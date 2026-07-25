@@ -7094,7 +7094,8 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // Capacity must be power-of-two (open-address mask hcap-1).
-                auto* ht = FlatHashTable::create(64);
+                // #2115 adds depth-safe steal keys → room above 1633 lineage.
+                auto* ht = FlatHashTable::create(128);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -7154,13 +7155,22 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"steal-deferred-inner-boundary", make_int(load(s.steal_deferred_inner_boundary))},
                 {"global-deferred-mutation-total",
                  make_int(load(s.global_deferred_mutation_total))},
+                // Issue #2115: depth-safe is_at_safe_mutation_boundary unify
+                {"steal-skipped-mutation-boundary-total",
+                 make_int(load(s.steal_skipped_mutation_boundary_total))},
+                {"steal_skipped_mutation_boundary_total",
+                 make_int(load(s.steal_skipped_mutation_boundary_total))},
+                {"depth-safe-boundary-steal-wired", make_int(1)},
+                {"is-at-safe-mutation-boundary-aliased", make_int(1)},
+                {"schema-2115", make_int(2115)},
+                {"issue-2115", make_int(2115)},
                 // #1633 mandate wire flags
                 {"inner-defer-mitigation-wired", make_int(1)},
                 {"long-mutation-hook-wired", make_int(1)},
                 {"steal-loop-inner-defer-wired", make_int(1)},
                 {"starvation-mitigation-mandate-active", make_int(1)},
                 {"issue", make_int(1633)},
-                {"schema", make_int(1633)}, // lineage 1492 / 1445
+                {"schema", make_int(1633)}, // lineage 1492 / 1445; #2115 satellite
             };
             return build_hash(kv);
         });

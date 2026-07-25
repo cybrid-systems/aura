@@ -2140,6 +2140,11 @@ aura_add_issue_test(test_reemit_mutation_boundary_handshake_2114)
 aura_issue_test_link_llvm_jit(test_reemit_mutation_boundary_handshake_2114)
 add_dependencies(all_test_issue_targets test_reemit_mutation_boundary_handshake_2114)
 
+# Issue #2115: unify is_at_safe_mutation_boundary with depth-safe steal API.
+aura_add_issue_test(test_depth_safe_mutation_boundary_steal_2115)
+aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal_2115)
+add_dependencies(all_test_issue_targets test_depth_safe_mutation_boundary_steal_2115)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

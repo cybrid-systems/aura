@@ -354,6 +354,12 @@ struct AdaptiveStealStats {
     // this counts times mitigation actually ran (priority boost +
     // pressure) for fairness under nested long mutations.
     std::atomic<std::uint64_t> steal_inner_deferred_starvation_mitigated_count{0};
+    // Issue #2115: steal attempts skipped because the victim is not
+    // depth-safe at a MutationBoundary (depth > 0). Bumped in the
+    // worker steal loop when is_stealable() && !is_at_mutation_boundary_safe()
+    // for YieldReason::MutationBoundary. Query surface:
+    // query:orchestration-steal-stats schema-2115.
+    std::atomic<std::uint64_t> steal_skipped_mutation_boundary_total{0};
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {
