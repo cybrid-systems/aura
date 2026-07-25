@@ -2075,6 +2075,11 @@ aura_add_issue_test(test_macro_hygiene_limits_2101)
 aura_issue_test_link_llvm_jit(test_macro_hygiene_limits_2101)
 add_dependencies(all_test_issue_targets test_macro_hygiene_limits_2101)
 
+# Issue #2102: coercion provenance miss → Full TypedMutationAudit / reject apply.
+aura_add_issue_test(test_coercion_provenance_miss_force_audit_2102)
+aura_issue_test_link_llvm_jit(test_coercion_provenance_miss_force_audit_2102)
+add_dependencies(all_test_issue_targets test_coercion_provenance_miss_force_audit_2102)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
