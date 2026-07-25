@@ -316,6 +316,177 @@ int main() {
         aura_set_aot_metrics(nullptr);
     }
 
+    // ── Issue #2093: structured reload-failure reason codes + per-reason metrics ──
+    {
+        std::println("\n--- #2093: per-reason failure counters + last-fail reason ---");
+        CompilerMetrics metrics;
+        aura_set_aot_metrics(&metrics);
+        aura_set_aot_region_mask(0);
+        aura_set_aot_defuse_version(0);
+        aura_set_module_version(0);
+
+        // ── AC1: Version mismatch bumps reload_fail_version_total
+        // (not only the generic rollback counter).
+        {
+            auto bad_ver_so =
+                build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88, "vfail");
+            if (bad_ver_so.empty()) {
+                CHECK(true, "skip AC1 (cc unavailable)");
+            } else {
+                const auto v0 = metrics.aot_reload_fail_version_total.load();
+                const auto rb0 = metrics.aot_hot_update_atomic_rollback.load();
+                const bool ok = aura_reload_aot_module(bad_ver_so.c_str(), /*expected=*/99);
+                CHECK(!ok, "AC1: version mismatch → false");
+                CHECK(metrics.aot_reload_fail_version_total.load() == v0 + 1,
+                      "AC1: reload_fail_version_total += 1");
+                CHECK(metrics.aot_hot_update_atomic_rollback.load() >= rb0 + 1,
+                      "AC1: generic atomic_rollback still bumps");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Version,
+                      "AC1: last-reason = Version");
+                // Registry snapshot mirrors per-reason counter.
+                aura_hot_update_registry_snapshot s{};
+                aura_hot_update_registry_get_snapshot(&s);
+                CHECK(s.aot_reload_fail_version_total >= 1,
+                      "AC1: registry snapshot exposes reload_fail_version_total");
+                CHECK(static_cast<AotReloadFail>(s.aot_reload_last_fail_reason) ==
+                          AotReloadFail::Version,
+                      "AC1: registry last-fail reason = Version");
+            }
+        }
+
+        // ── AC2: Dlopen failure bumps reload_fail_dlopen_total.
+        {
+            const auto d0 = metrics.aot_reload_fail_dlopen_total.load();
+            const bool ok = aura_reload_aot_module("/tmp/aura_aot_no_such_file_2093.so", 0);
+            CHECK(!ok, "AC2: dlopen missing file → false");
+            CHECK(metrics.aot_reload_fail_dlopen_total.load() == d0 + 1,
+                  "AC2: reload_fail_dlopen_total += 1");
+            CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                      AotReloadFail::Dlopen,
+                  "AC2: last-reason = Dlopen");
+        }
+
+        // ── AC2: Region mismatch bumps reload_fail_region_total.
+        {
+            aura_set_aot_region_mask(0x1);
+            auto region_bad =
+                build_registering_so(/*version=*/5, /*region=*/0x2, /*func_id=*/88, "rfail");
+            if (!region_bad.empty()) {
+                const auto r0 = metrics.aot_reload_fail_region_total.load();
+                const bool ok = aura_reload_aot_module(region_bad.c_str(), 5);
+                CHECK(!ok, "AC2: region mismatch → false");
+                CHECK(metrics.aot_reload_fail_region_total.load() == r0 + 1,
+                      "AC2: reload_fail_region_total += 1");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Region,
+                      "AC2: last-reason = Region");
+            }
+            aura_set_aot_region_mask(0);
+        }
+
+        // ── AC2: Stale defuse_version bumps reload_fail_defuse_total.
+        // Set host defuse ahead of binary emit version.
+        {
+            aura_set_aot_defuse_version(10);
+            auto defuse_bad =
+                build_registering_so(/*version=*/5, /*region=*/0, /*func_id=*/88, "dfail");
+            if (!defuse_bad.empty()) {
+                const auto d0 = metrics.aot_reload_fail_defuse_total.load();
+                const bool ok = aura_reload_aot_module(defuse_bad.c_str(), 0);
+                CHECK(!ok, "AC2: stale defuse → false");
+                CHECK(metrics.aot_reload_fail_defuse_total.load() == d0 + 1,
+                      "AC2: reload_fail_defuse_total += 1");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Defuse,
+                      "AC2: last-reason = Defuse");
+            }
+            aura_set_aot_defuse_version(0);
+        }
+
+        // ── AC2: Stale env_frame_version bumps reload_fail_env_total.
+        // Build a .so that exposes aot_env_frame_version=5; set host
+        // env_frame_version ahead via the C API.
+        {
+            const char* dir = "/tmp";
+            std::string cpath = std::format("{}/aura_aot_env_2093.c", dir);
+            std::string sopath = std::format("{}/aura_aot_env_2093.so", dir);
+            {
+                std::ofstream f(cpath);
+                if (f) {
+                    f << "#include <stdint.h>\n";
+                    f << "uint64_t aot_emit_version = 7ULL;\n";
+                    f << "uint64_t aot_region_mask = 0ULL;\n";
+                    f << "uint64_t aot_env_frame_version = 5ULL;\n";
+                    f << "uint64_t aot_linear_state = 0ULL;\n";
+                }
+            }
+            std::string cmd = std::format("cc -shared -fPIC -o {} {} 2>/dev/null", sopath, cpath);
+            if (std::system(cmd.c_str()) == 0) {
+                // Force the host env_frame_version ahead via the bridge.
+                aura_set_aot_default_env_frame_version(20);
+                const auto e0 = metrics.aot_reload_fail_env_total.load();
+                const bool ok = aura_reload_aot_module(sopath.c_str(), 0);
+                CHECK(!ok, "AC2: stale env_frame → false");
+                CHECK(metrics.aot_reload_fail_env_total.load() == e0 + 1,
+                      "AC2: reload_fail_env_total += 1");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Env,
+                      "AC2: last-reason = Env");
+                aura_set_aot_default_env_frame_version(0);
+                std::remove(sopath.c_str());
+                std::remove(cpath.c_str());
+            }
+        }
+
+        // ── AC3: Successful reload clears last-fail to Ok + bumps success.
+        // First force a failure to set last-fail, then a successful reload
+        // must clear it back to Ok.
+        {
+            // Force Version failure to set last-fail.
+            auto bad_pre =
+                build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88, "preok");
+            if (!bad_pre.empty()) {
+                (void)aura_reload_aot_module(bad_pre.c_str(), /*expected=*/99);
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Version,
+                      "AC3 setup: last-fail = Version after forced failure");
+                // Now do a successful reload.
+                auto good_so =
+                    build_registering_so(/*version=*/42, /*region=*/0, /*func_id=*/88, "ok");
+                if (!good_so.empty()) {
+                    const auto suc0 = metrics.aot_hot_update_success_.load();
+                    const bool ok = aura_reload_aot_module(good_so.c_str(), 42);
+                    CHECK(ok, "AC3: good .so reload succeeds");
+                    CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                              AotReloadFail::Ok,
+                          "AC3: last-fail cleared to Ok on success");
+                    CHECK(metrics.aot_hot_update_success_.load() >= suc0 + 1,
+                          "AC3: hot_update_success +1");
+                }
+            }
+        }
+
+        // ── AC5: query surface exposes per-reason counters + last-fail reason.
+        {
+            CompilerService cs;
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+            auto st = cs.eval("(engine:metrics \"query:aot-stats\")");
+            CHECK(st && is_hash(*st), "AC5: query:aot-stats is hash");
+            // Each per-reason key must be present (>= 0 even when 0).
+            for (const char* k : {"aot-reload-fail-dlopen-count", "aot-reload-fail-version-count",
+                                  "aot-reload-fail-region-count", "aot-reload-fail-defuse-count",
+                                  "aot-reload-fail-env-count", "aot-reload-fail-linear-count",
+                                  "aot-reload-fail-staging-count", "aot-reload-fail-other-count"}) {
+                CHECK(href(cs, "query:aot-stats", k) >= 0,
+                      std::format("AC5: query:aot-stats exposes '{}'", k));
+            }
+            aura_set_aot_metrics(nullptr);
+        }
+
+        aura_set_aot_metrics(nullptr);
+    }
+
     // ── Issue #2012: concurrent epoch probes during forced fail + success ──
     {
         std::println("\n--- #2012: concurrent probe stress during reload ---");

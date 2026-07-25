@@ -63,8 +63,47 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     aot_reload_success_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_reload_rollback(AotReloadFail reason) noexcept {
+    aot_reload_rollback_.fetch_add(1, std::memory_order_relaxed);
+    last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(reason),
+                                       std::memory_order_release);
+    switch (reason) {
+        case AotReloadFail::Dlopen:
+            aot_reload_fail_dlopen_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Version:
+            aot_reload_fail_version_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Region:
+            aot_reload_fail_region_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Defuse:
+            aot_reload_fail_defuse_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Env:
+            aot_reload_fail_env_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Linear:
+            aot_reload_fail_linear_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Staging:
+            aot_reload_fail_staging_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Other:
+            aot_reload_fail_other_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case AotReloadFail::Ok:
+            // Success path uses on_reload_success() instead — Ok here is
+            // a no-op (no counter to bump).
+            break;
+    }
+}
+
 void HotUpdateRegistry::on_reload_rollback() noexcept {
     aot_reload_rollback_.fetch_add(1, std::memory_order_relaxed);
+    last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(AotReloadFail::Other),
+                                       std::memory_order_release);
+    aot_reload_fail_other_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_live_closure_remap(std::uint64_t count) noexcept {
@@ -296,6 +335,25 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
         static_cast<std::int64_t>(aot_reload_success_.load(std::memory_order_relaxed));
     s.aot_reload_rollback_total =
         static_cast<std::int64_t>(aot_reload_rollback_.load(std::memory_order_relaxed));
+    // Issue #2093: per-reason reload failure breakdown (refine #2012).
+    s.aot_reload_fail_dlopen_total =
+        static_cast<std::int64_t>(aot_reload_fail_dlopen_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_version_total =
+        static_cast<std::int64_t>(aot_reload_fail_version_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_region_total =
+        static_cast<std::int64_t>(aot_reload_fail_region_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_defuse_total =
+        static_cast<std::int64_t>(aot_reload_fail_defuse_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_env_total =
+        static_cast<std::int64_t>(aot_reload_fail_env_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_linear_total =
+        static_cast<std::int64_t>(aot_reload_fail_linear_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_staging_total =
+        static_cast<std::int64_t>(aot_reload_fail_staging_.load(std::memory_order_relaxed));
+    s.aot_reload_fail_other_total =
+        static_cast<std::int64_t>(aot_reload_fail_other_.load(std::memory_order_relaxed));
+    s.aot_reload_last_fail_reason =
+        static_cast<std::int64_t>(last_aot_reload_fail_reason_.load(std::memory_order_relaxed));
     s.live_closure_remap_total =
         static_cast<std::int64_t>(live_closure_remap_.load(std::memory_order_relaxed));
     s.deopt_storm_detected_total =
@@ -355,6 +413,16 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->stable_func_id_map_size = s.stable_func_id_map_size;
     out->aot_reload_success_total = s.aot_reload_success_total;
     out->aot_reload_rollback_total = s.aot_reload_rollback_total;
+    // Issue #2093: per-reason reload failure breakdown (refine #2012).
+    out->aot_reload_fail_dlopen_total = s.aot_reload_fail_dlopen_total;
+    out->aot_reload_fail_version_total = s.aot_reload_fail_version_total;
+    out->aot_reload_fail_region_total = s.aot_reload_fail_region_total;
+    out->aot_reload_fail_defuse_total = s.aot_reload_fail_defuse_total;
+    out->aot_reload_fail_env_total = s.aot_reload_fail_env_total;
+    out->aot_reload_fail_linear_total = s.aot_reload_fail_linear_total;
+    out->aot_reload_fail_staging_total = s.aot_reload_fail_staging_total;
+    out->aot_reload_fail_other_total = s.aot_reload_fail_other_total;
+    out->aot_reload_last_fail_reason = s.aot_reload_last_fail_reason;
     out->live_closure_remap_total = s.live_closure_remap_total;
     out->deopt_storm_detected_total = s.deopt_storm_detected_total;
     out->deopt_observed_total = s.deopt_observed_total;

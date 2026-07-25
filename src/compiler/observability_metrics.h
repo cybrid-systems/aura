@@ -6185,6 +6185,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_cascade_region_stale_names_total{0};
     std::atomic<std::uint64_t> aot_region_mismatch_{0};
     std::atomic<std::uint64_t> aot_hot_update_success_{0};
+    // Issue #2093: per-reason reload-failure counters (refine #2012).
+    // Agents read these (via query:aot-reload-stats snapshot) to pick a
+    // recovery policy without log scraping — see issue body for the
+    // policy matrix (Version/Env/Linear → reemit+retry; Dlopen →
+    // path/ops; Staging → treat as bug). The aggregate
+    // aot_reload_rollback_total (#2012) is unchanged; these counters
+    // are strictly additive so existing dashboards keep working.
+    std::atomic<std::uint64_t> aot_reload_fail_dlopen_total{0};  // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_version_total{0}; // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_region_total{0};  // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_defuse_total{0};  // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_env_total{0};     // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_linear_total{0};  // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_staging_total{0}; // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_other_total{0};   // #2093
 
     // Issue #785: AOT concurrent hot-update observability
     // (concurrent steal + grace period + EnvFrame version
