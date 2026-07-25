@@ -2828,15 +2828,46 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto id = handle.id;
             const std::string out_name = handle.name.empty() ? name : handle.name;
             const std::string err = handle.error;
+            // Issue #2079: structured quota-reject fields (snapshot before any handle move).
+            const std::string qdim = handle.quota_dimension;
+            const std::uint64_t qused = handle.quota_used;
+            const std::uint64_t qlimit = handle.quota_limit;
+            const std::uint64_t qretry = handle.retry_after_ms;
             if (ok)
                 ev.agent_names_->put(std::move(handle));
 
-            // Issue #2011: quota reject surfaces as typed Aura error (no panic).
+            // Issue #2011 / #2079: quota reject returns a structured hash (not
+            // primitive-error) so Agent frameworks can branch on quota-dimension /
+            // quota-used / quota-limit / retry-after-ms without parsing error
+            // strings. Field names align with `query:resource-quota-stats` and
+            // `query:orch-module-stats` keys for consistency.
             if (!ok && quota_exceeded) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    err.empty() ? "ResourceQuotaExceeded: orch spawn rejected" : err,
-                    ev.primitive_error_counter_ptr());
+                std::vector<std::pair<std::string, EvalValue>> qkv = {
+                    {"ok", make_bool(false)},
+                    {"id", make_int(0)},
+                    {"name", make_string(ev.string_heap_.size())},
+                    {"quota-exceeded", make_bool(true)},
+                    {"schema", make_int(1588)},
+                    {"schema-2011", make_int(2011)},
+                    {"schema-2079", make_int(2079)},
+                };
+                // Sentinel name for quota-reject (out_name was not yet assigned;
+                // we never put the handle into agent_names_).
+                ev.string_heap_.push_back(out_name);
+                if (!qdim.empty()) {
+                    auto qidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(qdim);
+                    qkv.push_back({"quota-dimension", make_string(qidx)});
+                }
+                qkv.push_back({"quota-used", make_int(static_cast<std::int64_t>(qused))});
+                qkv.push_back({"quota-limit", make_int(static_cast<std::int64_t>(qlimit))});
+                qkv.push_back({"retry-after-ms", make_int(static_cast<std::int64_t>(qretry))});
+                const std::string qerr =
+                    err.empty() ? std::string("ResourceQuotaExceeded: orch spawn rejected") : err;
+                auto eidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(qerr);
+                qkv.push_back({"error", make_string(eidx)});
+                return build_orch_hash(qkv);
             }
 
             auto nidx = ev.string_heap_.size();
