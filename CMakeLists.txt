@@ -67,6 +67,12 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_control.cpp
     src/compiler/evaluator_primitives_char.cpp
     src/compiler/evaluator_primitives_mutation.cpp
+    # Issue #2078: AgentNameTable is header-only with inline methods
+    # (src/compiler/agent_name_table.h). Not compiled separately to
+    # avoid C++20 modules "declarations in both fragments" conflict.
+    # The .h is included from evaluator_ctor.cpp /
+    # evaluator_primitives_agent.cpp / the test file (not from
+    # evaluator.ixx's global fragment).
 )
 # Wave 5: service implementation partitions (same module: aura.compiler.service).
 set(AURA_SERVICE_SOURCE_FILES
@@ -1889,6 +1895,17 @@ set_target_properties(test_fiber_orch_core_batch PROPERTIES EXCLUDE_FROM_ALL TRU
 aura_add_issue_test(test_fiber_orch_parallel_quota_batch)
 aura_issue_test_link_llvm_jit(test_fiber_orch_parallel_quota_batch)
 set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+# Issue #2078: per-Evaluator orch agent name table (replaces the
+# process-static OrchAgentNameTable that lived in
+# evaluator_primitives_agent.cpp — multiple CompilerService instances
+# collided on the same agent name and tests were non-hermetic).
+# Storage moves to src/compiler/agent_name_table.h::AgentNameTable
+# (Evaluator member), drained at ~Evaluator via
+# Evaluator::cleanup_orch_agents(). Single-agent MVP surface
+# preserved (scripts/check_orch_mvp_scope.py --strict still guards).
+aura_add_issue_test(test_agent_name_table_isolation_2078)
+aura_issue_test_link_llvm_jit(test_agent_name_table_isolation_2078)
 
 aura_add_issue_test(test_fiber_concurrent_unit_batch)
 aura_issue_test_link_llvm_jit(test_fiber_concurrent_unit_batch)
