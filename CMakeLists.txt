@@ -2049,6 +2049,11 @@ aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)
 add_dependencies(all_test_issue_targets test_arena_adaptive_compact_2059)
 
+# Issue #2060: HotPassDodCompliant dirty short-circuit + SoA-direct dirty entry.
+aura_add_issue_test(test_hot_pass_dirty_soa_2060)
+aura_issue_test_link_llvm_jit(test_hot_pass_dirty_soa_2060)
+add_dependencies(all_test_issue_targets test_hot_pass_dirty_soa_2060)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

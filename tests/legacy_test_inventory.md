@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 383 | Preferred destination suites |
-| **Total scanned** | **383** | |
+| `tests/core/test_*.cpp` | 384 | Preferred destination suites |
+| **Total scanned** | **384** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 38 | 38 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 104 | 104 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 105 | 105 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 38 | 38 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 8 | 8 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 21 | 21 | P1 — domain hygiene suite exists |
@@ -280,6 +280,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_hash_iter_invalidation.cpp`
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp`
 - `tests/core/test_highperf_full_hotpath_matrix.cpp`
+- `tests/compiler/test_hot_pass_dirty_soa_2060.cpp`
 - `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp`
 - `tests/core/test_hotpath_matrix_batch.cpp`
 - `tests/compiler/test_hygiene_mutate_closed_loop.cpp`
@@ -614,13 +615,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_lifecycle.cpp` (—) [domain_suite, theme_renderer] — test_terminal_lifecycle.cpp — Issue #1352: delete/compact + use-after-delete
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (104)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (105)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (104)
+#### domain/ (105)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -658,6 +659,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_grant_epoch_fiber_bind_2055.cpp` (#2055) [domain_suite, theme_compiler] — AC1: Grant always carries non-zero grant_epoch matching mutation epoch
 - `tests/compiler/test_grant_epoch_invalidation_2074.cpp` (#2074) [domain_suite, theme_compiler] — Issue #2074 — mutation-bound CapabilityGrant + epoch invalidation
 - `tests/core/test_guard_dtor_batch_metrics.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #1747 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_hot_pass_dirty_soa_2060.cpp` (#2060) [domain_suite, theme_compiler] — AC1: DirtySoAEntryPass + kRequireDirtySoAEntry on production wraps
 - `tests/core/test_hotpath_matrix_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_hotpath_matrix_batch.cpp — Domain suite batch: behavioral gates.
 - `tests/compiler/test_hygiene_mutate_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2037; enforce_macro_hygiene_mutate_hotpath +
 - `tests/compiler/test_incremental_typed_selfmod_dirty_narrowing.cpp` (—) [domain_suite, theme_compiler] — test_incremental_typed_selfmod_dirty_narrowing.cpp — Merged #509/#518/#526/#536/#537/#550 +

@@ -171,6 +171,12 @@ export inline std::atomic<std::uint64_t> optimization_passes_skipped_by_define_d
 export inline std::atomic<std::uint64_t> dirty_block_relower_ratio_bp{0};
 export inline std::atomic<std::uint64_t> define_dirty_blocks_seen_total{0};
 export inline std::atomic<std::uint64_t> define_total_blocks_seen_total{0};
+// Issue #2060: dirty-only / SoA-columnar entry path observability.
+export inline std::atomic<std::uint64_t> dirty_only_entry_hits_total{0};
+export inline std::atomic<std::uint64_t> dirty_only_blocks_run_total{0};
+export inline std::atomic<std::uint64_t> dirty_only_blocks_skipped_total{0};
+export inline std::atomic<std::uint64_t> run_one_dirty_calls_total{0};
+export inline std::atomic<std::uint64_t> hot_pass_dirty_soa_wired{1};
 
 inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexcept {
     const auto dirty = view.dirty_block_count();
@@ -218,13 +224,15 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 
 // SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
 
-// Issue #1517 / #1619 / #1918: compile-time DOD compliance check.
+// Issue #1517 / #1619 / #1918 / #2060: compile-time DOD compliance check.
 // - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
 // - Soft metrics always: SoA aware → concept_enforcement_hits;
 //   legacy/unmarked → soa_view_pass_skipped.
 // - #1619/#1918: pack-level check_pipeline_dod_compliance at every pipeline entry.
 // - #1918: HotPassDodCompliant (SoAViewAware || Legacy) is the production target;
 //   unmarked passes remain transitional soft-skip (metric only).
+// - #2060: kRequireDirtySoAEntry / DirtyAware+SoA hot stages must provide
+//   DirtySoAEntryPass (run_on_dirty_blocks_only or Incremental+Dirty+SoA).
 export template <typename P> consteval void check_pass_dod_compliance() {
     using T = std::remove_cvref_t<P>;
     if constexpr (RequiresSoAViewPass<T>) {
@@ -236,6 +244,23 @@ export template <typename P> consteval void check_pass_dod_compliance() {
                       "Pass cannot declare both kRequireSoAView and kLegacyPass (#1619/#1918)");
         static_assert(HotPassDodCompliant<T>,
                       "kRequireSoAView pass must be HotPassDodCompliant (#1918)");
+    }
+    // Issue #2060: explicit dirty/SoA entry requirement.
+    if constexpr (RequiresDirtySoAEntryPass<T>) {
+        static_assert(DirtySoAEntryPass<T>,
+                      "HotPassDodCompliant pass declared kRequireDirtySoAEntry must provide "
+                      "run_on_dirty_blocks_only or Incremental+DirtyAware+SoAView (#2060)");
+        static_assert(SoAViewAwarePass<T>,
+                      "kRequireDirtySoAEntry pass must consume IR SoA columns (#2060)");
+        static_assert(!LegacyPass<T>,
+                      "Pass cannot declare both kRequireDirtySoAEntry and kLegacyPass (#2060)");
+    }
+    // Issue #2060: DirtyAware + SoAViewAware production stages must offer a
+    // dirty/SoA entry (pipeline routes run_on_dirty_blocks_only / block peel).
+    if constexpr (SoAViewAwarePass<T> && DirtyAwarePass<T> && !LegacyPass<T>) {
+        static_assert(DirtySoAEntryPass<T>,
+                      "SoAViewAware DirtyAware hot pass must provide DirtySoAEntryPass "
+                      "(run_on_dirty_blocks_only or Incremental+Dirty+SoA) (#2060)");
     }
 }
 
@@ -410,13 +435,22 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
 // partially dirty, block dirtiness prefers the define mask over the
 // pass's own is_block_dirty, and set_block_dirty_fn is installed when
 // the pass supports it so fold/propagate only touch dirty blocks.
+// Issue #2060: prefer run_on_dirty_blocks_only / dirty block peel so
+// clean regions never pay residual full-function walks under sparse
+// AI re-lower. consteval DirtySoAEntryPass enforced for DirtyAware+SoA.
 export template <IncrementalPass P>
     requires DirtyAwarePass<P>
 bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                                     const DefineDirtyMaskView* define_cache = nullptr) {
-    // Issue #1517 / #1619: enforce DOD compliance at dirty-incremental entry.
+    // Issue #1517 / #1619 / #2060: enforce DOD + dirty/SoA entry at dirty entry.
     check_pipeline_dod_compliance<P>();
     note_pass_soa_enforcement(pass);
+    // #2060: DirtyAware + SoA stages must offer DirtySoAEntry (concept check).
+    if constexpr (SoAViewAwarePass<P>) {
+        static_assert(DirtySoAEntryPass<P>,
+                      "run_incremental_dirty_pipeline requires DirtySoAEntryPass for "
+                      "SoAViewAware stages (#2060)");
+    }
 
     // AC3 (#1574): early-skip whole pass when define-level mask is clean.
     if (define_cache && define_cache->block_dirty_per_func && !define_cache->any()) {
@@ -450,6 +484,8 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
         }
 
         bool any_dirty = false;
+        std::uint64_t dirty_blocks = 0;
+        std::uint64_t clean_blocks = 0;
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
             const auto bid = static_cast<std::uint32_t>(bi);
             // Prefer define-level mask when present; else pass probe.
@@ -458,6 +494,7 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                                          : pass.is_block_dirty(bid);
             if (block_dirty) {
                 any_dirty = true;
+                ++dirty_blocks;
                 // Phase 1 instruction probe: if the pass is
                 // InstructionDirtyAwarePass, walk inst dirty bits for metrics.
                 if constexpr (InstructionDirtyAwarePass<P>) {
@@ -473,10 +510,11 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                                                                        std::memory_order_relaxed);
                     }
                 }
-                break;
+            } else {
+                ++clean_blocks;
+                if (fn_shape_stable)
+                    passes_skipped_shape_stable_blocks.fetch_add(1, std::memory_order_relaxed);
             }
-            if (fn_shape_stable)
-                passes_skipped_shape_stable_blocks.fetch_add(1, std::memory_order_relaxed);
         }
         if (!any_dirty) {
             passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
@@ -487,14 +525,50 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
             if (fn_shape_stable)
                 passes_skipped_shape_stable_blocks.fetch_add(
                     static_cast<std::uint64_t>(func.blocks.size()), std::memory_order_relaxed);
+            if (clean_blocks > 0)
+                dirty_only_blocks_skipped_total.fetch_add(clean_blocks, std::memory_order_relaxed);
             aura::core::cpp26::record_hotpath_invariant_hit();
             continue;
         }
-        pass.run(func);
+        // Issue #2060: prefer explicit dirty-only / SoA-columnar entry.
+        if constexpr (requires(P& p, aura::ir::IRFunction& f) { p.run_on_dirty_blocks_only(f); }) {
+            dirty_only_entry_hits_total.fetch_add(1, std::memory_order_relaxed);
+            dirty_only_blocks_run_total.fetch_add(dirty_blocks, std::memory_order_relaxed);
+            if (clean_blocks > 0)
+                dirty_only_blocks_skipped_total.fetch_add(clean_blocks, std::memory_order_relaxed);
+            pass.run_on_dirty_blocks_only(func);
+        } else {
+            // DirtyAware + set_block_dirty_fn: pass peels clean blocks internally.
+            // Still record #2060 skip metrics for Agent sparse-dirty dashboards.
+            dirty_only_entry_hits_total.fetch_add(1, std::memory_order_relaxed);
+            dirty_only_blocks_run_total.fetch_add(dirty_blocks, std::memory_order_relaxed);
+            if (clean_blocks > 0)
+                dirty_only_blocks_skipped_total.fetch_add(clean_blocks, std::memory_order_relaxed);
+            pass.run(func);
+        }
         if (pass.has_error())
             return false;
     }
     return true;
+}
+
+// Issue #2060: single-pass dirty-only entry. When define mask is fully
+// clean, skip the entire pass; otherwise route through
+// run_incremental_dirty_pipeline (DirtySoAEntry / block peel).
+export template <IncrementalPass P>
+    requires DirtyAwarePass<P>
+bool run_one_dirty(aura::ir::IRModule& mod, P& pass,
+                   const DefineDirtyMaskView* define_cache = nullptr) {
+    run_one_dirty_calls_total.fetch_add(1, std::memory_order_relaxed);
+    check_pipeline_dod_compliance<P>();
+    if (define_cache && define_cache->block_dirty_per_func && !define_cache->any()) {
+        note_define_dirty_mask_stats(*define_cache);
+        optimization_passes_skipped_by_define_dirty.fetch_add(1, std::memory_order_relaxed);
+        passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
+        pipeline_dirty_short_circuit_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return run_incremental_dirty_pipeline(mod, pass, define_cache);
 }
 
 // ── Issue #381: static_asserts documenting the new concepts ────
@@ -570,12 +644,15 @@ public:
     void run(aura::ir::BasicBlock& /*block*/) {
         // Per-block compute_kind is not defined; no-op for IncrementalPass.
     }
+    // Issue #2060: DirtySoAEntryPass — function-granularity dirty gate.
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& func) { run(func); }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
     std::span<const ComputeKindResult> results() const { return results_; }
     // Issue #1918: SoAViewAwarePass — dirty-aware function scan is DOD-friendly.
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kRequireDirtySoAEntry = true; // #2060
 
 private:
     // mutable so the const-qualified run() can still clear/refill
@@ -914,6 +991,20 @@ public:
     void run(aura::ir::IRFunction& func) { (void)fold_function(func); }
     void run(aura::ir::BasicBlock& block) { (void)fold_block(block); }
 
+    // Issue #2060: DirtySoAEntryPass — fold only dirty blocks (no clean peel).
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& func) {
+        if (!block_dirty_fn_) {
+            (void)fold_function(func);
+            return;
+        }
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (!is_block_dirty(static_cast<std::uint32_t>(bi)))
+                continue;
+            known_.clear();
+            folded_ += aura::compiler::constant_fold_block(func.blocks[bi], known_);
+        }
+    }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "const-fold"; }
     std::size_t folded_count() const { return folded_; }
@@ -922,6 +1013,8 @@ public:
     // Issue #1619 / #1918: SoAViewAwarePass — const-fold is DOD-friendly
     // (dirty short-circuit when wired; whole-function fold still columnar-ready).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    // Issue #2060: require dirty/SoA entry for this hot production wrap.
+    static constexpr bool kRequireDirtySoAEntry = true;
 
 private:
     // Legacy per-instance known-map (kept for fold_block callers
@@ -2639,6 +2732,9 @@ public:
     }
     void run(aura::ir::BasicBlock& block) { run_on_block(block); }
 
+    // Issue #2060: DirtySoAEntryPass — only dirty blocks (same peel as run(func)).
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& func) { run(func); }
+
     // Issue #1920 Phase 2: SoA type propagation over dirty blocks only.
     // Walks type_id / narrow_evidence columns without full AoS conversion.
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
@@ -2688,6 +2784,8 @@ public:
     // Issue #1619: SoAViewAwarePass — propagates type_id / narrow_evidence
     // instruction columns (columnar hot path).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    // Issue #2060: require dirty/SoA entry for type-prop hot path.
+    static constexpr bool kRequireDirtySoAEntry = true;
 
     // Issue #1530 / #1874: original #1457 set + extended pure/ownership
     // + more unaries / const ground stamps for DCE coverage.
@@ -3037,6 +3135,18 @@ static_assert(DirtyAwarePass<ComputeKindWrap>,
 static_assert(IncrementalPass<ComputeKindWrap>, "ComputeKindWrap is IncrementalPass (#1574)");
 static_assert(DirtyAwarePass<ShapeWrap>, "ShapeWrap is DirtyAware for define-mask wiring (#1574)");
 static_assert(IncrementalPass<ShapeWrap>, "ShapeWrap is IncrementalPass (#1574)");
+// Issue #2060: DirtySoAEntryPass on production dirty/SoA hot stages.
+static_assert(DirtySoAEntryPass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap DirtySoAEntryPass (#2060)");
+static_assert(DirtySoAEntryPass<TypePropagationPass>,
+              "TypePropagationPass DirtySoAEntryPass (#2060)");
+static_assert(DirtySoAEntryPass<ComputeKindWrap>, "ComputeKindWrap DirtySoAEntryPass (#2060)");
+static_assert(RequiresDirtySoAEntryPass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap kRequireDirtySoAEntry (#2060)");
+static_assert(RequiresDirtySoAEntryPass<TypePropagationPass>,
+              "TypePropagationPass kRequireDirtySoAEntry (#2060)");
+static_assert(RequiresDirtySoAEntryPass<ComputeKindWrap>,
+              "ComputeKindWrap kRequireDirtySoAEntry (#2060)");
 
 // Issue #160: Inline Expansion Pass (sub-item #6 minimal).
 //

@@ -24,7 +24,8 @@ export namespace aura::compiler::pass_concepts {
 
 inline constexpr int kConceptConstraintsPhase = 1;
 // Number of named Pass-related concepts exported below (keep in sync).
-inline constexpr int kPassConceptCount = 10;
+// #2060 adds DirtySoAEntryPass + RequiresDirtySoAEntryPass (was 10).
+inline constexpr int kPassConceptCount = 12;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -211,13 +212,45 @@ template <typename P>
 concept RequiresSoAViewPass =
     Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireSoAView == true; };
 
-// ── HotPassDodCompliant (#1918) ────────────────────────────────
+// ── HotPassDodCompliant (#1918 / #2060) ────────────────────────
 //
 // Production hot-path pass is either SoAViewAware (reports uses_soa_view)
 // or explicitly marked LegacyPass. Used by check_pass_dod_compliance
 // soft metrics + tests; hard static_assert for kRequireSoAView remains
 // RequiresSoAViewPass → SoAViewAwarePass.
+//
+// Issue #2060 contract (for future passes):
+//   Non-Legacy HotPassDodCompliant stages that participate in
+//   run_incremental_dirty_pipeline MUST also satisfy DirtySoAEntryPass
+//   (provide run_on_dirty_blocks_only, or be Incremental+DirtyAware+SoA
+//   so the pipeline can route a dirty-only / SoA-columnar entry).
+//   Pure whole-module analysis (ArityWrap) may remain SoAViewAware without
+//   DirtySoAEntry — define-level any() short-circuit still applies.
 template <typename P>
 concept HotPassDodCompliant = SoAViewAwarePass<P> || LegacyPass<P>;
+
+// ── DirtySoAEntryPass (#2060) ──────────────────────────────────
+//
+// Pass provides a dirty-only / SoA-columnar entry for sparse
+// incremental re-lower. Preferred surface:
+//   void run_on_dirty_blocks_only(IRFunction&)
+// Accepted equivalent (pipeline routes via dirty peel + set_block_dirty_fn):
+//   IncrementalPass + DirtyAwarePass + SoAViewAwarePass
+//
+// check_pass_dod_compliance / run_incremental_dirty_pipeline assert
+// this for DirtyAware hot stages so clean blocks never pay full
+// function walks under AI multi-round mutate.
+template <typename P>
+concept DirtySoAEntryPass = (SoAViewAwarePass<P> && DirtyAwarePass<P> && IncrementalPass<P>) ||
+                            (SoAViewAwarePass<P> && requires(P& p, aura::ir::IRFunction& f) {
+                                { p.run_on_dirty_blocks_only(f) } -> std::same_as<void>;
+                            });
+
+// Explicit opt-in marker: pass declares
+//   static constexpr bool kRequireDirtySoAEntry = true;
+// and MUST satisfy DirtySoAEntryPass (consteval in pass_manager).
+template <typename P>
+concept RequiresDirtySoAEntryPass =
+    Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireDirtySoAEntry == true; };
 
 } // namespace aura::compiler
