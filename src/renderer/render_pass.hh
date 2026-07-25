@@ -111,6 +111,9 @@ struct DirtyDeltaMetrics {
     std::atomic<std::uint64_t> dirty_full_frame_presents{0};
     std::atomic<std::uint64_t> dirty_partial_presents{0};
     std::atomic<std::uint64_t> dirty_cells_max{0}; // high-water (p99 proxy)
+    // Issue #2047: ANSI byte savings vs full-frame estimate on dirty present.
+    std::atomic<std::uint64_t> ansi_bytes_emitted_total{0};
+    std::atomic<std::uint64_t> ansi_bytes_saved_total{0};
     static constexpr std::size_t kSampleCap = 64;
     std::uint64_t samples[kSampleCap]{};
     std::atomic<std::uint64_t> sample_ix{0};
@@ -181,6 +184,8 @@ inline void reset_dirty_delta_metrics_for_test() noexcept {
     m.dirty_full_frame_presents.store(0, std::memory_order_relaxed);
     m.dirty_partial_presents.store(0, std::memory_order_relaxed);
     m.dirty_cells_max.store(0, std::memory_order_relaxed);
+    m.ansi_bytes_emitted_total.store(0, std::memory_order_relaxed);
+    m.ansi_bytes_saved_total.store(0, std::memory_order_relaxed);
     m.sample_ix.store(0, std::memory_order_relaxed);
     m.sample_count.store(0, std::memory_order_relaxed);
     for (auto& s : m.samples)

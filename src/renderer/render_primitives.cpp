@@ -82,10 +82,12 @@ namespace {
             return -1;
 
         if (!dirty.is_dirty()) {
+            // Issue #2047: clean present is free — short-circuit before hotpath.
             ++g_render_hot_path_stats.dirty_short_circuit_total;
             ++g_engine_counters.present_skips;
             g_dirty_delta_metrics().dirty_region_skips_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+            note_batch_terminal_short_circuit();
             aura::core::arena_policy::render_hotpath_skip_total.fetch_add(
                 1, std::memory_order_relaxed);
             if (out_opt)
@@ -102,6 +104,17 @@ namespace {
             build_frame_zero_copy_arena(fb, dirty, arena, sgr_emits, cells_emitted);
         g_engine_counters.sgr_emits += sgr_emits;
         g_engine_counters.dirty_cells_emitted += cells_emitted;
+        // Issue #2047: record ANSI byte savings vs full-frame estimate.
+        {
+            const auto full_est = estimate_ansi_frame_bytes(fb.width, fb.height);
+            const bool partial = cells_emitted < (static_cast<std::uint64_t>(fb.width) *
+                                                  static_cast<std::uint64_t>(fb.height));
+            note_batch_terminal_dirty_present(cells_emitted, n, full_est, partial);
+            auto& dm = g_dirty_delta_metrics();
+            dm.ansi_bytes_emitted_total.fetch_add(n, std::memory_order_relaxed);
+            if (full_est > n)
+                dm.ansi_bytes_saved_total.fetch_add(full_est - n, std::memory_order_relaxed);
+        }
 
         auto& zc = aura::core::zero_copy::g_zero_copy_fb;
         const auto last = zc.last_view();

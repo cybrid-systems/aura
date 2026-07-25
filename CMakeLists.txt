@@ -1970,6 +1970,11 @@ aura_add_issue_test(test_obs_metrics_smoke_batch)
 aura_issue_test_link_llvm_jit(test_obs_metrics_smoke_batch)
 add_dependencies(all_test_issue_targets test_obs_metrics_smoke_batch)
 
+# Issue #2047: batch_terminal Phase 2 dirty-region differential present
+aura_add_issue_test(test_batch_terminal_dirty_phase2_2047)
+aura_issue_test_link_llvm_jit(test_batch_terminal_dirty_phase2_2047)
+add_dependencies(all_test_issue_targets test_batch_terminal_dirty_phase2_2047)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

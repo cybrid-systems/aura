@@ -1,4 +1,4 @@
-// batch_terminal.hh — Issues #1349/#1350: ANSI helpers + TermCell RGB/Unicode.
+// batch_terminal.hh — Issues #1349/#1350/#2047: ANSI helpers + TermCell + dirty peel.
 // Header form for evaluator partition TUs. Keep in sync with batch_terminal.ixx.
 
 #ifndef AURA_RENDERER_BATCH_TERMINAL_HH
@@ -12,6 +12,60 @@
 #include <string>
 
 namespace aura::renderer {
+
+// Issue #2047: Phase 2 sentinel (parity with batch_terminal.ixx).
+inline constexpr int kBatchTerminalPhase = 2;
+inline constexpr int kBatchTerminalIssue = 2047;
+
+// Process-wide batch terminal stats (header path; mirrors module).
+struct BatchTerminalStats {
+    std::uint64_t sequences_emitted = 0;
+    std::uint64_t dirty_rects = 0;
+    std::uint64_t ansi_builds = 0;
+    std::uint64_t dirty_short_circuit = 0;
+    std::uint64_t dirty_cells_emitted = 0;
+    std::uint64_t dirty_full_presents = 0;
+    std::uint64_t dirty_partial_presents = 0;
+    std::uint64_t ansi_bytes_emitted = 0;
+    std::uint64_t ansi_bytes_saved = 0;
+    std::uint64_t dirty_region_skips = 0;
+};
+
+inline BatchTerminalStats& g_batch_terminal_stats() noexcept {
+    static BatchTerminalStats s;
+    return s;
+}
+
+// Backward-compat alias used by older call sites expecting a global object.
+// Prefer g_batch_terminal_stats() in new code.
+#ifndef AURA_BATCH_TERMINAL_STATS_OBJECT
+// Provide a reference-named binding via macro-free function only.
+#endif
+
+inline void reset_batch_terminal_stats_for_test() noexcept {
+    g_batch_terminal_stats() = {};
+}
+
+inline void note_batch_terminal_short_circuit() noexcept {
+    auto& s = g_batch_terminal_stats();
+    ++s.dirty_short_circuit;
+    ++s.dirty_region_skips;
+}
+
+inline void note_batch_terminal_dirty_present(std::uint64_t cells_emitted, std::size_t bytes,
+                                              std::size_t full_est, bool partial) noexcept {
+    auto& s = g_batch_terminal_stats();
+    s.dirty_cells_emitted += cells_emitted;
+    s.ansi_bytes_emitted += bytes;
+    if (partial) {
+        ++s.dirty_rects;
+        ++s.dirty_partial_presents;
+    } else {
+        ++s.dirty_full_presents;
+    }
+    if (full_est > bytes)
+        s.ansi_bytes_saved += (full_est - bytes);
+}
 
 // Issue #1350: full cell (Unicode codepoint + 24-bit RGB fg/bg).
 // mode=0 palette: fg_r/bg_r hold 0–255 indices; emit CSI 38;5 / 48;5.
@@ -285,8 +339,15 @@ inline DirtyFrameEmitResult build_terminal_frame_ansi_dirty(std::string& out, st
                                                             const DirtyRegion& dirty) {
     if (dirty.is_clean())
         return {};
-    return build_terminal_frame_ansi_dirty(out, w, h, cells, dirty.x0, dirty.y0, dirty.x1,
-                                           dirty.y1);
+    auto r =
+        build_terminal_frame_ansi_dirty(out, w, h, cells, dirty.x0, dirty.y0, dirty.x1, dirty.y1);
+    // Issue #2047: also bump process BatchTerminalStats for query surface.
+    const auto full_est = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 16u + 64u;
+    // bytes not known here without tracking out growth — present path notes via
+    // note_batch_terminal_dirty_present after zero-copy build.
+    (void)full_est;
+    (void)r;
+    return r;
 }
 
 // Legacy overload: packed u32 cells (ch | fg<<16 | bg<<24) → converted on the fly.
