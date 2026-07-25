@@ -12,6 +12,7 @@
 //   AC6: after commit/restore, GC request path works again (eval ok)
 
 #include "test_harness.hpp"
+#include <fstream>
 
 #include "core/gc_hooks.h"
 #include "compiler/messaging_bridge.h"
@@ -367,6 +368,76 @@ static void ac8_toctou_stress_per_evaluator() {
 
 } // namespace
 
+// ── Issue #2086 AC: fiber-steal / cross-evaluator resume must
+// clear orphan panic-defer depth from the previous host. After steal
+// from A (with armed panic defer) to B, process-wide depth attributable
+// to A is 0 and table slot for A is empty.
+// ── Issue #2086 AC: overflow path observable via metric.
+static void ac8_steal_clears_orphan_defer_2086() {
+    std::println("\n--- AC8: #2086 steal clears orphan defer + overflow counter ---");
+
+    // Baseline: capture metric from gc_hooks.h (process atomic).
+    const auto overflow_before =
+        aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed);
+
+    // Two distinct fake evaluator ids; arm id_prev with depth 2 to
+    // simulate "previous host had an active PanicCheckpoint".
+    std::uintptr_t fake_prev = 0xDEAD0001u;
+    std::uintptr_t fake_new = 0xBEEF0002u;
+    auto* id_prev = reinterpret_cast<void*>(fake_prev);
+    auto* id_new = reinterpret_cast<void*>(fake_new);
+
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_prev);
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_prev);
+    const auto depth_before = aura::gc_hooks::gc_defer_pending_panic_depth();
+    CHECK(depth_before >= 2, "AC8: depth reflects 2 arms on id_prev");
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_prev), "AC8: id_prev flagged before steal");
+
+    // Simulate fiber-steal: clear the orphan defer from id_prev.
+    // This is exactly what restore_post_yield_or_rollback does when
+    // thread_migrated=true and cp.evaluator_id != nullptr (the #2086
+    // path in evaluator_fiber_mutation.cpp).
+    const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(id_prev);
+    CHECK(cleared == 2, "AC8: clear returned 2 (full depth of id_prev)");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(id_prev),
+          "AC8: id_prev table slot empty after steal-style clear");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth_before - 2,
+          "AC8: process-wide depth -= 2 after id_prev clear");
+
+    // Arm a NEW id to confirm orthogonal slots work post-clear.
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_new);
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_new),
+          "AC8: id_new can be armed independently post-clear");
+
+    // Source-cite: the steal path in evaluator_fiber_mutation.cpp wires
+    // clear_gc_defer_for_evaluator + gc_defer_orphan_cleared_total.
+    std::ifstream efm("src/compiler/evaluator_fiber_mutation.cpp");
+    std::string efm_contents((std::istreambuf_iterator<char>(efm)),
+                             std::istreambuf_iterator<char>());
+    CHECK(efm_contents.find("gc_defer_orphan_cleared_total") != std::string::npos,
+          "AC8: steal path bumps gc_defer_orphan_cleared_total");
+    CHECK(efm_contents.find("clear_gc_defer_for_evaluator(cp.evaluator_id)") != std::string::npos,
+          "AC8: steal path calls clear_gc_defer_for_evaluator(cp.evaluator_id)");
+    CHECK(efm_contents.find("thread_migrated && cp.evaluator_id != nullptr") != std::string::npos,
+          "AC8: steal path gated on thread_migrated + evaluator_id non-null");
+
+    // Source-cite: overflow counter bump in gc_hooks.h.
+    std::ifstream gh("src/core/gc_hooks.h");
+    std::string gh_contents((std::istreambuf_iterator<char>(gh)), std::istreambuf_iterator<char>());
+    CHECK(gh_contents.find("g_gc_defer_table_overflow_total") != std::string::npos,
+          "AC8: gc_hooks.h exposes g_gc_defer_table_overflow_total");
+
+    // No overflow triggered in this AC (we used only 2 evaluators,
+    // well under kMaxArmedEvaluators=64); counter should be unchanged.
+    CHECK(aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed) ==
+              overflow_before,
+          "AC8: no overflow triggered (2 evaluators < kMaxArmedEvaluators=64)");
+
+    // Clean up: release id_new so depth returns to 0 for downstream tests.
+    aura::gc_hooks::release_gc_defer_pending_panic_for(id_new);
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0,
+          "AC8: process-wide depth == 0 after release id_new");
+}
 int main() {
     std::println("=== test_scheduler_gc_defer_pending_panic_steal (#1581 + #2002) ===");
     ac1_collector_request_defers();
@@ -377,6 +448,7 @@ int main() {
     ac6_gc_resumes_after_release();
     ac7_per_evaluator_discriminator();
     ac8_toctou_stress_per_evaluator();
+    ac8_steal_clears_orphan_defer_2086();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

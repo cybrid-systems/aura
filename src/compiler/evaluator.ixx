@@ -11434,7 +11434,14 @@ public:
     // and the defuse_version_ is bumped again so any pending
     // readers see the rolled-back state.
     struct MutationCheckpoint {
-        std::uint64_t version;             // defuse_version_ at boundary entry
+        std::uint64_t version; // defuse_version_ at boundary entry
+        // Issue #2086: pointer to the Evaluator* that owned the fiber at
+        // yield time (this at the push site). On fiber-steal resume
+        // (restore_post_yield_or_rollback + thread_migrated), we use
+        // this to call clear_gc_defer_for_evaluator(prev) so any panic
+        // defer depth the previous host armed gets released instead of
+        // staying pinned across the cross-evaluator handoff.
+        void* evaluator_id = nullptr;
         std::size_t mutation_log_size = 0; // FlatAST::mutation_log_.size() at entry
         // Issue #679: atomic-batch + macro marker snapshot at outermost
         // boundary entry for rollback realignment.
@@ -11469,6 +11476,13 @@ public:
         std::size_t boundary_depth = 0;
         std::size_t mutation_stack_depth = 0;
         std::thread::id thread_id{};
+        // Issue #2086: pointer to the Evaluator* that owned the fiber at
+        // yield time. On fiber-steal resume (restore_post_yield_or_rollback
+        // + thread_migrated), we use this to call
+        // clear_gc_defer_for_evaluator(prev) so any panic-defer depth the
+        // previous host armed gets released instead of staying pinned
+        // across the cross-evaluator handoff.
+        void* evaluator_id = nullptr;
         bool had_active_boundary = false;
     };
     // Per-fiber checkpoint stack. Each Fiber carries its own
