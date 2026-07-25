@@ -1,4 +1,5 @@
-// render_pass.ixx — Issues #1179/#1186/#1559/#1562: DirtyAware + dirty-region delta scaffold.
+// render_pass.ixx — Issues #1179/#1186/#1559/#1562/#2047: DirtyAware + dirty-region delta.
+// Keep in sync with render_pass.hh for header consumers.
 
 module;
 
@@ -11,9 +12,11 @@ export namespace aura::renderer {
 inline constexpr int kRenderPassPhase = 2;
 inline constexpr int kRenderPassIssue = 1562;
 
+// Framebuffer AABB dirty region (cell coordinates, inclusive).
 struct DirtyRegion {
     bool clean = true;
     std::uint32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    // True after clear() until first mark_dirty / mark_all_dirty.
     bool empty_aabb = true;
 
     [[nodiscard]] bool is_clean() const noexcept { return clean; }
@@ -46,16 +49,49 @@ struct DirtyRegion {
         y1 = height - 1;
     }
 
+    void mark_row_dirty(std::uint32_t y, std::uint32_t width) noexcept {
+        if (width == 0)
+            return;
+        mark_dirty(0, y);
+        mark_dirty(width - 1, y);
+    }
+
     void clear() noexcept {
         clean = true;
         empty_aabb = true;
         x0 = y0 = x1 = y1 = 0;
     }
 
+    // Clamp AABB into framebuffer [0,w) x [0,h). Returns false if empty.
+    [[nodiscard]] bool clamp_to(std::uint32_t w, std::uint32_t h) noexcept {
+        if (clean || empty_aabb || w == 0 || h == 0)
+            return false;
+        if (x0 >= w || y0 >= h)
+            return false;
+        x1 = std::min(x1, w - 1);
+        y1 = std::min(y1, h - 1);
+        if (x0 > x1 || y0 > y1)
+            return false;
+        return true;
+    }
+
     [[nodiscard]] std::uint64_t cell_count() const noexcept {
         if (clean || empty_aabb || x1 < x0 || y1 < y0)
             return 0;
         return static_cast<std::uint64_t>(x1 - x0 + 1) * static_cast<std::uint64_t>(y1 - y0 + 1);
+    }
+
+    [[nodiscard]] std::uint32_t width() const noexcept {
+        return clean || empty_aabb || x1 < x0 ? 0 : (x1 - x0 + 1);
+    }
+    [[nodiscard]] std::uint32_t height() const noexcept {
+        return clean || empty_aabb || y1 < y0 ? 0 : (y1 - y0 + 1);
+    }
+
+    [[nodiscard]] bool is_full_frame(std::uint32_t w, std::uint32_t h) const noexcept {
+        if (clean || empty_aabb || w == 0 || h == 0)
+            return false;
+        return x0 == 0 && y0 == 0 && x1 + 1 >= w && y1 + 1 >= h;
     }
 };
 

@@ -1442,6 +1442,24 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("zero-copy-acquires", static_cast<std::int64_t>(eng.zero_copy_acquires));
             insert_kv("sgr-emits", static_cast<std::int64_t>(eng.sgr_emits));
             insert_kv("dirty-cells-emitted", static_cast<std::int64_t>(eng.dirty_cells_emitted));
+            // Issue #2047: Phase 2 dirty peel + ANSI byte savings
+            {
+                auto& bt = aura::renderer::g_batch_terminal_stats();
+                auto& dm = aura::renderer::g_dirty_delta_metrics();
+                insert_kv("dirty-short-circuit", static_cast<std::int64_t>(bt.dirty_short_circuit));
+                insert_kv("dirty-region-skips",
+                          static_cast<std::int64_t>(
+                              dm.dirty_region_skips_total.load(std::memory_order_relaxed)));
+                insert_kv("ansi-bytes-saved",
+                          static_cast<std::int64_t>(
+                              dm.ansi_bytes_saved_total.load(std::memory_order_relaxed)));
+                insert_kv("ansi-bytes-emitted",
+                          static_cast<std::int64_t>(
+                              dm.ansi_bytes_emitted_total.load(std::memory_order_relaxed)));
+                insert_kv("batch-terminal-phase", aura::renderer::kBatchTerminalPhase);
+                insert_kv("schema-2047", 2047);
+                insert_kv("issue-2047", 2047);
+            }
             insert_kv("buffer-creates", m ? load(m->terminal_buffer_creates) : 0);
             insert_kv("buffer-live", m ? load(m->terminal_buffer_live) : 0);
             insert_kv("diff-updates", m ? load(m->terminal_diff_updates) : 0);
@@ -1638,7 +1656,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     dm.dirty_cells_skipped_total.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64); // #2047 extra batch-terminal keys
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
@@ -1672,10 +1690,32 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             // skip-rate as basis points (0..10000)
             insert_kv("dirty-cell-skip-rate-bp",
                       static_cast<std::int64_t>(aura::renderer::dirty_cell_skip_rate() * 10000.0));
+            // Issue #2047: ANSI byte savings + batch_terminal Phase 2 keys
+            // (folded into existing dirty-delta query — SlimSurface no new *-stats).
+            insert_kv("ansi-bytes-emitted",
+                      static_cast<std::int64_t>(
+                          dm.ansi_bytes_emitted_total.load(std::memory_order_relaxed)));
+            insert_kv("ansi-bytes-saved", static_cast<std::int64_t>(dm.ansi_bytes_saved_total.load(
+                                              std::memory_order_relaxed)));
+            {
+                auto& bt = aura::renderer::g_batch_terminal_stats();
+                insert_kv("batch-dirty-short-circuit",
+                          static_cast<std::int64_t>(bt.dirty_short_circuit));
+                insert_kv("batch-dirty-rects", static_cast<std::int64_t>(bt.dirty_rects));
+                insert_kv("batch-ansi-bytes-saved", static_cast<std::int64_t>(bt.ansi_bytes_saved));
+                insert_kv("batch-terminal-phase", aura::renderer::kBatchTerminalPhase);
+                insert_kv("batch-terminal-phase2-wired", 1);
+            }
+            insert_kv("schema-2047", 2047);
+            insert_kv("issue-2047", 2047);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2047: batch-terminal Phase 2 metrics fold into
+    // query:render-dirty-delta-stats + query:render-stats (SlimSurface —
+    // no new query:*-stats name).
 
     // ── Issue #1354/#1560: query:render-ffi-available ──
     // Agent discovery: registered bindings + hot-path hit/miss dispatch stats.
