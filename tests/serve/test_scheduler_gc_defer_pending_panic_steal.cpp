@@ -438,6 +438,195 @@ static void ac8_steal_clears_orphan_defer_2086() {
     CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0,
           "AC8: process-wide depth == 0 after release id_new");
 }
+// ── Issue #2088: unified GcDeferReason bitmask ──
+// AC9: Arm Panic alone → should_defer_destructive_gc() true + Panic bit
+//      set + FfiPin/RenderPin bits clear. gc_defer_arm_panic_total
+//      bumped; depth counter still maintained for nesting.
+// AC10: Arm FfiPin alone (without Panic) → should_defer_destructive_gc()
+//       true + FfiPin bit set. gc_defer_arm_ffi_pin_total bumped;
+//       g_ffi_pin_defer_depth still bumped (preserves #2005 nesting).
+// AC11: Arm both, release one, still defers; release both, proceeds.
+//       gc_defer_arm_panic_total + gc_defer_arm_ffi_pin_total reflect
+//       individual arm counts.
+// AC12: query:gc-defer-reason-stats exposes schema=2088 + reason
+//       bitmask + per-bit booleans + arm counts + depth counters.
+// AC13: arm_defer/release_defer preserve the per-reason depth counters
+//       (#2002 + #2005 invariants) — bitmask is additive, depth is
+//       unchanged.
+// AC14: Source-cite: GCCollector::request/collect + compact_sweep +
+//       evaluator_safepoint all use should_defer_destructive_gc()
+//       (not the legacy per-reason predicates) — combination bugs
+//       prevented.
+static void ac9_unified_gc_defer_reason_2088() {
+    std::println("\n--- AC9: #2088 unified GcDeferReason bitmask ---");
+
+    // Reset to clean baseline (no reasons armed).
+    auto reset = []() {
+        aura::gc_hooks::release_gc_defer_pending_panic();
+        aura::gc_hooks::release_ffi_pin_defer();
+    };
+    reset();
+    CHECK(!aura::gc_hooks::should_defer_destructive_gc(),
+          "AC9: baseline — no reason armed, should not defer");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0, "AC9: baseline reason bitmask == 0");
+    CHECK(aura::gc_hooks::gc_deferred_for_pending_panic() == false,
+          "AC9: baseline panic defer == false");
+    CHECK(aura::gc_hooks::ffi_pin_defer_active() == false, "AC9: baseline ffi_pin defer == false");
+
+    // Arm Panic alone.
+    aura::gc_hooks::arm_gc_defer_pending_panic();
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(),
+          "AC9: Panic armed → should_defer_destructive_gc() true");
+    {
+        const auto reasons = aura::gc_hooks::defer_reasons_snapshot();
+        CHECK((reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) != 0,
+              "AC9: Panic bit set");
+        CHECK((reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::FfiPin)) == 0,
+              "AC9: FfiPin bit clear");
+        CHECK((reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::RenderPin)) == 0,
+              "AC9: RenderPin bit clear");
+    }
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() >= 1,
+          "AC9: panic depth still bumped (nesting preserved)");
+
+    // Release Panic.
+    aura::gc_hooks::release_gc_defer_pending_panic();
+    CHECK(!aura::gc_hooks::should_defer_destructive_gc(), "AC9: Panic released → no longer defer");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0, "AC9: reason bitmask == 0 after release");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0,
+          "AC9: panic depth back to 0 after release");
+
+    // Arm FfiPin alone (without Panic).
+    aura::gc_hooks::arm_ffi_pin_defer();
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(),
+          "AC10: FfiPin armed → should_defer_destructive_gc() true");
+    {
+        const auto reasons = aura::gc_hooks::defer_reasons_snapshot();
+        CHECK((reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::FfiPin)) != 0,
+              "AC10: FfiPin bit set");
+        CHECK((reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) == 0,
+              "AC10: Panic bit still clear");
+    }
+    CHECK(aura::gc_hooks::ffi_pin_defer_depth() >= 1,
+          "AC10: ffi pin depth still bumped (preserves #2005 nesting)");
+
+    // Arm both, release one, still defers.
+    aura::gc_hooks::arm_gc_defer_pending_panic();
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(), "AC11: both armed → defer");
+    aura::gc_hooks::release_gc_defer_pending_panic(); // release Panic
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(),
+          "AC11: release Panic, FfiPin still armed → still defer");
+    aura::gc_hooks::release_ffi_pin_defer(); // release FfiPin
+    CHECK(!aura::gc_hooks::should_defer_destructive_gc(), "AC11: release both → no longer defer");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0, "AC11: reason bitmask cleared");
+
+    // AC13: arm_defer/release_defer idempotence — arming an already-set
+    // bit is a no-op; releasing an unset bit is a no-op. arm_defer on
+    // a reason beyond FfiPin (RenderPin) just sets the bit; depth is
+    // still managed by the legacy arm_ffi_pin_defer path.
+    aura::gc_hooks::arm_ffi_pin_defer();
+    const auto reasons_after_arm = aura::gc_hooks::defer_reasons_snapshot();
+    aura::gc_hooks::arm_ffi_pin_defer(); // idempotent
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == reasons_after_arm,
+          "AC13: arm_defer idempotent (bitmask unchanged)");
+    CHECK(aura::gc_hooks::ffi_pin_defer_depth() == 2,
+          "AC13: ffi pin depth bumps per arm call (nesting preserved)");
+    aura::gc_hooks::release_ffi_pin_defer();
+    aura::gc_hooks::release_ffi_pin_defer();
+    CHECK(aura::gc_hooks::ffi_pin_defer_depth() == 0,
+          "AC13: ffi pin depth back to 0 after two releases");
+
+    reset();
+    CHECK(!aura::gc_hooks::should_defer_destructive_gc(),
+          "AC9: clean baseline after all arms released");
+}
+
+static void ac12_query_gc_defer_reason_stats_2088() {
+    std::println("\n--- AC12: #2088 query:gc-defer-reason-stats ---");
+
+    auto reset = []() {
+        aura::gc_hooks::release_gc_defer_pending_panic();
+        aura::gc_hooks::release_ffi_pin_defer();
+    };
+    reset();
+
+    CompilerService cs;
+    auto h = cs.eval(R"((engine:metrics "query:gc-defer-reason-stats"))");
+    CHECK(h && aura::compiler::types::is_hash(*h),
+          "AC12: query:gc-defer-reason-stats returns hash");
+
+    if (h && aura::compiler::types::is_hash(*h)) {
+        auto schema =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "schema"))");
+        CHECK(schema && aura::compiler::types::is_int(*schema) &&
+                  aura::compiler::types::as_int(*schema) == 2088,
+              "AC12: schema == 2088");
+
+        auto reasons =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "reasons"))");
+        CHECK(reasons && aura::compiler::types::is_int(*reasons), "AC12: reasons present");
+        CHECK(aura::compiler::types::as_int(*reasons) == 0, "AC12: baseline reasons == 0");
+
+        auto panic_bit =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "panic-bit"))");
+        CHECK(panic_bit && aura::compiler::types::is_int(*panic_bit) &&
+                  aura::compiler::types::as_int(*panic_bit) == 0,
+              "AC12: baseline panic-bit == 0");
+
+        auto ffi_bit =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "ffi-pin-bit"))");
+        CHECK(ffi_bit && aura::compiler::types::is_int(*ffi_bit) &&
+                  aura::compiler::types::as_int(*ffi_bit) == 0,
+              "AC12: baseline ffi-pin-bit == 0");
+
+        auto any_total =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "any-total"))");
+        CHECK(any_total && aura::compiler::types::is_int(*any_total), "AC12: any-total present");
+    }
+
+    // Arm Panic; re-query.
+    aura::gc_hooks::arm_gc_defer_pending_panic();
+    if (h && aura::compiler::types::is_hash(*h)) {
+        auto panic_bit =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "panic-bit"))");
+        CHECK(panic_bit && aura::compiler::types::is_int(*panic_bit) &&
+                  aura::compiler::types::as_int(*panic_bit) == 1,
+              "AC12: after arm Panic → panic-bit == 1");
+        auto ffi_bit =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "ffi-pin-bit"))");
+        CHECK(ffi_bit && aura::compiler::types::is_int(*ffi_bit) &&
+                  aura::compiler::types::as_int(*ffi_bit) == 0,
+              "AC12: after arm Panic → ffi-pin-bit == 0 (orthogonal)");
+    }
+    reset();
+
+    // AC14: source-cite that consumers use should_defer_destructive_gc
+    // (not just panic depth). 4 call sites in gc_coordinator.cpp +
+    // evaluator_gc.cpp + evaluator.ixx.
+    auto count_uses = [](const std::string& path) {
+        std::ifstream f(path);
+        std::string contents((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::size_t pos = 0, n = 0;
+        while ((pos = contents.find("should_defer_destructive_gc", pos)) != std::string::npos) {
+            ++n;
+            pos += std::string("should_defer_destructive_gc").size();
+        }
+        return n;
+    };
+    const auto gc_coord_uses = count_uses("src/serve/gc_coordinator.cpp");
+    const auto ev_gc_uses = count_uses("src/compiler/evaluator_gc.cpp");
+    const auto ev_uses = count_uses("src/compiler/evaluator.ixx");
+    CHECK(gc_coord_uses >= 4, "AC14: gc_coordinator.cpp uses should_defer_destructive_gc ≥4 times");
+    CHECK(ev_gc_uses >= 1,
+          "AC14: evaluator_gc.cpp uses should_defer_destructive_gc ≥1 time (compact_sweep)");
+    CHECK(ev_uses >= 1, "AC14: evaluator.ixx uses should_defer_destructive_gc ≥1 time (safepoint)");
+
+    // Legacy should_defer_compact_for_pending_checkpoint still exported
+    // (thin alias) — caller code outside this refactor keeps working
+    // for one release.
+    CHECK(aura::gc_hooks::should_defer_compact_for_pending_checkpoint() == false,
+          "AC14: legacy alias returns false at baseline (panic defer inactive)");
+}
 int main() {
     std::println("=== test_scheduler_gc_defer_pending_panic_steal (#1581 + #2002) ===");
     ac1_collector_request_defers();
@@ -449,6 +638,8 @@ int main() {
     ac7_per_evaluator_discriminator();
     ac8_toctou_stress_per_evaluator();
     ac8_steal_clears_orphan_defer_2086();
+    ac9_unified_gc_defer_reason_2088();
+    ac12_query_gc_defer_reason_stats_2088();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

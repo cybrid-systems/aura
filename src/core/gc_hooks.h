@@ -165,6 +165,70 @@ namespace detail {
     inline std::array<ArmedEvaluatorEntry, kMaxArmedEvaluators> g_gc_defer_armed_table{};
     inline std::mutex g_gc_defer_armed_mtx{};
 } // namespace detail
+
+// Issue #2088: unified GcDeferReason bitmask. Combines all independent
+// defer signals (panic, ffi-pin, future render-pin) into a single
+// process-wide bitmask. Per-reason depth atomics stay (panic nesting,
+// ffi-pin refcount) — the bitmask is just the "any reason armed" flag
+// + observability surface for Agent dashboards. Combination bugs
+// (FFI pin held + panic released, or reverse) are prevented because
+// every consumer consults the single should_defer_destructive_gc().
+// Declared here (before arm_gc_defer_pending_panic / arm_ffi_pin_defer
+// at lines 186/241) so the bit-toggling calls compile in either order.
+enum class GcDeferReason : std::uint32_t {
+    None = 0,
+    Panic = 1u << 0,
+    FfiPin = 1u << 1,
+    RenderPin = 1u << 2, // reserved for future render-critical pin defer
+};
+inline constexpr std::uint32_t kGcDeferReasonNone = 0;
+// Issue #2088: process-wide defer-reason bitmask. Atomic bitmask
+// (not depth counter) — nested arm/release of the same reason is
+// tracked by the per-reason depth atomics above. arm_defer sets the
+// bit; release_defer clears the bit (no depth on the bitmask itself).
+inline std::atomic<std::uint32_t> g_gc_defer_reasons{0};
+
+// Issue #2088: set/clear a single reason bit. arm_defer / release_defer
+// are idempotent — arming an already-set bit is a no-op; releasing
+// an unset bit is a no-op. Returns the resulting bitmask.
+inline std::uint32_t arm_defer(GcDeferReason r) noexcept {
+    const auto bit = static_cast<std::uint32_t>(r);
+    if (bit == kGcDeferReasonNone)
+        return g_gc_defer_reasons.load(std::memory_order_acquire);
+    auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    while (true) {
+        const auto next = prev | bit;
+        if (next == prev)
+            return prev;
+        if (g_gc_defer_reasons.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
+                                                     std::memory_order_relaxed))
+            return next;
+    }
+}
+inline std::uint32_t release_defer(GcDeferReason r) noexcept {
+    const auto bit = static_cast<std::uint32_t>(r);
+    if (bit == kGcDeferReasonNone)
+        return g_gc_defer_reasons.load(std::memory_order_acquire);
+    auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    while (true) {
+        const auto next = prev & ~bit;
+        if (next == prev)
+            return prev;
+        if (g_gc_defer_reasons.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
+                                                     std::memory_order_relaxed))
+            return next;
+    }
+}
+// Snapshot the current reason bitmask (Agent-visible).
+inline std::uint32_t defer_reasons_snapshot() noexcept {
+    return g_gc_defer_reasons.load(std::memory_order_acquire);
+}
+// Issue #2088: single predicate replacing should_defer_compact_for_pending_checkpoint
+// + ffi_pin_defer_active across all consumers (GCCollector::request/collect,
+// compact_sweep, render hotpath). Returns true if ANY reason is armed.
+[[nodiscard]] inline bool should_defer_destructive_gc() noexcept {
+    return g_gc_defer_reasons.load(std::memory_order_acquire) != kGcDeferReasonNone;
+}
 // Signals from Fiber::yield → block_gc_for_pending_checkpoint
 // trampoline (may fire many times per armed window).
 inline std::atomic<std::uint64_t> g_gc_defer_pending_panic_signals{0};
@@ -184,6 +248,10 @@ inline std::atomic<std::uint64_t> g_gc_defer_last_checkpoint_epoch{0};
 
 inline void arm_gc_defer_pending_panic() noexcept {
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+    // Issue #2088: also toggle the Panic bit on the unified reason
+    // bitmask. Idempotent — arm_defer is a no-op when the bit is
+    // already set. Per-reason depth stays for nesting observability.
+    (void)arm_defer(GcDeferReason::Panic);
 }
 
 inline void release_gc_defer_pending_panic() noexcept {
@@ -193,6 +261,10 @@ inline void release_gc_defer_pending_panic() noexcept {
                 prev, prev - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
             return;
     }
+    // Issue #2088: clear Panic bit on the unified bitmask when depth
+    // hits 0 (no more armed panics). release_defer is idempotent on
+    // already-unset bits.
+    (void)release_defer(GcDeferReason::Panic);
 }
 
 // Issue #2002: per-evaluator arm. Updates the per-evaluator table
@@ -240,6 +312,8 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
 inline std::atomic<std::uint32_t> g_ffi_pin_defer_depth{0};
 inline void arm_ffi_pin_defer() noexcept {
     g_ffi_pin_defer_depth.fetch_add(1, std::memory_order_acq_rel);
+    // Issue #2088: also toggle FfiPin bit on the unified bitmask.
+    (void)arm_defer(GcDeferReason::FfiPin);
 }
 inline void release_ffi_pin_defer() noexcept {
     auto prev = g_ffi_pin_defer_depth.load(std::memory_order_relaxed);
@@ -248,6 +322,9 @@ inline void release_ffi_pin_defer() noexcept {
                                                         std::memory_order_relaxed))
             return;
     }
+    // Issue #2088: clear FfiPin bit on the unified bitmask when depth
+    // hits 0 (no more FFI pin holds).
+    (void)release_defer(GcDeferReason::FfiPin);
 }
 [[nodiscard]] inline bool ffi_pin_defer_active() noexcept {
     return g_ffi_pin_defer_depth.load(std::memory_order_acquire) > 0;

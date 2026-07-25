@@ -1285,6 +1285,11 @@ AURA_COMPILER_METRICS_FIELD(panic_transfer_failed)
 // Issue #2086: fiber-steal orphan defer-clear + table overflow counters.
 AURA_COMPILER_METRICS_FIELD(gc_defer_orphan_cleared_total)
 AURA_COMPILER_METRICS_FIELD(gc_defer_table_overflow_total)
+// Issue #2088: unified GcDeferReason bitmask lineage.
+AURA_COMPILER_METRICS_FIELD(gc_defer_arm_panic_total)
+AURA_COMPILER_METRICS_FIELD(gc_defer_arm_ffi_pin_total)
+AURA_COMPILER_METRICS_FIELD(gc_defer_arm_render_pin_total)
+AURA_COMPILER_METRICS_FIELD(gc_defer_any_total)
 AURA_COMPILER_METRICS_FIELD(panic_transfer_nested_success)
 AURA_COMPILER_METRICS_FIELD(cow_repin_on_steal)
 AURA_COMPILER_METRICS_FIELD(checkpoint_lost_on_compact)
