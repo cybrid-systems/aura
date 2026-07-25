@@ -173,6 +173,10 @@ inline std::atomic<std::uint64_t> g_gc_sweep_skipped_pending_panic{0};
 // Issue #1581: GCCollector::request() refused because defer was armed
 // (scheduler-facing early-out before arming gc_in_progress).
 inline std::atomic<std::uint64_t> g_gc_request_deferred_pending_panic{0};
+// Issue #2086: bumped when arm_gc_defer_pending_panic_for overflows
+// the bounded kMaxArmedEvaluators=64 per-evaluator table and falls back
+// to process-wide-only arm (under many concurrent evaluators).
+inline std::atomic<std::uint64_t> g_gc_defer_table_overflow_total{0};
 // Provenance of the last scheduler defer signal (fiber id + checkpoint
 // epoch). Written by send_defer_gc_signal; read by tests/metrics.
 inline std::atomic<std::uint64_t> g_gc_defer_last_fiber_id{0};
@@ -219,7 +223,13 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     // Overflow: still bump process-wide depth (legacy behavior). The
     // per-evaluator table is bounded; in practice # of evaluators with
     // active PanicCheckpoints is tiny.
+    // Issue #2086: observable overflow path. Surfaces table-full
+    // situations to dashboards (under many concurrent evaluators the
+    // per-evaluator arm silently falls back to process-wide-only
+    // depth — without this counter, the silent fallback hides
+    // accidental depth accumulation across steal boundaries).
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+    g_gc_defer_table_overflow_total.fetch_add(1, std::memory_order_relaxed);
 }
 // Issue #2005: explicit ffi-pin defer — increments while any
 // (ffi:pin-buffer) primitive holds a LifetimePin for an FFI buffer that

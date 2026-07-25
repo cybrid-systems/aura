@@ -369,6 +369,11 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
     // is no-op when compiler_metrics_ is nullptr.
     bump_per_fiber_mutation_stack_depth_max(cp.mutation_stack_depth);
     cp.thread_id = std::this_thread::get_id();
+    // Issue #2086: capture the owning Evaluator* at yield push so a
+    // fiber-steal resume on a different host can clear the per-evaluator
+    // panic defer depth we previously armed (otherwise orphan depth
+    // sticks to the previous host's slot forever).
+    cp.evaluator_id = static_cast<void*>(this);
     cp.had_active_boundary = had_boundary || at_mutation_boundary_yield;
     auto& ystack = active_yield_checkpoint_stack();
     ystack.push_back(cp);
@@ -748,6 +753,22 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     const std::size_t current_bdepth = mutation_boundary_depth();
     const std::uint64_t current_ver = defuse_version_snapshot();
     bool thread_migrated = cp.thread_id != std::this_thread::get_id();
+    // Issue #2086: on fiber-steal / cross-evaluator resume, clear the
+    // panic-defer depth the **previous** host armed. Without this call,
+    // a fiber that yields on Evaluator A with an active PanicCheckpoint
+    // and resumes on Evaluator B leaves A's per-evaluator slot permanently
+    // armed (the discriminator table never auto-clears on cross-host
+    // steal — only the current host's Guard dtor does). This can
+    // permanently defer GC or pin wrong evaluator's COW / StableNodeRef
+    // "protected" state. Clear before any restamp so the per-evaluator
+    // counter is gone before this fiber's bump_per_fiber metrics fire.
+    if (thread_migrated && cp.evaluator_id != nullptr) {
+        const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(cp.evaluator_id);
+        if (cleared > 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->gc_defer_orphan_cleared_total.fetch_add(cleared, std::memory_order_relaxed);
+        }
+    }
     bool size_mismatch = cp.mutation_stack_depth != current_mdepth;
     bool depth_mismatch = current_bdepth != cp.boundary_depth;
     bool version_drift_pre = !is_version_current(cp.defuse_version);
@@ -766,6 +787,10 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         // yield-checkpoint top aligned with live mutation state so
         // a subsequent restore after nested yields does not false-fail.
         cp.thread_id = std::this_thread::get_id();
+        // Issue #2086: re-stamp evaluator_id on the restamped checkpoint
+        // so a subsequent steal (this becomes the "previous host") is
+        // correctly attributed for clear_gc_defer_for_evaluator.
+        cp.evaluator_id = static_cast<void*>(this);
         cp.boundary_depth = current_bdepth;
         cp.mutation_stack_depth = current_mdepth;
         // Issue #1483 C2: wire per-fiber mutation_stack_depth metric

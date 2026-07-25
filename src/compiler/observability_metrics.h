@@ -6875,6 +6875,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> naked_mutate_attempt{0};                       // #1259
     std::atomic<std::uint64_t> panic_transfer_on_steal{0};                    // #1260
     std::atomic<std::uint64_t> panic_transfer_failed{0};                      // #1260
+    // Issue #2086: fiber-steal / cross-evaluator resume clears orphan
+    // panic-defer depth from the previous host (avoids permanently
+    // deferring GC after a steal across evaluators).
+    std::atomic<std::uint64_t> gc_defer_orphan_cleared_total{0}; // #2086
+    // Issue #2086: bumped when arm_gc_defer_pending_panic_for overflows
+    // the bounded kMaxArmedEvaluators=64 table (process-wide-only arm).
+    std::atomic<std::uint64_t> gc_defer_table_overflow_total{0}; // #2086
     // Issue #1446: nested boundary + steal + GC compact re-pin telemetry.
     // panic_transfer_nested_success: successful panic-checkpoint transfer
     //   across nested Guard boundaries (depth > 1) after steal/GC compact.

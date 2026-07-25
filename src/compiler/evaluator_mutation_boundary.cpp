@@ -101,15 +101,13 @@ void Evaluator::enter_mutation_boundary() {
         flat_generation_at_entry = workspace_flat_->generation();
     }
     MutationCheckpoint cp{defuse_version_.load(std::memory_order_acquire),
-                          log_size,
-                          bump_suppressed_at_entry,
-                          macro_introduced_count_at_entry,
-                          flat_generation_at_entry,
-                          std::move(children_snapshot),
-                          fine_rollback,
-                          std::move(sym_id_snapshot),
-                          std::move(param_snapshot),
-                          lightweight};
+                          // Issue #2086: capture owning Evaluator* so a
+                          // fiber-steal resume on a different host can
+                          // clear_gc_defer_for_evaluator(prev).
+                          static_cast<void*>(this), log_size, bump_suppressed_at_entry,
+                          macro_introduced_count_at_entry, flat_generation_at_entry,
+                          std::move(children_snapshot), fine_rollback, std::move(sym_id_snapshot),
+                          std::move(param_snapshot), lightweight};
     active_mutation_stack().push_back(std::move(cp));
     const std::size_t depth = active_mutation_stack().size();
     std::uint64_t prev_max = nested_guard_depth_max_.load(std::memory_order_relaxed);
