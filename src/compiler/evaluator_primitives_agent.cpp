@@ -3048,6 +3048,34 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
+    // Issue #2080: explicit progress touch for ProgressClock mode agents
+    // (attach_mailbox=#f + keepalive_interval_ms > 0). Updates the shared
+    // last_keepalive_us clock so watch_agent_liveness can distinguish Alive
+    // vs Stalled. No-op for MailboxKeepalive (host helper owns the clock)
+    // or Off (no liveness).
+    add("orch:agent-touch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-touch: usage (orch:agent-touch name)",
+                                        ev.primitive_error_counter_ptr());
+        }
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        auto* hp = ev.agent_names_->find(name);
+        if (!hp || !hp->ok) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-touch: unknown agent",
+                                        ev.primitive_error_counter_ptr());
+        }
+        aura::orch::note_agent_progress(*hp);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(true)},
+            {"schema", make_int(1588)},
+            {"schema-2008", make_int(2008)},
+            {"schema-2080", make_int(2080)},
+        };
+        return build_orch_hash(kv);
+    });
+
     add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto prim = ev.primitives_.lookup("parallel-intend");
         if (!prim) {

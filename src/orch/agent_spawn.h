@@ -363,8 +363,12 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
 
     auto& pq = aura::core::resource_quota::process_resource_quota();
 
-    // Issue #2008: keepalive uses a host thread (not an extra fiber).
+    // Issue #2008 / #2080: keepalive uses a host thread (not an extra fiber)
+    // when attach_mailbox is set; otherwise (attach_mailbox=#f + interval > 0)
+    // we run a zero-host-thread ProgressClock mode that the body entry
+    // initializes and `orch:agent-touch` keeps fresh.
     const bool want_keepalive = spec.keepalive_interval_ms > 0 && spec.attach_mailbox;
+    const bool want_progress_clock = spec.keepalive_interval_ms > 0 && !spec.attach_mailbox;
 
     // Issue #1880: fiber capacity preflight (check only; Scheduler::spawn also consumes).
     if (auto ferr = pq.check_orchestration_fibers(/*amount=*/1)) {
@@ -407,16 +411,30 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
                   : nullptr;
     auto body = std::move(spec.body);
     auto attach = spec.attach_mailbox;
-    const auto ka_interval = want_keepalive ? spec.keepalive_interval_ms : 0u;
+    // Issue #2080: ProgressClock mode shares the same liveness struct + clock
+    // (last_keepalive_us) as MailboxKeepalive, so watch_agent_liveness can use
+    // the same staleness check across both modes.
+    const auto ka_interval =
+        (want_keepalive || want_progress_clock) ? spec.keepalive_interval_ms : 0u;
     std::shared_ptr<AgentLiveness> live;
-    if (want_keepalive) {
+    if (want_keepalive || want_progress_clock) {
         live = std::make_shared<AgentLiveness>();
         live->interval_ms = ka_interval;
     }
 
-    serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach, live]() mutable {
+    serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach, live,
+                                   progress_clock = want_progress_clock]() mutable {
         if (attach && mb && serve::g_current_fiber)
             mb->attach(serve::g_current_fiber);
+        // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
+        // entry so watch_agent_liveness has a baseline even if the body
+        // never calls `orch:agent-touch`. MailboxKeepalive mode seeds the
+        // same clock from emit_keepalive (#2008 host helper).
+        if (live && progress_clock) {
+            const auto t0 = orch_now_us();
+            live->last_keepalive_us.store(t0, std::memory_order_release);
+            g_orch_module_stats.last_keepalive_us.store(t0, std::memory_order_relaxed);
+        }
         // Issue #1880: try_acquire mutation boundary when Evaluator is bound.
         // On reject: skip body (typed quota path already recorded); no panic.
         // Issue #2006: provenance closed-loop only after a successful body
@@ -682,7 +700,10 @@ struct KeepaliveWatchResult {
                                                                std::uint32_t stall_timeout_ms = 0,
                                                                bool cancel_on_stall = true) {
     KeepaliveWatchResult out;
-    if (!h.ok || !h.mailbox || h.keepalive_interval_ms == 0) {
+    // Issue #2080: ProgressClock mode (attach_mailbox=#f + interval > 0) is
+    // accepted: the body entry seeded last_keepalive_us and `orch:agent-touch`
+    // keeps it fresh. The mailbox peek path is skipped below when no mailbox.
+    if (!h.ok || h.keepalive_interval_ms == 0) {
         out.status = KeepaliveWatchStatus::Closed;
         return out;
     }
@@ -707,16 +728,19 @@ struct KeepaliveWatchResult {
         }
 
         // Non-blocking peek: any message (esp. keepalive) counts as alive.
-        auto msg = agent_recv(h, /*wait=*/false, /*timeout_ms=*/0);
-        if (msg) {
-            out.message = std::move(msg);
-            if (h.liveness)
-                out.last_keepalive_us =
-                    h.liveness->last_keepalive_us.load(std::memory_order_relaxed);
-            else if (is_keepalive_message(*out.message))
-                out.last_keepalive_us = orch_now_us();
-            out.status = KeepaliveWatchStatus::Alive;
-            return out;
+        // Skip for ProgressClock mode (#2080): no mailbox to peek.
+        if (h.mailbox) {
+            auto msg = agent_recv(h, /*wait=*/false, /*timeout_ms=*/0);
+            if (msg) {
+                out.message = std::move(msg);
+                if (h.liveness)
+                    out.last_keepalive_us =
+                        h.liveness->last_keepalive_us.load(std::memory_order_relaxed);
+                else if (is_keepalive_message(*out.message))
+                    out.last_keepalive_us = orch_now_us();
+                out.status = KeepaliveWatchStatus::Alive;
+                return out;
+            }
         }
 
         // Shared clock from helper emit path (works even if messages already
@@ -765,6 +789,19 @@ struct KeepaliveWatchResult {
         g_orch_module_stats.keepalive_cancels_total.fetch_add(1, std::memory_order_relaxed);
     }
     return out;
+}
+
+// Note (Issue #2080): ProgressClock progress touch (no mailbox).
+// Agents in ProgressClock mode (attach_mailbox=#f + interval > 0) call this
+// from the body to update the shared last_keepalive_us clock so
+// watch_agent_liveness can distinguish Alive vs Stalled. MailboxKeepalive
+// mode is unchanged — the host helper thread owns the clock.
+inline void note_agent_progress(AgentHandle& h) noexcept {
+    if (h.liveness && h.mailbox == nullptr && h.keepalive_interval_ms > 0) {
+        const auto t = orch_now_us();
+        h.liveness->last_keepalive_us.store(t, std::memory_order_release);
+        g_orch_module_stats.last_keepalive_us.store(t, std::memory_order_relaxed);
+    }
 }
 
 // Note (Issue #1966): no multi-agent public API here.

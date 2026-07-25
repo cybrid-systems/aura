@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 #include "compiler/observability_metrics.h"
+#include "compiler/agent_name_table.h"
 #include "core/resource_quota.hh"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
@@ -1036,7 +1037,10 @@ namespace {
         auto bad_recv = cs.eval(R"((orch:agent-recv "no-such-agent"))");
         CHECK(bad_recv && is_error(*bad_recv), "unknown agent recv is error");
 
-        // Quota reject → typed ResourceQuotaExceeded error.
+        // Quota reject → structured hash with quota-exceeded + dimension/used/limit
+        // (Issue #2079: orch:spawn-agent now returns hash, not primitive-error,
+        // so Agents can branch on quota-dimension / quota-used / quota-limit /
+        // retry-after-ms without parsing error strings).
         {
             using aura::core::resource_quota::Dimension;
             using aura::core::resource_quota::process_resource_quota;
@@ -1044,9 +1048,14 @@ namespace {
             reset_process_resource_quota_for_test();
             process_resource_quota().set_limit(Dimension::Memory, 100);
             auto q = cs.eval(R"((orch:spawn-agent "quota-agent" (lambda () 1)))");
-            CHECK(q && is_error(*q), "quota reject is Aura error");
-            // Message should mention ResourceQuotaExceeded when available.
-            // (error-message primitive may vary; is_error is the AC bar.)
+            CHECK(q && is_hash(*q), "quota reject returns hash (#2079)");
+            auto qe = cs.eval(
+                R"((if (hash-ref (orch:spawn-agent "quota-agent2" (lambda () 1)) "quota-exceeded") 1 0))");
+            CHECK(qe && is_int(*qe) && as_int(*qe) == 1,
+                  "quota-exceeded=#t in reject hash (#2079)");
+            auto qd = cs.eval(
+                R"((hash-ref (orch:spawn-agent "quota-agent3" (lambda () 1)) "quota-dimension"))");
+            CHECK(qd && is_string(*qd), "quota-dimension key present (#2079)");
             reset_process_resource_quota_for_test();
         }
 
@@ -1239,6 +1248,206 @@ namespace {
         }
     }
 
+    // ─── Issue #2080: ProgressClock liveness (attach_mailbox=#f + interval > 0) ───
+    static void ac7b_progress_clock_2080() {
+        std::println("\n--- AC7b: #2080 ProgressClock liveness ---");
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::KeepaliveWatchStatus;
+        using aura::orch::note_agent_progress;
+        using aura::orch::watch_agent_liveness;
+
+        auto href_int = [](CompilerService& cs, const char* expr) -> std::int64_t {
+            auto r = cs.eval(expr);
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+
+        // AC1: attach_mailbox=#f + interval > 0 spawns without mailbox or host
+        // helper thread. Body entry seeds last_keepalive_us; orch:agent-touch
+        // advances it; watch_agent_liveness returns Alive / Done.
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            const auto help0 =
+                g_orch_module_stats.keepalive_helpers_spawned.load(std::memory_order_relaxed);
+            std::atomic<bool> touch_flag{true};
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "pc-agent",
+                        .body =
+                            [&] {
+                                while (touch_flag.load(std::memory_order_relaxed))
+                                    Fiber::yield(YieldReason::Explicit);
+                            },
+                        .attach_mailbox = false,
+                        .keepalive_interval_ms = 30});
+            CHECK(h.ok, "ProgressClock spawn ok");
+            CHECK(h.mailbox == nullptr, "ProgressClock: no mailbox attached");
+            CHECK(!h.keepalive_active, "ProgressClock: no host helper thread");
+            CHECK(h.liveness != nullptr, "ProgressClock: liveness state present");
+            CHECK(h.keepalive_interval_ms == 30, "ProgressClock: interval recorded");
+            CHECK(g_orch_module_stats.keepalive_helpers_spawned.load() == help0,
+                  "ProgressClock: no host helper spawned");
+
+            for (int i = 0; i < 64; ++i) {
+                if (h.liveness->last_keepalive_us.load() > 0)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            CHECK(h.liveness->last_keepalive_us.load() > 0,
+                  "ProgressClock: body entry seeded last_keepalive_us");
+
+            const auto before = h.liveness->last_keepalive_us.load();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            aura::orch::note_agent_progress(h);
+            const auto after = h.liveness->last_keepalive_us.load();
+            CHECK(after > before, "ProgressClock: note_agent_progress advanced clock");
+
+            auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/100,
+                                           /*cancel_on_stall=*/false);
+            CHECK(wr.status == KeepaliveWatchStatus::Alive, "ProgressClock: watch Alive");
+
+            touch_flag.store(false, std::memory_order_relaxed);
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+
+            auto wr_done = watch_agent_liveness(h, /*stall_timeout_ms=*/10,
+                                                /*cancel_on_stall=*/false);
+            CHECK(wr_done.status == KeepaliveWatchStatus::Done,
+                  "ProgressClock: watch Done after join");
+        }
+
+        // AC2: Artificial stall (no touch) Stalled within stall window;
+        // cancel_on_stall fires; counters advance; body observes request_cancel.
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            std::atomic<bool> body_running{true};
+            std::atomic<bool> saw_cancel{false};
+            const auto stall0 =
+                g_orch_module_stats.stalled_agents_total.load(std::memory_order_relaxed);
+            const auto cancel0 =
+                g_orch_module_stats.keepalive_cancels_total.load(std::memory_order_relaxed);
+
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "pc-stall",
+                        .body =
+                            [&] {
+                                while (body_running.load(std::memory_order_relaxed)) {
+                                    if (aura::serve::g_current_fiber &&
+                                        aura::serve::g_current_fiber->is_cancel_requested()) {
+                                        saw_cancel.store(true, std::memory_order_relaxed);
+                                        break;
+                                    }
+                                    Fiber::yield(YieldReason::Explicit);
+                                }
+                            },
+                        .attach_mailbox = false,
+                        .keepalive_interval_ms = 30});
+            CHECK(h.ok, "pc-stall spawn ok");
+
+            for (int i = 0; i < 64; ++i) {
+                if (h.liveness->last_keepalive_us.load() > 0)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            h.liveness->last_keepalive_us.store(1, std::memory_order_release);
+
+            auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/30, /*cancel_on_stall=*/true);
+            CHECK(wr.status == KeepaliveWatchStatus::Stalled,
+                  "ProgressClock: stall detected (no touch)");
+            CHECK(wr.cancelled, "ProgressClock: cancel_on_stall fired");
+            CHECK(g_orch_module_stats.stalled_agents_total.load() > stall0,
+                  "ProgressClock: stalled_agents_total advanced");
+            CHECK(g_orch_module_stats.keepalive_cancels_total.load() > cancel0,
+                  "ProgressClock: keepalive_cancels_total advanced");
+
+            for (int i = 0; i < 100 && !saw_cancel.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            CHECK(saw_cancel.load(), "ProgressClock: body saw request_cancel");
+
+            body_running.store(false, std::memory_order_relaxed);
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        }
+
+        // AC3 / AC4: interval == 0 path is zero-cost (no helper, no mailbox,
+        // no liveness); watch returns Closed. MailboxKeepalive (attach + int)
+        // regression is covered by ac7_keepalive sub-blocks (a)-(d).
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            const auto help0 =
+                g_orch_module_stats.keepalive_helpers_spawned.load(std::memory_order_relaxed);
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "pc-off",
+                        .body =
+                            [] {
+                                for (int i = 0; i < 4; ++i)
+                                    Fiber::yield(YieldReason::Explicit);
+                            },
+                        .attach_mailbox = false});
+            CHECK(h.ok, "pc-off spawn ok");
+            CHECK(h.mailbox == nullptr, "pc-off: no mailbox");
+            CHECK(h.liveness == nullptr, "pc-off: no liveness (interval 0)");
+            CHECK(!h.keepalive_active, "pc-off: no helper");
+            CHECK(g_orch_module_stats.keepalive_helpers_spawned.load() == help0,
+                  "pc-off: zero-cost (no helper spawn)");
+            auto wr = watch_agent_liveness(h);
+            CHECK(wr.status == KeepaliveWatchStatus::Closed,
+                  "pc-off: watch closed when interval 0");
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        }
+
+        // AC5: Aura primitive orch:agent-touch wired + stats schema compat.
+        // schema-2008 lineage is preserved in query:orch-module-stats.
+        {
+            CompilerService cs;
+            auto touch_bad = cs.eval(R"((orch:agent-touch "nonexistent"))");
+            CHECK(touch_bad && is_error(*touch_bad), "touch unknown agent error");
+
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "pc-touch",
+                        .body =
+                            [&] {
+                                while (keep.load(std::memory_order_relaxed))
+                                    Fiber::yield(YieldReason::Explicit);
+                            },
+                        .attach_mailbox = false,
+                        .keepalive_interval_ms = 50});
+            CHECK(h.ok, "pc-touch spawn ok");
+            // Register the C++-spawned handle in ev.agent_names_ so the
+            // Aura primitive orch:agent-touch can resolve it by name.
+            // (Issue #2078: orch:spawn-agent does this automatically;
+            // direct C++ spawn_agent_with_mailbox callers must opt in.)
+            cs.evaluator().agent_names_->put(std::move(h));
+            for (int i = 0; i < 64; ++i) {
+                if (h.liveness->last_keepalive_us.load() > 0)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            const auto before = h.liveness->last_keepalive_us.load();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            auto r = cs.eval(R"((orch:agent-touch "pc-touch"))");
+            CHECK(r && is_hash(*r), "orch:agent-touch returns hash");
+            CHECK(href_int(cs, R"((if (hash-ref (orch:agent-touch "pc-touch2") "ok") 1 0))") == 1,
+                  "orch:agent-touch ok=#t");
+            CHECK(href_int(cs, R"((hash-ref (orch:agent-touch "pc-touch3") "schema-2080"))") ==
+                      2080,
+                  "schema-2080 in touch result");
+            CHECK(
+                href_int(
+                    cs, R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2008"))") ==
+                    2008,
+                "schema-2008 lineage preserved");
+            CHECK(h.liveness->last_keepalive_us.load() > before,
+                  "orch:agent-touch advanced shared clock");
+
+            keep.store(false, std::memory_order_relaxed);
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        }
+    }
 } // namespace
 
 int run_orch_agent_spawn() {
@@ -1250,6 +1459,7 @@ int run_orch_agent_spawn() {
     ac5_parallel_alias();
     ac6_stats();
     ac7_keepalive();
+    ac7b_progress_clock_2080();
     ac8_agent_send_recv_2011();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
