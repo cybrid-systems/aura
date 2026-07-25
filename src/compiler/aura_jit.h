@@ -377,6 +377,11 @@ public:
     std::size_t batch_deopt_prefix(const char* prefix, std::uint64_t current_epoch) noexcept;
     [[nodiscard]] bool is_deopt_pending(const char* name) const noexcept;
     [[nodiscard]] std::uint64_t deopt_pending_count() const noexcept;
+    // Issue #2050: clear deopt_pending for name (+ name#*) and re-stamp
+    // capture epoch to current so render-critical soft-dirty can keep
+    // previous native code while deopt throttle is active.
+    std::size_t clear_deopt_pending_keep_native(const char* name,
+                                                std::uint64_t current_epoch) noexcept;
 
     // Issue #1477: JIT-side dual-epoch fence.
     void capture_fn_epoch(const char* name, std::uint64_t bridge_epoch);

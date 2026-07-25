@@ -7183,6 +7183,19 @@ struct CompilerMetrics {
     // Issue #1563: AOT/hot preference hit rate in basis points (0..10000).
     std::atomic<std::uint64_t> render_aot_hit_rate_bp{0};
     std::atomic<std::uint64_t> render_critical_meta_count{0};
+    // Issue #2050: render-critical *defines* (user draw/present closures).
+    //   - render_critical_define_dirty_total: soft dirty of a critical define
+    //   - render_critical_deopt_throttled_total: kept previous JIT under window
+    //   - render_critical_deopt_applied_total: real deopt allowed for critical
+    //   - render_critical_jit_keep_total: clear_deopt_pending_keep_native calls
+    //   - render_critical_partial_prefer_total: body-only dirty path taken
+    //   - render_critical_define_registered_total: names registered as critical
+    std::atomic<std::uint64_t> render_critical_define_dirty_total{0};
+    std::atomic<std::uint64_t> render_critical_deopt_throttled_total{0};
+    std::atomic<std::uint64_t> render_critical_deopt_applied_total{0};
+    std::atomic<std::uint64_t> render_critical_jit_keep_total{0};
+    std::atomic<std::uint64_t> render_critical_partial_prefer_total{0};
+    std::atomic<std::uint64_t> render_critical_define_registered_total{0};
     std::atomic<std::uint64_t> render_hotpath_enter_total{0};
     // #1559: dirty short-circuit skip counter (mirrors arena_policy::render_hotpath_skip_total)
     std::atomic<std::uint64_t> render_hotpath_skip_total{0};

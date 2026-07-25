@@ -1661,7 +1661,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.primitives().hot_dispatch_hits_render());
             const auto cold_r = static_cast<std::int64_t>(ev.primitives().cold_dispatch_fallback());
 
-            auto* ht = FlatHashTable::create(32);
+            // Issue #2050: render-critical define protection counters
+            const auto rc_dirty = m ? load(m->render_critical_define_dirty_total) : 0;
+            const auto rc_thr = m ? load(m->render_critical_deopt_throttled_total) : 0;
+            const auto rc_app = m ? load(m->render_critical_deopt_applied_total) : 0;
+            const auto rc_keep = m ? load(m->render_critical_jit_keep_total) : 0;
+            const auto rc_partial = m ? load(m->render_critical_partial_prefer_total) : 0;
+            const auto rc_reg = m ? load(m->render_critical_define_registered_total) : 0;
+            const auto rc_def_n = static_cast<std::int64_t>(ev.render_critical_define_count());
+
+            auto* ht = FlatHashTable::create(64); // #2050 extra keys
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
@@ -1684,6 +1693,17 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(
                           aura::core::arena_policy::render_jit_deopt_throttled_total.load(
                               std::memory_order_relaxed)));
+            // Issue #2050 keys (Agent: "is it safe to mutate present right now?")
+            insert_kv("render-critical-define-dirty-total", rc_dirty);
+            insert_kv("render-critical-deopt-throttled-total", rc_thr);
+            insert_kv("render-critical-deopt-applied-total", rc_app);
+            insert_kv("render-critical-jit-keep-total", rc_keep);
+            insert_kv("render-critical-partial-prefer-total", rc_partial);
+            insert_kv("render-critical-define-registered-total", rc_reg);
+            insert_kv("render-critical-define-count", rc_def_n);
+            insert_kv("render-critical-protect-wired", 1);
+            insert_kv("schema-2050", 2050);
+            insert_kv("issue-2050", 2050);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -13,6 +13,7 @@ module;
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"               // aura_reemit_aot_for_dirty (#2035)
 #include "hot_update_registry.hh"          // HotUpdateRegistry notify + region mask (#2035)
+#include "render_prim_template.hh"         // #2050 aura_is_render_evolution_name
 #include "core/transparent_string_hash.hh" // TransparentStringHash for ir_cache_index
 #include <memory>
 #include <mutex>
@@ -101,8 +102,32 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // (live closures + linear + GC root audit before epoch publish).
     prepare_unified_invalidation_pre_cascade_(name);
 
+    // Issue #2050: render-critical define protection (draw/present closures).
+    // Auto-register evolution-named defines; soft-dirty prefers body-only +
+    // deopt throttle so high-frequency Agent set-body does not storm JIT.
+    const bool render_critical =
+        evaluator_.is_render_critical_define(name) || aura_is_render_evolution_name(name);
+    if (render_critical) {
+        evaluator_.register_render_critical_define(name);
+        metrics_.render_critical_define_dirty_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #1261 / #1476 / #1627: bump both epochs via unified helper.
     atomic_bump_epochs_and_stamp_bridge(name);
+
+    // Issue #2050: under deopt throttle, clear deopt_pending + re-stamp JIT
+    // epoch so previous native draw/present keeps serving frames.
+    if (render_critical) {
+        const bool apply = evaluator_.bump_render_jit_deopt_throttled();
+        if (!apply) {
+            metrics_.render_critical_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            const auto kept = jit_.clear_deopt_pending_keep_native(name.c_str(), bridge_epoch());
+            metrics_.render_critical_jit_keep_total.fetch_add(kept > 0 ? kept : 1,
+                                                              std::memory_order_relaxed);
+        } else {
+            metrics_.render_critical_deopt_applied_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 
     auto it = ir_cache_v2_.find(name);
     if (it != ir_cache_v2_.end()) {
@@ -116,8 +141,12 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         // Nested (irs[2..N] or >1 with free-ref self): free-var scan.
         const bool nested_primary = primary.irs.size() > 2;
         // Issue #1915: unified body-only dirty stamp (partial re-lower path).
+        // Issue #2050: render-critical always prefers body-only when possible.
         const auto body_blocks = primary.mark_body_only_dirty();
         if (body_blocks > 0 && !primary.irs.empty()) {
+            if (render_critical)
+                metrics_.render_critical_partial_prefer_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
             // Issue #1505 / #1625: free-var + per-block targeted dirty
             // of nested lambdas for self (not whole nested fn).
             if (nested_primary) {
