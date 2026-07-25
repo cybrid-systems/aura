@@ -3945,6 +3945,11 @@ private:
     // Issue #1563: when true, bump_jit_deopt_on_mutate uses render throttle
     // even outside an active render hotpath frame (render-critical mutate).
     mutable std::atomic<bool> prefer_render_critical_deopt_throttle_{false};
+    // Issue #2050: Agent-facing draw/present *define* names (not just PrimMeta).
+    // Soft mark_define_dirty consults this for deopt throttle + keep-native.
+    mutable std::mutex render_critical_defines_mtx_;
+    mutable std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        render_critical_defines_;
     // Issue #1564: default AutoRefreshOnBoundary for ensure_valid_or_refresh.
     mutable std::atomic<bool> stable_ref_auto_refresh_policy_{true};
     // Issue #1357: per-slot render prim latency + frame mark.
@@ -6888,6 +6893,31 @@ public:
     // (e.g. set-body of a draw/present closure outside an active hotpath frame).
     void set_prefer_render_critical_deopt_throttle(bool on) const noexcept {
         prefer_render_critical_deopt_throttle_.store(on, std::memory_order_relaxed);
+    }
+    // Issue #2050: register / query render-critical *define* names.
+    void register_render_critical_define(std::string_view name) const noexcept {
+        if (name.empty())
+            return;
+        std::lock_guard<std::mutex> lock(render_critical_defines_mtx_);
+        if (render_critical_defines_.insert(std::string(name)).second) {
+            if (compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                m->render_critical_define_registered_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    [[nodiscard]] bool is_render_critical_define(std::string_view name) const noexcept {
+        if (name.empty())
+            return false;
+        // Prim names (terminal-present-batch, …) always count.
+        if (primitives().is_render_critical_name(name))
+            return true;
+        std::lock_guard<std::mutex> lock(render_critical_defines_mtx_);
+        return render_critical_defines_.find(std::string(name)) != render_critical_defines_.end();
+    }
+    [[nodiscard]] std::size_t render_critical_define_count() const noexcept {
+        std::lock_guard<std::mutex> lock(render_critical_defines_mtx_);
+        return render_critical_defines_.size();
     }
     // Issue #1316/#1563: render-stable deopt throttle (never more than once per window_ms).
     // Returns true if deopt was applied, false if throttled (keep previous JIT).

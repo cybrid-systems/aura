@@ -3909,6 +3909,32 @@ std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
     return n;
 }
 
+// Issue #2050: render-critical soft-dirty under deopt throttle — clear
+// deopt_pending for name / name#* and re-stamp captured epoch so the
+// previous native body keeps serving frames until the throttle window
+// opens for a real recompile.
+std::size_t AuraJIT::clear_deopt_pending_keep_native(const char* name,
+                                                     std::uint64_t current_epoch) noexcept {
+    if (!impl_ || !name || !*name)
+        return 0;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::size_t cleared = 0;
+    const std::string base(name);
+    const std::string prefix = base + "#";
+    for (auto& [key, entry] : impl_->fn_trackers_) {
+        if (key == base || key.rfind(prefix, 0) == 0) {
+            if (entry.deopt_pending) {
+                entry.deopt_pending = false;
+                ++cleared;
+            }
+        }
+    }
+    // Re-stamp epoch under the same lock as capture_fn_epoch would.
+    impl_->fn_captured_epochs_[base].store(current_epoch, std::memory_order_release);
+    metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
+    return cleared;
+}
+
 // ── Public AOT API ──────────────────────────────────────────────
 
 bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
