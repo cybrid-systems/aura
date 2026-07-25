@@ -8,6 +8,7 @@
 #include "core/lifetime_pin.hh"
 #include "core/zero_copy_output.hh"
 #include "renderer/batch_terminal.hh"
+#include "renderer/render_frame_arena.hh"
 
 #include <cstring>
 #include <string>
@@ -129,15 +130,29 @@ namespace {
             return 0;
         }
 
+        // Issue #2049: sample wall-time for frame-time histogram / p99 proxy.
+        RenderFrameTimer frame_timer;
         HotpathGuard hotpath;
 
-        auto& arena = arena_opt ? *arena_opt : aura::core::zero_copy::g_render_frame_arena();
+        // Prefer dedicated double-buffered RenderFrameArena when no external
+        // arena is supplied (#2049); external arena_opt keeps legacy path.
+        aura::core::zero_copy::FrameBumpArena* arena_ptr = arena_opt;
+        RenderFrameArena* dedicated = nullptr;
+        if (!arena_ptr) {
+            dedicated = &g_render_frame_arena_v2();
+            arena_ptr = &dedicated->current();
+        }
+        auto& arena = *arena_ptr;
+
         std::uint64_t sgr_emits = 0;
         std::uint64_t cells_emitted = 0;
         const std::size_t n =
             build_frame_zero_copy_arena(fb, dirty, arena, sgr_emits, cells_emitted);
         g_engine_counters.sgr_emits += sgr_emits;
         g_engine_counters.dirty_cells_emitted += cells_emitted;
+        // Issue #2049: account frame scratch alloc (FrameBumpArena path).
+        if (const auto used = arena.used_bytes(); used > 0)
+            g_render_frame_metrics().render_alloc_bytes.fetch_add(used, std::memory_order_relaxed);
         // Issue #2047: record ANSI byte savings vs full-frame estimate.
         {
             const auto full_est = estimate_ansi_frame_bytes(fb.width, fb.height);
@@ -154,28 +169,31 @@ namespace {
         const auto last = zc.last_view();
         const char* data = last.data() ? reinterpret_cast<const char*>(last.data()) : nullptr;
 
-        // Issue #2048: LifetimePin + GC pin-defer for the duration of the
-        // zero-copy handoff (write / string copy / C backend). Soft-gate is
-        // already entered via HotpathGuard.
-        FfiPresentPinGuard handoff_pin(data ? const_cast<char*>(data) : nullptr, n);
-        if (n > 0 && data && !handoff_pin.valid()) {
-            // Pin failed unexpectedly — still attempt present (best-effort).
-        }
-
-        if (out_opt) {
-            if (data && n > 0)
-                out_opt->assign(data, n);
-            else
-                out_opt->clear();
-        }
-
         std::int64_t written = 0;
-        if (fd >= 0 && n > 0 && data) {
-            const auto wn = ::write(fd, data, n);
-            written = wn > 0 ? static_cast<std::int64_t>(wn) : 0;
-        } else if (fd < 0) {
-            written = static_cast<std::int64_t>(n);
-        }
+        // Issue #2048 / #2049: pin + GC-defer only for the handoff window;
+        // end_frame (double-buffer swap) runs after pin is released.
+        {
+            FfiPresentPinGuard handoff_pin(data ? const_cast<char*>(data) : nullptr, n);
+            (void)handoff_pin.valid();
+
+            if (out_opt) {
+                if (data && n > 0)
+                    out_opt->assign(data, n);
+                else
+                    out_opt->clear();
+            }
+
+            if (fd >= 0 && n > 0 && data) {
+                const auto wn = ::write(fd, data, n);
+                written = wn > 0 ? static_cast<std::int64_t>(wn) : 0;
+            } else if (fd < 0) {
+                written = static_cast<std::int64_t>(n);
+            }
+        } // pin released — buffer no longer needed for C handoff
+
+        // Issue #2049: O(1) double-buffer swap for next frame.
+        if (dedicated)
+            dedicated->end_frame();
 
         dirty.clear();
         g_render_hot_path_stats.present_bytes_total +=
@@ -198,6 +216,7 @@ void reset_render_engine_counters_for_test() noexcept {
     aura::core::zero_copy::g_zero_copy_fb.release_count = 0;
     aura::core::zero_copy::reset_zero_copy_metrics_for_test();
     reset_dirty_delta_metrics_for_test();
+    reset_render_frame_metrics_for_test();
 }
 
 std::int64_t present_batch(const FramebufferSoA& fb, DirtyRegion& dirty, int fd) {
