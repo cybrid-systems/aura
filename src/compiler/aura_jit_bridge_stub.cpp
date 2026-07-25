@@ -319,6 +319,27 @@ extern "C" __attribute__((weak)) std::uint64_t aura_stable_func_id_map_size(void
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_clear_stable_func_id_map(void) {}
+// Issue #2092: legacy name-fallback toggle (off by default in strict
+// tests). Production aura_jit_runtime.cpp owns the real atomic; the
+// weak stub returns 0 so light test binaries without the production
+// TU behave as the strict default (no name fallback).
+extern "C" __attribute__((weak)) void aura_set_remap_name_fallback_enabled(int /*v*/) {}
+extern "C" __attribute__((weak)) int aura_get_remap_name_fallback_enabled(void) {
+    return 0;
+}
+// Issue #2092: weak stub for the name-fallback counter bumper (the
+// real impl lives in aura_jit_bridge.cpp; this satisfies light test
+// binaries that don't link the production TU).
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_remap_name_fallback_total(std::uint64_t /*n*/) {}
+// Issue #2092: stable-id-keyed remap (no display-name arg). Stub
+// returns 0 so light test binaries without the production TU observe
+// no remap (consistent with no reemit candidates).
+extern "C" __attribute__((weak)) std::uint64_t
+aura_remap_live_closures_after_reemit(const std::uint32_t* /*stable_ids*/, std::size_t /*n*/,
+                                      std::uint64_t /*new_bridge_epoch*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_dirty_count(void) {
     return 0;
 }

@@ -147,6 +147,18 @@ extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
         g_aot_metrics_explicit_sets.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #2092: thin C-linkage helper for bumping the legacy
+// name-fallback counter from aura_jit_runtime.cpp (which only has the
+// forward declaration of CompilerMetrics via runtime_shared.h, so it
+// can't touch the struct members directly). The helper stays adjacent
+// to the static aot_metrics() accessor so the metric bookkeeping
+// stays in one TU.
+extern "C" void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_remap_name_fallback_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
 // ── Issue #1443: long-mutation policy knobs ───────────
 //
 // C-linkage setters for `long_mutation_threshold_us` (default 500'000 µs
@@ -2285,14 +2297,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         // reemitted stable id so they keep calling native code without
         // dual-freshness deopt. Global epoch bump remains for unmatched
         // closures (safety preserved).
-        if (!reemit_names.empty()) {
-            std::vector<const char*> name_ptrs;
-            name_ptrs.reserve(reemit_names.size());
-            for (const auto& s : reemit_names)
-                name_ptrs.push_back(s.c_str());
+        if (!reemit_stable_ids.empty()) {
             const std::uint64_t new_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+            // Issue #2092: caller no longer threads display names into the
+            // remap — the closure table matches by stable_func_id stored at
+            // aura_closure_set_name time (refine #2013). name-fallback
+            // path is gated by aura_set_remap_name_fallback_enabled().
             const std::uint64_t remapped = aura_remap_live_closures_after_reemit(
-                name_ptrs.data(), reemit_stable_ids.data(), reemit_stable_ids.size(), new_epoch);
+                reemit_stable_ids.data(), reemit_stable_ids.size(), new_epoch);
             if (remapped > 0) {
                 if (aot_metrics()) {
                     aot_metrics()->live_closure_remap_total.fetch_add(remapped,

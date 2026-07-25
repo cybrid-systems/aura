@@ -413,6 +413,154 @@ static void ac9_live_closure_remap() {
     aura_set_aot_defuse_version(0);
 }
 
+// Issue #2092: same display name over time keeps OLD stable id for
+// old closures; only closures whose stored stable_func_id is in the
+// reemit set get remapped. Pre-#2092 name-based remap would silently
+// attach old closures to the new define's id (wrong native body) or
+// miss remap for gensym names that changed between defines. AC1.
+static void ac9b_same_name_redefine() {
+    std::println("\n--- AC9b: #2092 same-name redefine safety ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+
+    // Pre-seed unrelated names so the v1 sid is > 1 (the clear resets
+    // g_next_stable_func_id to 1, so v2 sid will be 1 regardless of
+    // pre-seed order).
+    (void)aura_get_or_preserve_stable_func_id("ac9b_pre_a", nullptr);
+    (void)aura_get_or_preserve_stable_func_id("ac9b_pre_b", nullptr);
+    (void)aura_get_or_preserve_stable_func_id("ac9b_pre_c", nullptr);
+
+    // v1: define "fn" → stable id S1 (4 after the pre-seeds).
+    const auto sid_v1 = aura_get_or_preserve_stable_func_id("fn", nullptr);
+    CHECK(sid_v1 != 0 && sid_v1 > 1, "fn v1 stable id assigned");
+
+    // Closure stamped at v1 carries S1 (stored stable_func_id).
+    const auto c_old = aura_alloc_closure(100);
+    CHECK(c_old >= 0, "alloc c_old");
+    aura_closure_set_name(c_old, "fn");
+
+    // Simulate fresh process / scope shift so the next define gets a
+    // different stable id. Production aura_get_or_preserve normally
+    // preserves the existing id; clearing between defines exercises the
+    // path that *can* produce different ids (cold reimport, multi-define
+    // same display name in different compilation units, tests).
+    aura_clear_stable_func_id_map();
+    const auto sid_v2 = aura_get_or_preserve_stable_func_id("fn", nullptr);
+    CHECK(sid_v2 != 0 && sid_v2 != sid_v1, "fn v2 fresh id");
+
+    // Closure stamped at v2 carries S2.
+    const auto c_new = aura_alloc_closure(200);
+    CHECK(c_new >= 0, "alloc c_new");
+    aura_closure_set_name(c_new, "fn");
+
+    // Reemit only S2 (the v2 stable id).
+    ReemitFixture rf;
+    rf.candidates = {{"fn", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto rb0 = metrics.live_closure_remap_total.load(std::memory_order_relaxed);
+    const auto fb0 = metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
+
+    const auto epoch_before = aura_aot_func_table_epoch();
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "reemit fn v2 success");
+    const auto epoch_after = aura_aot_func_table_epoch();
+    CHECK(epoch_after == epoch_before + 1, "epoch bumped once");
+
+    // Primary key = stored stable_func_id (Issue #2092).
+    // c_new stored S2 (in reemit set) → remapped (bridge_epoch advanced).
+    // c_old stored S1 (NOT in reemit set) → NOT remapped (deopt path).
+    CHECK(aura_get_closure_bridge_epoch(c_new) == epoch_after, "c_new remapped to new epoch");
+    CHECK(aura_get_closure_bridge_epoch(c_old) != epoch_after,
+          "c_old NOT remapped (kept old stable id S1, deopt)");
+    // Remap count is exactly 1 (c_new only).
+    CHECK(metrics.live_closure_remap_total.load(std::memory_order_relaxed) == rb0 + 1,
+          "live_closure_remap_total +1 (c_new only)");
+    // No name fallback used — both closures had stored stable ids.
+    CHECK(metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed) == fb0,
+          "name fallback metric unchanged (stored-id path used)");
+
+    aura_free_closure(c_old);
+    aura_free_closure(c_new);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_defuse_version(0);
+}
+
+// Issue #2092: name fallback path is metric-visible and off by default
+// (AC3). Legacy closures (set_name called BEFORE the define entered the
+// stable map → stored stable_func_id stays 0) can be remapped via name
+// fallback when enabled. Strict tests keep the flag at 0 (default).
+static void ac9c_name_fallback() {
+    std::println("\n--- AC9c: #2092 name fallback off by default ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+
+    // Default off (AC3).
+    CHECK(aura_get_remap_name_fallback_enabled() == 0, "fallback off by default (AC3)");
+
+    // Allocate closure + set_name BEFORE the define enters the map →
+    // aura_lookup_stable_func_id returns 0 → stored stable_func_id = 0
+    // (the legacy scenario the fallback path targets).
+    const auto c_legacy = aura_alloc_closure(300);
+    CHECK(c_legacy >= 0, "alloc c_legacy");
+    aura_closure_set_name(c_legacy, "legacy");
+
+    // Now process the define (post-closure).
+    const auto sid_legacy = aura_get_or_preserve_stable_func_id("legacy", nullptr);
+    CHECK(sid_legacy != 0, "legacy stable id assigned");
+
+    ReemitFixture rf;
+    rf.candidates = {{"legacy", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto fb0 = metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
+    const auto rb0 = metrics.live_closure_remap_total.load(std::memory_order_relaxed);
+
+    // PART 1: fallback OFF → c_legacy NOT remapped, fallback metric stays 0.
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "reemit legacy (fallback off)");
+    const auto epoch_after_off = aura_aot_func_table_epoch();
+    CHECK(aura_get_closure_bridge_epoch(c_legacy) != epoch_after_off,
+          "c_legacy NOT remapped (fallback off, stored stable_id=0)");
+    CHECK(metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed) == fb0,
+          "name fallback metric unchanged (AC3 strict default)");
+
+    // PART 2: enable fallback + repopulate candidates for a second
+    // reemit → c_legacy remapped via name lookup, fallback metric +1.
+    aura_set_remap_name_fallback_enabled(1);
+    CHECK(aura_get_remap_name_fallback_enabled() == 1, "fallback enabled");
+    aura_set_aot_defuse_version(2);
+    rf.candidates.clear();
+    rf.candidates.push_back({"legacy", 1, false});
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "reemit legacy (fallback on)");
+    const auto epoch_after_on = aura_aot_func_table_epoch();
+    CHECK(aura_get_closure_bridge_epoch(c_legacy) == epoch_after_on,
+          "c_legacy remapped via name fallback");
+    CHECK(metrics.live_closure_remap_total.load(std::memory_order_relaxed) >= rb0 + 1,
+          "live_closure_remap_total +1 (fallback path)");
+    CHECK(metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed) == fb0 + 1,
+          "name fallback metric +1");
+
+    aura_free_closure(c_legacy);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+    aura_set_remap_name_fallback_enabled(0); // reset
+    aura_clear_stable_func_id_map();
+    aura_set_aot_defuse_version(0);
+}
+
 // Issue #2014: deopt storm detection + reemit recovery throttle.
 static void ac10_deopt_storm_throttle() {
     std::println("\n--- AC10: #2014 deopt storm detection + reemit throttle ---");
@@ -613,6 +761,8 @@ int main() {
     ac7_fuzz();
     ac8_lineage();
     ac9_live_closure_remap();
+    ac9b_same_name_redefine();
+    ac9c_name_fallback();
     ac10_deopt_storm_throttle();
     ac11_adaptive_region_mask();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

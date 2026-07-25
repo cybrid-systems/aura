@@ -77,6 +77,13 @@ int aura_aot_slot_is_stale(std::int64_t func_id);
 // aura_set_aot_metrics is declared in runtime_shared.h (CompilerMetrics*).
 void aura_ensure_aot_metrics(void* metrics);
 void* aura_get_aot_metrics(void);
+
+// Issue #2092: thin C-linkage helper for bumping the legacy
+// name-fallback counter from aura_jit_runtime.cpp (which only has
+// the forward declaration of CompilerMetrics via runtime_shared.h).
+// Production impl in aura_jit_bridge.cpp; weak stub in
+// aura_jit_bridge_stub.cpp so light test binaries link cleanly.
+void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 
@@ -210,8 +217,10 @@ std::uint64_t aura_reemit_region_filtered_skips(void);
 std::uint64_t aura_reemit_closure_dep_count(void);
 // Last re-emit success count (emit callback true count; 0 if no emit fn).
 std::uint64_t aura_reemit_success_count(void);
-// Issue #2013: remapped live-closure count is in CompilerMetrics::live_closure_remap_total
-// and HotUpdateRegistry snapshot (live_closure_remap_total).
+// Issue #2092: remapped live-closure count is in CompilerMetrics::live_closure_remap_total
+// and HotUpdateRegistry snapshot (live_closure_remap_total). Name-fallback
+// path bumps live_closure_remap_name_fallback_total via
+// aura_bump_live_closure_remap_name_fallback_total (declared above).
 
 // Issue #708 — region isolation + func_table refcount tracking.
 // Global (default) APIs — equivalent to for_eval(nullptr, ...).
