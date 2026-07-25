@@ -373,6 +373,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-2053", 2053);
                 insert_kv("production-security-wired", 1);
             }
+            // Issue #2055: grant/revoke WorkspaceEpoch + fiber bind surface
+            {
+                using aura::core::capability::kGrantEpochFiberBindIssue;
+                insert_kv("schema-2055", kGrantEpochFiberBindIssue);
+                insert_kv("issue-2055", kGrantEpochFiberBindIssue);
+                insert_kv("grant-epoch-bound", static_cast<std::int64_t>(snap.grant_epoch_bound));
+                insert_kv("revoke-epoch-bound", static_cast<std::int64_t>(snap.revoke_epoch_bound));
+                insert_kv("grant-fiber-bound", static_cast<std::int64_t>(snap.grant_fiber_bound));
+                insert_kv("fiber-mismatch", static_cast<std::int64_t>(snap.fiber_mismatch));
+                insert_kv("epoch-fence-hits", static_cast<std::int64_t>(snap.epoch_fence_hits));
+                insert_kv("grant-epoch-fiber-wired", 1);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

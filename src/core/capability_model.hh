@@ -4,6 +4,8 @@
 #ifndef AURA_CORE_CAPABILITY_MODEL_HH
 #define AURA_CORE_CAPABILITY_MODEL_HH
 
+#include "core/workspace_epoch.hh"
+
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -18,6 +20,8 @@ namespace aura::core::capability {
 
 inline constexpr int kCapabilityModelPhase = 2; // #1565 enforcement
 inline constexpr int kCapabilityModelIssue = 1565;
+// Issue #2055: grant/revoke bound to WorkspaceEpoch Mutation + fiber.
+inline constexpr int kGrantEpochFiberBindIssue = 2055;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -84,7 +88,11 @@ struct CapabilityGrant {
     // #1565: provenance binding + delegation audit (additive fields ok)
     std::uint64_t bound_mutation_id = 0;
     std::uint32_t bound_node_id = 0;
-    std::uint64_t grant_epoch = 0;
+    std::uint64_t grant_epoch = 0; // WorkspaceEpoch Mutation at grant (#2055)
+    // Issue #2055: fiber that issued the grant (audit / cross-fiber blame).
+    std::uint32_t grant_fiber_id = 0;
+    // Issue #2055: mutation epoch at revoke time (0 = never revoked / legacy).
+    std::uint64_t revoke_epoch = 0;
     bool revoked = false;
 };
 
@@ -120,6 +128,12 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> macro_self_evo_denied_total{0};
     std::atomic<std::uint64_t> macro_self_evo_depth_clamp_total{0};
     std::atomic<std::uint64_t> macro_self_evo_pass_clamp_total{0};
+    // Issue #2055: WorkspaceEpoch + fiber bind observability
+    std::atomic<std::uint64_t> capability_grant_epoch_bound_total{0};
+    std::atomic<std::uint64_t> capability_revoke_epoch_bound_total{0};
+    std::atomic<std::uint64_t> capability_grant_fiber_bound_total{0};
+    std::atomic<std::uint64_t> capability_fiber_mismatch_total{0};
+    std::atomic<std::uint64_t> capability_epoch_fence_hit_total{0};
 };
 
 inline CapabilityEffectMetrics& g_capability_effect_metrics() noexcept {
@@ -155,19 +169,30 @@ struct CapabilityRegistry {
     }
 
     // Grant effects to a tenant (OR into named grant).
+    // Issue #2055: stamps grant_epoch (WorkspaceEpoch Mutation) + grant_fiber_id
+    // from EffectProvenance so long-running multi-tenant blame stays consistent.
     void grant(TenantId tenant, std::string_view name, Effect effects,
                const EffectProvenance& prov = {}) {
         std::lock_guard<std::mutex> lock(mtx);
         auto& vec = by_tenant[tenant];
+        auto apply = [&](CapabilityGrant& g) {
+            g.effects = g.effects | effects;
+            g.revoked = false;
+            g.bound_mutation_id = prov.mutation_id;
+            g.bound_node_id = prov.node_id;
+            g.grant_epoch = prov.epoch;
+            g.grant_fiber_id = prov.fiber_id;
+            g.revoke_epoch = 0;
+            auto& met = g_capability_effect_metrics();
+            met.capability_grant_total.fetch_add(1, std::memory_order_relaxed);
+            if (prov.epoch != 0)
+                met.capability_grant_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+            if (prov.fiber_id != 0)
+                met.capability_grant_fiber_bound_total.fetch_add(1, std::memory_order_relaxed);
+        };
         for (auto& g : vec) {
             if (g.name == name) {
-                g.effects = g.effects | effects;
-                g.revoked = false;
-                g.bound_mutation_id = prov.mutation_id;
-                g.bound_node_id = prov.node_id;
-                g.grant_epoch = prov.epoch;
-                g_capability_effect_metrics().capability_grant_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                apply(g);
                 return;
             }
         }
@@ -175,15 +200,14 @@ struct CapabilityRegistry {
         g.name = std::string(name);
         g.effects = effects;
         g.tenant_id = tenant;
-        g.bound_mutation_id = prov.mutation_id;
-        g.bound_node_id = prov.node_id;
-        g.grant_epoch = prov.epoch;
+        apply(g);
         vec.push_back(std::move(g));
-        g_capability_effect_metrics().capability_grant_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
     }
 
-    void revoke(TenantId tenant, std::string_view name) {
+    // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
+    // If revoke_at_epoch == 0, callers should pass current_mutation_epoch() (or
+    // the make_grant_provenance helper) so blame trails stay non-zero.
+    void revoke(TenantId tenant, std::string_view name, std::uint64_t revoke_at_epoch = 0) {
         std::lock_guard<std::mutex> lock(mtx);
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
@@ -192,8 +216,16 @@ struct CapabilityRegistry {
             if (g.name == name) {
                 g.revoked = true;
                 g.effects = Effect::None;
-                g_capability_effect_metrics().capability_revoke_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                // Prefer explicit epoch; else stamp current Mutation epoch.
+                auto ep = revoke_at_epoch;
+                if (ep == 0)
+                    ep = ::aura::core::current_mutation_epoch();
+                if (ep == 0)
+                    ep = 1; // non-zero audit stamp at process origin
+                g.revoke_epoch = ep;
+                auto& met = g_capability_effect_metrics();
+                met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
@@ -216,6 +248,9 @@ struct CapabilityRegistry {
     // Issue #2074: anti privilege-sticky — if grant has grant_epoch != 0
     // AND the registry's min_valid_epoch is set AND grant_epoch < min_valid_epoch,
     // the grant is expired (issued at a stale mutation epoch) → deny.
+    // Issue #2055: grant_fiber_id is audit/blame metadata (multi-fiber same
+    // tenant still shares grants). Cross-fiber principal isolation is
+    // TenantScope on the Evaluator — not a hard deny here.
     [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
@@ -227,13 +262,35 @@ struct CapabilityRegistry {
                 g.bound_mutation_id != prov.mutation_id) {
                 return false;
             }
-            // Issue #2074: expired grant — grant_epoch behind min_valid_epoch.
+            // Issue #2074 / #2055: expired grant — grant_epoch behind min_valid.
             if (g.grant_epoch != 0 && grant_min_valid_epoch_ != 0 &&
                 g.grant_epoch < grant_min_valid_epoch_) {
+                g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
+                    1, std::memory_order_relaxed);
                 return false;
+            }
+            // Observability only: fiber differs from grant issuer (not a deny).
+            if (g.grant_fiber_id != 0 && prov.fiber_id != 0 && g.grant_fiber_id != prov.fiber_id) {
+                g_capability_effect_metrics().capability_fiber_mismatch_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
         }
         return true;
+    }
+
+    // Issue #2055: lookup a grant for tests / audit (newest name match).
+    [[nodiscard]] bool find_grant(TenantId tenant, std::string_view name, CapabilityGrant& out) {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return false;
+        for (const auto& g : it->second) {
+            if (g.name == name) {
+                out = g;
+                return true;
+            }
+        }
+        return false;
     }
 
     void record_audit(Effect required, Effect actual, TenantId tenant, const EffectProvenance& prov,
@@ -354,7 +411,10 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }
         } else if (wildcard_ok) {
+            // Issue #2055: wildcard must still honor epoch fence / provenance
+            // binding — otherwise privilege-sticky grants pass under "*".
             if (!reg.provenance_ok(tenant, prov)) {
+                allowed = false;
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
@@ -368,8 +428,35 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
     return allowed;
 }
 
+// Issue #2055: build EffectProvenance stamped with WorkspaceEpoch Mutation
+// + fiber. Always produces non-zero epoch (AC: grant carries non-zero
+// epoch matching mutation epoch at grant time). When force_mutation_bind
+// is true (sandbox != Off), mutation_id defaults to the mutation epoch if
+// the caller left it zero (#2074 anti-sticky). Pass fiber_id from
+// aura_fiber_current_id() at the Evaluator boundary (core header stays
+// free of fiber TLS).
+[[nodiscard]] inline EffectProvenance
+make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutation_bind = true,
+                      std::uint32_t node_id = 0, std::uint32_t fiber_id = 0) noexcept {
+    EffectProvenance prov;
+    prov.node_id = node_id;
+    prov.fiber_id = fiber_id;
+    const auto me = ::aura::core::current_mutation_epoch();
+    // Non-zero WorkspaceEpoch Mutation stamp (0 is "unset / legacy").
+    prov.epoch = me != 0 ? me : 1;
+    if (force_mutation_bind) {
+        prov.mutation_id = provenance_mutation_id != 0 ? provenance_mutation_id : me;
+        if (prov.mutation_id == 0)
+            prov.mutation_id = prov.epoch;
+    } else {
+        prov.mutation_id = provenance_mutation_id;
+    }
+    return prov;
+}
+
 inline void reset_capability_effects_for_test() noexcept {
     g_capability_registry().clear_for_test();
+    g_capability_registry().set_grant_min_valid_epoch(0);
     auto& m = g_capability_effect_metrics();
     m.capability_effect_enforced_total.store(0, std::memory_order_relaxed);
     m.capability_effect_denied_total.store(0, std::memory_order_relaxed);
@@ -383,6 +470,11 @@ inline void reset_capability_effects_for_test() noexcept {
     m.macro_self_evo_denied_total.store(0, std::memory_order_relaxed);
     m.macro_self_evo_depth_clamp_total.store(0, std::memory_order_relaxed);
     m.macro_self_evo_pass_clamp_total.store(0, std::memory_order_relaxed);
+    m.capability_grant_epoch_bound_total.store(0, std::memory_order_relaxed);
+    m.capability_revoke_epoch_bound_total.store(0, std::memory_order_relaxed);
+    m.capability_grant_fiber_bound_total.store(0, std::memory_order_relaxed);
+    m.capability_fiber_mismatch_total.store(0, std::memory_order_relaxed);
+    m.capability_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -402,6 +494,12 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t macro_self_evo_denied = 0;
     std::uint64_t macro_self_evo_depth_clamps = 0;
     std::uint64_t macro_self_evo_pass_clamps = 0;
+    // Issue #2055
+    std::uint64_t grant_epoch_bound = 0;
+    std::uint64_t revoke_epoch_bound = 0;
+    std::uint64_t grant_fiber_bound = 0;
+    std::uint64_t fiber_mismatch = 0;
+    std::uint64_t epoch_fence_hits = 0;
 };
 
 [[nodiscard]] inline CapabilityEffectStatsSnapshot snapshot_capability_effect_stats() noexcept {
@@ -422,6 +520,11 @@ struct CapabilityEffectStatsSnapshot {
         m.macro_self_evo_denied_total.load(std::memory_order_relaxed),
         m.macro_self_evo_depth_clamp_total.load(std::memory_order_relaxed),
         m.macro_self_evo_pass_clamp_total.load(std::memory_order_relaxed),
+        m.capability_grant_epoch_bound_total.load(std::memory_order_relaxed),
+        m.capability_revoke_epoch_bound_total.load(std::memory_order_relaxed),
+        m.capability_grant_fiber_bound_total.load(std::memory_order_relaxed),
+        m.capability_fiber_mismatch_total.load(std::memory_order_relaxed),
+        m.capability_epoch_fence_hit_total.load(std::memory_order_relaxed),
     };
 }
 
