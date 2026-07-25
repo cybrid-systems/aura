@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -5316,7 +5317,21 @@ public:
                 const std::size_t clean_funcs = it->second.irs.size() > dirty_func_count
                                                     ? it->second.irs.size() - dirty_func_count
                                                     : 0;
+                const auto partial_t0 = std::chrono::steady_clock::now();
                 if (relower_define_function(name, dirty_func_idx, flat, pool, expanded_root)) {
+                    // Issue #2112: feed adaptive threshold history.
+                    const auto partial_ns = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - partial_t0)
+                            .count());
+                    note_partial_relower_cost_ns(partial_ns);
+                    metrics_.avg_partial_relower_cost_ns.store(avg_partial_relower_cost_ns(),
+                                                               std::memory_order_relaxed);
+                    metrics_.partial_relower_cost_samples.store(
+                        partial_relower_cost_samples_atomic().load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
+                                                                  std::memory_order_relaxed);
                     if (clean_funcs > 0) {
                         metrics_.relower_partial_funcs_saved_total.fetch_add(
                             clean_funcs, std::memory_order_relaxed);
@@ -5379,9 +5394,27 @@ public:
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
+        const auto full_t0 = std::chrono::steady_clock::now();
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
+        // Issue #2112: feed adaptive threshold history for full path.
+        {
+            const auto full_ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - full_t0)
+                                               .count());
+            note_full_relower_cost_ns(full_ns);
+            metrics_.avg_full_relower_cost_ns.store(avg_full_relower_cost_ns(),
+                                                    std::memory_order_relaxed);
+            metrics_.full_relower_cost_samples.store(
+                full_relower_cost_samples_atomic().load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            metrics_.partial_vs_full_win_ratio_bp.store(partial_vs_full_win_ratio_bp(),
+                                                        std::memory_order_relaxed);
+            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
+                                                          std::memory_order_relaxed);
+        }
         // Run per-function passes on the new bundle.
         // Issue #1574 / #2044: shared incremental dirty suite.
         {

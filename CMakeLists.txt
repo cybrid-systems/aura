@@ -2125,6 +2125,11 @@ aura_add_issue_test(test_soa_generation_fence_2111)
 aura_issue_test_link_llvm_jit(test_soa_generation_fence_2111)
 add_dependencies(all_test_issue_targets test_soa_generation_fence_2111)
 
+# Issue #2112: adaptive partial/full relower threshold.
+aura_add_issue_test(test_adaptive_partial_relower_threshold_2112)
+aura_issue_test_link_llvm_jit(test_adaptive_partial_relower_threshold_2112)
+add_dependencies(all_test_issue_targets test_adaptive_partial_relower_threshold_2112)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
