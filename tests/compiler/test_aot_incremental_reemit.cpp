@@ -45,6 +45,7 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::compiler::types::as_int;
@@ -656,6 +657,94 @@ static void ac10_deopt_storm_throttle() {
     aura_set_aot_metrics(nullptr);
 }
 
+// Issue #2094: unified StormLevel facade. Combines HotUpdateRegistry
+// global deopt-storm (reemit throttle) with ShapeProfiler shape-storm
+// into a single bitmask so Agent recovery policy can branch on one
+// value rather than ORing two independent detectors.
+static void ac12_storm_level_global() {
+    std::println("\n--- AC12a: #2094 StormLevel Global bit (registry reemit throttle) ---");
+    // Reset state.
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_emit_region_mask(0);
+    aura_hot_update_set_deopt_storm_threshold(5, 1000); // low threshold for fast trip
+    // AC1 precondition: storm level starts at None.
+    CHECK(aura_hot_update_current_storm_level() == 0, "AC12a setup: storm-level = None at start");
+    CHECK(aura_hot_update_should_throttle_reemit() == 0,
+          "AC12a setup: no global throttle at start");
+    // Trigger global storm: push past threshold via aura_hot_update_note_deopt.
+    for (int i = 0; i < 10; ++i)
+        aura_hot_update_note_deopt();
+    // AC1: Global bit set, reemit throttled.
+    const auto sl = aura_hot_update_current_storm_level();
+    CHECK((sl & 0x2) != 0, "AC12a: storm-level has Global bit");
+    CHECK(sl == 2, "AC12a: storm-level == Global (Shape bit off)");
+    CHECK(aura_hot_update_should_throttle_reemit() == 1,
+          "AC12a: should_throttle_reemit true under global storm");
+    // Reset.
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_set_aot_metrics(nullptr);
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_emit_region_mask(0);
+}
+
+static void ac12_storm_level_shape() {
+    std::println("\n--- AC12b: #2094 StormLevel Shape bit (shape-only storm) ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_set_aot_emit_region_mask(0);
+    // AC2 precondition: Shape bit off, no global throttle.
+    CHECK(aura_hot_update_current_storm_level() == 0, "AC12b setup: storm-level = None at start");
+    // Trigger shape-only storm (publish via the registry facade
+    // setter — ShapeProfiler would do this in production).
+    aura_hot_update_set_shape_storm_active(1);
+    // AC2: Shape bit set, no global throttle (registry independent).
+    const auto sl = aura_hot_update_current_storm_level();
+    CHECK((sl & 0x1) != 0, "AC12b: storm-level has Shape bit");
+    CHECK(sl == 1, "AC12b: storm-level == Shape (Global bit off)");
+    CHECK(aura_hot_update_should_throttle_reemit() == 0,
+          "AC12b: shape-only storm does NOT throttle reemit");
+    // Reset.
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_metrics(nullptr);
+    aura_set_aot_emit_region_mask(0);
+}
+
+static void ac12_storm_level_both() {
+    std::println("\n--- AC12c: #2094 StormLevel Both + query:aot-stats surface ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_emit_region_mask(0);
+    aura_hot_update_set_deopt_storm_threshold(5, 1000);
+    // AC3: trigger both storms.
+    for (int i = 0; i < 10; ++i)
+        aura_hot_update_note_deopt();
+    aura_hot_update_set_shape_storm_active(1);
+    // StormLevel == Both (bits 0+1 set).
+    const auto sl = aura_hot_update_current_storm_level();
+    CHECK(sl == 3, "AC12c: storm-level == Both");
+    CHECK((sl & 0x1) != 0 && (sl & 0x2) != 0, "AC12c: both Shape + Global bits set");
+    CHECK(aura_hot_update_should_throttle_reemit() == 1, "AC12c: Global still triggers throttle");
+    // Query surface exposes storm-level via the unified key.
+    CompilerService cs;
+    aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+    // Issue #2094: use the same hash-ref pattern as AC5 (engine:metrics
+    // is a 1-arg function; the 2-arg form returns nil).
+    auto val = cs.eval("(hash-ref (engine:metrics \"query:aot-stats\") \"storm-level\")");
+    CHECK(val && is_int(*val) && as_int(*val) == 3,
+          "AC12c: query:aot-stats exposes storm-level == Both");
+    // Reset.
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_metrics(nullptr);
+    aura_set_aot_emit_region_mask(0);
+}
+
 // Issue #2016: Evolution permanent exclude + adaptive Performance mask +
 // host emit registers stable id into func_table.
 static void ac11_adaptive_region_mask() {
@@ -765,6 +854,9 @@ int main() {
     ac9c_name_fallback();
     ac10_deopt_storm_throttle();
     ac11_adaptive_region_mask();
+    ac12_storm_level_global();
+    ac12_storm_level_shape();
+    ac12_storm_level_both();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

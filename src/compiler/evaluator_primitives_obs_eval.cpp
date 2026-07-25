@@ -49,6 +49,10 @@ import aura.core.concept_constraints;
 
 // Hoisted from evaluator_primitives_obs_eval_00..13.cpp
 extern "C" {
+// Issue #2094: StormLevel facade forward decls (avoid pulling the full
+// hot_update_registry.hh into this TU since only the getter is used).
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+extern "C" void aura_hot_update_set_shape_storm_active(int active);
 extern "C" std::uint64_t aura_fiber_init_aura_result_err_total();
 extern "C" std::uint64_t aura_fiber_init_aura_result_ok_total();
 extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total();
@@ -11903,6 +11907,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t region_mismatch = 0;
         std::uint64_t hot_update_ok = 0;
         std::uint64_t hot_update_rb = 0;
+        // Issue #2094: unified StormLevel facade result.
+        std::uint64_t storm_level = 0;
         // Issue #2093: per-reason reload-failure breakdown.
         std::uint64_t fail_dlopen = 0;
         std::uint64_t fail_version = 0;
@@ -11928,6 +11934,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             fail_staging = m->aot_reload_fail_staging_total.load(std::memory_order_relaxed);
             fail_other = m->aot_reload_fail_other_total.load(std::memory_order_relaxed);
         }
+        // Issue #2094: read the unified StormLevel facade OUTSIDE the
+        // metrics if-block since aura_hot_update_current_storm_level() is
+        // a file-scope C function that doesn't need the CompilerMetrics*
+        // (the catalog was previously skipping the read when
+        // ev.compiler_metrics_ was null — agents still want the live value).
+        storm_level = static_cast<std::uint64_t>(::aura_hot_update_current_storm_level());
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(32); // #2046 joint versioning keys
             if (!ht)
@@ -11991,6 +12003,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
             {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
             {"aot-hot-update-rollback-count", make_int(static_cast<std::int64_t>(hot_update_rb))},
+            // Issue #2094: unified StormLevel facade (None=0/Shape=1/
+            // Global=2/Both=3). Agent branches on this single key for
+            // recovery policy rather than ORing two independent detectors.
+            {"storm-level", make_int(static_cast<std::int64_t>(storm_level))},
             // Issue #2093: per-reason reload-failure counters.
             {"aot-reload-fail-dlopen-count", make_int(static_cast<std::int64_t>(fail_dlopen))},
             {"aot-reload-fail-version-count", make_int(static_cast<std::int64_t>(fail_version))},

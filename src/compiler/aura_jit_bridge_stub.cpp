@@ -590,6 +590,13 @@ extern "C" __attribute__((weak)) int aura_hot_update_should_throttle_reemit(void
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_hot_update_on_reemit_throttled(void) {}
+// Issue #2094: weak stubs for the unified StormLevel facade.
+// Returns 0 (None) by default; production aura_jit_bridge.cpp owns
+// the real impl that ORs registry + shape-storm detectors.
+extern "C" __attribute__((weak)) std::uint8_t aura_hot_update_current_storm_level(void) {
+    return 0; // StormLevel::None
+}
+extern "C" __attribute__((weak)) void aura_hot_update_set_shape_storm_active(int /*active*/) {}
 extern "C" __attribute__((weak)) void
 aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w*/) {}
 extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}
