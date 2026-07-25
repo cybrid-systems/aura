@@ -7462,6 +7462,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_recheck_ratio_bp{0}; // affected*10000/workspace
     std::atomic<std::uint64_t> predicate_memo_hit_rate_bp{0};   // hits*10000/(hits+misses)
     std::atomic<std::uint64_t> predicate_memo_targeted_invalidations_total{0};
+    // Issue #2104 / #2068 Phase 2: selective var_name / min_gen invalidations
+    // from MutationBoundary / infer_flat_partial post-mutate wire-up.
+    std::atomic<std::uint64_t> predicate_memo_selective_invalidate_total{0};
+    std::atomic<std::uint64_t> predicate_memo_boundary_selective_total{0};
+    std::atomic<std::uint64_t> predicate_memo_boundary_selective_wired{1};
     std::atomic<std::uint64_t> incremental_locality_minimal_recheck_wired{1};
     // #1338 Type → IR + DeadCoercionElimination parent-type stamp
     std::atomic<std::uint64_t> ir_parent_type_stamp_active{1};
