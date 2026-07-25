@@ -15,6 +15,7 @@ module;
 #include "hot_update_registry.hh"          // HotUpdateRegistry notify + region mask (#2035)
 #include "render_prim_template.hh"         // #2050 aura_is_render_evolution_name
 #include "core/transparent_string_hash.hh" // TransparentStringHash for ir_cache_index
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -105,8 +106,12 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // Issue #2050: render-critical define protection (draw/present closures).
     // Auto-register evolution-named defines; soft-dirty prefers body-only +
     // deopt throttle so high-frequency Agent set-body does not storm JIT.
+    // Issue #2051: time render-critical soft-dirty for Agent closed-loop
+    // ("was this mutate cheap enough for 60 fps?").
     const bool render_critical =
         evaluator_.is_render_critical_define(name) || aura_is_render_evolution_name(name);
+    const auto render_mutate_t0 = render_critical ? std::chrono::steady_clock::now()
+                                                  : std::chrono::steady_clock::time_point{};
     if (render_critical) {
         evaluator_.register_render_critical_define(name);
         metrics_.render_critical_define_dirty_total.fetch_add(1, std::memory_order_relaxed);
@@ -338,6 +343,17 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // so concurrent apply / fiber steal cannot observe half-updated
     // linear_ownership_state or stale GC roots after soft dirty.
     finalize_linear_gc_invalidation_window_(name);
+
+    // Issue #2051: publish render-critical mutate cost (relaxed atomics only).
+    if (render_critical) {
+        const auto ns =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now() - render_mutate_t0)
+                                           .count());
+        metrics_.render_mutate_cost_ns_total.fetch_add(ns, std::memory_order_relaxed);
+        metrics_.render_mutate_cost_samples.fetch_add(1, std::memory_order_relaxed);
+        metrics_.render_mutate_last_ns.store(ns, std::memory_order_relaxed);
+    }
 }
 
 // Mark all defines dirty. Called when (set-code ...) re-parses the whole

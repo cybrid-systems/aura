@@ -7213,6 +7213,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_critical_jit_keep_total{0};
     std::atomic<std::uint64_t> render_critical_partial_prefer_total{0};
     std::atomic<std::uint64_t> render_critical_define_registered_total{0};
+    // Issue #2051: Agent closed-loop — render-related mutate cost + loop rounds.
+    //   - render_mutate_cost_ns_total / samples / last_ns: soft-dirty cost for
+    //     render-critical defines (Agents: "was this mutate cheap enough?")
+    //   - render_closed_loop_rounds_total: Agent query→mutate→present rounds
+    //   - render_closed_loop_stable_total: rounds that kept health / no regress
+    //   - render_closed_loop_improve_total: rounds that improved a score metric
+    //   - render_agent_query_hits: query:render-stats closed-loop path hits
+    std::atomic<std::uint64_t> render_mutate_cost_ns_total{0};
+    std::atomic<std::uint64_t> render_mutate_cost_samples{0};
+    std::atomic<std::uint64_t> render_mutate_last_ns{0};
+    std::atomic<std::uint64_t> render_closed_loop_rounds_total{0};
+    std::atomic<std::uint64_t> render_closed_loop_stable_total{0};
+    std::atomic<std::uint64_t> render_closed_loop_improve_total{0};
+    std::atomic<std::uint64_t> render_agent_query_hits{0};
     std::atomic<std::uint64_t> render_hotpath_enter_total{0};
     // #1559: dirty short-circuit skip counter (mirrors arena_policy::render_hotpath_skip_total)
     std::atomic<std::uint64_t> render_hotpath_skip_total{0};
