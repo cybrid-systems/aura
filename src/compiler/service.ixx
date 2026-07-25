@@ -5319,6 +5319,28 @@ public:
                                                     : 0;
                 const auto partial_t0 = std::chrono::steady_clock::now();
                 if (relower_define_function(name, dirty_func_idx, flat, pool, expanded_root)) {
+                    // Issue #2113: debug incremental soundness oracle —
+                    // after partial success, full-lower the same Lambda and
+                    // compare IR (partial ≡ full). Zero cost when disabled.
+                    if (incremental_soundness_enabled() && dirty_func_idx < it->second.irs.size()) {
+                        auto full_fn = aura::compiler::lower_function_at(
+                            flat, pool, arena_, expanded_root, &evaluator_.primitives());
+                        // Align id for compare helper (ignores id already).
+                        full_fn.id = it->second.irs[dirty_func_idx].id;
+                        // check_incremental_soundness bumps process atomics;
+                        // mirror into CompilerMetrics for dump/export.
+                        const bool ok =
+                            check_incremental_soundness(it->second.irs[dirty_func_idx], full_fn);
+                        metrics_.incremental_soundness_runs_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (ok) {
+                            metrics_.incremental_soundness_ok_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else {
+                            metrics_.incremental_soundness_mismatch_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    }
                     // Issue #2112: feed adaptive threshold history.
                     const auto partial_ns = static_cast<std::uint64_t>(
                         std::chrono::duration_cast<std::chrono::nanoseconds>(

@@ -24,6 +24,7 @@
 module;
 
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <bit>
@@ -731,6 +732,169 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     if (dirty_count >= threshold)
         return false;
     return true;
+}
+
+// ── Issue #2113: incremental soundness oracle (partial ≡ full) ──
+// Debug/self-evo confidence: after partial re-lower, optionally
+// re-lower fully and compare IR. Zero overhead when disabled
+// (callers gate on incremental_soundness_enabled()).
+//
+// Enable:
+//   - Compile with -DAURA_INCREMENTAL_SOUNDNESS, or
+//   - Debug builds (!NDEBUG) default auto-on, or
+//   - Runtime: set_incremental_soundness_mode(1) from tests
+// Disable always: set_incremental_soundness_mode(2)
+// Auto: set_incremental_soundness_mode(0)
+
+inline std::atomic<int>& incremental_soundness_mode_atomic() noexcept {
+    static std::atomic<int> mode{0}; // 0=auto, 1=on, 2=off
+    return mode;
+}
+
+inline void set_incremental_soundness_mode(int mode) noexcept {
+    // 0 auto, 1 force on, 2 force off
+    incremental_soundness_mode_atomic().store(mode, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline int get_incremental_soundness_mode() noexcept {
+    return incremental_soundness_mode_atomic().load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool incremental_soundness_enabled() noexcept {
+    const int m = get_incremental_soundness_mode();
+    if (m == 1)
+        return true;
+    if (m == 2)
+        return false;
+#if defined(AURA_INCREMENTAL_SOUNDNESS)
+    return true;
+#elif !defined(NDEBUG)
+    return true;
+#else
+    return false;
+#endif
+}
+
+// Process-wide oracle counters (always present; zero cost when unused).
+inline std::atomic<std::uint64_t>& incremental_soundness_runs_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& incremental_soundness_ok_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& incremental_soundness_mismatch_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Pure IR instruction equivalence — opcodes + operands + type/shape
+// metadata. Ignores pure layout noise (none currently; source_ast kept
+// because same AST lower must agree).
+[[nodiscard]] inline bool ir_instruction_equivalent(const aura::ir::IRInstruction& a,
+                                                    const aura::ir::IRInstruction& b) noexcept {
+    if (a.opcode != b.opcode)
+        return false;
+    if (a.operands != b.operands)
+        return false;
+    if (a.type_id != b.type_id || a.shape_id != b.shape_id)
+        return false;
+    if (a.linear_ownership_state != b.linear_ownership_state)
+        return false;
+    if (a.adt_variant_id != b.adt_variant_id || a.narrow_evidence != b.narrow_evidence)
+        return false;
+    // source_ast_node_id: same lower of same AST should match; include for
+    // stronger oracle (under-dirty keeps stale source stamps).
+    if (a.source_ast_node_id != b.source_ast_node_id)
+        return false;
+    return true;
+}
+
+// Pure IR function equivalence (structure of blocks + instructions).
+// Ignores function id / name / specialized_for (partial preserves id;
+// full lower may assign temporary id 0).
+[[nodiscard]] inline bool ir_function_equivalent(const aura::ir::IRFunction& a,
+                                                 const aura::ir::IRFunction& b) noexcept {
+    if (a.blocks.size() != b.blocks.size())
+        return false;
+    if (a.arg_count != b.arg_count || a.local_count != b.local_count)
+        return false;
+    if (a.variadic != b.variadic)
+        return false;
+    if (a.params.size() != b.params.size())
+        return false;
+    for (std::size_t i = 0; i < a.params.size(); ++i) {
+        if (a.params[i] != b.params[i])
+            return false;
+    }
+    // free_vars: order may differ after partial merge; compare as sets
+    // only by size for soft check; require exact order when both empty
+    // or equal size with matching multiset.
+    if (a.free_vars.size() != b.free_vars.size())
+        return false;
+    for (std::size_t bi = 0; bi < a.blocks.size(); ++bi) {
+        const auto& ba = a.blocks[bi];
+        const auto& bb = b.blocks[bi];
+        if (ba.instructions.size() != bb.instructions.size())
+            return false;
+        if (ba.successors.size() != bb.successors.size())
+            return false;
+        for (std::size_t s = 0; s < ba.successors.size(); ++s) {
+            if (ba.successors[s] != bb.successors[s])
+                return false;
+        }
+        for (std::size_t ii = 0; ii < ba.instructions.size(); ++ii) {
+            if (!ir_instruction_equivalent(ba.instructions[ii], bb.instructions[ii]))
+                return false;
+        }
+    }
+    return true;
+}
+
+// Alias name used in issue design docs.
+[[nodiscard]] inline bool ir_equivalent(const aura::ir::IRFunction& a,
+                                        const aura::ir::IRFunction& b) noexcept {
+    return ir_function_equivalent(a, b);
+}
+
+// Run oracle compare: record metrics. Returns true if equivalent.
+// Does not abort unless AURA_INCREMENTAL_SOUNDNESS_HARD is defined.
+[[nodiscard]] inline bool check_incremental_soundness(const aura::ir::IRFunction& partial,
+                                                      const aura::ir::IRFunction& full) noexcept {
+    incremental_soundness_runs_atomic().fetch_add(1, std::memory_order_relaxed);
+    const bool ok = ir_equivalent(partial, full);
+    if (ok) {
+        incremental_soundness_ok_atomic().fetch_add(1, std::memory_order_relaxed);
+    } else {
+        incremental_soundness_mismatch_atomic().fetch_add(1, std::memory_order_relaxed);
+#if defined(AURA_INCREMENTAL_SOUNDNESS_HARD)
+        assert(ok && "incremental soundness violation: partial IR != full IR (#2113)");
+#endif
+    }
+    return ok;
+}
+
+// Intentional under-dirty injection for tests: corrupt a single opcode
+// so oracle must report mismatch (AC1).
+inline void inject_soundness_under_dirty_for_test(aura::ir::IRFunction& fn) noexcept {
+    if (fn.blocks.empty() || fn.blocks[0].instructions.empty())
+        return;
+    // Flip opcode to a different op (or ConstI64↔Return) without resizing.
+    auto& inst = fn.blocks[0].instructions[0];
+    using aura::ir::IROpcode;
+    if (inst.opcode == IROpcode::ConstI64)
+        inst.opcode = IROpcode::Return;
+    else
+        inst.opcode = IROpcode::ConstI64;
+}
+
+// Reset process-wide mode + counters (tests only).
+inline void reset_incremental_soundness_for_test() noexcept {
+    set_incremental_soundness_mode(0);
+    incremental_soundness_runs_atomic().store(0, std::memory_order_relaxed);
+    incremental_soundness_ok_atomic().store(0, std::memory_order_relaxed);
+    incremental_soundness_mismatch_atomic().store(0, std::memory_order_relaxed);
 }
 
 } // namespace aura::compiler

@@ -6108,6 +6108,42 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"adaptive-partial-relower-wired", make_int(1)},
                 {"schema-2112", make_int(2112)},
                 {"issue-2112", make_int(2112)},
+                // Issue #2113: incremental soundness oracle (partial ≡ full)
+                {"incremental_soundness_runs_total",
+                 make_int(m ? load(m->incremental_soundness_runs_total)
+                            : static_cast<std::int64_t>(
+                                  aura::compiler::incremental_soundness_runs_atomic().load(
+                                      std::memory_order_relaxed)))},
+                {"incremental-soundness-runs",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::incremental_soundness_runs_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"incremental_soundness_ok_total",
+                 make_int(m ? load(m->incremental_soundness_ok_total)
+                            : static_cast<std::int64_t>(
+                                  aura::compiler::incremental_soundness_ok_atomic().load(
+                                      std::memory_order_relaxed)))},
+                {"incremental-soundness-ok",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::incremental_soundness_ok_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"incremental_soundness_mismatch_total",
+                 make_int(m ? load(m->incremental_soundness_mismatch_total)
+                            : static_cast<std::int64_t>(
+                                  aura::compiler::incremental_soundness_mismatch_atomic().load(
+                                      std::memory_order_relaxed)))},
+                {"incremental-soundness-mismatch",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::incremental_soundness_mismatch_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"incremental-soundness-enabled",
+                 make_int(aura::compiler::incremental_soundness_enabled() ? 1 : 0)},
+                {"incremental-soundness-mode",
+                 make_int(
+                     static_cast<std::int64_t>(aura::compiler::get_incremental_soundness_mode()))},
+                {"incremental-soundness-wired", make_int(1)},
+                {"schema-2113", make_int(2113)},
+                {"issue-2113", make_int(2113)},
                 // Issue #2033: CacheEntryVersionStamp + bridge_epoch should_relower
                 {"cache_entry_version_stamp_total",
                  make_int(m ? load(m->cache_entry_version_stamp_total) : 0)},
@@ -6226,6 +6262,91 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2112", make_int(2112)},
                 {"issue-2112", make_int(2112)},
                 {"schema", make_int(2112)},
+            };
+            for (auto& [k, v] : fields) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2113: (query:incremental-soundness-stats) — debug oracle
+    // partial ≡ full IR (register_stats_impl; SlimSurface freeze).
+    // Enable: -DAURA_INCREMENTAL_SOUNDNESS, debug (!NDEBUG) auto, or
+    // set_incremental_soundness_mode(1). Disable: mode(2). HARD assert:
+    // -DAURA_INCREMENTAL_SOUNDNESS_HARD.
+    ObservabilityPrims::register_stats_impl(
+        "query:incremental-soundness-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            const auto runs_p = static_cast<std::int64_t>(
+                incremental_soundness_runs_atomic().load(std::memory_order_relaxed));
+            const auto ok_p = static_cast<std::int64_t>(
+                incremental_soundness_ok_atomic().load(std::memory_order_relaxed));
+            const auto mm_p = static_cast<std::int64_t>(
+                incremental_soundness_mismatch_atomic().load(std::memory_order_relaxed));
+            const std::pair<std::string, EvalValue> fields[] = {
+                {"incremental_soundness_runs_total",
+                 make_int(m ? static_cast<std::int64_t>(m->incremental_soundness_runs_total.load(
+                                  std::memory_order_relaxed))
+                            : runs_p)},
+                {"incremental-soundness-runs", make_int(runs_p)},
+                {"incremental_soundness_ok_total",
+                 make_int(m ? static_cast<std::int64_t>(
+                                  m->incremental_soundness_ok_total.load(std::memory_order_relaxed))
+                            : ok_p)},
+                {"incremental-soundness-ok", make_int(ok_p)},
+                {"incremental_soundness_mismatch_total",
+                 make_int(m ? static_cast<std::int64_t>(m->incremental_soundness_mismatch_total
+                                                            .load(std::memory_order_relaxed))
+                            : mm_p)},
+                {"incremental-soundness-mismatch", make_int(mm_p)},
+                {"incremental-soundness-enabled",
+                 make_int(incremental_soundness_enabled() ? 1 : 0)},
+                {"incremental-soundness-mode",
+                 make_int(static_cast<std::int64_t>(get_incremental_soundness_mode()))},
+                {"incremental-soundness-wired", make_int(1)},
+                // Enable docs (AC5) — values are documentation sentinels.
+                {"enable-compile-flag", make_int(1)},     // -DAURA_INCREMENTAL_SOUNDNESS
+                {"enable-hard-assert-flag", make_int(1)}, // -DAURA_INCREMENTAL_SOUNDNESS_HARD
+                {"enable-runtime-mode-on", make_int(1)},  // set_incremental_soundness_mode(1)
+                {"enable-runtime-mode-off", make_int(2)}, // set_incremental_soundness_mode(2)
+                {"schema-2113", make_int(2113)},
+                {"issue-2113", make_int(2113)},
+                {"schema", make_int(2113)},
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
