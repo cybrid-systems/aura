@@ -5499,6 +5499,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("memo-hit-rate-target-bp", 8000); // 80%
             insert_kv("schema-1923", 1923);
             insert_kv("issue-1923", 1923);
+            // Issue #2104 / #2068 Phase 2: boundary selective predicate-memo.
+            const std::int64_t selective_total =
+                m ? static_cast<std::int64_t>(m->predicate_memo_selective_invalidate_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t boundary_selective =
+                m ? static_cast<std::int64_t>(
+                        m->predicate_memo_boundary_selective_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("predicate-memo-selective-invalidate-total", selective_total);
+            insert_kv("predicate_memo_selective_invalidate_total", selective_total);
+            insert_kv("predicate-memo-boundary-selective-total", boundary_selective);
+            insert_kv("predicate_memo_boundary_selective_total", boundary_selective);
+            insert_kv("predicate-memo-boundary-selective-wired",
+                      m ? static_cast<std::int64_t>(m->predicate_memo_boundary_selective_wired.load(
+                              std::memory_order_relaxed))
+                        : 1);
+            insert_kv("schema-2104", 2104);
+            insert_kv("issue-2104", 2104);
+            insert_kv("schema-2068", 2068);
             // Issue #1924: DeltaBlameChain / typed_mutate blame propagation
             insert_kv("blame-chain-complete-total", blame_complete);
             insert_kv("blame_chain_complete_total", blame_complete);

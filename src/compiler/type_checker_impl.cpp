@@ -4143,9 +4143,41 @@ InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
             static_cast<struct CompilerMetrics*>(cs_.metrics_)
                 ->deep_narrow_refreshes_total.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #1872: stamp last_used for LRU partial eviction.
-        predicate_memo_[cond_id] =
-            PredicateMemoEntry{cond_id, cache_epoch_, occ, ++predicate_memo_clock_};
+        // Issue #1872 / #2104: stamp last_used + captured var_names for
+        // selective invalidation (same capture as analyze_predicate path).
+        std::vector<std::string> captured;
+        if (occ && !occ->var_name.empty())
+            captured.push_back(occ->var_name);
+        if (cond_id != NULL_NODE && cond_id < flat.size()) {
+            std::unordered_set<std::string> seen;
+            if (!captured.empty())
+                seen.insert(captured.front());
+            std::vector<NodeId> stack{cond_id};
+            std::vector<std::uint8_t> visited(flat.size(), 0);
+            visited[static_cast<std::size_t>(cond_id)] = 1;
+            int hops = 0;
+            while (!stack.empty() && hops < 64) {
+                ++hops;
+                const auto nid = stack.back();
+                stack.pop_back();
+                auto nv = flat.get(nid);
+                if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM) {
+                    auto nm = std::string(pool.resolve(nv.sym_id));
+                    if (!nm.empty() && seen.insert(nm).second)
+                        captured.push_back(std::move(nm));
+                }
+                for (auto c : nv.children) {
+                    if (c == NULL_NODE || c >= flat.size())
+                        continue;
+                    if (visited[static_cast<std::size_t>(c)])
+                        continue;
+                    visited[static_cast<std::size_t>(c)] = 1;
+                    stack.push_back(c);
+                }
+            }
+        }
+        predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ,
+                                                      ++predicate_memo_clock_, std::move(captured)};
         evict_predicate_memo_if_over_capacity();
 
         flat.clear_dirty_for(id, kOccurrenceBit);
@@ -4520,12 +4552,42 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
             stats_.and_or_join_uses += join_used ? 1 : 0;
             // Issue #1872: stamp last_used + partial LRU on overflow
             // (replaces pre-#1872 wholesale clear when size > 4096).
-            // Issue #2068: capture var_names from the predicate body for
-            // selective invalidation later. Empty for predicates that
-            // produced no narrowing (occ == nullopt) — no SymId refs to track.
+            // Issue #2068 / #2104: capture var_names from the predicate body
+            // for selective invalidation. Prefer the occurrence result name,
+            // then walk the cond subtree for all Variable SymIds so multi-var
+            // predicates invalidate correctly under post-mutate partial.
             std::vector<std::string> captured;
+            std::unordered_set<std::string> seen_names;
+            auto push_name = [&](std::string n) {
+                if (n.empty() || !seen_names.insert(n).second)
+                    return;
+                captured.push_back(std::move(n));
+            };
             if (occ && !occ->var_name.empty())
-                captured.push_back(occ->var_name);
+                push_name(occ->var_name);
+            // Bounded DFS of cond subtree for Variable names.
+            if (cond_id != NULL_NODE && cond_id < flat.size()) {
+                std::vector<NodeId> stack{cond_id};
+                std::vector<std::uint8_t> visited(flat.size(), 0);
+                visited[static_cast<std::size_t>(cond_id)] = 1;
+                int hops = 0;
+                while (!stack.empty() && hops < 64) {
+                    ++hops;
+                    const auto nid = stack.back();
+                    stack.pop_back();
+                    auto nv = flat.get(nid);
+                    if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM)
+                        push_name(std::string(pool.resolve(nv.sym_id)));
+                    for (auto c : nv.children) {
+                        if (c == NULL_NODE || c >= flat.size())
+                            continue;
+                        if (visited[static_cast<std::size_t>(c)])
+                            continue;
+                        visited[static_cast<std::size_t>(c)] = 1;
+                        stack.push_back(c);
+                    }
+                }
+            }
             predicate_memo_[cond_id] = PredicateMemoEntry{
                 cond_id, cache_epoch_, occ, ++predicate_memo_clock_, std::move(captured)};
             evict_predicate_memo_if_over_capacity();
@@ -6340,9 +6402,59 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 1, std::memory_order_relaxed);
         }
     }
-    // Issue #1923: targeted predicate_memo invalidation for affected
-    // / occurrence if-nodes only (not epoch wholesale clear).
+    // Issue #2104 / #2068 Phase 2: selective predicate-memo invalidation
+    // by dirty binding names (prefer when known) + min_gen, then #1923
+    // targeted node invalidation for occurrence If / affected set.
+    // Zero cost when dirty set empty (helpers no-op on empty).
     {
+        std::unordered_set<std::string> dirty_var_names;
+        if (sym_for_lookup != aura::ast::INVALID_SYM) {
+            const auto nm = pool.resolve(sym_for_lookup);
+            if (!nm.empty())
+                dirty_var_names.insert(std::string(nm));
+        }
+        // Rebind / set-body often leave target as Define/Lambda — also
+        // collect Variable names under the mutated subtree (bounded).
+        if (rec.target_node != NULL_NODE && rec.target_node < flat.size()) {
+            std::vector<NodeId> stack{rec.target_node};
+            std::vector<std::uint8_t> visited(flat.size(), 0);
+            visited[static_cast<std::size_t>(rec.target_node)] = 1;
+            int hops = 0;
+            while (!stack.empty() && hops < 48 && dirty_var_names.size() < 32) {
+                ++hops;
+                const auto nid = stack.back();
+                stack.pop_back();
+                auto nv = flat.get(nid);
+                if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM) {
+                    auto nm = pool.resolve(nv.sym_id);
+                    if (!nm.empty())
+                        dirty_var_names.insert(std::string(nm));
+                }
+                if (nv.tag == NodeTag::Define || nv.tag == NodeTag::Let ||
+                    nv.tag == NodeTag::LetRec) {
+                    if (nv.sym_id != INVALID_SYM) {
+                        auto nm = pool.resolve(nv.sym_id);
+                        if (!nm.empty())
+                            dirty_var_names.insert(std::string(nm));
+                    }
+                }
+                for (auto c : nv.children) {
+                    if (c == NULL_NODE || c >= flat.size())
+                        continue;
+                    if (visited[static_cast<std::size_t>(c)])
+                        continue;
+                    visited[static_cast<std::size_t>(c)] = 1;
+                    stack.push_back(c);
+                }
+            }
+        }
+        // Prefer selective var_name path when the dirty set is known (#2104).
+        const auto selective_vars = engine.invalidate_predicate_memo_for_var_names(dirty_var_names);
+        // Drop memo entries captured under a strictly older epoch than the
+        // current cache epoch (generation advanced across mutate).
+        const auto selective_gen =
+            engine.invalidate_predicate_memo_for_min_gen(cache_epoch_ > 0 ? cache_epoch_ : 0);
+        // #1923: still invalidate by affected / occurrence node ids.
         std::vector<NodeId> memo_targets;
         memo_targets.reserve(affected.size() + occurrence_targets.size());
         for (auto id : affected)
@@ -6350,6 +6462,17 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         for (auto id : occurrence_targets)
             memo_targets.push_back(id);
         engine.invalidate_predicate_memo_for_nodes(memo_targets, &flat);
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            // Path always wired on infer_flat_partial (zero cost when empty).
+            m->predicate_memo_boundary_selective_wired.store(1, std::memory_order_relaxed);
+            // Boundary-selective total: only drops from var_names/min_gen
+            // (not #1923 node invalidations). AC3: empty dirty → 0 add.
+            if (selective_vars + selective_gen > 0) {
+                m->predicate_memo_boundary_selective_total.fetch_add(selective_vars + selective_gen,
+                                                                     std::memory_order_relaxed);
+            }
+        }
     }
     // Issue #1529 / #1924: pre-seed blame affected sequence from the
     // mutation primary + a bounded prefix of the affected set
@@ -6563,6 +6686,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
         m->predicate_memo_targeted_invalidations_total.fetch_add(
             engine.predicate_memo_targeted_invalidations(), std::memory_order_relaxed);
+        // Issue #2104: also mirror engine selective total (cumulative per call).
+        m->predicate_memo_selective_invalidate_total.fetch_add(
+            engine.predicate_memo_selective_invalidate_total(), std::memory_order_relaxed);
         m->incremental_locality_minimal_recheck_wired.store(1, std::memory_order_relaxed);
     }
 

@@ -330,14 +330,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Agent can compute enforcement_ratio =
     // linear_post_mutate_enforcements / guard_dirty_epoch.
     bump_linear_post_mutate_enforcement();
-    // Issue #2068: Phase 1 — selective predicate-memo invalidation helpers
-    // (invalidate_predicate_memo_for_var_names + invalidate_predicate_memo_for_min_gen)
-    // are exposed on InferenceEngine. Wire-up sites are the reanalysis / mutate
-    // path callers (reanalyze_occurrence_contexts end, evaluate_mutation_boundary
-    // post-mutate) — left as Phase 2 follow-up since this surface requires
-    // accessors not yet on InferEngine / Guard (current_cache_epoch + infer_engine).
-    // The helpers themselves are unit-tested via the test added in
-    // test_linear_ownership_occurrence_predicate_mutate.cpp.
+    // Issue #2068 Phase 2 / #2104: selective predicate-memo invalidation is
+    // wired in TypeChecker::infer_flat_partial (dirty var_names + min_gen
+    // before reanalyze_occurrence_contexts). Post-mutate typecheck
+    // (run_post_mutate_typecheck_no_lock, mutate:rebind Guard) and
+    // typecheck-incremental invoke that path. Empty dirty → zero cost.
+    // Prefer selective when var set known; #1923 node invalidate still runs.
     // Issue #555 / #518: selective_recheck_count_ is
     // bumped from infer_flat_partial's
     // reanalyze_occurrence_contexts path, not here.
