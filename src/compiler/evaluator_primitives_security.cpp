@@ -3678,12 +3678,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return result;
         });
 
-    // Issue #2075: (query:security-audit-trail [limit])
-    // Unified surface over g_security_event_ring() — covers
-    // EffectDeny + IsolationDeny + InvariantFail + MacroHygiene
-    // (the shared SecurityEvent schema introduced in #2075 so one
-    // Agent query covers effect deny + isolation deny + invariant
-    // fail). Lines include kind/tenant/mutation_id/epoch/effect/op/reason/denied.
+    // Issue #2075 / #2054: (query:security-audit-trail [limit])
+    // Unified surface over g_security_event_ring() — covers EffectAllow
+    // + EffectDeny + IsolationDeny + InvariantFail + MacroHygiene.
+    // Prefer query:security-audit for filters / TypedMutation join.
     ObservabilityPrims::register_stats_impl(
         "query:security-audit-trail", [&ev](std::span<const EvalValue> a) -> EvalValue {
             using aura::core::security_event::g_security_event_ring;
@@ -3695,13 +3693,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 limit = static_cast<std::size_t>(as_int(a[0]));
             if (limit > kSecurityEventRingSize)
                 limit = kSecurityEventRingSize;
-            const auto seq = ring.seq.load(std::memory_order_relaxed);
+            const auto head = ring.seq.load(std::memory_order_relaxed);
             EvalValue result = make_void();
             std::size_t emitted = 0;
             for (std::size_t i = 0; i < kSecurityEventRingSize && emitted < limit; ++i) {
-                if (seq <= i)
+                if (head <= i)
                     break;
-                const auto& e = ring.ring[(seq - 1 - i) % kSecurityEventRingSize];
+                const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
                 const char* kind_str = "EffectDeny";
                 switch (e.kind) {
                     case SecurityEventKind::EffectDeny:
@@ -3716,15 +3714,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     case SecurityEventKind::MacroHygiene:
                         kind_str = "MacroHygiene";
                         break;
+                    case SecurityEventKind::EffectAllow:
+                        kind_str = "EffectAllow";
+                        break;
                 }
-                auto line =
-                    std::format("seq={} kind={} tenant={} mutation_id={} epoch={} effect={} "
-                                "op=\"{}\" reason=\"{}\" denied={}",
-                                seq, kind_str, e.tenant_id, e.mutation_id, e.epoch, e.effect_bits,
-                                e.op, e.reason, e.denied ? 1 : 0);
-                // Issue #676 query-table style: push string into ev.string_heap_
-                // + pair into ev.pairs_ (car=string, cdr=rest) — Agent walks with
-                // car/cdr like other audit queries.
+                auto line = std::format(
+                    "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} effect={} "
+                    "op=\"{}\" reason=\"{}\" denied={}",
+                    e.seq, kind_str, e.tenant_id, e.fiber_id, e.mutation_id, e.epoch, e.effect_bits,
+                    e.op, e.reason, e.denied ? 1 : 0);
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
@@ -3733,6 +3731,186 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 ++emitted;
             }
             return result;
+        });
+
+    // Issue #2054: (query:security-audit [limit] [tenant] [fiber] [since-seq] [mutation-id])
+    // Single Agent-facing forensic surface joining SecurityEvent +
+    // TypedMutationAudit trail by mutation_id. Positional filters
+    // (same style as query:mutation-audit-log):
+    //   limit       — max rows (default 10, cap = ring size)
+    //   tenant      — match tenant_id when arg present (int)
+    //   fiber       — match fiber_id when arg present (int; 0 matches 0)
+    //   since-seq   — only events with e.seq >= since-seq (int > 0)
+    //   mutation-id — match mutation_id when arg present and != 0
+    // Each line includes typed_kind/typed_outcome when the TypedMutation
+    // trail still holds a correlated event (newest match).
+    ObservabilityPrims::register_stats_impl(
+        "query:security-audit", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            using aura::compiler::typed_audit::AuditOutcome;
+            using aura::compiler::typed_audit::MutationKind;
+            using aura::compiler::typed_audit::trail_find_by_mutation_id;
+            using aura::compiler::typed_audit::TypedMutationAuditEvent;
+            using aura::core::security_event::g_security_event_ring;
+            using aura::core::security_event::kSecurityAuditUnifyIssue;
+            using aura::core::security_event::kSecurityEventRingSize;
+            using aura::core::security_event::SecurityEventKind;
+            auto& ring = g_security_event_ring();
+
+            std::size_t limit = 10;
+            if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
+                limit = static_cast<std::size_t>(as_int(a[0]));
+            if (limit > kSecurityEventRingSize)
+                limit = kSecurityEventRingSize;
+
+            const bool filt_tenant = a.size() >= 2 && is_int(a[1]);
+            const auto want_tenant = filt_tenant ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
+            const bool filt_fiber = a.size() >= 3 && is_int(a[2]);
+            const auto want_fiber = filt_fiber ? as_int(a[2]) : 0;
+            const bool filt_since = a.size() >= 4 && is_int(a[3]) && as_int(a[3]) > 0;
+            const auto since_seq = filt_since ? static_cast<std::uint64_t>(as_int(a[3])) : 0;
+            const bool filt_mid = a.size() >= 5 && is_int(a[4]) && as_int(a[4]) != 0;
+            const auto want_mid = filt_mid ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
+
+            auto kind_name = [](SecurityEventKind k) -> const char* {
+                switch (k) {
+                    case SecurityEventKind::EffectDeny:
+                        return "EffectDeny";
+                    case SecurityEventKind::IsolationDeny:
+                        return "IsolationDeny";
+                    case SecurityEventKind::InvariantFail:
+                        return "InvariantFail";
+                    case SecurityEventKind::MacroHygiene:
+                        return "MacroHygiene";
+                    case SecurityEventKind::EffectAllow:
+                        return "EffectAllow";
+                }
+                return "Unknown";
+            };
+            auto typed_kind_name = [](MutationKind k) -> const char* {
+                switch (k) {
+                    case MutationKind::Unknown:
+                        return "Unknown";
+                    case MutationKind::Structural:
+                        return "Structural";
+                    case MutationKind::ReplaceType:
+                        return "ReplaceType";
+                    case MutationKind::ReplaceValue:
+                        return "ReplaceValue";
+                    case MutationKind::RecordPatch:
+                        return "RecordPatch";
+                    case MutationKind::Other:
+                        return "Other";
+                    case MutationKind::MacroHygiene:
+                        return "MacroHygiene";
+                    case MutationKind::AotHotUpdate:
+                        return "AotHotUpdate";
+                    case MutationKind::JitHotpath:
+                        return "JitHotpath";
+                }
+                return "Unknown";
+            };
+            auto typed_outcome_name = [](AuditOutcome o) -> const char* {
+                switch (o) {
+                    case AuditOutcome::Success:
+                        return "Success";
+                    case AuditOutcome::Rollback:
+                        return "Rollback";
+                    case AuditOutcome::Error:
+                        return "Error";
+                }
+                return "Unknown";
+            };
+
+            const auto head = ring.seq.load(std::memory_order_relaxed);
+            EvalValue result = make_void();
+            std::size_t emitted = 0;
+            for (std::size_t i = 0; i < kSecurityEventRingSize && emitted < limit; ++i) {
+                if (head <= i)
+                    break;
+                const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+                if (filt_tenant && e.tenant_id != want_tenant)
+                    continue;
+                if (filt_fiber && e.fiber_id != want_fiber)
+                    continue;
+                if (filt_since && e.seq < since_seq)
+                    continue;
+                if (filt_mid && e.mutation_id != want_mid)
+                    continue;
+
+                const char* typed_kind = "-";
+                const char* typed_outcome = "-";
+                std::uint64_t typed_seq = 0;
+                TypedMutationAuditEvent te{};
+                if (e.mutation_id != 0 && trail_find_by_mutation_id(e.mutation_id, te)) {
+                    typed_kind = typed_kind_name(te.kind);
+                    typed_outcome = typed_outcome_name(te.outcome);
+                    typed_seq = te.seq;
+                }
+
+                auto line = std::format(
+                    "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} effect={} "
+                    "op=\"{}\" reason=\"{}\" denied={} typed_seq={} typed_kind={} "
+                    "typed_outcome={} schema={}",
+                    e.seq, kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id, e.epoch,
+                    e.effect_bits, e.op, e.reason, e.denied ? 1 : 0, typed_seq, typed_kind,
+                    typed_outcome, kSecurityAuditUnifyIssue);
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(line));
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), result});
+                result = make_pair(pid);
+                ++emitted;
+            }
+            return result;
+        });
+
+    // Issue #2054: query:security-audit-stats — SlimSurface counters for
+    // the unified trail (schema-2054 + ring head/total + typed trail size).
+    ObservabilityPrims::register_stats_impl(
+        "query:security-audit-stats", [&ev](const auto&) -> EvalValue {
+            using aura::compiler::typed_audit::trail_size;
+            using aura::core::security_event::g_security_event_ring;
+            using aura::core::security_event::kSecurityAuditUnifyIssue;
+            using aura::core::security_event::kSecurityEventRingSize;
+            auto& ring = g_security_event_ring();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", kSecurityAuditUnifyIssue);
+            insert_kv("schema-2054", kSecurityAuditUnifyIssue);
+            insert_kv("ring-size", static_cast<std::int64_t>(kSecurityEventRingSize));
+            insert_kv("seq", static_cast<std::int64_t>(ring.seq.load(std::memory_order_relaxed)));
+            insert_kv("total",
+                      static_cast<std::int64_t>(ring.total.load(std::memory_order_relaxed)));
+            insert_kv("typed-trail-size", static_cast<std::int64_t>(trail_size()));
+            insert_kv("unified", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #668: query:primitives-regex-error-stats — math regex

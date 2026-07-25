@@ -1509,17 +1509,21 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             return out;
         };
 
-        // (engine:metrics "query:foo-stats") → single stats value
+        // (engine:metrics "query:foo-stats" [args...]) → single stats value
         // Issue #1439: prefer internal stats impl table (public prims removed).
+        // Issue #2054: forward optional filter args after the name so
+        // query:security-audit / query:mutation-audit-log can filter by
+        // tenant / fiber / since-seq / mutation-id via the metrics facade.
         if (a.size() >= 1 && is_string(a[0])) {
             auto sidx = as_string_idx(a[0]);
             if (sidx >= ev.string_heap_.size())
                 return make_void();
             const std::string& name = ev.string_heap_[sidx];
+            const auto rest = a.size() > 1 ? a.subspan(1) : std::span<const EvalValue>{};
             if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
-                return (*fn)({});
+                return (*fn)(rest);
             if (auto fn = ev.primitives_.lookup(name))
-                return (*fn)({});
+                return (*fn)(rest);
             return make_void();
         }
 

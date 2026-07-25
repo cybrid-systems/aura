@@ -220,30 +220,39 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
             if (required_effect_bits & kEffectFfi)
                 m->capability_denial_ffi_total.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #2075: shared SecurityEvent surface — one trail covers
-        // effect deny + isolation deny + invariant. query:security-audit-trail
-        // reads from g_security_event_ring() to give agents a unified view.
-        using aura::compiler::security::kEffectFfi;
-        using aura::compiler::security::kEffectMutate;
-        // Use ::aura::core:: (absolute path) because we're inside
-        // namespace aura::compiler and `aura::core::` would otherwise
-        // resolve as nested (aura::compiler::aura::core::) which doesn't exist.
-        using ::aura::core::security_event::append_security_event;
-        using ::aura::core::security_event::g_security_event_ring;
-        using ::aura::core::security_event::SecurityEventKind;
-        const char* reason_str = "capability-effect-deny";
-        if (required_effect_bits & kEffectMutate)
-            reason_str = "mutate-deny";
-        else if (required_effect_bits & kEffectFfi)
-            reason_str = "ffi-deny";
-        append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny, tenant,
-                              provenance_mutation_id, prov.epoch, required_effect_bits, op,
-                              reason_str);
     } else if (sb_active) {
         // Issue #1876: all allowed effects under sandbox record provenance.
         g_provenance_tracker().record_mutation();
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->sandbox_provenance_records_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #2075 / #2054: always emit correlated SecurityEvent (allow + deny)
+    // so Agents get a complete forensic trail. Use ::aura::core:: (absolute)
+    // because we're inside namespace aura::compiler.
+    {
+        using aura::compiler::security::kEffectFfi;
+        using aura::compiler::security::kEffectMutate;
+        using ::aura::core::security_event::append_security_event;
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::SecurityEventKind;
+        const auto mid =
+            provenance_mutation_id != 0 ? provenance_mutation_id : static_cast<std::uint64_t>(seq);
+        const auto kind = ok ? SecurityEventKind::EffectAllow : SecurityEventKind::EffectDeny;
+        const char* reason_str = "effect-allow";
+        if (!ok) {
+            reason_str = "capability-effect-deny";
+            if (required_effect_bits & kEffectMutate)
+                reason_str = "mutate-deny";
+            else if (required_effect_bits & kEffectFfi)
+                reason_str = "ffi-deny";
+        }
+        append_security_event(g_security_event_ring(), kind, tenant, mid, prov.epoch,
+                              required_effect_bits, op, reason_str, /*denied=*/!ok, slot.fiber_id);
+        // #2054: always-on TypedMutationAudit correlation (bypasses Sampled).
+        typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/!ok,
+                                                       static_cast<std::uint32_t>(target_node),
+                                                       slot.fiber_id);
     }
     g_sandbox_state().effect_checks++;
     return ok;
@@ -269,10 +278,10 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
     if (!g_mutation_audit_wal().enable(persist_dir, &replayed, kMutationAuditRingSize))
         return false;
     // Install recovered records into ring (preserve seq continuity).
+    // Issue #2054: do NOT skip rec.seq==0 — the first emit uses seq 0
+    // (fetch_add starts at 0); skipping dropped the first allow on replay.
     std::uint64_t max_seq = 0;
     for (const auto& rec : replayed) {
-        if (rec.seq == 0)
-            continue;
         auto& slot = mutation_audit_ring_[rec.seq % kMutationAuditRingSize];
         slot.seq = rec.seq;
         slot.timestamp_ms = rec.timestamp_ms;
@@ -289,10 +298,35 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
         if (rec.seq + 1 > max_seq)
             max_seq = rec.seq + 1;
     }
-    if (max_seq > 0) {
+    if (!replayed.empty()) {
+        // max_seq is exclusive next; if only seq=0 was present, max_seq=1.
+        if (max_seq == 0)
+            max_seq = 1;
         mutation_audit_seq_.store(max_seq, std::memory_order_relaxed);
         // total reflects recovered + future; seed with recovered count.
         mutation_audit_total_.store(replayed.size(), std::memory_order_relaxed);
+    }
+    // Issue #2054: rebuild unified SecurityEvent ring from WAL so Agents
+    // see the same chronological trail after restart (durable backend =
+    // mutation_audit_wal). Clear then re-append in seq order.
+    {
+        using ::aura::core::security_event::append_security_event;
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::reset_security_event_ring_for_test;
+        using ::aura::core::security_event::SecurityEventKind;
+        reset_security_event_ring_for_test();
+        for (const auto& rec : replayed) {
+            const bool denied = rec.effect_denied != 0;
+            const auto kind =
+                denied ? SecurityEventKind::EffectDeny : SecurityEventKind::EffectAllow;
+            const char* reason = denied ? "wal-replay-deny" : "wal-replay-allow";
+            const auto mid = rec.provenance_mutation_id != 0 ? rec.provenance_mutation_id
+                                                             : (rec.seq == 0 ? 1 : rec.seq);
+            append_security_event(g_security_event_ring(), kind, rec.tenant_id, mid, rec.epoch,
+                                  rec.effect_bits,
+                                  std::string_view(rec.op, strnlen(rec.op, sizeof(rec.op))), reason,
+                                  denied, rec.fiber_id);
+        }
     }
     return true;
 }
@@ -459,9 +493,15 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         using ::aura::core::security_event::append_security_event;
         using ::aura::core::security_event::g_security_event_ring;
         using ::aura::core::security_event::SecurityEventKind;
+        const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
         append_security_event(g_security_event_ring(), SecurityEventKind::IsolationDeny, target,
                               ref_tenant, ::aura::core::current_mutation_epoch(),
-                              static_cast<std::uint16_t>(required_effects), op, "isolation-deny");
+                              static_cast<std::uint16_t>(required_effects), op, "isolation-deny",
+                              /*denied=*/true, fiber);
+        // #2054: correlate isolation deny into TypedMutation trail.
+        typed_audit::capture_security_correlated_audit(ref_tenant != 0 ? ref_tenant : target, op,
+                                                       ::aura::core::current_mutation_epoch(),
+                                                       /*denied=*/true, /*target_node=*/0, fiber);
     }
     return ok;
 }
