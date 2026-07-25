@@ -229,6 +229,8 @@ private:
     // so record_cross_delta_blame_hit can mark truncated chains.
     bool last_reverify_truncated_ = false;
     std::size_t last_reverify_unscanned_ = 0;
+    // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
+    bool force_next_delta_timeout_ = false;
     void note_touched_var(aura::core::TypeId id);
     [[nodiscard]] std::uint32_t union_find_rep_index(aura::core::TypeId id) const;
     [[nodiscard]] int constraint_reverify_priority(std::size_t idx) const;
@@ -294,6 +296,16 @@ public:
     void* metrics_ = nullptr;
 
     void set_metrics(void* m) { metrics_ = m; }
+    // Issue #2107: synthetic over-limit for Agent tests — next solve_delta
+    // returns TIMEOUT with the built worklist as unresolved (no process).
+    // Auto-clears after one call. Production code must leave this false.
+    void force_next_delta_timeout_for_test(bool v = true) noexcept {
+        force_next_delta_timeout_ = v;
+    }
+    [[nodiscard]] bool last_reverify_truncated() const noexcept { return last_reverify_truncated_; }
+    [[nodiscard]] std::size_t last_reverify_unscanned() const noexcept {
+        return last_reverify_unscanned_;
+    }
     // Issue #536: wire solve_delta touched_roots snapshot +
     // cross-delta conflict hooks to Evaluator counters.
     void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
@@ -2056,6 +2068,8 @@ static_assert(aura::ast::MutationVisitor<PostMutationInvariantVisitor>);
 // priority policy.
 
 // Result of solve_delta_occurrence (cross-delta stability snapshot).
+// Issue #2107: structured TIMEOUT / partial unresolved export so Agents
+// can self-repair without parsing free-form diagnostics.
 export struct SolveDeltaOccurrenceResult {
     SolveResult status = SolveResult::SOLVED;
     std::size_t occurrence_priority_roots = 0;
@@ -2064,12 +2078,25 @@ export struct SolveDeltaOccurrenceResult {
     // True when blame chain is complete or retained mutation/predicate
     // anchors preserve continuity across clear_blame_context.
     bool provenance_continuity = false;
+    // Issue #2107: constraints still on the worklist (TIMEOUT) or the
+    // failing constraint (CONFLICT, when available). Empty on SOLVED.
+    // Callers may also receive the same list via unresolved_out.
+    std::vector<Constraint> unresolved;
+    // From reverify scan cap / last_blame_chain (what to expand next).
+    std::size_t unscanned_constraint_count = 0;
+    bool truncated_reverify = false;
+    // Unique affected_node ids from unresolved + blame frames (Agent
+    // repair set — no free-form diagnostic parsing required).
+    std::vector<std::uint32_t> unresolved_affected_nodes;
 };
 
 // Issue #2028: mark occurrence vars, restore retained blame anchors if
 // needed, then solve_delta. Only touched / occurrence / let-poly roots
 // participate in the incremental worklist (existing solve_delta policy).
 // metrics: optional CompilerMetrics* for agent-visible counters.
+// Issue #2107: always fills result.unresolved on TIMEOUT (and optionally
+// CONFLICT); mirrors into unresolved_out when non-null. Strict vs
+// permissive TypeError/Warning policy is unchanged at InferenceEngine.
 export SolveDeltaOccurrenceResult
 solve_delta_occurrence(ConstraintSystem& cs,
                        std::span<const aura::core::TypeId> occurrence_vars = {},
