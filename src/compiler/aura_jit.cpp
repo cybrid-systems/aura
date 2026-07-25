@@ -2431,12 +2431,27 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     // Issue #1369: non-__top__ symbols use mangle_aot_name (always `_vN`) so
     // registration .c link names match the LLVM object. `__top__` stays the
     // exact symbol runtime.c main() calls (version lives in aot_top_fn_version).
+    //
+    // Issue #2091: thread live env_frame_version + linear_state into the
+    // mangle. Pre-#2091 this site passed only defuse — captured-env /
+    // captured-linear drift after emit was invisible to the LLVM-side
+    // symbol (and therefore to dlopen-based reload probes). The
+    // registration .c emits matching link names via aot_link_name
+    // (also updated to accept env/linear), so the symbols stay
+    // symmetric. fn.linear_ownership_state wins over the global
+    // fingerprint for the per-function mangle (same logic as
+    // generate_registration_c).
     std::string fn_name = fn.name;
     const std::uint64_t emit_ver = aura_get_aot_defuse_version();
+    const std::uint64_t emit_env_v = aura_get_aot_live_env_frame_version();
+    const std::uint8_t emit_lin_fingerprint = aura_get_aot_live_linear_state_fingerprint();
+    const std::uint8_t fn_lin = static_cast<std::uint8_t>(fn.linear_ownership_state & 0xFFu);
+    const std::uint8_t emit_lin = fn_lin > emit_lin_fingerprint ? fn_lin : emit_lin_fingerprint;
     auto unique_name =
         (fn_name == "__top__")
             ? fn_name
-            : aura::compiler::mangle_aot_name(fn_name, static_cast<std::uint32_t>(my_id), emit_ver);
+            : aura::compiler::mangle_aot_name(fn_name, static_cast<std::uint32_t>(my_id), emit_ver,
+                                              emit_env_v, emit_lin);
     auto ptr_i64 = llvm::PointerType::getUnqual(local_ctx);
     auto i32_ty = llvm::Type::getInt32Ty(local_ctx);
     auto ret_ty = llvm::Type::getInt64Ty(local_ctx);

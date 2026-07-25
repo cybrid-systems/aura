@@ -53,6 +53,45 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_defuse_version(void)
     return g_aot_defuse_version_stub;
 }
 
+// Issue #2091: weak stubs for the live env_frame_version +
+// linear_state_fingerprint mirror atomics. Test binaries that
+// link aura_jit.cpp + a stub need these to compile; production
+// aura_jit_bridge.cpp provides the strong definitions. The live
+// values stay 0 in tests unless the test explicitly bumps them
+// (mirrors the pre-#2091 behavior — captures the legacy
+// defuse-only shape).
+static std::uint64_t g_aot_live_env_frame_version_stub = 0;
+static std::uint8_t g_aot_live_linear_state_fingerprint_stub = 0;
+
+extern "C" __attribute__((weak)) void aura_set_aot_live_env_frame_version(std::uint64_t v) {
+    g_aot_live_env_frame_version_stub = v;
+}
+
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_live_env_frame_version(void) {
+    return g_aot_live_env_frame_version_stub;
+}
+
+extern "C" __attribute__((weak)) void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v) {
+    g_aot_live_linear_state_fingerprint_stub = v;
+}
+
+extern "C" __attribute__((weak)) std::uint8_t aura_get_aot_live_linear_state_fingerprint(void) {
+    return g_aot_live_linear_state_fingerprint_stub;
+}
+
+// Issue #2091: weak stubs for the force flag bridge + the env-var
+// seed call. The stub returns 0 (force off) by default so tests
+// without the production bridge get the legacy shape.
+static bool g_aot_force_env_linear_suffix_stub = false;
+
+extern "C" __attribute__((weak)) void aura_aot_set_force_env_linear_suffix(int v) {
+    g_aot_force_env_linear_suffix_stub = (v != 0);
+}
+
+extern "C" __attribute__((weak)) int aura_aot_get_force_env_linear_suffix(void) {
+    return g_aot_force_env_linear_suffix_stub ? 1 : 0;
+}
+
 // Issue #1485 C2-wire: weak stubs for aura_set/get_current_bridge_epoch.
 // Production impl is in aura_jit_bridge.cpp; this ensures test
 // binaries that don't link aura_jit_bridge.cpp (test_spec_jit,

@@ -9,6 +9,7 @@ module;
 #include "core/workspace_isolation.hh"
 #include "core/self_healing_hooks.h"
 #include "security_capabilities.h"
+#include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
 #include <chrono>
 #include <cstdio>
 
@@ -477,6 +478,10 @@ void Evaluator::restore_panic_checkpoint_on_hot_swap_if_needed() noexcept {
 void Evaluator::run_post_restore_lifecycle_close(bool safe_total_event) noexcept {
     (void)truncate_env_frames_to_checkpoint();
     env_generation_ = env_generation_ + 1;
+    // Issue #2091: publish live env_frame_version + linear_state
+    // fingerprint to the AOT bridge (post-restore path — fiber
+    // steal / GC restore must reach the next emit / reemit).
+    publish_live_env_linear_to_bridge();
     invalidate_post_rollback_env_frames();
     walk_active_closures([this](ClosureId /*id*/, Closure& cl) {
         if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch()))

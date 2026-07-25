@@ -295,6 +295,115 @@ static constexpr std::uint64_t kAotRegionDirtyClearThreshold = 8;
 // 0 = no stamp (skip drift detection). Host can raise via setter when wired.
 static std::uint64_t g_aot_emit_env_frame_version = 0;
 
+// Issue #2091: live mirrors that follow the current Evaluator's
+// env_generation_ + linear-ownership fingerprint. The Evaluator
+// bumps these whenever the underlying counter changes so that
+// every emit / reemit / registration site reads the **current**
+// values instead of relying on a hand-set global. generate_registration_c
+// + aura_reemit_aot_for_dirty both prefer the live values when the
+// host hasn't explicitly set `g_aot_emit_env_frame_version` (max
+// wins; wired hosts always produce a non-zero stamp).
+//
+// `g_aot_live_linear_state_fingerprint` is a uint8 that tracks
+// the maximum linear_ownership_state observed across active
+// EnvFrames in the live Evaluator (mirrors the registration
+// .c's `aot_linear_state` symbol computation — same logic,
+// surfaced as a process-global so emit paths don't need an
+// Evaluator handle).
+static std::atomic<std::uint64_t> g_aot_live_env_frame_version{0};
+static std::atomic<std::uint8_t> g_aot_live_linear_state_fingerprint{0};
+
+// Issue #2091: process-global snapshot of the AURA_AOT_FORCE_ENV_LINEAR_SUFFIX
+// env var (read once at first emit so test harnesses that flip the flag
+// via aura_aot_set_force_env_linear_suffix() stay authoritative). The
+// C-linkage setter stores into aot_mangle.h's static atomic; the env
+// var here only seeds the default on cold start.
+static std::atomic<bool> g_aot_force_env_linear_suffix_env_seeded{false};
+
+static void aot_seed_force_env_linear_suffix_from_env() {
+    bool expected = false;
+    if (!g_aot_force_env_linear_suffix_env_seeded.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel))
+        return;
+    if (const char* e = ::getenv("AURA_AOT_FORCE_ENV_LINEAR_SUFFIX")) {
+        const bool on = (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y' ||
+                         e[0] == 'o' || e[0] == 'O');
+        aura::compiler::aot_set_force_env_linear_suffix(on);
+    }
+}
+
+// Issue #2091: live env_frame_version setter (called by the Evaluator
+// whenever env_generation_ bumps). The atomic is the canonical
+// process-global that every emit / reemit / registration site reads
+// when constructing mangle_aot_name / aot_link_name args.
+extern "C" void aura_set_aot_live_env_frame_version(std::uint64_t v) {
+    g_aot_live_env_frame_version.store(v, std::memory_order_release);
+}
+
+extern "C" std::uint64_t aura_get_aot_live_env_frame_version(void) {
+    return g_aot_live_env_frame_version.load(std::memory_order_acquire);
+}
+
+// Issue #2091: live linear_state fingerprint setter (uint8 — mirrors
+// the max linear_ownership_state observed in the active EnvFrames).
+extern "C" void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v) {
+    g_aot_live_linear_state_fingerprint.store(v, std::memory_order_release);
+}
+
+extern "C" std::uint8_t aura_get_aot_live_linear_state_fingerprint(void) {
+    return g_aot_live_linear_state_fingerprint.load(std::memory_order_acquire);
+}
+
+// Issue #2091: C-linkage bridge for the force flag in aot_mangle.h.
+// Honors AURA_AOT_FORCE_ENV_LINEAR_SUFFIX on first call so tests can
+// flip the flag explicitly without needing to set the env var. The
+// aot_mangle.h static atomic remains the source of truth.
+extern "C" void aura_aot_set_force_env_linear_suffix(int v) {
+    aot_seed_force_env_linear_suffix_from_env();
+    aura::compiler::aot_set_force_env_linear_suffix(v != 0);
+}
+
+extern "C" int aura_aot_get_force_env_linear_suffix(void) {
+    aot_seed_force_env_linear_suffix_from_env();
+    return aura::compiler::aot_force_env_linear_suffix() ? 1 : 0;
+}
+
+// Issue #2091: helper used by emit / reemit / registration sites.
+// Picks the **effective** env_frame_version stamp for a given emit:
+// prefer the explicitly-set host global (back-compat with #1640),
+// fall back to the live Evaluator mirror. Returns 0 only when both
+// are 0 (the legacy defuse-only shape).
+static std::uint64_t aot_resolve_emit_env_frame_version() noexcept {
+    const std::uint64_t host = g_aot_emit_env_frame_version;
+    const std::uint64_t live = g_aot_live_env_frame_version.load(std::memory_order_acquire);
+    return host > live ? host : live;
+}
+
+// Issue #2091: same, for the linear_state fingerprint. Per-function
+// overrides win (functions[i].linear_ownership_state) when the emit
+// path is the per-function FlatFunction loop in
+// generate_registration_c; the fingerprint is the module-level max.
+static std::uint8_t aot_resolve_emit_linear_state_fingerprint() noexcept {
+    const std::uint8_t live = g_aot_live_linear_state_fingerprint.load(std::memory_order_acquire);
+    return live;
+}
+
+// Issue #2091: metric bumper helper. Picks stamped vs default_zero
+// based on whether the resolved env/linear are non-zero or the force
+// flag is on. Called once per emit / reemit / registration site so
+// the dashboard can detect miswired hosts.
+static void aot_bump_env_linear_stamp_metric(std::uint64_t env_v, std::uint8_t lin_v) {
+    auto* m = aot_metrics();
+    if (!m)
+        return;
+    const bool stamped =
+        (env_v != 0) || (lin_v != 0) || aura::compiler::aot_force_env_linear_suffix();
+    if (stamped)
+        m->aot_emit_env_linear_stamped_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        m->aot_emit_env_linear_default_zero_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Backward-compat aliases for emit / log sites that still read "module version"
 // of the default state.
 static std::uint64_t g_aot_module_version_default() {
@@ -2382,19 +2491,57 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     // ahead. Defaults to 0 (no stamped env) for backwards compat
     // with pre-#1640 binaries — the runtime's drift check treats 0
     // as "no stamp, skip drift detection".
-    const std::uint64_t emit_env_frame_version = g_aot_emit_env_frame_version;
+    //
+    // Issue #2091: prefer the live Evaluator mirror via
+    // aot_resolve_emit_env_frame_version() (max of explicit host
+    // global + live atomic). Wired hosts always produce a
+    // non-zero stamp here so captured-env drift is observable.
+    aot_seed_force_env_linear_suffix_from_env();
+    const std::uint64_t emit_env_frame_version = aot_resolve_emit_env_frame_version();
+    // Issue #2091: module-level linear_state fingerprint = max of
+    // per-fn linear_ownership_state + the live Evaluator fingerprint.
+    // This is the same max computation that used to live inline below
+    // for the `aot_linear_state` symbol; lifted so mangle / link
+    // names can stamp the same value (pre-#2091 link names were
+    // defuse-only — captured-linear drift was invisible).
+    std::uint8_t max_lin = aot_resolve_emit_linear_state_fingerprint();
+    for (unsigned int i = 0; i < num_functions; ++i) {
+        const std::uint8_t ls =
+            static_cast<std::uint8_t>(functions[i].linear_ownership_state & 0xFFu);
+        if (ls > max_lin)
+            max_lin = ls;
+    }
+    const std::uint8_t emit_linear_state = max_lin;
     for (unsigned int i = 0; i < num_functions; ++i) {
         // Issue #1640: thread env_frame_version + linear_state
         // through the mangle so the resulting symbol carries the
         // extra versioning context. linear_state is read from the
         // function's runtime-linear-ownership metadata (0 = Untracked
         // when the function does not capture linear bindings).
+        //
+        // Issue #2091: per-function linear_state wins over the
+        // module-level max when it's higher (a single tracked-linear
+        // closure in the module still stamps the symbol). The env
+        // stamp is module-global — same value for every fn in the
+        // emit batch.
         const std::uint8_t fn_linear_state =
-            static_cast<std::uint8_t>(functions[i].linear_ownership_state);
-        mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i, emit_version,
-                                                           emit_env_frame_version, fn_linear_state);
-        link_names[i] = aura::compiler::aot_link_name(functions[i].name, i, emit_version);
+            static_cast<std::uint8_t>(functions[i].linear_ownership_state & 0xFFu);
+        const std::uint8_t fn_lin_for_mangle =
+            fn_linear_state > emit_linear_state ? fn_linear_state : emit_linear_state;
+        mangled_names[i] = aura::compiler::mangle_aot_name(
+            functions[i].name, i, emit_version, emit_env_frame_version, fn_lin_for_mangle);
+        // Issue #2091: link names now carry env_frame_version +
+        // linear_state too (pre-#2091 was defuse-only). The
+        // signature change is additive — the existing 3-arg
+        // overload defaults to (0, 0) which preserves the legacy
+        // shape when no host wiring exists.
+        link_names[i] = aura::compiler::aot_link_name(functions[i].name, i, emit_version,
+                                                      emit_env_frame_version, fn_lin_for_mangle);
     }
+    // Issue #2091: stamp accounting. Wired hosts bump `stamped`;
+    // miswired hosts (literal 0,0 + force off) bump
+    // `default_zero` so the Agent dashboard can detect drift.
+    aot_bump_env_linear_stamp_metric(emit_env_frame_version, emit_linear_state);
     // Issue #136: detect collisions on mangled identity (versioned).
     std::unordered_set<std::string> seen;
     for (unsigned i = 0; i < num_functions; ++i) {

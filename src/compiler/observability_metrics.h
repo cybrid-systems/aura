@@ -4434,6 +4434,22 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_hotupdate_region_isolation_total{0};
     std::atomic<std::uint64_t> aot_hotupdate_dispatch_stale_prevented_total{0};
     std::atomic<std::uint64_t> aot_hotupdate_multi_agent_reload_total{0};
+    // Issue #2091: AOT env/linear stamp accounting. Every wired
+    // emit / registration / reemit site must thread live
+    // env_frame_version + linear_state into mangle_aot_name /
+    // aot_link_name. The Agent / dashboard distinguishes:
+    //   - aot_emit_env_linear_stamped_total: emit paths where
+    //     env/linear were live values (non-zero, or force flag
+    //     on). Healthy production should drive this to > 0.
+    //   - aot_emit_env_linear_default_zero_total: emit paths
+    //     where both env_frame_version AND linear_state were
+    //     literal 0 AND force flag was off. Stays 0 on the
+    //     wired Evaluator emit path (AC3); non-zero means a
+    //     host is calling aura_emit_native_file / reemit
+    //     without threading live values — defuse-only stale
+    //     detection cannot catch captured-env drift.
+    std::atomic<std::uint64_t> aot_emit_env_linear_stamped_total{0};
+    std::atomic<std::uint64_t> aot_emit_env_linear_default_zero_total{0};
 
     // Issue #593: AST→query→IR MacroIntroduced hygiene closed-loop
     // foundation atomics (pattern capture prevention, post-mutate
