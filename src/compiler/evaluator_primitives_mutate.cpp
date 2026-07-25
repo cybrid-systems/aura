@@ -5044,7 +5044,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.empty() || !is_keyword(a[0]))
             return mev("bad-arg",
                        "usage: (mutate :op …)  ops: :rebind :replace :move :extract :validate "
-                       ":atomic :render-optimize");
+                       ":atomic :render-optimize :closed-loop-tick");
 
         const std::string op = kw_name(a[0]);
         auto rest = a.subspan(1);
@@ -5059,6 +5059,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto fn = ObservabilityPrims::lookup_stats_impl("mutate:render-optimize");
             if (!fn)
                 return mev("no-prim", "mutate:render-optimize facade missing");
+            return (*fn)(rest);
+        }
+
+        // Issue #2051: (mutate :closed-loop-tick [0|1|2])
+        // Stamp Agent closed-loop round (0=round, 1=stable, 2=improve).
+        if (op == "closed-loop-tick" || op == "render-closed-loop-tick") {
+            auto fn = ObservabilityPrims::lookup_stats_impl("mutate:render-closed-loop-tick");
+            if (!fn)
+                return mev("no-prim", "mutate:render-closed-loop-tick facade missing");
             return (*fn)(rest);
         }
 
@@ -5120,7 +5129,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         return mev("bad-arg", "unknown mutate op ':" + op +
                                   "' — use :rebind :replace :move :extract :validate :atomic "
-                                  ":render-optimize");
+                                  ":render-optimize :closed-loop-tick");
     });
 
     // Issue #1436: deprecate core mutate:* aliases in favor of (mutate :op).

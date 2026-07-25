@@ -241,6 +241,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:render-buffer-stats",
     "query:render-evolution-stats",
     "mutate:render-optimize",
+    // Issue #2051 closed-loop tick: register_stats_impl only (not catalog —
+    // side-effect facade; discover via query:render-stats schema-2051 +
+    // (mutate :closed-loop-tick)). Avoids freeze baseline growth.
     // Issue #1680: query:module-exports mtime cache observability
     "query:module-export-cache-stats",
     "query:shape-value-hotpath-contracts-stats",

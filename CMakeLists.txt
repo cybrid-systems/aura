@@ -1995,6 +1995,11 @@ aura_add_issue_test(test_render_critical_hotswap_2050)
 aura_issue_test_link_llvm_jit(test_render_critical_hotswap_2050)
 add_dependencies(all_test_issue_targets test_render_critical_hotswap_2050)
 
+# Issue #2051: Agent-visible render stats + closed-loop mutate-optimize
+aura_add_issue_test(test_render_agent_closedloop_2051)
+aura_issue_test_link_llvm_jit(test_render_agent_closedloop_2051)
+add_dependencies(all_test_issue_targets test_render_agent_closedloop_2051)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

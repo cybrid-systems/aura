@@ -11,6 +11,29 @@
 // Agent discoverability: schema string on PrimMeta + facade query:render-* stats.
 // Evolution: (mutate :rebind …) for draw logic; (mutate :render-optimize …) for
 // pattern-based hot-path preference (no new public prim name).
+//
+// ── Issue #2051: Render self-evolution contract (Agent closed-loop) ─────────
+// Safe mutate window (default 500 ms = deopt throttle window):
+//   - Prefer soft dirty / set-body / rebind on evolution-named defines
+//     (draw/present/render/tui/terminal/frame/cell/ansi in the name).
+//   - Before mutating at 60 fps: (stats:get "query:render-stats") and check:
+//       safe-to-mutate == 1
+//       agent-health-score >= 60
+//       agent-action in {0 hold, 1 optimize-ok, 3 prefer-dirty-delta}
+//       agent-action 2 → reduce mutate frequency; 4 → stop mutate this frame
+//   - After mutate: re-present, re-query; stamp outcome via
+//       (mutate :closed-loop-tick)     // round
+//       (mutate :closed-loop-tick 1)   // stable
+//       (mutate :closed-loop-tick 2)   // improve
+//   - Keep healthy:
+//       render-mutate-avg-us << frame budget (~16ms @ 60fps)
+//       render-critical-deopt-throttled grows under pressure (not applied storm)
+//       frame-time-p99-us stays within budget; dirty-short-circuit-rate-bp rises
+//   - LifetimePin / epoch / deopt throttle (#2048/#2050): pin handoffs and
+//     JIT keep-native are automatic under soft dirty; Agents must not force
+//     hard invalidate of present/draw on the hot path.
+// Primary surface: query:render-stats schema-2051 (aggregates memory / JIT /
+// dirty / pin / mutate-cost). Drill-down siblings stamped on the same hash.
 
 #ifndef AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 #define AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
@@ -40,5 +63,9 @@
 // Phase stamp for query:render-evolution-stats / template docs.
 inline constexpr int kRenderPrimTemplateIssue = 1677;
 inline constexpr int kRenderPrimTemplatePhase = 1;
+
+// Issue #2051: default safe mutate window (ms) — matches deopt throttle.
+inline constexpr int kRenderSafeMutateWindowMs = 500;
+inline constexpr int kRenderAgentClosedLoopIssue = 2051;
 
 #endif // AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH

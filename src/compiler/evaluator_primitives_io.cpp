@@ -1427,7 +1427,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto load = [](const std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(128); // #2051 Agent closed-loop keys
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
@@ -1507,6 +1507,113 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-enforcements", m ? load(m->linear_post_mutate_enforcements) : 0);
             insert_kv("phase", aura::renderer::kRenderPrimitivesPhase);
             insert_kv("issue", 1676);
+
+            // ── Issue #2051: Agent closed-loop surface (single rich map) ──
+            // Aggregates frame latency, dirty efficiency, pin/FFI, deopt
+            // throttle, arena pressure, and render-related mutate cost so
+            // Agents can decide without fan-out queries. Relaxed atomics only.
+            if (m)
+                m->render_agent_query_hits.fetch_add(1, std::memory_order_relaxed);
+            auto& rfm = aura::renderer::g_render_frame_metrics();
+            const auto frame_avg =
+                static_cast<std::int64_t>(aura::renderer::render_frame_time_avg_us());
+            const auto frame_p99 =
+                static_cast<std::int64_t>(aura::renderer::render_frame_time_p99_us());
+            const auto frame_max = static_cast<std::int64_t>(
+                rfm.render_frame_time_max_us.load(std::memory_order_relaxed));
+            const auto deopt_thr = m ? load(m->render_jit_deopt_throttled) : 0;
+            const auto deopt_app = m ? load(m->render_jit_deopt_applied) : 0;
+            const auto rc_thr = m ? load(m->render_critical_deopt_throttled_total) : 0;
+            const auto rc_app = m ? load(m->render_critical_deopt_applied_total) : 0;
+            const auto rc_keep = m ? load(m->render_critical_jit_keep_total) : 0;
+            const auto mut_ns = m ? load(m->render_mutate_cost_ns_total) : 0;
+            const auto mut_n = m ? load(m->render_mutate_cost_samples) : 0;
+            const auto mut_last = m ? load(m->render_mutate_last_ns) : 0;
+            const auto mut_avg_us =
+                mut_n > 0 ? (mut_ns / mut_n) / 1000 : static_cast<std::int64_t>(0);
+            const auto dirty_sc = static_cast<std::int64_t>(
+                aura::renderer::g_batch_terminal_stats().dirty_short_circuit);
+            const auto present_calls = static_cast<std::int64_t>(eng.present_calls);
+            const auto present_skips = static_cast<std::int64_t>(eng.present_skips);
+            // Short-circuit rate in basis points: skips / (calls+skips) * 10000
+            const auto sc_den = present_calls + present_skips;
+            const std::int64_t dirty_sc_rate_bp = sc_den > 0 ? (present_skips * 10000) / sc_den : 0;
+            const auto arena_used =
+                static_cast<std::int64_t>(aura::renderer::g_render_frame_arena_v2().used_bytes());
+            const auto arena_cap = static_cast<std::int64_t>(
+                aura::renderer::g_render_frame_arena_v2().capacity_bytes());
+            const auto arena_pressure_bp = arena_cap > 0 ? (arena_used * 10000) / arena_cap : 0;
+            const auto pin_hits = static_cast<std::int64_t>(
+                aura::core::zero_copy::g_zero_copy_metrics().present_pin_handoffs.load(
+                    std::memory_order_relaxed));
+            // Agent health 0–100: start 100; penalize deopt storm, latency, cost.
+            std::int64_t health = 100;
+            if (rc_app > 5 && rc_app * 2 > rc_thr)
+                health -= 25; // deopt storm on critical defines
+            else if (deopt_app > deopt_thr && deopt_app > 10)
+                health -= 15;
+            if (frame_p99 > 32000) // >32ms ~ under 30fps p99
+                health -= 20;
+            else if (frame_p99 > 20000)
+                health -= 10;
+            if (mut_avg_us > 5000) // >5ms average soft-dirty
+                health -= 15;
+            else if (mut_avg_us > 2000)
+                health -= 8;
+            if (arena_pressure_bp > 9000)
+                health -= 10;
+            if (health < 0)
+                health = 0;
+            // safe-to-mutate: healthy + throttle protecting or low applied
+            const std::int64_t safe_to_mutate =
+                (health >= 60 && (rc_thr >= rc_app || rc_app <= 2)) ? 1 : 0;
+            // agent-action: 0=hold 1=optimize-ok 2=reduce-mutate-freq
+            //               3=prefer-dirty-delta 4=stop-mutate
+            std::int64_t action = 1;
+            if (health < 40)
+                action = 4;
+            else if (health < 60 || mut_avg_us > 3000)
+                action = 2;
+            else if (dirty_sc_rate_bp < 1000 && present_calls > 5)
+                action = 3;
+            else if (safe_to_mutate)
+                action = 1;
+            else
+                action = 0;
+
+            insert_kv("frame-time-avg-us", frame_avg);
+            insert_kv("frame-time-p99-us", frame_p99);
+            insert_kv("frame-time-max-us", frame_max);
+            insert_kv("dirty-short-circuit-count", dirty_sc);
+            insert_kv("dirty-short-circuit-rate-bp", dirty_sc_rate_bp);
+            insert_kv("deopt-throttled", deopt_thr);
+            insert_kv("deopt-applied", deopt_app);
+            insert_kv("render-critical-deopt-throttled", rc_thr);
+            insert_kv("render-critical-deopt-applied", rc_app);
+            insert_kv("render-critical-jit-keep", rc_keep);
+            insert_kv("render-mutate-cost-ns-total", mut_ns);
+            insert_kv("render-mutate-cost-samples", mut_n);
+            insert_kv("render-mutate-last-ns", mut_last);
+            insert_kv("render-mutate-avg-us", mut_avg_us);
+            insert_kv("render-arena-pressure-bp", arena_pressure_bp);
+            insert_kv("present-pin-handoffs-agent", pin_hits);
+            insert_kv("agent-health-score", health);
+            insert_kv("safe-to-mutate", safe_to_mutate);
+            insert_kv("agent-action", action);
+            insert_kv("closed-loop-rounds", m ? load(m->render_closed_loop_rounds_total) : 0);
+            insert_kv("closed-loop-stable", m ? load(m->render_closed_loop_stable_total) : 0);
+            insert_kv("closed-loop-improve", m ? load(m->render_closed_loop_improve_total) : 0);
+            insert_kv("throttle-window-ms", m ? load(m->render_deopt_throttle_window_ms) : 500);
+            insert_kv("render-critical-protect-wired", 1);
+            insert_kv("schema-2051", 2051);
+            insert_kv("issue-2051", 2051);
+            insert_kv("agent-closedloop-wired", 1);
+            // Sibling discovery stamps (Agents know which facade to drill into)
+            insert_kv("sibling-memory-schema", 2049);
+            insert_kv("sibling-jit-stability-schema", 2050);
+            insert_kv("sibling-dirty-delta-schema", 1562);
+            insert_kv("sibling-lifetime-pin-schema", 2048);
+
             if (m && load(m->term_render_present_total) > 0)
                 ev.bump_render_obs_v2_savings(
                     static_cast<std::uint64_t>(load(m->term_render_present_total)));
@@ -1935,7 +2042,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (m)
                 m->render_template_phase.store(static_cast<std::uint64_t>(kRenderPrimTemplatePhase),
                                                std::memory_order_relaxed);
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32); // #2051 extra mutate-cost keys
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
@@ -1952,6 +2059,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("dispatch-fast-total", m ? load(m->render_hotpath_dispatch_fast_total) : 0);
             insert_kv("render-critical-meta-count",
                       static_cast<std::int64_t>(ev.primitives().render_critical_meta_count()));
+            // Issue #2051: mutate cost + closed-loop stamps for evolution Agents
+            insert_kv("render-mutate-cost-samples", m ? load(m->render_mutate_cost_samples) : 0);
+            insert_kv("render-mutate-avg-us", m && load(m->render_mutate_cost_samples) > 0
+                                                  ? (load(m->render_mutate_cost_ns_total) /
+                                                     load(m->render_mutate_cost_samples)) /
+                                                        1000
+                                                  : 0);
+            insert_kv("closed-loop-rounds", m ? load(m->render_closed_loop_rounds_total) : 0);
+            insert_kv("safe-mutate-window-ms", kRenderSafeMutateWindowMs);
+            insert_kv("schema-2051", 2051);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -1984,8 +2101,31 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->render_evolution_optimize_total.fetch_add(1, std::memory_order_relaxed);
                 // Heuristic savings unit: one "prefer dirty delta" decision.
                 m->render_evolution_savings_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2051: each optimize is one closed-loop Agent decision.
+                m->render_closed_loop_rounds_total.fetch_add(1, std::memory_order_relaxed);
             }
             return make_int(applied);
+        });
+
+    // Issue #2051: Agent stamps one closed-loop round outcome (facade-only).
+    // (stats:get "mutate:render-closed-loop-tick") → round count
+    // Optional int arg: 0=round only, 1=stable, 2=improve
+    ObservabilityPrims::register_stats_impl(
+        "mutate:render-closed-loop-tick", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            std::int64_t kind = 0;
+            if (!a.empty() && is_int(a[0]))
+                kind = as_int(a[0]);
+            if (m) {
+                m->render_closed_loop_rounds_total.fetch_add(1, std::memory_order_relaxed);
+                if (kind == 1)
+                    m->render_closed_loop_stable_total.fetch_add(1, std::memory_order_relaxed);
+                else if (kind == 2)
+                    m->render_closed_loop_improve_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(m ? static_cast<std::int64_t>(m->render_closed_loop_rounds_total.load(
+                                    std::memory_order_relaxed))
+                              : 0);
         });
 
     // ── Issue #1317: terminal-diff-stats ──
