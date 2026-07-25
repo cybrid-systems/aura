@@ -8961,9 +8961,27 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("linear-provenance-wired", 1);
                 insert_kv("schema-2026", 2026);
                 insert_kv("issue-2026", 2026);
+                // Issue #2103: Soft/Strict linear enforce mode + hard-fail totals.
+                using aura::core::provenance::g_linear_soft_incomplete_continue_total;
+                using aura::core::provenance::g_linear_strict_hard_fail_total;
+                using aura::core::provenance::linear_enforce_mode;
+                using aura::core::provenance::LinearEnforceMode;
+                const auto mode = linear_enforce_mode();
+                insert_kv("linear-enforce-mode",
+                          static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
+                insert_kv("linear-enforce-strict", mode == LinearEnforceMode::Strict ? 1 : 0);
+                insert_kv("linear-strict-hard-fail-total",
+                          static_cast<std::int64_t>(
+                              g_linear_strict_hard_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("linear-soft-incomplete-continue-total",
+                          static_cast<std::int64_t>(g_linear_soft_incomplete_continue_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("linear-enforce-mode-wired", 1);
+                insert_kv("schema-2103", 2103);
+                insert_kv("issue-2103", 2103);
             }
             insert_kv("issue", 1631);
-            insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 satellite)
+            insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 / #2103)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

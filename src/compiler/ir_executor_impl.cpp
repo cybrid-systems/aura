@@ -140,25 +140,40 @@ static bool linear_state_allows_op(std::uint8_t state, LinearOpKind op) noexcept
     return true;
 }
 
-// Issue #1515 / #2026: pure state-machine gate + provenance consistency.
+// Issue #1515 / #2026 / Issue #2103: pure state-machine gate + provenance
+// consistency.
 // Caller records metrics once per op path (either state reject, or heap
 // pass/fail) to avoid double-counting linear_check_pass + violations.
 // Shared helper with Evaluator GC/steal/boundary via provenance_tracker.
-static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op) noexcept {
+//
+// Soft (default): incomplete forensic trail is metric-only (continue).
+// Strict: incomplete trail → hard fail (no successful linear op commit).
+// Full TypedMutationAudit + Strict hard-fail bumps force-rollback total
+// so Agents can correlate self-evo rollbacks with provenance gaps.
+static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
+                                           std::uint32_t provenance_id = 0,
+                                           std::uint64_t mutation_id = 0,
+                                           CompilerMetrics* metrics = nullptr) noexcept {
     if (!linear_state_allows_op(state, op))
         return false;
     // Issue #2026: Moved is never a valid live state for any op (double-drop
     // / use-after-move). Owned/Borrow gates are op-specific above.
     if (state == 0)
         return true;
+    using aura::core::provenance::linear_enforce_require_complete;
     using aura::core::provenance::validate_linear_provenance;
-    // Hot IR path: require_complete=false (soft incomplete forensic trail).
-    // force_deopt on Moved live / would-be-stale is still hard-fail.
-    const auto r = validate_linear_provenance(state, /*node_id=*/0, /*provenance_id=*/0,
-                                              /*mutation_id=*/0, /*frame_version=*/0,
-                                              /*current_version=*/0, /*bridge_epoch=*/0,
-                                              /*current_bridge_epoch=*/0,
-                                              /*require_complete=*/false);
+    // Hot IR path: Soft → require_complete=false; Strict → true (#2103).
+    // force_deopt on Moved live / would-be-stale is always hard-fail.
+    const bool require = linear_enforce_require_complete();
+    const auto r =
+        validate_linear_provenance(state, /*node_id=*/0, provenance_id, mutation_id,
+                                   /*frame_version=*/0, /*current_version=*/0,
+                                   /*bridge_epoch=*/0, /*current_bridge_epoch=*/0, require);
+    if (!r.ok && require && metrics) {
+        // AC3: Strict hard-fail correlates with force-rollback counter under
+        // Full audit (and remains useful under Sampled as a linear fail).
+        metrics->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    }
     return r.ok;
 }
 
@@ -1559,9 +1574,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::MoveOp: {
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
-                    // State-machine gate before heap check (Issue #1515).
+                    // State-machine gate before heap check (Issue #1515 / #2103).
                     const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::Move);
+                        instr.linear_ownership_state, LinearOpKind::Move, instr.provenance, 0,
+                        metrics_);
                     // Issue #2067: pre-capture violation (always-on, not gated
                     // on linear_ownership_state != 0) so the post-mutate
                     // revalidate can correlate the violation with the
@@ -1632,7 +1648,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
                     const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::Borrow);
+                        instr.linear_ownership_state, LinearOpKind::Borrow, instr.provenance, 0,
+                        metrics_);
                     // Immutable borrow: increment refcount
                     // Runtime check: use-after-move detection
                     auto val = locals[ops[1]];
@@ -1682,7 +1699,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
                     const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::MutBorrow);
+                        instr.linear_ownership_state, LinearOpKind::MutBorrow, instr.provenance, 0,
+                        metrics_);
                     // Mutable borrow: treat as move (exclusive access)
                     auto val = locals[ops[1]];
                     if (!state_ok) {
@@ -1729,7 +1747,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::DropOp);
                     const bool state_ok = enforce_linear_ownership_state(
-                        instr.linear_ownership_state, LinearOpKind::Drop);
+                        instr.linear_ownership_state, LinearOpKind::Drop, instr.provenance, 0,
+                        metrics_);
                     // Explicit destruct: decrement refcount, erase if zero
                     // Runtime check: double-drop detection
                     auto val = locals[ops[0]];
