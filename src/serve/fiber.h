@@ -125,54 +125,38 @@ public:
                r == YieldReason::OperationBoundary || r == YieldReason::PassPipeline;
     }
 
-    // Issue #448: is_at_safe_mutation_boundary() returns true
-    // when this fiber is currently in a state where work-
-    // stealing is safe even if a MutationBoundary guard is
-    // active. The P0 contract: the fiber is considered
-    // "safe" if (a) it has not yielded for a MutationBoundary
-    // reason, OR (b) it has yielded for a MutationBoundary
-    // but the per-fiber mutation boundary depth is 0
-    // (i.e. the outermost guard has already been released).
+    // Issue #438 / #588 / #1254 / #2115: depth-safe mutation boundary
+    // probe for work-stealing. Uses the victim fiber's per-fiber
+    // mutation_stack_storage_ (NOT thief TLS) via C-linkage
+    // aura_evaluator_mutation_stack_depth_from_ptr so steal decisions
+    // cannot race dual-path / linear / LifetimePin / panic checkpoint.
     //
-    // P0: we use a relaxed best-effort check by reading
-    // the last_yield_reason_ + a thread_local depth probe.
-    // The follow-up will use the proper
-    // MutationBoundaryGuard::current_depth() to gate
-    // scheduler steal attempts.
-    bool is_at_safe_mutation_boundary() const {
+    // Returns true if steal is safe at this yield point:
+    //   - yield reason is not MutationBoundary, OR
+    //   - yield is MutationBoundary and per-fiber stack depth == 0
+    //     (outermost Guard already released / no active checkpoint).
+    // depth > 0 (outermost or nested Guard still held) → false.
+    // YieldReason::MutationBoundary itself is unchanged (is_stealable
+    // still treats MB as a stealable *reason class*); depth gates
+    // visibility only (#2115 AC2).
+    [[nodiscard]] bool is_at_mutation_boundary_safe() const noexcept {
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         if (r != YieldReason::MutationBoundary)
             return true;
-        // Currently yielded at a MutationBoundary — assume
-        // unsafe (the scheduler should defer or skip).
-        // The follow-up will use the Evaluator API to
-        // probe the per-fiber boundary depth.
-        return false;
-    }
-
-    // Issue #438: is_at_mutation_boundary_safe() — a more
-    // precise version that probes the per-thread mutation
-    // boundary depth via a C-linkage function
-    // (aura_evaluator_mutation_boundary_depth) defined
-    // in evaluator_fiber_mutation.cpp. The C-linkage
-    // shim keeps fiber.h free of Evaluator include
-    // dependencies (fiber.h is a low-level header
-    // included by tests that don't pull in the
-    // Evaluator module).
-    //
-    // Returns true if the fiber is at a safe mutation
-    // boundary point (depth == 0 OR the fiber is yielded
-    // for a non-MutationBoundary reason).
-    bool is_at_mutation_boundary_safe() const {
-        auto r = last_yield_reason_.load(std::memory_order_acquire);
-        if (r != YieldReason::MutationBoundary)
-            return true;
-        // Issue #588 + #1254: only outermost (depth == 0) is steal-safe.
-        // Inner MutationBoundaryGuard nesting must force defer — steals
-        // inside nested atomic sections risk partial rollback races.
+        // Issue #588 + #1254 + #2115: only depth == 0 is steal-safe.
         const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(
             mutation_stack_storage_.load(std::memory_order_acquire));
         return depth == 0;
+    }
+
+    // Issue #448 / #2115: alias of depth-safe API. Historical #448
+    // implementation always returned false for MutationBoundary yields
+    // (no depth probe), so steal callers that used this name were
+    // either over-conservative or — if mixed with is_stealable alone —
+    // incomplete. Unified to is_at_mutation_boundary_safe() so all
+    // steal decision points share one truth.
+    [[nodiscard]] bool is_at_safe_mutation_boundary() const noexcept {
+        return is_at_mutation_boundary_safe();
     }
 
     // Issue #1254: true when yielded at MutationBoundary with depth > 0
