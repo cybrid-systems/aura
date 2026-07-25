@@ -1547,6 +1547,13 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     // arena). Returns a hash with bytes_reclaimed / slots_recycled / new_gen /
     // soft_gated / invalidates_pins / mode / schema=2004. Optional int arg
     // selects mode: 0 = Soft (default), 1 = Force (bypasses soft-gate).
+    //
+    // Issue #2089: schema bump 2004 → 2009 + moved-live-objects field. The
+    // (arena:live-compact) hash now documents the non-moving contract: under
+    // Soft/Force, moved-live-objects is always #f (0). Consumers MUST observe
+    // new-gen / invalidates-pins + LifetimePin::validate() instead of assuming
+    // any raw pointer was rewritten. A future LiveCompactMode::Moving would
+    // set this #t (1); #2089 only adds the field + bumps the schema.
     ObservabilityPrims::register_stats_impl(
         "arena:live-compact", [&ev](const auto& args) -> EvalValue {
             aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft;
@@ -1556,7 +1563,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     (m != 0) ? aura::ast::LiveCompactMode::Force : aura::ast::LiveCompactMode::Soft;
             }
             const aura::ast::LiveCompactResult lc = ev.live_compact(mode);
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(9);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1589,7 +1596,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mode", static_cast<std::int64_t>(static_cast<std::uint8_t>(lc.mode)));
             insert_kv("soft-gated", lc.soft_gated ? 1 : 0);
             insert_kv("invalidates-pins", lc.invalidates_pins ? 1 : 0);
-            insert_kv("schema", 2004);
+            // Issue #2089: explicit non-moving contract flag. Always #f (0)
+            // under Soft/Force; reserved for a future Moving mode.
+            insert_kv("moved-live-objects", lc.moved_live_objects ? 1 : 0);
+            insert_kv("schema", 2009);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
