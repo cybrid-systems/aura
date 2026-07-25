@@ -397,6 +397,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         }
         emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                             static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
+        // Issue #2038: push-automatic DefUse/IR/JIT cascade so the next
+        // eval-current / query sees updated caches without a manual
+        // invalidate. Scoped to mutation-log targets + staged defuse
+        // names (not a global flush). No-op when log empty.
+        push_post_mutate_incremental_cascade(cp.mutation_log_size);
         // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
         // trail + real invariant suite on mutation boundary hot path.
         // Contextual sampling (#1894) forces audit for large dirty / linear.

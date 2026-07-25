@@ -6144,4 +6144,100 @@ void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& fl
     }
 }
 
+// Issue #2038: single choke-point cascade for all successful mutate:*
+// under MutationBoundaryGuard. Ensures DefUse / IR cache dirty / JIT
+// soft paths see the mutation without a manual invalidate.
+void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept {
+    if (!workspace_flat_ || !workspace_pool_)
+        return;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto& flat = *workspace_flat_;
+    auto& pool = *workspace_pool_;
+    const auto& log = flat.all_mutations();
+
+    // name → define NodeId (first sighting wins)
+    std::unordered_map<std::string, aura::ast::NodeId> affected;
+    affected.reserve(16);
+
+    auto note_define = [&](aura::ast::NodeId def_id) {
+        if (def_id == aura::ast::NULL_NODE || def_id >= flat.size())
+            return;
+        auto v = flat.get(def_id);
+        if (v.tag != aura::ast::NodeTag::Define)
+            return;
+        auto n = pool.resolve(v.sym_id);
+        if (n.empty())
+            return;
+        affected.emplace(std::string(n), def_id);
+    };
+
+    // 1) Mutation log targets → enclosing Define (structural / value mutates).
+    if (mutation_log_begin < log.size()) {
+        for (std::size_t i = mutation_log_begin; i < log.size(); ++i) {
+            const auto tid = log[i].target_node;
+            if (tid == aura::ast::NULL_NODE || tid >= flat.size())
+                continue;
+            // Ensure dirty bits are set even if a prim skipped mark_dirty_upward.
+            flat.mark_dirty_upward(tid);
+            note_define(flat.top_define_of(tid));
+            // Multi-op / parent slots: also walk parent for Define-of-container.
+            const auto pid = flat.parent_of(tid);
+            if (pid != aura::ast::NULL_NODE && pid < flat.size())
+                note_define(flat.top_define_of(pid));
+        }
+    }
+
+    // 2) Names already staged by precise mutates (query-and-replace etc.).
+    for (const auto& n : defuse_affected_syms_) {
+        if (n.empty())
+            continue;
+        const auto sid = pool.intern(n);
+        aura::ast::NodeId def_id = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sid) {
+                def_id = id;
+                break;
+            }
+        }
+        if (def_id != aura::ast::NULL_NODE)
+            affected.emplace(n, def_id);
+        else
+            affected.emplace(n, aura::ast::NULL_NODE);
+    }
+
+    std::uint64_t defines_n = 0;
+    for (const auto& [name, def_id] : affected) {
+        ++defines_n;
+        // Soft IR-cache dirty mark (service skips mutate lock when Workspace
+        // is already held by MutationBoundaryGuard — no lock inversion).
+        if (mark_define_dirty_fn_)
+            mark_define_dirty_fn_(name);
+        const auto sid = pool.intern(name);
+        if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM)
+            defuse_touch_fn_(defuse_index_, sid);
+        if (def_id != aura::ast::NULL_NODE) {
+            // Soft path only: mark_dirty_upward + impact_scope.
+            // Hard invalidate_function (BFS) is deferred — it would try
+            // to take Mutate while Workspace is still held by Guard.
+            finalize_define_mutate_invalidation(flat, name, def_id, /*run_full=*/false);
+        }
+    }
+
+    // 3) Optional eager partial re-lower of dirty ir_cache_v2 entries
+    // (service-owned; must be re-entrant under Workspace hold).
+    if (relower_dirty_defines_fn_ && defines_n > 0)
+        relower_dirty_defines_fn_();
+
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    const auto uus = static_cast<std::uint64_t>(us > 0 ? us : 0);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->post_mutate_incremental_cascade_total.fetch_add(1, std::memory_order_relaxed);
+        m->post_mutate_incremental_defines_total.fetch_add(defines_n, std::memory_order_relaxed);
+        m->post_mutate_incremental_latency_us_total.fetch_add(uus, std::memory_order_relaxed);
+        m->post_mutate_incremental_latency_samples.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 } // namespace aura::compiler
