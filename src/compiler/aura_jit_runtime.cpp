@@ -832,6 +832,13 @@ extern "C" void aura_invalidate_closure_cache_for(std::int64_t closure_id) {
     invalidate_closure_cache_for(closure_id);
 }
 
+// Issue #2042: bulk clear after soft/hard invalidate so PrimCall hot path
+// cannot apply through a cache entry whose live closure was just expired.
+extern "C" void aura_invalidate_all_closure_caches(void) {
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
+        clear_closure_cache_entry(g_closure_cache[i]);
+}
+
 extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
     return g_closure_cache_generation_mismatch_total.load(std::memory_order_relaxed);
 }

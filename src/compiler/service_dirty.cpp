@@ -615,57 +615,13 @@ void CompilerService::invalidate_function(const std::string& name) {
     for (auto& dep_name : dependents)
         invalidate_bridge_with_impact(dep_name);
 
-    // Issue #1536: bulk walk_active_closures after invalidate so any
-    // remaining captured fns (not hard-erased) are deopt-on-next-apply.
+    // Issue #1536 / #2042: bulk JIT walk + comprehensive live-closure expire
+    // (IR runtime_closures_ + tree-walker / fiber Closures + PrimCall cache).
+    // Soft path already ran expire via atomic_bump_epochs_and_stamp_bridge;
+    // re-run after per-name bridge invalidation so any late-stamped IRClosures
+    // that still predate cur_epoch are expired before clear_ir_define_env_binding.
     notify_walk_active_closures_(bridge_epoch());
-
-    // Issue #601 / #1513: live IRClosure walk after invalidate.
-    //
-    // Pre-#1513 restamped bridge_epoch to current so apply passed
-    // the stale check while flat*/pool* could still be dangling
-    // (shared_ptr copies outlive bridge table reset). That was a
-    // use-after-mutation hazard.
-    //
-    // #1513 closed-loop: expire views on live IRClosures, leave
-    // bridge_epoch at the pre-bump value so is_bridge_stale fires,
-    // and zero env_version so dual-check also trips. Next apply
-    // takes safe fallback (tree-walker / re-parse) instead of
-    // evaluating through expired flat*/pool*.
-    //
-    // Runs AFTER invalidate_bridge_for and BEFORE
-    // clear_ir_define_env_binding (interpreter still reachable).
-    {
-        const std::uint64_t cur_epoch = bridge_epoch();
-        const auto live_walk_one = [&]([[maybe_unused]] const std::string& affected_name) {
-            for (auto& [bname, binding] : ir_define_env_bindings_) {
-                (void)bname;
-                if (!binding || !binding->interpreter)
-                    continue;
-                binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
-                                                                IRClosure& cl) {
-                    // Only touch closures that predate this invalidate.
-                    if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
-                        return;
-                    // Expire captured views (do NOT restamp epoch).
-                    // Issue #1916: next apply/materialize must not walk
-                    // dangling EnvFrame / free'd flat*/pool*.
-                    cl.flat.reset();
-                    cl.pool.reset();
-                    cl.body_id = aura::ast::NULL_NODE;
-                    cl.env_version = 0; // dual-check: force re-stamp on rebuild
-                    metrics_.jit_hotswap_forced_deopt_total.fetch_add(1, std::memory_order_relaxed);
-                    metrics_.ir_closure_invalidate_expired_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    metrics_.dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
-                });
-            }
-        };
-        live_walk_one(name);
-        for (auto& dep_name : dependents)
-            live_walk_one(dep_name);
-    }
+    (void)expire_stale_live_closures_(bridge_epoch());
 
     // Issue #741: re-stamp EnvFrame version_ for live tree-walker
     // closures captured from quote/lambda paths in impacted blocks.

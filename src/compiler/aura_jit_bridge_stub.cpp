@@ -87,6 +87,9 @@ extern "C" __attribute__((weak)) int aura_closure_exists(std::int64_t /*closure_
 extern "C" __attribute__((weak)) void
 aura_invalidate_closure_cache_for(std::int64_t /*closure_id*/) {}
 
+// Issue #2042: weak no-op bulk clear when full runtime is not linked.
+extern "C" __attribute__((weak)) void aura_invalidate_all_closure_caches(void) {}
+
 extern "C" __attribute__((weak)) std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
     return 0;
 }
