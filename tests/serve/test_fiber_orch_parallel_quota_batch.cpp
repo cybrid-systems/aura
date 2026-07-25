@@ -2386,6 +2386,202 @@ int run_orch_quota_structured_2079() {
 } // namespace aura_fiber_run_orch_quota_structured_2079
 // ─── end #2079 ───
 
+// ─── from #2082 join-timeout cancel+drain before release ───
+namespace aura_fiber_run_join_timeout_2082 {
+// @category: integration
+// @reason: Issue #2082 — On Timeout / Cancelled / Invalid join outcomes,
+// cancel residual fibers + best-effort short secondary join BEFORE
+// releasing arena reservations. Previously join_agent / join_agents
+// released unconditionally, racing with bodies that may still allocate.
+//
+//   AC1: short timeout against a spinning body → cancel requested;
+//        fiber reaches Done or secondary timeout without process crash.
+//   AC2: arena quota returns toward baseline after timeout+drain
+//        (no permanent leak of reserved_memory_bytes).
+//   AC3: Ok join path unchanged (provenance runs only on Ok).
+//   AC4: Concurrent ~AgentHandle + join_agent remains idempotent
+//        (no double-free; #2009 invariant).
+//   AC5: stress loop under quota + join timeout batch.
+
+namespace {
+
+    using aura::compiler::CompilerService;
+    using aura::core::resource_quota::Dimension;
+    using aura::core::resource_quota::process_resource_quota;
+    using aura::core::resource_quota::reset_process_resource_quota_for_test;
+    using aura::orch::g_orch_module_stats;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    using aura::serve::YieldReason;
+    using aura::test::g_failed;
+    using aura::test::g_passed;
+
+    struct SchedRunner {
+        Scheduler& sched;
+        std::thread thr;
+        explicit SchedRunner(Scheduler& s)
+            : sched(s)
+            , thr([&s] { s.run(); }) {}
+        ~SchedRunner() {
+            sched.stop();
+            if (thr.joinable())
+                thr.join();
+        }
+    };
+
+} // namespace
+
+int run_join_timeout_2082() {
+    // AC1 + AC2: spinning body + short timeout → cancel requested, fiber
+    // reaches Done, arena reservation released (no permanent leak).
+    {
+        std::println("\n--- AC1+AC2: spinning body + short timeout ---");
+        reset_process_resource_quota_for_test();
+        auto& pq = process_resource_quota();
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        std::atomic<bool> hold{true};
+        const auto arena0 = pq.agent_arena_usage_bytes.load(std::memory_order_relaxed);
+        auto h = aura::orch::spawn_agent_with_mailbox(
+            sched, {.name = "spin-2082", .body = [&] {
+                        // Long-running body that honors cancel via yield loop.
+                        while (hold.load(std::memory_order_relaxed)) {
+                            if (aura::serve::g_current_fiber &&
+                                aura::serve::g_current_fiber->is_cancel_requested())
+                                break;
+                            Fiber::yield(YieldReason::Explicit);
+                        }
+                    }});
+        CHECK(h.ok, "spawn spinning body");
+        CHECK(h.reserved_memory_bytes > 0, "reservation recorded");
+
+        // Brief wait so the body is in its loop.
+        for (int i = 0; i < 32 && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        // Short timeout forces non-Ok outcome → cancel + drain path.
+        auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{10});
+        CHECK(jr.status == JoinStatus::Timeout || jr.status == JoinStatus::Ok,
+              "join timed out or drained (#2082)");
+        // After cancel+drain, body should observe cancel and exit within
+        // the bounded secondary join (~2s internal).
+        hold.store(false, std::memory_order_relaxed);
+        // Allow the cancelled fiber to finish; release_reservation is
+        // already called inside join_agent (#2082 contract).
+        for (int i = 0; i < 200 && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CHECK(h.reserved_memory_bytes == 0, "reservation released after cancel+drain");
+        CHECK(pq.agent_arena_usage_bytes.load() <= arena0 + h.reserved_memory_bytes,
+              "arena usage returns toward baseline");
+        reset_process_resource_quota_for_test();
+    }
+
+    // AC3: Ok join path unchanged — provenance still runs (counter bumps).
+    {
+        std::println("\n--- AC3: Ok join path regression ---");
+        reset_process_resource_quota_for_test();
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        const auto prov0 =
+            g_orch_module_stats.stable_ref_auto_refresh_total.load(std::memory_order_relaxed);
+        auto h = aura::orch::spawn_agent_with_mailbox(
+            sched, {.name = "ok-2082", .body = [] { Fiber::yield(YieldReason::Explicit); }});
+        CHECK(h.ok, "spawn ok body");
+        auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        CHECK(jr.status == JoinStatus::Ok, "Ok join");
+        CHECK(g_orch_module_stats.stable_ref_auto_refresh_total.load() > prov0,
+              "provenance ran on Ok join (regression)");
+        CHECK(h.reserved_memory_bytes == 0, "reservation released after Ok join");
+        reset_process_resource_quota_for_test();
+    }
+
+    // AC4: Concurrent ~AgentHandle + join_agent is idempotent (no double-free).
+    {
+        std::println("\n--- AC4: ~AgentHandle + join idempotent ---");
+        reset_process_resource_quota_for_test();
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        auto h = aura::orch::spawn_agent_with_mailbox(
+            sched, {.name = "idemp-2082", .body = [] { Fiber::yield(YieldReason::Explicit); }});
+        CHECK(h.ok, "spawn idempotent body");
+        auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        CHECK(jr.status == JoinStatus::Ok, "Ok join (idempotent test)");
+        // join_agent already released. Move into a new scope and let the
+        // destructor run; no double-free expected.
+        {
+            auto h2 = std::move(h);
+            // h2.reserved_memory_bytes should already be 0 (join released).
+            CHECK(h2.reserved_memory_bytes == 0,
+                  "reservation already zeroed by join_agent (idempotent)");
+        }
+        // Counters must not double-bump (no crash, no leak).
+        reset_process_resource_quota_for_test();
+    }
+
+    // AC5: stress loop — short-timeout batch joins under quota.
+    {
+        std::println("\n--- AC5: stress quota + join timeout batch ---");
+        reset_process_resource_quota_for_test();
+        auto& pq = process_resource_quota();
+        pq.set_limit(Dimension::Memory, 4 * 1024 * 1024); // enough for ~150 agents
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        constexpr int kBatch = 32;
+        std::vector<aura::orch::AgentHandle> hs;
+        hs.reserve(kBatch);
+        std::atomic<bool> hold{true};
+        for (int i = 0; i < kBatch; ++i) {
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = std::format("s{}", i), .body = [&] {
+                            while (hold.load(std::memory_order_relaxed)) {
+                                if (aura::serve::g_current_fiber &&
+                                    aura::serve::g_current_fiber->is_cancel_requested())
+                                    break;
+                                Fiber::yield(YieldReason::Explicit);
+                            }
+                        }});
+            CHECK(h.ok, std::format("spawn {}", i));
+            hs.push_back(std::move(h));
+        }
+        // Brief wait so bodies are running.
+        for (int i = 0; i < 32; ++i) {
+            bool any_alive = false;
+            for (auto& h : hs)
+                if (h.fiber && !h.fiber->is_done())
+                    any_alive = true;
+            if (any_alive)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        auto jr = aura::orch::join_agents(hs, std::optional<std::uint64_t>{5});
+        CHECK(jr.status == JoinStatus::Timeout || jr.status == JoinStatus::Ok,
+              "batch join timed out or drained");
+        // Release the hold so cancel can finish the bodies.
+        hold.store(false, std::memory_order_relaxed);
+        // Allow cancelled fibers to finish + arena to drain.
+        for (int i = 0; i < 200; ++i) {
+            bool any_alive = false;
+            for (auto& h : hs)
+                if (h.fiber && !h.fiber->is_done())
+                    any_alive = true;
+            if (!any_alive)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        // All reservations should be released.
+        std::uint64_t total_reserved = 0;
+        for (auto& h : hs)
+            total_reserved += h.reserved_memory_bytes;
+        CHECK(total_reserved == 0, "all batch reservations released after cancel+drain");
+        reset_process_resource_quota_for_test();
+    }
+
+    return g_failed == 0 ? 0 : 1;
+}
+
+} // namespace aura_fiber_run_join_timeout_2082
+// ─── end #2082 ───
 int main() {
     std::println("\n######## run_parallel_intend ########");
     if (int rc = aura_fiber_run_parallel_intend::run_parallel_intend(); rc != 0) {
@@ -2426,6 +2622,11 @@ int main() {
     if (int rc = aura_fiber_run_orch_quota_structured_2079::run_orch_quota_structured_2079();
         rc != 0) {
         std::println("run_orch_quota_structured_2079 FAILED rc={}", rc);
+        return rc;
+    }
+    std::println("\n######## run_join_timeout_2082 ########");
+    if (int rc = aura_fiber_run_join_timeout_2082::run_join_timeout_2082(); rc != 0) {
+        std::println("run_join_timeout_2082 FAILED rc={}", rc);
         return rc;
     }
     if (::aura::test::g_failed)

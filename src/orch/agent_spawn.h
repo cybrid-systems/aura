@@ -572,6 +572,19 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
         g_orch_module_stats.join_ok_total.fetch_add(1, std::memory_order_relaxed);
     else
         g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2082: On non-Ok join (Timeout / Cancelled / Invalid), the body
+    // fiber may still be running and allocating. Releasing the arena
+    // reservation now would under-account live work. Mirror the
+    // parallel_orch::parallel_run discipline: request_cancel + best-effort
+    // short secondary join before releasing. Secondary join is bounded
+    // (~2s); if the body is in a tight non-yielding loop, cancellation may
+    // not be observed. The fiber is leaked-but-cancelled; the reservation
+    // release below is still safe because release_agent_memory_reservation
+    // is idempotent and only zeros reserved_memory_bytes on first call.
+    if (jr.status != serve::JoinStatus::Ok && h.fiber && !h.fiber->is_done()) {
+        h.fiber->request_cancel();
+        (void)serve::Fiber::join(h.fiber, std::optional<std::uint64_t>{2000});
+    }
     // agents_active: best-effort (never go below 0).
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
@@ -586,7 +599,9 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     // even when Fiber::join skipped host refresh (nested fiber join).
     if (jr.status == serve::JoinStatus::Ok)
         orch_post_join_provenance(h.fiber);
-    // Issue #1880: free arena/mailbox reservation after join.
+    // Issue #1880 / #2082: free arena/mailbox reservation only after
+    // Ok join or after cancel+drain best-effort above. Idempotent with
+    // ~AgentHandle (#2009 invariant preserved).
     release_agent_memory_reservation(h);
     return jr;
 }
@@ -619,6 +634,26 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
         g_orch_module_stats.join_ok_total.fetch_add(fibers.size(), std::memory_order_relaxed);
     else
         g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2082: On non-Ok batch join, request_cancel any not-yet-Done
+    // fiber before releasing per-handle reservations. Best-effort batch
+    // secondary join (~2s) to drain; same idempotent-release contract as
+    // join_agent above. Mirrors parallel_orch::parallel_run discipline.
+    if (jr.status != serve::JoinStatus::Ok) {
+        for (auto& a : agents) {
+            if (a.fiber && !a.fiber->is_done())
+                a.fiber->request_cancel();
+        }
+        std::vector<serve::Fiber*> not_done;
+        not_done.reserve(agents.size());
+        for (auto& a : agents) {
+            if (a.fiber && !a.fiber->is_done())
+                not_done.push_back(a.fiber);
+        }
+        if (!not_done.empty()) {
+            (void)serve::Fiber::join(std::span<serve::Fiber* const>(not_done),
+                                     std::optional<std::uint64_t>{2000});
+        }
+    }
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
         const auto n = static_cast<std::uint64_t>(fibers.size());
