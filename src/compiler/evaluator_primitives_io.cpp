@@ -29,6 +29,7 @@ module;
 #include "compiler/ffi_hot_path.hh"
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_ffi.hh"
+#include "renderer/render_frame_arena.hh"
 #include "renderer/render_pass.hh"
 #include "renderer/render_primitives.hh"
 #include "terminal_buffer_registry.hh"
@@ -1548,13 +1549,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->zero_copy_hit_in_render.store(zm.hit_in_render.load(std::memory_order_relaxed),
                                                  std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64); // #2049 extra frame-arena keys
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
                 (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
                                                                    make_string, make_int);
             };
+            // Issue #2049: dedicated RenderFrameArena metrics (double-buffer).
+            auto& rfa = aura::renderer::g_render_frame_arena_v2();
+            auto& rfm = aura::renderer::g_render_frame_metrics();
             insert_kv("schema", 1675);
             insert_kv("frame-arena-capacity", static_cast<std::int64_t>(fa.capacity_bytes()));
             insert_kv("frame-arena-used", static_cast<std::int64_t>(fa.used_bytes()));
@@ -1581,6 +1585,38 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed)));
             insert_kv("hotpath-active", aura::core::arena_policy::in_render_hotpath() ? 1 : 0);
             insert_kv("issue", 1675);
+            // Issue #2049: render_alloc_bytes / arena reset / frame-time histogram
+            insert_kv("render-alloc-bytes", static_cast<std::int64_t>(rfm.render_alloc_bytes.load(
+                                                std::memory_order_relaxed)));
+            insert_kv("render-arena-reset-total",
+                      static_cast<std::int64_t>(
+                          rfm.render_arena_reset_total.load(std::memory_order_relaxed)));
+            insert_kv("render-arena-swap-total",
+                      static_cast<std::int64_t>(
+                          rfm.render_arena_swap_total.load(std::memory_order_relaxed)));
+            insert_kv("render-frame-arena-capacity",
+                      static_cast<std::int64_t>(rfa.capacity_bytes()));
+            insert_kv("render-frame-arena-used", static_cast<std::int64_t>(rfa.used_bytes()));
+            insert_kv("render-frame-presents",
+                      static_cast<std::int64_t>(
+                          rfm.render_frame_presents.load(std::memory_order_relaxed)));
+            insert_kv("frame-time-avg-us",
+                      static_cast<std::int64_t>(aura::renderer::render_frame_time_avg_us()));
+            insert_kv("frame-time-p99-us",
+                      static_cast<std::int64_t>(aura::renderer::render_frame_time_p99_us()));
+            insert_kv("frame-time-max-us",
+                      static_cast<std::int64_t>(
+                          rfm.render_frame_time_max_us.load(std::memory_order_relaxed)));
+            insert_kv("linear-cell-grid-creates",
+                      static_cast<std::int64_t>(
+                          rfm.linear_cell_grid_creates.load(std::memory_order_relaxed)));
+            insert_kv("linear-cell-grid-moves",
+                      static_cast<std::int64_t>(
+                          rfm.linear_cell_grid_moves.load(std::memory_order_relaxed)));
+            insert_kv("render-frame-arena-phase", aura::renderer::kRenderFrameArenaPhase);
+            insert_kv("schema-2049", 2049);
+            insert_kv("issue-2049", 2049);
+            insert_kv("render-frame-arena-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
