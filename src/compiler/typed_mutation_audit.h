@@ -277,14 +277,15 @@ inline void apply_dev_audit_defaults() noexcept {
            1;
 }
 
-inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
-                                std::uint64_t before_epoch, std::uint64_t after_epoch,
-                                AuditOutcome outcome, std::uint32_t target_node = 0,
-                                std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
-                                std::uint32_t affected_ref_count = 0) noexcept {
-    if (!should_audit(mutation_id))
-        return;
-
+// Core trail write (no Sampled gate). Used by capture_audit_event and by
+// #2054 security-correlated emit (always-on so rings stay joined by
+// mutation_id even under Sampled strategy).
+inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_view name,
+                                       MutationKind kind, std::uint64_t before_epoch,
+                                       std::uint64_t after_epoch, AuditOutcome outcome,
+                                       std::uint32_t target_node = 0,
+                                       std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
+                                       std::uint32_t affected_ref_count = 0) noexcept {
     TypedMutationAuditEvent ev{};
     ev.mutation_id = mutation_id;
     const auto seq =
@@ -314,10 +315,36 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
 
     g_typed_mutation_audit_counters.contextual_total.fetch_add(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_writes.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.fetch_add(
+        1, std::memory_order_relaxed);
     if (outcome == AuditOutcome::Rollback)
         g_typed_mutation_audit_counters.rollbacks.fetch_add(1, std::memory_order_relaxed);
     if (outcome == AuditOutcome::Error)
         g_typed_mutation_audit_counters.errors.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
+                                std::uint64_t before_epoch, std::uint64_t after_epoch,
+                                AuditOutcome outcome, std::uint32_t target_node = 0,
+                                std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
+                                std::uint32_t affected_ref_count = 0) noexcept {
+    if (!should_audit(mutation_id))
+        return;
+    capture_audit_event_forced(mutation_id, name, kind, before_epoch, after_epoch, outcome,
+                               target_node, nodes_changed, fiber_id, affected_ref_count);
+}
+
+// Issue #2054: always-on security correlation emit from
+// check_and_record_effect (allow + deny). Bypasses Sampled so Agents
+// can join SecurityEvent.mutation_id ↔ TypedMutationAuditEvent.mutation_id.
+inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::string_view op,
+                                              std::uint64_t epoch, bool denied,
+                                              std::uint32_t target_node = 0,
+                                              std::int64_t fiber_id = 0) noexcept {
+    g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
+    capture_audit_event_forced(mutation_id, op, classify_kind(op), epoch, epoch,
+                               denied ? AuditOutcome::Error : AuditOutcome::Success, target_node,
+                               /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
 }
 
 // Issue #1882: AOT hot-update boundary audit. Sampled on success (should_audit);
@@ -576,6 +603,28 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
     std::lock_guard lock(g_trail().mu);
     out = g_trail().ring[seq % kTypedMutationAuditTrailSize];
     return out.seq == seq;
+}
+
+// Issue #2054: newest-first scan for mutation_id correlation join.
+// Returns true and copies the most recent matching event still in ring.
+[[nodiscard]] inline bool trail_find_by_mutation_id(std::uint64_t mutation_id,
+                                                    TypedMutationAuditEvent& out) noexcept {
+    if (mutation_id == 0)
+        return false;
+    const auto head = trail_seq();
+    if (head == 0)
+        return false;
+    const std::size_t window = head < kTypedMutationAuditTrailSize ? static_cast<std::size_t>(head)
+                                                                   : kTypedMutationAuditTrailSize;
+    std::lock_guard lock(g_trail().mu);
+    for (std::size_t i = 0; i < window; ++i) {
+        const auto& e = g_trail().ring[(head - 1 - i) % kTypedMutationAuditTrailSize];
+        if (e.mutation_id == mutation_id) {
+            out = e;
+            return true;
+        }
+    }
+    return false;
 }
 
 inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,

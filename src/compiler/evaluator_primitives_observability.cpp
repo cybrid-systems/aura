@@ -211,6 +211,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #1567 — mutation audit WAL persist + crash recovery
     "query:audit-wal-stats",
     "query:mutation-audit-log",
+    // Issue #2075 / #2054: security-audit* stay register_stats_impl only
+    // (engine:metrics facade) — not cataloged (SlimSurface freeze).
     // Issue #1568 — linear boundary consistency closed-loop
     "query:linear-boundary-consistency-stats",
     // Issues #809–#817 Phase 1 unified production/error/macro surfaces
@@ -529,6 +531,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #676 — sandbox capability + mutation audit
     "query:security-stats",
     "query:mutation-audit-log",
+    // Issue #2075 / #2054: security-audit* via register_stats_impl only
+    // (engine:metrics); not listed here (SlimSurface freeze / #1448).
     // Issue #464 — Arena auto-compaction lifecycle
     "query:arena-auto-stats",
     // Issue #677 — deployment / health / metrics export
