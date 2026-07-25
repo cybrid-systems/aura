@@ -56,6 +56,31 @@ public:
     void on_reemit_pipeline_call(std::uint64_t candidates, std::uint64_t successes) noexcept;
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
+    // Issue #2094: unified StormLevel facade. Combines
+    // HotUpdateRegistry's sliding-window deopt storm (global reemit
+    // throttle) with ShapeProfiler's shape-storm detector into a
+    // single bitmask so SpecJITController / reemit entry can apply
+    // one recovery policy without consulting two independent truth
+    // values. Policy table (Issue #2094 AC5):
+    //   - Global|Both → should_throttle_reemit() (existing #2014)
+    //   - Shape|Both → SpecJIT / GuardShape conservative mode
+    //     (existing shape-storm path)
+    //   - None → normal flow
+    // Counters are NOT merged — each detector keeps its own
+    // lineage / thresholds / metrics. Only the decision is unified.
+    enum class StormLevel : std::uint8_t {
+        None = 0, // bit 0 = shape, bit 1 = global
+        Shape = 1,
+        Global = 2,
+        Both = 3,
+    };
+    // Reads both detectors and returns the combined bitmask.
+    [[nodiscard]] StormLevel current_storm_level() const noexcept;
+    // Issue #2094: setter for ShapeProfiler (or tests) to publish its
+    // deopt_storm_active state. Bridge reads it via the facade above
+    // without needing to import shape_profiler.h.
+    void set_shape_storm_active(bool active) noexcept;
+    [[nodiscard]] bool shape_storm_active() const noexcept;
     // Issue #2093: reason-aware rollback hook. The per-reason atomic
     // counter + last-reason file-scope atomic are bumped here so the
     // Agent snapshot (taken via get_snapshot / get_stats_snapshot) can
@@ -170,6 +195,10 @@ public:
         std::int64_t last_region_mask_from_dirty = 0;
         std::int64_t schema_2035 = 2035;
         std::int64_t issue_2035 = 2035;
+        // Issue #2094: unified StormLevel facade result (uint8_t enum).
+        // Agents read this as a single recovery-policy signal rather
+        // than ORing two independent detectors.
+        std::int64_t storm_level = 0; // StormLevel: None=0/Shape=1/Global=2/Both=3
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -239,6 +268,10 @@ private:
     std::atomic<std::uint64_t> deopt_storm_window_ms_{100};
     std::atomic<bool> reemit_throttled_{false};
     std::atomic<std::uint64_t> reemit_throttle_skips_{0};
+    // Issue #2094: ShapeProfiler publishes its deopt_storm_active
+    // state here so current_storm_level() can OR both detectors
+    // without importing shape_profiler.h.
+    std::atomic<bool> shape_storm_active_{false};
     std::atomic<std::uint64_t> region_mask_adapt_clears_{0};   // #2016
     std::atomic<std::uint64_t> region_mask_adapt_restores_{0}; // #2016
     // Issue #2035
@@ -288,6 +321,10 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t aot_reload_fail_staging_total;
     std::int64_t aot_reload_fail_other_total;
     std::int64_t aot_reload_last_fail_reason;
+    // Issue #2094: unified StormLevel facade result (uint8_t enum).
+    // Agents read this as a single recovery-policy signal rather than
+    // ORing two independent detectors.
+    std::int64_t storm_level;              // StormLevel: None=0/Shape=1/Global=2/Both=3
     std::int64_t live_closure_remap_total; // #2013
     // Issue #2014
     std::int64_t deopt_storm_detected_total;
@@ -313,6 +350,16 @@ void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* ou
 void aura_hot_update_note_deopt(void);
 int aura_hot_update_should_throttle_reemit(void);
 void aura_hot_update_on_reemit_throttled(void);
+
+// Issue #2094: StormLevel facade accessor (C ABI). Returns the
+// combined bitmask of shape-storm + global-deopt-storm detectors
+// so external callers can branch on a single recovery-policy value.
+// Result mapping (uint8_t): 0=None, 1=Shape, 2=Global, 3=Both.
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+
+// Issue #2094: setter for ShapeProfiler (or tests) to publish its
+// deopt_storm_active state without needing to import shape_profiler.h.
+extern "C" void aura_hot_update_set_shape_storm_active(int active);
 void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                                std::uint64_t window_ms);
 void aura_hot_update_reset_deopt_storm_state_for_test(void);

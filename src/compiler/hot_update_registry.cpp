@@ -175,6 +175,30 @@ void HotUpdateRegistry::on_reemit_throttled() noexcept {
     reemit_throttle_skips_.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #2094: ShapeProfiler publishes its deopt_storm_active state
+// here so current_storm_level() can OR both detectors without
+// importing shape_profiler.h. Tests can call this directly to
+// simulate shape-only storms (AC2) without spinning up the
+// profile machinery.
+void HotUpdateRegistry::set_shape_storm_active(bool active) noexcept {
+    shape_storm_active_.store(active, std::memory_order_release);
+}
+
+bool HotUpdateRegistry::shape_storm_active() const noexcept {
+    return shape_storm_active_.load(std::memory_order_acquire);
+}
+
+// Issue #2094: unified StormLevel facade. Combines the global
+// deopt storm (should_throttle_reemit) with the shape storm
+// (shape_storm_active) into a single bitmask for downstream
+// consumers (SpecJITController, reemit entry, Agent dashboards).
+// Policy table documented in hot_update_registry.hh.
+HotUpdateRegistry::StormLevel HotUpdateRegistry::current_storm_level() const noexcept {
+    const bool g = should_throttle_reemit();
+    const bool s = shape_storm_active();
+    return static_cast<StormLevel>((g ? 2 : 0) | (s ? 1 : 0));
+}
+
 void HotUpdateRegistry::set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                                   std::uint64_t window_ms) noexcept {
     deopt_storm_threshold_.store(deopts_per_window, std::memory_order_relaxed);
@@ -384,6 +408,8 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
         static_cast<std::int64_t>(last_region_mask_from_dirty_.load(std::memory_order_relaxed));
     s.schema_2035 = 2035;
     s.issue_2035 = 2035;
+    // Issue #2094: unified StormLevel facade (Shape|Global|Both).
+    s.storm_level = static_cast<std::int64_t>(current_storm_level());
     return s;
 }
 
@@ -441,6 +467,8 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->last_region_mask_from_dirty = s.last_region_mask_from_dirty;
     out->schema_2035 = s.schema_2035;
     out->issue_2035 = s.issue_2035;
+    // Issue #2094: unified StormLevel facade (uint8_t enum, copied as int64_t).
+    out->storm_level = s.storm_level;
 }
 
 extern "C" void aura_hot_update_note_deopt(void) {
@@ -449,6 +477,18 @@ extern "C" void aura_hot_update_note_deopt(void) {
 
 extern "C" int aura_hot_update_should_throttle_reemit(void) {
     return aura::compiler::hot_update_registry().should_throttle_reemit() ? 1 : 0;
+}
+
+// Issue #2094: StormLevel facade accessor (C ABI). Returns the
+// combined bitmask of shape-storm + global-deopt-storm detectors.
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void) {
+    return static_cast<std::uint8_t>(aura::compiler::hot_update_registry().current_storm_level());
+}
+
+// Issue #2094: setter for ShapeProfiler (or tests) to publish its
+// deopt_storm_active state without importing shape_profiler.h.
+extern "C" void aura_hot_update_set_shape_storm_active(int active) {
+    aura::compiler::hot_update_registry().set_shape_storm_active(active != 0);
 }
 
 extern "C" void aura_hot_update_on_reemit_throttled(void) {

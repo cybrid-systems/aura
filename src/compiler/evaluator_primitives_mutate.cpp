@@ -77,6 +77,12 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t aot_reload_fail_staging_total;
     std::int64_t aot_reload_fail_other_total;
     std::int64_t aot_reload_last_fail_reason;
+    // Issue #2094: unified StormLevel facade result (uint8_t enum).
+    // MUST stay in lockstep with hot_update_registry.hh — the production
+    // aura_hot_update_registry_get_snapshot() writes this field; if this
+    // shadow struct is missing it, the writes overflow and corrupt
+    // adjacent stack/heap (stack canary smashes).
+    std::int64_t storm_level;              // StormLevel: None=0/Shape=1/Global=2/Both=3
     std::int64_t live_closure_remap_total; // #2013
     // Issue #2014
     std::int64_t deopt_storm_detected_total;
