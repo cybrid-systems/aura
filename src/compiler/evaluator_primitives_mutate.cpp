@@ -439,8 +439,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 using aura::compiler::security::kEffectMutate;
                 if (!ev.check_and_record_effect(kEffectMutate, kEffectMutate, "mutate", 0,
                                                 ev.capability_tenant_id(), 0)) {
+                    // Issue #2076: unified Agent-readable deny reason.
+                    // Shape: "effect-denied: <EffectName> not granted tenant=<id> op=<op>"
                     return mev("capability-denied",
-                               "mutate effect denied by capability effect model (#1565)");
+                               aura::compiler::security::format_deny_reason(
+                                   kEffectMutate, ev.capability_tenant_id(), "mutate"));
                 }
             }
             // Issue #1566: multi-tenant workspace isolation on every mutate path.

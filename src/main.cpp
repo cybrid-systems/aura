@@ -46,6 +46,13 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
 
 extern "C" void aura_reset_runtime(); // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
+// Issue #2076: production default Restricted sandbox + AURA_SANDBOX env override.
+// Reads env before any Evaluator is constructed (free function, no
+// Evaluator instance needed) so the very first runtime is in
+// Restricted mode unless dev/test explicitly opt out via AURA_SANDBOX=off.
+namespace aura::compiler::security {
+void apply_aura_sandbox_env() noexcept;
+}
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 // Issue #243: defuse_version_ setter/getter so the AOT
 // bridge can mangle + register with the current emit epoch.
@@ -346,6 +353,12 @@ int main(int argc, char* argv[]) {
     // and JIT caches, so it's the canonical cleanup point.
     static int dummy = (std::atexit(+[]() { aura_reset_runtime(); }), 0);
     (void)dummy;
+
+    // Issue #2076: production default Restricted sandbox + AURA_SANDBOX env
+    // override. Read env before any runtime is constructed so the first
+    // runtime inherits the env-selected mode. Unset → Restricted (1)
+    // (production safe-by-default; dev/test set AURA_SANDBOX=off).
+    aura::compiler::security::apply_aura_sandbox_env();
 
     // ── Crash handler: print backtrace on fatal signal ────────────
     // ── Crash handler: print backtrace on fatal signal ────────────

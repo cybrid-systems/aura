@@ -5122,6 +5122,10 @@ public:
                                  std::uint64_t provenance_mutation_id = 0) noexcept;
     void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict
     [[nodiscard]] std::uint8_t effect_sandbox_mode() const noexcept;
+    // Issue #2076: production default Restricted sandbox + env override.
+    // Reads AURA_SANDBOX env var (off/strict/restricted/unset) and calls
+    // set_effect_sandbox_mode. Unset → Restricted (production safe-by-default).
+    void apply_env_sandbox() noexcept;
     void set_capability_tenant_id(std::uint64_t tenant) noexcept { capability_tenant_id_ = tenant; }
     [[nodiscard]] std::uint64_t capability_tenant_id() const noexcept {
         return capability_tenant_id_;

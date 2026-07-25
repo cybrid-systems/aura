@@ -2052,6 +2052,13 @@ aura_issue_test_link_llvm_jit(test_grant_epoch_invalidation_2074)
 aura_add_issue_test(test_security_audit_trail_2075)
 aura_issue_test_link_llvm_jit(test_security_audit_trail_2075)
 
+# Issue #2076: production default Restricted sandbox + AURA_SANDBOX
+# env override + Agent-readable deny reason format
+# (effect-denied: <EffectName> not granted tenant=<id> op=<op>).
+# apply_aura_sandbox_env() called from main.cpp at startup.
+aura_add_issue_test(test_aura_sandbox_env_2076)
+aura_issue_test_link_llvm_jit(test_aura_sandbox_env_2076)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
