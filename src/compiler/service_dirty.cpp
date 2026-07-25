@@ -29,7 +29,10 @@ import std;
 
 namespace aura::compiler {
 
-// ── Issue #2035: HotUpdateRegistry cascade notify + region-mask reemit ──
+// ── Issue #2035 / #2046: HotUpdateRegistry cascade notify + region-mask reemit
+// + joint AOT/JIT epoch identity. Soft/hard invalidate already advanced
+// bridge + AOT table epoch under mutate_mtx_ via atomic_bump_epochs; this
+// path marks AOT region identity for root+dependents and optionally reemits.
 void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                                                        const std::vector<std::string>& dependents) {
     auto& reg = hot_update_registry();
@@ -55,6 +58,15 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
         reg.set_emit_region_mask(mask);
         reg.on_region_mask_from_dirty(mask);
     }
+    // Issue #2046: observe joint epoch after cascade (already bumped by
+    // atomic_bump_epochs_and_stamp_bridge). Root + dependents share the
+    // global AOT table epoch — probe rejects generation-behind slots.
+    const auto joint = aura_aot_func_table_epoch();
+    metrics_.aot_cascade_joint_epoch_observe_total.fetch_add(1, std::memory_order_relaxed);
+    // Dependent count (including root) for region-stale fan-out observability.
+    const std::uint64_t region_n = 1u + static_cast<std::uint64_t>(dependents.size());
+    metrics_.aot_cascade_region_stale_names_total.fetch_add(region_n, std::memory_order_relaxed);
+    (void)joint;
     // Selective AOT re-emit only when the host wired a reemit candidate provider.
     // Stable func ids are preserved inside aura_reemit_aot_for_dirty on success.
     if (reg.reemit_provider_wired()) {

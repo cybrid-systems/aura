@@ -4,6 +4,39 @@
 // C identifiers from Aura function names. Exposed as a header
 // so tests can verify behavior without pulling in the entire
 // LLVM/AOT pipeline.
+//
+// ── Joint versioning contract (Issue #2046) ───────────────────────────
+// Interpreter / JIT / AOT share one invalidate protocol so mixed-mode
+// long-running AI self-mod cannot observe version skew after cascade.
+//
+// Domains (must advance under the same mutate_mtx_ path):
+//   1. bridge_epoch  — WorkspaceEpoch::Bridge + C g_current_bridge_epoch
+//                      (dual-write). Stamped into closures at alloc;
+//                      mismatch → deopt / reparse.
+//   2. AOT table epoch (g_aot_table_epoch / aura_aot_func_table_epoch)
+//                      — lockstep with bridge via
+//                      CompilerService::atomic_bump_epochs_and_stamp_bridge
+//                      → aura_aot_bump_func_table_epoch(). JIT capture_fn_epoch
+//                      and AOT slot table_generation use this as the joint
+//                      "region identity" for hot-swap.
+//   3. defuse_version — Evaluator's mutate counter; embedded in mangled
+//                      names as `_vN` (this header). Reload refuses
+//                      binaries with emit version behind host defuse.
+//   4. region_mask   — multi-agent isolation (per-eval AotState); not a
+//                      mutate epoch, but reload rejects mask mismatch.
+//
+// After soft (mark_define_dirty) or hard (invalidate_function) invalidate:
+//   - bridge + defuse + AOT table epoch all advance together
+//   - HotUpdateRegistry::notify_epoch_bump fans out to listeners
+//   - AOT slots with table_generation != current epoch are treated as
+//     stale (aura_aot_probe_fn_ptr returns 0 → forced recompile / JIT)
+//   - JIT is_fn_epoch_stale rejects native code captured at the old epoch
+//   - Cascade dependents share the same epoch bump (global table) so
+//     transitive AOT regions cannot stay live under the old identity
+//
+// Re-emit / reload restamps slot table_generation to the new epoch
+// (commit_func_table_swap / aura_register_fn_tracked). Until then, mixed
+// JIT+AOT workloads must not execute generation-behind AOT code.
 
 #pragma once
 

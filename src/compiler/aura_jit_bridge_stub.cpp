@@ -303,6 +303,13 @@ aura_reload_aot_module_for_eval(void* /*eval*/, const char* /*path*/, std::uint6
 extern "C" __attribute__((weak)) std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t /*func_id*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uintptr_t
+aura_aot_probe_fn_ptr_raw(std::int64_t /*func_id*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_aot_slot_is_stale(std::int64_t /*func_id*/) {
+    return 1;
+}
 
 extern "C" __attribute__((weak)) void aura_register_fn_tracked(std::int64_t /*id*/,
                                                                std::int64_t /*ptr*/) {}

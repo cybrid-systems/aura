@@ -2120,6 +2120,11 @@ aura_add_issue_test(test_source_to_ir_map_consistency_2045)
 aura_issue_test_link_llvm_jit(test_source_to_ir_map_consistency_2045)
 add_dependencies(all_test_issue_targets test_source_to_ir_map_consistency_2045)
 
+# Issue #2046: AOT region versioning aligned with JIT hot-swap / bridge_epoch
+aura_add_issue_test(test_aot_jit_joint_versioning_2046)
+aura_issue_test_link_llvm_jit(test_aot_jit_joint_versioning_2046)
+add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

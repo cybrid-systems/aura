@@ -11875,7 +11875,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             hot_update_rb = m->aot_hot_update_atomic_rollback.load(std::memory_order_relaxed);
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32); // #2046 joint versioning keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11913,11 +11913,45 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
+        std::uint64_t joint_bump = 0;
+        std::uint64_t region_ver_bump = 0;
+        std::uint64_t region_stale_mark = 0;
+        std::uint64_t slot_stale_rej = 0;
+        std::uint64_t forced_recompile = 0;
+        std::uint64_t cascade_joint = 0;
+        std::uint64_t cascade_names = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            joint_bump = m->aot_joint_epoch_bump_total.load(std::memory_order_relaxed);
+            region_ver_bump = m->aot_region_version_bump_total.load(std::memory_order_relaxed);
+            region_stale_mark = m->aot_region_stale_mark_total.load(std::memory_order_relaxed);
+            slot_stale_rej = m->aot_slot_stale_reject_total.load(std::memory_order_relaxed);
+            forced_recompile =
+                m->aot_forced_recompile_on_mismatch_total.load(std::memory_order_relaxed);
+            cascade_joint =
+                m->aot_cascade_joint_epoch_observe_total.load(std::memory_order_relaxed);
+            cascade_names = m->aot_cascade_region_stale_names_total.load(std::memory_order_relaxed);
+        }
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
             {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
             {"aot-hot-update-rollback-count", make_int(static_cast<std::int64_t>(hot_update_rb))},
+            // Issue #2046: joint AOT/JIT region versioning after invalidate
+            {"aot_joint_epoch_bump_total", make_int(static_cast<std::int64_t>(joint_bump))},
+            {"aot-joint-epoch-bump-total", make_int(static_cast<std::int64_t>(joint_bump))},
+            {"aot_region_version_bump_total", make_int(static_cast<std::int64_t>(region_ver_bump))},
+            {"aot_region_stale_mark_total", make_int(static_cast<std::int64_t>(region_stale_mark))},
+            {"aot_slot_stale_reject_total", make_int(static_cast<std::int64_t>(slot_stale_rej))},
+            {"aot_forced_recompile_on_mismatch_total",
+             make_int(static_cast<std::int64_t>(forced_recompile))},
+            {"aot_cascade_joint_epoch_observe_total",
+             make_int(static_cast<std::int64_t>(cascade_joint))},
+            {"aot_cascade_region_stale_names_total",
+             make_int(static_cast<std::int64_t>(cascade_names))},
+            {"aot-jit-joint-versioning-wired", make_int(1)},
+            {"schema-2046", make_int(2046)},
+            {"issue-2046", make_int(2046)},
         };
         return build_hash(kv);
     });

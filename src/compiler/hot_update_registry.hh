@@ -1,4 +1,4 @@
-// hot_update_registry.hh — Issue #1956 / #2014 / #2035
+// hot_update_registry.hh — Issue #1956 / #2014 / #2035 / #2046
 // Unified coordination center for hot-update / incremental re-emit
 // callbacks, region mask, epoch listeners, and aggregated metrics.
 //
@@ -12,6 +12,11 @@
 //   4. exposes hot_update_registry_* counters for dashboards
 //   5. Issue #2014: sliding-window deopt storm detection + reemit throttle
 //   6. Issue #2035: cascade dirty → region-mask reemit bookkeeping
+//   7. Issue #2046: joint AOT/JIT versioning — notify_epoch_bump is
+//      also called from aura_aot_bump_func_table_epoch (invalidate
+//      soft/hard) so listeners see the same epoch domain as JIT
+//      capture_fn_epoch / AOT slot table_generation. See aot_mangle.h
+//      "Joint versioning contract".
 //
 // MVP scope (#1943): single-workspace; no cross-COW migration.
 
