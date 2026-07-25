@@ -2090,6 +2090,11 @@ aura_add_issue_test(test_predicate_memo_boundary_selective_2104)
 aura_issue_test_link_llvm_jit(test_predicate_memo_boundary_selective_2104)
 add_dependencies(all_test_issue_targets test_predicate_memo_boundary_selective_2104)
 
+# Issue #2105: composite/nested txn ordered commit barrier.
+aura_add_issue_test(test_composite_txn_commit_2105)
+aura_issue_test_link_llvm_jit(test_composite_txn_commit_2105)
+add_dependencies(all_test_issue_targets test_composite_txn_commit_2105)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

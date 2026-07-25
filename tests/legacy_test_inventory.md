@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 390 | Preferred destination suites |
-| **Total scanned** | **390** | |
+| `tests/core/test_*.cpp` | 391 | Preferred destination suites |
+| **Total scanned** | **391** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 39 | 39 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 108 | 108 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 109 | 109 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 38 | 38 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 8 | 8 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 22 | 22 | P1 — domain hygiene suite exists |
@@ -214,6 +214,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_compiler_metrics_ownership.cpp`
 - `tests/compiler/test_compiler_service_ownership.cpp`
 - `tests/compiler/test_composite_nested_txn_invariant_audit.cpp`
+- `tests/compiler/test_composite_txn_commit_2105.cpp`
 - `tests/compiler/test_composite_typed_mutate.cpp`
 - `tests/compiler/test_comprehensive_live_closure_expire_2042.cpp`
 - `tests/compiler/test_concept_constraints.cpp`
@@ -622,13 +623,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_lifecycle.cpp` (—) [domain_suite, theme_renderer] — test_terminal_lifecycle.cpp — Issue #1352: delete/compact + use-after-delete
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (108)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (109)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (108)
+#### domain/ (109)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -645,6 +646,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_provenance_miss_force_audit_2102.cpp` (#2102) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_compiler_closure_env_safety_post_invalidate.cpp —
 - `tests/compiler/test_composite_nested_txn_invariant_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2027; composite counters + partial recover helpers
+- `tests/compiler/test_composite_txn_commit_2105.cpp` (#2105) [domain_suite, theme_compiler] — AC1: Nested/atomic_batch success path runs ordered revalidate before clean
 - `tests/compiler/test_composite_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #1408: Inline no-op stubs for aura::jit::AuraJIT::invalidate_prefix
 - `tests/compiler/test_comprehensive_live_closure_expire_2042.cpp` (#2042) [domain_suite, theme_compiler] — Issue #2042 — comprehensive live IRClosure / tree-walker / PrimCall
 - `tests/compiler/test_constraint_solver_surface_cross_delta.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2028; solve_delta_occurrence +

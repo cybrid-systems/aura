@@ -412,6 +412,131 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     }
 }
 
+// Issue #2105: ordered composite / nested / atomic_batch commit barrier.
+// Agent-visible type + linear views must not go clean until this sequence
+// succeeds: solve_delta_occurrence → linear revalidate → invariant audit
+// → (Full) partial recovery, else reject (caller structural-rolls back).
+bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view op_name,
+                                     std::uint32_t target_node, std::uint64_t before_epoch,
+                                     std::uint64_t after_epoch, bool nested, bool batch_active,
+                                     void* out_commit) noexcept {
+    using namespace aura::compiler::typed_audit;
+    CompositeTxnCommitResult cr{};
+    auto& c = g_typed_mutation_audit_counters;
+    c.composite_commit_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+
+    // 1) solve_delta_occurrence (stable constraint surface #2028).
+    // Empty occurrence span: re-run solve_delta with current CS state /
+    // retained blame anchors when a type registry is available.
+    cr.solve_ok = true;
+    if (type_registry_ && workspace_flat_ && workspace_pool_) {
+        try {
+            auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+            aura::diag::DiagnosticCollector diag;
+            aura::compiler::TypeChecker tc(reg);
+            if (compiler_metrics_)
+                tc.set_metrics(compiler_metrics_);
+            auto& cs = tc.constraint_system();
+            if (mutation_id != 0)
+                cs.set_active_mutation_id(mutation_id);
+            auto sdo = aura::compiler::solve_delta_occurrence(cs, {}, nullptr, compiler_metrics_);
+            using aura::compiler::SolveResult;
+            cr.solve_ok = (sdo.status == SolveResult::SOLVED);
+            if (!cr.solve_ok)
+                c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+        } catch (...) {
+            // [SILENCE-PRIM] solve path failure → treat as type fail.
+            cr.solve_ok = false;
+            c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // 2) Linear ownership revalidate (dirty/full sweep + boundary consistency).
+    {
+        const auto sweep = linear_post_mutate_enforce_all();
+        cr.linear_ok = sweep.all_safe || sweep.frames_checked == 0;
+        (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                  /*mark_all_linear=*/false);
+        if (!cr.linear_ok)
+            c.composite_commit_linear_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // 3) Invariant audit (type + linear + provenance) under composite_mode.
+    InvariantAuditResult audit{};
+    cr.audit_ok =
+        run_typed_mutation_invariant_audit(mutation_id, op_name, target_node, before_epoch,
+                                           after_epoch, /*composite_mode=*/true, &audit);
+    if (!cr.solve_ok)
+        audit.type_ok = false;
+    if (!cr.linear_ok) {
+        audit.linear_ok = false;
+    }
+    cr.audit = audit;
+    record_composite_invariant_audit(nested, batch_active, audit);
+
+    const bool first_ok = cr.solve_ok && cr.linear_ok && audit.all_ok() && cr.audit_ok;
+    if (first_ok) {
+        c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
+        clear_txn_dirty();
+        cr.committed = true;
+        if (out_commit)
+            *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+        return true;
+    }
+
+    // 4) Full strategy: per-category partial recovery then re-audit (#2029).
+    if (get_strategy() == AuditStrategy::Full) {
+        c.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
+        c.composite_partial_recover_attempt_total.fetch_add(1, std::memory_order_relaxed);
+        if (!audit.linear_ok || audit.cross_batch_linear_escape) {
+            c.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
+            c.composite_partial_recover_linear_total.fetch_add(1, std::memory_order_relaxed);
+            (void)linear_post_mutate_enforce_all();
+            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                      /*mark_all_linear=*/true);
+        }
+        if (!audit.type_ok || !cr.solve_ok) {
+            c.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
+            c.composite_partial_recover_type_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!audit.provenance_ok) {
+            c.partial_recovery_provenance_total.fetch_add(1, std::memory_order_relaxed);
+            if (workspace_flat_)
+                workspace_flat_->restamp_all_node_generations();
+            (void)restamp_pinned_stable_refs();
+            (void)post_mutation_reflect_validate();
+        }
+        InvariantAuditResult after{};
+        const bool after_ok = run_typed_mutation_invariant_audit(
+            mutation_id, "composite-txn-partial-recover", target_node, before_epoch, after_epoch,
+            /*composite_mode=*/true, &after);
+        if (after_ok && after.all_ok()) {
+            c.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+            c.composite_partial_recover_success_total.fetch_add(1, std::memory_order_relaxed);
+            c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
+            record_composite_invariant_audit(nested, batch_active, after);
+            clear_txn_dirty();
+            cr.audit = after;
+            cr.audit_ok = true;
+            cr.partial_recovered = true;
+            cr.committed = true;
+            if (out_commit)
+                *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+            return true;
+        }
+        c.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
+        cr.audit = after;
+    }
+
+    // Reject: caller performs structural rollback.
+    c.composite_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+    cr.rejected = true;
+    cr.committed = false;
+    if (out_commit)
+        *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+    return false;
+}
+
 // Issue #1614 / #2027: TypedMutationAudit real post-mutation invariant suite.
 // Type (post_mutation_invariant_check), linear (linear_post_mutate_enforce_all),
 // provenance (post_mutation_reflect_validate). Records trail + counters.

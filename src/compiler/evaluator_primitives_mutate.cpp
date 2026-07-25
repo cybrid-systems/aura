@@ -5498,8 +5498,28 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("provenance-restamp-recover-wired", 1);
                 insert_kv("schema-2029", 2029);
                 insert_kv("issue-2029", 2029);
+                // Issue #2105: ordered composite commit barrier metrics.
+                insert_kv("composite-commit-revalidate-total",
+                          static_cast<std::int64_t>(
+                              c.composite_commit_revalidate_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-commit-ok-total",
+                          static_cast<std::int64_t>(
+                              c.composite_commit_ok_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-commit-reject-total",
+                          static_cast<std::int64_t>(
+                              c.composite_commit_reject_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-commit-solve-fail-total",
+                          static_cast<std::int64_t>(
+                              c.composite_commit_solve_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-commit-linear-fail-total",
+                          static_cast<std::int64_t>(c.composite_commit_linear_fail_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-txn-commit-wired", 1);
+                insert_kv("txn-dirty", ev.txn_dirty() ? 1 : 0);
+                insert_kv("schema-2105", 2105);
+                insert_kv("issue-2105", 2105);
             }
-            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882 / #2027 / #2029 satellite
+            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882 / #2027 / #2029 / #2105
             insert_kv("schema", 1894);
             TypedMutationAuditEvent latest{};
             if (trail_latest(latest)) {

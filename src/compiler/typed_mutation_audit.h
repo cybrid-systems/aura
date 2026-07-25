@@ -139,6 +139,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_batch_audit_total{0};
     std::atomic<std::uint64_t> composite_cross_batch_linear_escape_total{0};
     std::atomic<std::uint64_t> composite_partial_recover_attempt_total{0};
+    // Issue #2105: ordered composite/nested commit barrier
+    // (solve_delta_occurrence → linear revalidate → invariant audit).
+    std::atomic<std::uint64_t> composite_commit_revalidate_total{0};
+    std::atomic<std::uint64_t> composite_commit_ok_total{0};
+    std::atomic<std::uint64_t> composite_commit_reject_total{0};
+    std::atomic<std::uint64_t> composite_commit_solve_fail_total{0};
+    std::atomic<std::uint64_t> composite_commit_linear_fail_total{0};
     // Issue #2029: Full-strategy per-category partial recovery (all boundaries,
     // not only composite). Prefer type/linear/provenance recover before
     // structural rollback; soundness: re-audit must all_ok before continue.
@@ -456,6 +463,17 @@ inline void record_composite_invariant_audit(bool nested, bool batch_active,
         c.composite_invariant_fail_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #2105: result of ordered composite_txn_commit barrier.
+struct CompositeTxnCommitResult {
+    bool committed = false;
+    bool solve_ok = true;
+    bool linear_ok = true;
+    bool audit_ok = true;
+    bool partial_recovered = false;
+    bool rejected = false;
+    InvariantAuditResult audit{};
+};
+
 // Issue #1884: stamp last TypePropagationPass / DCE narrow metrics for
 // the next invariant audit correlation window.
 inline void note_type_propagation_pass(std::uint64_t fixpoint_rounds, std::uint64_t narrow_hits,
@@ -719,6 +737,16 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_nested_audit_total.store(0,
                                                                        std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_batch_audit_total.store(0, std::memory_order_relaxed);
+    // Issue #2105 composite commit barrier
+    g_typed_mutation_audit_counters.composite_commit_revalidate_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_ok_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_reject_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_solve_fail_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_linear_fail_total.store(
+        0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_cross_batch_linear_escape_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_partial_recover_attempt_total.store(

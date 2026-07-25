@@ -3037,6 +3037,22 @@ public:
                                        std::uint32_t target_node, std::uint64_t before_epoch,
                                        std::uint64_t after_epoch, bool composite_mode = false,
                                        void* out_result = nullptr) noexcept;
+    // Issue #2105: ordered composite / nested / atomic_batch commit barrier.
+    // Sequence: solve_delta_occurrence → linear revalidate → invariant audit
+    // → (Full) partial recovery or reject. Clears txn-dirty on success.
+    // out_commit: optional typed_audit::CompositeTxnCommitResult*.
+    [[nodiscard]] bool composite_txn_commit(std::uint64_t mutation_id, std::string_view op_name,
+                                            std::uint32_t target_node, std::uint64_t before_epoch,
+                                            std::uint64_t after_epoch, bool nested = false,
+                                            bool batch_active = false,
+                                            void* out_commit = nullptr) noexcept;
+    // Issue #2105: Agent-visible flag — composite/nested txn still open
+    // (half-typed views must not be treated as committed).
+    [[nodiscard]] bool txn_dirty() const noexcept {
+        return txn_dirty_.load(std::memory_order_relaxed) != 0;
+    }
+    void note_txn_dirty() noexcept { txn_dirty_.store(1, std::memory_order_relaxed); }
+    void clear_txn_dirty() noexcept { txn_dirty_.store(0, std::memory_order_relaxed); }
     // Issue #1595: MultiFiberMailbox attach/recv/broadcast path.
     // Returns false when a linear claim in payload fails ownership checks
     // (caller must not deliver). Always runs light StableNodeRef probe.
@@ -4615,6 +4631,9 @@ private:
     // Issue #1490: lifetime # of post-steal EnvFrame refresh passes
     // (Fiber::resume migration + post-yield validate path).
     std::atomic<std::uint64_t> post_steal_refresh_count_{0};
+    // Issue #2105: set while nested Guard / atomic_batch is open so Agents
+    // can treat workspace type/linear views as not yet commit-consistent.
+    std::atomic<std::uint32_t> txn_dirty_{0};
     // Issue #1612: refresh_stale_macro_frames invocation count.
     std::atomic<std::uint64_t> macro_refresh_invoke_count_{0};
     // Issue #439: safepoint wait time (sum of all
