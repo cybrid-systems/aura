@@ -1,4 +1,4 @@
-// hot_update_registry.cpp — Issue #1956 / #2014
+// hot_update_registry.cpp — Issue #1956 / #2014 / #2114
 // Process-wide HotUpdateRegistry singleton.
 
 #include "compiler/hot_update_registry.hh"
@@ -7,6 +7,10 @@
 
 #include <chrono>
 #include <utility>
+
+// C-linkage boundary probes (strong in evaluator_fiber_mutation; weak stubs).
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+extern "C" int aura_evaluator_mutation_boundary_held();
 
 namespace aura::compiler {
 
@@ -17,6 +21,9 @@ namespace {
         return static_cast<std::uint64_t>(
             duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
     }
+
+    // Issue #2114: TLS soft reemit boundary depth (per-thread reemit call).
+    thread_local int g_soft_reemit_boundary_depth = 0;
 
 } // namespace
 
@@ -220,6 +227,82 @@ void HotUpdateRegistry::reset_deopt_storm_state_for_test() noexcept {
     // Keep lifetime counters (detected / observed / skips) for dashboards.
 }
 
+// ── Issue #2114: reemit ↔ MutationBoundary handshake ──
+void HotUpdateRegistry::set_reemit_boundary_policy(ReemitBoundaryPolicy p) noexcept {
+    reemit_boundary_policy_.store(static_cast<int>(p), std::memory_order_relaxed);
+}
+
+HotUpdateRegistry::ReemitBoundaryPolicy HotUpdateRegistry::reemit_boundary_policy() const noexcept {
+    return static_cast<ReemitBoundaryPolicy>(
+        reemit_boundary_policy_.load(std::memory_order_relaxed));
+}
+
+bool HotUpdateRegistry::in_mutation_boundary_for_reemit() const noexcept {
+    // Soft reemit boundary (this thread mid-reemit soft-enter).
+    if (g_soft_reemit_boundary_depth > 0)
+        return true;
+    // Real MutationBoundary stack depth (enter/exit_mutation_boundary).
+    if (aura_evaluator_mutation_boundary_depth() > 0)
+        return true;
+    // Outermost Guard held flag — still true during #2090 dtor reemit
+    // (held cleared only after reemit pipeline).
+    if (aura_evaluator_mutation_boundary_held() != 0)
+        return true;
+    return false;
+}
+
+void HotUpdateRegistry::soft_reemit_boundary_enter() noexcept {
+    ++g_soft_reemit_boundary_depth;
+}
+
+void HotUpdateRegistry::soft_reemit_boundary_exit() noexcept {
+    if (g_soft_reemit_boundary_depth > 0)
+        --g_soft_reemit_boundary_depth;
+}
+
+int HotUpdateRegistry::soft_reemit_boundary_depth() const noexcept {
+    return g_soft_reemit_boundary_depth;
+}
+
+void HotUpdateRegistry::on_reemit_outside_boundary() noexcept {
+    reemit_outside_boundary_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::on_reemit_soft_boundary_entered() noexcept {
+    reemit_soft_boundary_entered_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::on_reemit_deferred_for_boundary() noexcept {
+    reemit_deferred_for_boundary_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::defer_reemit_for_boundary(std::uint64_t defuse_version) noexcept {
+    reemit_deferred_version_.store(defuse_version, std::memory_order_relaxed);
+    reemit_deferred_pending_.store(true, std::memory_order_release);
+    on_reemit_deferred_for_boundary();
+}
+
+bool HotUpdateRegistry::has_deferred_reemit() const noexcept {
+    return reemit_deferred_pending_.load(std::memory_order_acquire);
+}
+
+std::uint64_t HotUpdateRegistry::take_deferred_reemit_version() noexcept {
+    if (!reemit_deferred_pending_.exchange(false, std::memory_order_acq_rel))
+        return 0;
+    return reemit_deferred_version_.exchange(0, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {
+    reemit_boundary_policy_.store(0, std::memory_order_relaxed);
+    reemit_outside_boundary_.store(0, std::memory_order_relaxed);
+    reemit_soft_boundary_entered_.store(0, std::memory_order_relaxed);
+    reemit_deferred_for_boundary_.store(0, std::memory_order_relaxed);
+    reemit_deferred_pending_.store(false, std::memory_order_relaxed);
+    reemit_deferred_version_.store(0, std::memory_order_relaxed);
+    // Clear TLS soft depth for this thread (test isolation).
+    g_soft_reemit_boundary_depth = 0;
+}
+
 void HotUpdateRegistry::set_emit_region_mask(std::uint64_t mask) noexcept {
     // C path calls on_emit_region_mask_set (single bookkeeping site).
     aura_set_aot_emit_region_mask(mask);
@@ -410,6 +493,18 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.issue_2035 = 2035;
     // Issue #2094: unified StormLevel facade (Shape|Global|Both).
     s.storm_level = static_cast<std::int64_t>(current_storm_level());
+    // Issue #2114: reemit ↔ MutationBoundary handshake.
+    s.reemit_outside_boundary_total =
+        static_cast<std::int64_t>(reemit_outside_boundary_.load(std::memory_order_relaxed));
+    s.reemit_soft_boundary_entered_total =
+        static_cast<std::int64_t>(reemit_soft_boundary_entered_.load(std::memory_order_relaxed));
+    s.reemit_deferred_for_boundary_total =
+        static_cast<std::int64_t>(reemit_deferred_for_boundary_.load(std::memory_order_relaxed));
+    s.reemit_boundary_policy =
+        static_cast<std::int64_t>(reemit_boundary_policy_.load(std::memory_order_relaxed));
+    s.reemit_deferred_pending = reemit_deferred_pending_.load(std::memory_order_relaxed) ? 1 : 0;
+    s.schema_2114 = 2114;
+    s.issue_2114 = 2114;
     return s;
 }
 
@@ -469,6 +564,14 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->issue_2035 = s.issue_2035;
     // Issue #2094: unified StormLevel facade (uint8_t enum, copied as int64_t).
     out->storm_level = s.storm_level;
+    // Issue #2114
+    out->reemit_outside_boundary_total = s.reemit_outside_boundary_total;
+    out->reemit_soft_boundary_entered_total = s.reemit_soft_boundary_entered_total;
+    out->reemit_deferred_for_boundary_total = s.reemit_deferred_for_boundary_total;
+    out->reemit_boundary_policy = s.reemit_boundary_policy;
+    out->reemit_deferred_pending = s.reemit_deferred_pending;
+    out->schema_2114 = s.schema_2114;
+    out->issue_2114 = s.issue_2114;
 }
 
 extern "C" void aura_hot_update_note_deopt(void) {
@@ -516,4 +619,31 @@ extern "C" void aura_hot_update_notify_dirty_define(const char* name) {
 
 extern "C" int aura_hot_update_reemit_provider_wired(void) {
     return aura::compiler::hot_update_registry().reemit_provider_wired() ? 1 : 0;
+}
+
+// Issue #2114: reemit ↔ MutationBoundary handshake C ABI.
+extern "C" int aura_hot_update_in_mutation_boundary_for_reemit(void) {
+    return aura::compiler::hot_update_registry().in_mutation_boundary_for_reemit() ? 1 : 0;
+}
+
+extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy) {
+    using P = aura::compiler::HotUpdateRegistry::ReemitBoundaryPolicy;
+    auto p = (policy == 1) ? P::Defer : P::SoftEnter;
+    aura::compiler::hot_update_registry().set_reemit_boundary_policy(p);
+}
+
+extern "C" int aura_hot_update_get_reemit_boundary_policy(void) {
+    return static_cast<int>(aura::compiler::hot_update_registry().reemit_boundary_policy());
+}
+
+extern "C" void aura_hot_update_reset_reemit_boundary_handshake_for_test(void) {
+    aura::compiler::hot_update_registry().reset_reemit_boundary_handshake_for_test();
+}
+
+extern "C" int aura_hot_update_soft_reemit_boundary_active(void) {
+    return aura::compiler::hot_update_registry().soft_reemit_boundary_depth() > 0 ? 1 : 0;
+}
+
+extern "C" int aura_hot_update_has_deferred_reemit(void) {
+    return aura::compiler::hot_update_registry().has_deferred_reemit() ? 1 : 0;
 }

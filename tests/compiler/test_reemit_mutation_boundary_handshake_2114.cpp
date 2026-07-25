@@ -1,0 +1,273 @@
+// @category: unit
+// @reason: Issue #2114 — HotUpdate reemit ↔ MutationBoundary explicit handshake.
+//
+// Handshake policy for Agent / plugin authors (AC5):
+//   SoftEnter (default, policy=0): reemit outside a real MutationBoundary
+//     enters a TLS soft reemit boundary for the call duration. Dual-epoch /
+//     linear / GC steal see soft depth via aura_hot_update_soft_reemit_boundary_active.
+//   Defer (policy=1): reemit outside records pending version and returns 0;
+//     next outermost MutationBoundary exit drains it under the real Guard.
+//   Inside real boundary (depth>0 or held flag, #2090 dtor window): proceed
+//     without soft-enter. Outside path is never silent (always counted).
+//
+//   AC1: Forced reemit outside → soft-enter or defer (never silent)
+//   AC2: Soft path does not break baseline reemit / inside-boundary path
+//   AC3: Query exposes three counters + schema-2114
+//   AC4: Existing reemit wiring still present (source + soft path green)
+//   AC5: Policy docs in this header + query enable keys
+
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
+#include "test_harness.hpp"
+
+#include <cstdint>
+#include <fstream>
+#include <print>
+#include <string>
+#include <string_view>
+#include <unordered_set>
+#include <vector>
+
+extern "C" void aura_hot_update_reset_reemit_boundary_handshake_for_test(void);
+extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
+extern "C" int aura_hot_update_get_reemit_boundary_policy(void);
+extern "C" int aura_hot_update_in_mutation_boundary_for_reemit(void);
+extern "C" int aura_hot_update_soft_reemit_boundary_active(void);
+extern "C" int aura_hot_update_has_deferred_reemit(void);
+extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
+
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
+
+namespace {
+
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::compiler::hot_update_registry;
+using aura::compiler::HotUpdateRegistry;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+struct ReemitFixture {
+    struct Candidate {
+        std::string name;
+        std::uint64_t region;
+        bool from_closure_capture;
+    };
+    std::vector<Candidate> candidates;
+    std::size_t cursor = 0;
+};
+
+static bool reemit_candidate_iter(void* userdata, const char** out_name, std::uint64_t* out_region,
+                                  bool* out_from_closure_capture) {
+    auto* f = static_cast<ReemitFixture*>(userdata);
+    if (!f || f->candidates.empty())
+        return false;
+    if (f->cursor >= f->candidates.size()) {
+        f->cursor = 0;
+        return false;
+    }
+    const auto& c = f->candidates[f->cursor++];
+    *out_name = c.name.c_str();
+    *out_region = c.region;
+    *out_from_closure_capture = c.from_closure_capture;
+    return true;
+}
+
+struct EmitFixture {
+    std::unordered_set<std::string> fail_names;
+    std::atomic<std::uint32_t> calls{0};
+    std::atomic<std::uint32_t> ok{0};
+};
+
+static bool emit_fn(const char* name, std::uint64_t /*region*/, void* userdata) {
+    auto* f = static_cast<EmitFixture*>(userdata);
+    f->calls.fetch_add(1, std::memory_order_relaxed);
+    if (!name)
+        return false;
+    if (f->fail_names.count(name))
+        return false;
+    f->ok.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+static std::int64_t href(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:hot-update-registry-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static void wire_reemit(ReemitFixture& rf, EmitFixture& ef) {
+    rf.candidates = {{"fn_a", 0, false}, {"fn_b", 1, false}};
+    rf.cursor = 0;
+    ef.calls.store(0);
+    ef.ok.store(0);
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+    aura_hot_update_reset_deopt_storm_state_for_test();
+}
+
+static void ac1_outside_soft_or_defer() {
+    std::println("\n--- AC1: outside boundary soft-enter / defer ---");
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    ReemitFixture rf;
+    EmitFixture ef;
+    wire_reemit(rf, ef);
+
+    // Outside: no Guard, depth 0, held 0 → SoftEnter
+    CHECK(aura_hot_update_in_mutation_boundary_for_reemit() == 0, "outside before");
+    CHECK(aura_hot_update_get_reemit_boundary_policy() == 0, "default SoftEnter");
+    const auto n = aura_reemit_aot_for_dirty(0);
+    CHECK(n >= 1, "soft-enter reemit succeeds");
+    auto snap = hot_update_registry().snapshot();
+    CHECK(snap.reemit_outside_boundary_total >= 1, "outside counted");
+    CHECK(snap.reemit_soft_boundary_entered_total >= 1, "soft-enter counted");
+    CHECK(snap.reemit_deferred_for_boundary_total == 0, "not deferred on SoftEnter");
+    CHECK(aura_hot_update_soft_reemit_boundary_active() == 0, "soft depth cleared after call");
+    CHECK(ef.ok.load() >= 1, "emit ran under soft boundary");
+
+    // Defer policy
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+    aura_hot_update_set_reemit_boundary_policy(1);
+    CHECK(aura_hot_update_get_reemit_boundary_policy() == 1, "policy Defer");
+    wire_reemit(rf, ef);
+    const auto n2 = aura_reemit_aot_for_dirty(42);
+    CHECK(n2 == 0, "deferred returns 0");
+    CHECK(aura_hot_update_has_deferred_reemit() == 1, "pending set");
+    snap = hot_update_registry().snapshot();
+    CHECK(snap.reemit_outside_boundary_total >= 1, "outside counted (defer)");
+    CHECK(snap.reemit_deferred_for_boundary_total >= 1, "deferred counted");
+    CHECK(snap.reemit_soft_boundary_entered_total == 0, "no soft-enter on defer");
+    CHECK(ef.calls.load() == 0, "emit not called when deferred");
+
+    // Drain deferred under real MutationBoundary
+    CompilerService cs;
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(aura_hot_update_in_mutation_boundary_for_reemit() == 1, "inside Guard");
+        // Reemit while held (simulates #2090 dtor window / flush)
+        rf.cursor = 0;
+        const auto n3 = aura_reemit_aot_for_dirty(42);
+        CHECK(n3 >= 1, "inside reemit succeeds");
+        CHECK(aura_hot_update_has_deferred_reemit() == 0, "deferred drained");
+    }
+    aura_hot_update_set_reemit_boundary_policy(0);
+}
+
+static void ac2_inside_boundary_baseline() {
+    std::println("\n--- AC2: inside boundary + soft baseline ---");
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    ReemitFixture rf;
+    EmitFixture ef;
+    wire_reemit(rf, ef);
+
+    CompilerService cs;
+    bool ok = true;
+    std::uint64_t outside_before = hot_update_registry().snapshot().reemit_outside_boundary_total;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(cs.evaluator().mutation_boundary_held(), "held");
+        CHECK(aura_hot_update_in_mutation_boundary_for_reemit() == 1, "inside for reemit");
+        const auto n = aura_reemit_aot_for_dirty(0);
+        CHECK(n >= 1, "inside reemit ok");
+    }
+    auto snap = hot_update_registry().snapshot();
+    // Inside path must not bump outside / soft counters
+    CHECK(snap.reemit_outside_boundary_total == static_cast<std::int64_t>(outside_before),
+          "no outside bump inside Guard");
+    CHECK(ef.ok.load() >= 1, "emit under Guard");
+}
+
+static void ac3_query_surface() {
+    std::println("\n--- AC3: query counters + schema-2114 ---");
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+    ReemitFixture rf;
+    EmitFixture ef;
+    wire_reemit(rf, ef);
+    (void)aura_reemit_aot_for_dirty(0); // soft-enter outside
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "eval");
+    CHECK(href(cs, "schema-2114") == 2114, "schema-2114");
+    CHECK(href(cs, "issue-2114") == 2114, "issue-2114");
+    CHECK(href(cs, "reemit-handshake-wired") == 1, "wired");
+    CHECK(href(cs, "reemit-outside-boundary-total") >= 1, "outside query");
+    CHECK(href(cs, "reemit-soft-boundary-entered-total") >= 1, "soft query");
+    CHECK(href(cs, "reemit-deferred-for-boundary-total") >= 0, "deferred query");
+    CHECK(href(cs, "reemit-handshake-policy-soft-enter") == 0, "policy soft doc");
+    CHECK(href(cs, "reemit-handshake-policy-defer") == 1, "policy defer doc");
+}
+
+static void ac4_existing_reemit_wiring() {
+    std::println("\n--- AC4: existing reemit / handshake source wiring ---");
+    auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto reg = read_file("src/compiler/hot_update_registry.hh");
+    auto regc = read_file("src/compiler/hot_update_registry.cpp");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(bridge.find("Issue #2114") != std::string::npos ||
+              bridge.find("#2114") != std::string::npos,
+          "bridge cites #2114");
+    CHECK(bridge.find("on_reemit_outside_boundary") != std::string::npos, "outside bump");
+    CHECK(bridge.find("soft_reemit_boundary_enter") != std::string::npos, "soft enter");
+    CHECK(bridge.find("defer_reemit_for_boundary") != std::string::npos ||
+              bridge.find("Defer") != std::string::npos,
+          "defer path");
+    CHECK(reg.find("reemit_outside_boundary_total") != std::string::npos, "registry metric");
+    CHECK(reg.find("SoftEnter") != std::string::npos, "SoftEnter policy");
+    CHECK(regc.find("in_mutation_boundary_for_reemit") != std::string::npos, "in-boundary check");
+    CHECK(mb.find("deferred_reemit") != std::string::npos ||
+              mb.find("aura_hot_update_has_deferred_reemit") != std::string::npos,
+          "boundary exit drain");
+    CHECK(q.find("schema-2114") != std::string::npos, "query schema");
+    // Throttle preserved
+    CHECK(bridge.find("should_throttle_reemit") != std::string::npos, "storm throttle retained");
+}
+
+static void ac5_docs() {
+    std::println("\n--- AC5: handshake policy docs ---");
+    auto reg = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(reg.find("SoftEnter") != std::string::npos, "SoftEnter documented");
+    CHECK(reg.find("Defer") != std::string::npos, "Defer documented");
+    CHECK(reg.find("Agent") != std::string::npos || reg.find("plugin") != std::string::npos,
+          "Agent/plugin policy note");
+    CompilerService cs;
+    CHECK(href(cs, "reemit-handshake-policy-soft-enter") == 0, "query soft sentinel");
+    CHECK(href(cs, "reemit-handshake-policy-defer") == 1, "query defer sentinel");
+}
+
+} // namespace
+
+int main() {
+    std::println("=== Issue #2114: reemit ↔ MutationBoundary handshake ===");
+    ac1_outside_soft_or_defer();
+    ac2_inside_boundary_baseline();
+    ac3_query_surface();
+    ac4_existing_reemit_wiring();
+    ac5_docs();
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}

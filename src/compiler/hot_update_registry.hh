@@ -1,4 +1,4 @@
-// hot_update_registry.hh — Issue #1956 / #2014 / #2035 / #2046
+// hot_update_registry.hh — Issue #1956 / #2014 / #2035 / #2046 / #2114
 // Unified coordination center for hot-update / incremental re-emit
 // callbacks, region mask, epoch listeners, and aggregated metrics.
 //
@@ -17,6 +17,20 @@
 //      soft/hard) so listeners see the same epoch domain as JIT
 //      capture_fn_epoch / AOT slot table_generation. See aot_mangle.h
 //      "Joint versioning contract".
+//   8. Issue #2114: HotUpdate reemit ↔ MutationBoundary handshake.
+//      Reemit never races dual-epoch / linear / GC outside a boundary.
+//      Policy for Agent / plugin authors (AC5):
+//        - Default SoftEnter: if reemit is invoked outside a real
+//          MutationBoundary (depth==0 and !held), enter a TLS soft
+//          reemit boundary for the call duration; bump
+//          reemit_outside_boundary_total + reemit_soft_boundary_entered_total.
+//        - Defer (set_reemit_boundary_policy(Defer)): skip the call,
+//          record reemit_deferred_for_boundary_total + pending version;
+//          next MutationBoundary outermost exit (or explicit flush)
+//          drains the deferred reemit under the real boundary.
+//        - Inside real boundary (depth>0 or held flag, including #2090
+//          dtor window before held is cleared): proceed without soft
+//          enter; never silent about outside paths (always count).
 //
 // MVP scope (#1943): single-workspace; no cross-COW migration.
 
@@ -110,6 +124,29 @@ public:
     // Test / recovery: clear throttle + open a fresh window.
     void reset_deopt_storm_state_for_test() noexcept;
 
+    // ── Issue #2114: reemit ↔ MutationBoundary handshake ──
+    // SoftEnter (0, default): outside → soft boundary for call duration.
+    // Defer (1): outside → record pending, return without reemit body.
+    enum class ReemitBoundaryPolicy : int { SoftEnter = 0, Defer = 1 };
+    void set_reemit_boundary_policy(ReemitBoundaryPolicy p) noexcept;
+    [[nodiscard]] ReemitBoundaryPolicy reemit_boundary_policy() const noexcept;
+    // True when real MutationBoundary depth/held or soft reemit depth > 0.
+    [[nodiscard]] bool in_mutation_boundary_for_reemit() const noexcept;
+    // Soft reemit boundary (TLS). RAII helpers for reemit pipeline.
+    void soft_reemit_boundary_enter() noexcept;
+    void soft_reemit_boundary_exit() noexcept;
+    [[nodiscard]] int soft_reemit_boundary_depth() const noexcept;
+    // Observability bumps (never silent outside path).
+    void on_reemit_outside_boundary() noexcept;
+    void on_reemit_soft_boundary_entered() noexcept;
+    void on_reemit_deferred_for_boundary() noexcept;
+    // Defer pending reemit (policy=Defer). Flushed by boundary exit.
+    void defer_reemit_for_boundary(std::uint64_t defuse_version) noexcept;
+    [[nodiscard]] bool has_deferred_reemit() const noexcept;
+    // Returns pending version and clears deferred flag. 0 if none.
+    [[nodiscard]] std::uint64_t take_deferred_reemit_version() noexcept;
+    void reset_reemit_boundary_handshake_for_test() noexcept;
+
     // ── preferred C++ API (forwards to C ABI + bookkeeping) ──
     void set_emit_region_mask(std::uint64_t mask) noexcept;
     [[nodiscard]] std::uint64_t emit_region_mask() const noexcept;
@@ -199,6 +236,14 @@ public:
         // Agents read this as a single recovery-policy signal rather
         // than ORing two independent detectors.
         std::int64_t storm_level = 0; // StormLevel: None=0/Shape=1/Global=2/Both=3
+        // Issue #2114: reemit ↔ MutationBoundary handshake.
+        std::int64_t reemit_outside_boundary_total = 0;
+        std::int64_t reemit_soft_boundary_entered_total = 0;
+        std::int64_t reemit_deferred_for_boundary_total = 0;
+        std::int64_t reemit_boundary_policy = 0; // 0 SoftEnter, 1 Defer
+        std::int64_t reemit_deferred_pending = 0;
+        std::int64_t schema_2114 = 2114;
+        std::int64_t issue_2114 = 2114;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -278,6 +323,13 @@ private:
     std::atomic<std::uint64_t> region_mask_from_dirty_total_{0};
     std::atomic<std::uint64_t> cascade_reemit_trigger_total_{0};
     std::atomic<std::uint64_t> last_region_mask_from_dirty_{0};
+    // Issue #2114: reemit ↔ MutationBoundary handshake.
+    std::atomic<int> reemit_boundary_policy_{0}; // ReemitBoundaryPolicy
+    std::atomic<std::uint64_t> reemit_outside_boundary_{0};
+    std::atomic<std::uint64_t> reemit_soft_boundary_entered_{0};
+    std::atomic<std::uint64_t> reemit_deferred_for_boundary_{0};
+    std::atomic<bool> reemit_deferred_pending_{false};
+    std::atomic<std::uint64_t> reemit_deferred_version_{0};
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -344,6 +396,14 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t last_region_mask_from_dirty;
     std::int64_t schema_2035;
     std::int64_t issue_2035;
+    // Issue #2114
+    std::int64_t reemit_outside_boundary_total;
+    std::int64_t reemit_soft_boundary_entered_total;
+    std::int64_t reemit_deferred_for_boundary_total;
+    std::int64_t reemit_boundary_policy;
+    std::int64_t reemit_deferred_pending;
+    std::int64_t schema_2114;
+    std::int64_t issue_2114;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2014: C entry points for deopt feed / throttle / config.
@@ -369,6 +429,18 @@ void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);
 // Issue #2035: module-safe dirty notify + reemit-provider probe.
 void aura_hot_update_notify_dirty_define(const char* name);
 int aura_hot_update_reemit_provider_wired(void);
+
+// Issue #2114: reemit ↔ MutationBoundary handshake C ABI.
+// Returns 1 when depth>0, MutationBoundary held, or soft reemit depth>0.
+int aura_hot_update_in_mutation_boundary_for_reemit(void);
+// Policy: 0=SoftEnter (default), 1=Defer.
+void aura_hot_update_set_reemit_boundary_policy(int policy);
+int aura_hot_update_get_reemit_boundary_policy(void);
+void aura_hot_update_reset_reemit_boundary_handshake_for_test(void);
+// Soft boundary depth (TLS); 1 when active.
+int aura_hot_update_soft_reemit_boundary_active(void);
+// 1 if a deferred reemit is pending.
+int aura_hot_update_has_deferred_reemit(void);
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH
