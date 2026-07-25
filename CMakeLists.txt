@@ -2078,6 +2078,11 @@ aura_add_issue_test(test_mutation_contention_2040)
 aura_issue_test_link_llvm_jit(test_mutation_contention_2040)
 add_dependencies(all_test_issue_targets test_mutation_contention_2040)
 
+# Issue #2041: partial re-lower + JIT hot-swap on invalidate cascade
+aura_add_issue_test(test_partial_relower_cascade_2041)
+aura_issue_test_link_llvm_jit(test_partial_relower_cascade_2041)
+add_dependencies(all_test_issue_targets test_partial_relower_cascade_2041)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

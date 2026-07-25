@@ -689,16 +689,89 @@ void CompilerService::invalidate_function(const std::string& name) {
         }
     }
 
-    // Re-lower each dependent with current cache. The dependents vector
-    // is in BFS-discovery order (FIFO from the source) and additionally
-    // sorted lexicographically above (Issue #401) so the iteration order
-    // here is deterministic across runs.
+    // Issue #2041: cascade re-lower prefers partial (should_partial_relower)
+    // when ir_cache_v2_ has a small body-only dirty mask — then feeds JIT
+    // via relower_define_blocks → partial_recompile. Full lower_to_ir only
+    // when partial is not applicable or fails (no silent stale IR).
+    //
+    // Helper: try partial path for one define. Returns true when the
+    // entry is clean / was partially re-lowered (caller must not full-lower).
+    auto try_partial_invalidate_relower = [&](const std::string& fname) -> bool {
+        auto src_it = function_sources_.find(fname);
+        if (src_it == function_sources_.end())
+            return false;
+        auto vit = ir_cache_v2_.find(fname);
+        if (vit == ir_cache_v2_.end() || vit->second.irs.empty())
+            return false;
+        const std::size_t dirty_n = vit->second.dirty_block_count();
+        // Clean entry — nothing to re-lower.
+        if (dirty_n == 0 && !vit->second.dirty)
+            return true;
+        // Issue #2041 AC: respect should_partial_relower for the cascade.
+        // Large dirty surfaces (≥ threshold) go to the full path below.
+        if (dirty_n > 0 && !should_partial_relower(dirty_n)) {
+            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
+                                                          std::memory_order_relaxed);
+            return false;
+        }
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return false;
+        flat.root = pr.root;
+        // Prefer Lambda body node for per-function re-lower.
+        aura::ast::NodeId expanded = pr.root;
+        if (expanded < flat.size()) {
+            auto dv = flat.get(expanded);
+            if (dv.tag == aura::ast::NodeTag::Define && !dv.children.empty()) {
+                auto body = dv.child(0);
+                if (body < flat.size() && flat.get(body).tag == aura::ast::NodeTag::Lambda)
+                    expanded = body;
+            }
+        }
+        const auto per_before =
+            metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
+        const auto blocks_before =
+            metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
+        if (!relower_only_dirty_blocks(fname, src_it->second, flat, pool, expanded))
+            return false;
+        // True partial win (per-fn / per-block), not internal full-fallback.
+        const bool true_partial =
+            metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
+                per_before ||
+            metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed) >
+                blocks_before;
+        if (true_partial) {
+            metrics_.incremental_partial_relower_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
+                                                          std::memory_order_relaxed);
+        } else {
+            // relower_define_blocks took full-fallback internally — still
+            // counts as handled (IR + bitmask refreshed; no second full pass).
+            metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return true;
+    };
+
+    // Root: body-only dirty → partial re-lower + JIT partial_recompile when
+    // should_partial_relower holds (AI multi-round mutate hot path).
+    (void)try_partial_invalidate_relower(name);
+
+    // Re-lower each dependent. Prefer partial; full lower only when needed.
+    // Dependents vector is BFS + lexicographically sorted (Issue #401).
     for (auto& dep_name : dependents) {
+        if (try_partial_invalidate_relower(dep_name))
+            continue;
+
         auto src_it = function_sources_.find(dep_name);
         if (src_it == function_sources_.end())
             continue;
 
-        // Re-parse the function source
+        // Full cascade re-lower (large dirty mask or partial failed).
+        metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.relower_full_called_count.fetch_add(1, std::memory_order_relaxed);
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
@@ -707,7 +780,6 @@ void CompilerService::invalidate_function(const std::string& name) {
             continue;
         flat.root = pr.root;
 
-        // Re-lower with current cache to detect new dependencies
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
@@ -715,7 +787,6 @@ void CompilerService::invalidate_function(const std::string& name) {
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
             cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
-        // Phase 4: Run passes per-function on the re-lowered function bundle.
         {
             ComputeKindWrap ck_pass;
             ConstantFoldingWrap cf_pass;
@@ -723,17 +794,10 @@ void CompilerService::invalidate_function(const std::string& name) {
                 if (func.id == ir_mod.entry_function_id)
                     continue;
                 ck_pass.compute_function(func);
-                auto nf = cf_pass.fold_function(func);
-                if (nf > 0) {
-                    // Debug print removed (#63723): was polluting
-                    // test framework stream redirect for tests like
-                    // edsl-ir-cache:cascade-after-mutate. The folded
-                    // count is already in metrics_ via cf_pass metrics.
-                }
+                (void)cf_pass.fold_function(func);
             }
         }
 
-        // Update cache with new IR (store full bundle)
         std::vector<aura::ir::IRFunction> bundle;
         for (auto& func : ir_mod.functions) {
             if (func.id != ir_mod.entry_function_id) {
@@ -743,12 +807,10 @@ void CompilerService::invalidate_function(const std::string& name) {
         ir_cache_[dep_name] = std::move(bundle);
         snapshot_ir_for_disk(dep_name);
 
-        // Re-record dependencies
         for (auto& called_name : cache_hits) {
             record_dependency(dep_name, called_name);
         }
 
-        // Issue #272 Cycle 2: re-bind dependent env via IR after re-lower.
         (void)bind_function_define_via_ir(ir_mod, dep_name);
     }
 
