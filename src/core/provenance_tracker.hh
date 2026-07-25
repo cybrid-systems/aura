@@ -165,6 +165,44 @@ struct LinearProvenanceResult {
     const char* reason = nullptr;
 };
 
+// Issue #2103: process-wide linear enforce mode for IR hot path + shared
+// validate_linear_provenance callers. Soft (default) = incomplete forensic
+// trail is metric-only; Strict = hard fail (aligned with Full audit
+// force-rollback correlation). Steal/GC may still pass require_complete=true
+// regardless of Soft for live-root safety.
+enum class LinearEnforceMode : std::uint8_t {
+    Soft = 0,
+    Strict = 1,
+};
+
+inline std::atomic<std::uint32_t> g_linear_enforce_mode{
+    static_cast<std::uint32_t>(LinearEnforceMode::Soft)};
+// Strict hard-fail samples (incomplete trail or other require_complete fail).
+inline std::atomic<std::uint64_t> g_linear_strict_hard_fail_total{0};
+// Soft incomplete samples that continued (require_complete=false path).
+inline std::atomic<std::uint64_t> g_linear_soft_incomplete_continue_total{0};
+
+[[nodiscard]] inline LinearEnforceMode linear_enforce_mode() noexcept {
+    return static_cast<LinearEnforceMode>(g_linear_enforce_mode.load(std::memory_order_relaxed));
+}
+
+inline void set_linear_enforce_mode(LinearEnforceMode m) noexcept {
+    g_linear_enforce_mode.store(static_cast<std::uint32_t>(m), std::memory_order_relaxed);
+}
+
+// IR hot path / soft dual-check: true when Strict mode is active.
+// Steal/GC enforce paths that always require complete pass true explicitly.
+[[nodiscard]] inline bool linear_enforce_require_complete() noexcept {
+    return linear_enforce_mode() == LinearEnforceMode::Strict;
+}
+
+inline void reset_linear_enforce_mode_for_test() noexcept {
+    g_linear_enforce_mode.store(static_cast<std::uint32_t>(LinearEnforceMode::Soft),
+                                std::memory_order_relaxed);
+    g_linear_strict_hard_fail_total.store(0, std::memory_order_relaxed);
+    g_linear_soft_incomplete_continue_total.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2026: unified linear ownership + provenance consistency check.
 //
 // Policy (shared across fiber-steal, GC safepoint, MutationBoundary failure,
@@ -175,7 +213,8 @@ struct LinearProvenanceResult {
 //   - bridge_epoch != 0 and != current: mismatch + deopt (steal/GC domain)
 //   - Tracked linear with both provenance_id==0 and mutation_id==0:
 //     incomplete forensic trail → bump incomplete; force_deopt only when
-//     require_complete=true (steal/GC enforce paths pass true)
+//     require_complete=true (steal/GC enforce paths pass true; IR Strict
+//     mode via linear_enforce_require_complete() — Issue #2103)
 //
 // node_id is for audit/forensics (env_id or AST node); 0 when unavailable.
 [[nodiscard]] inline LinearProvenanceResult
@@ -235,9 +274,12 @@ validate_linear_provenance(std::uint8_t linear_state, std::uint32_t node_id = 0,
             r.reason = "linear provenance incomplete";
             m.linear_provenance_mismatch_total.fetch_add(1, std::memory_order_release);
             m.linear_provenance_deopt_total.fetch_add(1, std::memory_order_release);
+            // Issue #2103: Strict / require_complete hard-fail sample.
+            g_linear_strict_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
             return r;
         }
-        // Soft: incomplete but not force-deopt on hot IR path.
+        // Soft (#2103): incomplete forensic trail — metric only, continue.
+        g_linear_soft_incomplete_continue_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     m.linear_provenance_ok_total.fetch_add(1, std::memory_order_relaxed);

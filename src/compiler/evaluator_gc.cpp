@@ -231,14 +231,15 @@ bool Evaluator::validate_linear_ownership_state(
     std::uint8_t linear_state, std::uint64_t frame_version, std::uint64_t current_version,
     std::uint64_t bridge_epoch, std::uint64_t current_bridge_epoch,
     std::atomic<std::uint64_t>* bridge_epoch_drift_counter) noexcept {
-    // Issue #1515 / #2026: route through provenance_tracker::validate_linear_provenance
+    // Issue #1515 / #2026 / #2103: route through provenance_tracker::validate_linear_provenance
     // so GC / steal / boundary / IR share one consistency policy.
-    // require_complete=false here (hot dual-check); steal/GC use require_complete
-    // via probe paths that call validate_linear_provenance directly.
+    // Soft dual-check uses linear_enforce_require_complete() (Strict → hard).
+    // Steal/GC enforce paths still pass require_complete=true explicitly.
+    using aura::core::provenance::linear_enforce_require_complete;
     using aura::core::provenance::validate_linear_provenance;
     const auto r = validate_linear_provenance(
         linear_state, /*node_id=*/0, /*provenance_id=*/0, /*mutation_id=*/0, frame_version,
-        current_version, bridge_epoch, current_bridge_epoch, /*require_complete=*/false);
+        current_version, bridge_epoch, current_bridge_epoch, linear_enforce_require_complete());
     if (!r.ok) {
         if (bridge_epoch_drift_counter && r.reason &&
             std::string_view(r.reason).find("bridge") != std::string_view::npos)
@@ -616,10 +617,11 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
     // 4) GC root registration consistency audit (monotonicity + balance).
     (void)run_linear_gc_root_audit(path);
 
-    // 5) Issue #2026: linear × provenance consistency after enforce (shared
-    // with IR / steal / GC). Soft require_complete=false so boundary stays
-    // non-blocking; force_deopt mismatches still mark !all_safe.
+    // 5) Issue #2026 / #2103: linear × provenance consistency after enforce
+    // (shared with IR / steal / GC). Soft mode keeps require_complete=false;
+    // Strict mode hard-fails incomplete trails (linear_enforce_require_complete).
     {
+        using aura::core::provenance::linear_enforce_require_complete;
         using aura::core::provenance::validate_linear_provenance;
         const auto current_ver = defuse_version_snapshot();
         const auto current_bridge = current_bridge_epoch();
@@ -637,7 +639,7 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
                 const auto pr = validate_linear_provenance(
                     s, static_cast<std::uint32_t>(cl.env_id), hy.node_id, hy.source_mutation_id,
                     fr.version_, current_ver, cl.bridge_epoch, current_bridge,
-                    /*require_complete=*/false);
+                    linear_enforce_require_complete());
                 if (!pr.ok && pr.force_deopt) {
                     out.all_safe = false;
                     if (m) {
