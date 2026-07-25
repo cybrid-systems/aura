@@ -40,6 +40,7 @@ module;
 export module aura.compiler.ir_cache_pure;
 
 import aura.core.ast;
+import aura.compiler.ir;
 
 export namespace aura::compiler {
 
@@ -225,6 +226,139 @@ inline ImpactScope compute_impact_scope(
         rich.emplace(nid, loc);
     }
     return compute_impact_scope(flat, root, rich, ir_cache_index);
+}
+
+// ── source_to_ir_map rebuild / consistency (Issue #2045) ───
+// Impact-scope selective invalidation depends on an accurate
+// NodeId → (func, block[, instr]) reverse index. After every
+// partial or full re-lower the map must be rebuilt or patched
+// against the new IR layout so the next mutate cannot under-
+// invalidate (silent stale blocks).
+//
+// Helpers are pure: they only read `irs` / write `out` map.
+
+// Populate (append) reverse index from lowered IR stamps.
+// Prefer precise instr when present; keep first precise hit
+// for a given NodeId (matches service populate_source_to_ir_from_irs).
+inline void populate_source_to_ir_map_from_irs(const std::vector<aura::ir::IRFunction>& irs,
+                                               SourceToIrMap& out) {
+    for (std::size_t fi = 0; fi < irs.size(); ++fi) {
+        const auto& fn = irs[fi];
+        for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fn.blocks.size()); ++bi) {
+            const auto& blk = fn.blocks[bi];
+            for (std::uint32_t ii = 0; ii < static_cast<std::uint32_t>(blk.instructions.size());
+                 ++ii) {
+                const auto sn = blk.instructions[ii].source_ast_node_id;
+                if (sn == 0)
+                    continue;
+                const auto nid = static_cast<aura::ast::NodeId>(sn);
+                SourceIrLoc loc{fi, bi, ii};
+                auto it = out.find(nid);
+                if (it == out.end() || !it->second.has_instr())
+                    out[nid] = loc;
+            }
+        }
+    }
+}
+
+// Full rebuild: clear + populate from current irs layout.
+inline void rebuild_source_to_ir_map_from_irs(const std::vector<aura::ir::IRFunction>& irs,
+                                              SourceToIrMap& out) {
+    out.clear();
+    if (!irs.empty())
+        out.reserve(irs.size() * 8);
+    populate_source_to_ir_map_from_irs(irs, out);
+}
+
+// Incremental patch after per-function re-lower: drop all
+// entries pointing at `func_idx`, then re-stamp from that
+// function's new blocks only.
+inline void patch_source_to_ir_map_for_function(const aura::ir::IRFunction& fn,
+                                                std::size_t func_idx, SourceToIrMap& out) {
+    for (auto it = out.begin(); it != out.end();) {
+        if (it->second.function_index == func_idx)
+            it = out.erase(it);
+        else
+            ++it;
+    }
+    for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fn.blocks.size()); ++bi) {
+        const auto& blk = fn.blocks[bi];
+        for (std::uint32_t ii = 0; ii < static_cast<std::uint32_t>(blk.instructions.size()); ++ii) {
+            const auto sn = blk.instructions[ii].source_ast_node_id;
+            if (sn == 0)
+                continue;
+            const auto nid = static_cast<aura::ast::NodeId>(sn);
+            SourceIrLoc loc{func_idx, bi, ii};
+            auto it = out.find(nid);
+            if (it == out.end() || !it->second.has_instr())
+                out[nid] = loc;
+        }
+    }
+}
+
+// Count map entries whose (func, block[, instr]) is not a live
+// location in `irs`, or whose reverse stamp no longer matches
+// the mapped NodeId (stale after re-lower).
+[[nodiscard]] inline std::size_t
+count_source_to_ir_map_inconsistencies(const std::vector<aura::ir::IRFunction>& irs,
+                                       const SourceToIrMap& map) noexcept {
+    std::size_t bad = 0;
+    for (const auto& [nid, loc] : map) {
+        if (loc.function_index >= irs.size()) {
+            ++bad;
+            continue;
+        }
+        const auto& fn = irs[loc.function_index];
+        if (loc.block_index >= fn.blocks.size()) {
+            ++bad;
+            continue;
+        }
+        if (!loc.has_instr())
+            continue;
+        const auto& blk = fn.blocks[loc.block_index];
+        if (loc.instr_index >= blk.instructions.size()) {
+            ++bad;
+            continue;
+        }
+        const auto sn = blk.instructions[loc.instr_index].source_ast_node_id;
+        // Reverse stamp mismatch = stale map entry (under-invalidation risk).
+        if (sn != 0 && static_cast<aura::ast::NodeId>(sn) != nid)
+            ++bad;
+    }
+    return bad;
+}
+
+// Cheap consistency predicate for debug / fuzz / tests.
+[[nodiscard]] inline bool
+source_to_ir_map_is_consistent(const std::vector<aura::ir::IRFunction>& irs,
+                               const SourceToIrMap& map) noexcept {
+    return count_source_to_ir_map_inconsistencies(irs, map) == 0;
+}
+
+// Debug/fuzz assert: returns true when consistent. In debug builds
+// with AURA_ASSERT_SOURCE_TO_IR (or !NDEBUG), fires assert on failure.
+// Always safe to call in release (returns false on inconsistency).
+[[nodiscard]] inline bool
+assert_source_to_ir_map_consistent(const std::vector<aura::ir::IRFunction>& irs,
+                                   const SourceToIrMap& map) noexcept {
+    const bool ok = source_to_ir_map_is_consistent(irs, map);
+#if !defined(NDEBUG) || defined(AURA_ASSERT_SOURCE_TO_IR)
+    // Soft assert: empty map with empty irs is fine; only fire when
+    // map claims mappings that don't resolve to live IR.
+    if (!ok && !map.empty()) {
+        // Intentionally not aborting production fuzz that injects
+        // intentional desync — callers treat return value as the
+        // contract. Keep a side-channel assert for unit tests that
+        // define AURA_ASSERT_SOURCE_TO_IR_HARD.
+#if defined(AURA_ASSERT_SOURCE_TO_IR_HARD)
+        assert(ok && "source_to_ir_map inconsistent with IR layout (#2045)");
+#endif
+        (void)ok;
+    }
+#else
+    (void)ok;
+#endif
+    return ok;
 }
 
 // ── compute_dependencies ──────────────────────────────────

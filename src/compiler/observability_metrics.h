@@ -146,6 +146,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> instr_level_impact_hits_total{0};
     std::atomic<std::uint64_t> instr_level_impact_misses_total{0};
     std::atomic<std::uint64_t> instr_level_dirty_marks_total{0};
+    // Issue #2045: source_to_ir_map consistency after re-lower.
+    //   - source_to_ir_map_rebuild_total: full rebuilds after store / repair
+    //   - source_to_ir_map_patch_total: per-function patches after partial
+    //   - source_to_ir_map_inconsistency_total: bad map entries detected
+    //   - source_to_ir_map_soa_desync_total: map vs dual-emit SoA mismatches
+    //   - source_to_ir_map_consistent_checks_total: assert/check invocations
+    std::atomic<std::uint64_t> source_to_ir_map_rebuild_total{0};
+    std::atomic<std::uint64_t> source_to_ir_map_patch_total{0};
+    std::atomic<std::uint64_t> source_to_ir_map_inconsistency_total{0};
+    std::atomic<std::uint64_t> source_to_ir_map_soa_desync_total{0};
+    std::atomic<std::uint64_t> source_to_ir_map_consistent_checks_total{0};
     // Issue #2032: dep_graph concurrent correctness + partial threshold.
     //   - dep_graph_edge_reject_stale_total: record_dependency rejected
     //     because mutation_epoch advanced while waiting for the lock

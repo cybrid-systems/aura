@@ -15,6 +15,10 @@
 // DirtyAware passes run(IRModuleV2), JIT shape/column consult, capture
 // dirty marks) adopt IRModuleV2 + block_dirty_/shape_ids_ for
 // incremental decisions. See ir_soa_migration in jit_typed_mutation_stats.h.
+//
+// Issue #2045: after dual-emit / re-lower, CompilerService rebuilds
+// IRCacheEntry::source_to_ir_map from AoS irs and cross-checks SoA
+// source_node_ids_ so impact_scope cannot under-invalidate.
 
 module;
 

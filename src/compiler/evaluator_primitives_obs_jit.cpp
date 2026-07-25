@@ -796,6 +796,24 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"soa-cascade-instr-dirty-sync-wired", make_int(1)},
                 {"schema-2034", make_int(2034)},
                 {"issue-2034", make_int(2034)},
+                // Issue #2045: source_to_ir_map rebuild / consistency after re-lower
+                {"source_to_ir_map_rebuild_total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},
+                {"source-to-ir-map-rebuild-total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},
+                {"source_to_ir_map_patch_total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_patch_total))},
+                {"source-to-ir-map-patch-total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_patch_total))},
+                {"source_to_ir_map_inconsistency_total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_inconsistency_total))},
+                {"source_to_ir_map_soa_desync_total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_soa_desync_total))},
+                {"source_to_ir_map_consistent_checks_total",
+                 make_int(L(&CompilerMetrics::source_to_ir_map_consistent_checks_total))},
+                {"source-to-ir-map-consistency-wired", make_int(1)},
+                {"schema-2045", make_int(2045)},
+                {"issue-2045", make_int(2045)},
             };
             return build_hash(kv);
         });
