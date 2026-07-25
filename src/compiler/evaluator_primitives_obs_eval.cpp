@@ -5938,8 +5938,26 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"should-relower-bridge-epoch-wired", make_int(1)},
                 {"schema-2033", make_int(2033)},
                 {"issue-2033", make_int(2033)},
+                // Issue #2038: push-automatic post-mutate cascade + latency
+                {"post_mutate_incremental_cascade_total",
+                 make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
+                {"post-mutate-incremental-cascade-total",
+                 make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
+                {"post_mutate_incremental_defines_total",
+                 make_int(m ? load(m->post_mutate_incremental_defines_total) : 0)},
+                {"post-mutate-incremental-defines-total",
+                 make_int(m ? load(m->post_mutate_incremental_defines_total) : 0)},
+                {"post_mutate_incremental_latency_us_total",
+                 make_int(m ? load(m->post_mutate_incremental_latency_us_total) : 0)},
+                {"post-mutate-incremental-latency-us-total",
+                 make_int(m ? load(m->post_mutate_incremental_latency_us_total) : 0)},
+                {"post_mutate_incremental_latency_samples",
+                 make_int(m ? load(m->post_mutate_incremental_latency_samples) : 0)},
+                {"post-mutate-push-cascade-wired", make_int(1)},
+                {"schema-2038", make_int(2038)},
+                {"issue-2038", make_int(2038)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032/#2033 satellite
+                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2038 satellites
             };
             return build_hash(kv);
         });

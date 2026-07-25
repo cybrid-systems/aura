@@ -1860,6 +1860,11 @@ aura_add_issue_test(test_hygiene_mutate_closed_loop)
 aura_issue_test_link_llvm_jit(test_hygiene_mutate_closed_loop)
 add_dependencies(all_test_issue_targets test_hygiene_mutate_closed_loop)
 
+# Issue #2038: push-automatic post-mutate DefUse/IR/JIT cascade + latency.
+aura_add_issue_test(test_post_mutate_push_cascade)
+aura_issue_test_link_llvm_jit(test_post_mutate_push_cascade)
+add_dependencies(all_test_issue_targets test_post_mutate_push_cascade)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

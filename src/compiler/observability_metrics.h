@@ -161,6 +161,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cache_entry_version_stamp_total{0};
     std::atomic<std::uint64_t> should_relower_bridge_epoch_mismatch_total{0};
     std::atomic<std::uint64_t> should_relower_stamp_mismatch_total{0};
+    // Issue #2038: push-automatic post-mutate incremental cascade
+    // (dirty → DefUse / IR / JIT) on outermost successful MutationBoundaryGuard exit.
+    //   - post_mutate_incremental_cascade_total: cascade invocations
+    //   - post_mutate_incremental_defines_total: defines marked dirty / invalidated
+    //   - post_mutate_incremental_latency_us_total: sum of cascade wall-time (µs)
+    //   - post_mutate_incremental_latency_samples: cascade latency sample count
+    std::atomic<std::uint64_t> post_mutate_incremental_cascade_total{0};
+    std::atomic<std::uint64_t> post_mutate_incremental_defines_total{0};
+    std::atomic<std::uint64_t> post_mutate_incremental_latency_us_total{0};
+    std::atomic<std::uint64_t> post_mutate_incremental_latency_samples{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
