@@ -193,13 +193,144 @@ inline constexpr std::uint8_t kPolicyReasonDefragReq = 0x10;
 inline constexpr std::uint8_t kPolicyReasonFiberSafe = 0x20;
 inline constexpr std::uint8_t kPolicyReasonMutation = 0x40; // #1919
 inline constexpr std::uint8_t kPolicyReasonJitDeopt = 0x80; // #1919
+// Issue #2059: extended reason / soft-gate (stored in last_decision_reason
+// extras; decision.reason remains uint8 for ABI stability with #1919 tests).
+inline constexpr std::uint16_t kPolicyReasonDeoptStorm = 0x100;
+inline constexpr std::uint16_t kPolicyReasonLivePressure = 0x200;
+inline constexpr std::uint16_t kPolicyReasonSoftGatedStorm = 0x400;
 
 struct AutoCompactDecision {
     bool should_compact = false;
     bool prefer_live_defrag = false;
     std::uint8_t reason = 0;
     double frag_threshold_used = 0.30; // #1919 dynamic
+    // Issue #2059: adaptive headroom fraction (0.125..0.50) chosen for this
+    // decision; compact/defrag read current_adaptive_headroom() after eval.
+    double headroom_used = 0.25;
+    // Soft-gate recommended under deopt storm when frag is not critical.
+    bool soft_gate_recommended = false;
+    // Extended reason bits (includes #2059 storm/live/soft-gate flags).
+    std::uint16_t reason_ext = 0;
 };
+
+// ── Issue #2059: adaptive headroom + ShapeProfiler deopt-rate closed loop ──
+//
+// Live ShapeProfiler metrics published by CompilerService compact hook /
+// boundary sync so evaluate_auto_compact_policy can jointly decide:
+//   frag + live pressure + deopt_rate / deopt_storm → compact? headroom? soft-gate?
+inline std::atomic<std::uint64_t> shape_deopt_rate_bp{0};   // deopt_rate_per_fn * 10000
+inline std::atomic<std::uint64_t> shape_stable_ratio_bp{0}; // stable_ratio * 10000
+inline std::atomic<bool> shape_deopt_storm_active{false};
+inline std::atomic<std::uint64_t> adaptive_headroom_bp{2500}; // last chosen (default 25%)
+inline std::atomic<std::uint64_t> last_decision_reason{0};    // reason_ext snapshot
+inline std::atomic<std::uint64_t> last_deopt_attributed_compact{0};
+inline std::atomic<std::uint64_t> post_compact_resync_total{0};
+inline std::atomic<std::uint64_t> adaptive_policy_evaluations_total{0};
+inline std::atomic<std::uint64_t> adaptive_soft_gated_storm_total{0};
+inline std::atomic<std::uint64_t> live_pressure_signal_total{0};
+inline std::atomic<std::uint64_t> adaptive_policy_wired{1}; // #2059
+// Fixed 25% baseline headroom (bp) for Agent A/B vs adaptive policy.
+inline constexpr std::uint64_t kFixedHeadroomBaselineBp = 2500;
+inline constexpr double kHeadroomMin = 0.125;    // aggressive reclaim under AI frag
+inline constexpr double kHeadroomMax = 0.50;     // storm protection
+inline constexpr double kHeadroomDefault = 0.25; // matches historical fixed policy
+// deopt_rate_per_fn above this (bp) counts as elevated deopt pressure.
+inline constexpr std::uint64_t kElevatedDeoptRateBp = 1500; // 0.15
+
+// Publish live ShapeProfiler metrics into the adaptive policy feedback loop.
+inline void publish_shape_deopt_metrics(double deopt_rate_per_fn, bool storm_active,
+                                        double stable_ratio) noexcept {
+    const auto rate_bp =
+        static_cast<std::uint64_t>(deopt_rate_per_fn < 0.0     ? 0.0
+                                   : deopt_rate_per_fn > 100.0 ? 1000000.0
+                                                               : deopt_rate_per_fn * 10000.0);
+    const auto stable_bp =
+        static_cast<std::uint64_t>(stable_ratio < 0.0   ? 0.0
+                                   : stable_ratio > 1.0 ? 10000.0
+                                                        : stable_ratio * 10000.0);
+    shape_deopt_rate_bp.store(rate_bp, std::memory_order_relaxed);
+    shape_stable_ratio_bp.store(stable_bp, std::memory_order_relaxed);
+    shape_deopt_storm_active.store(storm_active, std::memory_order_release);
+    // Elevated rate or active storm → sticky JIT deopt pressure for threshold
+    // (inline — signal_jit_deopt_pressure is defined later in this header).
+    if (storm_active || rate_bp >= kElevatedDeoptRateBp) {
+        jit_deopt_pressure_pending.store(true, std::memory_order_release);
+        jit_deopt_pressure_signal_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+inline void record_post_compact_resync() noexcept {
+    post_compact_resync_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void record_live_pressure_signal() noexcept {
+    live_pressure_signal_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void record_last_decision(std::uint16_t reason_ext, double headroom,
+                                 std::uint64_t deopt_attributed = 0) noexcept {
+    last_decision_reason.store(reason_ext, std::memory_order_relaxed);
+    adaptive_headroom_bp.store(static_cast<std::uint64_t>(headroom * 10000.0),
+                               std::memory_order_relaxed);
+    last_deopt_attributed_compact.store(deopt_attributed, std::memory_order_relaxed);
+}
+
+// Adaptive headroom: under mutation/high frag → lower (tighter reclaim, lower
+// peak RSS). Under deopt storm / elevated deopt rate → higher (leave room,
+// reduce compact→deopt churn). Mode shifts the base.
+[[nodiscard]] inline double compute_adaptive_headroom(AutoCompactMode mode, bool mutation_p,
+                                                      bool deopt_p, bool storm, double frag_ratio,
+                                                      double deopt_rate = 0.0) noexcept {
+    double hr = kHeadroomDefault;
+    switch (mode) {
+        case AutoCompactMode::Conservative:
+            hr = 0.35; // keep more free space; fewer shrink side-effects
+            break;
+        case AutoCompactMode::Aggressive:
+            hr = 0.20; // reclaim earlier / tighter
+            break;
+        case AutoCompactMode::Balanced:
+        default:
+            hr = kHeadroomDefault;
+            break;
+    }
+    // High fragmentation + AI mutation pressure: shrink headroom (lower peak RSS).
+    if (mutation_p || frag_ratio >= 0.40)
+        hr -= 0.05;
+    if (frag_ratio >= 0.60)
+        hr -= 0.05;
+    // Deopt pressure / storm / elevated rate: raise headroom (avoid over-compact).
+    if (deopt_p || deopt_rate >= 0.15)
+        hr += 0.10;
+    if (storm)
+        hr += 0.10;
+    if (hr < kHeadroomMin)
+        hr = kHeadroomMin;
+    if (hr > kHeadroomMax)
+        hr = kHeadroomMax;
+    adaptive_headroom_bp.store(static_cast<std::uint64_t>(hr * 10000.0), std::memory_order_relaxed);
+    return hr;
+}
+
+// Last published adaptive headroom fraction (for compact/defrag buffer trim).
+[[nodiscard]] inline double current_adaptive_headroom() noexcept {
+    const auto bp = adaptive_headroom_bp.load(std::memory_order_relaxed);
+    if (bp == 0)
+        return kHeadroomDefault;
+    return static_cast<double>(bp) / 10000.0;
+}
+
+// Live freelist / mark pressure: free slots or recent low-savings defrags.
+[[nodiscard]] inline bool peek_live_pressure() noexcept {
+    // Heuristic from process-wide defrag counters: many attempts with little
+    // savings imply freelist holes / live pressure that live_compact can fix.
+    const auto attempts = defrag_attempted_total.load(std::memory_order_relaxed);
+    const auto saved = defrag_saved_bytes_total.load(std::memory_order_relaxed);
+    if (attempts >= 4 && saved < attempts) // avg < 1 byte/attempt → pressure
+        return true;
+    return live_relocate_total.load(std::memory_order_relaxed) > 0 &&
+           frag_post_compact_bp.load(std::memory_order_relaxed) >= 2500;
+}
 
 inline void signal_shape_churn() noexcept {
     shape_churn_pending.store(true, std::memory_order_release);
@@ -309,22 +440,37 @@ inline constexpr std::uint64_t kFalsePositiveTargetBp = 500; // 5%
 // render_hotpath → always soft-gate (caller should skip).
 // fiber_active → mark fiber-safe reason (caller runs safepoint).
 // #1919: peeks mutation/JIT deopt pressure for dynamic threshold.
+// #2059: peeks ShapeProfiler deopt_rate / deopt_storm + live pressure;
+//        computes adaptive headroom; soft-gates under storm when frag
+//        is not critical (closes compact↔deopt feedback loop).
 [[nodiscard]] inline AutoCompactDecision
 evaluate_auto_compact_policy(double frag_ratio, bool defrag_requested, bool dirty_cascade,
                              bool shape_churn, bool fiber_active, bool render_hotpath,
                              double small_pool_util = 0.0) noexcept {
     smart_policy_evaluations_total.fetch_add(1, std::memory_order_relaxed);
+    adaptive_policy_evaluations_total.fetch_add(1, std::memory_order_relaxed);
     AutoCompactDecision d{};
     if (render_hotpath) {
         smart_policy_soft_gated_total.fetch_add(1, std::memory_order_relaxed);
+        d.headroom_used = current_adaptive_headroom();
         return d;
     }
     const bool mutation_p = peek_mutation_pressure();
     const bool deopt_p = peek_jit_deopt_pressure();
+    const bool storm = shape_deopt_storm_active.load(std::memory_order_acquire);
+    const double deopt_rate =
+        static_cast<double>(shape_deopt_rate_bp.load(std::memory_order_relaxed)) / 10000.0;
+    const bool elevated_deopt = deopt_p || storm || deopt_rate >= 0.15;
+    const bool live_p = peek_live_pressure();
+    if (live_p)
+        record_live_pressure_signal();
     const auto mode = auto_compact_mode();
-    const double frag_thr =
-        compute_dynamic_frag_threshold(mode, mutation_p, deopt_p, shape_churn, dirty_cascade);
+    // Storm / elevated deopt rate raise the dynamic frag threshold (act later).
+    const double frag_thr = compute_dynamic_frag_threshold(mode, mutation_p, elevated_deopt,
+                                                           shape_churn, dirty_cascade);
     d.frag_threshold_used = frag_thr;
+    d.headroom_used =
+        compute_adaptive_headroom(mode, mutation_p, elevated_deopt, storm, frag_ratio, deopt_rate);
     // Soft band: half of dynamic thr (floor soft base).
     const double soft_thr =
         frag_thr * 0.5 < kSmartFragSoftThreshold ? kSmartFragSoftThreshold : frag_thr * 0.5;
@@ -346,8 +492,13 @@ evaluate_auto_compact_policy(double frag_ratio, bool defrag_requested, bool dirt
         d.reason |= kPolicyReasonFiberSafe;
     if (mutation_p)
         d.reason |= kPolicyReasonMutation;
-    if (deopt_p)
+    if (deopt_p || elevated_deopt)
         d.reason |= kPolicyReasonJitDeopt;
+    d.reason_ext = d.reason;
+    if (storm)
+        d.reason_ext |= kPolicyReasonDeoptStorm;
+    if (live_p)
+        d.reason_ext |= kPolicyReasonLivePressure;
 
     // Trigger when frag/pool pressure is high, or dirty/shape cascade, or
     // pending defrag/mutation coincides with soft frag (avoid clearing
@@ -355,19 +506,31 @@ evaluate_auto_compact_policy(double frag_ratio, bool defrag_requested, bool dirt
     // Conservative + deopt: require frag_high/small_high (avoid storms).
     // Mutation pressure alone never forces compact — it only lowers the
     // dynamic threshold and assists soft-frag / defrag paths (#1919).
+    // #2059: live freelist pressure assists soft-frag / defrag paths.
     const bool conservative_gate =
-        mode == AutoCompactMode::Conservative && deopt_p && !frag_high && !small_high;
+        mode == AutoCompactMode::Conservative && elevated_deopt && !frag_high && !small_high;
     d.should_compact =
         frag_high || small_high ||
         (!conservative_gate && (dirty_cascade || shape_churn ||
                                 (defrag_requested && (frag_soft || dirty_cascade || shape_churn ||
-                                                      frag_high || mutation_p)) ||
-                                (mutation_p && frag_soft)));
+                                                      frag_high || mutation_p || live_p)) ||
+                                (mutation_p && frag_soft) || (live_p && frag_soft)));
+
+    // Issue #2059: under active deopt storm, soft-gate non-critical compacts
+    // (frag not high / pool not high) so ShapeProfiler can re-sync without
+    // another compact→deopt wave. Critical memory pressure still wins.
+    if (storm && d.should_compact && !frag_high && !small_high) {
+        d.soft_gate_recommended = true;
+        d.should_compact = false;
+        d.reason_ext |= kPolicyReasonSoftGatedStorm;
+        adaptive_soft_gated_storm_total.fetch_add(1, std::memory_order_relaxed);
+        smart_policy_soft_gated_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // Prefer live_defrag when user/Agent requested defrag or freelist
-    // pressure is implied by high frag + dirty/churn/mutation.
+    // pressure is implied by high frag + dirty/churn/mutation/live pressure.
     d.prefer_live_defrag =
-        defrag_requested || (frag_high && (dirty_cascade || shape_churn || mutation_p));
+        defrag_requested || live_p || (frag_high && (dirty_cascade || shape_churn || mutation_p));
 
     if (d.should_compact) {
         smart_policy_triggers_total.fetch_add(1, std::memory_order_relaxed);
@@ -376,6 +539,9 @@ evaluate_auto_compact_policy(double frag_ratio, bool defrag_requested, bool dirt
         if (d.prefer_live_defrag)
             live_defrag_policy_hits_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Always publish decision snapshot for Agent observability (#2059).
+    record_last_decision(d.reason_ext, d.headroom_used,
+                         shape_deopt_rate_bp.load(std::memory_order_relaxed));
     return d;
 }
 

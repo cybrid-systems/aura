@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-07-25 by `scripts/inventory_legacy_tests.py`
+**Generated:** 2026-07-26 by `scripts/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 382 | Preferred destination suites |
-| **Total scanned** | **382** | |
+| `tests/core/test_*.cpp` | 383 | Preferred destination suites |
+| **Total scanned** | **383** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 37 | 37 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 38 | 38 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 104 | 104 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 38 | 38 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 8 | 8 | P1 — small, already partially batched |
@@ -165,6 +165,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_aot_shell_c0_escape.cpp`
 - `tests/compiler/test_aot_stats_null_metrics.cpp`
 - `tests/compiler/test_apply_closure_envframe_soa.cpp`
+- `tests/core/test_arena_adaptive_compact_2059.cpp`
 - `tests/core/test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp`
 - `tests/core/test_arena_auto_compact_intelligent.cpp`
 - `tests/core/test_arena_batch.cpp`
@@ -566,16 +567,17 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (37)
+### `arena_compaction` — Arena / compaction / GC (38)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (37)
+#### domain/ (38)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
+- `tests/core/test_arena_adaptive_compact_2059.cpp` (#2059) [domain_suite, theme_core] — AC1: compute_adaptive_headroom varies with mutation vs deopt storm
 - `tests/core/test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp` (—) [domain_suite, theme_core] — (aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run). Stays at tests/core/ per
 - `tests/core/test_arena_auto_compact_intelligent.cpp` (—) [domain_suite, theme_core] — Issue #1242/#1621/#187/#1919/#300 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_arena_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_arena_batch.cpp — consolidated arena batch driver. EXCLUDE_FROM_ALL.

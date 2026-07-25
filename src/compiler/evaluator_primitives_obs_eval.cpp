@@ -7446,8 +7446,8 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed));
             const auto fp_bp = static_cast<std::int64_t>(
                 aura::core::arena_policy::auto_compact_false_positive_bp());
-            // #1621 + #1919: ~30 keys — create(64) headroom.
-            auto* ht = FlatHashTable::create(64);
+            // #1621 + #1919 + #2059: ~50 keys — create(128) headroom.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7505,8 +7505,54 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
             insert_kv("jit-deopt-throttle-wired", 1);
             insert_kv("schema-1919", 1919);
             insert_kv("issue-1919", 1919);
+            // Issue #2059: adaptive headroom + deopt-rate closed loop
+            const auto headroom_bp = static_cast<std::int64_t>(
+                aura::core::arena_policy::adaptive_headroom_bp.load(std::memory_order_relaxed));
+            const auto last_reason = static_cast<std::int64_t>(
+                aura::core::arena_policy::last_decision_reason.load(std::memory_order_relaxed));
+            const auto deopt_rate_bp = static_cast<std::int64_t>(
+                aura::core::arena_policy::shape_deopt_rate_bp.load(std::memory_order_relaxed));
+            const auto stable_bp = static_cast<std::int64_t>(
+                aura::core::arena_policy::shape_stable_ratio_bp.load(std::memory_order_relaxed));
+            const auto storm_active =
+                aura::core::arena_policy::shape_deopt_storm_active.load(std::memory_order_acquire)
+                    ? 1
+                    : 0;
+            const auto resync =
+                static_cast<std::int64_t>(aura::core::arena_policy::post_compact_resync_total.load(
+                    std::memory_order_relaxed));
+            const auto soft_storm = static_cast<std::int64_t>(
+                aura::core::arena_policy::adaptive_soft_gated_storm_total.load(
+                    std::memory_order_relaxed));
+            const auto adapt_eval = static_cast<std::int64_t>(
+                aura::core::arena_policy::adaptive_policy_evaluations_total.load(
+                    std::memory_order_relaxed));
+            const auto live_sig =
+                static_cast<std::int64_t>(aura::core::arena_policy::live_pressure_signal_total.load(
+                    std::memory_order_relaxed));
+            const auto deopt_attr = static_cast<std::int64_t>(
+                aura::core::arena_policy::last_deopt_attributed_compact.load(
+                    std::memory_order_relaxed));
+            insert_kv("adaptive-headroom-bp", headroom_bp);
+            insert_kv(
+                "fixed-headroom-baseline-bp",
+                static_cast<std::int64_t>(aura::core::arena_policy::kFixedHeadroomBaselineBp));
+            insert_kv("headroom-min-bp", 1250); // 12.5%
+            insert_kv("headroom-max-bp", 5000); // 50%
+            insert_kv("last-decision-reason", last_reason);
+            insert_kv("shape-deopt-rate-bp", deopt_rate_bp);
+            insert_kv("shape-stable-ratio-bp", stable_bp);
+            insert_kv("shape-deopt-storm-active", storm_active);
+            insert_kv("post-compact-resync-total", resync);
+            insert_kv("adaptive-soft-gated-storm-total", soft_storm);
+            insert_kv("adaptive-policy-evaluations", adapt_eval);
+            insert_kv("live-pressure-signals", live_sig);
+            insert_kv("last-deopt-attributed-compact", deopt_attr);
+            insert_kv("adaptive-policy-wired", 1);
+            insert_kv("schema-2059", 2059);
+            insert_kv("issue-2059", 2059);
             insert_kv("issue", 1621);
-            insert_kv("schema", 1621); // lineage 743 → 1621 + #1919
+            insert_kv("schema", 1621); // lineage 743 → 1621 + #1919 + #2059
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -911,6 +911,20 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::core::arena_policy::auto_compact_false_positive_bp()))},
                 {"arena-false-positive-target-bp", make_int(500)},
+                // Issue #2059: adaptive headroom + deopt closed loop
+                {"schema-2059", make_int(2059)},
+                {"issue-2059", make_int(2059)},
+                {"arena-adaptive-compact-wired", make_int(1)},
+                {"arena-adaptive-headroom-bp",
+                 make_int(static_cast<std::int64_t>(aura::core::arena_policy::adaptive_headroom_bp
+                                                        .load(std::memory_order_relaxed)))},
+                {"arena-fixed-headroom-baseline-bp",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::arena_policy::kFixedHeadroomBaselineBp))},
+                {"arena-post-compact-resync-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::arena_policy::post_compact_resync_total.load(
+                         std::memory_order_relaxed)))},
             };
             return build_kv_hash(ev, kv);
         });
