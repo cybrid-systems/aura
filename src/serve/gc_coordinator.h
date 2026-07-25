@@ -6,6 +6,7 @@
 
 #include "fiber.h" // GCPhase, WorkerGCState
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <vector>
@@ -15,6 +16,17 @@
 namespace aura::serve {
 
 class Scheduler;
+
+// Issue #2084: process-wide mirrors of mark-size injection metrics so
+// Agents can observe coverage without a live GCCollector pointer
+// (query:gc-mark-size-stats / engine:metrics). Updated whenever
+// mark_from_roots receives non-zero sizes or collect() injects via size_fn_.
+inline std::atomic<std::int64_t> g_mark_size_injected_total{0};
+inline std::atomic<std::int64_t> g_mark_size_injected_heaps_total{0};
+inline std::atomic<std::int64_t> g_last_injected_string_size{0};
+inline std::atomic<std::int64_t> g_last_injected_pairs_size{0};
+inline std::atomic<std::int64_t> g_last_injected_closures_size{0};
+inline std::atomic<std::int64_t> g_mark_size_provider_wired{1}; // serve_async registers size_fn
 
 // ── GCCollector — GC coordinator (Phase 1: safepoint) ────
 //
@@ -222,10 +234,23 @@ public:
 
     GCSweepResult sweep();
 
-    // Mark accessors (for testing)
+    // Mark accessors (for testing + #2084 size-coverage ACs)
     bool string_mark(size_t idx) const { return string_marks_.test(idx); }
     bool pair_mark(size_t idx) const { return pair_marks_.test(idx); }
     bool closure_mark(size_t idx) const { return closure_marks_.test(idx); }
+    // Issue #2084: MarkBitVector extents after mark_from_roots — must equal
+    // injected heap sizes when size provider returns non-zero (not just
+    // max root index + 1).
+    [[nodiscard]] size_t string_marks_size() const noexcept { return string_marks_.size(); }
+    [[nodiscard]] size_t pair_marks_size() const noexcept { return pair_marks_.size(); }
+    [[nodiscard]] size_t closure_marks_size() const noexcept { return closure_marks_.size(); }
+    [[nodiscard]] size_t string_marks_dead_count() const noexcept {
+        return string_marks_.count_dead();
+    }
+    [[nodiscard]] size_t pair_marks_dead_count() const noexcept { return pair_marks_.count_dead(); }
+    [[nodiscard]] size_t closure_marks_dead_count() const noexcept {
+        return closure_marks_.count_dead();
+    }
 
     // ── Configuration ────────────────────────────────
     void set_alloc_threshold(int64_t threshold) { alloc_threshold_ = threshold; }
@@ -250,10 +275,15 @@ public:
         // non-zero heap sizes (i.e. size provider was registered and
         // returned > 0). 0 = call still uses root-derived fallback.
         std::atomic<int64_t> mark_size_injected_total{0};
-        // Issue #2084: cumulative heap-size bytes covered by injected
+        // Issue #2084: cumulative heap-size slots covered by injected
         // sizes (sum of string + pair + closures across cycles that
         // successfully injected). Dashboard visibility.
         std::atomic<int64_t> mark_size_injected_heaps_total{0};
+        // Issue #2084: last injected (string, pairs, closures) sizes for
+        // Agent inspection of the most recent cycle.
+        std::atomic<int64_t> last_injected_string_size{0};
+        std::atomic<int64_t> last_injected_pairs_size{0};
+        std::atomic<int64_t> last_injected_closures_size{0};
         // Issue #1256: fiber-side safepoint wait latency while MutationBoundary held.
         std::atomic<int64_t> eventfd_wakeup_latency_us{0};
         std::atomic<int64_t> safepoint_wait_while_mutation_held{0};
