@@ -649,7 +649,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
                                                " >= flat size " + std::to_string(flat.size()));
             }
-            auto ref = flat.make_ref(node);
+            // Issue #2056: stamp tenant/fiber when promoting raw NodeId → ref.
+            auto ref = ev.make_stamped_ref(node);
             if (!ref.is_valid_in(flat) || !flat.get_safe(ref)) {
                 *ok = false;
                 const auto policy = ev.get_stale_ref_policy();

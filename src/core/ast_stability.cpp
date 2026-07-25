@@ -177,10 +177,14 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
         aura::core::provenance::record_cross_layer_mismatch();
     }
 
-    // Preserve cross-fiber / cross-layer / pin provenance across refresh.
+    // Preserve cross-fiber / cross-layer / pin / tenant provenance across
+    // refresh. Issue #2056: tenant_id must survive remake so cross-tenant
+    // isolation still denies after gen restamp (FailOnStale refuses silent
+    // tenant restamp; AutoRefresh only remakes gen/cow/wrap).
     const auto preserved_fiber = fiber_id;
     const auto preserved_ws = workspace_id;
     const auto preserved_pin = boundary_pinned;
+    const auto preserved_tenant = tenant_id;
 
     // Align slot gen with current FlatAST generation before remake.
     ast.restamp_subtree_generation(id);
@@ -198,6 +202,9 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     // boundary_pinned exception in is_valid / is_valid_in_layer.
     cow_epoch_at_capture = fresh.cow_epoch_at_capture;
     boundary_pinned = preserved_pin;
+    tenant_id = preserved_tenant;
+    if (preserved_tenant != 0)
+        aura::core::provenance::record_stable_ref_tenant_preserved_on_refresh();
 
     ast.record_stale_ref_auto_refresh();
     aura::core::provenance::record_auto_refresh();

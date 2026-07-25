@@ -16,6 +16,7 @@ module;
 #include "orch/agent_spawn.h" // #2010: g_orch_module_stats for mailbox BP mirror
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
+#include "core/sandbox.hh" // #2056: is_strict for cross-tenant ensure
 #include <cassert>
 #include <chrono>
 #include <memory> // Issue #1880: unique_ptr for orch agent body guard
@@ -605,6 +606,7 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
     if (ref.fiber_id != 0 && current_fiber != 0 && ref.fiber_id != current_fiber) {
         if (ref.boundary_pinned && auto_refresh) {
             // Pinned refs survive steal: restamp fiber provenance + gen/cow.
+            // Issue #2056: do NOT restamp tenant_id (FailOnStale / isolation).
             ref.fiber_id = current_fiber;
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->boundary_pinned_auto_restamp_total.fetch_add(1, std::memory_order_relaxed);
@@ -615,6 +617,22 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->stable_ref_fiber_mismatch_prevented_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+            bump_provenance_mismatch();
+            aura::core::provenance::record_ensure_valid_fail();
+            return std::nullopt;
+        }
+    }
+    // Issue #2056: cross-tenant StableNodeRef use under Restricted/Strict.
+    // Stamped ref.tenant_id must match principal (or 0/unset). Denied refs
+    // never silently restamp tenant — FailOnStale remains closed.
+    if (ref.tenant_id != 0 && capability_tenant_id_ != 0 &&
+        !aura::core::provenance::tenant_ids_compatible(ref.tenant_id, capability_tenant_id_)) {
+        const bool sandbox_on =
+            sandbox_mode_ || effect_sandbox_mode() != 0 || aura::core::sandbox::is_strict();
+        if (sandbox_on) {
+            aura::core::provenance::record_stable_ref_cross_tenant_deny();
+            (void)check_workspace_isolation(capability_tenant_id_, ref.tenant_id,
+                                            /*required_effects=*/0, "stable-ref-cross-tenant");
             bump_provenance_mismatch();
             aura::core::provenance::record_ensure_valid_fail();
             return std::nullopt;

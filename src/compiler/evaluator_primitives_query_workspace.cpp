@@ -319,7 +319,8 @@ void register_workspace_query_primitives(
             layer = wt->active_idx();
         }
         const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-        auto ref = flat.make_safe_ref(node, layer, cur_fiber);
+        // Issue #2056: mandate tenant + fiber stamp on Agent-facing capture.
+        auto ref = ev.make_stamped_safe_ref(node, layer, cur_fiber);
         if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
             return mev("stale-ref", "query:stable-ref: provenance ensure failed");
         ev.pin_stable_ref_for_cow_boundary(ref);
@@ -1251,7 +1252,8 @@ void register_workspace_query_primitives(
             return make_bool(false);
 
         const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-        auto ref = flat.make_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
+        // Issue #2056: mandate tenant stamp on provenance capture.
+        auto ref = ev.make_stamped_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
         const bool is_live = ref.is_valid_in(flat);
         const bool is_macro = flat.is_macro_introduced(nid);
         const auto marker = flat.marker(nid);
