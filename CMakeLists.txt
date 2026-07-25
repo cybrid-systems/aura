@@ -2028,6 +2028,11 @@ aura_add_issue_test(test_grant_epoch_fiber_bind_2055)
 aura_issue_test_link_llvm_jit(test_grant_epoch_fiber_bind_2055)
 add_dependencies(all_test_issue_targets test_grant_epoch_fiber_bind_2055)
 
+# Issue #2056: mandate tenant_id + provenance stamp on StableNodeRef create/rebind.
+aura_add_issue_test(test_stable_ref_tenant_mandate_2056)
+aura_issue_test_link_llvm_jit(test_stable_ref_tenant_mandate_2056)
+add_dependencies(all_test_issue_targets test_stable_ref_tenant_mandate_2056)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

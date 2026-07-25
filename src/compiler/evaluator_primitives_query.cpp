@@ -1621,7 +1621,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // the Agent can compare two captures and detect a
             // cross-fiber swap via the fiber-id field.
             const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-            auto ref = ws->make_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
+            // Issue #2056: mandate tenant + fiber stamp on provenance query capture.
+            auto ref = ev.make_stamped_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
             const bool is_live = ref.is_valid_in(*ws);
             auto* ht = FlatHashTable::create(16);
             if (!ht)
@@ -1662,7 +1663,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("subtree-gen-at-capture",
                       static_cast<std::int64_t>(ref.subtree_gen_at_capture));
             insert_kv("is-live", is_live ? 1 : 0);
+            // Issue #2056: tenant stamp on every Agent-facing capture.
+            insert_kv("tenant-id", static_cast<std::int64_t>(ref.tenant_id));
             insert_kv("schema", 620);
+            insert_kv("schema-2056", 2056);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -544,7 +544,41 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
 }
 
 void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept {
-    ref.tenant_id = capability_tenant_id_;
+    // Issue #2056: full stamp (tenant + fiber) — alias of stamp_stable_ref.
+    stamp_stable_ref(ref);
+}
+
+// Issue #2056: mandate tenant_id + fiber provenance on every StableNodeRef
+// handed to Agent / user code. Central create/rebind helper.
+void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept {
+    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+    ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
+}
+
+ast::FlatAST::StableNodeRef Evaluator::make_stamped_ref(ast::NodeId id) const noexcept {
+    ast::FlatAST::StableNodeRef ref{};
+    if (workspace_flat_)
+        ref = workspace_flat_->make_ref(id);
+    else
+        ref.id = id;
+    stamp_stable_ref(ref);
+    return ref;
+}
+
+ast::FlatAST::StableNodeRef
+Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
+                                 std::uint32_t fiber_id) const noexcept {
+    ast::FlatAST::StableNodeRef ref{};
+    const auto fiber =
+        fiber_id != 0 ? fiber_id : static_cast<std::uint32_t>(aura_fiber_current_id());
+    if (workspace_flat_)
+        ref = workspace_flat_->make_safe_ref(id, workspace_id, fiber);
+    else {
+        ref.id = id;
+        ref.fiber_id = fiber;
+    }
+    stamp_stable_ref(ref);
+    return ref;
 }
 
 } // namespace aura::compiler

@@ -5263,7 +5263,15 @@ public:
                                                  std::uint16_t required_effects = 0,
                                                  std::string_view op = "workspace") noexcept;
     // Stamp FlatAST::StableNodeRef.tenant_id from current principal.
+    // Issue #1566 / #2056: stamp tenant (+ fiber) on StableNodeRef.
     void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;
+    // Issue #2056: full mandate stamp (tenant_id + fiber if unset).
+    void stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept;
+    // Issue #2056: create helpers that stamp before returning to Agent code.
+    [[nodiscard]] ast::FlatAST::StableNodeRef make_stamped_ref(ast::NodeId id) const noexcept;
+    [[nodiscard]] ast::FlatAST::StableNodeRef
+    make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id = 0,
+                          std::uint32_t fiber_id = 0) const noexcept;
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with
@@ -11908,12 +11916,8 @@ public:
     void pin_node_for_atomic_batch(aura::ast::NodeId id) noexcept {
         if (!workspace_flat_ || id >= workspace_flat_->size())
             return;
-        auto ref = workspace_flat_->make_safe_ref(id);
-        // Issue #2073: stamp tenant on every ref capture so cross-tenant
-        // isolation check (#1566) has provenance to compare against.
-        // Without this stamp, ref.tenant_id stays 0 and isolation can't
-        // distinguish "own tenant" from "foreign tenant" refs.
-        stamp_ref_tenant(ref);
+        // Issue #2073 / #2056: stamped create — tenant + fiber mandated.
+        auto ref = make_stamped_safe_ref(id);
         for (const auto& existing : atomic_batch_pinned_refs_) {
             if (existing.id == ref.id)
                 return;

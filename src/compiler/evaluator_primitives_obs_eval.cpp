@@ -9132,6 +9132,16 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hot-path-auto-refresh", static_cast<std::int64_t>(snap.hot_path_refresh));
             insert_kv("provenance-mismatch",
                       static_cast<std::int64_t>(ev.get_provenance_mismatch()));
+            // Issue #2056: tenant stamp mandate surface (SlimSurface fold-in).
+            insert_kv("schema-2056", aura::core::provenance::kStableRefTenantMandateIssue);
+            insert_kv("issue-2056", aura::core::provenance::kStableRefTenantMandateIssue);
+            insert_kv("tenant-stamp-total", static_cast<std::int64_t>(snap.tenant_stamps));
+            insert_kv("cross-tenant-deny-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_denies));
+            insert_kv("tenant-preserved-on-refresh",
+                      static_cast<std::int64_t>(snap.tenant_preserved_on_refresh));
+            insert_kv("tenant-stamp-wired", 1);
+            insert_kv("principal-tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -24,6 +24,8 @@ namespace aura::core::provenance {
 
 inline constexpr int kProvenanceTrackerPhase = 3; // #1630 mandate full provenance
 inline constexpr int kProvenanceTrackerIssue = 1630;
+// Issue #2056: mandate tenant_id + provenance stamp on StableNodeRef create/rebind.
+inline constexpr int kStableRefTenantMandateIssue = 2056;
 
 // Policy for ensure_valid_or_refresh (AC).
 enum class AutoRefreshPolicy : std::uint8_t {
@@ -51,6 +53,10 @@ struct ProvenanceEnforcementMetrics {
     std::atomic<std::uint64_t> macro_hygiene_provenance_hits_total{0};
     // Issue #1877: Strict sandbox engaged FailOnStale provenance policy.
     std::atomic<std::uint64_t> fail_on_stale_strict_sandbox_total{0};
+    // Issue #2056: tenant stamp mandate + cross-tenant ref use denials.
+    std::atomic<std::uint64_t> stable_ref_tenant_stamp_total{0};
+    std::atomic<std::uint64_t> stable_ref_cross_tenant_deny_total{0};
+    std::atomic<std::uint64_t> stable_ref_tenant_preserved_on_refresh_total{0};
     // Issue #2026: linear ownership × provenance consistency closed-loop.
     std::atomic<std::uint64_t> linear_provenance_checks_total{0};
     std::atomic<std::uint64_t> linear_provenance_ok_total{0};
@@ -111,6 +117,18 @@ inline void record_macro_hygiene_provenance_hit(std::uint64_t n = 1) noexcept {
 }
 inline void record_fail_on_stale_strict_sandbox(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().fail_on_stale_strict_sandbox_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline void record_stable_ref_tenant_stamp(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_tenant_stamp_total.fetch_add(n,
+                                                                       std::memory_order_relaxed);
+}
+inline void record_stable_ref_cross_tenant_deny(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_cross_tenant_deny_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline void record_stable_ref_tenant_preserved_on_refresh(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_tenant_preserved_on_refresh_total.fetch_add(
         n, std::memory_order_relaxed);
 }
 
@@ -253,6 +271,20 @@ struct HygieneProvenanceStamp {
     return ref_tenant == current_tenant;
 }
 
+// Issue #2056: central StableNodeRef tenant + fiber stamp (layout fields only).
+// Called from Evaluator::stamp_stable_ref / create helpers. Does not touch
+// gen/wrap/cow — those stay FlatAST capture responsibilities.
+// `tenant_id` may be 0 (unset / single-tenant). Always writes tenant_id so
+// create paths never leave a stale foreign stamp when principal is 0.
+template <typename StableRefT>
+inline void stamp_stable_ref_fields(StableRefT& ref, std::uint64_t tenant_id,
+                                    std::uint32_t fiber_id = 0) noexcept {
+    ref.tenant_id = tenant_id;
+    if (fiber_id != 0 && ref.fiber_id == 0)
+        ref.fiber_id = fiber_id;
+    record_stable_ref_tenant_stamp();
+}
+
 // Forward decl so reset can clear last_hygiene on the process-wide tracker.
 struct ProvenanceTracker;
 inline ProvenanceTracker& g_provenance_tracker() noexcept;
@@ -271,6 +303,10 @@ struct ProvenanceStatsSnapshot {
     std::uint64_t cross_cow_provenance_enforced = 0;
     std::uint64_t macro_hygiene_provenance_hits = 0;
     std::uint64_t fail_on_stale_strict_sandbox = 0;
+    // Issue #2056
+    std::uint64_t tenant_stamps = 0;
+    std::uint64_t cross_tenant_denies = 0;
+    std::uint64_t tenant_preserved_on_refresh = 0;
     int phase = kProvenanceTrackerPhase;
     int issue = kProvenanceTrackerIssue;
 };
@@ -291,6 +327,9 @@ struct ProvenanceStatsSnapshot {
         m.cross_cow_provenance_enforced_total.load(std::memory_order_relaxed),
         m.macro_hygiene_provenance_hits_total.load(std::memory_order_relaxed),
         m.fail_on_stale_strict_sandbox_total.load(std::memory_order_relaxed),
+        m.stable_ref_tenant_stamp_total.load(std::memory_order_relaxed),
+        m.stable_ref_cross_tenant_deny_total.load(std::memory_order_relaxed),
+        m.stable_ref_tenant_preserved_on_refresh_total.load(std::memory_order_relaxed),
         kProvenanceTrackerPhase,
         kProvenanceTrackerIssue,
     };
@@ -374,6 +413,9 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.cross_cow_provenance_enforced_total.store(0, std::memory_order_relaxed);
     m.macro_hygiene_provenance_hits_total.store(0, std::memory_order_relaxed);
     m.fail_on_stale_strict_sandbox_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_tenant_stamp_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_cross_tenant_deny_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_tenant_preserved_on_refresh_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_ok_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_mismatch_total.store(0, std::memory_order_relaxed);
