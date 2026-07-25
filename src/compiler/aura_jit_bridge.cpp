@@ -14,6 +14,7 @@
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 #include "runtime_shared.h"        // Issue #2013: aura_remap_live_closures_after_reemit
 #include "typed_mutation_audit.h"  // Issue #1882: TypedMutationAudit on hot-update
+#include "core/workspace_epoch.hh" // Issue #2039: dual-write WorkspaceEpoch::Bridge
 
 #include <atomic>
 #include <cstdarg>
@@ -85,26 +86,24 @@ extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
     return g_aot_defuse_version;
 }
 
-// ── Issue #1485 C2-wire: current bridge_epoch tracker for the
-// aura_closure_call 2-check (refine #1475). See aura_jit_bridge.h.
-// Set by service.ixx::bump_bridge_epoch() every time the
-// workspace's bridge_epoch advances; stamped into per-closure
-// AuraClosure::bridge_epoch at aura_alloc_closure time. Mismatch
-// at aura_closure_call → return 0 (caller falls back via
-// aura_jit.cpp OpApply emit's deopt-to-interpreter path).
-// Issue #1654: std::atomic<std::uint64_t> replaces the plain uint64_t to close
-// the C++ memory model data race. The previous plain uint64_t write/read pair
-// was UB per the C++ memory model — concurrent writes from
-// service.ixx::bump_bridge_epoch() and reads from lib/runtime.c's
-// aura_closure_call 2-check produced torn reads on weakly-ordered
-// architectures (ARM, POWER). The std::atomic release/acquire protocol
-// mirrors the #1476 dual-epoch primitive (already used elsewhere in
-// service.ixx) and gives the JIT-side 2-check the authoritative safety
-// gate it was supposed to have (#1485 C2-wire fix-up intent).
+// ── Issue #1485 C2-wire / #2039 dual-write: C runtime bridge epoch.
+//
+// Canonical process-global storage is WorkspaceEpoch::Bridge
+// (src/core/workspace_epoch.hh). This C atom is a dual-write mirror for
+// lib/runtime.c aura_closure_call and AOT paths that cannot include C++
+// headers. service.ixx::bump_bridge_epoch() publishes via
+// bump_mutation_and_bridge_epochs() then aura_set_current_bridge_epoch().
+//
+// Issue #1654: std::atomic closes the C++ memory-model data race between
+// host bumps and concurrent aura_closure_call reads (acq/rel protocol).
 static std::atomic<std::uint64_t> g_current_bridge_epoch{0};
 
 extern "C" void aura_set_current_bridge_epoch(std::uint64_t v) {
     g_current_bridge_epoch.store(v, std::memory_order_release);
+    // Issue #2039: dual-write WorkspaceEpoch Bridge so C++ readers of
+    // current_bridge_epoch() and C readers of this atom stay aligned
+    // even when tests call aura_set_* directly (without bump_bridge_epoch).
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Bridge, v);
 }
 
 extern "C" std::uint64_t aura_get_current_bridge_epoch(void) {

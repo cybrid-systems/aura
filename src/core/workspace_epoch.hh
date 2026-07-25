@@ -1,25 +1,27 @@
-// workspace_epoch.hh — Issue #1964 cycle 2a
-// Unified workspace epoch counter. Consolidates 5 legacy counters:
-//   - bridge_epoch      (Worker + Closure cache invalidation, 602 refs)
-//   - mutation_epoch    (FlatAST global mutation epoch,        101 refs)
-//   - subtree_generation_ (per-top-level-Define gen,           ~80 refs)
-//   - wrap_epoch        (per-workspace wrap tracker,            ~20 refs)
-//   - generation_       (AST workspace epoch, 1-indexed,       ~44 refs)
+// workspace_epoch.hh — Issue #1964 cycle 2a–2d / Issue #2039
+// Unified workspace epoch vocabulary + process-global storage for the
+// two process-scoped epochs (Mutation + Bridge).
 //
-// Cycle 2a: type definition + per-kind atomic storage shim.
-// Cycles 2b/2c/2d: collapse legacy counters into per-workspace
-// `WorkspaceEpoch` instance + delete the legacy fields.
+// ## Final ownership model (cycle 2d / #2039)
 //
-// All counter semantics are preserved (mutation/bridge/subtree/wrap/
-// generation have distinct invariants per the AC). The unified type
-// provides a single vocabulary + a single linter entry point so future
-// cycle work is mechanical: each legacy field maps to a `WorkspaceEpoch`
-// member of the appropriate kind, and the linter tracks migration
-// progress.
+// | Kind         | Storage owner                         | Accessor surface              |
+// |--------------|---------------------------------------|-------------------------------|
+// | Mutation     | process-global atomic (this header)   | current_mutation_epoch / bump |
+// | Bridge       | process-global atomic (this header)   | current_bridge_epoch / bump   |
+// |              | dual-written to C g_current_bridge_epoch for runtime.c |
+// | Generation   | per-FlatAST `generation_` (uint16)    | FlatAST::generation()         |
+// | Wrap         | per-FlatAST `wrap_epoch_`             | FlatAST::wrap_epoch()         |
+// | Subtree      | per-FlatAST `subtree_gen_[id]`        | FlatAST subtree helpers       |
+// | node_gen_    | per-FlatAST parallel to generation_   | is_valid / make_ref           |
 //
-// Not thread-safe by itself — caller (FlatAST::bump_generation,
-// Worker::bump_bridge_epoch, etc.) is responsible for atomicity per
-// the existing legacy counter semantics.
+// Per-AST fields (Generation / Wrap / Subtree / node_gen_) intentionally
+// do NOT migrate to the process-global atomics — each FlatAST instance
+// tracks its own StableNodeRef validity. Mutation + Bridge are process-
+// scoped (single CompilerService / AOT runtime) and live only here after
+// cycle 2d: the legacy `CompilerService::mutation_epoch_` field is deleted.
+//
+// Linter: scripts/check_workspace_epoch_migration.py --strict must report 0
+// remaining raw `mutation_epoch_` / dual-storage consumer violations.
 
 #ifndef AURA_CORE_WORKSPACE_EPOCH_HH
 #define AURA_CORE_WORKSPACE_EPOCH_HH
@@ -104,37 +106,25 @@ inline std::atomic<std::uint64_t>& g_workspace_epoch_storage(WorkspaceEpochKind 
     return mutation; // unreachable; suppresses -Wreturn-type
 }
 
-// Convenience accessors (avoid `g_workspace_epoch_storage(kind).fetch_add(...)`
-// noise at call sites). Each is a one-liner that delegates to the
-// per-kind atomic. Cycles 2b/2c/2d replace these with per-workspace
-// member-function accessors on the owning type (FlatAST / Worker).
+// Convenience accessors. Mutation/Bridge use acquire/release so
+// should_relower / dep_graph stale-edge reject / apply_closure see
+// published bumps (legacy mutation_epoch_ used acq/rel).
 inline std::uint64_t load_workspace_epoch(WorkspaceEpochKind kind) noexcept {
-    return g_workspace_epoch_storage(kind).load(std::memory_order_relaxed);
+    return g_workspace_epoch_storage(kind).load(std::memory_order_acquire);
 }
 
 inline void store_workspace_epoch(WorkspaceEpochKind kind, std::uint64_t v) noexcept {
-    g_workspace_epoch_storage(kind).store(v, std::memory_order_relaxed);
+    g_workspace_epoch_storage(kind).store(v, std::memory_order_release);
 }
 
 inline std::uint64_t fetch_add_workspace_epoch(WorkspaceEpochKind kind,
                                                std::uint64_t delta = 1) noexcept {
-    return g_workspace_epoch_storage(kind).fetch_add(delta, std::memory_order_relaxed);
+    return g_workspace_epoch_storage(kind).fetch_add(delta, std::memory_order_acq_rel);
 }
 
-// ── Issue #1964 cycle 2b: mutation_epoch migration accessors ─────
-//
-// Replaces the legacy `service.ixx::mutation_epoch_` field with a
-// WorkspaceEpoch-canonical counter. All reads of "the current
-// mutation epoch" across the codebase should go through
-// `current_mutation_epoch()`; all writes should go through
-// `bump_mutation_epoch()`. Cycle 2b ships the API + service.ixx
-// migration; cycle 2d completes the legacy-field deletion in
-// service.ixx itself (after consumers are migrated).
-//
-// The function-pointer indirection via
-// `shape_jit_pass::g_mutation_epoch_fn` is no longer required once
-// consumers call `current_mutation_epoch()` directly; cycle 2d will
-// remove that indirection.
+// ── Mutation epoch (process-global; #1964 2b + #2039 2d) ─────
+// Sole storage: g_workspace_epoch_storage(Mutation). The legacy
+// CompilerService::mutation_epoch_ field is deleted in #2039.
 
 [[nodiscard]] inline std::uint64_t current_mutation_epoch() noexcept {
     return load_workspace_epoch(WorkspaceEpochKind::Mutation);
@@ -144,28 +134,12 @@ inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
     fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
 }
 
-// ── Issue #1964 cycle 2c: bridge_epoch migration accessors ─────
-//
-// Two distinct scopes for bridge_epoch:
-//  1. **Process-global** (aura_jit_bridge.cpp::g_current_bridge_epoch,
-//     aura_get_current_bridge_epoch / aura_jit_get_current_bridge_epoch):
-//     a single counter shared across the whole compiler instance.
-//     Migrated to WorkspaceEpoch::Bridge via the accessors below.
-//  2. **Per-Worker** (service.ixx::CompilerService::bridge_epoch_):
-//     each Worker instance has its own counter, used for closure
-//     cache invalidation. Architectural intent is per-worker (each
-//     Worker's closure cache should track its own invalidation
-//     state). Cycle 2c ships the process-global migration; the
-//     per-worker migration is deferred to a follow-up that adds a
-//     per-worker WorkspaceEpoch variant (or keeps the local field
-//     + exposes via a typed accessor).
-//
-// The function-pointer indirection via
-// `shape_jit_pass::g_mutation_epoch_fn` (which actually returns
-// bridge_epoch — pre-existing misnomer, see #1964 cycle 2b commit
-// message) is left in place for now; cycle 2d cleanup removes it
-// once both process-global and per-worker bridge epochs are
-// migrated.
+// ── Bridge epoch (process-global; #1964 2c + #2039 2d) ─────
+// Canonical storage: WorkspaceEpoch::Bridge. C runtime
+// (aura_get/set_current_bridge_epoch) dual-writes the same value
+// for lib/runtime.c aura_closure_call. CompilerService::bridge_epoch()
+// historically aliases Mutation for Cycle 1 lockstep; prefer these
+// accessors for new code that wants the Bridge kind explicitly.
 
 [[nodiscard]] inline std::uint64_t current_bridge_epoch() noexcept {
     return load_workspace_epoch(WorkspaceEpochKind::Bridge);
@@ -173,6 +147,13 @@ inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
 
 inline void bump_bridge_epoch(std::uint64_t delta = 1) noexcept {
     fetch_add_workspace_epoch(WorkspaceEpochKind::Bridge, delta);
+}
+
+// Keep Bridge kind aligned with Mutation when the service uses the
+// Cycle-1 "shared counter" protocol (bump both in lockstep).
+inline void bump_mutation_and_bridge_epochs(std::uint64_t delta = 1) noexcept {
+    const auto prev = fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
+    store_workspace_epoch(WorkspaceEpochKind::Bridge, prev + delta);
 }
 
 } // namespace aura::core
