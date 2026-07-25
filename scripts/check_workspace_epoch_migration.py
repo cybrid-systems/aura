@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
-"""check_workspace_epoch_migration.py — Issue #1964 cycle 2a migration linter
+"""check_workspace_epoch_migration.py — Issue #2039 / #1964 cycle 2d gate
 
-Tracks progress of the epoch-counter unification. After cycle 2a,
-new code that touches any of the 5 legacy epoch counters
-(bridge_epoch / mutation_epoch / subtree_generation_ / wrap_epoch_
-/ generation_) MUST go through `aura::core::WorkspaceEpoch` /
-`g_workspace_epoch_storage(kind)` defined in
-`src/core/workspace_epoch.hh`.
+Final ownership model (documented in src/core/workspace_epoch.hh):
 
-Legacy-counter raw usage is ALLOWED only in:
-- src/core/workspace_epoch.hh              (the shim itself)
-- src/core/ast.ixx                         (defines the legacy counters; cycle 2b/2d migrates these)
-- src/serve/fiber.{cpp,h}                  (defines g_bridge_epoch_; cycle 2c migrates)
-- src/compiler/evaluator_*.cpp             (mostly wraps mutation_epoch_ via FlatAST accessor; cycle 2b sanity)
-- src/repl/*.cpp                           (read-only debug print; cycle 2d migrates)
-- tests/**                                 (test code may exercise legacy counters directly)
+| Kind       | Storage owner                      | Status after 2d          |
+|------------|------------------------------------|--------------------------|
+| Mutation   | process-global WorkspaceEpoch only | migrated; no dual field  |
+| Bridge     | WorkspaceEpoch + C dual-write      | migrated; C is mirror    |
+| Generation | per-FlatAST generation_            | intentional (not global) |
+| Wrap       | per-FlatAST wrap_epoch_            | intentional              |
+| Subtree    | per-FlatAST subtree_gen_           | intentional              |
+| node_gen_  | per-FlatAST                        | intentional              |
 
-All other production code (.cpp/.hpp/.ixx under src/ excluding the
-allowed list above) using one of the 5 legacy counter identifier
-patterns MUST use `WorkspaceEpoch` instead. The linter emits a
-violation per offending line.
+This linter enforces that process-global Mutation storage is NOT dual-
+declared outside WorkspaceEpoch. Per-AST fields, per-closure stamped
+bridge_epoch, metric names, and C dual-write mirrors are allowed.
 
-Excluded:
-- comments (// ... and /* ... */ blocks)
-- the workspace_epoch.hh shim file itself
+Forbidden (production src/ only):
+  - `mutation_epoch_.load/store/fetch_add/exchange` field ops
+  - `std::atomic<...> mutation_epoch_{...}` field declarations
+  - bare `mutation_epoch_{0}` member initializers on CompilerService
 
-Ref: Issue #1964 AC #2 (unify epoch/generation counters — one logical
-counter per workspace).
+Allowed (not flagged):
+  - comments (stripped before scan)
+  - workspace_epoch.hh itself
+  - tests/**
+  - per-AST generation_ / wrap_epoch_ / subtree_gen_ / node_gen_
+  - ClosureBridgeData.bridge_epoch stamps, metrics, hook names
+  - g_current_bridge_epoch C dual-write in aura_jit_bridge / runtime / stubs
+
+Ref: Issue #2039 AC1 (linter clean under final ownership model).
 """
 
 from __future__ import annotations
@@ -38,66 +41,40 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Patterns that match raw usage of the 5 legacy counters.
-# These match identifier references, not bare string mentions in comments.
-# Note: ordered most-specific first so longer matches win.
-LEGACY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("bridge_epoch", re.compile(r"\b(?:g_)?bridge_epoch(?:_\w*)?\b")),
-    ("mutation_epoch", re.compile(r"\bmutation_epoch(?:_\w*)?\b")),
-    ("subtree_generation_", re.compile(r"\bsubtree_generation_\w*\b")),
-    ("wrap_epoch_", re.compile(r"\bwrap_epoch_\w*\b")),
-    # `generation_` is tricky — it appears as a struct member, a function
-    # local, and as the legacy epoch counter. To avoid noise we only
-    # match `generation_` when it's clearly an epoch counter (typed as
-    # uint16_t / uint32_t / uint64_t on the same line).
-    ("generation_", re.compile(r"\bgeneration_(?:count|wrap|suppressed|of)?\b")),
-    ("bump_generation_count_", re.compile(r"\bbump_generation_count_\w*\b")),
-    ("type_cache_generation_", re.compile(r"\btype_cache_generation_\w*\b")),
-    ("next_generation_", re.compile(r"\bnext_generation_\w*\b")),
-    ("node_gen_", re.compile(r"\bnode_gen_\w*\b")),
-    ("subtree_gen_", re.compile(r"\bsubtree_gen_\w*\b")),
+# Forbidden dual-storage patterns for process-global Mutation epoch.
+# After #2039, sole storage is WorkspaceEpoch::Mutation.
+FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "mutation_epoch_field_op",
+        re.compile(
+            r"\bmutation_epoch_\.(?:load|store|fetch_add|exchange|"
+            r"compare_exchange_weak|compare_exchange_strong)\b"
+        ),
+    ),
+    (
+        "mutation_epoch_atomic_decl",
+        re.compile(r"\bstd::atomic\s*<[^>;]*>\s*mutation_epoch_"),
+    ),
+    (
+        "mutation_epoch_field_init",
+        re.compile(r"\bmutation_epoch_\{"),
+    ),
 ]
 
-# Files where legacy counter usage is allowed (the migration owners).
+# Files where the (deleted) dual field historically lived; still
+# scanned for regressions. The shim itself is the only allowed owner
+# of process-global mutation storage APIs.
 ALLOWED_FILES: set[str] = {
-    # The shim itself.
     "src/core/workspace_epoch.hh",
-    # ast.ixx defines the legacy counters — cycle 2b/2d migrates these.
-    "src/core/ast.ixx",
-    # type.ixx / type_impl.cpp use next_generation_ for TypeId epochs
-    # (separate from AST workspace epoch) — cycle 2d migrates.
-    "src/core/type.ixx",
-    "src/core/type_impl.cpp",
-    # fiber.{cpp,h} define g_bridge_epoch_ — cycle 2c migrates.
-    "src/serve/fiber.cpp",
-    "src/serve/fiber.h",
-    # concept_constraints.ixx has pipeline_epoch / mutation_epoch passthrough — cycle 2b migrates.
-    "src/core/concept_constraints.ixx",
-    # mutation.ixx has its own mutation_id counter (separate from AST mutation_epoch_)
-    # — keep as-is, cycle 2b reviews whether to merge.
-    "src/core/mutation.ixx",
-    # repl code reads counters for debug — cycle 2d migrates.
-    "src/repl/repl.cppm",
-    "src/repl/repl_main.cpp",
-    # The linter script itself mentions counter names.
     "scripts/check_workspace_epoch_migration.py",
 }
 
-# Directories to scan (production code, exclude build/, .git/, docs/, tests/).
 SCAN_DIRS = ["src/core", "src/compiler", "src/serve", "src/repl", "src/reflect"]
-SCAN_EXTS = {".cpp", ".h", ".hpp", ".ixx", ".cppm"}
+SCAN_EXTS = {".cpp", ".h", ".hpp", ".hh", ".ixx", ".cppm"}
 
 
-# A line is "comment" if it starts with optional whitespace + //, or is
-# inside a /* */ block. We approximate the latter by tracking brace-depth
-# + a simple "last /* seen, no matching */" flag across the file.
 def strip_comments_and_strings(src: str) -> str:
-    """Replace comments and string literals with whitespace of equal
-    length. Keeps line numbers stable. Best-effort: handles // line
-    comments, /* */ block comments, and " / R" / ' / L' string literals
-    (no raw strings, no template-arg edge cases — those are rare for
-    counter names and would surface as false positives that can be
-    whitelisted)."""
+    """Replace comments and string literals with whitespace of equal length."""
     out = list(src)
     i = 0
     n = len(src)
@@ -117,7 +94,6 @@ def strip_comments_and_strings(src: str) -> str:
             i += 1
             continue
         if c == "/" and nxt == "/":
-            # line comment to EOL
             j = i
             while j < n and src[j] != "\n":
                 out[j] = " "
@@ -131,8 +107,6 @@ def strip_comments_and_strings(src: str) -> str:
             i += 2
             continue
         if c == '"':
-            # string literal to closing " (no escape handling — false
-            # positives are rare for counter names)
             j = i + 1
             out[i] = " "
             while j < n and src[j] != '"':
@@ -182,7 +156,7 @@ def scan_file(path: Path) -> list[tuple[int, str, str]]:
     stripped_lines = stripped.splitlines()
     violations: list[tuple[int, str, str]] = []
     for lineno, (_raw_line, stripped_line) in enumerate(zip(raw_lines, stripped_lines, strict=False), start=1):
-        for pname, pat in LEGACY_PATTERNS:
+        for pname, pat in FORBIDDEN_PATTERNS:
             for m in pat.finditer(stripped_line):
                 violations.append((lineno, pname, m.group(0)))
     return violations
@@ -203,27 +177,34 @@ def main() -> int:
     ap.add_argument(
         "--strict",
         action="store_true",
-        help="Exit 1 if any violations found (use in CI after cycles 2b/2c/2d "
-        "migrate legacy uses). Default is non-strict: report stats only.",
+        help="Exit 1 if any dual-storage violations found (CI gate after #2039).",
     )
     ap.add_argument(
         "--per-violation",
         action="store_true",
-        help="Print every violation (default: per-file first 10 + total).",
+        help="Print every violation (default: per-file first 20 + total).",
     )
     args = ap.parse_args()
 
     if args.self_test:
-        # Self-test: scan this very file (allowed) + scan scripts/ subdir
-        # + assert the shim itself contains the pattern names but does
-        # not produce violations.
         fixture_violations = scan_file(Path(__file__))
         if fixture_violations:
             print("SELF-TEST FAILED — allowed file produced violations:")
             for v in fixture_violations:
                 print(f"  {v}")
             return 1
-        print("SELF-TEST OK — linter scans itself cleanly (allowed file).")
+        # Positive fixture: a synthetic dual-storage line must match.
+        synthetic = "    std::atomic<std::uint64_t> mutation_epoch_{0};\n"
+        synthetic += "    auto x = mutation_epoch_.load(std::memory_order_acquire);\n"
+        stripped = strip_comments_and_strings(synthetic)
+        hits = 0
+        for line in stripped.splitlines():
+            for _pname, pat in FORBIDDEN_PATTERNS:
+                hits += len(list(pat.finditer(line)))
+        if hits < 2:
+            print(f"SELF-TEST FAILED — synthetic dual-storage only hit {hits} patterns")
+            return 1
+        print("SELF-TEST OK — linter scans itself cleanly; forbids dual mutation_epoch_.")
         return 0
 
     total_files = 0
@@ -252,19 +233,19 @@ def main() -> int:
         return 0 if total_violations == 0 else 1
 
     if total_violations == 0:
-        print(f"✓ workspace_epoch_migration: clean — 0 violations across {total_files} files (Issue #1964 cycle 2a)")
+        print(
+            f"✓ workspace_epoch_migration: clean — 0 dual-storage violations "
+            f"across {total_files} files (Issue #2039 cycle 2d)"
+        )
         return 0
 
-    # Non-strict mode (default): report stats, exit 0. Used during
-    # cycle 2a before cycles 2b/2c/2d migrate legacy uses.
-    # Strict mode: exit 1 (use in CI after migration cycles complete).
     print(
-        f"⚠ workspace_epoch_migration: {total_violations} violation(s) "
+        f"✗ workspace_epoch_migration: {total_violations} dual-storage violation(s) "
         f"across {len(violation_files)}/{total_files} files "
-        f"(cycle 2a — legacy uses pending cycles 2b/2c/2d migration)\n"
-        f"  Allowed files ({len(ALLOWED_FILES)}): see ALLOWED_FILES in "
-        f"scripts/check_workspace_epoch_migration.py\n"
-        f"  Use --strict to enforce (exit 1) after migration cycles complete."
+        f"(Issue #2039 — Mutation must live only in WorkspaceEpoch)\n"
+        f"  Forbidden: mutation_epoch_ field ops/decls outside workspace_epoch.hh\n"
+        f"  Allowed: per-FlatAST generation_/wrap_epoch_/subtree_gen_/node_gen_, "
+        f"C dual-write g_current_bridge_epoch, metrics, stamped bridge_epoch"
     )
     if args.per_violation:
         for path, vs in violation_files:
@@ -281,7 +262,9 @@ def main() -> int:
 
     if args.strict:
         return 1
-    return 0
+    # Non-strict still reports but exits 0 only when clean under 2d.
+    # After #2039, default matches --strict for CI simplicity.
+    return 1 if total_violations else 0
 
 
 if __name__ == "__main__":

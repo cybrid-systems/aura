@@ -4516,7 +4516,7 @@ public:
         // bug that passed mutation_count twice (never detecting epoch drift).
         // Issue #1555: also treat body-only bitmasks (dirty_block_count>0)
         // as needs-relower even if entry.dirty was cleared inconsistently.
-        const auto cur_mut = mutation_epoch_.load(std::memory_order_acquire);
+        const auto cur_mut = aura::core::current_mutation_epoch();
         const auto cur_bridge = bridge_epoch();
         const auto cur_defuse = evaluator_.defuse_version();
         std::uint32_t reasons = 0;
@@ -4559,7 +4559,7 @@ public:
         entry.dirty = false;
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
         // Issue #2033: stamp mutation + bridge + defuse after successful lower.
-        entry.stamp_version(mutation_epoch_.load(std::memory_order_acquire), bridge_epoch(),
+        entry.stamp_version(aura::core::current_mutation_epoch(), bridge_epoch(),
                             evaluator_.defuse_version());
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #196: rebuild the per-block dirty bitmask to
@@ -9125,13 +9125,13 @@ private:
         // waiting for the lock (stale concurrent cascade window), or if
         // dep_graph_generation_ advanced (exclusive erase/rebuild).
         metrics_.dep_graph_record_total.fetch_add(1, std::memory_order_relaxed);
-        const auto epoch_before = mutation_epoch_.load(std::memory_order_acquire);
+        const auto epoch_before = aura::core::current_mutation_epoch();
         const auto gen_before = dep_graph_generation_.load(std::memory_order_acquire);
         // Issue #1523: dep_graph is LAST — safe alone or under mutate.
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
                                                                lock_order::Level::DepGraph);
         sync_lock_order_metrics_();
-        const auto epoch_after = mutation_epoch_.load(std::memory_order_acquire);
+        const auto epoch_after = aura::core::current_mutation_epoch();
         const auto gen_after = dep_graph_generation_.load(std::memory_order_acquire);
         if (epoch_before != epoch_after || gen_before != gen_after) {
             metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
@@ -9835,14 +9835,15 @@ public:
     // to detect stale entries that weren't explicitly invalidated
     // by name. Single process-wide counter, monotonic.
     //
-    // Pattern:
-    //   - mutation: mutation_epoch_.fetch_add(1, release);
+    // Pattern (Issue #2039 / #1964 cycle 2d):
+    //   - mutation: aura::core::bump_mutation_epoch() (process-global)
     //   - ir_cache lookup: if entry.last_seen_epoch_ != current,
     //                       treat as stale (re-lower)
     //   - jit_cache lookup: if entry.last_seen_epoch_ != current,
     //                        treat as stale (re-compile)
     //   - apply_closure: load current via bridge_epoch() acquire
-    std::atomic<std::uint64_t> mutation_epoch_{0};
+    // Legacy field mutation_epoch_ deleted — sole storage is
+    // WorkspaceEpoch::Mutation (src/core/workspace_epoch.hh).
 
     // Issue #1414: solved_delta_cache_ — engine-level cache for
     // ConstraintSystem::solve_delta results. Keyed by
@@ -9880,47 +9881,29 @@ public:
     // falls back to re-parse from body_source or invalidates
     // the closure.
     //
-    // For Cycle 1 we reuse mutation_epoch_ — both are bumped
-    // together on reset() and on structural mutations, so a
-    // single counter suffices. Cycle 2 may split if bridge
-    // and cache invalidation need different policies.
+    // Issue #223 / #2039: process-global Mutation epoch (WorkspaceEpoch).
+    // Cycle-1 lockstep: Bridge kind + C runtime mirror Mutation so
+    // apply_closure / aura_closure_call share one published value.
     //
-    // INVARIANT (Epoch Invariant): Every closure created
-    // through the bridge must capture the current epoch
-    // at construction time (via bridge_epoch()). Every
-    // subsequent apply_closure call must check staleness
-    // via Evaluator::is_bridge_stale(). A bypass of either
-    // invariant is a contract violation.
+    // INVARIANT (Epoch Invariant): Every closure created through the
+    // bridge must capture the current epoch at construction time
+    // (via bridge_epoch()). Every subsequent apply_closure call must
+    // check staleness via Evaluator::is_bridge_stale().
     [[nodiscard]] std::uint64_t bridge_epoch() const noexcept {
         return aura::core::current_mutation_epoch();
     }
-    // Issue #223: explicitly bump the bridge epoch. Called when
-    // the bridge_epoch_ field on existing ClosureBridgeData should
-    // be considered stale (e.g. major mutation that doesn't reset
-    // the arena). For Cycle 1 we just forward to mutation_epoch_.
+    // Issue #223 / #2039: bump Mutation + Bridge kinds in lockstep and
+    // dual-write C runtime g_current_bridge_epoch.
     //
-    // INVARIANT: bump_bridge_epoch() and any cache invalidation
-    // must happen as a paired operation — bumping the epoch
-    // without invalidating the cache leaves stale entries
-    // visible. The current implementation reuses
-    // mutation_epoch_ which is bumped together with cache
-    // invalidation in mark_define_dirty / mark_all_defines_dirty.
+    // INVARIANT: bump_bridge_epoch() and any cache invalidation must
+    // happen as a paired operation — bumping without invalidating
+    // leaves stale entries visible.
     void bump_bridge_epoch() noexcept {
-        aura::core::bump_mutation_epoch();
-        // Issue #1476: bump the bridge_epoch_bumps_total counter
-        // alongside the atomic so observability tracks every epoch
-        // advance. Pairs with mutation_epoch_ acquire-load counters
-        // (compiler_closure_epoch_mismatch_hits / is_bridge_stale
-        // helper from #1475) to verify epoch progress vs catch-up.
+        aura::core::bump_mutation_and_bridge_epochs();
+        // Issue #1476: observability counter for every epoch advance.
         metrics_.bridge_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
-        // Issue #1485 C2-wire: keep AOT/C-runtime current_bridge_epoch
-        // in lockstep with mutation_epoch_ so lib/runtime.c's
-        // aura_closure_call 2-check (bridge_epoch mismatch + defuse_version_
-        // mismatch → return 0) sees the fresh value rather than the
-        // default 0. Without this wire, g_current_bridge_epoch stays at
-        // the static init value forever and the 2-check always passes
-        // vacuously. Acquire/release pairing with the fetch_add above
-        // mirrors the #1476 dual-epoch protocol.
+        // Issue #1485 / #2039: C runtime dual-write (WorkspaceEpoch is
+        // canonical; C atom mirrors for lib/runtime.c).
         aura_set_current_bridge_epoch(aura::core::current_mutation_epoch());
     }
 
