@@ -4224,17 +4224,23 @@ public:
         }
     }
 
+    // Issue #2058: move children_[id] out so the PCV is typically unique
+    // (no snapshot/SafePCVSpan hold) → cow_set writes in place (zero alloc).
+    // When a snapshot still aliases storage, cow_* falls back to with_* COW.
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
         contract_assert(id < children_.size());
-        const auto& list = children_[id];
-        if (idx >= list.size())
+        auto list = std::move(children_[id]);
+        if (idx >= list.size()) {
+            children_[id] = std::move(list);
             return;
+        }
         const auto old_size = list.size();
         auto old_cid = list[idx];
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
-        children_[id] = list.with_set(idx, child);
-        contract_assert(children_[id].size() == old_size);
+        list.cow_set(idx, child);
+        contract_assert(list.size() == old_size);
+        children_[id] = std::move(list);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
         // Issue #1689: incremental inverted index (when valid).
@@ -4247,12 +4253,15 @@ public:
         add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
     }
     void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
-        const auto& list = children_[id];
-        auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
-        // Issue #1689: shift indices of edges at/after pos before insert.
-        if (!incoming_parent_index_dirty_ && pos < list.size())
+        auto pos = std::min(static_cast<std::uint32_t>(children_[id].size()), idx);
+        // Issue #1689: shift indices of edges at/after pos before insert
+        // (reads children_[id] while still installed).
+        if (!incoming_parent_index_dirty_ && pos < children_[id].size())
             incoming_index_shift_parent_indices(id, pos, /*delta=*/+1);
-        children_[id] = list.with_insert(pos, child);
+        // Issue #2058: move-out for unique-ish path (insert still allocates).
+        auto list = std::move(children_[id]);
+        list.cow_insert(pos, child);
+        children_[id] = std::move(list);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
         if (!incoming_parent_index_dirty_ && child != NULL_NODE)
@@ -4263,22 +4272,24 @@ public:
         structural_mutate_insert_total_.fetch_add(1, std::memory_order_relaxed);
     }
     void remove_child_locked(NodeId id, std::uint32_t idx) {
-        const auto& list = children_[id];
-        if (idx < list.size()) {
-            auto cid = list[idx];
-            // Issue #1689: drop edge and shift higher indices before erase.
-            if (!incoming_parent_index_dirty_) {
-                if (cid != NULL_NODE)
-                    incoming_index_remove_edge(cid, id, idx);
-                if (idx + 1 < list.size())
-                    incoming_index_shift_parent_indices(id, idx + 1, /*delta=*/-1);
-            }
-            if (cid != NULL_NODE && cid < parent_.size())
-                parent_[cid] = NULL_NODE;
-            children_[id] = list.with_erase(idx);
-            add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
-            structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
+        if (idx >= children_[id].size())
+            return;
+        auto cid = children_[id][idx];
+        // Issue #1689: drop edge and shift higher indices before erase.
+        if (!incoming_parent_index_dirty_) {
+            if (cid != NULL_NODE)
+                incoming_index_remove_edge(cid, id, idx);
+            if (idx + 1 < children_[id].size())
+                incoming_index_shift_parent_indices(id, idx + 1, /*delta=*/-1);
         }
+        if (cid != NULL_NODE && cid < parent_.size())
+            parent_[cid] = NULL_NODE;
+        // Issue #2058: move-out + cow_erase (size-change always allocates).
+        auto list = std::move(children_[id]);
+        list.cow_erase(idx);
+        children_[id] = std::move(list);
+        add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
+        structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
     void set_child(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
