@@ -40,12 +40,41 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <string_view>
 
 namespace aura::compiler {
+
+// Issue #2091: process-wide toggle that, when true, makes
+// mangle_aot_name / aot_link_name always emit the `_eN_lN` suffix
+// (including `_e0_l0`) so host code paths that track env/linear
+// at all never accidentally fall back to the legacy defuse-only
+// shape. Tests / diagnostics can flip this via
+// `aura_aot_set_force_env_linear_suffix(1)` (paired with the
+// optional `AURA_AOT_FORCE_ENV_LINEAR_SUFFIX` env var honored by
+// the C-linkage bridge hook). Off by default — production hosts
+// that already thread live env/linear into the mangle args do
+// not need this; the metric `aot_emit_env_linear_stamped_total`
+// vs `aot_emit_env_linear_default_zero_total` is the canonical
+// signal that the host is wired (stamped counter > 0).
+inline std::atomic<bool>& aot_force_env_linear_suffix_flag() noexcept {
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+
+// Issue #2091: file-scope accessor for the force flag (used by
+// mangle_aot_name / aot_link_name so the inline header stays
+// self-contained without requiring an extra .cpp).
+inline bool aot_force_env_linear_suffix() noexcept {
+    return aot_force_env_linear_suffix_flag().load(std::memory_order_relaxed);
+}
+
+inline void aot_set_force_env_linear_suffix(bool v) noexcept {
+    aot_force_env_linear_suffix_flag().store(v, std::memory_order_relaxed);
+}
 
 // Issue #136: a thorough name-mangler. The previous version
 // only replaced @ . - space with _, which is incomplete: special
@@ -91,6 +120,19 @@ namespace aura::compiler {
 // Issue #2015: parse side now extracts `_eN_lN` as well as `_vN`
 // so probe / stale-check paths can detect captured-env and
 // linear-ownership drift (not only defuse epoch).
+//
+// Issue #2091: when `aot_force_env_linear_suffix()` is true,
+// the mangle always emits the `_eN_lN` suffix (including
+// `_e0_l0` when both stamp components are 0). Without the
+// flag, the suffix is omitted only when both env_frame_version
+// and linear_state are 0 (the pre-#2091 legacy shape) so
+// back-compat with callers that explicitly want the bare
+// `_vN` form is preserved. The wired host paths
+// (aura_jit_bridge.cpp::generate_registration_c + reemit
+// success) now thread live env/linear values; the metric
+// `aot_emit_env_linear_stamped_total` reflects how often the
+// stamp actually fired vs the `default_zero` counter (which
+// detects miswired hosts).
 inline std::string mangle_aot_name(std::string_view original, std::uint32_t disambiguator,
                                    std::uint64_t defuse_version = 0,
                                    std::uint64_t env_frame_version = 0,
@@ -155,7 +197,17 @@ inline std::string mangle_aot_name(std::string_view original, std::uint32_t disa
     // the mangled name carries enough context for the reload
     // path to detect captured-env drift. Format `_e<N>_l<N>`
     // (e = env_frame_version, l = linear_state).
-    if (env_frame_version != 0 || linear_state != 0) {
+    //
+    // Issue #2091: emit the suffix whenever either stamp is
+    // non-zero OR the process-wide force flag is on. The
+    // force flag is the documented escape hatch for hosts
+    // that want the explicit `_e0_l0` shape even when both
+    // stamps are still 0 (e.g. before any env/linear tracking
+    // has run). Without the flag we still omit the suffix when
+    // both are 0 (pre-#2091 legacy back-compat).
+    const bool want_env_linear =
+        (env_frame_version != 0) || (linear_state != 0) || aot_force_env_linear_suffix();
+    if (want_env_linear) {
         result += "_e";
         result += std::to_string(env_frame_version);
         result += "_l";
@@ -167,11 +219,20 @@ inline std::string mangle_aot_name(std::string_view original, std::uint32_t disa
 // Issue #1369: ELF link name for registration / LLVM object.
 // `__top__` must remain the exact symbol `runtime.c` main() calls.
 // All other functions use the versioned mangle identity.
+//
+// Issue #2091: env_frame_version + linear_state now flow through
+// here too (was previously defuse-only) so the registration .c
+// link names and the LLVM-side mangle identity stay symmetric.
+// Defaults preserve the pre-#2091 behavior (env=0, lin=0 → no
+// `_e_l` suffix unless the force flag is on).
 inline std::string aot_link_name(const std::string& original, std::uint32_t disambiguator,
-                                 std::uint64_t defuse_version = 0) {
+                                 std::uint64_t defuse_version = 0,
+                                 std::uint64_t env_frame_version = 0,
+                                 std::uint8_t linear_state = 0) {
     if (original == "__top__")
         return "__top__";
-    return mangle_aot_name(original, disambiguator, defuse_version);
+    return mangle_aot_name(original, disambiguator, defuse_version, env_frame_version,
+                           linear_state);
 }
 
 // Issue #2015: full version suffix components from a mangled name.

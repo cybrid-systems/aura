@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
 
 module aura.compiler.evaluator;
 
@@ -45,6 +46,26 @@ using types::make_cell;
 using types::make_closure;
 using types::make_error;
 using types::make_float;
+
+// Issue #2091: publish hook used at env_generation_ bump sites
+// (member function so it sees env_frames_ directly without
+// needing a public view accessor). Captures both env_frame_version
+// + linear_state_fingerprint in one shot so the AOT bridge sees
+// a consistent pair. O(n*m) over active EnvFrames but
+// env_generation_ bumps are rare (compact / truncate / rollback)
+// — the scan is acceptable. The C-linkage bridge hooks come
+// from aura_jit_bridge.h (included in the global module fragment).
+void Evaluator::publish_live_env_linear_to_bridge() const noexcept {
+    aura_set_aot_live_env_frame_version(env_generation_);
+    std::uint8_t max_lin = 0;
+    for (const auto& fr : env_frames_) {
+        for (auto v : fr.bindings_linear_ownership_state_) {
+            if (v > max_lin)
+                max_lin = v;
+        }
+    }
+    aura_set_aot_live_linear_state_fingerprint(max_lin);
+}
 using types::make_hash;
 using types::make_int;
 using types::make_pair;
@@ -1695,6 +1716,10 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
+    // Issue #2091: publish live env_frame_version + linear_state
+    // fingerprint so the AOT bridge can stamp `_eN_lN` on the
+    // next emit / reemit / registration call.
+    publish_live_env_linear_to_bridge();
     // Issue #1927 / #1955: dual-epoch lockstep with compact_env_frames —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure).
     defuse_version_.fetch_add(1, std::memory_order_release);
@@ -1997,6 +2022,11 @@ std::size_t Evaluator::compact_env_frames() {
     // (JIT will not see "fresh epoch + dangling env_id" race).
     defuse_version_.fetch_add(1, std::memory_order_release);
     ++env_generation_;
+    // Issue #2091: publish live env_frame_version + linear_state
+    // fingerprint to the AOT bridge (compact_env_frames path —
+    // captured-env remap + dual-epoch bump must reach every
+    // subsequent emit).
+    publish_live_env_linear_to_bridge();
     if (bridge_epoch_bump_fn_ && compiler_service_)
         bridge_epoch_bump_fn_(compiler_service_);
 

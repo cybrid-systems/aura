@@ -3454,6 +3454,14 @@ public:
     [[nodiscard]] EnvFrameResolveResult resolve_env_frame_detailed(EnvId id) const noexcept;
     [[nodiscard]] EnvFrameResolveResultMut resolve_env_frame_mut_detailed(EnvId id) noexcept;
     [[nodiscard]] std::uint64_t env_generation() const noexcept { return env_generation_; }
+    // Issue #2091: publish the live env_frame_version + max
+    // linear_state_fingerprint to the AOT bridge atomics so emit /
+    // reemit / registration sites can stamp `_eN_lN` without
+    // importing the C++20 module. Called at env_generation_ bump
+    // sites (compact / truncate / rollback). Implementation lives
+    // in evaluator_env.cpp (the only TU that sees env_frames_ +
+    // the C-linkage bridge hooks).
+    void publish_live_env_linear_to_bridge() const noexcept;
     [[nodiscard]] std::uint64_t get_envframe_truncate_count() const noexcept {
         return envframe_truncate_count_.load(std::memory_order_relaxed);
     }

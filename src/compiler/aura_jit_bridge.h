@@ -129,6 +129,20 @@ bool aura_aot_mangle_version_is_stale_ex(const char* mangled, std::uint64_t expe
                                          std::uint64_t expected_env_frame,
                                          std::uint8_t expected_linear);
 
+// Issue #2091: live env_frame_version + linear_state_fingerprint
+// mirrors that the Evaluator publishes into whenever env_generation_
+// bumps (compact / truncate / rollback). emit / reemit /
+// registration sites read these via aura_get_aot_live_* and stamp
+// the `_eN_lN` suffix without importing the C++20 module.
+void aura_set_aot_live_env_frame_version(std::uint64_t v);
+std::uint64_t aura_get_aot_live_env_frame_version(void);
+void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v);
+std::uint8_t aura_get_aot_live_linear_state_fingerprint(void);
+
+// Issue #2091: C-linkage bridge for the aot_mangle.h force flag.
+void aura_aot_set_force_env_linear_suffix(int v);
+int aura_aot_get_force_env_linear_suffix(void);
+
 // Issue #1271: incremental re-emit skeleton + last commit epoch.
 // Returns count of dirty functions re-emitted (0 in Phase 1 skeleton).
 //
