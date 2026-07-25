@@ -25,14 +25,53 @@ namespace aura::compiler {
 // Issue #918: explicit using-declarations (no using-namespace).
 using security::kCapWildcard;
 
+// Issue #2077: unify has_capability string path with Effect matrix
+// (single source of truth). When `effect_for_cap_name(needed) != None`
+// the Effect bit in `g_capability_registry().effects_for(tenant)` is
+// consulted — grant_capability / grant_effect_capability already mirror
+// these names into the registry, and now has_capability reads them
+// from there too. Wildcard "*" still grants everything via the
+// explicit string-grant path; it also maps to the full effect mask
+// so an effect-only grant (without pushing "*" as a string) can
+// satisfy wildcard queries if every bit is held. Caps with
+// `effect_for_cap_name == None` (tenant-admin, compile-stats, agent,
+// workspace, fiber, exception-control, macro, query, capability,
+// sys-read/write/open/syscall, self-evo, synthesize, strategy,
+// sandbox) keep the legacy string-list path.
 bool Evaluator::has_capability(std::string_view needed) const noexcept {
-    if (!sandbox_mode_)
+    // Sandbox fully off (Evaluator sandbox + global registry effect mode)
+    // preserves legacy "always allow" semantics — matches check_and_record_effect.
+    if (!sandbox_mode_ && effect_sandbox_mode() == 0)
         return true;
     if (needed.empty())
         return false;
-    const auto matches = [&](const std::string& held) {
-        return held == needed || held == kCapWildcard;
-    };
+    using namespace ::aura::core::capability;
+    // Explicit "*" in any layer keeps legacy wildcard-grants-all behavior.
+    const auto wildcard_held = [&]() noexcept {
+        for (const auto& cap : granted_capabilities_) {
+            if (cap == kCapWildcard)
+                return true;
+        }
+        for (const auto& layer : capability_stack_) {
+            for (const auto& cap : layer) {
+                if (cap == kCapWildcard)
+                    return true;
+            }
+        }
+        return false;
+    }();
+    if (wildcard_held)
+        return true;
+    // Delegate to effect matrix when name maps to a known Effect bit.
+    // effect_for_cap_name returns the full mask for "*" so an effect-only
+    // full-grant (registry has every bit) satisfies individual effect-mapped
+    // cap queries even without an explicit "*" string grant.
+    const Effect eff = effect_for_cap_name(needed);
+    if (eff != Effect::None) {
+        return has_effect(g_capability_registry().effects_for(capability_tenant_id_), eff);
+    }
+    // Legacy string-only caps keep the list path.
+    const auto matches = [&](const std::string& held) { return held == needed; };
     for (const auto& cap : granted_capabilities_) {
         if (matches(cap))
             return true;
