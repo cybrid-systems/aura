@@ -48,6 +48,9 @@ extern "C" std::uint64_t aura_jit_live_macro_fn_count();
 extern "C" std::uint64_t aura_jit_macro_provenance_recoverable_total();
 extern "C" std::uint8_t aura_jit_fn_source_marker(std::int64_t func_id);
 extern "C" std::uint32_t aura_jit_fn_provenance(std::int64_t func_id);
+// Issue #2100: deopt round-trip preserved/lost (IR attrs → AST restamp).
+extern "C" std::uint64_t aura_jit_macro_introduced_preserved_total();
+extern "C" std::uint64_t aura_jit_macro_introduced_lost_total();
 // Issue #2018: rest-param hygiene gensym counter (clone_macro_body).
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
@@ -6852,8 +6855,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("jit-native-marker-preserve-wired", 1);
         // After deopt, side-table still holds marker/provenance (not cleared).
         insert_kv("jit-macro-deopt-provenance-retained", 1);
+        // Issue #2100: deopt round-trip preserved/lost (IR attrs → AST restamp).
+        const auto deopt_preserved = aura_jit_macro_introduced_preserved_total();
+        const auto deopt_lost = aura_jit_macro_introduced_lost_total();
+        insert_kv("jit-macro-introduced-preserved-total",
+                  static_cast<std::int64_t>(deopt_preserved));
+        insert_kv("jit-macro-introduced-lost-total", static_cast<std::int64_t>(deopt_lost));
+        insert_kv("jit-macro-deopt-ast-restore-wired", 1);
+        insert_kv("ir-macro-attr-source-marker-wired", 1);
+        insert_kv("schema-2100", 2100);
+        insert_kv("issue-2100", 2100);
         insert_kv("issue", 2022);
-        insert_kv("schema", 2022); // lineage 1891 / 1616 / 1610 / 1047 / 501
+        insert_kv("schema", 2022); // lineage 2100 / 2022 / 1891 / 1610
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
