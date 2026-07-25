@@ -8,6 +8,7 @@ module;
 #include "security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
+#include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
@@ -248,7 +249,16 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
                                         std::uint64_t provenance_mutation_id) noexcept {
     using namespace aura::core::capability;
     EffectProvenance prov;
-    prov.mutation_id = provenance_mutation_id;
+    // Issue #2074: anti privilege-sticky — bind prov.mutation_id to the
+    // current mutation epoch when sandbox != Off AND caller didn't pass
+    // an explicit one. Without this, a grant issued at mutation epoch
+    // 0 stays valid forever (capability_model.hh grant() then stamps
+    // grant_epoch=0) — long-running AI self-mod windows accumulate
+    // sticky privileges. The provenance_ok() check (capability_model.hh)
+    // denies grants whose grant_epoch < registry's min_valid_epoch.
+    prov.mutation_id = (provenance_mutation_id != 0 || sandbox_mode_ == 0)
+                           ? provenance_mutation_id
+                           : aura::core::current_mutation_epoch();
     prov.epoch = current_bridge_epoch();
     prov.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
     g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov);
