@@ -205,6 +205,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> relower_instruction_skip_total{0};
     std::atomic<std::uint64_t> should_partial_relower_consult_total{0};
     std::atomic<std::uint64_t> should_partial_relower_yes_total{0};
+    // Issue #2113: incremental soundness oracle (partial ≡ full IR).
+    // Zero cost when oracle disabled (service path gated on
+    // incremental_soundness_enabled()). Process atomics in
+    // ir_cache_pure mirror these for pure unit tests.
+    //   - incremental_soundness_runs_total: oracle invocations
+    //   - incremental_soundness_ok_total: partial ≡ full
+    //   - incremental_soundness_mismatch_total: under-dirty / bug
+    std::atomic<std::uint64_t> incremental_soundness_runs_total{0};
+    std::atomic<std::uint64_t> incremental_soundness_ok_total{0};
+    std::atomic<std::uint64_t> incremental_soundness_mismatch_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
     std::atomic<std::uint64_t> jit_partial_recompile_requests_total{0};
     // Issue #401: invalidate_function call counter. Bumped once per

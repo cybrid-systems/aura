@@ -2130,6 +2130,11 @@ aura_add_issue_test(test_adaptive_partial_relower_threshold_2112)
 aura_issue_test_link_llvm_jit(test_adaptive_partial_relower_threshold_2112)
 add_dependencies(all_test_issue_targets test_adaptive_partial_relower_threshold_2112)
 
+# Issue #2113: incremental soundness oracle (debug partial ≡ full).
+aura_add_issue_test(test_incremental_soundness_oracle_2113)
+aura_issue_test_link_llvm_jit(test_incremental_soundness_oracle_2113)
+add_dependencies(all_test_issue_targets test_incremental_soundness_oracle_2113)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
