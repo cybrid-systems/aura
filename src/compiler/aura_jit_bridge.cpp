@@ -110,6 +110,17 @@ extern "C" std::uint64_t aura_get_current_bridge_epoch(void) {
     return g_current_bridge_epoch.load(std::memory_order_acquire);
 }
 
+// Issue #2043: linear-ownership epoch dual-write for JIT linear fences.
+static std::atomic<std::uint64_t> g_linear_ownership_epoch{0};
+
+extern "C" void aura_set_linear_ownership_epoch(std::uint64_t v) {
+    g_linear_ownership_epoch.store(v, std::memory_order_release);
+}
+
+extern "C" std::uint64_t aura_get_linear_ownership_epoch(void) {
+    return g_linear_ownership_epoch.load(std::memory_order_acquire);
+}
+
 // ── Issue #452: AOT hot-update counters (observable) ───────────
 //
 // Three atomics bumped by aura_reload_aot_module on each
@@ -1435,6 +1446,22 @@ extern "C" int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint
             cur_defuse = aura_get_defuse_version();
         if (linear_is_env_frame_stale(env_id, frame_ver, cur_defuse))
             stale = true;
+    }
+
+    // Issue #2043: linear-ownership epoch fence — when linear_state is set
+    // and the process has advanced linear_ownership_epoch past the TLS
+    // capture (frame_ver reuse as coarse stamp when >0 and < current),
+    // force deopt so apply cannot race a concurrent finalize window.
+    if (linear_state != 0) {
+        const std::uint64_t lin_ep = aura_get_linear_ownership_epoch();
+        const std::uint64_t frame_ver = g_linear_frame_version.load(std::memory_order_acquire);
+        if (lin_ep != 0 && frame_ver != 0 && frame_ver < lin_ep) {
+            stale = true;
+            if (aot_metrics()) {
+                aot_metrics()->linear_epoch_fence_enforce_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
     }
 
     // Issue #1540: linear_post_mutate_enforce (tree-walker dual of #1478).

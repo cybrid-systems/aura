@@ -6182,7 +6182,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->linear_postmutate_env_version_sync_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(32); // #2043: more keys than #800 base
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6213,7 +6213,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("escape-violations-prevented", escape_prevented);
             insert_kv("guard-boundary-linear-safe", guard_safe);
             insert_kv("env-version-sync", env_sync);
-            insert_kv("schema", 800);
+            // Issue #2043: atomic linear+GC window observability (additive)
+            insert_kv("linear-gc-window-finalize-total",
+                      m ? static_cast<std::int64_t>(
+                              m->linear_gc_window_finalize_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("linear-ownership-epoch-bumps",
+                      m ? static_cast<std::int64_t>(
+                              m->linear_ownership_epoch_bumps_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("linear-gc-window-under-mutate",
+                      m ? static_cast<std::int64_t>(m->linear_gc_window_under_mutate_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("linear-ownership-epoch",
+                      static_cast<std::int64_t>(ev->linear_ownership_epoch()));
+            insert_kv("schema", 800); // lineage retained for #800 tests
+            insert_kv("schema-2043", 2043);
+            insert_kv("issue-2043", 2043);
+            insert_kv("linear-gc-window-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

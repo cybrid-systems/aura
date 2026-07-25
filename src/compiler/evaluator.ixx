@@ -4310,6 +4310,12 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+    // Issue #2043: linear-ownership epoch — bumped under mutate_mtx_ at the
+    // end of finalize_linear_gc_invalidation_window_ so apply / JIT linear
+    // fences can detect "invalidate completed linear+GC revalidation".
+    // Parallel to defuse_version_ / bridge_epoch (separate domain: linear
+    // EnvFrame ownership_state vs binding cells vs AST views).
+    std::atomic<std::uint64_t> linear_ownership_epoch_{0};
 
 public:
     // Issue #957: production-facing defuse_version accessor (AOT emit,
@@ -4321,6 +4327,15 @@ public:
     // Test-only aliases (stable name for existing tests).
     std::uint64_t defuse_version_for_test() const { return defuse_version(); }
     void bump_defuse_version_for_test() { defuse_version_.fetch_add(1, std::memory_order_acq_rel); }
+
+    // Issue #2043: linear-ownership epoch accessors (acq/rel).
+    [[nodiscard]] std::uint64_t linear_ownership_epoch() const noexcept {
+        return linear_ownership_epoch_.load(std::memory_order_acquire);
+    }
+    // Returns the new epoch after bump (post-increment value).
+    std::uint64_t bump_linear_ownership_epoch() noexcept {
+        return linear_ownership_epoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
 
     // Issue #266: stats from the most recent boundary exit(false).
     struct BoundaryRollbackStats {

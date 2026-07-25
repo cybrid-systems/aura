@@ -9250,17 +9250,47 @@ private:
         }
     }
 
-    // Issue #683 / #1515: LinearOwnershipRevalidate after invalidate/re-lower.
-    // Unified sync_linear_roots_and_bridge_epoch registers GC roots
-    // under live bridge_epoch then probes EnvFrame × linear state.
+    // Issue #683 / #1515 / #2043: LinearOwnershipRevalidate after
+    // invalidate/re-lower. Delegates to the atomic linear+GC window
+    // (finalize_linear_gc_invalidation_window_) so soft/hard share one path.
     void run_linear_ownership_revalidate_after_invalidate(const std::string& name) {
+        finalize_linear_gc_invalidation_window_(name);
+    }
+
+    // Issue #2043: atomic linear-ownership + GC root window under mutate_mtx_.
+    // Must run after dual-epoch bump + live-closure expire, and after any
+    // re-lower that may have recreated EnvFrames. Sequence (lock order doc
+    // in lock_order_audit.h):
+    //   1. scan_live_closures_for_linear_captures (mark invalid)
+    //   2. linear_post_mutate_enforce_all
+    //   3. sync_linear_roots_and_bridge_epoch (GC roots + probe)
+    //   4. bump linear_ownership_epoch + dual-write C for JIT fence
+    //   5. run_linear_gc_root_audit
+    //   6. release fence so concurrent apply sees a complete window
+    void finalize_linear_gc_invalidation_window_(const std::string& name) {
         (void)name;
+        metrics_.linear_gc_window_finalize_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_relower_revalidate_hits.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+        if (lock_order::is_held(lock_order::Level::Mutate))
+            metrics_.linear_gc_window_under_mutate_total.fetch_add(1, std::memory_order_relaxed);
+
+        // Full scan (not only_if_moved): after invalidate every linear
+        // capture must revalidate before apply is allowed again.
+        (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                                /*only_if_moved=*/false);
+        (void)evaluator_.linear_post_mutate_enforce_all();
         evaluator_.sync_linear_roots_and_bridge_epoch();
-        // Issue #1543: invalidate_function path audit.
+
+        const auto ep = evaluator_.bump_linear_ownership_epoch();
+        aura_set_linear_ownership_epoch(ep);
+        metrics_.linear_ownership_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
+
         (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
+        // Publish complete linear+GC window to concurrent apply / fiber steal.
+        std::atomic_thread_fence(std::memory_order_release);
     }
 
     // Issue #1385: CountingMR — wraps new_delete_resource and
@@ -9650,6 +9680,19 @@ public:
     }
     [[nodiscard]] std::uint64_t public_expire_stale_tree_walker_closures_total() const noexcept {
         return metrics_.expire_stale_tree_walker_closures_total.load(std::memory_order_relaxed);
+    }
+    // Issue #2043: test seam for linear+GC finalize window.
+    void public_finalize_linear_gc_window(const std::string& name = {}) {
+        finalize_linear_gc_invalidation_window_(name);
+    }
+    [[nodiscard]] std::uint64_t public_linear_gc_window_finalize_total() const noexcept {
+        return metrics_.linear_gc_window_finalize_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_linear_ownership_epoch() const noexcept {
+        return evaluator_.linear_ownership_epoch();
+    }
+    [[nodiscard]] std::uint64_t public_linear_ownership_epoch_bumps_total() const noexcept {
+        return metrics_.linear_ownership_epoch_bumps_total.load(std::memory_order_relaxed);
     }
 
     // Issue #401: public test hook for invalidate_function. Lets tests
