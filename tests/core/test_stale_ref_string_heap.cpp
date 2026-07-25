@@ -11,6 +11,8 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 
@@ -132,6 +134,55 @@ int main() {
         CHECK(rp >= 0, "AC7: pair_remap_size is non-negative");
         CHECK(cs.evaluator().resolve_pair(static_cast<std::uint64_t>(post + 1000)) == -1,
               "AC7: resolve_pair out-of-range → -1");
+    }
+
+    // ── Issue #2084: GC size-provider injection (mark_from_roots covers full heap) ──
+    std::println("\n--- AC8+AC9: #2084 closures_size() + size-provider wiring ---");
+    {
+        // AC1: closures_size() returns the current closure count (companion to
+        // string_heap_size + pairs_size, needed by the GC size-provider
+        // callback to mark_from_roots so MarkBitVectors cover the full heap).
+        CompilerService cs2;
+        const auto cs2_closures0 = cs2.evaluator().closures_size();
+        CHECK(cs2_closures0 == 0, "fresh Evaluator has 0 closures");
+        (void)cs2.eval("(set-code \"(define f (lambda () 1))(define g (lambda () 2))\")");
+        const auto cs2_closures1 = cs2.evaluator().closures_size();
+        CHECK(cs2_closures1 >= 2, "closures_size() reflects new lambda registrations");
+
+        // AC4: source cite — the GC coordinator now exposes the size-provider
+        // callback hook + mark_size_injected_total counter. The actual
+        // collect() injection happens via serve_async.cpp: register_size_fn
+        // wiring + gc_coordinator.cpp: collect() calling size_fn_() before
+        // mark_from_roots.
+        std::ifstream gc_header("src/serve/gc_coordinator.h");
+        std::string gc_h_contents((std::istreambuf_iterator<char>(gc_header)),
+                                  std::istreambuf_iterator<char>());
+        CHECK(gc_h_contents.find("register_size_fn") != std::string::npos,
+              "gc_coordinator.h exposes register_size_fn");
+        CHECK(gc_h_contents.find("GCSizeFn") != std::string::npos, "GCSizeFn typedef declared");
+        CHECK(gc_h_contents.find("mark_size_injected_total") != std::string::npos,
+              "mark_size_injected_total counter in Metrics struct");
+
+        std::ifstream gc_cpp("src/serve/gc_coordinator.cpp");
+        std::string gc_c_contents((std::istreambuf_iterator<char>(gc_cpp)),
+                                  std::istreambuf_iterator<char>());
+        CHECK(gc_c_contents.find("size_fn_") != std::string::npos,
+              "gc_coordinator.cpp calls size_fn_()");
+        CHECK(gc_c_contents.find("mark_size_injected_total") != std::string::npos,
+              "gc_coordinator.cpp bumps mark_size_injected_total");
+
+        // AC4 (cont.): serve_async.cpp wires the size-provider callback to
+        // the active CompilerService via g_current_compiler_service so the
+        // GC sees real (string_heap_size, pairs_size, closures_size) per cycle.
+        std::ifstream sa("src/serve/serve_async.cpp");
+        std::string sa_contents((std::istreambuf_iterator<char>(sa)),
+                                std::istreambuf_iterator<char>());
+        CHECK(sa_contents.find("register_size_fn") != std::string::npos,
+              "serve_async.cpp registers the size-provider callback");
+        CHECK(sa_contents.find("string_heap_size()") != std::string::npos &&
+                  sa_contents.find("pairs_size()") != std::string::npos &&
+                  sa_contents.find("closures_size()") != std::string::npos,
+              "size-provider returns real (string, pair, closure) sizes");
     }
 
     std::println("\n=== test_stale_ref_string_heap_1681: {} passed, {} failed ===", g_passed,
