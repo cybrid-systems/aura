@@ -2145,6 +2145,11 @@ aura_add_issue_test(test_depth_safe_mutation_boundary_steal_2115)
 aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal_2115)
 add_dependencies(all_test_issue_targets test_depth_safe_mutation_boundary_steal_2115)
 
+# Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
+aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
+aura_issue_test_link_llvm_jit(test_dual_path_desync_hard_fail_2116)
+add_dependencies(all_test_issue_targets test_dual_path_desync_hard_fail_2116)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

@@ -7063,6 +7063,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dual_path_stale_fallback_total{0};    // #1638
     std::atomic<std::uint64_t> mutation_log_compact_bytes_saved{0};  // #1638
     std::atomic<std::uint64_t> env_frame_version_drift_prevented{0}; // #1638
+    // Issue #2116: dual-path desync hard-fail in materialize_call_env +
+    // GCEnvWalkFn. Default Hard: do not continue with half-consistent
+    // EnvFrame (empty/safe Env + skip GC walk). Soft: legacy continue
+    // with dual_path_desync_soft_continue_total for dashboards.
+    //   - dual_path_desync_hard_fail_total: hard path firings
+    //   - dual_path_desync_soft_continue_total: soft-mode continues
+    //   - dual_path_desync_gc_walk_skipped_total: GCEnvWalkFn skips
+    std::atomic<std::uint64_t> dual_path_desync_hard_fail_total{0};       // #2116
+    std::atomic<std::uint64_t> dual_path_desync_soft_continue_total{0};   // #2116
+    std::atomic<std::uint64_t> dual_path_desync_gc_walk_skipped_total{0}; // #2116
 
     // Issue #1639: per-block dirty bitmask → partial re-lower wiring
     // (refine #1474 / #1495 / #1505 / #1514 / #1555 / #1601 / #1605).

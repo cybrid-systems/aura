@@ -2653,7 +2653,8 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
         "query:envframe-dualpath-policy-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                // Capacity power-of-two; #2116 adds desync hard-fail keys.
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -2683,7 +2684,6 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        // 8 slots should be enough for the 5-key hashes we build.
                         FlatHashTable::destroy(ht);
                         return make_void();
                     }
@@ -2711,11 +2711,37 @@ void ObservabilityPrims::register_jit_p16(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(m->envframe_version_mismatch_post_steal_total.load(
                         std::memory_order_relaxed))
                   : 0;
+            const std::int64_t hard_fail =
+                m ? static_cast<std::int64_t>(
+                        m->dual_path_desync_hard_fail_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t soft_cont =
+                m ? static_cast<std::int64_t>(
+                        m->dual_path_desync_soft_continue_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t gc_skip =
+                m ? static_cast<std::int64_t>(
+                        m->dual_path_desync_gc_walk_skipped_total.load(std::memory_order_relaxed))
+                  : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"desync-panic-count", make_int(desync_panic_count)},
                 {"gc-stale-desync-hits", make_int(gc_stale_desync_hits)},
                 {"dualpath-repair", make_int(dualpath_repair)},
                 {"version-mismatch", make_int(version_mismatch)},
+                // Issue #2116: hard-fail dual-path desync policy
+                {"dual_path_desync_hard_fail_total", make_int(hard_fail)},
+                {"dual-path-desync-hard-fail-total", make_int(hard_fail)},
+                {"dual_path_desync_soft_continue_total", make_int(soft_cont)},
+                {"dual-path-desync-soft-continue-total", make_int(soft_cont)},
+                {"dual_path_desync_gc_walk_skipped_total", make_int(gc_skip)},
+                {"dual-path-desync-gc-walk-skipped-total", make_int(gc_skip)},
+                {"dual-path-desync-policy-mode",
+                 make_int(
+                     static_cast<std::int64_t>(Evaluator::get_envframe_dual_path_desync_mode()))},
+                {"dual-path-desync-hard-default", make_int(1)},
+                {"dual-path-desync-hard-wired", make_int(1)},
+                {"schema-2116", make_int(2116)},
+                {"issue-2116", make_int(2116)},
                 {"schema", make_int(756)},
             };
             return build_hash(kv);
