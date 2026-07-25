@@ -116,14 +116,25 @@ extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name)
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
                                           std::int64_t argc);
-// Issue #2013: after successful reemit, retarget live closures whose name
-// matches a reemitted stable func id: rewrite func_id + restamp bridge_epoch
-// under the closure table write lock. Returns remapped closure count.
-// names/stable_ids length n; new_bridge_epoch is post-commit table epoch.
-extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const char* const* names,
-                                                               const std::uint32_t* stable_ids,
+// Issue #2013 / #2092: after successful reemit, retarget live closures
+// whose stable_func_id (NOT display name — name is unstable under
+// redefine / gensym / multi-define) is in the reemit set: rewrite
+// func_id + restamp bridge_epoch under the closure table write lock.
+// Returns remapped closure count. stable_ids length n; new_bridge_epoch
+// is post-commit table epoch. Legacy name fallback (off by default,
+// gated by aura_set_remap_name_fallback_enabled()) bumps
+// live_closure_remap_name_fallback_total when used.
+extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch);
+
+// Issue #2092: legacy name-fallback toggle. Off by default (AC3) —
+// wired hosts opt in only when they want pre-#2092 behavior for
+// legacy closures (stored stable_func_id == 0). Production impl in
+// aura_jit_runtime.cpp; weak stub in aura_jit_bridge_stub.cpp so
+// light test binaries link cleanly without the production TU.
+extern "C" void aura_set_remap_name_fallback_enabled(int v);
+extern "C" int aura_get_remap_name_fallback_enabled(void);
 // Issue #2017: clear g_closure_cache entries for one cid (proactive after
 // compact-env-frames remap so the next call does not hit a stale generation).
 extern "C" void aura_invalidate_closure_cache_for(std::int64_t closure_id);

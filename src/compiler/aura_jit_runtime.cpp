@@ -55,6 +55,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set> // Issue #2092: stable_id_set for remap
 #include <array>
 #include <vector>
 #include <cstring>
@@ -705,6 +706,28 @@ static std::vector<std::string> g_closure_names;
 // defuse_version ↔ aura_get_aot_defuse_version() (mutate / EnvFrame proxy)
 static std::vector<std::uint64_t> g_closure_bridge_epochs;
 static std::vector<std::uint64_t> g_closure_defuse_versions;
+// Issue #2092: per-closure stable_func_id stamp (parallel to func_ids).
+// Set in aura_closure_set_name() via aura_lookup_stable_func_id() so the
+// remap after reemit matches by stable id (not display name) — the
+// display name is unstable under redefine / gensym / multi-define. 0
+// means legacy / never stamped; remap falls back to name match (off by
+// default, gated by aura_set_remap_name_fallback_enabled).
+static std::vector<std::uint32_t> g_closure_stable_func_ids;
+
+// Issue #2092: process-global toggle for the legacy name-fallback
+// path in aura_remap_live_closures_after_reemit. Off by default
+// (AC3) — wired hosts set this to 1 only when they want pre-#2092
+// behavior for legacy closures. Atomic for lock-free reads from the
+// remap hot path.
+static std::atomic<bool> g_remap_name_fallback_enabled{false};
+
+extern "C" void aura_set_remap_name_fallback_enabled(int v) {
+    g_remap_name_fallback_enabled.store(v != 0, std::memory_order_release);
+}
+
+extern "C" int aura_get_remap_name_fallback_enabled(void) {
+    return g_remap_name_fallback_enabled.load(std::memory_order_acquire) ? 1 : 0;
+}
 
 // Issue #1361: free bitmap + free-list for per-closure free + ID reuse.
 // g_closure_freed[i]==1 means slot i is free (must not call/capture).
@@ -870,7 +893,8 @@ static bool closure_vectors_consistent_unlocked() noexcept {
     return g_closure_envs.size() == n && g_closure_is_arena.size() == n &&
            g_arena_closure_envs.size() == n && g_closure_names.size() == n &&
            g_closure_freed.size() == n && g_closure_bridge_epochs.size() == n &&
-           g_closure_defuse_versions.size() == n;
+           g_closure_defuse_versions.size() == n &&
+           g_closure_stable_func_ids.size() == n; // Issue #2092
 }
 
 #ifndef NDEBUG
@@ -905,6 +929,13 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
             g_arena_closure_env_sizes[cid] = 0;
         if (cid < g_closure_names.size())
             g_closure_names[cid].clear();
+        // Issue #2092: clear the legacy stable_func_id stamp on reuse
+        // (the previous closure's stamp is no longer meaningful — the
+        // new alloc starts fresh; aura_closure_set_name will re-stamp
+        // it via aura_lookup_stable_func_id when the host wires the
+        // define-time stable map).
+        if (cid < g_closure_stable_func_ids.size())
+            g_closure_stable_func_ids[cid] = 0;
         stamp_closure_provenance_locked(cid);
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
         g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
@@ -920,6 +951,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_closure_freed.push_back(0);
     g_closure_bridge_epochs.push_back(aura_aot_func_table_epoch());
     g_closure_defuse_versions.push_back(aura_get_aot_defuse_version());
+    g_closure_stable_func_ids.push_back(
+        0); // Issue #2092: legacy default; stamped in aura_closure_set_name
     return id;
 }
 
@@ -1042,53 +1075,93 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
     if (cid < g_closure_func_ids.size() && cid < g_closure_names.size()) {
         g_closure_names[cid] = name ? std::string(name) : std::string();
     }
+    // Issue #2092: stamp the stable_func_id for this closure (if the
+    // name is already in the stable map). Use lookup-only (NOT
+    // get_or_preserve) — closures that arrive before the define is
+    // processed get stable_id = 0 and fall through to the (off by
+    // default) name fallback path during remap. The stored id
+    // reflects the define id at allocation time, so a later redefine
+    // of the same display name does NOT silently attach this closure
+    // to the new define's stable id (AC1 — same-name redefine safety).
+    if (cid < g_closure_func_ids.size()) {
+        if (cid >= g_closure_stable_func_ids.size())
+            g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
+        g_closure_stable_func_ids[cid] = name ? aura_lookup_stable_func_id(name) : 0;
+    }
     aura_unlock_workspace_write();
 }
 
-// Issue #2013: targeted live-closure remap after successful reemit.
-// For each live cid whose name is in the reemitted set, rewrite
-// g_closure_func_ids to the process-stable id and restamp bridge_epoch
-// (and defuse_version) so aura_closure_call dual-freshness passes without
-// deopt. Hold the exclusive table lock so concurrent calls observe either
-// fully-old or fully-new (func_id + epoch) for each slot.
-extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const char* const* names,
-                                                               const std::uint32_t* stable_ids,
+// Issue #2092: live-closure remap after successful reemit, keyed by
+// stable_func_id (NOT display name). Display name is unstable under
+// redefine / gensym / multi-define same name; a name-only match can
+// silently attach an old closure to a new define's stable id (or
+// miss remap for an anonymous lambda that never enters the stable map
+// by name). Primary key = closure's stored stable_func_id (stamped
+// in aura_closure_set_name). Secondary = name fallback (off by
+// default, gated by aura_set_remap_name_fallback_enabled), for
+// legacy closures that never had their stable_func_id stamped.
+// Hold the exclusive table lock so concurrent calls observe either
+// fully-old or fully-new (func_id + epoch) for each slot (AC4 —
+// preserves #2013 torn-write contract).
+extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch) {
-    if (!names || !stable_ids || n == 0)
+    if (!stable_ids || n == 0)
         return 0;
 
-    // Build name → stable_id lookup (small n: reemit batch size).
-    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
-                       std::equal_to<>>
-        name_to_id;
-    name_to_id.reserve(n);
+    // Build unordered_set for O(1) membership (Issue #2092 goal 3).
+    std::unordered_set<std::uint32_t> reemit_ids;
+    reemit_ids.reserve(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
-        if (!names[i] || !*names[i] || stable_ids[i] == 0)
-            continue;
-        name_to_id.emplace(names[i], stable_ids[i]);
+        if (stable_ids[i] != 0)
+            reemit_ids.insert(stable_ids[i]);
     }
-    if (name_to_id.empty())
+    if (reemit_ids.empty())
         return 0;
 
     const std::uint64_t host_defuse = aura_get_aot_defuse_version();
+    const bool name_fallback = g_remap_name_fallback_enabled.load(std::memory_order_acquire);
 
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
 
     std::uint64_t remapped = 0;
+    std::uint64_t name_fallback_count = 0;
     const std::size_t nslots = g_closure_func_ids.size();
     for (std::size_t cid = 0; cid < nslots; ++cid) {
         if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
             continue;
-        if (cid >= g_closure_names.size() || g_closure_names[cid].empty())
-            continue;
-        auto it = name_to_id.find(g_closure_names[cid]);
-        if (it == name_to_id.end())
+
+        // Primary key: closure's stored stable_func_id (Issue #2092).
+        std::uint32_t cid_stable_id = 0;
+        if (cid < g_closure_stable_func_ids.size())
+            cid_stable_id = g_closure_stable_func_ids[cid];
+
+        std::uint32_t match_id = 0;
+        bool via_name_fallback = false;
+        if (cid_stable_id != 0 && reemit_ids.count(cid_stable_id)) {
+            match_id = cid_stable_id;
+        } else if (name_fallback && cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
+            // Legacy fallback: legacy closures (stable_id == 0) whose
+            // name happens to match a reemit name. Off by default; when
+            // enabled, bump live_closure_remap_name_fallback_total so the
+            // Agent dashboard can detect reliance on the legacy path.
+            // NB: lookup uses aura_lookup_stable_func_id, which returns
+            // the LATEST stable id for that name — same caveat as the
+            // pre-#2092 implementation. This path is documented as
+            // legacy-only and not safe under same-name redefine (AC1).
+            const std::uint32_t looked_up =
+                aura_lookup_stable_func_id(g_closure_names[cid].c_str());
+            if (looked_up != 0 && reemit_ids.count(looked_up)) {
+                match_id = looked_up;
+                via_name_fallback = true;
+            }
+        }
+        if (match_id == 0)
             continue;
 
-        // Atomic-from-callers' view: both fields under exclusive table lock.
-        g_closure_func_ids[cid] = static_cast<std::int64_t>(it->second);
+        // Atomic-from-callers' view: all fields under exclusive table lock.
+        g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
         if (cid >= g_closure_bridge_epochs.size())
             g_closure_bridge_epochs.resize(cid + 1, 0);
         if (cid >= g_closure_defuse_versions.size())
@@ -1097,9 +1170,18 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const char* const
         g_closure_defuse_versions[cid] = host_defuse;
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
+        if (via_name_fallback)
+            ++name_fallback_count;
     }
 
     aura_unlock_workspace_write();
+    if (name_fallback_count > 0) {
+        // Issue #2092: bump the legacy name-fallback counter via the
+        // C-linkage helper in aura_jit_bridge.cpp (this TU only has
+        // the forward declaration of CompilerMetrics via
+        // runtime_shared.h, so we don't touch the struct directly).
+        aura_bump_live_closure_remap_name_fallback_total(name_fallback_count);
+    }
     return remapped;
 }
 

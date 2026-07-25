@@ -7587,6 +7587,12 @@ struct CompilerMetrics {
     // Issue #2013: live closures retargeted to stable func id + restamped
     // bridge_epoch after successful reemit (avoids deopt storms).
     std::atomic<std::uint64_t> live_closure_remap_total{0}; // #2013
+    // Issue #2092: live closures retargeted via the (off-by-default)
+    // name fallback path because their stable_func_id stamp was 0
+    // (legacy closure / define processed after set_name). Non-zero
+    // indicates a host is relying on the legacy behavior; AC3 says
+    // strict tests must keep this at 0.
+    std::atomic<std::uint64_t> live_closure_remap_name_fallback_total{0}; // #2092
 
     // ── Issue #2016: LLVM incremental reemit + adaptive region mask ──
     // aot_incremental_llvm_emit_total: successful default/host LLVM reemits
