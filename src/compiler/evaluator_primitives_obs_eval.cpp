@@ -44,8 +44,9 @@ import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
 import aura.compiler.optimization_passes;
-import aura.compiler.coercion_map;  // Issue #2025: AST dead-coercion elision counter
-import aura.compiler.ir_cache_pure; // Issue #2032: get_partial_relower_threshold
+import aura.compiler.coercion_map;      // Issue #2025: AST dead-coercion elision counter
+import aura.compiler.ir_cache_pure;     // Issue #2032: get_partial_relower_threshold
+import aura.compiler.dirty_propagation; // Issue #2106: cascade_skip_subtree surface
 import aura.core.concept_constraints;
 
 // Hoisted from evaluator_primitives_obs_eval_00..13.cpp
@@ -13757,11 +13758,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
 
     // (engine:metrics "query:optimization-passes-stats") — Issue #1576:
     // concrete optimization_passes registry + contract/pipeline counters.
+    // Issue #2025 DeadCoercion layered keys; Issue #2106 cascade_skip +
+    // DeadCoercion dirty-cone early-out (schema-2106).
     ObservabilityPrims::register_stats_impl(
         "query:optimization-passes-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
-            // #1576 lineage + #2025 DeadCoercion keys → 32 slots.
-            auto* ht = FlatHashTable::create(32);
+            // #1576 + #2025 + #2106 keys → 64 slots.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -13771,15 +13774,28 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             const auto load = [](std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
+            // Issue #2106: flush pending file-scope skips into metrics sink
+            // so Agents always see a consistent cascade_skip_subtree_total.
+            (void)aura::compiler::dirty::flush_dirty_skip_subtree_to_metrics();
             // Issue #2025: DeadCoercion runs + layered AST/IR elision synergy.
             const auto dead_runs =
                 load(opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::DeadCoercion)]);
             const auto ir_elided = load(dead_coercion_ir_elided_total);
             const auto ir_narrow = load(dead_coercion_ir_narrow_evidence_hits);
             const auto dce_pipeline = load(dead_coercion_pipeline_runs_total);
+            const auto dce_cone_skips = load(dead_coercion_dirty_cone_skips);
             const auto ast_elided = static_cast<std::int64_t>(
                 aura::compiler::g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed));
             const auto layered = ir_elided + ast_elided;
+            const auto cascade_skip =
+                static_cast<std::int64_t>(aura::compiler::dirty::cascade_skip_subtree_visible());
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const auto cascade_skip_metrics =
+                m ? static_cast<std::int64_t>(
+                        m->cascade_skip_subtree_total.load(std::memory_order_relaxed))
+                  : cascade_skip;
             const std::pair<std::string, EvalValue> fields[] = {
                 {"phase", make_int(kOptimizationPassesPhase)},
                 {"pass-runs", make_int(load(opt_pass_runs_total))},
@@ -13809,13 +13825,93 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"dead-coercion-ast-elided", make_int(ast_elided)},
                 {"dead-coercion-layered-total", make_int(layered)},
                 {"dead-coercion-wired", make_int(1)},
+                // Issue #2106: dirty-cone early-out + cascade skip layered story
+                {"dead-coercion-dirty-cone-skips", make_int(dce_cone_skips)},
+                {"cascade-skip-subtree-total", make_int(cascade_skip_metrics)},
                 {"schema-2025", make_int(2025)},
                 {"issue-2025", make_int(2025)},
+                {"schema-2106", make_int(2106)},
+                {"issue-2106", make_int(2106)},
                 {"define-dirty-skips",
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::optimization_passes_skipped_by_define_dirty.load(
                          std::memory_order_relaxed)))},
-                {"schema", make_int(2025)}, // lineage 1576 + #2025 DeadCoercion pipeline
+                // lineage 1576 + #2025 DeadCoercion + #2106 cascade skip
+                {"schema", make_int(2106)},
+            };
+            for (auto& [k, v] : fields) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // (engine:metrics "query:dirty-cascade-stats") — Issue #2063 / #2106:
+    // summary-dirty early-exit observability. register_stats_impl only
+    // (SlimSurface freeze: no new public prim name). Keys:
+    //   cascade-skip-subtree-total  — CompilerMetrics + unflushed file-scope
+    //   cascade-nodes-marked-total  — dirty_cascade_nodes_marked_total
+    //   cascade-bfs-hits            — dirty_propagation_bfs_hits
+    //   cascade-depth-samples       — dirty_cascade_depth_samples
+    //   schema-2106 / schema        — 2106
+    ObservabilityPrims::register_stats_impl(
+        "query:dirty-cascade-stats", [&ev](const auto&) -> EvalValue {
+            (void)aura::compiler::dirty::flush_dirty_skip_subtree_to_metrics();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            const auto load = [](std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const auto skip_metrics =
+                m ? load(m->cascade_skip_subtree_total)
+                  : static_cast<std::int64_t>(
+                        aura::compiler::dirty::cascade_skip_subtree_visible());
+            const std::pair<std::string, EvalValue> fields[] = {
+                {"cascade-skip-subtree-total", make_int(skip_metrics)},
+                {"cascade-nodes-marked-total",
+                 make_int(load(aura::compiler::dirty::dirty_cascade_nodes_marked_total))},
+                {"cascade-bfs-hits",
+                 make_int(load(aura::compiler::dirty::dirty_propagation_bfs_hits))},
+                {"cascade-depth-samples",
+                 make_int(load(aura::compiler::dirty::dirty_cascade_depth_samples))},
+                {"cascade-skip-file-scope",
+                 make_int(load(aura::compiler::dirty::dirty_skip_subtree))},
+                {"schema-2063", make_int(2063)},
+                {"schema-2106", make_int(2106)},
+                {"schema", make_int(2106)},
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;

@@ -41,9 +41,12 @@ inline std::array<std::atomic<std::uint64_t>, 16> opt_pass_runs_by_kind{};
 // Issue #2025: IR dead-coercion pipeline counters (AST elision lives in
 // coercion_map.ixx as g_dead_coercion_ast_elided_total). Combined on
 // query:optimization-passes-stats as dead-coercion-layered-total.
+// Issue #2106: layered story = AST elision + IR CastOp elision + dirty-cone
+// early-out (dead_coercion_dirty_cone_skips) + cascade_skip_subtree_total.
 inline std::atomic<std::uint64_t> dead_coercion_ir_elided_total{0};
 inline std::atomic<std::uint64_t> dead_coercion_ir_narrow_evidence_hits{0};
 inline std::atomic<std::uint64_t> dead_coercion_pipeline_runs_total{0};
+inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_skips{0};
 
 enum class PassKind : std::uint8_t {
     ConstantFold = 0,
@@ -368,10 +371,20 @@ public:
         aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
         pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
         // Dirty-aware: when a block dirty fn is set, only process dirty blocks.
+        // Issue #2106: empty dirty cone after cascade skip → early-out without
+        // a full IR walk (zero-overhead synergy with cascade_skip_subtree).
         if (block_dirty_fn_) {
             std::vector<std::uint8_t> dirty(f.blocks.size(), 0);
-            for (std::size_t bi = 0; bi < f.blocks.size(); ++bi)
-                dirty[bi] = is_block_dirty(static_cast<std::uint32_t>(bi)) ? 1 : 0;
+            bool any_dirty = false;
+            for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+                const bool d = is_block_dirty(static_cast<std::uint32_t>(bi));
+                dirty[bi] = d ? 1 : 0;
+                any_dirty = any_dirty || d;
+            }
+            if (!any_dirty) {
+                dead_coercion_dirty_cone_skips.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
             pass.run_function(f, dirty);
         } else {
             pass.run_function(f);
