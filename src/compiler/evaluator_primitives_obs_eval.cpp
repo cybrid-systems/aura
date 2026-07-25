@@ -12546,8 +12546,35 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"hot-pass-dod-compliant-wired", make_int(1)},
                 {"schema-1918", make_int(1918)},
                 {"issue-1918", make_int(1918)},
+                // Issue #2060: dirty-only / SoA-columnar entry path
+                {"schema-2060", make_int(2060)},
+                {"issue-2060", make_int(2060)},
+                {"hot-pass-dirty-soa-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_pass_dirty_soa_wired.load(std::memory_order_relaxed)))},
+                {"dirty-only-entry-hits",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::dirty_only_entry_hits_total.load(std::memory_order_relaxed)))},
+                {"dirty-only-blocks-run",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::dirty_only_blocks_run_total.load(std::memory_order_relaxed)))},
+                {"dirty-only-blocks-skipped",
+                 make_int(static_cast<std::int64_t>(aura::compiler::dirty_only_blocks_skipped_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"run-one-dirty-calls",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::run_one_dirty_calls_total.load(std::memory_order_relaxed)))},
+                {"optimization-passes-skipped-by-define-dirty",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::optimization_passes_skipped_by_define_dirty.load(
+                         std::memory_order_relaxed)))},
+                {"pipeline-dirty-short-circuit",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pipeline_dirty_short_circuit_total.load(
+                         std::memory_order_relaxed)))},
+                {"dirty-soa-entry-contract-wired", make_int(1)},
                 {"issue", make_int(1619)},
-                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918
+                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060
             };
             return build_hash(kv);
         });

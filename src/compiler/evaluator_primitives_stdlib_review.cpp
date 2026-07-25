@@ -897,6 +897,17 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"edsl-apply-soa-wired", make_int(1)},
                 {"edsl-mutate-soa-wired", make_int(1)},
                 {"edsl-children-soa-wired", make_int(1)},
+                // Issue #2060: dirty-only SoA entry for HotPassDodCompliant
+                {"schema-2060", make_int(2060)},
+                {"issue-2060", make_int(2060)},
+                {"hot-pass-dirty-soa-wired", make_int(1)},
+                {"dirty-soa-entry-contract-wired", make_int(1)},
+                {"dirty-only-entry-hits",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::dirty_only_entry_hits_total.load(std::memory_order_relaxed)))},
+                {"dirty-only-blocks-skipped",
+                 make_int(static_cast<std::int64_t>(aura::compiler::dirty_only_blocks_skipped_total
+                                                        .load(std::memory_order_relaxed)))},
                 // Issue #1919: intelligent auto-compact policy surface
                 {"schema-1919", make_int(1919)},
                 {"issue-1919", make_int(1919)},
