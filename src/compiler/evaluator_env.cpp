@@ -1847,6 +1847,12 @@ std::size_t Evaluator::compact_env_frames() {
     // invalidate stay under this interlock (+ caller MutationBoundaryGuard
     // on the primitive path) so they are atomic w.r.t. other mutations.
     std::lock_guard interlock(compact_env_frames_lock_);
+    // Issue #2087: clear env_id_remap_ at start of compact (mirrors
+    // pair_remap_.clear() at start of compact_pairs). After all
+    // rewrites below, env_id_remap_ is moved-from the local remap
+    // vector so resolve_env() can answer the env_id remap from any
+    // post-compact caller (test, JIT, FFI).
+    env_id_remap_.clear();
     // Issue #1545 / #1568 / #1928: pre-compact full boundary consistency —
     // scan + force Drop linear/Moved/NULL_ENV captures + EnvFrame enforce
     // before env_id remap so apply never walks remapped frames with
@@ -1963,6 +1969,22 @@ std::size_t Evaluator::compact_env_frames() {
     // IRClosure::bridge_epoch happens after dual-epoch bump below.
     if (compact_env_remap_fn_)
         compact_env_remap_fn_(compact_env_remap_ctx_, remap.data(), remap.size());
+
+    // Issue #2087: publish env_id_remap_ for post-compact resolve_env()
+    // callers (test, JIT, FFI). Empty until next compact. Mirrors the
+    // pair_remap_ / string_remap_ lifecycle in #2001.
+    env_id_remap_ = std::move(remap);
+
+    // Issue #2087: bump process-wide remap counters for Agent-visible
+    // observability (mirrors gc_pairs_remapped_total / gc_strings_compacted_total
+    // wiring from #2001). gc_closures_compacted_total counts the # of
+    // Closure entries touched this sweep; gc_env_frames_remapped_total
+    // counts the size of env_id_remap_ populated this sweep.
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->gc_closures_compacted_total.fetch_add(rewritten, std::memory_order_relaxed);
+        m->gc_env_frames_remapped_total.fetch_add(static_cast<std::uint64_t>(env_id_remap_.size()),
+                                                  std::memory_order_relaxed);
+    }
 
     const std::size_t reclaimed = orig_size - new_env_frames.size();
     env_frames_ = std::move(new_env_frames);

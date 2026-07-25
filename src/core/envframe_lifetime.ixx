@@ -25,7 +25,8 @@ import std;
 
 export namespace aura::core::envframe_lifetime {
 
-inline constexpr int kEnvFrameLifetimePhase = 1;
+inline constexpr int kEnvFrameLifetimePhase = 2; // #2087: Phase 2 — env_id remap table + closures
+                                                 // write-lock rewrite + GC-compact-stats lineage.
 
 enum class EnvFrameLifetimeSite : std::uint8_t {
     BoundaryExit = 0,
