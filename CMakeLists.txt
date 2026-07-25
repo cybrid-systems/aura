@@ -2034,6 +2034,12 @@ aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
 aura_add_issue_test(test_capability_effect_force_2072)
 aura_issue_test_link_llvm_jit(test_capability_effect_force_2072)
 
+# Issue #2074: anti privilege-sticky — grant_epoch binding to
+# current_mutation_epoch() + min_valid_epoch invalidation in
+# CapabilityRegistry::provenance_ok.
+aura_add_issue_test(test_grant_epoch_invalidation_2074)
+aura_issue_test_link_llvm_jit(test_grant_epoch_invalidation_2074)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

@@ -140,6 +140,19 @@ struct CapabilityRegistry {
     static constexpr std::size_t kAuditRing = 128;
     EffectAuditEntry audit_ring[kAuditRing]{};
     std::atomic<std::uint64_t> audit_seq{0};
+    // Issue #2074: anti privilege-sticky — min mutation epoch a grant
+    // must have been issued at to be considered valid. Grants with
+    // grant_epoch < grant_min_valid_epoch_ are denied in provenance_ok().
+    // 0 = disabled (legacy behavior). Set via set_grant_min_valid_epoch.
+    std::atomic<std::uint64_t> grant_min_valid_epoch_{0};
+
+    // Issue #2074: anti privilege-sticky accessors.
+    void set_grant_min_valid_epoch(std::uint64_t epoch) noexcept {
+        grant_min_valid_epoch_.store(epoch, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t grant_min_valid_epoch() const noexcept {
+        return grant_min_valid_epoch_.load(std::memory_order_acquire);
+    }
 
     // Grant effects to a tenant (OR into named grant).
     void grant(TenantId tenant, std::string_view name, Effect effects,
@@ -200,6 +213,9 @@ struct CapabilityRegistry {
 
     // Optional provenance binding check: if grant has bound_mutation_id != 0
     // and caller's prov.mutation_id is non-zero and differs → mismatch.
+    // Issue #2074: anti privilege-sticky — if grant has grant_epoch != 0
+    // AND the registry's min_valid_epoch is set AND grant_epoch < min_valid_epoch,
+    // the grant is expired (issued at a stale mutation epoch) → deny.
     [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
@@ -209,6 +225,11 @@ struct CapabilityRegistry {
                 continue;
             if (g.bound_mutation_id != 0 && prov.mutation_id != 0 &&
                 g.bound_mutation_id != prov.mutation_id) {
+                return false;
+            }
+            // Issue #2074: expired grant — grant_epoch behind min_valid_epoch.
+            if (g.grant_epoch != 0 && grant_min_valid_epoch_ != 0 &&
+                g.grant_epoch < grant_min_valid_epoch_) {
                 return false;
             }
         }
