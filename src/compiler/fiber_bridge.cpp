@@ -25,6 +25,11 @@ __attribute__((weak)) std::size_t aura_evaluator_mutation_boundary_depth() {
     return 0;
 }
 
+// Issue #2114: outermost MutationBoundaryGuard held flag (weak stub).
+__attribute__((weak)) int aura_evaluator_mutation_boundary_held() {
+    return 0;
+}
+
 // Issue #588: per-fiber stack depth probe (weak stub).
 __attribute__((weak)) std::size_t
 aura_evaluator_mutation_stack_depth_from_ptr(void* /*mutation_stack_storage*/) {

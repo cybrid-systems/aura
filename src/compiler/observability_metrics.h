@@ -6972,6 +6972,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> boundary_reemit_success_total{0};        // #2090
     std::atomic<std::uint64_t> boundary_reemit_throttled_total{0};      // #2090
     std::atomic<std::uint64_t> boundary_batch_deopt_unmatched_total{0}; // #2090
+    // Issue #2114: reemit ↔ MutationBoundary handshake (mirrors HotUpdateRegistry;
+    // primary counters live on registry snapshot / query:hot-update-registry-stats).
+    // Prefer registry atomics; these optional mirrors exist for dump export.
+    std::atomic<std::uint64_t> reemit_outside_boundary_total{0};        // #2114
+    std::atomic<std::uint64_t> reemit_soft_boundary_entered_total{0};   // #2114
+    std::atomic<std::uint64_t> reemit_deferred_for_boundary_total{0};   // #2114
     std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};        // #1254
     std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};      // #1255
     std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};    // #1255

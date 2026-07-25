@@ -969,10 +969,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
         const bool dirty_marks_this_boundary = (dirty_calls > 0);
         const bool dirty_or_env_restamp = dirty_defines_this_boundary || dirty_marks_this_boundary;
+        // Issue #2114: drain reemit deferred while outside a boundary
+        // (policy=Defer) under the real Guard held window.
+        const bool deferred_reemit = aura_hot_update_has_deferred_reemit() != 0;
         const bool full_rollback_skip = (!success && ev_->panic_auto_rollback_);
-        if (!dirty_or_env_restamp || full_rollback_skip) {
+        if ((!dirty_or_env_restamp && !deferred_reemit) || full_rollback_skip) {
             // No pipeline work needed (no dirty state OR full-rollback
             // restored pre-mutation snapshot — nothing to coalesce).
+            // Deferred without dirty still runs below when deferred_reemit.
         } else if (!aura_hot_update_reemit_provider_wired()) {
             // Dirty + no reemit provider wired: still bump epoch so the
             // JIT observes the new gen (align with #2017 compact-env

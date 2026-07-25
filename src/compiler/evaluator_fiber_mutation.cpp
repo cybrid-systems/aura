@@ -1380,6 +1380,20 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
 }
 
+// Issue #2114: C-linkage held flag for reemit handshake (bridge / HotUpdate
+// registry without Evaluator module). True while outermost Guard is alive,
+// including the #2090 dtor reemit window (held cleared after reemit).
+extern "C" int aura_evaluator_mutation_boundary_held() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (ev && ev->mutation_boundary_held())
+        return 1;
+    // Also treat non-zero depth-slot as held when yield hook unbound
+    // mid-teardown (defensive).
+    if (Evaluator::mutation_boundary_depth() > 0)
+        return 1;
+    return 0;
+}
+
 // Issue #1518: wire arena auto live_compact soft-gate to mutation boundary.
 // Static init once: first call from any TU that links fiber mutation.
 namespace {

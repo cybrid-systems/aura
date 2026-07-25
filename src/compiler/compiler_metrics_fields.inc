@@ -1273,6 +1273,9 @@ AURA_COMPILER_METRICS_FIELD(mutation_boundary_holds_over_1ms_total)
 // drive a single ordered recovery sequence.
 AURA_COMPILER_METRICS_FIELD(boundary_reemit_success_total)
 AURA_COMPILER_METRICS_FIELD(boundary_reemit_throttled_total)
+AURA_COMPILER_METRICS_FIELD(reemit_outside_boundary_total)
+AURA_COMPILER_METRICS_FIELD(reemit_soft_boundary_entered_total)
+AURA_COMPILER_METRICS_FIELD(reemit_deferred_for_boundary_total)
 AURA_COMPILER_METRICS_FIELD(boundary_batch_deopt_unmatched_total)
 // Issue #2040: workspace_mtx_ unique-acquire contention + wait latency.
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_acquire_total)

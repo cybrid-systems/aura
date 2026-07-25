@@ -103,6 +103,14 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t last_region_mask_from_dirty;
     std::int64_t schema_2035;
     std::int64_t issue_2035;
+    // Issue #2114: MUST stay in lockstep with hot_update_registry.hh
+    std::int64_t reemit_outside_boundary_total;
+    std::int64_t reemit_soft_boundary_entered_total;
+    std::int64_t reemit_deferred_for_boundary_total;
+    std::int64_t reemit_boundary_policy;
+    std::int64_t reemit_deferred_pending;
+    std::int64_t schema_2114;
+    std::int64_t issue_2114;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }
@@ -6124,6 +6132,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             insert_kv("schema-2090", 2090);
             insert_kv("issue-2090", 2090);
+            // Issue #2114: HotUpdate reemit ↔ MutationBoundary handshake.
+            insert_kv("reemit-outside-boundary-total", snap.reemit_outside_boundary_total);
+            insert_kv("reemit_outside_boundary_total", snap.reemit_outside_boundary_total);
+            insert_kv("reemit-soft-boundary-entered-total",
+                      snap.reemit_soft_boundary_entered_total);
+            insert_kv("reemit_soft_boundary_entered_total",
+                      snap.reemit_soft_boundary_entered_total);
+            insert_kv("reemit-deferred-for-boundary-total",
+                      snap.reemit_deferred_for_boundary_total);
+            insert_kv("reemit_deferred_for_boundary_total",
+                      snap.reemit_deferred_for_boundary_total);
+            insert_kv("reemit-boundary-policy", snap.reemit_boundary_policy);
+            insert_kv("reemit-deferred-pending", snap.reemit_deferred_pending);
+            // AC5 docs sentinels: SoftEnter=0, Defer=1
+            insert_kv("reemit-handshake-policy-soft-enter", 0);
+            insert_kv("reemit-handshake-policy-defer", 1);
+            insert_kv("reemit-handshake-wired", 1);
+            insert_kv("schema-2114", snap.schema_2114 != 0 ? snap.schema_2114 : 2114);
+            insert_kv("issue-2114", snap.issue_2114 != 0 ? snap.issue_2114 : 2114);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

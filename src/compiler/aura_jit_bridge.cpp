@@ -2237,6 +2237,43 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         return 0;
     }
 
+    // Issue #2114: HotUpdate reemit ↔ MutationBoundary explicit handshake.
+    // Outside a real boundary: SoftEnter (default) holds a TLS soft reemit
+    // boundary for the call duration; Defer records pending and returns 0.
+    // Inside (depth>0 or Guard held, including #2090 dtor window): proceed.
+    // Never silent — outside path always bumps reemit_outside_boundary_total.
+    auto& hur = aura::compiler::hot_update_registry();
+    // Consuming a deferred reemit under a real boundary is still "inside".
+    if (hur.has_deferred_reemit() && hur.in_mutation_boundary_for_reemit()) {
+        (void)hur.take_deferred_reemit_version();
+    }
+    struct SoftReemitBoundaryGuard {
+        bool active = false;
+        SoftReemitBoundaryGuard() = default;
+        ~SoftReemitBoundaryGuard() {
+            if (active)
+                aura::compiler::hot_update_registry().soft_reemit_boundary_exit();
+        }
+        SoftReemitBoundaryGuard(const SoftReemitBoundaryGuard&) = delete;
+        SoftReemitBoundaryGuard& operator=(const SoftReemitBoundaryGuard&) = delete;
+    } soft_guard;
+    if (!hur.in_mutation_boundary_for_reemit()) {
+        hur.on_reemit_outside_boundary();
+        using Policy = aura::compiler::HotUpdateRegistry::ReemitBoundaryPolicy;
+        if (hur.reemit_boundary_policy() == Policy::Defer) {
+            hur.defer_reemit_for_boundary(current_defuse_version);
+            g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
+            g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
+            g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
+            g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+            return 0;
+        }
+        // SoftEnter (default): soft boundary for dual-epoch / linear / GC.
+        hur.soft_reemit_boundary_enter();
+        soft_guard.active = true;
+        hur.on_reemit_soft_boundary_entered();
+    }
+
     const std::uint64_t region_mask = g_aot_emit_region_mask;
     const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
 
