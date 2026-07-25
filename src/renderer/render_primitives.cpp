@@ -1,8 +1,11 @@
-// render_primitives.cpp — Issues #1559/#1561/#1562: present/draw + dirty-delta + zero-copy.
+// render_primitives.cpp — Issues #1559/#1561/#1562/#2048: present/draw +
+// dirty-delta + zero-copy LifetimePin handoff under render soft-gate.
 
 #include "renderer/render_primitives.hh"
 
 #include "core/arena_auto_policy_stats.h"
+#include "core/gc_hooks.h"
+#include "core/lifetime_pin.hh"
 #include "core/zero_copy_output.hh"
 #include "renderer/batch_terminal.hh"
 
@@ -20,6 +23,37 @@ namespace {
         ~HotpathGuard() noexcept { aura::core::arena_policy::exit_render_hotpath(); }
         HotpathGuard(const HotpathGuard&) = delete;
         HotpathGuard& operator=(const HotpathGuard&) = delete;
+    };
+
+    // Issue #2048: pin zero-copy ANSI buffer for C handoff; arm GC defer so
+    // compact cannot reclaim arena frame while write/backend is in flight.
+    struct FfiPresentPinGuard {
+        aura::core::lifetime::LifetimePin pin;
+        bool armed = false;
+        explicit FfiPresentPinGuard(void* p, std::size_t nbytes) noexcept {
+            if (!p || nbytes == 0)
+                return;
+            // gen=1 is the present-frame stamp; arena_id=0 (frame bump arena).
+            pin.pin(p, /*gen=*/1, /*arena_id=*/0);
+            pin.mark_ffi_handoff();
+            aura::gc_hooks::arm_ffi_pin_defer();
+            armed = true;
+            auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
+            zm.zero_copy_handoff_hits.fetch_add(1, std::memory_order_relaxed);
+            zm.present_pin_handoffs.fetch_add(1, std::memory_order_relaxed);
+            if (nbytes >= 4096)
+                zm.zero_copy_large_handoff_hits.fetch_add(1, std::memory_order_relaxed);
+        }
+        ~FfiPresentPinGuard() noexcept {
+            if (!armed)
+                return;
+            pin.unpin_on_compact();
+            aura::gc_hooks::release_ffi_pin_defer();
+            armed = false;
+        }
+        FfiPresentPinGuard(const FfiPresentPinGuard&) = delete;
+        FfiPresentPinGuard& operator=(const FfiPresentPinGuard&) = delete;
+        [[nodiscard]] bool valid() const noexcept { return pin.pinned() && pin.validate(1, 0); }
     };
 
     // Build dirty-aware ANSI into scratch, place in Arena-backed zero-copy view.
@@ -119,6 +153,14 @@ namespace {
         auto& zc = aura::core::zero_copy::g_zero_copy_fb;
         const auto last = zc.last_view();
         const char* data = last.data() ? reinterpret_cast<const char*>(last.data()) : nullptr;
+
+        // Issue #2048: LifetimePin + GC pin-defer for the duration of the
+        // zero-copy handoff (write / string copy / C backend). Soft-gate is
+        // already entered via HotpathGuard.
+        FfiPresentPinGuard handoff_pin(data ? const_cast<char*>(data) : nullptr, n);
+        if (n > 0 && data && !handoff_pin.valid()) {
+            // Pin failed unexpectedly — still attempt present (best-effort).
+        }
 
         if (out_opt) {
             if (data && n > 0)

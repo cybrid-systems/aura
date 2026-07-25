@@ -1980,6 +1980,11 @@ aura_add_issue_test(test_batch_terminal_dirty_phase2_2047)
 aura_issue_test_link_llvm_jit(test_batch_terminal_dirty_phase2_2047)
 add_dependencies(all_test_issue_targets test_batch_terminal_dirty_phase2_2047)
 
+# Issue #2048: LifetimePin + zero-copy batch FFI present under soft-gate
+aura_add_issue_test(test_lifetime_pin_batch_ffi_present_2048)
+aura_issue_test_link_llvm_jit(test_lifetime_pin_batch_ffi_present_2048)
+add_dependencies(all_test_issue_targets test_lifetime_pin_batch_ffi_present_2048)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

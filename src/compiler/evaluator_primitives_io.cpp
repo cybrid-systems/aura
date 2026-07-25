@@ -1459,6 +1459,20 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("batch-terminal-phase", aura::renderer::kBatchTerminalPhase);
                 insert_kv("schema-2047", 2047);
                 insert_kv("issue-2047", 2047);
+                // Issue #2048: zero-copy LifetimePin handoff on present
+                auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
+                insert_kv("zero-copy-handoff-hits",
+                          static_cast<std::int64_t>(
+                              zm.zero_copy_handoff_hits.load(std::memory_order_relaxed)));
+                insert_kv("present-pin-handoffs",
+                          static_cast<std::int64_t>(
+                              zm.present_pin_handoffs.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-large-handoff-hits",
+                          static_cast<std::int64_t>(
+                              zm.zero_copy_large_handoff_hits.load(std::memory_order_relaxed)));
+                insert_kv("schema-2048", 2048);
+                insert_kv("issue-2048", 2048);
+                insert_kv("batch-ffi-present-wired", 1);
             }
             insert_kv("buffer-creates", m ? load(m->terminal_buffer_creates) : 0);
             insert_kv("buffer-live", m ? load(m->terminal_buffer_live) : 0);

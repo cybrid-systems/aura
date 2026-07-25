@@ -388,15 +388,14 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         return make_int(aura::stdlib::render_ffi::dispatch_c_ansi_emit(args));
     });
 
-    // Issue #2005: (ffi:pin-buffer [ptr:int] [gen:int] [arena_id:int]) → handle (int).
-    // Allocates a LifetimePin, pins it to the FFI buffer, and arms
-    // g_ffi_pin_defer_depth so compact_sweep / GCCollector defer destructive
-    // reclaim while the pin is live. Used by the render hotpath + MutationBoundary
-    // lightweight path (refines #2000 LifetimePin Phase 2). Returns a stable
-    // handle (index into the FFI pin registry) for later (ffi:unpin-buffer).
+    // Issue #2005 / #2048: shared FFI pin registry (single static — pin/unpin
+    // and query:ffi-pin-count must share state). (ffi:pin-buffer) arms
+    // g_ffi_pin_defer_depth so compact_sweep defers while any pin is live.
     {
+        // File-scope-like statics at this block: one registry for all three prims.
         static std::vector<std::unique_ptr<aura::core::lifetime::LifetimePin>> g_ffi_pin_registry;
         static std::mutex g_ffi_pin_registry_mtx;
+
         add("ffi:pin-buffer", [](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
                 return make_int(-1);
@@ -407,6 +406,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
                                          : 0;
             auto pin = std::make_unique<aura::core::lifetime::LifetimePin>();
             pin->pin(ptr, gen, arena_id);
+            pin->mark_ffi_handoff(); // #2048: handoff signal on pin
             aura::gc_hooks::arm_ffi_pin_defer();
             std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
             const std::int64_t handle = static_cast<std::int64_t>(g_ffi_pin_registry.size());
@@ -425,12 +425,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             aura::gc_hooks::release_ffi_pin_defer();
             return make_int(1);
         });
-    }
-
-    // Issue #2005: (query:ffi-pin-count) → live FFI LifetimePin count (int).
-    {
-        static std::vector<std::unique_ptr<aura::core::lifetime::LifetimePin>> g_ffi_pin_registry;
-        static std::mutex g_ffi_pin_registry_mtx;
+        // Issue #2005 / #2048: (query:ffi-pin-count) → live FFI LifetimePin count.
         add("query:ffi-pin-count", [](std::span<const EvalValue>) -> EvalValue {
             std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
             std::int64_t n = 0;

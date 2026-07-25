@@ -1,6 +1,9 @@
 // lifetime_pin.ixx — Issue #2000 Phase 2: LifetimePin real RAII pinning +
 // generation stamp + FFI handoff + restamp/invalidate hooks. Refines #1226
-// Phase 1 (pure counters).
+// Phase 1 (pure counters). Issue #2048: batch terminal present zero-copy
+// handoff holds a LifetimePin for the ANSI/cell buffer under the render
+// hotpath soft-gate and arms g_ffi_pin_defer_depth so compact/GC cannot
+// reclaim the buffer mid-write (see present_batch_impl).
 //
 // Phase 2 surfaces:
 //   - Real pointer + generation stamp storage per pin (ptr_, gen_, arena_id_).
