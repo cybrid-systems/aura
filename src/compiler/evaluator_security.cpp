@@ -53,7 +53,7 @@ void Evaluator::grant_capability(std::string cap) {
     }
     granted_capabilities_.push_back(std::move(cap));
     // #1565: mirror named grant into effect matrix for current tenant.
-    using namespace aura::core::capability;
+    using namespace ::aura::core::capability;
     const auto eff = effect_for_cap_name(granted_capabilities_.back());
     if (eff != Effect::None) {
         EffectProvenance prov;
@@ -65,7 +65,7 @@ void Evaluator::grant_capability(std::string cap) {
 
 void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
                                     std::string_view op, ast::NodeId target_node) noexcept {
-    using namespace aura::core::audit_wal;
+    using namespace ::aura::core::audit_wal;
     const auto seq = mutation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
     auto& slot = mutation_audit_ring_[seq % kMutationAuditRingSize];
     slot.seq = seq;
@@ -105,9 +105,9 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                         std::uint16_t actual_effect_bits, std::string_view op,
                                         ast::NodeId target_node, std::uint64_t tenant_id,
                                         std::uint64_t provenance_mutation_id) noexcept {
-    using namespace aura::core::capability;
-    using namespace aura::core::sandbox;
-    using namespace aura::core::provenance;
+    using namespace ::aura::core::capability;
+    using namespace ::aura::core::sandbox;
+    using namespace ::aura::core::provenance;
 
     // Keep sandbox.hh mode in sync with evaluator sandbox_mode_ + Strict.
     if (sandbox_mode_ && g_capability_registry().sandbox_mode == EffectSandboxMode::Off)
@@ -153,7 +153,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     slot.epoch = prov.epoch;
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     {
-        using namespace aura::core::audit_wal;
+        using namespace ::aura::core::audit_wal;
         if (g_mutation_audit_wal().is_enabled()) {
             const auto rec = make_record(
                 slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed, slot.epoch_delta,
@@ -184,9 +184,12 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
         // reads from g_security_event_ring() to give agents a unified view.
         using aura::compiler::security::kEffectFfi;
         using aura::compiler::security::kEffectMutate;
-        using aura::core::security_event::append_security_event;
-        using aura::core::security_event::g_security_event_ring;
-        using aura::core::security_event::SecurityEventKind;
+        // Use ::aura::core:: (absolute path) because we're inside
+        // namespace aura::compiler and `aura::core::` would otherwise
+        // resolve as nested (aura::compiler::aura::core::) which doesn't exist.
+        using ::aura::core::security_event::append_security_event;
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::SecurityEventKind;
         const char* reason_str = "capability-effect-deny";
         if (required_effect_bits & kEffectMutate)
             reason_str = "mutate-deny";
@@ -220,7 +223,7 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op,
 
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.
 bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept {
-    using namespace aura::core::audit_wal;
+    using namespace ::aura::core::audit_wal;
     std::vector<AuditWalRecord> replayed;
     if (!g_mutation_audit_wal().enable(persist_dir, &replayed, kMutationAuditRingSize))
         return false;
@@ -264,7 +267,7 @@ bool Evaluator::mutation_audit_wal_enabled() const noexcept {
 void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                         std::uint16_t effect_bits,
                                         std::uint64_t provenance_mutation_id) noexcept {
-    using namespace aura::core::capability;
+    using namespace ::aura::core::capability;
     EffectProvenance prov;
     // Issue #2074: anti privilege-sticky — bind prov.mutation_id to the
     // current mutation epoch when sandbox != Off AND caller didn't pass
@@ -285,10 +288,10 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
 }
 
 void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
-    using namespace aura::core::capability;
-    using namespace aura::core::sandbox;
-    using namespace aura::core::workspace_isolation;
-    using namespace aura::core::provenance;
+    using namespace ::aura::core::capability;
+    using namespace ::aura::core::sandbox;
+    using namespace ::aura::core::workspace_isolation;
+    using namespace ::aura::core::provenance;
     if (mode > 2)
         mode = 2;
     g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
@@ -316,25 +319,115 @@ std::uint8_t Evaluator::effect_sandbox_mode() const noexcept {
     return static_cast<std::uint8_t>(aura::core::capability::g_capability_registry().sandbox_mode);
 }
 
+// Issue #2076: unified Agent-readable deny reason formatter.
+// Shape: "effect-denied: <EffectName> not granted tenant=<id> op=<op>"
+// Stable string literal so Agents can parse / grep / dashboard.
+static const char* effect_name_str(std::uint16_t effect_bits) noexcept {
+    if (effect_bits & aura::compiler::security::kEffectMutate)
+        return "mutate";
+    if (effect_bits & aura::compiler::security::kEffectFfi)
+        return "ffi";
+    if (effect_bits & aura::compiler::security::kEffectNetwork)
+        return "network";
+    if (effect_bits & aura::compiler::security::kEffectExec)
+        return "exec";
+    if (effect_bits & aura::compiler::security::kEffectRender)
+        return "render";
+    if (effect_bits & aura::compiler::security::kEffectWrite)
+        return "write";
+    if (effect_bits & aura::compiler::security::kEffectRead)
+        return "read";
+    if (effect_bits & aura::compiler::security::kEffectMacroSelfEvo)
+        return "macro-self-evo";
+    return "unknown";
+}
+
+namespace aura::compiler::security {
+    std::string format_deny_reason(std::uint16_t effect_bits, std::uint64_t tenant_id,
+                                   std::string_view op) {
+        return std::format("effect-denied: {} not granted tenant={} op={}",
+                           effect_name_str(effect_bits), tenant_id, op);
+    }
+} // namespace aura::compiler::security
+
+// Issue #2076: production default Restricted sandbox + env override.
+// Reads AURA_SANDBOX env var:
+//   "off"        → set_effect_sandbox_mode(0) (legacy Off behavior)
+//   "strict"     → set_effect_sandbox_mode(2)
+//   "restricted" / unset / other → set_effect_sandbox_mode(1) (default Restricted)
+//
+// Call this early in main() / service startup so production deploys
+// default to Restricted (the open-by-default gap closed by #2076).
+// Dev/test fixtures call set_effect_sandbox_mode(0) explicitly to
+// restore Off behavior.
+void Evaluator::apply_env_sandbox() noexcept {
+    const char* e = std::getenv("AURA_SANDBOX");
+    if (!e || !*e) {
+        // Unset / empty → default Restricted (production safe-by-default).
+        set_effect_sandbox_mode(1);
+        return;
+    }
+    std::string_view v(e);
+    if (v == "off")
+        set_effect_sandbox_mode(0);
+    else if (v == "strict")
+        set_effect_sandbox_mode(2);
+    else
+        set_effect_sandbox_mode(1); // restricted (also default for unknown values)
+}
+
+// Issue #2076: free-function variant of apply_env_sandbox for callers
+// that don't have an Evaluator instance yet (e.g., main() at startup,
+// before the runtime + first Evaluator is constructed). Reads the
+// AURA_SANDBOX env var and sets the global sandbox mode via the
+// registry + set_mode() so the first Evaluator constructed after
+// this call inherits the env-selected mode.
+namespace aura::compiler::security {
+    void apply_aura_sandbox_env() noexcept {
+        const char* e = std::getenv("AURA_SANDBOX");
+        auto mode = static_cast<std::uint8_t>(1); // default Restricted
+        if (e && *e) {
+            std::string_view v(e);
+            if (v == "off")
+                mode = 0;
+            else if (v == "strict")
+                mode = 2;
+            else
+                mode = 1; // restricted (also default for unknown values)
+        }
+        using namespace ::aura::core::sandbox;
+        using namespace ::aura::core::capability;
+        set_mode(static_cast<SandboxMode>(mode));
+        g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
+    }
+} // namespace aura::compiler::security
+
 // Issue #1566: multi-tenant workspace isolation bridge.
 void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view name,
                                      bool allow_cross) noexcept {
-    using namespace aura::core::workspace_isolation;
+    using namespace ::aura::core::workspace_isolation;
     capability_tenant_id_ = tenant_id;
     g_workspace_isolation().set_current_tenant(tenant_id, name, allow_cross);
 }
 
 void Evaluator::grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
                                           std::uint16_t effect_bits) noexcept {
-    using namespace aura::core::workspace_isolation;
+    using namespace ::aura::core::workspace_isolation;
     g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, effect_bits);
 }
 
 bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
                                           std::uint16_t required_effects,
                                           std::string_view op) noexcept {
-    using namespace aura::core::workspace_isolation;
-    using namespace aura::core::sandbox;
+    // Issue #1566: workspace isolation bridge. Use explicit `using`
+    // declarations with `::aura::core::` (absolute path) because we're
+    // inside namespace `aura::compiler` and `aura::core::` would
+    // otherwise resolve as nested (`aura::compiler::aura::core::`)
+    // which doesn't exist.
+    using ::aura::core::sandbox::is_strict;
+    using ::aura::core::workspace_isolation::check_boundary;
+    using ::aura::core::workspace_isolation::g_workspace_isolation;
+    using ::aura::core::workspace_isolation::IsolationRefProvenance;
     const auto target = target_tenant != 0 ? target_tenant : capability_tenant_id_;
     const bool strict =
         effect_sandbox_mode() == 2 || is_strict() || g_workspace_isolation().strict_sandbox_linked;
@@ -345,12 +438,15 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         bump_capability_denial();
         // Issue #2075: shared SecurityEvent surface — also append to the
         // unified audit ring so query:security-audit-trail covers
-        // isolation denies alongside effect denies.
-        using aura::core::security_event::append_security_event;
-        using aura::core::security_event::g_security_event_ring;
-        using aura::core::security_event::SecurityEventKind;
+        // isolation denies alongside effect denies. Use ::aura::core::
+        // (absolute path) because we're inside namespace aura::compiler
+        // and `aura::core::` would otherwise resolve as nested
+        // (aura::compiler::aura::core::) which doesn't exist.
+        using ::aura::core::security_event::append_security_event;
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::SecurityEventKind;
         append_security_event(g_security_event_ring(), SecurityEventKind::IsolationDeny, target,
-                              ref_tenant, aura::core::current_mutation_epoch(),
+                              ref_tenant, ::aura::core::current_mutation_epoch(),
                               static_cast<std::uint16_t>(required_effects), op, "isolation-deny");
     }
     return ok;

@@ -4,6 +4,9 @@
 #define AURA_COMPILER_SECURITY_CAPABILITIES_H
 
 #include <cstdint>
+#include <format>
+#include <string>
+#include <string_view>
 
 extern "C" std::uint64_t aura_fiber_current_id();
 
@@ -64,6 +67,46 @@ inline constexpr std::uint16_t kEffectNetwork = 1 << 4;
 inline constexpr std::uint16_t kEffectFfi = 1 << 5;
 inline constexpr std::uint16_t kEffectRender = 1 << 6;
 inline constexpr std::uint16_t kEffectMacroSelfEvo = 1 << 7; // Issue #2023
+
+// Issue #2076: unified Agent-readable deny reason formatter.
+// Shape: "effect-denied: <EffectName> not granted tenant=<id> op=<op>"
+// Stable string literal so Agents can parse / grep / dashboard.
+// Inline in the header so test TUs (and the mutate deny path in
+// evaluator_primitives_mutate.cpp) can call it without a separate
+// linker symbol — header-only avoids the libaura_test_objects link
+// dependency on the evaluator module.
+inline std::string format_deny_reason(std::uint16_t effect_bits, std::uint64_t tenant_id,
+                                      std::string_view op) {
+    auto name = [effect_bits]() -> const char* {
+        if (effect_bits & kEffectMutate)
+            return "mutate";
+        if (effect_bits & kEffectFfi)
+            return "ffi";
+        if (effect_bits & kEffectNetwork)
+            return "network";
+        if (effect_bits & kEffectExec)
+            return "exec";
+        if (effect_bits & kEffectRender)
+            return "render";
+        if (effect_bits & kEffectWrite)
+            return "write";
+        if (effect_bits & kEffectRead)
+            return "read";
+        if (effect_bits & kEffectMacroSelfEvo)
+            return "macro-self-evo";
+        return "unknown";
+    };
+    return std::format("effect-denied: {} not granted tenant={} op={}", name(), tenant_id, op);
+}
+
+// Issue #2076: production default Restricted sandbox + AURA_SANDBOX env
+// override. Declaration only — definition lives in evaluator_security.cpp
+// (uses core/sandbox.hh + core/capability_model.hh which would make
+// this header too heavy if inlined). Called from main() at startup
+// (main binary links against the evaluator module so the definition
+// is available) and from Evaluator::apply_env_sandbox() (evaluator
+// method, no link issue).
+void apply_aura_sandbox_env() noexcept;
 
 } // namespace aura::compiler::security
 
