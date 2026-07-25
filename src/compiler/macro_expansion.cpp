@@ -6,6 +6,7 @@ module;
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>                  // Issue #2101: getenv / strtol for runtime depth/pass caps
 #include "core/capability_model.hh" // Issue #2023: MacroSelfEvo gate
 #include "core/sandbox.hh"          // Issue #2023: is_sandbox_active
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
@@ -179,6 +180,123 @@ thread_local int s_effective_max_depth = MAX_HYGIENE_DEPTH;
 // Issue #2023: when false, rest-param hygiene gensym is skipped.
 thread_local bool s_allow_rest_hygiene = true;
 
+// Issue #2101: process-wide runtime caps (atomics for concurrent set+expand).
+// Depth default = hard ceiling (no extra clamp). Pass default = 0 (no clamp).
+// Env (read once on first access): AURA_MACRO_HYGIENE_DEPTH_CAP, AURA_MACRO_HYGIENE_PASS_CAP.
+static std::atomic<int> g_runtime_hygiene_depth_cap{MAX_HYGIENE_DEPTH};
+static std::atomic<int> g_runtime_hygiene_pass_cap{0};
+static std::atomic<bool> g_runtime_caps_env_loaded{false};
+
+static void ensure_runtime_caps_env_loaded() noexcept {
+    bool expected = false;
+    if (!g_runtime_caps_env_loaded.compare_exchange_strong(expected, true,
+                                                           std::memory_order_acq_rel))
+        return;
+    if (const char* env = std::getenv("AURA_MACRO_HYGIENE_DEPTH_CAP")) {
+        char* end = nullptr;
+        long v = std::strtol(env, &end, 10);
+        if (end != env && v >= 1 && v <= MAX_HYGIENE_DEPTH)
+            g_runtime_hygiene_depth_cap.store(static_cast<int>(v), std::memory_order_relaxed);
+    }
+    if (const char* env = std::getenv("AURA_MACRO_HYGIENE_PASS_CAP")) {
+        char* end = nullptr;
+        long v = std::strtol(env, &end, 10);
+        if (end != env && v >= 0 && v <= 1'000'000)
+            g_runtime_hygiene_pass_cap.store(static_cast<int>(v), std::memory_order_relaxed);
+    }
+}
+
+int hard_hygiene_depth_limit() noexcept {
+    return MAX_HYGIENE_DEPTH;
+}
+
+int runtime_hygiene_depth_cap() noexcept {
+    ensure_runtime_caps_env_loaded();
+    return g_runtime_hygiene_depth_cap.load(std::memory_order_acquire);
+}
+
+int runtime_hygiene_pass_cap() noexcept {
+    ensure_runtime_caps_env_loaded();
+    return g_runtime_hygiene_pass_cap.load(std::memory_order_acquire);
+}
+
+bool set_hygiene_depth_cap(int n) noexcept {
+    ensure_runtime_caps_env_loaded();
+    // AC1: reject above hard ceiling and n < 1 (no silent raise/zero).
+    if (n < 1 || n > MAX_HYGIENE_DEPTH)
+        return false;
+    g_runtime_hygiene_depth_cap.store(n, std::memory_order_release);
+    return true;
+}
+
+bool set_hygiene_pass_cap(int n) noexcept {
+    ensure_runtime_caps_env_loaded();
+    if (n < 0)
+        return false;
+    g_runtime_hygiene_pass_cap.store(n, std::memory_order_release);
+    return true;
+}
+
+void reset_hygiene_runtime_caps_for_test() noexcept {
+    g_runtime_hygiene_depth_cap.store(MAX_HYGIENE_DEPTH, std::memory_order_release);
+    g_runtime_hygiene_pass_cap.store(0, std::memory_order_release);
+    // Keep env_loaded=true so tests control caps without env re-apply.
+    g_runtime_caps_env_loaded.store(true, std::memory_order_release);
+}
+
+// Combine hard ceiling + process runtime + optional capability depth.
+// capability_depth<=0 means "no capability clamp" (Off / unconstrained).
+static int combine_depth_limit(int capability_depth) noexcept {
+    ensure_runtime_caps_env_loaded();
+    int lim = MAX_HYGIENE_DEPTH;
+    const int rt = g_runtime_hygiene_depth_cap.load(std::memory_order_acquire);
+    if (rt > 0 && rt < lim)
+        lim = rt;
+    if (capability_depth > 0 && capability_depth < lim)
+        lim = capability_depth;
+    if (lim < 1)
+        lim = 1;
+    return lim;
+}
+
+int effective_hygiene_depth_limit() noexcept {
+    ensure_runtime_caps_env_loaded();
+    using aura::core::capability::check_macro_self_evo;
+    using aura::core::capability::g_capability_registry;
+    const auto tenant = g_capability_registry().default_tenant;
+    const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
+    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+    int cap_depth = 0;
+    if (chk.allowed && chk.effective.max_depth > 0)
+        cap_depth = static_cast<int>(chk.effective.max_depth);
+    // Also honour TLS expand-session bound when nested under expand.
+    int tls = s_effective_max_depth;
+    if (tls > 0 && tls < MAX_HYGIENE_DEPTH) {
+        if (cap_depth <= 0 || tls < cap_depth)
+            cap_depth = tls;
+    }
+    return combine_depth_limit(cap_depth);
+}
+
+int effective_hygiene_pass_cap() noexcept {
+    ensure_runtime_caps_env_loaded();
+    using aura::core::capability::check_macro_self_evo;
+    using aura::core::capability::g_capability_registry;
+    const auto tenant = g_capability_registry().default_tenant;
+    const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
+    const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+    int lim = 0; // 0 = no extra clamp
+    const int rt = g_runtime_hygiene_pass_cap.load(std::memory_order_acquire);
+    if (rt > 0)
+        lim = rt;
+    if (chk.allowed && chk.effective.max_expansion_passes > 0) {
+        const int cap = static_cast<int>(chk.effective.max_expansion_passes);
+        if (lim <= 0 || cap < lim)
+            lim = cap;
+    }
+    return lim;
+}
+
 // Issue #2023: MacroSelfEvo gate counters (also mirrored in capability metrics).
 std::atomic<std::uint64_t> g_macro_self_evo_denied_total{0};
 std::atomic<std::uint64_t> g_macro_self_evo_allowed_total{0};
@@ -351,10 +469,13 @@ aura::ast::NodeId clone_macro_body(
             armed = true;
             prev_depth = s_effective_max_depth;
             prev_rest = s_allow_rest_hygiene;
-            if (chk.effective.max_depth > 0) {
-                int d = static_cast<int>(chk.effective.max_depth);
-                if (d > MAX_HYGIENE_DEPTH)
-                    d = MAX_HYGIENE_DEPTH;
+            // Issue #2101: capability may only tighten further under the
+            // process-wide runtime depth cap (never raise past hard/runtime).
+            {
+                int cap_d = 0;
+                if (chk.effective.max_depth > 0)
+                    cap_d = static_cast<int>(chk.effective.max_depth);
+                const int d = combine_depth_limit(cap_d);
                 // Only tighten if expand_all has not already set a tighter bound.
                 if (s_effective_max_depth == MAX_HYGIENE_DEPTH || d < s_effective_max_depth)
                     s_effective_max_depth = d;
@@ -397,10 +518,11 @@ aura::ast::NodeId clone_macro_body(
     if (s_hygiene_depth == 0) {
         s_warned_this_call = false;
     }
-    // Issue #2023: honour MacroSelfEvo effective max_depth (≤ hard limit).
-    const int depth_limit = (s_effective_max_depth > 0 && s_effective_max_depth < MAX_HYGIENE_DEPTH)
+    // Issue #2023 / #2101: honour min(hard, runtime cap, TLS/capability).
+    const int depth_limit =
+        combine_depth_limit((s_effective_max_depth > 0 && s_effective_max_depth < MAX_HYGIENE_DEPTH)
                                 ? s_effective_max_depth
-                                : MAX_HYGIENE_DEPTH;
+                                : 0);
     if (s_hygiene_depth >= depth_limit) {
         if (!s_warned_this_call) {
             s_warned_this_call = true;
@@ -416,11 +538,13 @@ aura::ast::NodeId clone_macro_body(
                                      ? "MacroIntroduced"
                                      : "User";
             std::fprintf(stderr,
-                         "[#365/#1247/#2023 warning] clone_macro_body exceeded "
-                         "depth_limit=%d (hard MAX_HYGIENE_DEPTH=%d); marker=%s depth=%d "
+                         "[#365/#1247/#2023/#2101 warning] clone_macro_body exceeded "
+                         "depth_limit=%d (hard MAX_HYGIENE_DEPTH=%d runtime_cap=%d); "
+                         "marker=%s depth=%d "
                          "[MacroIntroduced provenance path]; falling back to "
                          "unhygienic substitution (original name).\n",
-                         depth_limit, MAX_HYGIENE_DEPTH, origin, s_hygiene_depth);
+                         depth_limit, MAX_HYGIENE_DEPTH, runtime_hygiene_depth_cap(), origin,
+                         s_hygiene_depth);
         }
         return NULL_NODE;
     }
@@ -994,7 +1118,17 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             return root;
         }
         g_macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
-        // Clamp passes / depth when policy sets positive limits.
+        // Issue #2101: process-wide runtime pass cap first (capability only tightens).
+        {
+            const int rt_pass = runtime_hygiene_pass_cap();
+            if (rt_pass > 0 && max_passes > rt_pass) {
+                max_passes = rt_pass;
+                g_macro_self_evo_pass_clamp_total.fetch_add(1, std::memory_order_relaxed);
+                g_capability_effect_metrics().macro_self_evo_pass_clamp_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        // Clamp passes further when MacroSelfEvo policy sets a tighter bound.
         if (chk.effective.max_expansion_passes > 0 &&
             max_passes > static_cast<int>(chk.effective.max_expansion_passes)) {
             max_passes = static_cast<int>(chk.effective.max_expansion_passes);
@@ -1019,16 +1153,15 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             DepthPolicyGuard(const DepthPolicyGuard&) = delete;
             DepthPolicyGuard& operator=(const DepthPolicyGuard&) = delete;
         };
-        int eff_depth = MAX_HYGIENE_DEPTH;
-        if (chk.effective.max_depth > 0) {
-            eff_depth = static_cast<int>(chk.effective.max_depth);
-            if (eff_depth > MAX_HYGIENE_DEPTH)
-                eff_depth = MAX_HYGIENE_DEPTH;
-            if (eff_depth < MAX_HYGIENE_DEPTH) {
-                g_macro_self_evo_depth_clamp_total.fetch_add(1, std::memory_order_relaxed);
-                g_capability_effect_metrics().macro_self_evo_depth_clamp_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
+        // Issue #2101: min(hard, runtime, capability) — capability cannot loosen.
+        int cap_d = 0;
+        if (chk.effective.max_depth > 0)
+            cap_d = static_cast<int>(chk.effective.max_depth);
+        const int eff_depth = combine_depth_limit(cap_d);
+        if (eff_depth < MAX_HYGIENE_DEPTH) {
+            g_macro_self_evo_depth_clamp_total.fetch_add(1, std::memory_order_relaxed);
+            g_capability_effect_metrics().macro_self_evo_depth_clamp_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
         // Concurrent-fiber policy: deny when other top-level clones are live
         // and policy forbids concurrent expand.

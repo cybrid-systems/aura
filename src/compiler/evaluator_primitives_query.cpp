@@ -2745,7 +2745,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("in_flight", in_flight);
                 insert_kv("in-flight", in_flight);
                 insert_kv("macro-clone-in-flight", in_flight);
-                insert_kv("max-hygiene-depth-cap", 1024);
+                insert_kv("max-hygiene-depth-cap",
+                          static_cast<std::int64_t>(aura::compiler::macro_exp::MAX_HYGIENE_DEPTH));
+                insert_kv("hard-max-depth",
+                          static_cast<std::int64_t>(aura::compiler::macro_exp::MAX_HYGIENE_DEPTH));
+                // Issue #2101: live effective + process-wide runtime caps.
+                insert_kv("effective-max-depth",
+                          static_cast<std::int64_t>(
+                              aura::compiler::macro_exp::effective_hygiene_depth_limit()));
+                insert_kv("runtime-depth-cap",
+                          static_cast<std::int64_t>(
+                              aura::compiler::macro_exp::runtime_hygiene_depth_cap()));
+                insert_kv("self-evo-pass-cap",
+                          static_cast<std::int64_t>(
+                              aura::compiler::macro_exp::effective_hygiene_pass_cap()));
+                insert_kv("runtime-pass-cap",
+                          static_cast<std::int64_t>(
+                              aura::compiler::macro_exp::runtime_hygiene_pass_cap()));
+                insert_kv("schema-2101", 2101);
+                insert_kv("issue-2101", 2101);
+                insert_kv("hygiene-limits-runtime-wired", 1);
+                insert_kv("process-wide", 1); // AC5: caps are process-wide atomics
+                insert_kv("capability-tightens-only", 1);
                 insert_kv("depth-obs-wired", 1);
                 insert_kv("concurrent-obs-wired", 1);
                 insert_kv("depth-concurrent-obs-issue", 2021);
@@ -2757,7 +2778,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("action", recommendation);
             insert_kv("ai-closedloop-macro-health-wired", 1);
             insert_kv("audit-trail-wired", 1);
-            insert_kv("issue", 1613); // lineage 1609 / 1501 / 486; depth keys #2021
+            insert_kv("issue", 1613); // lineage 1609 / 1501 / 486; depth keys #2021 / #2101
             insert_kv("schema", 1613);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -6630,9 +6651,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("rest-param-hygiene-total", rest_hyg);
         insert_kv("restamp-after-flat-total", restamp);
         insert_kv("max-hygiene-depth-cap", static_cast<std::int64_t>(MAX_HYGIENE_DEPTH));
+        insert_kv("hard-max-depth", static_cast<std::int64_t>(MAX_HYGIENE_DEPTH));
+        // Issue #2101: live effective + runtime process-wide caps.
+        insert_kv(
+            "effective-max-depth",
+            static_cast<std::int64_t>(aura::compiler::macro_exp::effective_hygiene_depth_limit()));
+        insert_kv("runtime-depth-cap", static_cast<std::int64_t>(
+                                           aura::compiler::macro_exp::runtime_hygiene_depth_cap()));
+        insert_kv(
+            "self-evo-pass-cap",
+            static_cast<std::int64_t>(aura::compiler::macro_exp::effective_hygiene_pass_cap()));
+        insert_kv("runtime-pass-cap",
+                  static_cast<std::int64_t>(aura::compiler::macro_exp::runtime_hygiene_pass_cap()));
+        insert_kv("schema-2101", 2101);
+        insert_kv("issue-2101", 2101);
+        insert_kv("hygiene-limits-runtime-wired", 1);
+        insert_kv("process-wide", 1);
+        insert_kv("capability-tightens-only", 1);
         insert_kv("allow-macro-mutate", ev.get_allow_macro_mutate() ? 1 : 0);
         insert_kv("active", 1);
-        insert_kv("schema", 2020); // Agent surface #2020; concurrent peak keys #2021
+        insert_kv("schema", 2020); // Agent surface #2020; concurrent peak keys #2021 / #2101
         insert_kv("issue", 2020);
         insert_kv("depth-concurrent-obs-issue", 2021);
 
