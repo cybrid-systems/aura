@@ -1907,6 +1907,11 @@ set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FR
 aura_add_issue_test(test_agent_name_table_isolation_2078)
 aura_issue_test_link_llvm_jit(test_agent_name_table_isolation_2078)
 
+# Issue #2083: opt-in AgentScope (feature-flagged via AURA_ENABLE_AGENT_SCOPE).
+# The test file #defines the flag so the AgentScope class body is visible.
+aura_add_issue_test(test_agent_scope_2083)
+aura_issue_test_link_llvm_jit(test_agent_scope_2083)
+
 aura_add_issue_test(test_fiber_concurrent_unit_batch)
 aura_issue_test_link_llvm_jit(test_fiber_concurrent_unit_batch)
 add_dependencies(all_test_issue_targets test_fiber_concurrent_unit_batch)

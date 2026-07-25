@@ -37,6 +37,30 @@ REMOVED_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("conduct_parallel", re.compile(r"\bconduct_parallel\b")),
 ]
 
+# Feature-flagged multi-agent patterns (allowed only when the corresponding
+# #define is present in the scanned file). Issue #2083: AgentScope opt-in.
+# Default builds keep the linter green (no #define → no symbols → no
+# violations). Commercial multi-agent builds #define AURA_ENABLE_AGENT_SCOPE
+# per TU to opt in.
+FEATURE_FLAG_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
+    (
+        "AgentScope",
+        re.compile(r"\bAgentScope\b"),
+        "AURA_ENABLE_AGENT_SCOPE",
+    ),
+]
+FEATURE_FLAG_DEFINE_RE = re.compile(r"^\s*#\s*define\s+(?P<flag>[A-Z][A-Z0-9_]+)\b", re.MULTILINE)
+# A feature flag is also considered "opted-in" when the file uses #ifdef /
+# #if defined on it (header gate pattern). This lets headers like
+# src/orch/agent_scope.h wrap the new surface in `#ifdef AURA_ENABLE_AGENT_SCOPE`
+# without having to #define the flag itself. #ifndef is intentionally
+# excluded — it means "when the flag is NOT defined" (the default build).
+FEATURE_FLAG_IFDEF_RES: list[re.Pattern[str]] = [
+    re.compile(r"^\s*#\s*ifdef\s+(?P<flag>[A-Z][A-Z0-9_]+)\b", re.MULTILINE),
+    re.compile(r"^\s*#\s*if\s+defined\s+(?P<flag>[A-Z][A-Z0-9_]+)\b", re.MULTILINE),
+    re.compile(r"^\s*#\s*if\s+defined\s*\(\s*(?P<flag>[A-Z][A-Z0-9_]+)\s*\)", re.MULTILINE),
+]
+
 # Files allowed to mention removed identifiers (docs/rationale only, or
 # the linter itself). After #1966 no production/test code may call them.
 ALLOWLIST: set[str] = {
@@ -128,12 +152,28 @@ def scan_file(path: Path) -> list[tuple[int, str, str]]:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
+    # Issue #2083: collect feature-flag macros defined in this file; their
+    # associated FEATURE_FLAG_PATTERNS are then allowed in the same TU.
+    defined_flags = {m.group("flag") for m in FEATURE_FLAG_DEFINE_RE.finditer(raw)}
+    # Also treat #ifdef / #if defined as opt-in (header gate pattern).
+    for ifdef_re in FEATURE_FLAG_IFDEF_RES:
+        for m in ifdef_re.finditer(raw):
+            flag = m.group("flag")
+            if flag:
+                defined_flags.add(flag)
     stripped = strip_comments_and_strings(raw)
     raw_lines = raw.splitlines()
     stripped_lines = stripped.splitlines()
     violations: list[tuple[int, str, str]] = []
     for lineno, (_raw_line, stripped_line) in enumerate(zip(raw_lines, stripped_lines, strict=False), start=1):
         for pname, pat in REMOVED_PATTERNS:
+            for m in pat.finditer(stripped_line):
+                violations.append((lineno, pname, m.group(0)))
+        # Feature-flag-gated patterns (Issue #2083 AgentScope): only flag
+        # when the matching #define is NOT present in this TU.
+        for pname, pat, flag_macro in FEATURE_FLAG_PATTERNS:
+            if flag_macro in defined_flags:
+                continue
             for m in pat.finditer(stripped_line):
                 violations.append((lineno, pname, m.group(0)))
     return violations
@@ -199,10 +239,13 @@ def main() -> int:
     print(
         f"⚠ orch_mvp_scope: {total_violations} removed multi-agent symbol(s) "
         f"reintroduced across {len(violation_files)}/{total_files} files "
-        f"(Issue #1966 — AgentRegistry / global_agent_registry / conduct_parallel "
-        f"must not return to the public orch surface)\n"
+        f"(Issue #1966 / #2083 — AgentRegistry / global_agent_registry / "
+        f"conduct_parallel / AgentScope-without-flag must not return to the "
+        f"public orch surface)\n"
         f"  Allowlisted files ({len(ALLOWLIST)}): see ALLOWLIST in "
         f"scripts/check_orch_mvp_scope.py\n"
+        f"  Feature-flag-gated symbols: {', '.join(p[0] for p in FEATURE_FLAG_PATTERNS)} "
+        f"(allowed only with #define {', '.join(p[2] for p in FEATURE_FLAG_PATTERNS)})\n"
         f"  Use --strict to enforce (exit 1; ./build.py gate always uses --strict)."
     )
     if not args.quiet:
