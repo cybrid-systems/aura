@@ -2,13 +2,13 @@
   "categories": {
     "compile": 23,
     "engine": 8,
-    "mutate": 6,
+    "mutate": 4,
     "other": 411,
     "query": 51,
     "stats-like": 2,
     "workspace": 24
   },
-  "count": 525,
+  "count": 523,
   "frozen_count": 448,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -699,9 +699,7 @@
     "module?",
     "modulo",
     "mutate",
-    "mutate:extract-function",
     "mutate:from-verification-feedback",
-    "mutate:query-and-replace",
     "mutate:set-agent-fingerprint",
     "mutate:validate-against-schema",
     "mutate:validate-reflected",

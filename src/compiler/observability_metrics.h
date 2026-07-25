@@ -6555,6 +6555,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> capability_denial_ffi_total{0};
     std::atomic<std::uint64_t> sandbox_provenance_records_total{0};
     std::atomic<std::uint64_t> sandbox_provenance_invalid_total{0};
+    // Issue #2052: force capability + isolation on every mutate:* entry.
+    //   - mutate_force_effect_check_total: add_mutate wrappers entered
+    //   - mutate_force_effect_denied_total: check_and_record_effect deny
+    //   - mutate_force_isolation_denied_total: check_workspace_isolation deny
+    //   - mutate_force_effect_allowed_total: both checks passed
+    //   - mutate_force_wired: constant 1 for Agent discovery
+    std::atomic<std::uint64_t> mutate_force_effect_check_total{0};
+    std::atomic<std::uint64_t> mutate_force_effect_denied_total{0};
+    std::atomic<std::uint64_t> mutate_force_isolation_denied_total{0};
+    std::atomic<std::uint64_t> mutate_force_effect_allowed_total{0};
+    std::atomic<std::uint64_t> mutate_force_wired{1};
     std::atomic<std::uint64_t> dirty_subtree_bfs_walks_total{0};   // #1036
     std::atomic<std::uint64_t> ir_marker_stats_queries_total{0};   // #1039
     std::atomic<std::uint64_t> ir_cache_v2_lru_evictions_total{0}; // #1042

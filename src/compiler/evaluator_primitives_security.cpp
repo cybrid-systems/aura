@@ -252,8 +252,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->capability_effect_check_total.store(snap.checks, std::memory_order_relaxed);
             }
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            // 1565 + 1876 + #2023 MacroSelfEvo keys
-            auto* ht = FlatHashTable::create(64);
+            // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -331,6 +331,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(snap.macro_self_evo_pass_clamps));
             insert_kv("macro-self-evo-wired", 1);
             insert_kv("macro-self-evo-schema", 2023);
+            // Issue #2052: force capability + isolation on every mutate:* entry
+            insert_kv("mutate-force-checks",
+                      m ? static_cast<std::int64_t>(
+                              m->mutate_force_effect_check_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("mutate-force-denied",
+                      m ? static_cast<std::int64_t>(
+                              m->mutate_force_effect_denied_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("mutate-force-isolation-denied",
+                      m ? static_cast<std::int64_t>(m->mutate_force_isolation_denied_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("mutate-force-allowed",
+                      m ? static_cast<std::int64_t>(
+                              m->mutate_force_effect_allowed_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv(
+                "mutate-force-wired",
+                m ? static_cast<std::int64_t>(m->mutate_force_wired.load(std::memory_order_relaxed))
+                  : 1);
+            insert_kv("schema-2052", 2052);
+            insert_kv("issue-2052", 2052);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

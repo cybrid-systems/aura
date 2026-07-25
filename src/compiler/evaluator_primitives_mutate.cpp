@@ -422,40 +422,103 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return ev.string_heap_[i];
     };
 
-    // Issue #1259: every mutate:* registration goes through this wrapper.
-    // Detects "naked" mutate (no MutationBoundaryGuard entered during call)
-    // by comparing outermost-wrap counter before/after.
+    // Issue #1259 / #1565 / #1566 / #2052: every mutate:* registration goes
+    // through this wrapper. Forces capability effect + workspace isolation
+    // BEFORE the body runs; records concrete op name for Agent audit.
+    // Detects "naked" mutate (no MutationBoundaryGuard) via wrap counter.
     auto add_mutate = [&](std::string name, auto fn) {
-        add(std::move(name), [&ev, mev, fn](std::span<const EvalValue> a) -> EvalValue {
-            // Issue #676: legacy string capability gate.
-            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate) &&
-                !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+        // Capture concrete op name for check_and_record_effect / isolation.
+        auto op_name = std::make_shared<std::string>(std::move(name));
+        add(*op_name, [&ev, mev, fn, op_name](std::span<const EvalValue> a) -> EvalValue {
+            using aura::compiler::security::kCapMutate;
+            using aura::compiler::security::kCapWildcard;
+            using aura::compiler::security::kEffectMutate;
+            const char* op = op_name->c_str();
+
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->mutate_force_effect_check_total.fetch_add(1, std::memory_order_relaxed);
+
+            // Issue #1565 / #2052: effect matrix + provenance audit FIRST so
+            // denied paths always hit the mutation audit ring + sandbox metrics
+            // (legacy string gate alone used to skip them).
+            // Best-effort target_node from first int / StableNodeRef arg.
+            aura::ast::NodeId target_node = 0;
+            std::uint64_t ref_tenant = 0;
+            if (!a.empty()) {
+                if (is_int(a[0])) {
+                    target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                } else if (is_pair(a[0])) {
+                    // Packed StableNodeRef: (id . (gen . …)) optionally with tenant.
+                    const auto outer = as_pair_idx(a[0]);
+                    if (outer < ev.pairs_.size() && is_int(ev.pairs_[outer].car)) {
+                        target_node = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
+                        auto cdr = ev.pairs_[outer].cdr;
+                        if (is_pair(cdr)) {
+                            const auto inner = as_pair_idx(cdr);
+                            if (inner < ev.pairs_.size()) {
+                                auto c2 = ev.pairs_[inner].cdr;
+                                if (is_pair(c2)) {
+                                    const auto tidx = as_pair_idx(c2);
+                                    if (tidx < ev.pairs_.size() && is_int(ev.pairs_[tidx].car))
+                                        ref_tenant =
+                                            static_cast<std::uint64_t>(as_int(ev.pairs_[tidx].car));
+                                } else if (is_int(c2) && (as_int(c2) <= 0 || as_int(c2) >= 65536)) {
+                                    ref_tenant = static_cast<std::uint64_t>(as_int(c2));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!ev.check_and_record_effect(kEffectMutate, kEffectMutate, op, target_node,
+                                            ev.capability_tenant_id(), 0)) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2076: unified Agent-readable deny reason (merr pair).
+                return mev("capability-denied", aura::compiler::security::format_deny_reason(
+                                                    kEffectMutate, ev.capability_tenant_id(), op));
+            }
+
+            // Issue #676: legacy string capability gate (after effect record so
+            // Strict denials already audited). Still required when sandbox is on
+            // but effect mode is Off (effect check always-allows).
+            if (ev.sandbox_mode() && !ev.has_capability(kCapMutate) &&
+                !ev.has_capability(kCapWildcard)) {
                 ev.bump_capability_denial();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                    m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
+                }
                 return mev("capability-denied", "mutate capability required in sandbox mode");
             }
-            // Issue #1565: effect matrix + provenance audit (Strict always; Restricted when
-            // sandboxed).
-            {
-                using aura::compiler::security::kEffectMutate;
-                if (!ev.check_and_record_effect(kEffectMutate, kEffectMutate, "mutate", 0,
-                                                ev.capability_tenant_id(), 0)) {
-                    // Issue #2076: unified Agent-readable deny reason.
-                    // Shape: "effect-denied: <EffectName> not granted tenant=<id> op=<op>"
-                    return mev("capability-denied",
-                               aura::compiler::security::format_deny_reason(
-                                   kEffectMutate, ev.capability_tenant_id(), "mutate"));
+
+            // Issue #1566 / #2052: multi-tenant workspace isolation.
+            // Pass ref_tenant when StableNodeRef provenance is present so
+            // cross-tenant refs deny under Strict / isolation policy.
+            // Under Strict, also refuse when last hygiene stamp belongs to
+            // a foreign tenant (parity with mutate:atomic-batch #1878).
+            const bool strict_iso =
+                (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+            if (strict_iso && ref_tenant == 0) {
+                const auto self = ev.capability_tenant_id();
+                if (self != 0) {
+                    const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
+                    if (hs.tenant_id != 0 && hs.tenant_id != self)
+                        ref_tenant = hs.tenant_id;
                 }
             }
-            // Issue #1566: multi-tenant workspace isolation on every mutate path.
-            // target = current principal's tenant (0 = isolation off / single-tenant).
-            {
-                using aura::compiler::security::kEffectMutate;
-                if (!ev.check_workspace_isolation(/*target=*/0, /*ref_tenant=*/0, kEffectMutate,
-                                                  "mutate")) {
-                    return mev("tenant-isolation-denied",
-                               "cross-tenant mutate denied by WorkspaceIsolationPolicy (#1566)");
-                }
+            if (!ev.check_workspace_isolation(/*target=*/0, ref_tenant, kEffectMutate, op)) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->mutate_force_isolation_denied_total.fetch_add(1, std::memory_order_relaxed);
+                return mev("tenant-isolation-denied",
+                           std::string("cross-tenant ") + op +
+                               " denied by WorkspaceIsolationPolicy (#1566/#2052)");
             }
+
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->mutate_force_effect_allowed_total.fetch_add(1, std::memory_order_relaxed);
+
             std::uint64_t wraps_before = 0;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 wraps_before =
@@ -465,7 +528,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 const auto wraps_after =
                     m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
                 if (wraps_after == wraps_before) {
-                    // No outermost Guard was entered — naked mutate path.
                     m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
                 } else {
                     m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
@@ -840,7 +902,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // predicates with replacement. Query phase snapshots flat.size() and
     // captures StableNodeRef; apply phase uses is_valid_in() + parent-slot
     // checks inside an atomic batch so multiple set_child calls share one bump.
-    add("mutate:query-and-replace",
+    // Issue #2052: route through add_mutate so capability + isolation fire first.
+    add_mutate(
+        "mutate:query-and-replace",
         [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
             // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
             // defuse_version_ + rollback. ok = false on every error path.
@@ -4438,157 +4502,159 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   Extracts a subtree into a new top-level function definition.
     //   Analyzes free variables in the subtree and makes them parameters.
     //   Replaces the original node with a call to the new function.
-    add("mutate:extract-function", [&ev, collect_free_vars, safe_str](const auto& a) -> EvalValue {
-        using namespace aura::ast;
-        // last local merr definition removed; all calls use centralized make_merr
-        // Issue #1904: removed redundant manual defuse_version_ +
-        // total_mutations_ bump — MutationBoundaryGuard owns the bump.
-        // We also need to add `ok = false` on the error paths below.
-        if (ev.workspace_read_only_)
-            return ev.make_merr("read-only", "workspace is read-only");
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
-            !ev.workspace_pool_)
-            return ev.make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
-        auto node = static_cast<NodeId>(as_int(a[0]));
-        auto name_idx = as_string_idx(a[1]);
-        if (name_idx >= ev.string_heap_.size())
-            return ev.make_merr("bad-arg", "name string index out of range");
-        auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size())
-            return ev.make_merr("out-of-range", std::to_string(node) + " >= flat size " +
-                                                    std::to_string(flat.size()));
+    // Issue #2052: route through add_mutate (capability + isolation first).
+    add_mutate(
+        "mutate:extract-function", [&ev, collect_free_vars, safe_str](const auto& a) -> EvalValue {
+            using namespace aura::ast;
+            // last local merr definition removed; all calls use centralized make_merr
+            // Issue #1904: removed redundant manual defuse_version_ +
+            // total_mutations_ bump — MutationBoundaryGuard owns the bump.
+            // We also need to add `ok = false` on the error paths below.
+            if (ev.workspace_read_only_)
+                return ev.make_merr("read-only", "workspace is read-only");
+            if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
+                !ev.workspace_pool_)
+                return ev.make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
+            auto node = static_cast<NodeId>(as_int(a[0]));
+            auto name_idx = as_string_idx(a[1]);
+            if (name_idx >= ev.string_heap_.size())
+                return ev.make_merr("bad-arg", "name string index out of range");
+            auto& flat = *ev.workspace_flat_;
+            if (node >= flat.size())
+                return ev.make_merr("out-of-range", std::to_string(node) + " >= flat size " +
+                                                        std::to_string(flat.size()));
 
-        auto new_name = ev.string_heap_[name_idx];
-        std::string summary =
-            (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
+            auto new_name = ev.string_heap_[name_idx];
+            std::string summary =
+                (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
 
-        // Find parent of target node using parent_ vector
-        if (node == NULL_NODE || !flat.is_live_node(node))
-            return ev.make_merr("out-of-range", "extract target not a live node");
-        auto parent_of_target = flat.parent_of(node);
-        auto child_idx_opt = parent_child_index_if_attached(flat, node);
-        if (parent_of_target == NULL_NODE || !child_idx_opt)
-            return ev.make_merr("no-parent", "extracted node has no parent");
-        int child_idx_in_parent = static_cast<int>(*child_idx_opt);
+            // Find parent of target node using parent_ vector
+            if (node == NULL_NODE || !flat.is_live_node(node))
+                return ev.make_merr("out-of-range", "extract target not a live node");
+            auto parent_of_target = flat.parent_of(node);
+            auto child_idx_opt = parent_child_index_if_attached(flat, node);
+            if (parent_of_target == NULL_NODE || !child_idx_opt)
+                return ev.make_merr("no-parent", "extracted node has no parent");
+            int child_idx_in_parent = static_cast<int>(*child_idx_opt);
 
-        // Collect free variables in the extracted subtree
-        // Filter out common built-in symbols
-        auto raw_free_vars = collect_free_vars(flat, node, *ev.workspace_pool_);
-        std::vector<SymId> free_vars;
-        {
-            static const char* builtins[] = {
-                "+",          "-",      "*",         "/",       "%",       "=",       "<",
-                ">",          "<=",     ">=",        "display", "newline", "print",   "read",
-                "car",        "cdr",    "cons",      "pair?",   "null?",   "list",    "eq?",
-                "eqv?",       "equal?", "not",       "and",     "or",      "if",      "cond",
-                "lambda",     "define", "let",       "letrec",  "begin",   "set!",    "apply",
-                "map",        "filter", "foldl",     "foldr",   "string?", "number?", "symbol?",
-                "procedure?", "void",   "make-void", "error",   "assert",
-            };
-            std::unordered_set<SymId> builtin_syms;
-            for (auto b : builtins)
-                builtin_syms.insert(ev.workspace_pool_->intern(b));
-            for (auto fv : raw_free_vars) {
-                if (builtin_syms.find(fv) == builtin_syms.end())
-                    free_vars.push_back(fv);
-            }
-        }
-
-        // Issue #1701: multiple flat.add_* (5+N) can each stress SoA /
-        // free-list topology. Snapshot pre-append size; re-validate
-        // parent_of_target / node / ws_root before set_child / insert.
-        // Use is_live_node not is_valid_in (no gen-tagged restamp until
-        // the explicit restamp_all_node_generations at the end).
-        const auto size_before_appends = static_cast<std::size_t>(flat.size());
-
-        // Issue #1950: MutationBoundaryGuard wrap around the mutation
-        // block (AC #2: 100% Guard wrap on mutate:* primitives). The Guard
-        // dtor (evaluator.ixx:12588, batched to ≤6 atomics per #1747)
-        // owns the defuse_version_ + total_mutations_ bump — this primitive
-        // intentionally removed its manual #1904 path. Validation stays
-        // outside Guard; the mutation block (Steps 1–6 + restamp + return
-        // value) is wrapped so partial state on exception rolls back.
-        return run_under_mutation_guard(
-            ev,
-            [&]() -> EvalValue {
-                // Step 1: Create lambda with free vars as params, body = extracted node
-                auto lambda_id = flat.add_lambda(free_vars, node);
-
-                // Step 2: Create (define new-name lambda)
-                auto new_sym = ev.workspace_pool_->intern(new_name);
-                auto define_id = flat.add_define(new_sym, lambda_id);
-                flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
-                flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
-
-                // Step 3: Create call site (new-name free-var-1 ...)
-                auto var_id = flat.add_variable(new_sym);
-                flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
-                std::vector<NodeId> call_args;
-                call_args.reserve(free_vars.size());
-                for (auto fv : free_vars) {
-                    auto arg_var = flat.add_variable(fv);
-                    call_args.push_back(arg_var);
-                }
-                auto call_id = flat.add_call(var_id, call_args);
-                flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
-
-                // Issue #1701: re-validate target + parent edge after multi-add_*.
-                if (static_cast<std::size_t>(node) >= size_before_appends ||
-                    !flat.is_live_node(node))
-                    return ev.make_merr("stale-ref",
-                                        "extract-function: target invalid after add_*");
-                auto parent_slot_ok = [&]() -> bool {
-                    if (parent_of_target == NULL_NODE ||
-                        static_cast<std::size_t>(parent_of_target) >= size_before_appends ||
-                        !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
-                        return false;
-                    auto pv = flat.get(parent_of_target);
-                    return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
-                           pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+            // Collect free variables in the extracted subtree
+            // Filter out common built-in symbols
+            auto raw_free_vars = collect_free_vars(flat, node, *ev.workspace_pool_);
+            std::vector<SymId> free_vars;
+            {
+                static const char* builtins[] = {
+                    "+",          "-",      "*",         "/",       "%",       "=",       "<",
+                    ">",          "<=",     ">=",        "display", "newline", "print",   "read",
+                    "car",        "cdr",    "cons",      "pair?",   "null?",   "list",    "eq?",
+                    "eqv?",       "equal?", "not",       "and",     "or",      "if",      "cond",
+                    "lambda",     "define", "let",       "letrec",  "begin",   "set!",    "apply",
+                    "map",        "filter", "foldl",     "foldr",   "string?", "number?", "symbol?",
+                    "procedure?", "void",   "make-void", "error",   "assert",
                 };
-                if (!parent_slot_ok()) {
-                    child_idx_opt = parent_child_index_if_attached(flat, node);
-                    if (!child_idx_opt)
-                        return ev.make_merr("stale-ref",
-                                            "extract-function: parent edge lost after add_*");
-                    parent_of_target = flat.parent_of(node);
-                    child_idx_in_parent = static_cast<int>(*child_idx_opt);
-                    if (!parent_slot_ok())
-                        return ev.make_merr("stale-ref",
-                                            "extract-function: parent invalid after add_*");
+                std::unordered_set<SymId> builtin_syms;
+                for (auto b : builtins)
+                    builtin_syms.insert(ev.workspace_pool_->intern(b));
+                for (auto fv : raw_free_vars) {
+                    if (builtin_syms.find(fv) == builtin_syms.end())
+                        free_vars.push_back(fv);
                 }
+            }
 
-                // Step 5: Replace original node slot with the call
-                flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
-                               call_id);
+            // Issue #1701: multiple flat.add_* (5+N) can each stress SoA /
+            // free-list topology. Snapshot pre-append size; re-validate
+            // parent_of_target / node / ws_root before set_child / insert.
+            // Use is_live_node not is_valid_in (no gen-tagged restamp until
+            // the explicit restamp_all_node_generations at the end).
+            const auto size_before_appends = static_cast<std::size_t>(flat.size());
 
-                // Step 6: Insert new define as a child of the workspace root
-                // Insert at position 0 (before other defs) to avoid forward-reference issues
-                // Re-read root after appends; require live pre-append or still-valid root.
-                auto ws_root = flat.root;
-                if (ws_root == NULL_NODE || !flat.is_live_node(ws_root))
-                    return ev.make_merr("stale-ref",
-                                        "extract-function: workspace root invalid after add_*");
-                flat.insert_child(ws_root, 0, define_id);
+            // Issue #1950: MutationBoundaryGuard wrap around the mutation
+            // block (AC #2: 100% Guard wrap on mutate:* primitives). The Guard
+            // dtor (evaluator.ixx:12588, batched to ≤6 atomics per #1747)
+            // owns the defuse_version_ + total_mutations_ bump — this primitive
+            // intentionally removed its manual #1904 path. Validation stays
+            // outside Guard; the mutation block (Steps 1–6 + restamp + return
+            // value) is wrapped so partial state on exception rolls back.
+            return run_under_mutation_guard(
+                ev,
+                [&]() -> EvalValue {
+                    // Step 1: Create lambda with free vars as params, body = extracted node
+                    auto lambda_id = flat.add_lambda(free_vars, node);
 
-                ev.workspace_flat_->mark_dirty_upward(define_id);
-                ev.workspace_flat_->mark_dirty_upward(ws_root);
+                    // Step 2: Create (define new-name lambda)
+                    auto new_sym = ev.workspace_pool_->intern(new_name);
+                    auto define_id = flat.add_define(new_sym, lambda_id);
+                    flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
+                    flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
 
-                flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
-                flat.restamp_all_node_generations();
+                    // Step 3: Create call site (new-name free-var-1 ...)
+                    auto var_id = flat.add_variable(new_sym);
+                    flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
+                    std::vector<NodeId> call_args;
+                    call_args.reserve(free_vars.size());
+                    for (auto fv : free_vars) {
+                        auto arg_var = flat.add_variable(fv);
+                        call_args.push_back(arg_var);
+                    }
+                    auto call_id = flat.add_call(var_id, call_args);
+                    flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
 
-                // Return (define-node-id . call-node-id)
-                auto result_pid = ev.pairs_.size();
-                {
-                    auto car_val = make_int(static_cast<std::int64_t>(define_id));
-                    auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
-                    ev.pairs_.push_back(Pair{car_val, cdr_val});
-                }
-                return make_pair(result_pid);
-            },
-            ev.make_merr("guard-rejected",
-                         "extract-function: MutationBoundaryGuard rejected the mutation"));
-    });
+                    // Issue #1701: re-validate target + parent edge after multi-add_*.
+                    if (static_cast<std::size_t>(node) >= size_before_appends ||
+                        !flat.is_live_node(node))
+                        return ev.make_merr("stale-ref",
+                                            "extract-function: target invalid after add_*");
+                    auto parent_slot_ok = [&]() -> bool {
+                        if (parent_of_target == NULL_NODE ||
+                            static_cast<std::size_t>(parent_of_target) >= size_before_appends ||
+                            !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
+                            return false;
+                        auto pv = flat.get(parent_of_target);
+                        return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
+                               pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+                    };
+                    if (!parent_slot_ok()) {
+                        child_idx_opt = parent_child_index_if_attached(flat, node);
+                        if (!child_idx_opt)
+                            return ev.make_merr("stale-ref",
+                                                "extract-function: parent edge lost after add_*");
+                        parent_of_target = flat.parent_of(node);
+                        child_idx_in_parent = static_cast<int>(*child_idx_opt);
+                        if (!parent_slot_ok())
+                            return ev.make_merr("stale-ref",
+                                                "extract-function: parent invalid after add_*");
+                    }
+
+                    // Step 5: Replace original node slot with the call
+                    flat.set_child(parent_of_target,
+                                   static_cast<std::uint32_t>(child_idx_in_parent), call_id);
+
+                    // Step 6: Insert new define as a child of the workspace root
+                    // Insert at position 0 (before other defs) to avoid forward-reference issues
+                    // Re-read root after appends; require live pre-append or still-valid root.
+                    auto ws_root = flat.root;
+                    if (ws_root == NULL_NODE || !flat.is_live_node(ws_root))
+                        return ev.make_merr("stale-ref",
+                                            "extract-function: workspace root invalid after add_*");
+                    flat.insert_child(ws_root, 0, define_id);
+
+                    ev.workspace_flat_->mark_dirty_upward(define_id);
+                    ev.workspace_flat_->mark_dirty_upward(ws_root);
+
+                    flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+                    flat.restamp_all_node_generations();
+
+                    // Return (define-node-id . call-node-id)
+                    auto result_pid = ev.pairs_.size();
+                    {
+                        auto car_val = make_int(static_cast<std::int64_t>(define_id));
+                        auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
+                        ev.pairs_.push_back(Pair{car_val, cdr_val});
+                    }
+                    return make_pair(result_pid);
+                },
+                ev.make_merr("guard-rejected",
+                             "extract-function: MutationBoundaryGuard rejected the mutation"));
+        });
 
     // ── mutate:inline-call ──────────────────────────────────────
     // (mutate:inline-call call-node-id "summary")
