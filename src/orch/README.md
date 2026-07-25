@@ -35,6 +35,44 @@ the eval-serialization is the safety floor.
 
 MVP scope is single-agent only (`scripts/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
 
-Regression: `tests/orch/agent_primitives_2011.aura` · `tests/serve/test_fiber_orch_core_batch` AC4/AC8.
+### `AgentScope` (Issue #2083, opt-in feature flag)
+
+`src/orch/agent_scope.h` provides an opt-in scoped multi-agent supervision root,
+gated by `#define AURA_ENABLE_AGENT_SCOPE`. Default builds keep the MVP linter
+green; commercial multi-agent builds define the flag per TU to opt in.
+
+```cpp
+#define AURA_ENABLE_AGENT_SCOPE
+#include "orch/agent_scope.h"
+
+aura::serve::Scheduler sched(2);
+// ... run scheduler ...
+
+aura::orch::AgentScope scope(sched);
+auto& h1 = scope.spawn({.name = "a", .body = [] { /* ... */ }});
+auto& h2 = scope.spawn({.name = "b", .body = [] { /* ... */ }});
+
+scope.cancel_all();                       // best-effort request_cancel
+auto jr = scope.join_all(/*timeout_ms=*/5000); // mirror #2082 cancel+drain
+// ~AgentScope: cancel + best-effort drain + reservation release.
+```
+
+Rules (per Issue #2083 AC4):
+1. **No** process-global registry (linter still forbids `AgentRegistry` /
+   `global_agent_registry` / `conduct_parallel`).
+2. Scope destructor is the supervision root (cancel + best-effort drain +
+   reservation release, mirroring `join_agents` #2082 contract).
+3. Default (flag off) tree still passes `--strict` MVP scope linter:
+   - `scripts/check_orch_mvp_scope.py` allows `AgentScope` only in TUs
+     that `#define AURA_ENABLE_AGENT_SCOPE` (new `FEATURE_FLAG_PATTERNS`
+     mechanism; see linter source).
+4. Distinct from `OrchAgentNameTable` (#2078) and `parallel_intend` (#1587):
+   - `OrchAgentNameTable`: per-Evaluator name bookkeeping for Aura
+     primitives (`orch:spawn-agent` / `orch:agent-join`).
+   - `parallel_intend`: short-lived batch thunks (no long-lived names).
+   - `AgentScope`: long-lived named agents, parent-cancel + `join_all`
+     semantics, bound to an explicit owner (Scheduler reference).
+
+Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6).
 
 See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.md`](../../docs/wire-formats.md) §10.
