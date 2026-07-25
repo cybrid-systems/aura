@@ -752,7 +752,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_runtime_mutation_boundary_steal_safety.cpp` (—) [domain_suite, theme_serve] — test_runtime_mutation_boundary_steal_safety.cpp — Issue #588:
 - `tests/serve/test_safe_yield_orchestration.cpp` (—) [domain_suite, theme_serve] — Issue #1504/#1591/#1635 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_safepoint_mutation.cpp` (—) [domain_suite, theme_serve] — test_safepoint_mutation.cpp — Issue #1364: safepoint × mutation telemetry
-- `tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp` (—) [domain_suite, theme_serve] — AC1: pending checkpoint → GCCollector::request deferred; collect skips
+- `tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: pending checkpoint → GCCollector::request deferred; collect skips
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp` (—) [domain_suite, theme_serve] — test_scheduler_gc_safepoint_mutation_coordination.cpp —
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
 - `tests/core/test_stress_alloc_storage_lock.cpp` (—) [domain_suite, theme_core] — test_stress_alloc_storage_lock.cpp — Issue #1397
