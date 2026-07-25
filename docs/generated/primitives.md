@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**533** registrations scanned from `src/**/*.cpp` (20 marked **deprecated** — Issue #1438).
+**531** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 100 primitives (19%)
+- **mutation-safety**: 98 primitives (18%)
 - **core**: 379 primitives (71%)
 - **internal-observable**: 46 primitives (9%)
 - **convenience**: 8 primitives (2%)
@@ -64,11 +64,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (6)
+## Mutate: (4)
 
-- `mutate:extract-function` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -688,7 +686,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (100)
+### Mutation safety (must remain primitive) (98)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -756,9 +754,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `git-rev-parse` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-stage` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-status` — `src/compiler/evaluator_primitives_io.cpp`
-- `mutate:extract-function` **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1235,11 +1231,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **20** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **19** names:
 
 - `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
-- `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`

@@ -2007,6 +2007,11 @@ aura_add_issue_test(test_render_agent_closedloop_2051)
 aura_issue_test_link_llvm_jit(test_render_agent_closedloop_2051)
 add_dependencies(all_test_issue_targets test_render_agent_closedloop_2051)
 
+# Issue #2052: force capability + isolation on every mutate:* entry
+aura_add_issue_test(test_mutate_capability_force_2052)
+aura_issue_test_link_llvm_jit(test_mutate_capability_force_2052)
+add_dependencies(all_test_issue_targets test_mutate_capability_force_2052)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
