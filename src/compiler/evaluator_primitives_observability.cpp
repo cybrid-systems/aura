@@ -109,6 +109,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #1914 — unified hygiene + provenance diagnostics dashboard
     "query:hygiene-provenance-stats",
     // Issue #486 — MacroIntroduced hygiene decision hash
+    // (#2101: effective/runtime depth+pass keys live on this surface —
+    //  no new query:* name under SlimSurface freeze #1448)
     "query:macro-hygiene-stats",
     // Issue #548 — Panic-checkpoint lifecycle
     "query:panic-checkpoint-lifecycle-stats",

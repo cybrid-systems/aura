@@ -18,7 +18,7 @@ import aura.core.ast;
 
 namespace aura::compiler::macro_exp {
 
-// Issue #365: MAX_HYGIENE_DEPTH — upper bound on recursive
+// Issue #365: MAX_HYGIENE_DEPTH — hard safety ceiling on recursive
 // clone_macro_body nesting. Exported so tests + other modules
 // can read it (and so operators can detect when their macros
 // are close to the limit via compile-time diagnostic).
@@ -32,7 +32,34 @@ namespace aura::compiler::macro_exp {
 // Returning a NodeId-typed merr would require changing the
 // function signature (invasive); observability path is the
 // scope-limited fix.
+//
+// Issue #2101: MAX_HYGIENE_DEPTH remains the immutable hard
+// ceiling. Runtime / capability / MacroSelfEvo policy may only
+// *tighten* the effective limit (never raise past this).
 export constexpr int MAX_HYGIENE_DEPTH = 1024;
+
+// Issue #2101: process-wide runtime hygiene depth/pass caps.
+// Scope: process-wide atomics (not per-tenant / per-fiber) — a
+// concurrent set on one fiber is immediately visible to expand
+// on another. Capability (MacroSelfEvo) can only tighten further.
+//
+// set_hygiene_depth_cap(n): n must be in [1, MAX_HYGIENE_DEPTH];
+// returns false if rejected (above hard ceiling or n < 1).
+// set_hygiene_pass_cap(n): n==0 clears (no runtime pass clamp);
+// n>0 clamps max_passes; returns false if n < 0.
+// Defaults: depth=MAX, pass=0 (no runtime pass clamp).
+export int hard_hygiene_depth_limit() noexcept;    // == MAX_HYGIENE_DEPTH
+export int runtime_hygiene_depth_cap() noexcept;   // process-wide setter value
+export int runtime_hygiene_pass_cap() noexcept;    // 0 = no runtime pass clamp
+export bool set_hygiene_depth_cap(int n) noexcept; // reject if n∉[1,MAX]
+export bool set_hygiene_pass_cap(int n) noexcept;  // reject if n<0; 0 clears
+export void reset_hygiene_runtime_caps_for_test() noexcept;
+// Live effective limit that the next expand / clone will enforce:
+// min(hard, runtime depth cap, capability max_depth when tightening).
+export int effective_hygiene_depth_limit() noexcept;
+// Live effective pass cap: min of runtime pass cap (if >0) and
+// capability max_expansion_passes (if >0); 0 means "no extra clamp".
+export int effective_hygiene_pass_cap() noexcept;
 
 // Issue #1245 Phase 1: concurrent macro-clone hygiene counters (defined in .cpp).
 export extern std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total;

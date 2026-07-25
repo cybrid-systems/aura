@@ -2070,6 +2070,11 @@ aura_add_issue_test(test_jit_macro_deopt_hygiene_2100)
 aura_issue_test_link_llvm_jit(test_jit_macro_deopt_hygiene_2100)
 add_dependencies(all_test_issue_targets test_jit_macro_deopt_hygiene_2100)
 
+# Issue #2101: runtime-configurable hygiene depth/pass caps + query surface.
+aura_add_issue_test(test_macro_hygiene_limits_2101)
+aura_issue_test_link_llvm_jit(test_macro_hygiene_limits_2101)
+add_dependencies(all_test_issue_targets test_macro_hygiene_limits_2101)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
