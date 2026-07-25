@@ -2653,8 +2653,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"retries-performed", make_int(static_cast<std::int64_t>(batch.retries_performed))},
             {"circuit-opened", make_bool(batch.circuit_opened)},
             {"results", make_vector(rvidx)},
+            // Issue #2081: parallel-intend eval-serialization contract surface.
+            // Evaluator::apply_closure is serialized via shared eval_mu inside
+            // each task body (see ParallelIntendState::eval_mu); fibers run
+            // concurrently under max-concurrency but apply_closure is locked.
+            // This field lets Agents introspect the contract without parsing
+            // source. A future :pure #t path (#2081 Phase B) may set #f.
+            {"eval-serialized", make_bool(true)},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
+            {"schema-2081", make_int(2081)},
         };
         return build_hash(kv);
     });

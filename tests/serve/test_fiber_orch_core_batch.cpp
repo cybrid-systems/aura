@@ -980,6 +980,66 @@ namespace {
         CHECK(n && is_int(*n) && as_int(*n) == 2, "alias ok-count 2");
     }
 
+    // Issue #2081: document parallel-intend eval-serialization contract;
+    // surface `eval-serialized=#t` + `schema-2081` in the batch hash so
+    // Agents can introspect the contract without parsing source.
+    static void ac5b_parallel_intend_2081() {
+        std::println("\n--- AC5b: #2081 parallel-intend eval-serialization contract ---");
+
+        // AC1: src/orch/README.md documents the eval-serialized contract.
+        {
+            std::ifstream in("src/orch/README.md");
+            std::string contents((std::istreambuf_iterator<char>(in)),
+                                 std::istreambuf_iterator<char>());
+            CHECK(!contents.empty(), "src/orch/README.md readable");
+            CHECK(contents.find("Issue #2081") != std::string::npos, "README cites #2081");
+            CHECK(contents.find("eval-serialized") != std::string::npos,
+                  "README documents eval-serialized contract");
+            CHECK(contents.find("eval_mu") != std::string::npos,
+                  "README names the shared eval_mu serialization primitive");
+            CHECK(contents.find("serialized") != std::string::npos,
+                  "README explicitly states serialized apply_closure");
+        }
+
+        // AC5: batch hash carries eval-serialized=#t + schema-2081.
+        {
+            CompilerService cs;
+            auto r = cs.eval(R"(
+(orch:parallel-intend
+  (vector (lambda () 1) (lambda () 2) (lambda () 3))
+  :timeout-ms 10000)
+)");
+            CHECK(r && is_hash(*r), "batch hash");
+            auto ev_serialized = cs.eval(R"(
+(if (hash-ref (orch:parallel-intend (vector (lambda () 1)) :timeout-ms 5000) "eval-serialized") 1 0)
+)");
+            CHECK(ev_serialized && is_int(*ev_serialized) && as_int(*ev_serialized) == 1,
+                  "batch hash \"eval-serialized\" == #t");
+            auto schema_2081 = cs.eval(R"(
+(hash-ref (orch:parallel-intend (vector (lambda () 1)) :timeout-ms 5000) "schema-2081")
+)");
+            CHECK(schema_2081 && is_int(*schema_2081) && as_int(*schema_2081) == 2081,
+                  "batch hash \"schema-2081\" == 2081");
+        }
+
+        // AC2: existing parallel-intend contract (status / ok-count / results)
+        // is preserved alongside the new field — no regression for consumers.
+        {
+            CompilerService cs;
+            auto status = cs.eval(R"(
+(hash-ref (orch:parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 5000) "status")
+)");
+            CHECK(status && is_string(*status), "status key still present (regression)");
+            auto ok_count = cs.eval(R"(
+(hash-ref (orch:parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 5000) "ok-count")
+)");
+            CHECK(ok_count && is_int(*ok_count) && as_int(*ok_count) == 2,
+                  "ok-count still == 2 (regression)");
+        }
+
+        std::println("  PASS: AC5b #2081 (README + eval-serialized + regression)");
+    }
+
     static void ac6_stats() {
         std::println("\n--- AC6: query:orch-module-stats ---");
         CompilerService cs;
@@ -1457,6 +1517,7 @@ int run_orch_agent_spawn() {
     ac3_parallel_intend();
     ac4_aura_spawn_join();
     ac5_parallel_alias();
+    ac5b_parallel_intend_2081();
     ac6_stats();
     ac7_keepalive();
     ac7b_progress_clock_2080();
