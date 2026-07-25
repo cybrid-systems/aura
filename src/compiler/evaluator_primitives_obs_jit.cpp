@@ -10493,17 +10493,18 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
     // composition (panic-heavy vs ffi-pin-heavy workloads).
     ObservabilityPrims::register_stats_impl(
         "query:gc-defer-reason-stats", [&ev](const auto&) -> EvalValue {
+            (void)ev;
             const std::uint32_t reasons = aura::gc_hooks::defer_reasons_snapshot();
-            auto* m = ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
-                                            : nullptr;
+            // Issue #2088: process-wide arm counters (primary). CompilerMetrics
+            // fields remain for optional mirror; hooks are the source of truth.
             const std::uint64_t arm_panic =
-                m ? m->gc_defer_arm_panic_total.load(std::memory_order_relaxed) : 0;
+                aura::gc_hooks::g_gc_defer_arm_panic_total.load(std::memory_order_relaxed);
             const std::uint64_t arm_ffi_pin =
-                m ? m->gc_defer_arm_ffi_pin_total.load(std::memory_order_relaxed) : 0;
+                aura::gc_hooks::g_gc_defer_arm_ffi_pin_total.load(std::memory_order_relaxed);
             const std::uint64_t arm_render_pin =
-                m ? m->gc_defer_arm_render_pin_total.load(std::memory_order_relaxed) : 0;
+                aura::gc_hooks::g_gc_defer_arm_render_pin_total.load(std::memory_order_relaxed);
             const std::uint64_t any_total =
-                m ? m->gc_defer_any_total.load(std::memory_order_relaxed) : 0;
+                aura::gc_hooks::g_gc_defer_any_total.load(std::memory_order_relaxed);
             // Per-reason depth atomics (still maintained alongside the
             // bitmask — depth is for nesting observability, bitmask is
             // for the "any reason armed" predicate).
@@ -10511,7 +10512,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
             const std::uint64_t ffi_pin_depth =
                 aura::gc_hooks::g_ffi_pin_defer_depth.load(std::memory_order_acquire);
-            auto* ht = FlatHashTable::create(8);
+            // ~12 keys — create(16) headroom.
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10539,6 +10541,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 }
             };
             insert_kv("schema", 2088);
+            insert_kv("schema-2088", 2088);
+            insert_kv("issue-2088", 2088);
             insert_kv("reasons", static_cast<std::int64_t>(reasons));
             insert_kv(
                 "panic-bit",
@@ -10558,6 +10562,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("any-total", static_cast<std::int64_t>(any_total));
             insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
             insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
+            insert_kv("unified-defer-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

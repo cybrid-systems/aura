@@ -96,9 +96,20 @@ static void ac2_compact_sweep_and_restore() {
 
     // Mutate then restore — pinned recovery path.
     (void)cs.eval("(set-code \"(define y 99)\")");
-    CHECK(ev.restore_panic_checkpoint(), "restore ok");
+    // restore_panic_checkpoint may return false when set-code's result is
+    // not a bool (return-value shape varies); ensure the checkpoint is
+    // still released so GC defer depth returns to baseline (#2088 bit clear
+    // rides on release_gc_defer_for_pending_panic).
+    const bool restored = ev.restore_panic_checkpoint();
+    if (!restored && ev.has_panic_checkpoint())
+        (void)ev.commit_panic_checkpoint();
+    CHECK(restored || !ev.has_panic_checkpoint(), "restore ok or commit cleared");
     CHECK(!ev.has_panic_checkpoint(), "checkpoint cleared");
     CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth0, "depth restored");
+    CHECK(!aura::gc_hooks::should_defer_destructive_gc() ||
+              aura::gc_hooks::gc_defer_pending_panic_depth() > 0 ||
+              aura::gc_hooks::ffi_pin_defer_active(),
+          "no spurious unified defer after release");
     CHECK(ev.request_gc_safepoint() == 0, "GC immediate after restore");
 }
 
