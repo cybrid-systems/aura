@@ -2722,6 +2722,17 @@ public:
     // `site` is a free-form string for log/metric attribution
     // (e.g., "materialize_call_env", "GCEnvWalkFn").
     bool ensure_env_frame_dual_path_consistent(EnvId id, const char* site) noexcept;
+    // Issue #2116: dual-path desync policy (Hard default / Soft compat).
+    // Hard: materialize returns empty Env; GCEnvWalkFn skips frame roots.
+    // Soft: legacy continue (metric dual_path_desync_soft_continue_total).
+    // Process-wide mode: 0=Hard (default), 1=Soft.
+    // inject_envframe_dual_path_desync_for_test corrupts bindings_ length
+    // so ensure_dual_path_consistent returns false (AC1 inject).
+    static void set_envframe_dual_path_desync_mode(int mode) noexcept;
+    [[nodiscard]] static int get_envframe_dual_path_desync_mode() noexcept;
+    [[nodiscard]] static bool envframe_dual_path_desync_is_hard() noexcept;
+    static void reset_envframe_dual_path_desync_mode_for_test() noexcept;
+    void inject_envframe_dual_path_desync_for_test(EnvId id) noexcept;
     // Issue #1638: mutation_log compact at boundary exit success path.
     // Delegates to FlatAST::compact_mutation_log() (shrink_to_fit on
     // mutation_log_) and bumps mutation_log_compact_bytes_saved by

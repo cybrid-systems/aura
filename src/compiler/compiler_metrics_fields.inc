@@ -1627,6 +1627,10 @@ AURA_COMPILER_METRICS_FIELD(mutation_boundary_steal_safe_total)
 AURA_COMPILER_METRICS_FIELD(dual_path_stale_fallback_total)
 AURA_COMPILER_METRICS_FIELD(mutation_log_compact_bytes_saved)
 AURA_COMPILER_METRICS_FIELD(env_frame_version_drift_prevented)
+// Issue #2116: dual-path desync hard-fail policy.
+AURA_COMPILER_METRICS_FIELD(dual_path_desync_hard_fail_total)
+AURA_COMPILER_METRICS_FIELD(dual_path_desync_soft_continue_total)
+AURA_COMPILER_METRICS_FIELD(dual_path_desync_gc_walk_skipped_total)
 // Issue #1639: per-block dirty → partial re-lower observability.
 AURA_COMPILER_METRICS_FIELD(full_relower_count)
 AURA_COMPILER_METRICS_FIELD(dirty_block_ratio_numerator_total)

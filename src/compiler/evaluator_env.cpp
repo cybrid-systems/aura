@@ -16,6 +16,13 @@ import aura.compiler.value;
 
 namespace aura::compiler {
 
+// Issue #2116: process-wide dual-path desync policy.
+// 0 = Hard (production default): never continue with half-consistent frame.
+// 1 = Soft (compat/debug): legacy materialize + GC walk continue.
+namespace {
+    std::atomic<int> g_envframe_dual_path_desync_mode{0};
+} // namespace
+
 using types::EvalValue;
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
@@ -73,6 +80,34 @@ using types::make_primitive;
 using types::make_string;
 using types::make_vector;
 using types::make_void;
+
+// Issue #2116: dual-path desync policy helpers.
+void Evaluator::set_envframe_dual_path_desync_mode(int mode) noexcept {
+    g_envframe_dual_path_desync_mode.store(mode == 1 ? 1 : 0, std::memory_order_relaxed);
+}
+
+int Evaluator::get_envframe_dual_path_desync_mode() noexcept {
+    return g_envframe_dual_path_desync_mode.load(std::memory_order_relaxed);
+}
+
+bool Evaluator::envframe_dual_path_desync_is_hard() noexcept {
+    return get_envframe_dual_path_desync_mode() == 0;
+}
+
+void Evaluator::reset_envframe_dual_path_desync_mode_for_test() noexcept {
+    g_envframe_dual_path_desync_mode.store(0, std::memory_order_relaxed);
+}
+
+void Evaluator::inject_envframe_dual_path_desync_for_test(EnvId id) noexcept {
+    if (id == NULL_ENV_ID)
+        return;
+    std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+    if (id >= env_frames_.size())
+        return;
+    // Length desync: push only on string path (bindings_ longer than
+    // bindings_symid_) so ensure_dual_path_consistent() fails.
+    env_frames_[id].bindings_.emplace_back("__desync_inject__", make_int(0));
+}
 
 // Depth guard: protects Env::lookup against cyclic parent chains
 // (thread_local since lookup can be called from multiple fibers).
@@ -1034,8 +1069,29 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             m->linear_postmutate_env_version_sync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #418: dual-path consistency probe on materialize.
-    ensure_envframe_dual_path_consistency(fr);
+    // Issue #418 / #2116: dual-path consistency probe on materialize.
+    // Hard (default): desync → empty Env + dual_path_desync_hard_fail_total;
+    // never copy half-consistent bindings. Soft: legacy continue + soft metric.
+    bump_envframe_mandatory_enforce();
+    const bool dual_ok = ensure_envframe_dual_path_consistency(fr);
+    if (!dual_ok) {
+        bump_envframe_mandatory_enforce_desync();
+        if (envframe_dual_path_desync_is_hard()) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->dual_path_desync_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            bump_envframe_desync_panic();
+            bump_dangling_env("materialize-dual-desync");
+            ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+            wire_global_access(ne);
+            // Do NOT copy fr.bindings_ / bindings_symid_ — frame is desynced.
+            return ne;
+        }
+        // Soft mode: continue materializing (legacy) with distinct metric.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->dual_path_desync_soft_continue_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #1269 / #1754 / #1999: enforce dual-path + version stamp on every
     // materialize path — refresh only when the frame exists and is
     // version-stale (not NULL/OOB — those have no bindings to refresh).
@@ -2209,16 +2265,35 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
             refresh_stale_frame_in_walk(cur, "walk_env_frame_roots");
             continue;
         }
-        // Issue #1903: dual-path consistency check (length parity +
+        // Issue #1903 / #2116: dual-path consistency check (length parity +
         // linear-ownership SoA + content when pool_ set). Routes through
         // the canonical EnvFrame helper which bumps the dedicated
         // observability counters via the frame's owner_ back-pointer.
-        // The legacy size-only bump below is kept as a fast-path signal
-        // for callers that only check this single counter.
+        // Hard mode (default): skip roots from desynced frames — never
+        // silent walk half-consistent bindings (AC2). Soft: legacy walk.
+        bool dual_ok = true;
         if (fr.owner())
-            (void)const_cast<EnvFrame&>(fr).ensure_dual_path_consistent();
-        else if (fr.bindings_.size() != fr.bindings_symid_.size())
+            dual_ok = const_cast<EnvFrame&>(fr).ensure_dual_path_consistent();
+        else if (fr.bindings_.size() != fr.bindings_symid_.size()) {
+            dual_ok = false;
             bump_envframe_desync_detected();
+        }
+        if (!dual_ok) {
+            bump_envframe_gc_stale_desync_hit();
+            if (envframe_dual_path_desync_is_hard()) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->dual_path_desync_gc_walk_skipped_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    m->dual_path_desync_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                bump_envframe_gc_walk_safe_skips();
+                continue; // AC2: no silent walk of desynced frame
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->dual_path_desync_soft_continue_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Soft: fall through to walk roots (legacy).
+        }
         // Issue #1903: prefer bindings_symid_ for GC root discovery
         // (the SymId-keyed array is the canonical primary store per
         // the Phase 2.3 migration; bindings_ is the legacy secondary).
