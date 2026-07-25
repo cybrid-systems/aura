@@ -4184,6 +4184,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> let_poly_instantiate_provenance_total{0};
     std::atomic<std::uint64_t> adt_guardshape_selective_renarrow_total{0};
     std::atomic<std::uint64_t> cross_delta_solve_continuity_hits_total{0};
+    // Issue #2107: structured TIMEOUT / unresolved export for Agent repair.
+    //   - solve_delta_unresolved_export_total: solves that exported non-empty unresolved
+    //   - solve_delta_unresolved_constraints_total: sum of exported constraint count
+    //   - solve_delta_timeout_unresolved_total: TIMEOUT outcomes via occurrence API
+    //   - solve_delta_unresolved_last_count / unscanned_last / truncated_reverify_last
+    //   - solve_delta_unresolved_affected_{0..3}: sample affected_node ids
+    std::atomic<std::uint64_t> solve_delta_unresolved_export_total{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_constraints_total{0};
+    std::atomic<std::uint64_t> solve_delta_timeout_unresolved_total{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_last_count{0};
+    std::atomic<std::uint64_t> solve_delta_unscanned_last{0};
+    std::atomic<std::uint64_t> solve_delta_truncated_reverify_last{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_affected_sample_len{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_affected_0{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_affected_1{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_affected_2{0};
+    std::atomic<std::uint64_t> solve_delta_unresolved_affected_3{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

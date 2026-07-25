@@ -1445,6 +1445,35 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         });
     }
 
+    // Issue #2107: synthetic TIMEOUT for Agent self-repair tests —
+    // export the built worklist as unresolved without processing.
+    if (force_next_delta_timeout_) {
+        force_next_delta_timeout_ = false;
+        if (unresolved_out) {
+            for (auto idx : worklist) {
+                if (idx < constraints_.size())
+                    unresolved_out->push_back(constraints_[idx]);
+            }
+        }
+        // Documented cap path: if worklist empty, report remaining dirty
+        // as unscanned so Agents still get a machine-readable expand set.
+        if (worklist.empty() && dirty_count_ > 0) {
+            last_reverify_truncated_ = true;
+            last_reverify_unscanned_ = dirty_count_;
+            last_blame_chain_.truncated_reverify = true;
+            last_blame_chain_.unscanned_constraint_count = dirty_count_;
+            last_blame_chain_.partial = true;
+            if (unresolved_out) {
+                for (std::size_t i = 0; i < constraints_.size(); ++i) {
+                    if (i < constraint_dirty_.size() && constraint_dirty_[i])
+                        unresolved_out->push_back(constraints_[i]);
+                }
+            }
+        }
+        clear_touched_roots();
+        return SolveResult::TIMEOUT;
+    }
+
     // Process the delta worklist. Same pass-limit heuristic as
     // solve() — the delta set is small, so 10 passes is enough
     // for fixpoint in practice. If a delta is large enough to
@@ -1538,6 +1567,10 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #2107: include the failing constraint for Agent
+                // diagnostics (AC3 — CONFLICT still returns conflict).
+                if (unresolved_out)
+                    unresolved_out->push_back(c);
                 record_cross_delta_blame_hit();
                 if (!touched_roots_.empty() && on_cross_delta_conflict_)
                     on_cross_delta_conflict_();
@@ -8267,17 +8300,72 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
             cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
     }
     SolveDeltaOccurrenceResult r;
-    r.status = cs.solve_delta(unresolved_out);
+    // Issue #2107: always collect unresolved into the result so Agents
+    // get a structured list even when the caller passes nullptr.
+    // Mirror into unresolved_out when provided (no double-own — copy).
+    r.status = cs.solve_delta(&r.unresolved);
+    if (unresolved_out)
+        *unresolved_out = r.unresolved;
     r.occurrence_priority_roots = cs.occurrence_priority_roots_size();
     r.let_poly_roots = cs.let_poly_dirty_roots_size();
     r.touched_roots = cs.touched_roots_size();
     r.provenance_continuity = cs.last_blame_chain().is_complete() ||
                               cs.last_blame_chain().complete || cs.retained_mutation_id() != 0 ||
                               cs.active_mutation_id() != 0;
+    // Issue #2107: reverify truncation / unscanned expand-next set.
+    const auto& blame = cs.last_blame_chain();
+    r.truncated_reverify = blame.truncated_reverify || cs.last_reverify_truncated();
+    r.unscanned_constraint_count = blame.unscanned_constraint_count != 0
+                                       ? blame.unscanned_constraint_count
+                                       : cs.last_reverify_unscanned();
+    // Unique affected_node sample for Agent repair loops (AC5).
+    {
+        std::unordered_set<std::uint32_t> seen;
+        auto push_node = [&](std::uint32_t n) {
+            if (n == 0 || !seen.insert(n).second)
+                return;
+            r.unresolved_affected_nodes.push_back(n);
+        };
+        for (const auto& c : r.unresolved)
+            push_node(c.affected_node);
+        for (const auto& f : blame.frames)
+            push_node(f.affected_node);
+        // Cap sample so query ring stays small.
+        constexpr std::size_t kAffectedSampleCap = 16;
+        if (r.unresolved_affected_nodes.size() > kAffectedSampleCap)
+            r.unresolved_affected_nodes.resize(kAffectedSampleCap);
+    }
     if (m) {
         m->solve_delta_occurrence_total.fetch_add(1, std::memory_order_relaxed);
         if (r.provenance_continuity)
             m->solve_delta_occurrence_stable_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2107: Agent-visible unresolved export counters.
+        m->solve_delta_unresolved_last_count.store(r.unresolved.size(), std::memory_order_relaxed);
+        m->solve_delta_unscanned_last.store(r.unscanned_constraint_count,
+                                            std::memory_order_relaxed);
+        m->solve_delta_truncated_reverify_last.store(r.truncated_reverify ? 1 : 0,
+                                                     std::memory_order_relaxed);
+        m->solve_delta_unresolved_affected_sample_len.store(r.unresolved_affected_nodes.size(),
+                                                            std::memory_order_relaxed);
+        // Pack first 4 affected node ids into fixed atomics for query.
+        const std::uint32_t samples[4] = {
+            r.unresolved_affected_nodes.size() > 0 ? r.unresolved_affected_nodes[0] : 0u,
+            r.unresolved_affected_nodes.size() > 1 ? r.unresolved_affected_nodes[1] : 0u,
+            r.unresolved_affected_nodes.size() > 2 ? r.unresolved_affected_nodes[2] : 0u,
+            r.unresolved_affected_nodes.size() > 3 ? r.unresolved_affected_nodes[3] : 0u,
+        };
+        m->solve_delta_unresolved_affected_0.store(samples[0], std::memory_order_relaxed);
+        m->solve_delta_unresolved_affected_1.store(samples[1], std::memory_order_relaxed);
+        m->solve_delta_unresolved_affected_2.store(samples[2], std::memory_order_relaxed);
+        m->solve_delta_unresolved_affected_3.store(samples[3], std::memory_order_relaxed);
+        if (!r.unresolved.empty()) {
+            m->solve_delta_unresolved_export_total.fetch_add(1, std::memory_order_relaxed);
+            m->solve_delta_unresolved_constraints_total.fetch_add(r.unresolved.size(),
+                                                                  std::memory_order_relaxed);
+        }
+        if (r.status == SolveResult::TIMEOUT) {
+            m->solve_delta_timeout_unresolved_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     return r;
 }

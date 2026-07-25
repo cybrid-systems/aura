@@ -2100,6 +2100,11 @@ aura_add_issue_test(test_cascade_skip_metrics_2106)
 aura_issue_test_link_llvm_jit(test_cascade_skip_metrics_2106)
 add_dependencies(all_test_issue_targets test_cascade_skip_metrics_2106)
 
+# Issue #2107: structured TIMEOUT / unresolved export on solve_delta_occurrence.
+aura_add_issue_test(test_solve_delta_unresolved_export_2107)
+aura_issue_test_link_llvm_jit(test_solve_delta_unresolved_export_2107)
+add_dependencies(all_test_issue_targets test_solve_delta_unresolved_export_2107)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

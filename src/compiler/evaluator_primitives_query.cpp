@@ -5593,6 +5593,64 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("adt-guardshape-renarrow-wired", 1);
             insert_kv("schema-2028", 2028);
             insert_kv("issue-2028", 2028);
+            // Issue #2107: structured TIMEOUT / unresolved export for Agents
+            {
+                const std::int64_t unr_export =
+                    m ? static_cast<std::int64_t>(
+                            m->solve_delta_unresolved_export_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t unr_cons =
+                    m ? static_cast<std::int64_t>(m->solve_delta_unresolved_constraints_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t to_unr =
+                    m ? static_cast<std::int64_t>(
+                            m->solve_delta_timeout_unresolved_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t last_n =
+                    m ? static_cast<std::int64_t>(
+                            m->solve_delta_unresolved_last_count.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t last_unscanned =
+                    m ? static_cast<std::int64_t>(
+                            m->solve_delta_unscanned_last.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t last_trunc =
+                    m ? static_cast<std::int64_t>(
+                            m->solve_delta_truncated_reverify_last.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t sample_len =
+                    m ? static_cast<std::int64_t>(
+                            m->solve_delta_unresolved_affected_sample_len.load(
+                                std::memory_order_relaxed))
+                      : 0;
+                insert_kv("solve-delta-unresolved-export-total", unr_export);
+                insert_kv("solve-delta-unresolved-constraints-total", unr_cons);
+                insert_kv("solve-delta-timeout-unresolved-total", to_unr);
+                insert_kv("solve-delta-unresolved-last-count", last_n);
+                insert_kv("solve-delta-unscanned-last", last_unscanned);
+                insert_kv("solve-delta-truncated-reverify-last", last_trunc);
+                insert_kv("solve-delta-unresolved-affected-sample-len", sample_len);
+                insert_kv("solve-delta-unresolved-affected-0",
+                          m ? static_cast<std::int64_t>(m->solve_delta_unresolved_affected_0.load(
+                                  std::memory_order_relaxed))
+                            : 0);
+                insert_kv("solve-delta-unresolved-affected-1",
+                          m ? static_cast<std::int64_t>(m->solve_delta_unresolved_affected_1.load(
+                                  std::memory_order_relaxed))
+                            : 0);
+                insert_kv("solve-delta-unresolved-affected-2",
+                          m ? static_cast<std::int64_t>(m->solve_delta_unresolved_affected_2.load(
+                                  std::memory_order_relaxed))
+                            : 0);
+                insert_kv("solve-delta-unresolved-affected-3",
+                          m ? static_cast<std::int64_t>(m->solve_delta_unresolved_affected_3.load(
+                                  std::memory_order_relaxed))
+                            : 0);
+                insert_kv("solve-delta-unresolved-export-wired", 1);
+                insert_kv("schema-2107", 2107);
+                insert_kv("issue-2107", 2107);
+            }
             // Issue #2030: agent blame completeness + occurrence post-mutate hit rate
             {
                 const std::uint64_t blame_c =
