@@ -505,6 +505,24 @@ void run_serve_async(int num_workers) {
         svc->evaluator().walk_env_frame_roots(out.pair_roots, out.closure_roots);
     });
 
+    // Issue #2084: register a size-provider callback so the GC can size
+    // its MarkBitVectors to the actual current heap extent (string_heap_,
+    // pairs_, closures_), not just max root index + 1. Without this,
+    // high-water dead slots above any live root never enter the mark
+    // vector and the live_mask walk silently under-covers the heap.
+    // Same lookup pattern as the env-walk callback above (active service
+    // via g_current_compiler_service); returns (0,0,0) when no active
+    // service to preserve the pre-#2084 root-derived sizing fallback.
+    sched.gc_collector()->register_size_fn(
+        []() -> std::tuple<std::size_t, std::size_t, std::size_t> {
+            auto* svc = static_cast<aura::compiler::CompilerService*>(
+                aura::messaging::g_current_compiler_service);
+            if (!svc)
+                return {0, 0, 0};
+            const auto& ev = svc->evaluator();
+            return {ev.string_heap_size(), ev.pairs_size(), ev.closures_size()};
+        });
+
     // 3. Shared state between stdin_reader and session fibers
     std::deque<std::string> stdin_lines; // complete JSON lines from stdin
     bool stdin_eof = false;

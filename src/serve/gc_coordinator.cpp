@@ -145,9 +145,25 @@ bool GCCollector::collect() {
 
         // ── Phase 3: Mark from roots ──────────────────────
         auto mark_start = std::chrono::steady_clock::now();
-        // Size hints: default to root count estimate.
-        // In full integration, evaluator provides actual heap sizes.
-        mark_from_roots(roots, 0, 0, 0);
+        // Issue #2084: inject real heap sizes from the evaluator so the
+        // MarkBitVectors cover the full current heap extent. Without
+        // this, mark_from_roots only resizes to max root index + 1 and
+        // high-water dead slots above any live root never enter the
+        // MarkBitVector — silently under-covering the heap under
+        // long-running mutate+GC loops (production review gap G-mark-size).
+        std::size_t s_size = 0, p_size = 0, c_size = 0;
+        if (size_fn_) {
+            const auto sp = size_fn_();
+            s_size = std::get<0>(sp);
+            p_size = std::get<1>(sp);
+            c_size = std::get<2>(sp);
+            if (s_size > 0 || p_size > 0 || c_size > 0) {
+                metrics_.mark_size_injected_total.fetch_add(1, std::memory_order_relaxed);
+                metrics_.mark_size_injected_heaps_total.fetch_add(
+                    static_cast<int64_t>(s_size + p_size + c_size), std::memory_order_relaxed);
+            }
+        }
+        mark_from_roots(roots, s_size, p_size, c_size);
         auto mark_end = std::chrono::steady_clock::now();
         auto mark_us =
             std::chrono::duration_cast<std::chrono::microseconds>(mark_end - mark_start).count();

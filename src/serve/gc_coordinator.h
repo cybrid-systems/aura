@@ -181,6 +181,21 @@ public:
     // is the 3-5x mark-phase speedup from #172.
     void register_env_walk_fn(GCEnvWalkFn fn) { env_walk_fn_ = std::move(fn); }
 
+    // Issue #2084: size-provider callback (caller-side). The
+    // evaluator publishes its current (string_heap_size,
+    // pairs_size, closures_size) so mark_from_roots can size
+    // the MarkBitVectors correctly. Without real sizes,
+    // mark_from_roots falls back to max-root-index + 1 and
+    // high-water dead slots above any live root index never
+    // enter the MarkBitVector — silently under-covering the
+    // heap under long-running mutate+GC loops.
+    //
+    // The callback is invoked between collect_roots and
+    // mark_from_roots. Returning (0, 0, 0) preserves the
+    // pre-#2084 root-derived sizing fallback.
+    using GCSizeFn = std::function<std::tuple<std::size_t, std::size_t, std::size_t>()>;
+    void register_size_fn(GCSizeFn fn) { size_fn_ = std::move(fn); }
+
     // ── Mark + Sweep (Phase 3) ──────────────────────
     void mark_from_roots(const GCRootSet& roots, size_t string_heap_size, size_t pairs_size,
                          size_t closures_size);
@@ -231,6 +246,14 @@ public:
         std::atomic<int64_t> strings_freed{0}; // entries removed
         std::atomic<int64_t> pairs_freed{0};
         std::atomic<int64_t> closures_freed{0};
+        // Issue #2084: cycle count where mark_from_roots was called with
+        // non-zero heap sizes (i.e. size provider was registered and
+        // returned > 0). 0 = call still uses root-derived fallback.
+        std::atomic<int64_t> mark_size_injected_total{0};
+        // Issue #2084: cumulative heap-size bytes covered by injected
+        // sizes (sum of string + pair + closures across cycles that
+        // successfully injected). Dashboard visibility.
+        std::atomic<int64_t> mark_size_injected_heaps_total{0};
         // Issue #1256: fiber-side safepoint wait latency while MutationBoundary held.
         std::atomic<int64_t> eventfd_wakeup_latency_us{0};
         std::atomic<int64_t> safepoint_wait_while_mutation_held{0};
@@ -253,6 +276,12 @@ private:
     // evaluator walks env_frames_ and produces pair/closure
     // index lists. Called between mark_from_roots and sweep.
     GCEnvWalkFn env_walk_fn_;
+
+    // Issue #2084: size-provider callback (caller-side).
+    // Returns (string_heap_size, pairs_size, closures_size)
+    // so mark_from_roots can size the MarkBitVectors to the
+    // actual current heap extent (not just max root index).
+    GCSizeFn size_fn_;
 
     // Mark state (Phase 3)
     MarkBitVector string_marks_;

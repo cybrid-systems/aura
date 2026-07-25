@@ -5978,6 +5978,10 @@ public:
     // Issue #2001: public pairs_ size getter (companion to string_heap_size)
     // for tests + observability. Live pair count post-compact.
     [[nodiscard]] std::size_t pairs_size() const noexcept { return pairs_.size(); }
+    // Issue #2084: public closures_ size getter (companion to pairs_size)
+    // so the GC size-provider callback can size the closure MarkBitVector
+    // to the actual current closure count rather than the max root index.
+    [[nodiscard]] std::size_t closures_size() const noexcept { return closures_.size(); }
     std::int32_t push_string_heap(const std::string& s) {
         const auto idx = static_cast<std::int32_t>(string_heap_.size());
         string_heap_.push_back(s);
