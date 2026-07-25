@@ -5210,6 +5210,8 @@ public:
     void grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0) noexcept;
+    // Issue #2055: revoke with WorkspaceEpoch Mutation stamp for audit.
+    void revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept;
     void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict
     [[nodiscard]] std::uint8_t effect_sandbox_mode() const noexcept;
     // Issue #2076: production default Restricted sandbox + env override.
@@ -5223,6 +5225,35 @@ public:
     // Issue #1566: WorkspaceIsolationPolicy enforcement.
     void set_tenant_principal(std::uint64_t tenant_id, std::string_view name = {},
                               bool allow_cross = false) noexcept;
+    // Issue #2055: RAII principal snapshot for fiber entry / multi-tenant
+    // long-running work. Restores previous capability_tenant_id_ on exit so
+    // a stolen fiber cannot silently inherit another tenant's principal.
+    class TenantScope {
+    public:
+        TenantScope(Evaluator& ev, std::uint64_t tenant_id, std::string_view name = {},
+                    bool allow_cross = false) noexcept;
+        ~TenantScope() noexcept;
+        TenantScope(const TenantScope&) = delete;
+        TenantScope& operator=(const TenantScope&) = delete;
+        TenantScope(TenantScope&& o) noexcept
+            : ev_(o.ev_)
+            , prev_tenant_(o.prev_tenant_)
+            , fiber_id_(o.fiber_id_)
+            , active_(o.active_) {
+            o.active_ = false;
+            o.ev_ = nullptr;
+        }
+        TenantScope& operator=(TenantScope&&) = delete;
+        void release() noexcept;
+        [[nodiscard]] std::uint32_t fiber_id() const noexcept { return fiber_id_; }
+        [[nodiscard]] std::uint64_t previous_tenant() const noexcept { return prev_tenant_; }
+
+    private:
+        Evaluator* ev_ = nullptr;
+        std::uint64_t prev_tenant_ = 0;
+        std::uint32_t fiber_id_ = 0;
+        bool active_ = false;
+    };
     void grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
                                    std::uint16_t effect_bits) noexcept;
     // Returns true if allowed. target_tenant=0 → use capability_tenant_id_.

@@ -2023,6 +2023,11 @@ aura_add_issue_test(test_security_audit_unify_2054)
 aura_issue_test_link_llvm_jit(test_security_audit_unify_2054)
 add_dependencies(all_test_issue_targets test_security_audit_unify_2054)
 
+# Issue #2055: grant/revoke bound to WorkspaceEpoch Mutation + fiber.
+aura_add_issue_test(test_grant_epoch_fiber_bind_2055)
+aura_issue_test_link_llvm_jit(test_grant_epoch_fiber_bind_2055)
+add_dependencies(all_test_issue_targets test_grant_epoch_fiber_bind_2055)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

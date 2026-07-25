@@ -2,6 +2,7 @@
 
 module;
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 
@@ -93,12 +94,15 @@ void Evaluator::grant_capability(std::string cap) {
             return;
     }
     granted_capabilities_.push_back(std::move(cap));
-    // #1565: mirror named grant into effect matrix for current tenant.
+    // #1565 / #2055: mirror named grant into effect matrix for current tenant.
+    // Stamp WorkspaceEpoch Mutation + fiber (not Bridge) so grant_epoch matches
+    // the mutation epoch at grant time and long-running blame stays consistent.
     using namespace ::aura::core::capability;
     const auto eff = effect_for_cap_name(granted_capabilities_.back());
     if (eff != Effect::None) {
-        EffectProvenance prov;
-        prov.epoch = current_bridge_epoch();
+        const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+        const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+        auto prov = make_grant_provenance(/*mutation_id=*/0, force_bind, /*node_id=*/0, fiber);
         g_capability_registry().grant(capability_tenant_id_, granted_capabilities_.back(), eff,
                                       prov);
     }
@@ -343,23 +347,31 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
                                         std::uint16_t effect_bits,
                                         std::uint64_t provenance_mutation_id) noexcept {
     using namespace ::aura::core::capability;
-    EffectProvenance prov;
-    // Issue #2074: anti privilege-sticky — bind prov.mutation_id to the
-    // current mutation epoch when sandbox != Off AND caller didn't pass
-    // an explicit one. Without this, a grant issued at mutation epoch
-    // 0 stays valid forever (capability_model.hh grant() then stamps
-    // grant_epoch=0) — long-running AI self-mod windows accumulate
-    // sticky privileges. The provenance_ok() check (capability_model.hh)
-    // denies grants whose grant_epoch < registry's min_valid_epoch.
-    prov.mutation_id = (provenance_mutation_id != 0 || sandbox_mode_ == 0)
-                           ? provenance_mutation_id
-                           : aura::core::current_mutation_epoch();
-    prov.epoch = current_bridge_epoch();
-    prov.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #2074 / #2055: anti privilege-sticky + WorkspaceEpoch Mutation bind.
+    // force_mutation_bind when sandbox active (Restricted/Strict or evaluator
+    // sandbox_mode_). Always stamps non-zero grant_epoch + fiber_id.
+    const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
     g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov);
     // Also string-grant for legacy has_capability path.
     if (!name.empty())
         grant_capability(std::string(name));
+}
+
+// Issue #2055: revoke with WorkspaceEpoch Mutation stamp for audit trail.
+void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept {
+    using namespace ::aura::core::capability;
+    auto ep = aura::core::current_mutation_epoch();
+    if (ep == 0)
+        ep = 1;
+    g_capability_registry().revoke(tenant_id, name, ep);
+    // Drop matching string grant so has_capability stays consistent.
+    if (!name.empty()) {
+        granted_capabilities_.erase(std::remove(granted_capabilities_.begin(),
+                                                granted_capabilities_.end(), std::string(name)),
+                                    granted_capabilities_.end());
+    }
 }
 
 void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
@@ -456,6 +468,31 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view n
     using namespace ::aura::core::workspace_isolation;
     capability_tenant_id_ = tenant_id;
     g_workspace_isolation().set_current_tenant(tenant_id, name, allow_cross);
+}
+
+// Issue #2055: RAII TenantScope — snapshot principal at fiber entry so a
+// stolen / resumed fiber cannot silently keep another tenant's principal.
+Evaluator::TenantScope::TenantScope(Evaluator& ev, std::uint64_t tenant_id, std::string_view name,
+                                    bool allow_cross) noexcept
+    : ev_(&ev)
+    , prev_tenant_(ev.capability_tenant_id())
+    , fiber_id_(static_cast<std::uint32_t>(aura_fiber_current_id()))
+    , active_(true) {
+    ev.set_tenant_principal(tenant_id, name, allow_cross);
+}
+
+Evaluator::TenantScope::~TenantScope() noexcept {
+    release();
+}
+
+void Evaluator::TenantScope::release() noexcept {
+    if (!active_ || !ev_)
+        return;
+    // Restore prior principal (name empty → keep id only).
+    ev_->set_capability_tenant_id(prev_tenant_);
+    using namespace ::aura::core::workspace_isolation;
+    g_workspace_isolation().set_current_tenant(prev_tenant_, {}, false);
+    active_ = false;
 }
 
 void Evaluator::grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
