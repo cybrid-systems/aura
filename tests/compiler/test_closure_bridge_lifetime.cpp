@@ -460,6 +460,63 @@ static void ac13_concurrent_pin_compact_stress() {
 
 } // namespace
 
+// AC14: Issue #2085 — validate() bumps gen_mismatch_total on gen or
+//       arena_id mismatch (ptr-null does NOT bump; it's not a mismatch,
+//       it's a previously-invalidated pin).
+static void ac14_gen_mismatch_total() {
+    std::println("\n--- AC14: #2085 gen_mismatch_total ---");
+    const auto mismatch_before = g_lifetime_pin_stats.gen_mismatch_total;
+
+    LifetimePin lp;
+    int buf = 0;
+    lp.pin(&buf, 5, 7);
+    // Same gen, same arena → match
+    CHECK(lp.validate(5, 7), "validate(gen=5, arena=7) true");
+    CHECK(g_lifetime_pin_stats.gen_mismatch_total == mismatch_before,
+          "match does NOT bump counter");
+
+    // Gen mismatch
+    CHECK(!lp.validate(6, 7), "validate(gen=6, arena=7) false (gen drift)");
+    CHECK(g_lifetime_pin_stats.gen_mismatch_total == mismatch_before + 1,
+          "gen drift bumps gen_mismatch_total");
+
+    // Arena mismatch (both non-zero, differ)
+    CHECK(!lp.validate(5, 8), "validate(gen=5, arena=8) false (arena drift)");
+    CHECK(g_lifetime_pin_stats.gen_mismatch_total == mismatch_before + 2,
+          "arena drift bumps gen_mismatch_total");
+
+    // ptr-null does NOT bump (already invalidated, not a mismatch)
+    lp.unpin_on_compact();
+    const auto mismatch_pre_unpin = g_lifetime_pin_stats.gen_mismatch_total;
+    CHECK(!lp.validate(5, 7), "validate after unpin: false");
+    CHECK(g_lifetime_pin_stats.gen_mismatch_total == mismatch_pre_unpin,
+          "ptr-null validate does NOT bump mismatch counter");
+}
+
+// AC15: Issue #2085 — boundary dtor restamp_all_pins_for_arena passes
+//       the current arena generation (not the keep-current `0` sentinel).
+//       Source-cite + verify lifetime_pin_restamps_total advances on
+//       boundary exit under ffi:pin-buffer wiring.
+static void ac15_boundary_restamp_uses_actual_gen() {
+    std::println("\n--- AC15: #2085 boundary dtor uses actual arena gen ---");
+    // Source cite: the boundary dtor must NOT pass `0` as new_gen.
+    std::ifstream mut_b("src/compiler/evaluator_mutation_boundary.cpp");
+    std::string mb_contents((std::istreambuf_iterator<char>(mut_b)),
+                            std::istreambuf_iterator<char>());
+    CHECK(mb_contents.find("restamp_all_pins_for_arena(0, 0)") == std::string::npos,
+          "boundary no longer passes 0 sentinel (must pass live gen)");
+    CHECK(mb_contents.find("boundary_gen") != std::string::npos,
+          "boundary_gen local variable present");
+
+    // Source cite: validate() bumps gen_mismatch_total.
+    std::ifstream lpi("src/core/lifetime_pin.ixx");
+    std::string lpi_contents((std::istreambuf_iterator<char>(lpi)),
+                             std::istreambuf_iterator<char>());
+    CHECK(lpi_contents.find("gen_mismatch_total") != std::string::npos,
+          "lifetime_pin.ixx exposes gen_mismatch_total");
+    CHECK(lpi_contents.find("++g_lifetime_pin_stats.gen_mismatch_total") != std::string::npos,
+          "validate() bumps gen_mismatch_total on mismatch");
+}
 int main() {
     std::println("=== Issue #1929: Closure Bridge lifetime safety (+ #2000 phase 2) ===");
     ac1_source();
@@ -475,6 +532,8 @@ int main() {
     ac11_unpin_on_compact_and_bulk();
     ac12_query_lifetime_pin_stats_primitive();
     ac13_concurrent_pin_compact_stress();
+    ac14_gen_mismatch_total();
+    ac15_boundary_restamp_uses_actual_gen();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
