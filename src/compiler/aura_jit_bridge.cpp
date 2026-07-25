@@ -695,15 +695,60 @@ extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
     return g_aot_table_epoch.load(std::memory_order_acquire);
 }
 
-// Issue #2012: diagnostics / tests — read live fn_ptr without taking the
-// reload lock (atomic load). Returns 0 for out-of-range or empty slots.
+// Issue #2012 / #2046: diagnostics / tests — read live fn_ptr.
+// Returns 0 for out-of-range, empty, or generation-behind slots.
+// After soft/hard invalidate, aura_aot_bump_func_table_epoch advances
+// the table epoch without restamping slots; probes must reject those
+// entries so mixed JIT+AOT never executes stale AOT code.
 extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
     if (func_id < 0)
         return 0;
     const auto idx = static_cast<unsigned>(func_id);
     if (idx >= kMaxAotFuncs)
         return 0;
+    auto& slot = g_aot_func_slots[idx];
+    const auto ptr = slot.fn_ptr.load(std::memory_order_acquire);
+    if (ptr == 0)
+        return 0;
+    // Issue #2046: joint region identity — slot generation must match
+    // current table epoch (same domain JIT capture_fn_epoch uses).
+    const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
+    const auto gen = slot.table_generation.load(std::memory_order_acquire);
+    if (gen != cur) {
+        if (aot_metrics()) {
+            aot_metrics()->aot_slot_stale_reject_total.fetch_add(1, std::memory_order_relaxed);
+            aot_metrics()->aot_forced_recompile_on_mismatch_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    return ptr;
+}
+
+// Issue #2046: raw probe that ignores generation (tests / recovery only).
+extern "C" std::uintptr_t aura_aot_probe_fn_ptr_raw(std::int64_t func_id) {
+    if (func_id < 0)
+        return 0;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return 0;
     return g_aot_func_slots[idx].fn_ptr.load(std::memory_order_acquire);
+}
+
+// Issue #2046: 1 when slot is empty/out-of-range/generation-behind.
+extern "C" int aura_aot_slot_is_stale(std::int64_t func_id) {
+    if (func_id < 0)
+        return 1;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return 1;
+    auto& slot = g_aot_func_slots[idx];
+    const auto ptr = slot.fn_ptr.load(std::memory_order_acquire);
+    if (ptr == 0)
+        return 1;
+    const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
+    const auto gen = slot.table_generation.load(std::memory_order_acquire);
+    return gen != cur ? 1 : 0;
 }
 
 extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
@@ -836,8 +881,32 @@ extern "C" std::uint64_t aura_jit_closure_safe_fallbacks(void) {
     return m ? m->jit_closure_safe_fallbacks.load(std::memory_order_relaxed) : 0;
 }
 
+// Issue #2046: joint epoch advance shared by soft/hard invalidate
+// (atomic_bump_epochs_and_stamp_bridge) and AOT reload/reemit.
+// Does NOT restamp slot table_generation — live slots become
+// generation-behind so aura_aot_probe_fn_ptr rejects them until
+// reemit/register. Notifies HotUpdateRegistry epoch listeners so
+// agents/plugins stay aligned with JIT hot-swap.
 extern "C" void aura_aot_bump_func_table_epoch(void) {
-    g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
+    const std::uint64_t new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (auto* m = aot_metrics()) {
+        m->aot_joint_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
+        m->aot_region_version_bump_total.fetch_add(1, std::memory_order_relaxed);
+        // Count non-empty slots now generation-behind (cheap when empty).
+        std::uint64_t stale_slots = 0;
+        for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
+            auto& slot = g_aot_func_slots[i];
+            if (slot.fn_ptr.load(std::memory_order_relaxed) == 0)
+                continue;
+            if (slot.table_generation.load(std::memory_order_relaxed) != new_epoch)
+                ++stale_slots;
+        }
+        if (stale_slots > 0)
+            m->aot_region_stale_mark_total.fetch_add(stale_slots, std::memory_order_relaxed);
+    }
+    // Fan-out: same path as commit_func_table_swap so invalidate and
+    // successful reload share one epoch-listener contract.
+    aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
 }
 
 // Issue #1905: bridge hook for live closure refresh on mutated define.

@@ -61,8 +61,14 @@ std::uint64_t aura_get_module_version(void);
 // old or fully new symbols relative to aura_aot_func_table_epoch().
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
 
-// Issue #2012: probe live func_table slot (0 if empty / out of range).
+// Issue #2012 / #2046: probe live func_table slot.
+// Returns 0 if empty, out of range, OR generation-behind current
+// aura_aot_func_table_epoch() (stale after invalidate / joint epoch bump).
 std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id);
+// Issue #2046: raw pointer (ignores generation; tests / recovery only).
+std::uintptr_t aura_aot_probe_fn_ptr_raw(std::int64_t func_id);
+// Issue #2046: 1 if empty/out-of-range/generation-behind, else 0.
+int aura_aot_slot_is_stale(std::int64_t func_id);
 
 // Issue #1368: AOT metrics pointer lifecycle
 //   aura_set_aot_metrics — explicit host wire-up (overwrites)

@@ -6141,6 +6141,23 @@ struct CompilerMetrics {
     // - aot_hot_update_success_: bumped on successful
     //   dlopen + version check (the constructor ran).
     std::atomic<std::uint64_t> aot_stale_reject_count_{0};
+    // Issue #2046: joint AOT/JIT region versioning after invalidate.
+    //   - aot_joint_epoch_bump_total: aura_aot_bump_func_table_epoch calls
+    //     (soft/hard invalidate + refresh paths)
+    //   - aot_region_version_bump_total: alias samples for region identity
+    //     advance (same domain as table epoch)
+    //   - aot_region_stale_mark_total: non-empty slots left generation-behind
+    //   - aot_slot_stale_reject_total: probe_fn_ptr rejected generation-behind
+    //   - aot_forced_recompile_on_mismatch_total: forced recompile signal
+    //     when probe refuses stale AOT (caller falls back to JIT / reemit)
+    std::atomic<std::uint64_t> aot_joint_epoch_bump_total{0};
+    std::atomic<std::uint64_t> aot_region_version_bump_total{0};
+    std::atomic<std::uint64_t> aot_region_stale_mark_total{0};
+    std::atomic<std::uint64_t> aot_slot_stale_reject_total{0};
+    std::atomic<std::uint64_t> aot_forced_recompile_on_mismatch_total{0};
+    // Issue #2046: cascade path observes joint epoch for root+dependents.
+    std::atomic<std::uint64_t> aot_cascade_joint_epoch_observe_total{0};
+    std::atomic<std::uint64_t> aot_cascade_region_stale_names_total{0};
     std::atomic<std::uint64_t> aot_region_mismatch_{0};
     std::atomic<std::uint64_t> aot_hot_update_success_{0};
 
