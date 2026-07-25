@@ -2083,6 +2083,11 @@ aura_add_issue_test(test_partial_relower_cascade_2041)
 aura_issue_test_link_llvm_jit(test_partial_relower_cascade_2041)
 add_dependencies(all_test_issue_targets test_partial_relower_cascade_2041)
 
+# Issue #2042: comprehensive live IRClosure / tree-walker / PrimCall expire
+aura_add_issue_test(test_comprehensive_live_closure_expire_2042)
+aura_issue_test_link_llvm_jit(test_comprehensive_live_closure_expire_2042)
+add_dependencies(all_test_issue_targets test_comprehensive_live_closure_expire_2042)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

@@ -9637,6 +9637,20 @@ public:
     [[nodiscard]] std::uint64_t public_walk_active_closures_stale_total() const noexcept {
         return metrics_.jit_walk_active_closures_stale_total.load(std::memory_order_relaxed);
     }
+    // Issue #2042: test seam — run comprehensive live-closure expire at
+    // current bridge epoch (same helper as soft/hard invalidate).
+    std::size_t public_expire_stale_live_closures() {
+        return expire_stale_live_closures_(bridge_epoch());
+    }
+    [[nodiscard]] std::uint64_t public_expire_stale_live_closures_total() const noexcept {
+        return metrics_.expire_stale_live_closures_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_expire_stale_ir_closures_total() const noexcept {
+        return metrics_.expire_stale_ir_closures_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_expire_stale_tree_walker_closures_total() const noexcept {
+        return metrics_.expire_stale_tree_walker_closures_total.load(std::memory_order_relaxed);
+    }
 
     // Issue #401: public test hook for invalidate_function. Lets tests
     // drive the BFS traversal directly without going through the Aura
@@ -10196,6 +10210,84 @@ public:
         // Issue #1536: after name-specific batch_deopt, bulk-walk all
         // captured fns so un-named active closures also deopt-on-next-apply.
         notify_walk_active_closures_(bridge_epoch());
+        // Issue #2042: comprehensive expire of live IR / tree-walker /
+        // PrimCall closures so soft mark_define_dirty and hard invalidate
+        // share one path (no missing fiber/JIT/primcall holders).
+        (void)expire_stale_live_closures_(bridge_epoch());
+    }
+
+    // Issue #2042: expire every live IRClosure / tree-walker Closure that
+    // predates cur_epoch, plus bulk-clear PrimCall g_closure_cache.
+    // Atomic w.r.t. apply only when caller holds mutate lock (soft/hard
+    // invalidate paths). Returns total IR + tree-walker expirations.
+    //
+    // Sources covered:
+    //   1. ir_define_env_bindings_ → IRInterpreter::runtime_closures_
+    //   2. Evaluator::closures_ (tree-walker / fiber-held)
+    //   3. PrimCall / JIT inline closure cache (aura_invalidate_all_closure_caches)
+    //   4. AuraJIT walk_active_closures already ran via notify_walk_active_closures_
+    std::size_t expire_stale_live_closures_(std::uint64_t cur_epoch) {
+        metrics_.expire_stale_live_closures_total.fetch_add(1, std::memory_order_relaxed);
+        std::size_t ir_expired = 0;
+        std::size_t tw_expired = 0;
+
+        // ── 1. IR path (all define env bindings; not just the mutated name) ──
+        for (auto& [bname, binding] : ir_define_env_bindings_) {
+            (void)bname;
+            if (!binding || !binding->interpreter)
+                continue;
+            binding->interpreter->walk_runtime_closures([&]([[maybe_unused]] std::uint64_t cid,
+                                                            IRClosure& cl) {
+                // Skip unstamped (legacy) and already-current stamps.
+                if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
+                    return;
+                cl.flat.reset();
+                cl.pool.reset();
+                cl.body_id = aura::ast::NULL_NODE;
+                cl.env_version = 0;
+                ++ir_expired;
+                metrics_.jit_hotswap_forced_deopt_total.fetch_add(1, std::memory_order_relaxed);
+                metrics_.ir_closure_invalidate_expired_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                metrics_.dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+            });
+        }
+        if (ir_expired > 0)
+            metrics_.expire_stale_ir_closures_total.fetch_add(ir_expired,
+                                                              std::memory_order_relaxed);
+
+        // ── 2. Tree-walker / fiber-held Closures ──
+        // Leave bridge_epoch at pre-bump value so is_bridge_stale fires;
+        // null flat/pool so no UAF even if a path skips the epoch check.
+        evaluator_.walk_active_closures([&]([[maybe_unused]] ClosureId id, Closure& cl) {
+            if (cur_epoch == 0)
+                return;
+            if (cl.bridge_epoch != 0 && cl.bridge_epoch == cur_epoch)
+                return; // stamped at new epoch (should not happen mid-invalidate)
+            // Only act when there is still a live view to expire (idempotent
+            // on second call after atomic_bump + hard invalidate).
+            const bool has_view =
+                cl.flat != nullptr || cl.pool != nullptr || cl.body_id != aura::ast::NULL_NODE;
+            if (!has_view)
+                return;
+            cl.flat = nullptr;
+            cl.pool = nullptr;
+            cl.body_id = aura::ast::NULL_NODE;
+            // Keep bridge_epoch as pre-bump (or 0) — do not restamp.
+            ++tw_expired;
+            metrics_.dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+        });
+        if (tw_expired > 0)
+            metrics_.expire_stale_tree_walker_closures_total.fetch_add(tw_expired,
+                                                                       std::memory_order_relaxed);
+
+        // ── 3. PrimCall / JIT hot apply inline cache ──
+        aura_invalidate_all_closure_caches();
+        metrics_.expire_primcall_cache_clear_total.fetch_add(1, std::memory_order_relaxed);
+
+        return ir_expired + tw_expired;
     }
 
     // Issue #1523: mirror process-wide lock_order atomics into CompilerMetrics.

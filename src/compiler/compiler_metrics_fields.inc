@@ -85,6 +85,11 @@ AURA_COMPILER_METRICS_FIELD(envframe_compact_bridge_restamps_total)
 // Issue #2017: compact-env-frames → hot-update epoch notify + cache invalidate.
 AURA_COMPILER_METRICS_FIELD(env_compact_epoch_notify_total)
 AURA_COMPILER_METRICS_FIELD(env_compact_cache_invalidate_total)
+// Issue #2042: comprehensive live-closure expire paths.
+AURA_COMPILER_METRICS_FIELD(expire_stale_live_closures_total)
+AURA_COMPILER_METRICS_FIELD(expire_stale_ir_closures_total)
+AURA_COMPILER_METRICS_FIELD(expire_stale_tree_walker_closures_total)
+AURA_COMPILER_METRICS_FIELD(expire_primcall_cache_clear_total)
 AURA_COMPILER_METRICS_FIELD(bridge_epoch_bump_on_truncate_total)
 AURA_COMPILER_METRICS_FIELD(envframe_truncate_doomed_closures_total)
 AURA_COMPILER_METRICS_FIELD(envframe_invalid_vs_stale_distinguished_total)

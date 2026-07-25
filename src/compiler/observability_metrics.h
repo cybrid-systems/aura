@@ -360,6 +360,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_compact_bridge_restamps_total{0};
     std::atomic<std::uint64_t> env_compact_epoch_notify_total{0};
     std::atomic<std::uint64_t> env_compact_cache_invalidate_total{0};
+    // Issue #2042: comprehensive live-closure expire (IR + tree-walker + PrimCall).
+    //   - expire_stale_live_closures_total: times expire_stale_live_closures_ ran
+    //   - expire_stale_ir_closures_total: IRClosures expired (flat/pool reset)
+    //   - expire_stale_tree_walker_closures_total: Evaluator::Closure expired
+    //   - expire_primcall_cache_clear_total: bulk PrimCall g_closure_cache clears
+    std::atomic<std::uint64_t> expire_stale_live_closures_total{0};
+    std::atomic<std::uint64_t> expire_stale_ir_closures_total{0};
+    std::atomic<std::uint64_t> expire_stale_tree_walker_closures_total{0};
+    std::atomic<std::uint64_t> expire_primcall_cache_clear_total{0};
     // Issue #1889: truncate_env_frames_to_checkpoint dual-epoch observability.
     //   - bridge_epoch_bump_on_truncate_total: # of times truncate advanced
     //     bridge_epoch (must match successful drop path, not no-op)
