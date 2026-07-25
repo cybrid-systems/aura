@@ -28,6 +28,9 @@ module;
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 #include "serve/parallel_orch.h"
+// Issue #2078: header-only AgentNameTable definition (see .h for why
+// not in evaluator.ixx's global fragment).
+#include "compiler/agent_name_table.h"
 #include "orch/orch.h"
 #include <atomic>
 #include <cstdio>
@@ -2749,29 +2752,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     };
     static OrchSchedHolder orch_sched;
 
-    // Issue #1966: name→AgentHandle bookkeeping for MVP orch:spawn-agent /
+    // Issue #1966 / #2078: name→AgentHandle bookkeeping for MVP orch:spawn-agent /
     // orch:agent-join. Formerly aura::orch::AgentRegistry (public deferred
-    // multi-agent surface); demoted to TU-local table so orch/ stays
-    // single-agent MVP only. Not a multi-agent coordination API.
-    struct OrchAgentNameTable {
-        aura::orch::AgentHandle& put(aura::orch::AgentHandle h) {
-            std::lock_guard lock(mu_);
-            auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
-            h.name = name;
-            agents_[name] = std::move(h);
-            return agents_[name];
-        }
-        [[nodiscard]] aura::orch::AgentHandle* find(const std::string& name) {
-            std::lock_guard lock(mu_);
-            auto it = agents_.find(name);
-            return it == agents_.end() ? nullptr : &it->second;
-        }
-        std::mutex mu_;
-        std::unordered_map<std::string, aura::orch::AgentHandle, aura::core::TransparentStringHash,
-                           std::equal_to<>>
-            agents_;
-    };
-    static OrchAgentNameTable orch_agent_names;
+    // multi-agent surface); demoted to TU-local static table for MVP, but
+    // `static` still crossed Evaluator lifetime (#1966). Issue #2078 moves
+    // storage to Evaluator::agent_names_ (per-Evaluator, see
+    // src/compiler/agent_name_table.h) so two CompilerService instances can
+    // use the same agent name without cross-talk. Drained at ~Evaluator
+    // via Evaluator::cleanup_orch_agents(). Not a multi-agent coordination
+    // API — check_orch_mvp_scope.py --strict still guards the public surface.
 
     add("orch:spawn-agent",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
@@ -2840,7 +2829,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const std::string out_name = handle.name.empty() ? name : handle.name;
             const std::string err = handle.error;
             if (ok)
-                orch_agent_names.put(std::move(handle));
+                ev.agent_names_->put(std::move(handle));
 
             // Issue #2011: quota reject surfaces as typed Aura error (no panic).
             if (!ok && quota_exceeded) {
@@ -2883,7 +2872,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentHandle* hp = nullptr;
             if (types::is_string(a[0])) {
                 auto name = heap_str_from(ev.string_heap_, a[0]);
-                hp = orch_agent_names.find(name);
+                hp = ev.agent_names_->find(name);
             }
             // Join-by-id is intentionally not supported (name table is name-keyed).
             if (!hp) {
@@ -2938,7 +2927,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                         ev.primitive_error_counter_ptr());
         }
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto* hp = orch_agent_names.find(name);
+        auto* hp = ev.agent_names_->find(name);
         if (!hp || !hp->ok) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "orch:agent-send: unknown agent",
@@ -2983,7 +2972,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ev.primitive_error_counter_ptr());
             }
             auto name = heap_str_from(ev.string_heap_, a[0]);
-            auto* hp = orch_agent_names.find(name);
+            auto* hp = ev.agent_names_->find(name);
             if (!hp || !hp->ok) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:agent-recv: unknown agent",

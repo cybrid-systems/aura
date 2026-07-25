@@ -54,6 +54,16 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+// Issue #2078: forward declaration shim for AgentNameTable. NOT included
+// here via the full definition (agent_name_table.h pulls in orch headers
+// which transitively reach serve/fiber.h → conflict with service.ixx's
+// direct include). The fwd header is included here in the global module
+// fragment so the forward decl matches the definition's module-attachment
+// (both module-orphaned) — std::unique_ptr<AgentNameTable> works end-to-end.
+// The full definition is included from evaluator_ctor.cpp /
+// evaluator_primitives_agent.cpp / the test file (where AgentNameTable's
+// methods are actually invoked).
+#include "compiler/agent_name_table_fwd.h"
 
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
@@ -1290,6 +1300,12 @@ export class Evaluator {
 
 public:
     Evaluator();
+    // Issue #2078: drain agent_names_ + best-effort join outstanding
+    // orch agents before ~Evaluator proceeds with arena teardown.
+    // Called from ~Evaluator; idempotent (no-op when table is empty).
+    // noexcept — joins with a short timeout so a misbehaving agent body
+    // can't stall Evaluator teardown.
+    void cleanup_orch_agents() noexcept;
     // Issue #67: destructor walks modules_ and runs each env's
     // destructor to free their std::vector bindings_ heap allocations.
     // Without this, arena-allocated Envs leak at process exit (the
@@ -4990,6 +5006,29 @@ private:
     bool sandbox_mode_ = false;
     // Issue #1565: multi-tenant id for capability effect checks.
     std::uint64_t capability_tenant_id_ = 0;
+
+public:
+    // Issue #2078: per-Evaluator orch agent name table. Replaces the
+    // TU-local static OrchAgentNameTable that lived in
+    // evaluator_primitives_agent.cpp — multiple CompilerService
+    // instances collided on the same agent name and tests were
+    // non-hermetic. Public so tests/orch/test_agent_name_table_isolation_2078
+    // can verify the storage-layer isolation directly; the orch primitives
+    // (in evaluator_primitives_agent.cpp) and cleanup_orch_agents (in
+    // evaluator_ctor.cpp) are part of the same module so they have access
+    // regardless. Drained by cleanup_orch_agents() at ~Evaluator; AgentHandle
+    // destructors release any remaining arena reservation.
+    //
+    // Held as std::unique_ptr so the AgentNameTable definition (which
+    // pulls in orch headers → serve/fiber.h) does not need to be visible
+    // in evaluator.ixx's module interface — only in evaluator_ctor.cpp
+    // (init + destruction) + evaluator_primitives_agent.cpp (call sites)
+    // + the test file. Initialized in Evaluator::Evaluator() body
+    // (evaluator_ctor.cpp) since std::make_unique<AgentNameTable> needs
+    // the full type at the call site.
+    std::unique_ptr<aura::compiler::AgentNameTable> agent_names_;
+
+private:
     static constexpr std::size_t kMutationAuditRingSize = 64;
     struct MutationAuditEntry {
         std::uint64_t seq = 0;

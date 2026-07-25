@@ -8,6 +8,14 @@ module;
 #include "primitives_detail.h"
 #include "primitives_meta.h"
 #include "compiler/aura_jit_bridge.h" // Issue #1367: aura_cleanup_aot_state
+// Issue #2078: cleanup_orch_agents() joins outstanding orch agents via
+// aura::orch::join_agent on drained AgentHandle entries. The orch header
+// is a plain include (not a module); evaluator module pulls it into
+// purview so AgentNameTable member + cleanup method can use it.
+#include "orch/agent_spawn.h"
+// Issue #2078: header-only AgentNameTable definition (see .h for why
+// not in evaluator.ixx's global fragment).
+#include "compiler/agent_name_table.h"
 
 module aura.compiler.evaluator;
 
@@ -65,6 +73,14 @@ void Evaluator::build_primitive_slots() {
 }
 
 Evaluator::Evaluator() {
+    // Issue #2078: per-Evaluator orch agent name table. The unique_ptr
+    // member is only forward-declared in evaluator.ixx so std::make_unique
+    // here needs the full AgentNameTable definition (included above from
+    // agent_name_table.h, which itself pulls in orch headers — evaluator
+    // module's other TUs include this header too; evaluator.ixx does NOT
+    // to keep orch → serve/fiber.h out of its global fragment).
+    agent_names_ = std::make_unique<AgentNameTable>();
+
     // Issue #1746: monotonic instance id for TLS maps (depth slot).
     // Never recycled; independent of heap address reuse.
     static std::atomic<std::uint64_t> next_instance_id{1};
@@ -270,6 +286,13 @@ Evaluator::~Evaluator() {
     // release is idempotent (no-op when not armed) and noexcept.
     release_gc_defer_for_pending_panic();
 
+    // Issue #2078: drain per-Evaluator orch agent name table + best-effort
+    // join outstanding agents before arena teardown. AgentHandle
+    // destructors (when the local vector inside cleanup_orch_agents goes
+    // out of scope) release any remaining arena reservation. Best-effort
+    // join — a misbehaving agent body can't stall Evaluator teardown.
+    cleanup_orch_agents();
+
     // Issue #1662 (P0): clear arena owner + compact hooks FIRST so a
     // surviving ASTArena cannot UAF into this dying Evaluator via
     // allocate_raw (quota callback) or on_compact_hook. set_arena /
@@ -343,6 +366,29 @@ Evaluator::~Evaluator() {
         type_registry_ = nullptr;
         owns_type_registry_ = false;
     }
+}
+
+// Issue #2078: drain per-Evaluator orch agent name table + best-effort
+// join outstanding agents. Called from ~Evaluator before arena teardown.
+// AgentHandle destructors (when the local vector goes out of scope at
+// end of this function) release any remaining arena reservation — so
+// AC3 (no dangling fibers / no leaked arena reservations) is satisfied
+// even when an agent body is still running past the 100ms join timeout.
+// Best-effort join: a misbehaving agent body cannot stall Evaluator
+// teardown. The process-static scheduler still owns the fiber and
+// cleans up at process exit / OrchSchedHolder teardown.
+void Evaluator::cleanup_orch_agents() noexcept {
+    auto handles = agent_names_->drain_for_cleanup();
+    for (auto& h : handles) {
+        if (h.ok && h.fiber) {
+            // 100ms short timeout — agent bodies should complete quickly.
+            // If they don't, the AgentHandle destructor still releases
+            // the arena reservation when `handles` goes out of scope.
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{100});
+        }
+    }
+    // handles goes out of scope; AgentHandle destructors run and release
+    // any remaining arena reservation via release_reservation_if_any().
 }
 
 // Issue #1720: concurrent-safe timeline / intend-history API.
