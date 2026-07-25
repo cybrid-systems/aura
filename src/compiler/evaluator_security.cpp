@@ -12,6 +12,7 @@ module;
 #include "core/workspace_isolation.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
+#include "core/security_event.hh" // #2075: shared SecurityEvent surface
 #include "observability_metrics.h"
 
 module aura.compiler.evaluator;
@@ -178,6 +179,22 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
             if (required_effect_bits & kEffectFfi)
                 m->capability_denial_ffi_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #2075: shared SecurityEvent surface — one trail covers
+        // effect deny + isolation deny + invariant. query:security-audit-trail
+        // reads from g_security_event_ring() to give agents a unified view.
+        using aura::compiler::security::kEffectFfi;
+        using aura::compiler::security::kEffectMutate;
+        using aura::core::security_event::append_security_event;
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::SecurityEventKind;
+        const char* reason_str = "capability-effect-deny";
+        if (required_effect_bits & kEffectMutate)
+            reason_str = "mutate-deny";
+        else if (required_effect_bits & kEffectFfi)
+            reason_str = "ffi-deny";
+        append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny, tenant,
+                              provenance_mutation_id, prov.epoch, required_effect_bits, op,
+                              reason_str);
     } else if (sb_active) {
         // Issue #1876: all allowed effects under sandbox record provenance.
         g_provenance_tracker().record_mutation();
@@ -324,8 +341,18 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
     IsolationRefProvenance prov{};
     prov.tenant_id = ref_tenant;
     const bool ok = check_boundary(target, &prov, required_effects, strict, op);
-    if (!ok)
+    if (!ok) {
         bump_capability_denial();
+        // Issue #2075: shared SecurityEvent surface — also append to the
+        // unified audit ring so query:security-audit-trail covers
+        // isolation denies alongside effect denies.
+        using aura::core::security_event::append_security_event;
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::SecurityEventKind;
+        append_security_event(g_security_event_ring(), SecurityEventKind::IsolationDeny, target,
+                              ref_tenant, aura::core::current_mutation_epoch(),
+                              static_cast<std::uint16_t>(required_effects), op, "isolation-deny");
+    }
     return ok;
 }
 

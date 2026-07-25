@@ -16,6 +16,7 @@ module;
 #include "core/sandbox.hh"             // #1876: query:sandbox-status
 #include "core/workspace_isolation.hh" // #1566: snapshot_tenant_isolation_stats
 #include "core/mutation_audit_wal.hh"  // #1567: snapshot_audit_wal_stats
+#include "core/security_event.hh"      // #2075: shared SecurityEvent schema + ring
 
 module aura.compiler.evaluator;
 
@@ -3625,6 +3626,63 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     entry.seq, entry.fiber_id, entry.op, entry.target_node, entry.nodes_changed,
                     entry.epoch_delta, entry.timestamp_ms, entry.effect_bits, entry.tenant_id,
                     entry.provenance_mutation_id, entry.epoch, entry.effect_denied ? 1 : 0);
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(line));
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), result});
+                result = make_pair(pid);
+                ++emitted;
+            }
+            return result;
+        });
+
+    // Issue #2075: (query:security-audit-trail [limit])
+    // Unified surface over g_security_event_ring() — covers
+    // EffectDeny + IsolationDeny + InvariantFail + MacroHygiene
+    // (the shared SecurityEvent schema introduced in #2075 so one
+    // Agent query covers effect deny + isolation deny + invariant
+    // fail). Lines include kind/tenant/mutation_id/epoch/effect/op/reason/denied.
+    ObservabilityPrims::register_stats_impl(
+        "query:security-audit-trail", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            using aura::core::security_event::g_security_event_ring;
+            using aura::core::security_event::kSecurityEventRingSize;
+            using aura::core::security_event::SecurityEventKind;
+            auto& ring = g_security_event_ring();
+            std::size_t limit = 10;
+            if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
+                limit = static_cast<std::size_t>(as_int(a[0]));
+            if (limit > kSecurityEventRingSize)
+                limit = kSecurityEventRingSize;
+            const auto seq = ring.seq.load(std::memory_order_relaxed);
+            EvalValue result = make_void();
+            std::size_t emitted = 0;
+            for (std::size_t i = 0; i < kSecurityEventRingSize && emitted < limit; ++i) {
+                if (seq <= i)
+                    break;
+                const auto& e = ring.ring[(seq - 1 - i) % kSecurityEventRingSize];
+                const char* kind_str = "EffectDeny";
+                switch (e.kind) {
+                    case SecurityEventKind::EffectDeny:
+                        kind_str = "EffectDeny";
+                        break;
+                    case SecurityEventKind::IsolationDeny:
+                        kind_str = "IsolationDeny";
+                        break;
+                    case SecurityEventKind::InvariantFail:
+                        kind_str = "InvariantFail";
+                        break;
+                    case SecurityEventKind::MacroHygiene:
+                        kind_str = "MacroHygiene";
+                        break;
+                }
+                auto line =
+                    std::format("seq={} kind={} tenant={} mutation_id={} epoch={} effect={} "
+                                "op=\"{}\" reason=\"{}\" denied={}",
+                                seq, kind_str, e.tenant_id, e.mutation_id, e.epoch, e.effect_bits,
+                                e.op, e.reason, e.denied ? 1 : 0);
+                // Issue #676 query-table style: push string into ev.string_heap_
+                // + pair into ev.pairs_ (car=string, cdr=rest) — Agent walks with
+                // car/cdr like other audit queries.
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
