@@ -5299,16 +5299,17 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
-    // Issue #1373 / #1375: (query:mutation-boundary-hold-stats) —
-    // hold-time + yield/migration + 9-bucket histogram for
-    // MutationBoundaryGuard. Complements #717 fiber-boundary-
-    // violation-stats and #1253 mutation_hold_* (long-mutation SLO).
+    // Issue #1373 / #1375 / #2040: (query:mutation-boundary-hold-stats) —
+    // hold-time + yield/migration + 9-bucket histogram + workspace_mtx_
+    // unique-acquire contention (p99/max + wait_ns). Complements #717
+    // fiber-boundary-violation-stats and #1253 mutation_hold_* SLO.
+    // Issue #2040 reuses this existing stats name (no new *-stats freeze).
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-hold-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // 16 base fields + 9 histogram buckets → need room
-                auto* ht = FlatHashTable::create(64);
+                // ~30 base fields + 9 histogram buckets → need room
+                auto* ht = FlatHashTable::create(128);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -5365,6 +5366,38 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     hist_sum += hist[i];
                 }
             }
+            // Issue #2040: p99 proxy from hold histogram midpoints (µs).
+            static constexpr std::int64_t
+                kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets] = {
+                    50, 300, 750, 3'000, 7'500, 30'000, 75'000, 550'000, 2'000'000};
+            std::int64_t p99_us = 0;
+            if (holds > 0) {
+                const auto target =
+                    static_cast<std::int64_t>((static_cast<std::uint64_t>(holds) * 99 + 99) / 100);
+                std::int64_t cum = 0;
+                p99_us = kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets - 1];
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets;
+                     ++i) {
+                    cum += hist[i];
+                    if (cum >= target) {
+                        p99_us = kHoldMidsUs[i];
+                        break;
+                    }
+                }
+            }
+            const std::int64_t hold_max = m ? load(m->mutation_hold_duration_us_max) : 0;
+            // Issue #2040: workspace_mtx_ unique-acquire contention.
+            const std::int64_t acquires = m ? load(m->workspace_mtx_acquire_total) : 0;
+            const std::int64_t contended = m ? load(m->workspace_mtx_contended_total) : 0;
+            const std::int64_t wait_ns = m ? load(m->workspace_mtx_wait_ns_total) : 0;
+            const std::int64_t wait_max = m ? load(m->workspace_mtx_wait_ns_max) : 0;
+            const std::int64_t wait_avg =
+                contended > 0 ? static_cast<std::int64_t>(wait_ns / contended) : 0;
+            const std::int64_t rate_pct =
+                acquires > 0
+                    ? static_cast<std::int64_t>((static_cast<std::uint64_t>(contended) * 100) /
+                                                static_cast<std::uint64_t>(acquires))
+                    : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"same-thread-yield",
                  make_int(m ? load(m->mutation_boundary_yield_same_thread_total) : 0)},
@@ -5380,7 +5413,20 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"over-1ms", make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
                 {"avg-hold-us", make_int(avg)},
                 {"avg-us", make_int(avg)},
+                {"max-hold-us", make_int(hold_max)}, // #2040
+                {"p99-hold-us", make_int(p99_us)},   // #2040
                 {"held-now", make_int(ev.mutation_boundary_held() ? 1 : 0)},
+                // Issue #2040: workspace_mtx_ contention (Guard unique acquire)
+                {"workspace-mtx-acquire-total", make_int(acquires)},
+                {"workspace-mtx-contended-total", make_int(contended)},
+                {"workspace-mtx-wait-ns-total", make_int(wait_ns)},
+                {"workspace-mtx-wait-ns-avg", make_int(wait_avg)},
+                {"workspace-mtx-wait-ns-max", make_int(wait_max)},
+                {"workspace-mtx-contention-rate-pct", make_int(rate_pct)},
+                {"closedloop-contention-total",
+                 make_int(m ? load(m->workspace_closedloop_shared_mutex_contention_total) : 0)},
+                {"closedloop-contention-ns-total",
+                 make_int(m ? load(m->workspace_closedloop_shared_mutex_contention_ns_total) : 0)},
                 // Issue #1375: 9-bucket histogram keys (see bucket-labels)
                 {"hist-0-100us", make_int(hist[0])},
                 {"hist-100-500us", make_int(hist[1])},
@@ -5394,7 +5440,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"hist-sum", make_int(hist_sum)},
                 {"hist-buckets", make_int(static_cast<std::int64_t>(
                                      CompilerMetrics::kMutationBoundaryHoldHistBuckets))},
-                {"schema", make_int(1375)},
+                {"schema", make_int(2040)}, // #2040 extended (was 1375)
+                {"issue", make_int(2040)},
             };
             return build_hash(kv);
         });

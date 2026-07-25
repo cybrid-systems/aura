@@ -6791,12 +6791,25 @@ struct CompilerMetrics {
     static constexpr std::size_t kMutationBoundaryHoldHistBuckets = 9;
     std::atomic<std::uint64_t>
         mutation_boundary_hold_histogram[kMutationBoundaryHoldHistBuckets]{}; // #1375
-    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};              // #1254
-    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};            // #1255
-    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};          // #1255
-    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};           // #1255
-    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};        // #1255
-    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0};       // #1255
+    // ── Issue #2040: high-concurrency Guard / workspace_mtx_ contention ──
+    // Measured on outermost MutationBoundaryGuard unique acquire only
+    // (try_lock fail → blocking lock). All relaxed atomics; single-fiber
+    // uncontended path is one try_lock + one acquire counter (no wait).
+    //   - workspace_mtx_acquire_total: outermost unique acquires
+    //   - workspace_mtx_contended_total: try_lock failed (waited)
+    //   - workspace_mtx_wait_ns_total / _max: blocked wait latency
+    // Hold p99 is estimated on read from mutation_boundary_hold_histogram
+    // (see query:mutation-boundary-hold-stats); no extra hot-path write.
+    std::atomic<std::uint64_t> workspace_mtx_acquire_total{0};          // #2040
+    std::atomic<std::uint64_t> workspace_mtx_contended_total{0};        // #2040
+    std::atomic<std::uint64_t> workspace_mtx_wait_ns_total{0};          // #2040
+    std::atomic<std::uint64_t> workspace_mtx_wait_ns_max{0};            // #2040
+    std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};        // #1254
+    std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};      // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};    // #1255
+    std::atomic<std::uint64_t> defuse_incremental_updates_total{0};     // #1255
+    std::atomic<std::uint64_t> defuse_full_rebuild_fallbacks_total{0};  // #1255
+    std::atomic<std::uint64_t> pattern_hygiene_defuse_sync_on_guard{0}; // #1255
 
     // ── Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1256_1260_active{1};

@@ -2073,6 +2073,11 @@ aura_issue_test_link_llvm_jit(test_aura_sandbox_env_2076)
 aura_add_issue_test(test_capability_unified_2077)
 aura_issue_test_link_llvm_jit(test_capability_unified_2077)
 
+# Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
+aura_add_issue_test(test_mutation_contention_2040)
+aura_issue_test_link_llvm_jit(test_mutation_contention_2040)
+add_dependencies(all_test_issue_targets test_mutation_contention_2040)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
