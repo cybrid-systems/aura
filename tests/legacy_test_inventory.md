@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 376 | Preferred destination suites |
-| **Total scanned** | **376** | |
+| `tests/core/test_*.cpp` | 377 | Preferred destination suites |
+| **Total scanned** | **377** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 37 | 37 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 99 | 99 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 100 | 100 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 38 | 38 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 7 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 21 | 21 | P1 — domain hygiene suite exists |
@@ -407,6 +407,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_production_safety.cpp`
 - `tests/compiler/test_production_safety_1047.cpp`
 - `tests/compiler/test_production_safety_1097.cpp`
+- `tests/compiler/test_production_security_defaults_2053.cpp`
 - `tests/compiler/test_production_stability_1014.cpp`
 - `tests/compiler/test_production_sweep.cpp`
 - `tests/serve/test_production_sweep.cpp`
@@ -606,13 +607,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_lifecycle.cpp` (—) [domain_suite, theme_renderer] — test_terminal_lifecycle.cpp — Issue #1352: delete/compact + use-after-delete
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (99)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (100)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (99)
+#### domain/ (100)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -687,6 +688,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_pixel_framebuffer.cpp` (—) [domain_suite, theme_renderer] — test_pixel_framebuffer.cpp — Issue #1980 / Epic #1979
 - `tests/compiler/test_post_mutate_push_cascade.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2038; push_post_mutate_incremental_cascade +
 - `tests/compiler/test_production_readiness_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_production_readiness_batch.cpp
+- `tests/compiler/test_production_security_defaults_2053.cpp` (#2053) [domain_suite, theme_compiler] — AC1: apply_production_security_defaults → Restricted (unset AURA_SANDBOX)
 - `tests/compiler/test_provenance_blame_hygiene.cpp` (—) [domain_suite, theme_compiler] — Issue #1877 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
 - `tests/renderer/test_render3d_primitives.cpp` (—) [domain_suite, theme_renderer] — test_render3d_primitives.cpp — Issue #1986 / Epic #1979

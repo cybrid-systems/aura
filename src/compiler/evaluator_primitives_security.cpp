@@ -9,6 +9,7 @@ module;
 #include "shape.h"
 #include "value_tags.h"
 #include "security_capabilities.h"
+#include "typed_mutation_audit.h" // #2053 production defaults query keys
 #include "serve/http_health.h"
 #include "serve/metrics.h"
 #include "hash_meta.h"                 // FNV constants (#901)
@@ -354,6 +355,24 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                   : 1);
             insert_kv("schema-2052", 2052);
             insert_kv("issue-2052", 2052);
+            // Issue #2053: production security defaults visibility
+            {
+                using namespace aura::compiler::typed_audit;
+                using namespace aura::core::audit_wal;
+                using namespace aura::core::sandbox;
+                insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
+                insert_kv("typed-audit-strategy",
+                          static_cast<std::int64_t>(static_cast<std::uint32_t>(get_strategy())));
+                insert_kv("typed-audit-sample-ratio",
+                          static_cast<std::int64_t>(get_sample_ratio()));
+                insert_kv(
+                    "process-sandbox-mode",
+                    static_cast<std::int64_t>(static_cast<std::uint8_t>(g_sandbox_state().mode)));
+                insert_kv("wal-process-enabled", g_mutation_audit_wal().is_enabled() ? 1 : 0);
+                insert_kv("schema-2053", 2053);
+                insert_kv("issue-2053", 2053);
+                insert_kv("production-security-wired", 1);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

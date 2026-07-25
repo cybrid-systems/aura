@@ -8453,7 +8453,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                         m->typed_mut_audit_savings_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t active = 1;
-            auto* ht = FlatHashTable::create(32) /* #1141 / #1894 */;
+            auto* ht = FlatHashTable::create(48) /* #1141 / #1894 / #2053 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8505,6 +8505,13 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hotpath-guard-exit-wired", 1);
             insert_kv("schema", 1894); // lineage 839 / 1614
             insert_kv("issue", 1894);
+            // Issue #2053: production audit defaults
+            insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
+            insert_kv("strategy",
+                      static_cast<std::int64_t>(static_cast<std::uint32_t>(get_strategy())));
+            insert_kv("sample-ratio", static_cast<std::int64_t>(get_sample_ratio()));
+            insert_kv("schema-2053", 2053);
+            insert_kv("issue-2053", 2053);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

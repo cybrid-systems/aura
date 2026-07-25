@@ -6,6 +6,8 @@ module;
 #include <cstring>
 
 #include "security_capabilities.h"
+#include "security_defaults.hh" // #2076/#2053 production defaults (header-inline)
+#include "typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
@@ -381,13 +383,10 @@ static const char* effect_name_str(std::uint16_t effect_bits) noexcept {
     return "unknown";
 }
 
-namespace aura::compiler::security {
-    std::string format_deny_reason(std::uint16_t effect_bits, std::uint64_t tenant_id,
-                                   std::string_view op) {
-        return std::format("effect-denied: {} not granted tenant={} op={}",
-                           effect_name_str(effect_bits), tenant_id, op);
-    }
-} // namespace aura::compiler::security
+// format_deny_reason is header-inline in security_capabilities.h (#2076).
+// Do NOT reopen `namespace aura::compiler::security` here while inside
+// `namespace aura::compiler` — that creates the bogus nested path
+// aura::compiler::aura::compiler::security (module ODR / link break).
 
 // Issue #2076: production default Restricted sandbox + env override.
 // Reads AURA_SANDBOX env var:
@@ -400,46 +399,22 @@ namespace aura::compiler::security {
 // Dev/test fixtures call set_effect_sandbox_mode(0) explicitly to
 // restore Off behavior.
 void Evaluator::apply_env_sandbox() noexcept {
-    const char* e = std::getenv("AURA_SANDBOX");
-    if (!e || !*e) {
-        // Unset / empty → default Restricted (production safe-by-default).
-        set_effect_sandbox_mode(1);
-        return;
+    // Issue #2053: full production security bundle (sandbox + audit + WAL).
+    // Relative security:: is correct inside namespace aura::compiler.
+    security::apply_production_security_defaults();
+    // Mirror process-wide mode onto this Evaluator (sandbox_mode_, Strict link).
+    const auto mode =
+        static_cast<std::uint8_t>(::aura::core::capability::g_capability_registry().sandbox_mode);
+    set_effect_sandbox_mode(mode);
+    // If production enabled WAL via env, also attach this Evaluator's ring.
+    if (::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+        const char* wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+        if (!wal || !*wal)
+            wal = std::getenv("AURA_PERSIST_DIR");
+        if (wal && *wal)
+            (void)enable_mutation_audit_wal(wal);
     }
-    std::string_view v(e);
-    if (v == "off")
-        set_effect_sandbox_mode(0);
-    else if (v == "strict")
-        set_effect_sandbox_mode(2);
-    else
-        set_effect_sandbox_mode(1); // restricted (also default for unknown values)
 }
-
-// Issue #2076: free-function variant of apply_env_sandbox for callers
-// that don't have an Evaluator instance yet (e.g., main() at startup,
-// before the runtime + first Evaluator is constructed). Reads the
-// AURA_SANDBOX env var and sets the global sandbox mode via the
-// registry + set_mode() so the first Evaluator constructed after
-// this call inherits the env-selected mode.
-namespace aura::compiler::security {
-    void apply_aura_sandbox_env() noexcept {
-        const char* e = std::getenv("AURA_SANDBOX");
-        auto mode = static_cast<std::uint8_t>(1); // default Restricted
-        if (e && *e) {
-            std::string_view v(e);
-            if (v == "off")
-                mode = 0;
-            else if (v == "strict")
-                mode = 2;
-            else
-                mode = 1; // restricted (also default for unknown values)
-        }
-        using namespace ::aura::core::sandbox;
-        using namespace ::aura::core::capability;
-        set_mode(static_cast<SandboxMode>(mode));
-        g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
-    }
-} // namespace aura::compiler::security
 
 // Issue #1566: multi-tenant workspace isolation bridge.
 void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view name,
@@ -496,3 +471,6 @@ void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcep
 }
 
 } // namespace aura::compiler
+
+// apply_aura_sandbox_env / apply_production_security_defaults:
+// header-inline in security_defaults.hh (included via security_capabilities.h).

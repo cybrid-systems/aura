@@ -22,9 +22,13 @@ inline constexpr int kTypedMutationAuditPassPhase =
     6; // #2029 Full per-category partial recover (lineage #2027)
 inline constexpr int kTypedMutationAuditIssue =
     1894; // lineage 1614 / 1589; AOT #1882; #2027/#2029 satellite
+// Issue #2053: production multi-tenant AI — stronger audit defaults.
+inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
 // Force audit when dirty scope is large (Sampled strategy still hits).
 inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
+// Issue #2053: under production defaults, force critical kinds even if Sampled.
+inline constexpr std::uint64_t kAuditForceNodesChangedProduction = 1;
 inline constexpr std::size_t kAuditNameCap = 48;
 
 enum class AuditStrategy : std::uint8_t {
@@ -76,6 +80,8 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> errors{0};
     std::atomic<std::uint32_t> strategy{static_cast<std::uint32_t>(AuditStrategy::Sampled)};
     std::atomic<std::uint32_t> sample_ratio{4}; // every Nth id when Sampled (N>=1)
+    // Issue #2053: 1 when production security defaults applied (Full or ratio=1).
+    std::atomic<std::uint32_t> production_defaults_active{0};
     std::atomic<std::uint64_t> trail_seq{0};
     // Issue #1613: macro hygiene audit trail (hygiene-protected blocks + allowed macro mutates).
     std::atomic<std::uint64_t> macro_hygiene_events{0};
@@ -177,6 +183,27 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
     return g_typed_mutation_audit_counters.sample_ratio.load(std::memory_order_relaxed);
 }
 
+[[nodiscard]] inline bool production_defaults_active() noexcept {
+    return g_typed_mutation_audit_counters.production_defaults_active.load(
+               std::memory_order_relaxed) != 0;
+}
+
+// Issue #2053: production multi-tenant AI — capture every self-modify event.
+// Full strategy (default under apply_production_audit_defaults). Dev/test
+// keep Sampled/ratio=4 via apply_dev_audit_defaults / reset_typed_mutation_audit.
+inline void apply_production_audit_defaults() noexcept {
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+}
+
+// Issue #2053: restore fast-iteration Sampled defaults (tests / AURA_SANDBOX=off).
+inline void apply_dev_audit_defaults() noexcept {
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+}
+
 // Thread-safe Full / Sampled / Off gate.
 // Sampled: audit when mutation_id % sample_ratio == 0.
 [[nodiscard]] inline bool should_audit(std::uint64_t mutation_id) noexcept {
@@ -199,6 +226,8 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 // Issue #1894: contextual gate — also force audit when dirty scope is large
 // or linear ops are present (self-evo closed-loop must not under-sample
 // ownership-sensitive mutations).
+// Issue #2053: under production defaults, force any non-zero dirty scope
+// so self-modify / hygiene / invariant events are never under-sampled.
 [[nodiscard]] inline bool should_audit_contextual(std::uint64_t mutation_id,
                                                   std::uint64_t nodes_changed,
                                                   bool linear_ops_present = false) noexcept {
@@ -209,8 +238,10 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
         g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
-    // Sampled: force-hit for large dirty scopes / linear mutations.
-    if (linear_ops_present || nodes_changed >= kAuditForceNodesChanged) {
+    const auto force_n =
+        production_defaults_active() ? kAuditForceNodesChangedProduction : kAuditForceNodesChanged;
+    // Sampled: force-hit for large dirty scopes / linear mutations / prod.
+    if (linear_ops_present || nodes_changed >= force_n) {
         g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
         g_typed_mutation_audit_counters.contextual_force_audit_total.fetch_add(
             1, std::memory_order_relaxed);
@@ -654,8 +685,7 @@ inline void reset_for_test() noexcept {
                                                                         std::memory_order_relaxed);
     g_typed_mutation_audit_counters.partial_recovery_provenance_total.store(
         0, std::memory_order_relaxed);
-    set_strategy(AuditStrategy::Sampled);
-    set_sample_ratio(4);
+    apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)
         e = TypedMutationAuditEvent{};
