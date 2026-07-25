@@ -2040,6 +2040,13 @@ aura_issue_test_link_llvm_jit(test_capability_effect_force_2072)
 aura_add_issue_test(test_grant_epoch_invalidation_2074)
 aura_issue_test_link_llvm_jit(test_grant_epoch_invalidation_2074)
 
+# Issue #2075: unified SecurityEvent schema + query:security-audit-trail
+# primitive. Shared effect/isolation/invariant audit surface
+# (src/core/security_event.hh) wired at both effect + isolation deny
+# paths in evaluator_security.cpp.
+aura_add_issue_test(test_security_audit_trail_2075)
+aura_issue_test_link_llvm_jit(test_security_audit_trail_2075)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
