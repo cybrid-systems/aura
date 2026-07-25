@@ -204,6 +204,12 @@ extern "C" std::int64_t aura_hash_string_cmp_fn(std::int64_t, std::int64_t);
 extern "C" void aura_set_hash_str_convert_callback(std::int64_t (*fn)(std::int64_t));
 extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t);
 
+// Issue #2100: MacroIntroduced deopt → AST restore hook (aura_jit_runtime.cpp).
+// Must live at file/module scope — nested extern "C" inside methods is ill-formed.
+extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept);
+extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
+extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
+
 // Convert one JIT-string argument to an evaluator-string argument by
 // copying the content from the JIT pool to the evaluator string heap.
 // Non-string values pass through unchanged.
@@ -1063,6 +1069,15 @@ public:
                    (check_call & 0xFFFFFF);
         });
         aura::messaging::g_current_compiler_service = this;
+        // Issue #2100: register deopt→AST MacroIntroduced restore hook so
+        // aura_jit_macro_introduced_deopt_inc can re-stamp workspace markers.
+        aura_jit_set_macro_deopt_restore_fn(+[]() noexcept -> std::uint64_t {
+            auto* raw = aura::messaging::g_current_compiler_service;
+            if (!raw)
+                return 0;
+            return static_cast<CompilerService*>(raw)
+                ->restore_macro_introduced_from_ir_after_deopt();
+        });
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send = [](const std::string& target,
                                                       const std::string& msg) -> bool {
@@ -2401,6 +2416,9 @@ public:
         last_ir_mod_ = ir_mod;
         last_ir_stats_ = aura::ir::compute_ir_stats(*last_ir_mod_);
         last_escape_maps_ = escape_pass.take_maps();
+        // Issue #2100: accumulate MacroIntroduced IR attrs (last_ir is
+        // replaced per form; durable cache feeds deopt AST restore).
+        note_macro_ir_attrs_from_module(*last_ir_mod_);
 
 // ── Try JIT execution when LLVM available ──────────────
 #ifdef AURA_HAVE_LLVM
@@ -2737,6 +2755,8 @@ public:
         last_ir_mod_ = ir_mod;
         last_ir_stats_ = aura::ir::compute_ir_stats(*last_ir_mod_);
         last_escape_maps_ = escape_pass.take_maps();
+        // Issue #2100: accumulate MacroIntroduced IR attrs for deopt restore.
+        note_macro_ir_attrs_from_module(*last_ir_mod_);
 
         aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_, &metrics_,
                                       &evaluator_);
@@ -8594,7 +8614,146 @@ public:
     // last_ir_mod_ on its own compilation).
     const aura::ir::IRStatsSnapshot& last_ir_stats() const noexcept { return last_ir_stats_; }
 
+    // Issue #2100: after JIT deopt of MacroIntroduced code, re-apply
+    // IRInstruction::source_marker + provenance (+ source_ast_node_id)
+    // onto the workspace FlatAST so Agents still see is_macro_introduced
+    // and provenance-blame after expand→JIT→deopt. Uses the durable
+    // macro_ir_attr_cache_ (survives last_ir form overwrite) plus a
+    // fresh walk of last_ir_mod_. Returns # of nodes restored.
+    // Bumps jit_macro_introduced_preserved/lost totals.
+    std::uint64_t restore_macro_introduced_from_ir_after_deopt() noexcept {
+        auto* flat = evaluator_.workspace_flat();
+        if (!flat)
+            return 0;
+        std::uint64_t restored = 0;
+        std::uint64_t lost = 0;
+        constexpr auto kExpansion =
+            static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
+        auto apply_one = [&](std::uint32_t node_u32, std::uint32_t provenance) {
+            const auto nid = static_cast<aura::ast::NodeId>(node_u32);
+            if (nid == 0 || nid >= flat->size() || !flat->is_live_node(nid)) {
+                ++lost;
+                return;
+            }
+            flat->set_marker(nid, aura::ast::SyntaxMarker::MacroIntroduced);
+            if (provenance != 0)
+                flat->set_provenance(nid, provenance);
+            flat->apply_macro_dirty_bits(nid, kExpansion);
+            ++restored;
+        };
+        // Durable cache first (attrs from earlier forms / cached defines).
+        for (const auto& e : macro_ir_attr_cache_)
+            apply_one(e.source_ast_node_id, e.provenance);
+        // Also walk current last_ir for any attrs not yet cached.
+        if (last_ir_mod_) {
+            for (const auto& fn : last_ir_mod_->functions) {
+                for (const auto& blk : fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.source_marker != 1 || instr.source_ast_node_id == 0)
+                            continue;
+                        bool already = false;
+                        for (const auto& e : macro_ir_attr_cache_) {
+                            if (e.source_ast_node_id == instr.source_ast_node_id) {
+                                already = true;
+                                break;
+                            }
+                        }
+                        if (!already)
+                            apply_one(instr.source_ast_node_id, instr.provenance);
+                    }
+                }
+            }
+        }
+        if (restored)
+            aura_jit_macro_introduced_preserved_inc(restored);
+        if (lost)
+            aura_jit_macro_introduced_lost_inc(lost);
+        return restored;
+    }
+
+    // Issue #2100: # of durable MacroIntroduced IR attrs retained for deopt.
+    std::uint64_t macro_ir_attr_cache_size() const noexcept {
+        return static_cast<std::uint64_t>(macro_ir_attr_cache_.size());
+    }
+
+    // Issue #2100 test/Agent helper: seed durable IR attrs from live
+    // MacroIntroduced workspace nodes when natural IR lowering has not
+    // yet filled the cache (e.g. tree-walker-only forms). Returns # stamped.
+    std::uint64_t seed_macro_ir_attrs_from_workspace() noexcept {
+        auto* flat = evaluator_.workspace_flat();
+        if (!flat)
+            return 0;
+        std::uint64_t n = 0;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (!flat->is_live_node(id) || !flat->is_macro_introduced(id))
+                continue;
+            const auto nid_u = static_cast<std::uint32_t>(id);
+            const auto prov = flat->provenance(id);
+            bool found = false;
+            for (auto& e : macro_ir_attr_cache_) {
+                if (e.source_ast_node_id == nid_u) {
+                    e.provenance = prov;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                macro_ir_attr_cache_.push_back(MacroIrAttrEntry{nid_u, prov});
+                ++n;
+            }
+        }
+        // Mirror into last_ir_mod_ when present so walks see attrs too.
+        if (last_ir_mod_ && n > 0) {
+            if (last_ir_mod_->functions.empty()) {
+                aura::ir::IRFunction stub;
+                stub.name = "__macro_hygiene_2100";
+                stub.blocks.emplace_back();
+                last_ir_mod_->functions.push_back(std::move(stub));
+            }
+            auto& blk = last_ir_mod_->functions.back().blocks.back();
+            for (const auto& e : macro_ir_attr_cache_) {
+                aura::ir::IRInstruction instr;
+                instr.opcode = aura::ir::IROpcode::Nop;
+                instr.source_marker = 1;
+                instr.source_ast_node_id = e.source_ast_node_id;
+                instr.provenance = e.provenance;
+                blk.instructions.push_back(instr);
+            }
+        }
+        return n;
+    }
+
 private:
+    // Issue #2100: durable MacroIntroduced IR attrs for deopt restore.
+    // last_ir_mod_ is overwritten per eval form; this cache accumulates.
+    struct MacroIrAttrEntry {
+        std::uint32_t source_ast_node_id = 0;
+        std::uint32_t provenance = 0;
+    };
+    std::vector<MacroIrAttrEntry> macro_ir_attr_cache_;
+
+    void note_macro_ir_attrs_from_module(const aura::ir::IRModule& mod) {
+        for (const auto& fn : mod.functions) {
+            for (const auto& blk : fn.blocks) {
+                for (const auto& instr : blk.instructions) {
+                    if (instr.source_marker != 1 || instr.source_ast_node_id == 0)
+                        continue;
+                    bool found = false;
+                    for (auto& e : macro_ir_attr_cache_) {
+                        if (e.source_ast_node_id == instr.source_ast_node_id) {
+                            e.provenance = instr.provenance;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        macro_ir_attr_cache_.push_back(
+                            MacroIrAttrEntry{instr.source_ast_node_id, instr.provenance});
+                    }
+                }
+            }
+        }
+    }
     // Issue #1457 / #1874: surface TypePropagationPass work into metrics.
     void accumulate_type_propagation_metrics(const aura::compiler::TypePropagationPass& tp) {
         metrics_.type_propagation_runs_.fetch_add(1, std::memory_order_relaxed);
@@ -9533,8 +9692,11 @@ public:
         // stack frame. Always reset if we still own it;
         // never blindly zero (other services may have set
         // it concurrently in a multi-service scenario).
-        if (aura::messaging::g_current_compiler_service == this)
+        if (aura::messaging::g_current_compiler_service == this) {
             aura::messaging::g_current_compiler_service = nullptr;
+            // Issue #2100: drop deopt restore hook with the owning service.
+            aura_jit_set_macro_deopt_restore_fn(nullptr);
+        }
     }
 
     // Issue #411 fu1 follow-up #2: per-DefUseIndex caller

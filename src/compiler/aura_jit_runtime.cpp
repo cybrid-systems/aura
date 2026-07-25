@@ -251,6 +251,15 @@ static std::atomic<uint64_t> g_jit_macro_introduced_deopt{0};
 // Issue #1610: IR lowering stamp counters (shared with query:ir-hygiene-stats).
 static std::atomic<uint64_t> g_hygiene_ir_macro_marker_total{0};
 static std::atomic<uint64_t> g_hygiene_ir_provenance_stamped_total{0};
+// Issue #2100: deopt round-trip MacroIntroduced coverage.
+// preserved = deopt/restore kept marker+provenance (side-table or AST restamp);
+// lost = expected MacroIntroduced but metadata missing after deopt.
+static std::atomic<uint64_t> g_jit_macro_introduced_preserved_total{0};
+static std::atomic<uint64_t> g_jit_macro_introduced_lost_total{0};
+// Optional service hook: re-apply IR MacroIntroduced attrs onto workspace AST
+// after deopt (registered by CompilerService). Returns nodes restored.
+using MacroDeoptRestoreFn = std::uint64_t (*)() noexcept;
+static std::atomic<MacroDeoptRestoreFn> g_macro_deopt_restore_fn{nullptr};
 
 // Issue #2022: native MacroIntroduced side-table — survives after JIT/AOT
 // so deopt / mutate / provenance-blame can still distinguish macro-origin
@@ -310,12 +319,56 @@ extern "C" void aura_jit_macro_hygiene_consult_inc() {
 }
 extern "C" void aura_jit_macro_introduced_deopt_inc() {
     g_jit_macro_introduced_deopt.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2100: after MacroIntroduced deopt, re-apply IR attrs onto AST
+    // via CompilerService hook so Agents still see is_macro_introduced.
+    if (auto* fn = g_macro_deopt_restore_fn.load(std::memory_order_acquire))
+        (void)fn();
 }
 extern "C" uint64_t aura_jit_macro_hygiene_consults() {
     return g_jit_macro_hygiene_consults.load(std::memory_order_relaxed);
 }
 extern "C" uint64_t aura_jit_macro_introduced_deopt() {
     return g_jit_macro_introduced_deopt.load(std::memory_order_relaxed);
+}
+
+// Issue #2100: register/unregister service-side AST restore after deopt.
+extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept) {
+    g_macro_deopt_restore_fn.store(fn, std::memory_order_release);
+}
+
+// Issue #2100: note deopt round-trip for a func_id side-table entry.
+// If marker still MacroIntroduced (1) after deopt → preserved; else lost.
+// Does NOT clear the side-table (deopt must retain metadata for Agent blame).
+extern "C" void aura_jit_note_macro_deopt_roundtrip(int64_t func_id) {
+    if (func_id < 0) {
+        g_jit_macro_introduced_lost_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kJitMacroMarkerSlots) {
+        g_jit_macro_introduced_lost_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (g_jit_fn_source_marker[idx] == 1) {
+        g_jit_macro_introduced_preserved_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_jit_macro_introduced_lost_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_jit_macro_introduced_preserved_inc(uint64_t n) {
+    if (n)
+        g_jit_macro_introduced_preserved_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" void aura_jit_macro_introduced_lost_inc(uint64_t n) {
+    if (n)
+        g_jit_macro_introduced_lost_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_jit_macro_introduced_preserved_total() {
+    return g_jit_macro_introduced_preserved_total.load(std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_jit_macro_introduced_lost_total() {
+    return g_jit_macro_introduced_lost_total.load(std::memory_order_relaxed);
 }
 
 // Issue #1610: IR lowering MacroIntroduced / provenance stamp counters.
@@ -427,6 +480,8 @@ extern "C" void aura_counters_reset() {
     g_jit_macro_introduced_deopt.store(0, std::memory_order_relaxed);
     g_hygiene_ir_macro_marker_total.store(0, std::memory_order_relaxed);
     g_hygiene_ir_provenance_stamped_total.store(0, std::memory_order_relaxed);
+    g_jit_macro_introduced_preserved_total.store(0, std::memory_order_relaxed);
+    g_jit_macro_introduced_lost_total.store(0, std::memory_order_relaxed);
     g_jit_native_marker_preserved_total.store(0, std::memory_order_relaxed);
     g_jit_live_macro_fn_count.store(0, std::memory_order_relaxed);
     g_jit_macro_provenance_recoverable_total.store(0, std::memory_order_relaxed);
