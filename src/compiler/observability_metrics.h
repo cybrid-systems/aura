@@ -6065,6 +6065,8 @@ struct CompilerMetrics {
     //     violation counters
     //   - ir_escape_analysis_runs_total / ir_escape_slots_marked_total
     //     IR EscapeAnalysisPass observability
+    // Issue #2108: composite commit hard-blocked due to linear escape.
+    std::atomic<std::uint64_t> linear_escape_commit_blocked_total{0};
     std::atomic<std::uint64_t> linear_escape_reanalysis_total{0};
     std::atomic<std::uint64_t> ownership_dirty_revalidate_hits{0};
     std::atomic<std::uint64_t> linear_escape_while_borrowed_total{0};

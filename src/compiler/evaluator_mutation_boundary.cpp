@@ -446,11 +446,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             // Composite paths never under-sample (self-evo multi-step safety).
             // Provenance miss forces audit even when Sampled would skip and
             // even when nodes_changed==0 (apply may be the only side effect).
-            const bool do_audit =
-                strat != typed_audit::AuditStrategy::Off &&
-                (provenance_miss ||
-                 (nodes_changed > 0 && (composite || typed_audit::should_audit_contextual(
-                                                         mid, nodes_changed, linear_hint))));
+            // Issue #2108: linear_ops_present (linear_hint) and composite
+            // always force the escape hard-block path — Sampled must not
+            // skip analyze_linear_escape / Moved live-root checks.
+            const bool do_audit = strat != typed_audit::AuditStrategy::Off &&
+                                  (provenance_miss || composite || linear_hint ||
+                                   (nodes_changed > 0 && typed_audit::should_audit_contextual(
+                                                             mid, nodes_changed, linear_hint)));
             if (do_audit) {
                 typed_audit::InvariantAuditResult first{};
                 bool inv_ok = false;

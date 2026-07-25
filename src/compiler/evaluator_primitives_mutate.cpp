@@ -5518,6 +5518,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("txn-dirty", ev.txn_dirty() ? 1 : 0);
                 insert_kv("schema-2105", 2105);
                 insert_kv("issue-2105", 2105);
+                // Issue #2108: hard-block composite cross-batch linear escape
+                insert_kv("linear-escape-commit-blocked-total",
+                          static_cast<std::int64_t>(c.linear_escape_commit_blocked_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("linear_escape_commit_blocked_total",
+                          static_cast<std::int64_t>(c.linear_escape_commit_blocked_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("linear-escape-commit-hard-block-wired", 1);
+                insert_kv("schema-2108", 2108);
+                insert_kv("issue-2108", 2108);
             }
             insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882 / #2027 / #2029 / #2105
             insert_kv("schema", 1894);

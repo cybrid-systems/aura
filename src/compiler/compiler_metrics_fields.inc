@@ -1691,6 +1691,7 @@ AURA_COMPILER_METRICS_FIELD(solve_delta_unresolved_affected_0)
 AURA_COMPILER_METRICS_FIELD(solve_delta_unresolved_affected_1)
 AURA_COMPILER_METRICS_FIELD(solve_delta_unresolved_affected_2)
 AURA_COMPILER_METRICS_FIELD(solve_delta_unresolved_affected_3)
+AURA_COMPILER_METRICS_FIELD(linear_escape_commit_blocked_total)
 
 
 #undef AURA_COMPILER_METRICS_FIELD
