@@ -38,6 +38,13 @@
 //  Header-only, no std::pmr dependency. Uses std::shared_ptr
 //  (atomic refcount — safe to share across fibers / threads).
 //
+//  Issue #2058: unique-ownership hot path. When the PCV is the sole
+//  holder of storage (use_count()==1) — the common FlatAST pattern of
+//  "mutate then drop old view" after a move out of children_[id] —
+//  cow_* / ensure_unique + in-place writes avoid a new allocation and
+//  the second atomic refcount trip. Snapshot / SafePCVSpan holders keep
+//  use_count()>1 so with_* / cow_* still allocate (COW correctness).
+//
 // Test plan (test_issue_221.cpp):
 //   1. Basic: construct, size, operator[], iterators
 //   2. COW semantics: with_push_back / with_insert / with_erase
@@ -62,6 +69,7 @@
 #define AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
 
 #include <algorithm>
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <initializer_list>
@@ -73,6 +81,33 @@
 #include <utility>
 
 namespace aura::ast {
+
+// Issue #2058: process-wide PCV hot-path metrics (unique in-place vs COW alloc).
+struct PcvHotpathMetrics {
+    std::atomic<std::uint64_t> unique_inplace_total{0};
+    std::atomic<std::uint64_t> cow_alloc_total{0};
+    std::atomic<std::uint64_t> ensure_unique_clone_total{0};
+    std::atomic<std::uint64_t> cow_set_total{0};
+    std::atomic<std::uint64_t> cow_insert_total{0};
+    std::atomic<std::uint64_t> cow_erase_total{0};
+    std::atomic<std::uint64_t> cow_push_total{0};
+};
+inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
+    static PcvHotpathMetrics m;
+    return m;
+}
+inline void reset_pcv_hotpath_metrics_for_test() noexcept {
+    auto& m = g_pcv_hotpath_metrics();
+    m.unique_inplace_total.store(0, std::memory_order_relaxed);
+    m.cow_alloc_total.store(0, std::memory_order_relaxed);
+    m.ensure_unique_clone_total.store(0, std::memory_order_relaxed);
+    m.cow_set_total.store(0, std::memory_order_relaxed);
+    m.cow_insert_total.store(0, std::memory_order_relaxed);
+    m.cow_erase_total.store(0, std::memory_order_relaxed);
+    m.cow_push_total.store(0, std::memory_order_relaxed);
+}
+
+inline constexpr int kPcvHotpathIssue = 2058;
 
 template <typename T> class PersistentChildVector {
 public:
@@ -188,6 +223,10 @@ public:
     // old storage with refcount > 1).
     long use_count() const noexcept { return data_.use_count(); }
 
+    // Issue #2058: sole owner of storage (safe for in-place mutate).
+    // Empty / null storage is treated as unique.
+    [[nodiscard]] bool is_unique() const noexcept { return !data_ || data_.use_count() == 1; }
+
     // Issue #300 follow-up #1: identity of the shared storage
     // block (for teardown dedup when aliased PCVs exist).
     const void* storage_identity() const noexcept { return data_.get(); }
@@ -196,6 +235,21 @@ public:
     void abandon_storage() noexcept {
         data_ = nullptr;
         size_ = 0;
+    }
+
+    // Issue #2058: if shared, clone into private storage (refcount 1).
+    // No-op when already unique or empty. Returns true if a clone ran.
+    bool ensure_unique() {
+        if (!data_ || data_.use_count() == 1)
+            return false;
+        auto out = make_storage_owned(size_);
+        const T* src = src_data();
+        if (src && size_ > 0)
+            std::copy(src, src + size_, out->data.get());
+        data_ = std::move(out);
+        g_pcv_hotpath_metrics().ensure_unique_clone_total.fetch_add(1, std::memory_order_relaxed);
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // ── Element access (const) ───────────────────────────────
@@ -242,6 +296,7 @@ public:
         out->data[size_] = v;
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
 
@@ -253,6 +308,7 @@ public:
         out->data[size_] = std::move(v);
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
 
@@ -268,6 +324,7 @@ public:
         out->data[pos] = v;
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
 
@@ -282,6 +339,7 @@ public:
         }
         auto result = from_storage(out, size_ - 1);
         contract_assert(result.size() == size_ - 1);
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
 
@@ -295,7 +353,52 @@ public:
         out->data[i] = v;
         auto result = from_storage(out, size_);
         contract_assert(result.size() == size_);
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
         return result;
+    }
+
+    // ── Issue #2058: unique-path / COW hybrid mutators ────────
+    // Non-const: when this is the sole storage owner, write in place
+    // (zero alloc, no extra atomic). When shared (snapshot / pin /
+    // SafePCVSpan), allocate like with_* and replace self.
+    // FlatAST locked paths should move children_[id] out, call cow_*,
+    // then move back — so the common case is unique.
+
+    void cow_set(size_type i, const T& v) {
+        g_pcv_hotpath_metrics().cow_set_total.fetch_add(1, std::memory_order_relaxed);
+        if (i >= size_)
+            return;
+        if (is_unique() && data_) {
+            // Storage is shared_ptr<const Storage> but unique_ptr<T[]>::get()
+            // on const unique_ptr still yields T* — sole owner may write.
+            data_->data.get()[i] = v;
+            g_pcv_hotpath_metrics().unique_inplace_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        *this = with_set(i, v);
+    }
+
+    void cow_push_back(const T& v) {
+        g_pcv_hotpath_metrics().cow_push_total.fetch_add(1, std::memory_order_relaxed);
+        // Exact-size storage: push always allocates a larger buffer.
+        // Moving the PCV first (FlatAST pattern) still avoids an extra
+        // atomic refcount bump on the assignment path.
+        *this = with_push_back(v);
+    }
+
+    void cow_insert(size_type pos, const T& v) {
+        g_pcv_hotpath_metrics().cow_insert_total.fetch_add(1, std::memory_order_relaxed);
+        // Insert always changes size → always need new buffer (no spare capacity).
+        *this = with_insert(pos, v);
+    }
+
+    void cow_erase(size_type pos) {
+        g_pcv_hotpath_metrics().cow_erase_total.fetch_add(1, std::memory_order_relaxed);
+        if (pos >= size_)
+            return;
+        // Erase always changes size → new buffer. Unique still allocates but
+        // avoids an extra shared_ptr copy when the caller moved the PCV first.
+        *this = with_erase(pos);
     }
 
     // ── Comparison ───────────────────────────────────────────

@@ -2038,6 +2038,12 @@ aura_add_issue_test(test_side_effect_inherit_2057)
 aura_issue_test_link_llvm_jit(test_side_effect_inherit_2057)
 add_dependencies(all_test_issue_targets test_side_effect_inherit_2057)
 
+# Issue #2058: PCV unique-ownership hot path (AI structural mutate).
+aura_add_issue_test(test_pcv_unique_hotpath_2058)
+# Header-only PCV + FlatAST module link via standard issue test helper.
+aura_issue_test_link_llvm_jit(test_pcv_unique_hotpath_2058)
+add_dependencies(all_test_issue_targets test_pcv_unique_hotpath_2058)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
