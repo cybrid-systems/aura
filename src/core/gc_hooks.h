@@ -246,24 +246,58 @@ inline std::atomic<std::uint64_t> g_gc_defer_table_overflow_total{0};
 inline std::atomic<std::uint64_t> g_gc_defer_last_fiber_id{0};
 inline std::atomic<std::uint64_t> g_gc_defer_last_checkpoint_epoch{0};
 
+// Issue #2088: process-wide arm-count mirrors for Agent dashboards
+// (query:gc-defer-reason-stats). Bumped when a reason bit transitions
+// 0→set (first nest level), not on every nested arm. Combined any_total
+// bumps when the whole bitmask transitions empty→non-empty.
+inline std::atomic<std::uint64_t> g_gc_defer_arm_panic_total{0};
+inline std::atomic<std::uint64_t> g_gc_defer_arm_ffi_pin_total{0};
+inline std::atomic<std::uint64_t> g_gc_defer_arm_render_pin_total{0};
+inline std::atomic<std::uint64_t> g_gc_defer_any_total{0};
+
+// Note first arm of a reason (bit was clear). Updates process-wide arm
+// counters. Called under successful arm_defer 0→set transitions only.
+inline void note_defer_reason_armed(GcDeferReason r, std::uint32_t prev_mask) noexcept {
+    const auto bit = static_cast<std::uint32_t>(r);
+    if (bit == kGcDeferReasonNone)
+        return;
+    if ((prev_mask & bit) != 0)
+        return; // already armed — nested
+    if (prev_mask == kGcDeferReasonNone)
+        g_gc_defer_any_total.fetch_add(1, std::memory_order_relaxed);
+    if (r == GcDeferReason::Panic)
+        g_gc_defer_arm_panic_total.fetch_add(1, std::memory_order_relaxed);
+    else if (r == GcDeferReason::FfiPin)
+        g_gc_defer_arm_ffi_pin_total.fetch_add(1, std::memory_order_relaxed);
+    else if (r == GcDeferReason::RenderPin)
+        g_gc_defer_arm_render_pin_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 inline void arm_gc_defer_pending_panic() noexcept {
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
     // Issue #2088: also toggle the Panic bit on the unified reason
     // bitmask. Idempotent — arm_defer is a no-op when the bit is
     // already set. Per-reason depth stays for nesting observability.
+    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
     (void)arm_defer(GcDeferReason::Panic);
+    note_defer_reason_armed(GcDeferReason::Panic, prev);
 }
 
 inline void release_gc_defer_pending_panic() noexcept {
     auto prev = g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
     while (prev > 0) {
+        const auto next = prev - 1;
         if (g_gc_defer_pending_panic_depth.compare_exchange_weak(
-                prev, prev - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+                prev, next, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+            // Issue #2088: clear Panic bit only when depth hits 0 (last
+            // nested release). Intermediate releases keep the bit set so
+            // should_defer_destructive_gc() still defers.
+            if (next == 0)
+                (void)release_defer(GcDeferReason::Panic);
             return;
+        }
     }
-    // Issue #2088: clear Panic bit on the unified bitmask when depth
-    // hits 0 (no more armed panics). release_defer is idempotent on
-    // already-unset bits.
+    // Depth already 0 — ensure bit is clear (idempotent safety).
     (void)release_defer(GcDeferReason::Panic);
 }
 
@@ -281,6 +315,10 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         if (e.id == evaluator_id) {
             ++e.depth;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+            // Issue #2088: keep Panic bit set for per-eval nested arm.
+            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+            (void)arm_defer(GcDeferReason::Panic);
+            note_defer_reason_armed(GcDeferReason::Panic, prev);
             return;
         }
     }
@@ -289,6 +327,10 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             e.id = evaluator_id;
             e.depth = 1;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+            // Issue #2088: first per-eval slot → arm Panic bit.
+            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+            (void)arm_defer(GcDeferReason::Panic);
+            note_defer_reason_armed(GcDeferReason::Panic, prev);
             return;
         }
     }
@@ -302,6 +344,10 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     // accidental depth accumulation across steal boundaries).
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
     g_gc_defer_table_overflow_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2088: overflow path still arms the unified Panic bit.
+    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    (void)arm_defer(GcDeferReason::Panic);
+    note_defer_reason_armed(GcDeferReason::Panic, prev);
 }
 // Issue #2005: explicit ffi-pin defer — increments while any
 // (ffi:pin-buffer) primitive holds a LifetimePin for an FFI buffer that
@@ -313,21 +359,31 @@ inline std::atomic<std::uint32_t> g_ffi_pin_defer_depth{0};
 inline void arm_ffi_pin_defer() noexcept {
     g_ffi_pin_defer_depth.fetch_add(1, std::memory_order_acq_rel);
     // Issue #2088: also toggle FfiPin bit on the unified bitmask.
+    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
     (void)arm_defer(GcDeferReason::FfiPin);
+    note_defer_reason_armed(GcDeferReason::FfiPin, prev);
 }
 inline void release_ffi_pin_defer() noexcept {
     auto prev = g_ffi_pin_defer_depth.load(std::memory_order_relaxed);
     while (prev > 0) {
-        if (g_ffi_pin_defer_depth.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel,
-                                                        std::memory_order_relaxed))
+        const auto next = prev - 1;
+        if (g_ffi_pin_defer_depth.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
+                                                        std::memory_order_relaxed)) {
+            // Issue #2088: clear FfiPin bit only on last release (depth→0).
+            if (next == 0)
+                (void)release_defer(GcDeferReason::FfiPin);
             return;
+        }
     }
-    // Issue #2088: clear FfiPin bit on the unified bitmask when depth
-    // hits 0 (no more FFI pin holds).
+    // Depth already 0 — ensure bit is clear.
     (void)release_defer(GcDeferReason::FfiPin);
 }
 [[nodiscard]] inline bool ffi_pin_defer_active() noexcept {
     return g_ffi_pin_defer_depth.load(std::memory_order_acquire) > 0;
+}
+// Issue #2088 / #2005: nesting depth accessor (Agent + tests).
+[[nodiscard]] inline std::uint32_t ffi_pin_defer_depth() noexcept {
+    return g_ffi_pin_defer_depth.load(std::memory_order_acquire);
 }
 
 
@@ -352,9 +408,14 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     }
     auto prev = g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
     while (prev > 0) {
+        const auto next = prev - 1;
         if (g_gc_defer_pending_panic_depth.compare_exchange_weak(
-                prev, prev - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+                prev, next, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+            // Issue #2088: clear Panic bit when process-wide depth hits 0.
+            if (next == 0)
+                (void)release_defer(GcDeferReason::Panic);
             break;
+        }
     }
 }
 
@@ -399,8 +460,13 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         while (prev > 0) {
             const auto target = (prev >= cleared) ? prev - cleared : 0;
             if (g_gc_defer_pending_panic_depth.compare_exchange_weak(
-                    prev, target, std::memory_order_acq_rel, std::memory_order_relaxed))
+                    prev, target, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                // Issue #2088: clear Panic bit when process-wide depth hits 0
+                // after steal orphan-clear (no remaining armed panics).
+                if (target == 0)
+                    (void)release_defer(GcDeferReason::Panic);
                 break;
+            }
         }
     }
     return cleared;

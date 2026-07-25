@@ -2059,6 +2059,12 @@ aura_add_issue_test(test_gc_mark_size_inject_2084)
 aura_issue_test_link_llvm_jit(test_gc_mark_size_inject_2084)
 add_dependencies(all_test_issue_targets test_gc_mark_size_inject_2084)
 
+# Issue #2088: unified GcDeferReason bitmask (panic + FFI pin + reserved render).
+# Extends #1581/#2002/#2005 scheduler GC defer suite with AC9–AC14.
+aura_add_issue_test(test_scheduler_gc_defer_pending_panic_steal)
+aura_issue_test_link_llvm_jit(test_scheduler_gc_defer_pending_panic_steal)
+add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_steal)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
