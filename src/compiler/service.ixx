@@ -67,6 +67,7 @@ import aura.compiler.lowering;
 import aura.compiler.ir_soa;
 import aura.compiler.ir_executor;
 import aura.compiler.pass_manager;
+import aura.compiler.dirty_propagation; // Issue #2106: cascade_skip metrics sink
 import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.compiler.cache;
@@ -673,6 +674,12 @@ public:
         // counters, so the snapshot and closure:stats read
         // a consistent value.
         evaluator_.set_compiler_metrics(&metrics_);
+        // Issue #2106: wire dirty cascade summary-skip counter into
+        // CompilerMetrics so Agents see cascade_skip_subtree_total via
+        // query:dirty-cascade-stats / optimization-passes-stats.
+        // Exchange happens inside cascade_mark_dirty / flush_pipeline_cascade_roots.
+        aura::compiler::dirty::set_cascade_skip_subtree_metrics(
+            &metrics_.cascade_skip_subtree_total);
         // Issue #708: wire AOT bridge counters at construction so
         // aura_reload_aot_module / checkpoint probes bump metrics_
         // before the first JIT eval (register_jit_primitives is lazy).
@@ -9696,6 +9703,13 @@ public:
             aura::messaging::g_current_compiler_service = nullptr;
             // Issue #2100: drop deopt restore hook with the owning service.
             aura_jit_set_macro_deopt_restore_fn(nullptr);
+        }
+        // Issue #2106: drop cascade_skip metrics sink if it points at our
+        // metrics_ (avoid UAF after service teardown, same pattern as
+        // aura_clear_jit_batch_deopt_target).
+        if (aura::compiler::dirty::g_cascade_skip_subtree_metrics ==
+            &metrics_.cascade_skip_subtree_total) {
+            aura::compiler::dirty::set_cascade_skip_subtree_metrics(nullptr);
         }
     }
 

@@ -2095,6 +2095,11 @@ aura_add_issue_test(test_composite_txn_commit_2105)
 aura_issue_test_link_llvm_jit(test_composite_txn_commit_2105)
 add_dependencies(all_test_issue_targets test_composite_txn_commit_2105)
 
+# Issue #2106: cascade_skip_subtree → CompilerMetrics + DeadCoercion synergy.
+aura_add_issue_test(test_cascade_skip_metrics_2106)
+aura_issue_test_link_llvm_jit(test_cascade_skip_metrics_2106)
+add_dependencies(all_test_issue_targets test_cascade_skip_metrics_2106)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

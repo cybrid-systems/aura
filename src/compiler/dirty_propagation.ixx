@@ -13,9 +13,16 @@ inline constexpr int kDirtyPropagationPhase = 2; // #1575: cascade + bridges
 
 using NodeId = std::uint32_t;
 
-// ── Metrics (#1575) ────────────────────────────────────────────
+// ── Metrics (#1575 / #2063 / #2106) ────────────────────────────
 // Module-level atomics so Agent / tests can observe cascade health
 // without going through CompilerService.
+//
+// Issue #2063: cascade_mark_dirty bumps dirty_skip_subtree on
+// summary-dirty early-exit. Issue #2106: callers / CompilerService
+// register g_cascade_skip_subtree_metrics (CompilerMetrics::
+// cascade_skip_subtree_total); flush_dirty_skip_subtree_to_metrics
+// exchanges the file-scope counter into that sink so nested
+// cascades never double-count (exchange zeros the source).
 inline std::atomic<std::uint64_t> dirty_skip_subtree{0};
 inline std::atomic<std::uint64_t> dirty_propagation_bfs_hits{0};
 inline std::atomic<std::uint64_t> manual_propagate_deprecated_count{0};
@@ -25,6 +32,37 @@ inline std::atomic<std::uint64_t> dirty_cascade_depth_samples{0};
 inline std::atomic<std::uint64_t> dirty_cascade_nodes_marked_total{0};
 inline std::atomic<std::uint64_t> dirty_sync_from_ir_total{0};
 inline std::atomic<std::uint64_t> dirty_push_to_ir_total{0};
+
+// Issue #2106: optional sink → CompilerMetrics::cascade_skip_subtree_total.
+// Set by CompilerService ctor (or tests); null when no service is live.
+inline std::atomic<std::uint64_t>* g_cascade_skip_subtree_metrics = nullptr;
+
+inline void set_cascade_skip_subtree_metrics(std::atomic<std::uint64_t>* sink) noexcept {
+    g_cascade_skip_subtree_metrics = sink;
+}
+
+// Exchange file-scope dirty_skip_subtree into the metrics sink.
+// Returns the drained count (0 if sink is null — leaves file-scope
+// intact so unit tests without a service can still load it).
+// Exchange semantics: nested cascade_mark_dirty / cascade_mark_dirty_many
+// must not double-count the same skips into metrics.
+[[nodiscard]] inline std::uint64_t flush_dirty_skip_subtree_to_metrics() noexcept {
+    auto* sink = g_cascade_skip_subtree_metrics;
+    if (!sink)
+        return 0;
+    const auto n = dirty_skip_subtree.exchange(0, std::memory_order_relaxed);
+    if (n)
+        sink->fetch_add(n, std::memory_order_relaxed);
+    return n;
+}
+
+// Agent-visible total: metrics sink (if set) + any unflushed file-scope.
+[[nodiscard]] inline std::uint64_t cascade_skip_subtree_visible() noexcept {
+    std::uint64_t n = dirty_skip_subtree.load(std::memory_order_relaxed);
+    if (g_cascade_skip_subtree_metrics)
+        n += g_cascade_skip_subtree_metrics->load(std::memory_order_relaxed);
+    return n;
+}
 
 struct DirtyPropagationStats {
     std::uint64_t marks = 0;
@@ -238,12 +276,10 @@ inline std::size_t cascade_mark_dirty(DirtySet& set, NodeId root, const DepGraph
                 }
                 if (all_dirty && sub_deps && !sub_deps->empty()) {
                     skip_subtree = true;
-                    // Issue #2063: bump file-scope dirty_skip_subtree counter.
-                    // The CompilerMetrics cascade_skip_subtree_total is bumped
-                    // by callers (invalidate_bridge_for / mark_define_dirty
-                    // paths) that hold the metrics_ pointer — cascade_mark_dirty
-                    // is a free function in the aura::compiler::dirty namespace
-                    // and does not have access to CompilerMetrics directly.
+                    // Issue #2063 / #2106: bump file-scope dirty_skip_subtree.
+                    // End-of-cascade flush_dirty_skip_subtree_to_metrics()
+                    // exchanges into CompilerMetrics::cascade_skip_subtree_total
+                    // when the service has registered the metrics sink.
                     dirty_skip_subtree.fetch_add(1, std::memory_order_relaxed);
                 }
             }
@@ -256,6 +292,10 @@ inline std::size_t cascade_mark_dirty(DirtySet& set, NodeId root, const DepGraph
     dirty_cascade_depth_samples.fetch_add(1, std::memory_order_relaxed);
     dirty_cascade_nodes_marked_total.fetch_add(marked, std::memory_order_relaxed);
     g_dirty_propagation_stats.bfs_nodes_marked += marked;
+    // Issue #2106: transfer summary-dirty skips into CompilerMetrics.
+    // Exchange zeros dirty_skip_subtree so a subsequent flush (or nested
+    // cascade_mark_dirty_many entry) does not re-add the same events.
+    (void)flush_dirty_skip_subtree_to_metrics();
     return marked;
 }
 
@@ -274,15 +314,19 @@ inline std::size_t cascade_mark_dirty_many(DirtySet& set, std::span<const NodeId
 }
 
 // Drain thread-local cascade roots into g_global_dirty (pass_manager hook).
+// Issue #2106: each cascade_mark_dirty already flushes skip counts into
+// metrics; final flush is a no-op safety net if any residual remains.
 inline std::size_t flush_pipeline_cascade_roots() {
     if (!g_pipeline_dep_graph || t_pipeline_cascade_roots.empty()) {
         t_pipeline_cascade_roots.clear();
+        (void)flush_dirty_skip_subtree_to_metrics();
         return 0;
     }
     std::size_t n = 0;
     for (NodeId r : t_pipeline_cascade_roots)
         n += cascade_mark_dirty(g_global_dirty, r, *g_pipeline_dep_graph);
     t_pipeline_cascade_roots.clear();
+    (void)flush_dirty_skip_subtree_to_metrics();
     return n;
 }
 
