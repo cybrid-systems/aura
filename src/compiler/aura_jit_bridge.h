@@ -84,6 +84,32 @@ void* aura_get_aot_metrics(void);
 // Production impl in aura_jit_bridge.cpp; weak stub in
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
+
+// Issue #2093: structured reload-failure reason codes. Agents branch
+// on this enum (via aura_aot_last_reload_fail_reason or the
+// query:aot-reload-stats snapshot) to pick a recovery policy without
+// log scraping — see issue body for the policy matrix
+// (Version/Env/Linear → reemit+retry; Dlopen → path/ops; Staging →
+// treat as bug). 0 (Ok) is the success state and the value cleared
+// at the start of every aura_reload_aot_module call. Stable ABI: do
+// not reorder — existing values are persisted in query snapshots.
+enum class AotReloadFail : std::uint8_t {
+    Ok = 0,
+    Dlopen,
+    Version,
+    Region,
+    Defuse,
+    Env,
+    Linear,
+    Staging,
+    Other,
+};
+
+// Issue #2093: getter for the last reload failure reason (file-scope
+// atomic in aura_jit_bridge.cpp; thread-safe lock-free read).
+// Returns AotReloadFail as uint8_t for C ABI stability.
+extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void);
+
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 
@@ -232,6 +258,13 @@ void aura_set_aot_emit_region_mask(std::uint64_t mask);
 // eval_ptr is typically Evaluator*; nullptr selects the process default state.
 void aura_set_aot_region_mask_for_eval(void* eval_ptr, std::uint64_t mask);
 std::uint64_t aura_get_aot_region_mask_for_eval(void* eval_ptr);
+// Issue #2093: per-eval env_frame_version setter for the reload
+// drift-detection path. Without this, tests + hosts that want to
+// trigger an Env-failure reload can't seed the host side — the
+// reload reads st.env_frame_version (per-eval state) directly, not
+// the file-scope g_aot_live_env_frame_version.
+void aura_set_aot_default_env_frame_version(std::uint64_t v);
+void aura_set_aot_env_frame_version_for_eval(void* eval_ptr, std::uint64_t v);
 void aura_set_module_version_for_eval(void* eval_ptr, std::uint64_t v);
 std::uint64_t aura_get_module_version_for_eval(void* eval_ptr);
 void aura_set_aot_defuse_version_for_eval(void* eval_ptr, std::uint64_t v);

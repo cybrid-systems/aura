@@ -11903,12 +11903,30 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t region_mismatch = 0;
         std::uint64_t hot_update_ok = 0;
         std::uint64_t hot_update_rb = 0;
+        // Issue #2093: per-reason reload-failure breakdown.
+        std::uint64_t fail_dlopen = 0;
+        std::uint64_t fail_version = 0;
+        std::uint64_t fail_region = 0;
+        std::uint64_t fail_defuse = 0;
+        std::uint64_t fail_env = 0;
+        std::uint64_t fail_linear = 0;
+        std::uint64_t fail_staging = 0;
+        std::uint64_t fail_other = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
             region_mismatch = m->aot_region_mismatch_.load(std::memory_order_relaxed);
             hot_update_ok = m->aot_hot_update_success_.load(std::memory_order_relaxed);
             hot_update_rb = m->aot_hot_update_atomic_rollback.load(std::memory_order_relaxed);
+            // Issue #2093: per-reason reload-failure reads.
+            fail_dlopen = m->aot_reload_fail_dlopen_total.load(std::memory_order_relaxed);
+            fail_version = m->aot_reload_fail_version_total.load(std::memory_order_relaxed);
+            fail_region = m->aot_reload_fail_region_total.load(std::memory_order_relaxed);
+            fail_defuse = m->aot_reload_fail_defuse_total.load(std::memory_order_relaxed);
+            fail_env = m->aot_reload_fail_env_total.load(std::memory_order_relaxed);
+            fail_linear = m->aot_reload_fail_linear_total.load(std::memory_order_relaxed);
+            fail_staging = m->aot_reload_fail_staging_total.load(std::memory_order_relaxed);
+            fail_other = m->aot_reload_fail_other_total.load(std::memory_order_relaxed);
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(32); // #2046 joint versioning keys
@@ -11973,6 +11991,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
             {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
             {"aot-hot-update-rollback-count", make_int(static_cast<std::int64_t>(hot_update_rb))},
+            // Issue #2093: per-reason reload-failure counters.
+            {"aot-reload-fail-dlopen-count", make_int(static_cast<std::int64_t>(fail_dlopen))},
+            {"aot-reload-fail-version-count", make_int(static_cast<std::int64_t>(fail_version))},
+            {"aot-reload-fail-region-count", make_int(static_cast<std::int64_t>(fail_region))},
+            {"aot-reload-fail-defuse-count", make_int(static_cast<std::int64_t>(fail_defuse))},
+            {"aot-reload-fail-env-count", make_int(static_cast<std::int64_t>(fail_env))},
+            {"aot-reload-fail-linear-count", make_int(static_cast<std::int64_t>(fail_linear))},
+            {"aot-reload-fail-staging-count", make_int(static_cast<std::int64_t>(fail_staging))},
+            {"aot-reload-fail-other-count", make_int(static_cast<std::int64_t>(fail_other))},
             // Issue #2046: joint AOT/JIT region versioning after invalidate
             {"aot_joint_epoch_bump_total", make_int(static_cast<std::int64_t>(joint_bump))},
             {"aot-joint-epoch-bump-total", make_int(static_cast<std::int64_t>(joint_bump))},

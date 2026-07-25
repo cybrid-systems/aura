@@ -30,6 +30,8 @@
 #include <string>
 #include <vector>
 
+#include "compiler/aura_jit_bridge.h" // Issue #2093: AotReloadFail enum
+
 namespace aura::compiler {
 
 // Sentinel epoch passed to epoch listeners when a deopt storm trips (#2014).
@@ -54,6 +56,13 @@ public:
     void on_reemit_pipeline_call(std::uint64_t candidates, std::uint64_t successes) noexcept;
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
+    // Issue #2093: reason-aware rollback hook. The per-reason atomic
+    // counter + last-reason file-scope atomic are bumped here so the
+    // Agent snapshot (taken via get_snapshot / get_stats_snapshot) can
+    // distinguish Version vs Region vs Env failures for recovery
+    // policy. on_reload_rollback() (no-arg) is kept as a thin wrapper
+    // for callers that don't have a reason.
+    void on_reload_rollback(AotReloadFail reason) noexcept;
     void on_reload_rollback() noexcept;
     // Issue #2013: live closures remapped after reemit (count of slots).
     void on_live_closure_remap(std::uint64_t count) noexcept;
@@ -125,6 +134,21 @@ public:
         // Issue #2012: atomic reload recovery counters.
         std::int64_t aot_reload_success_total = 0;
         std::int64_t aot_reload_rollback_total = 0;
+        // Issue #2093: per-reason reload-failure breakdown (refine #2012).
+        // Mirrors CompilerMetrics counters — Agent reads these to branch
+        // on a recovery policy without parsing logs. Aggregate
+        // aot_reload_rollback_total is unchanged so existing dashboards
+        // keep working. Last-fail reason is the most recent reload's
+        // failure enum (Ok when the last attempt succeeded).
+        std::int64_t aot_reload_fail_dlopen_total = 0;
+        std::int64_t aot_reload_fail_version_total = 0;
+        std::int64_t aot_reload_fail_region_total = 0;
+        std::int64_t aot_reload_fail_defuse_total = 0;
+        std::int64_t aot_reload_fail_env_total = 0;
+        std::int64_t aot_reload_fail_linear_total = 0;
+        std::int64_t aot_reload_fail_staging_total = 0;
+        std::int64_t aot_reload_fail_other_total = 0;
+        std::int64_t aot_reload_last_fail_reason = 0; // AotReloadFail enum value
         // Issue #2013: live closure remaps after reemit.
         std::int64_t live_closure_remap_total = 0;
         // Issue #2014: deopt storm detection + throttle.
@@ -191,6 +215,20 @@ private:
     std::atomic<std::uint64_t> aot_reload_success_{0};  // #2012
     std::atomic<std::uint64_t> aot_reload_rollback_{0}; // #2012
     std::atomic<std::uint64_t> live_closure_remap_{0};  // #2013
+    // Issue #2093: per-reason rollback counters + last-reason mirror.
+    // The last-reason atomic is duplicated with aura_jit_bridge.cpp's
+    // g_last_reload_fail_reason so callers without direct bridge access
+    // (e.g. query:aot-reload-stats snapshot readers) can still branch
+    // on the most recent failure without parsing logs.
+    std::atomic<std::uint64_t> aot_reload_fail_dlopen_{0};     // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_version_{0};    // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_region_{0};     // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_defuse_{0};     // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_env_{0};        // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_linear_{0};     // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_staging_{0};    // #2093
+    std::atomic<std::uint64_t> aot_reload_fail_other_{0};      // #2093
+    std::atomic<std::uint8_t> last_aot_reload_fail_reason_{0}; // #2093 (AotReloadFail enum)
 
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
@@ -240,7 +278,17 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t stable_func_id_map_size;
     std::int64_t aot_reload_success_total;  // #2012
     std::int64_t aot_reload_rollback_total; // #2012
-    std::int64_t live_closure_remap_total;  // #2013
+    // Issue #2093: per-reason breakdown + last-fail reason.
+    std::int64_t aot_reload_fail_dlopen_total;
+    std::int64_t aot_reload_fail_version_total;
+    std::int64_t aot_reload_fail_region_total;
+    std::int64_t aot_reload_fail_defuse_total;
+    std::int64_t aot_reload_fail_env_total;
+    std::int64_t aot_reload_fail_linear_total;
+    std::int64_t aot_reload_fail_staging_total;
+    std::int64_t aot_reload_fail_other_total;
+    std::int64_t aot_reload_last_fail_reason;
+    std::int64_t live_closure_remap_total; // #2013
     // Issue #2014
     std::int64_t deopt_storm_detected_total;
     std::int64_t deopt_observed_total;

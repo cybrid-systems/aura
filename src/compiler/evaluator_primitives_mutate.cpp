@@ -63,7 +63,21 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t stable_func_id_map_size;
     std::int64_t aot_reload_success_total;  // #2012
     std::int64_t aot_reload_rollback_total; // #2012
-    std::int64_t live_closure_remap_total;  // #2013
+    // Issue #2093: per-reason breakdown + last-fail reason.
+    // MUST stay in lockstep with hot_update_registry.hh — the production
+    // aura_hot_update_registry_get_snapshot() writes these fields; if
+    // this shadow struct is missing any of them, the writes overflow
+    // and corrupt adjacent stack/heap (stack canary smashes).
+    std::int64_t aot_reload_fail_dlopen_total;
+    std::int64_t aot_reload_fail_version_total;
+    std::int64_t aot_reload_fail_region_total;
+    std::int64_t aot_reload_fail_defuse_total;
+    std::int64_t aot_reload_fail_env_total;
+    std::int64_t aot_reload_fail_linear_total;
+    std::int64_t aot_reload_fail_staging_total;
+    std::int64_t aot_reload_fail_other_total;
+    std::int64_t aot_reload_last_fail_reason;
+    std::int64_t live_closure_remap_total; // #2013
     // Issue #2014
     std::int64_t deopt_storm_detected_total;
     std::int64_t deopt_observed_total;

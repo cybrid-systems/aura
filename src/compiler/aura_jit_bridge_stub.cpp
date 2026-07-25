@@ -436,6 +436,12 @@ extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
 extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
     return g_aot_metrics_explicit_stub;
 }
+// Issue #2093: weak stub for the last-reload-fail-reason getter
+// (production impl is in aura_jit_bridge.cpp; light test binaries
+// that don't link the production bridge TU link cleanly).
+extern "C" __attribute__((weak)) std::uint8_t aura_aot_last_reload_fail_reason(void) {
+    return 0; // AotReloadFail::Ok
+}
 
 extern "C" void aura_jit_epoch_acquire_fence(void) {
     std::atomic_thread_fence(std::memory_order_acquire);

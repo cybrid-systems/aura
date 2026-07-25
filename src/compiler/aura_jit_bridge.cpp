@@ -96,6 +96,18 @@ extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
 //
 // Issue #1654: std::atomic closes the C++ memory-model data race between
 // host bumps and concurrent aura_closure_call reads (acq/rel protocol).
+// Issue #2093: file-scope last-reason mirror so callers without
+// direct bridge access (query primitives, dashboards) can branch on
+// the most recent reload failure. Duplicated with the
+// last_aot_reload_fail_reason_ atomic in HotUpdateRegistry so both
+// the bridge TU and the registry TU can publish independently;
+// readers can use either (both store AotReloadFail as uint8_t).
+static std::atomic<std::uint8_t> g_last_reload_fail_reason{0};
+
+extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void) {
+    return g_last_reload_fail_reason.load(std::memory_order_acquire);
+}
+
 static std::atomic<std::uint64_t> g_current_bridge_epoch{0};
 
 extern "C" void aura_set_current_bridge_epoch(std::uint64_t v) {
@@ -436,6 +448,19 @@ extern "C" void aura_set_aot_region_mask(std::uint64_t mask) {
 
 extern "C" void aura_set_aot_region_mask_for_eval(void* eval_ptr, std::uint64_t mask) {
     aot_state_for(eval_ptr).region_mask.store(mask, std::memory_order_relaxed);
+}
+
+// Issue #2093: per-eval env_frame_version setter. Pairs with the
+// reload's st.env_frame_version check at L1885 so tests + hosts can
+// seed the host side and force an Env-failure reload. Default state
+// (nullptr) writes to g_aot_default_state.env_frame_version; per-eval
+// writes to aot_state_for(eval_ptr).env_frame_version.
+extern "C" void aura_set_aot_default_env_frame_version(std::uint64_t v) {
+    g_aot_default_state.env_frame_version.store(v, std::memory_order_relaxed);
+}
+
+extern "C" void aura_set_aot_env_frame_version_for_eval(void* eval_ptr, std::uint64_t v) {
+    aot_state_for(eval_ptr).env_frame_version.store(v, std::memory_order_relaxed);
     if (aot_metrics())
         aot_metrics()->aot_per_eval_region_sets.fetch_add(1, std::memory_order_relaxed);
 }
@@ -804,10 +829,52 @@ static void* g_aot_last_handle = nullptr;
 static std::uint64_t g_aot_last_commit_epoch = 0;
 static std::uint64_t g_aot_last_module_version = 0;
 
-void note_reload_rollback() noexcept {
-    if (aot_metrics())
+void note_reload_rollback(AotReloadFail reason) noexcept {
+    if (aot_metrics()) {
         aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
-    aura::compiler::hot_update_registry().on_reload_rollback();
+        // Issue #2093: per-reason metric bump. Agent reads these to pick
+        // a recovery policy without log scraping. The aggregate
+        // aot_hot_update_atomic_rollback above is unchanged so existing
+        // dashboards keep working.
+        switch (reason) {
+            case AotReloadFail::Dlopen:
+                aot_metrics()->aot_reload_fail_dlopen_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Version:
+                aot_metrics()->aot_reload_fail_version_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Region:
+                aot_metrics()->aot_reload_fail_region_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Defuse:
+                aot_metrics()->aot_reload_fail_defuse_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Env:
+                aot_metrics()->aot_reload_fail_env_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Linear:
+                aot_metrics()->aot_reload_fail_linear_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Staging:
+                aot_metrics()->aot_reload_fail_staging_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Other:
+                aot_metrics()->aot_reload_fail_other_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case AotReloadFail::Ok:
+                break;
+        }
+    }
+    g_last_reload_fail_reason.store(static_cast<std::uint8_t>(reason), std::memory_order_release);
+    aura::compiler::hot_update_registry().on_reload_rollback(reason);
+}
+
+// Issue #2093: thin wrapper for callers that don't have a specific
+// reason (rare; legacy call sites funnel through Other).
+void note_reload_rollback() noexcept {
+    note_reload_rollback(AotReloadFail::Other);
 }
 
 } // namespace
@@ -1691,6 +1758,13 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     // Serialize concurrent reloads so staging state is single-writer.
     std::lock_guard<std::mutex> reload_lock(g_aot_reload_mtx);
 
+    // Issue #2093: clear last-fail at the start of every attempt so
+    // a failure path that exits without setting last-fail (e.g. the
+    // null-path short-circuit at L1705) doesn't leak the previous
+    // attempt's reason. AC3 covers the success-side clear below.
+    g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Ok),
+                                    std::memory_order_release);
+
     bump_reload_attempt();
     // Issue #1271: capture pre-reload epoch so failed paths never
     // advance table generation (atomic rollback of partial register).
@@ -1725,7 +1799,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         g_aot_staging_active.store(false, std::memory_order_release);
         clear_aot_staging();
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
-        note_reload_rollback();
+        // Issue #2093: per-reason rollback.
+        note_reload_rollback(AotReloadFail::Dlopen);
         audit_fail("aot-hotupdate-dlopen-fail");
         return false;
     }
@@ -1734,14 +1809,15 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     // `version != 0`, it must match. If `version == 0`, we trust
     // the binary's own aot_emit_version.
     auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
-    auto rollback_close = [&](std::string_view audit_reason) {
+    auto rollback_close = [&](std::string_view audit_reason, AotReloadFail reason) {
         // Discard staged registrations; live table untouched.
         g_aot_staging_active.store(false, std::memory_order_release);
         clear_aot_staging();
         ::dlclose(handle);
         // Epoch must remain epoch_before (no commit_func_table_swap).
         (void)epoch_before;
-        note_reload_rollback();
+        // Issue #2093: per-reason rollback (was no-arg before).
+        note_reload_rollback(reason);
         audit_fail(audit_reason);
     };
     if (binary_version) {
@@ -1750,7 +1826,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*binary_version),
                     static_cast<unsigned long long>(version), path);
-            rollback_close("aot-hotupdate-version-mismatch");
+            rollback_close("aot-hotupdate-version-mismatch", AotReloadFail::Version);
             // Issue #452: bump stale-reject counter.
             if (aot_metrics())
                 aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1767,7 +1843,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             aot_log("aura_reload_aot_module: no aot_emit_version in %s, "
                     "but host specified version=%llu; refusing\n",
                     path, static_cast<unsigned long long>(version));
-            rollback_close("aot-hotupdate-missing-emit-version");
+            rollback_close("aot-hotupdate-missing-emit-version", AotReloadFail::Version);
             // Issue #452: pre-#243 binary with explicit version
             // requested counts as stale.
             if (aot_metrics())
@@ -1783,7 +1859,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     "(binary=%llu, host=%llu) for %s — FullReAOT required\n",
                     static_cast<unsigned long long>(*binary_region),
                     static_cast<unsigned long long>(host_region), path);
-            rollback_close("aot-hotupdate-region-mismatch");
+            rollback_close("aot-hotupdate-region-mismatch", AotReloadFail::Region);
             if (aot_metrics())
                 aot_metrics()->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -1798,7 +1874,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*emit_ver),
                     static_cast<unsigned long long>(host_defuse), path);
-            rollback_close("aot-hotupdate-stale-defuse");
+            rollback_close("aot-hotupdate-stale-defuse", AotReloadFail::Defuse);
             if (aot_metrics())
                 aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -1833,7 +1909,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                 aot_metrics()->aot_incremental_reemit_triggered.fetch_add(
                     1, std::memory_order_relaxed);
             }
-            rollback_close("aot-hotupdate-env-frame-drift");
+            rollback_close("aot-hotupdate-env-frame-drift", AotReloadFail::Env);
             return false;
         }
     }
@@ -1856,6 +1932,9 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         aot_metrics()->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
     }
     aura::compiler::hot_update_registry().on_reload_success();
+    // Issue #2093: success path clears last-fail to Ok (AC3).
+    g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Ok),
+                                    std::memory_order_release);
     // Issue #1882: TypedMutationAudit trail for successful hot-update (sampled).
     aura::compiler::typed_audit::capture_aot_hotupdate_audit(
         /*success=*/true, epoch_before, g_aot_last_commit_epoch, "aot-hotupdate");
