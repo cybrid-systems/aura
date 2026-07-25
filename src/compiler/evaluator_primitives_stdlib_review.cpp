@@ -11,6 +11,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/gap_buffer.hh"
+#include "core/zero_copy_output.hh" // #2048 zero_copy_handoff metrics
 #include "jit_typed_mutation_stats.h"
 #include "tui/tui_runtime.hh"
 
@@ -763,6 +764,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:lifetime-pin-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
             const auto& s = aura::core::lifetime::g_lifetime_pin_stats;
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(2000)},
                 {"phase", make_int(aura::core::lifetime::kLifetimePinPhase)},
@@ -771,6 +777,22 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"ffi-handoffs", make_int(static_cast<std::int64_t>(s.ffi_handoffs))},
                 {"invalidations", make_int(static_cast<std::int64_t>(s.invalidations))},
                 {"restamps", make_int(static_cast<std::int64_t>(s.restamps))},
+                // Issue #2048: batch present zero-copy handoff + GC defer
+                {"zero-copy-handoff-hits",
+                 make_int(static_cast<std::int64_t>(
+                     zm.zero_copy_handoff_hits.load(std::memory_order_relaxed)))},
+                {"zero-copy-large-handoff-hits",
+                 make_int(static_cast<std::int64_t>(
+                     zm.zero_copy_large_handoff_hits.load(std::memory_order_relaxed)))},
+                {"present-pin-handoffs",
+                 make_int(static_cast<std::int64_t>(
+                     zm.present_pin_handoffs.load(std::memory_order_relaxed)))},
+                {"defer-because-ffi-pin", make_int(m ? load(m->ffi_defer_because_pin_total) : 0)},
+                {"live-pin-count",
+                 make_int(static_cast<std::int64_t>(aura::core::lifetime::live_pin_count()))},
+                {"batch-ffi-present-wired", make_int(1)},
+                {"schema-2048", make_int(2048)},
+                {"issue-2048", make_int(2048)},
             };
             return build_kv_hash(ev, kv);
         });

@@ -18,7 +18,7 @@ namespace aura::core::zero_copy {
 inline constexpr int kZeroCopyOutputPhase = 2; // #1561: Arena path
 inline constexpr int kZeroCopyOutputIssue = 1561;
 
-// Process-wide metrics (#1561 AC4).
+// Process-wide metrics (#1561 AC4 / #2048 handoff).
 struct ZeroCopyMetrics {
     std::atomic<std::uint64_t> acquire_count{0};
     std::atomic<std::uint64_t> release_count{0};
@@ -27,6 +27,10 @@ struct ZeroCopyMetrics {
     std::atomic<std::uint64_t> hit_in_render{0};     // zero_copy_hit_in_render
     std::atomic<std::uint64_t> vector_fallback_count{0};
     std::atomic<std::uint64_t> arena_path_active{1};
+    // Issue #2048: LifetimePin + zero-copy handoff to C write/backend.
+    std::atomic<std::uint64_t> zero_copy_handoff_hits{0};
+    std::atomic<std::uint64_t> zero_copy_large_handoff_hits{0}; // batches ≥ 4 KiB
+    std::atomic<std::uint64_t> present_pin_handoffs{0};
 };
 
 inline ZeroCopyMetrics& g_zero_copy_metrics() noexcept {
@@ -174,6 +178,9 @@ inline void reset_zero_copy_metrics_for_test() noexcept {
     m.hit_in_render.store(0, std::memory_order_relaxed);
     m.vector_fallback_count.store(0, std::memory_order_relaxed);
     m.arena_path_active.store(1, std::memory_order_relaxed);
+    m.zero_copy_handoff_hits.store(0, std::memory_order_relaxed);
+    m.zero_copy_large_handoff_hits.store(0, std::memory_order_relaxed);
+    m.present_pin_handoffs.store(0, std::memory_order_relaxed);
     g_zero_copy_fb.acquire_count = 0;
     g_zero_copy_fb.release_count = 0;
     g_zero_copy_fb.last_ptr = nullptr;

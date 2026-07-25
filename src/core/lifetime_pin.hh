@@ -1,61 +1,35 @@
-// lifetime_pin.ixx — Issue #2000 Phase 2: LifetimePin real RAII pinning +
-// generation stamp + FFI handoff + restamp/invalidate hooks. Refines #1226
-// Phase 1 (pure counters). Issue #2048: batch terminal present zero-copy
-// handoff holds a LifetimePin for the ANSI/cell buffer under the render
-// hotpath soft-gate and arms g_ffi_pin_defer_depth so compact/GC cannot
-// reclaim the buffer mid-write (see present_batch_impl).
-//
-// Phase 2 surfaces:
-//   - Real pointer + generation stamp storage per pin (ptr_, gen_, arena_id_).
-//   - validate(cur_gen, cur_arena_id) → bool: false after compact invalidates.
-//   - restamp(new_gen, new_arena_id): pin survived compact, gen bumped.
-//     new_gen = 0 keeps current gen (signals "boundary dtor ran" with no
-//     observed gen bump — useful for MutationBoundaryGuard dtor wiring
-//     where the boundary itself doesn't bump gen, only compact_sweep does).
-//   - unpin_on_compact(): pin dead (buffer reclaimed), ptr nulled.
-//   - Active registry (function-static vector + mutex) so compact hooks
-//     can iterate all live LifetimePin instances tied to an arena and
-//     restamp / invalidate them in one pass (no per-pin coordination).
-//   - Two new stats counters: invalidations, restamps (Phase 1 retained
-//     pins, unpins, ffi_handoffs).
-//   - kLifetimePinPhase bumps from 1 to 2.
-//   - mark_ffi_handoff stays as the handoff signal (counter + bool flag on
-//     the pin for downstream FFI consumers to consult ownership state).
-//
-// Thread-safety:
-//   - registry mutex serializes ctor/dtor/move ctor & assign + global helpers.
-//   - ptr_/gen_/arena_id_ are plain fields — validate() reads them without
-//     a lock. The worst case is a stale read returning false-negative
-//     ("invalid" when actually still valid) — which is safe (FFI just
-//     recreates the pin post-compact, no UAF). False-positive is not
-//     possible because restamp/unpin_on_compact are serialized by the
-//     registry mutex.
+// lifetime_pin.hh — Issue #2000 Phase 2 / #2048 header form of LifetimePin.
+// Keep in sync with lifetime_pin.ixx for module consumers.
+// Used by non-module TUs (render_primitives.cpp, etc.).
 
-module;
+#ifndef AURA_CORE_LIFETIME_PIN_HH
+#define AURA_CORE_LIFETIME_PIN_HH
 
-export module aura.core.lifetime_pin;
+#include <algorithm>
+#include <cstdint>
+#include <mutex>
+#include <vector>
 
-import std;
-
-export namespace aura::core::lifetime {
+namespace aura::core::lifetime {
 
 inline constexpr int kLifetimePinPhase = 2;
+inline constexpr int kLifetimePinIssue = 2048; // joint batch-FFI present contract
 
 struct LifetimePinStats {
     std::uint64_t pins = 0;
     std::uint64_t unpins = 0;
     std::uint64_t ffi_handoffs = 0;
-    std::uint64_t invalidations = 0; // Phase 2: compact reclaimed buffer
-    std::uint64_t restamps = 0;      // Phase 2: compact bumped gen, pin still valid
+    std::uint64_t invalidations = 0;
+    std::uint64_t restamps = 0;
 };
 
-inline LifetimePinStats g_lifetime_pin_stats{};
+inline LifetimePinStats& g_lifetime_pin_stats() noexcept {
+    static LifetimePinStats s;
+    return s;
+}
 
 class LifetimePin;
 
-// Active pin registry (function-static so LifetimePin ctor can reference
-// it without forward-declaration ordering concerns). Initialized on first
-// use; cleared on module unload.
 inline std::vector<LifetimePin*>& pin_registry() {
     static std::vector<LifetimePin*> v;
     return v;
@@ -70,7 +44,7 @@ public:
     LifetimePin() noexcept {
         std::lock_guard<std::mutex> lock(pin_registry_mtx());
         pin_registry().push_back(this);
-        ++g_lifetime_pin_stats.pins;
+        ++g_lifetime_pin_stats().pins;
     }
     ~LifetimePin() noexcept {
         std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -78,7 +52,7 @@ public:
         auto it = std::find(reg.begin(), reg.end(), this);
         if (it != reg.end())
             reg.erase(it);
-        ++g_lifetime_pin_stats.unpins;
+        ++g_lifetime_pin_stats().unpins;
     }
     LifetimePin(const LifetimePin&) = delete;
     LifetimePin& operator=(const LifetimePin&) = delete;
@@ -119,8 +93,6 @@ public:
         return *this;
     }
 
-    // Pin a buffer pointer with a generation stamp. arena_id = 0 means
-    // "no specific arena — generic FFI buffer" (validate still checks gen).
     void pin(void* p, std::uint64_t g, std::uint64_t arena_id = 0) noexcept {
         ptr_ = p;
         gen_ = g;
@@ -133,8 +105,6 @@ public:
     [[nodiscard]] std::uint64_t gen() const noexcept { return gen_; }
     [[nodiscard]] std::uint64_t arena_id() const noexcept { return arena_id_; }
 
-    // Validate pin against current generation + arena id. Returns false if
-    // pin was invalidated (ptr nulled) or gen / arena_id mismatch.
     [[nodiscard]] bool validate(std::uint64_t cur_gen,
                                 std::uint64_t cur_arena_id = 0) const noexcept {
         if (!ptr_)
@@ -144,9 +114,6 @@ public:
         return gen_ == cur_gen;
     }
 
-    // Compact hook (Phase 2): pin survived compact, gen bumped to track
-    // new generation. new_gen = 0 keeps current gen (boundary-dtor use).
-    // new_arena_id = 0 keeps current arena_id.
     void restamp(std::uint64_t new_gen = 0, std::uint64_t new_arena_id = 0) noexcept {
         if (!ptr_)
             return;
@@ -154,12 +121,9 @@ public:
             gen_ = new_gen;
         if (new_arena_id != 0)
             arena_id_ = new_arena_id;
-        ++g_lifetime_pin_stats.restamps;
+        ++g_lifetime_pin_stats().restamps;
     }
 
-    // Compact hook (Phase 2): buffer dead, pin invalidated. Subsequent
-    // validate() returns false; FFI consumer must re-pin if it needs the
-    // buffer again.
     void unpin_on_compact() noexcept {
         if (!ptr_)
             return;
@@ -167,15 +131,12 @@ public:
         gen_ = 0;
         arena_id_ = 0;
         ffi_handoff_ = false;
-        ++g_lifetime_pin_stats.invalidations;
+        ++g_lifetime_pin_stats().invalidations;
     }
 
-    // FFI handoff signal. Phase 1: counter bump only. Phase 2: also flips
-    // an internal flag so downstream consumers (e.g. ffi_hot batch dispatch)
-    // can consult ownership transfer state without re-querying the caller.
     void mark_ffi_handoff() noexcept {
         ffi_handoff_ = true;
-        ++g_lifetime_pin_stats.ffi_handoffs;
+        ++g_lifetime_pin_stats().ffi_handoffs;
     }
     [[nodiscard]] bool ffi_handoff() const noexcept { return ffi_handoff_; }
 
@@ -186,9 +147,6 @@ private:
     bool ffi_handoff_ = false;
 };
 
-// Restamp every live LifetimePin tied to `arena_id`. arena_id == 0
-// matches all (use for boundary-wide restamp). new_gen == 0 keeps current
-// gen. Returns # restamped (counter-bumped).
 inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
                                               std::uint64_t new_gen = 0) noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -205,7 +163,6 @@ inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
     return n;
 }
 
-// Invalidate every live LifetimePin tied to `arena_id`. Returns # invalidated.
 inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
     auto& reg = pin_registry();
@@ -221,7 +178,6 @@ inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcep
     return n;
 }
 
-// Total live pins (for tests + observability).
 inline std::size_t live_pin_count() noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
     auto& reg = pin_registry();
@@ -233,3 +189,5 @@ inline std::size_t live_pin_count() noexcept {
 }
 
 } // namespace aura::core::lifetime
+
+#endif // AURA_CORE_LIFETIME_PIN_HH
