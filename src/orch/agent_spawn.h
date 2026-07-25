@@ -201,6 +201,14 @@ struct AgentHandle {
     // Issue #1600 / #1880: typed quota failure surface for Agent frameworks.
     bool quota_exceeded = false;
     std::string error; // e.g. "ResourceQuotaExceeded: fibers quota exceeded"
+    // Issue #2079: structured quota-reject fields (machine-readable per Agent spec).
+    // Empty / 0 when not a quota reject (success or non-quota failure).
+    // Field names align with `query:resource-quota-stats` dimension names
+    // ("fibers" | "memory" | "mutations") for Agent framework consistency.
+    std::string quota_dimension;      // "fibers" | "memory" | "mutations" | "" (none)
+    std::uint64_t quota_used = 0;     // current usage at reject time
+    std::uint64_t quota_limit = 0;    // configured limit at reject time
+    std::uint64_t retry_after_ms = 0; // suggested backoff (0 if unknown)
     // Issue #1880: memory reserved at spawn (released on join / scope exit).
     std::uint64_t reserved_memory_bytes = 0;
     // Issue #2008: keepalive / liveness (null / 0 when disabled — zero cost).
@@ -221,6 +229,10 @@ struct AgentHandle {
         , ok(o.ok)
         , quota_exceeded(o.quota_exceeded)
         , error(std::move(o.error))
+        , quota_dimension(std::move(o.quota_dimension))
+        , quota_used(o.quota_used)
+        , quota_limit(o.quota_limit)
+        , retry_after_ms(o.retry_after_ms)
         , reserved_memory_bytes(o.reserved_memory_bytes)
         , keepalive_interval_ms(o.keepalive_interval_ms)
         , liveness(std::move(o.liveness))
@@ -229,6 +241,10 @@ struct AgentHandle {
         o.fiber = nullptr;
         o.ok = false;
         o.quota_exceeded = false;
+        o.quota_dimension.clear();
+        o.quota_used = 0;
+        o.quota_limit = 0;
+        o.retry_after_ms = 0;
         o.reserved_memory_bytes = 0; // prevent double-release
         o.keepalive_interval_ms = 0;
         o.keepalive_active = false;
@@ -247,6 +263,10 @@ struct AgentHandle {
             ok = o.ok;
             quota_exceeded = o.quota_exceeded;
             error = std::move(o.error);
+            quota_dimension = std::move(o.quota_dimension);
+            quota_used = o.quota_used;
+            quota_limit = o.quota_limit;
+            retry_after_ms = o.retry_after_ms;
             reserved_memory_bytes = o.reserved_memory_bytes;
             keepalive_interval_ms = o.keepalive_interval_ms;
             liveness = std::move(o.liveness);
@@ -255,6 +275,10 @@ struct AgentHandle {
             o.fiber = nullptr;
             o.ok = false;
             o.quota_exceeded = false;
+            o.quota_dimension.clear();
+            o.quota_used = 0;
+            o.quota_limit = 0;
+            o.retry_after_ms = 0;
             o.reserved_memory_bytes = 0;
             o.keepalive_interval_ms = 0;
             o.keepalive_active = false;
@@ -351,6 +375,11 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         // #1600: align preflight reject with Scheduler::spawn metric surface.
         pq.fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
+        // Issue #2079: structured quota-reject fields (machine-readable per Agent spec).
+        h.quota_dimension = "fibers";
+        h.quota_used = ferr->used;
+        h.quota_limit = ferr->limit;
+        h.retry_after_ms = 50;
         h.error = "ResourceQuotaExceeded: " + ferr->message;
         return h;
     }
@@ -362,6 +391,11 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
+        // Issue #2079: structured quota-reject fields (machine-readable per Agent spec).
+        h.quota_dimension = "memory";
+        h.quota_used = merr->used;
+        h.quota_limit = merr->limit;
+        h.retry_after_ms = 100;
         h.error = "ResourceQuotaExceeded: " +
                   aura::core::resource_quota::ResourceQuotaManager::format_reason(*merr);
         return h;
@@ -419,6 +453,12 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
+        // Issue #2079: structured quota-reject fields (Scheduler::spawn nullptr
+        // mirrors the fiber preflight reject; we snapshot current quota state).
+        h.quota_dimension = "fibers";
+        h.quota_used = pq.used(aura::core::resource_quota::Dimension::Fibers);
+        h.quota_limit = pq.limit(aura::core::resource_quota::Dimension::Fibers);
+        h.retry_after_ms = 50;
         h.error = "ResourceQuotaExceeded: fibers quota exceeded";
         return h;
     }
