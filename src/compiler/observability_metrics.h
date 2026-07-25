@@ -369,6 +369,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> expire_stale_ir_closures_total{0};
     std::atomic<std::uint64_t> expire_stale_tree_walker_closures_total{0};
     std::atomic<std::uint64_t> expire_primcall_cache_clear_total{0};
+    // Issue #2043: atomic linear+GC invalidation window under mutate_mtx_.
+    //   - linear_gc_window_finalize_total: times finalize_linear_gc_invalidation_window_ ran
+    //   - linear_ownership_epoch_bumps_total: linear_ownership_epoch advances
+    //   - linear_gc_window_under_mutate_total: finalize saw Level::Mutate held
+    std::atomic<std::uint64_t> linear_gc_window_finalize_total{0};
+    std::atomic<std::uint64_t> linear_ownership_epoch_bumps_total{0};
+    std::atomic<std::uint64_t> linear_gc_window_under_mutate_total{0};
     // Issue #1889: truncate_env_frames_to_checkpoint dual-epoch observability.
     //   - bridge_epoch_bump_on_truncate_total: # of times truncate advanced
     //     bridge_epoch (must match successful drop path, not no-op)

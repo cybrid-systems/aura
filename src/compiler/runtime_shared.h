@@ -130,6 +130,11 @@ extern "C" void aura_invalidate_closure_cache_for(std::int64_t closure_id);
 // Issue #2042: bulk-clear PrimCall / JIT g_closure_cache after invalidate
 // so hot apply cannot hit a stale native entry for expired live closures.
 extern "C" void aura_invalidate_all_closure_caches(void);
+// Issue #2043: process-global linear-ownership epoch (dual-write from
+// Evaluator::bump_linear_ownership_epoch under mutate finalize window).
+// JIT linear_epoch_safety_check / apply dual-path consult this.
+extern "C" void aura_set_linear_ownership_epoch(std::uint64_t v);
+extern "C" std::uint64_t aura_get_linear_ownership_epoch(void);
 // Issue #2017: module-safe C entry for HotUpdateRegistry::notify_epoch_bump
 // (module partitions cannot attach the C++ registry — #1956 link discipline).
 extern "C" void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);

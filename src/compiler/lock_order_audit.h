@@ -1,7 +1,18 @@
-// lock_order_audit.h — Issue #1523 / #1388 canonical lock-order verifier.
+// lock_order_audit.h — Issue #1523 / #1388 / #2043 canonical lock-order verifier.
 //
 // Canonical acquire order (never reverse):
 //   Mutate → Workspace → EnvFrames → DepGraph
+//
+// Issue #2043 — linear ownership + GC window (soft/hard invalidate):
+//   While Level::Mutate is held:
+//     1. prepare_unified_invalidation_pre_cascade_ (linear scan + GC coord)
+//     2. dual-epoch bump + live-closure expire
+//     3. dirty cascade / re-lower (may take Workspace / DepGraph)
+//     4. finalize_linear_gc_invalidation_window_ (scan + enforce +
+//        sync_linear_roots + linear_ownership_epoch bump + root audit)
+//   Apply / fiber steal / GC must observe a complete window: either
+//   pre-bump state or post-finalize state — never half-updated linear
+//   ownership_state with live apply.
 //
 // Thread-local depth counters detect inversions (acquiring a lower
 // level while a higher level is held). Zero-cost when depths are zero

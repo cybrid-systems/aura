@@ -292,6 +292,11 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     metrics_.dep_graph_hygiene_propagate.fetch_add(1, std::memory_order_relaxed);
     // Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit.
     notify_hot_update_after_cascade_(name, cascade_dependents);
+
+    // Issue #2043: close linear+GC window under mutate_mtx_ before return
+    // so concurrent apply / fiber steal cannot observe half-updated
+    // linear_ownership_state or stale GC roots after soft dirty.
+    finalize_linear_gc_invalidation_window_(name);
 }
 
 // Mark all defines dirty. Called when (set-code ...) re-parses the whole

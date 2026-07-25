@@ -2088,6 +2088,11 @@ aura_add_issue_test(test_comprehensive_live_closure_expire_2042)
 aura_issue_test_link_llvm_jit(test_comprehensive_live_closure_expire_2042)
 add_dependencies(all_test_issue_targets test_comprehensive_live_closure_expire_2042)
 
+# Issue #2043: linear ownership + GC atomic invalidation window
+aura_add_issue_test(test_linear_gc_window_2043)
+aura_issue_test_link_llvm_jit(test_linear_gc_window_2043)
+add_dependencies(all_test_issue_targets test_linear_gc_window_2043)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

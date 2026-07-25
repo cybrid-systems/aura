@@ -90,6 +90,15 @@ aura_invalidate_closure_cache_for(std::int64_t /*closure_id*/) {}
 // Issue #2042: weak no-op bulk clear when full runtime is not linked.
 extern "C" __attribute__((weak)) void aura_invalidate_all_closure_caches(void) {}
 
+// Issue #2043: weak linear-ownership epoch stubs (light bundles).
+static std::atomic<std::uint64_t> g_linear_ownership_epoch_stub{0};
+extern "C" __attribute__((weak)) void aura_set_linear_ownership_epoch(std::uint64_t v) {
+    g_linear_ownership_epoch_stub.store(v, std::memory_order_release);
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_linear_ownership_epoch(void) {
+    return g_linear_ownership_epoch_stub.load(std::memory_order_acquire);
+}
+
 extern "C" __attribute__((weak)) std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
     return 0;
 }
