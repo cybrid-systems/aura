@@ -6057,8 +6057,9 @@ public:
         }
         // Issue #1489 / #651 / #1581 AC2: defer while PanicCheckpoint
         // recovery window is open (process-wide arm or live checkpoint).
-        if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint() ||
-            has_panic_checkpoint()) {
+        // Issue #2088: should_defer_destructive_gc() is the unified
+        // predicate covering panic + ffi-pin + future render-pin.
+        if (aura::gc_hooks::should_defer_destructive_gc() || has_panic_checkpoint()) {
             bump_gc_safepoint_deferred();
             bump_gc_blocked_by_pending_panic();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))

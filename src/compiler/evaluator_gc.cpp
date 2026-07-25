@@ -875,28 +875,26 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     }
 
     // Issue #2005: defer destructive compact while any (ffi:pin-buffer)
-    // LifetimePin is live (render hotpath soft-gate binding). The pin
-    // protects an FFI buffer from UAF across this sweep; deferring the
-    // sweep keeps the buffer valid until the pin is released via
-    // (ffi:unpin-buffer). The pin registry's LifetimePin ctor/dtor
-    // already manages the defer depth via arm/release_ffi_pin_defer.
-    if (aura::gc_hooks::ffi_pin_defer_active()) {
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
-            m->ffi_defer_because_pin_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2088: single unified defer predicate (panic + ffi-pin +
+    // future render-pin). Per-reason metric bumps below preserve the
+    // observability lineage of #2005 (ffi_defer_because_pin_total) and
+    // #1581 (gc_blocked_by_panic_total). Both can be true concurrently
+    // (e.g. ffi pin held across a PanicCheckpoint recovery window) — we
+    // bump both metrics and return the zeroed result.
+    if (aura::gc_hooks::should_defer_destructive_gc() || has_panic_checkpoint()) {
+        const bool ffi_active = aura::gc_hooks::ffi_pin_defer_active();
+        const bool panic_active =
+            aura::gc_hooks::gc_deferred_for_pending_panic() || has_panic_checkpoint();
+        if (ffi_active) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->ffi_defer_because_pin_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return result; // zeroed — deferred
-    }
-
-    // Issue #1489 / #1581: skip destructive reclaim while a
-    // PanicCheckpoint recovery window is open (process-wide gc_hooks
-    // depth or live panic_safe_source_ on this evaluator). Re-pin
-    // path remains available via on_arena_compact_hook after the
-    // window closes.
-    if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint() || has_panic_checkpoint()) {
-        aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
-            m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);
-        bump_gc_blocked_by_pending_panic();
+        if (panic_active) {
+            aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);
+            bump_gc_blocked_by_pending_panic();
+        }
         return result; // all zeros — reclaim skipped
     }
 

@@ -24,8 +24,12 @@ bool GCCollector::request() {
     // Issue #1581 / #1489: refuse to arm a GC cycle while a
     // PanicCheckpoint recovery window is open. Avoids marking
     // gc_in_progress only to abort in collect().
-    if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint()) {
-        aura::gc_hooks::note_gc_request_deferred_pending_panic();
+    if (aura::gc_hooks::should_defer_destructive_gc()) {
+        // Issue #2088: unified predicate — defers on ANY reason
+        // (panic + ffi pin + future render-pin). Legacy per-reason
+        // counters (panic / ffi_pin) bump inside arm_defer/release_defer.
+        if (aura::gc_hooks::gc_deferred_for_pending_panic())
+            aura::gc_hooks::note_gc_request_deferred_pending_panic();
         return false;
     }
 
@@ -39,8 +43,9 @@ bool GCCollector::request() {
 
     // Re-check after CAS: a checkpoint may have been saved between
     // the first probe and arming gc_in_progress (TOCTOU).
-    if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint()) {
-        aura::gc_hooks::note_gc_request_deferred_pending_panic();
+    if (aura::gc_hooks::should_defer_destructive_gc()) {
+        if (aura::gc_hooks::gc_deferred_for_pending_panic())
+            aura::gc_hooks::note_gc_request_deferred_pending_panic();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
     }
@@ -86,8 +91,11 @@ bool GCCollector::collect() {
     // Issue #1489 / #1581: defer full GC while a PanicCheckpoint
     // recovery window is open (arm on save / block_gc trampoline;
     // release on commit/restore). Avoid compact_sweep of pinned state.
-    if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint()) {
-        aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+    // Issue #2088: defer on ANY reason (panic + ffi pin + future render),
+    // not just panic.
+    if (aura::gc_hooks::should_defer_destructive_gc()) {
+        if (aura::gc_hooks::gc_deferred_for_pending_panic())
+            aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
     }
@@ -111,8 +119,10 @@ bool GCCollector::collect() {
     // Issue #1581: re-check after safepoint wait — a mutator may have
     // saved a PanicCheckpoint during the wait window (TOCTOU vs entry
     // probe). Abort before mark/sweep so pinned COW/StableNodeRef stay.
-    if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint()) {
-        aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+    // Issue #2088: defer on ANY reason (panic + ffi pin + future render).
+    if (aura::gc_hooks::should_defer_destructive_gc()) {
+        if (aura::gc_hooks::gc_deferred_for_pending_panic())
+            aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
         scheduler_->resume_from_gc();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;

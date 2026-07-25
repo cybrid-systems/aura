@@ -10473,6 +10473,84 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2088: query:gc-defer-reason-stats — unified GcDeferReason
+    // bitmask lineage. Returns the current reason bitmask (Panic=1,
+    // FfiPin=2, RenderPin=4) + per-reason arm counts + combined
+    // gc-defer-any-total. Agent dashboards use this to debug
+    // "why is GC deferred right now?" and to track historical defer
+    // composition (panic-heavy vs ffi-pin-heavy workloads).
+    ObservabilityPrims::register_stats_impl(
+        "query:gc-defer-reason-stats", [&ev](const auto&) -> EvalValue {
+            const std::uint32_t reasons = aura::gc_hooks::defer_reasons_snapshot();
+            auto* m = ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                            : nullptr;
+            const std::uint64_t arm_panic =
+                m ? m->gc_defer_arm_panic_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t arm_ffi_pin =
+                m ? m->gc_defer_arm_ffi_pin_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t arm_render_pin =
+                m ? m->gc_defer_arm_render_pin_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t any_total =
+                m ? m->gc_defer_any_total.load(std::memory_order_relaxed) : 0;
+            // Per-reason depth atomics (still maintained alongside the
+            // bitmask — depth is for nesting observability, bitmask is
+            // for the "any reason armed" predicate).
+            const std::uint64_t panic_depth =
+                aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
+            const std::uint64_t ffi_pin_depth =
+                aura::gc_hooks::g_ffi_pin_defer_depth.load(std::memory_order_acquire);
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2088);
+            insert_kv("reasons", static_cast<std::int64_t>(reasons));
+            insert_kv(
+                "panic-bit",
+                static_cast<std::int64_t>(static_cast<bool>(
+                    reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic))));
+            insert_kv(
+                "ffi-pin-bit",
+                static_cast<std::int64_t>(static_cast<bool>(
+                    reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::FfiPin))));
+            insert_kv("render-pin-bit",
+                      static_cast<std::int64_t>(static_cast<bool>(
+                          reasons &
+                          static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::RenderPin))));
+            insert_kv("arm-panic-total", static_cast<std::int64_t>(arm_panic));
+            insert_kv("arm-ffi-pin-total", static_cast<std::int64_t>(arm_ffi_pin));
+            insert_kv("arm-render-pin-total", static_cast<std::int64_t>(arm_render_pin));
+            insert_kv("any-total", static_cast<std::int64_t>(any_total));
+            insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
+            insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 98 (orig lines 20621-20671)
