@@ -110,6 +110,12 @@ void apply_production_security_defaults() noexcept;
 // Issue #2053 stamp for query surfaces / Agent discovery.
 inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 
+// Issue #2057: side-effect primitives inherit capability enforcement by
+// construction. See security_side_effect.hh + scripts/check_side_effect_security.py.
+// Rule: new mutate/ffi/render/exec/file-write prims MUST use add_mutate,
+// require_effect, PrimMeta.required_effects, or documented security_exempt.
+inline constexpr int kSideEffectInheritIssue = 2057;
+
 } // namespace aura::compiler::security
 
 #endif // AURA_COMPILER_SECURITY_CAPABILITIES_H

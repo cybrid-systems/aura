@@ -152,6 +152,15 @@ export struct PrimMeta {
     // under high-frequency AI mutation of draw/present closures.
     bool render_critical = false;
     bool stable_hot_path = false;
+    // Issue #2057: capability Effect bits this primitive requires (mirror
+    // security_capabilities.h kEffect*). Non-zero → dispatch enforces
+    // require_effect unless effect_enforced_in_body or security_exempt.
+    std::uint16_t required_effects = 0;
+    // Body already calls check_and_record_effect / require_effect / add_mutate
+    // (avoid double audit on the happy path).
+    bool effect_enforced_in_body = false;
+    // Documented security-exempt (read-only admin / query of security state).
+    bool security_exempt = false;
     std::string doc;
     std::string category; // eda | sva | verification | general | deprecated | rendering
     std::string schema;   // e.g. "(int string) -> bool"
@@ -5458,6 +5467,23 @@ public:
                         string_heap_, error_values_,
                         "capability denied: sandboxed primitive requires kCapSandbox",
                         primitive_error_counter_ptr());
+                }
+                // Issue #2057: PrimMeta.required_effects → automatic require_effect
+                // unless the body already enforces (add_mutate / wrap) or the
+                // primitive is documented security_exempt. Prevents new
+                // effectful prims from bypassing capability checks by omission.
+                if (meta.required_effects != 0 && !meta.security_exempt &&
+                    !meta.effect_enforced_in_body) {
+                    if (!require_effect(meta.required_effects, name)) {
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                            m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        return primitives_detail::make_primitive_error(
+                            string_heap_, error_values_,
+                            security::format_deny_reason(meta.required_effects,
+                                                         capability_tenant_id_, name),
+                            primitive_error_counter_ptr());
+                    }
                 }
                 // Cold / non-render-critical while a frame is in flight.
                 if (aura::core::arena_policy::in_render_hotpath()) {

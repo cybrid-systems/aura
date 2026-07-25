@@ -3286,7 +3286,11 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // Issue #1896: wrap delegation under try_acquire Guard so a throw from
     // nested eda:* cannot leave partial structured mutate state without
     // panic-checkpoint restore (NodeId validated before Guard).
+    // AURA_SIDE_EFFECT_PRIM — verification-feedback mutate (#2057).
     add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
+        using aura::compiler::security::kEffectMutate;
+        if (!ev.require_effect(kEffectMutate, "mutate:from-verification-feedback"))
+            return make_bool(false);
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))
             return make_bool(false);
         auto strategy_idx = as_string_idx(a[0]);

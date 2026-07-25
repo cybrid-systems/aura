@@ -1514,6 +1514,25 @@ def cmd_test_binding():
     return 0
 
 
+def cmd_side_effect_security():
+    """Issue #2057: effectful prims must use require_effect / add_mutate / exempt."""
+    print(f"{B}═══ Side-effect security coverage (#2057) ═══{N}")
+    script = ROOT / "scripts" / "check_side_effect_security.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail(
+            "side-effect security gate failed — new effectful prim without "
+            "require_effect / add_mutate / security_exempt "
+            "(see src/compiler/security_side_effect.hh)"
+        )
+        return 1
+    ok("side-effect security coverage OK")
+    return 0
+
+
 def cmd_naming_convention():
     """Issue #1886: naming_convention.md sections + example template keys."""
     print(f"{B}═══ Naming convention doc (#1886) ═══{N}")
@@ -1660,6 +1679,7 @@ def cmd_gate():
     Issue #1931: also runs mutation Guard coverage linter (--strict).
     Issue #1957: also runs legacy test inventory --check (regen with --fix).
     Issue #1966: also runs orch MVP scope linter (--strict; removed multi-agent symbols).
+    Issue #2057: also runs side-effect security coverage (--strict).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1686,6 +1706,7 @@ def cmd_gate():
         or cmd_primitive_surface()
         or cmd_test_registry()
         or cmd_test_binding()
+        or cmd_side_effect_security()
         or cmd_naming_convention()
         or cmd_dead_heap_push()
         or cmd_catch_silent_swallow()

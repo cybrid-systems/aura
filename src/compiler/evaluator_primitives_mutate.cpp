@@ -7,6 +7,7 @@ module;
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
+#include "security_side_effect.hh" // #2057: PrimMeta effect contract + gate pattern
 #include "observability_metrics.h"
 #include "hash_meta.h"                    // FNV constants for stats hash
 #include "typed_mutation_audit.h"         // Issue #1589
@@ -442,10 +443,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return ev.string_heap_[i];
     };
 
-    // Issue #1259 / #1565 / #1566 / #2052: every mutate:* registration goes
-    // through this wrapper. Forces capability effect + workspace isolation
-    // BEFORE the body runs; records concrete op name for Agent audit.
-    // Detects "naked" mutate (no MutationBoundaryGuard) via wrap counter.
+    // Issue #1259 / #1565 / #1566 / #2052 / #2057: every mutate:* registration
+    // goes through this wrapper (AURA_SIDE_EFFECT_PRIM pattern). Forces
+    // capability effect + workspace isolation BEFORE the body runs; records
+    // concrete op name for Agent audit. PrimMeta.required_effects is stamped
+    // with effect_enforced_in_body=true so dispatch does not double-audit.
     auto add_mutate = [&](std::string name, auto fn) {
         // Capture concrete op name for check_and_record_effect / isolation.
         auto op_name = std::make_shared<std::string>(std::move(name));
@@ -555,6 +557,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             return result;
         });
+        // Issue #2057: declare Effect contract on PrimMeta (body already
+        // enforces — effect_enforced_in_body avoids double require_effect).
+        ::aura::compiler::PrimMeta meta{};
+        meta.pure = false;
+        meta.required_effects = ::aura::compiler::security::kEffectMutate;
+        meta.effect_enforced_in_body = true;
+        meta.security_level = ::aura::compiler::kPrimSecSandboxed;
+        meta.safety_flags = ::aura::compiler::kPrimSafetyMutates;
+        meta.category = "security-gated";
+        meta.doc = "mutate:* via add_mutate (#2052/#2057 AURA_SIDE_EFFECT_PRIM)";
+        ev.primitives().set_meta_for_name(*op_name, std::move(meta));
     };
 
     // Issue #1419: (mutate:set-agent-fingerprint <int>)
