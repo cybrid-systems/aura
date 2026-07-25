@@ -168,9 +168,15 @@ struct CompilerMetrics {
     //     because mutation_epoch advanced while waiting for the lock
     //   - dep_graph_generation_total: exclusive cascade erase/rebuild gens
     //   - partial_relower_threshold_used: last threshold observed at decision
+    // Issue #2112: adaptive partial/full cost history
     std::atomic<std::uint64_t> dep_graph_edge_reject_stale_total{0};
     std::atomic<std::uint64_t> dep_graph_generation_total{0};
     std::atomic<std::uint64_t> partial_relower_threshold_used{8};
+    std::atomic<std::uint64_t> avg_partial_relower_cost_ns{0};
+    std::atomic<std::uint64_t> avg_full_relower_cost_ns{0};
+    std::atomic<std::uint64_t> partial_vs_full_win_ratio_bp{0};
+    std::atomic<std::uint64_t> partial_relower_cost_samples{0};
+    std::atomic<std::uint64_t> full_relower_cost_samples{0};
     // Issue #2033: CacheEntryVersionStamp / should_relower bridge check.
     //   - cache_entry_version_stamp_total: stamps written on store_define_v2
     //   - should_relower_bridge_epoch_mismatch_total: bridge_epoch forced re-lower

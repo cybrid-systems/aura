@@ -481,29 +481,156 @@ count_dirty_blocks(const std::vector<std::uint8_t>& block_dirty) noexcept {
     return n;
 }
 
-// Issue #426 / #2032: configurable partial-vs-full re-lower threshold.
+// Issue #426 / #2032 / #2112: configurable partial-vs-full re-lower threshold.
 // Default 8 (historical): 0 → skip, 1..(T-1) → partial, ≥T → full.
 // Agents / tests may raise (bulk set-code) or lower (tiny AI edits).
+// Issue #2112: after enough cost samples, threshold adapts within [4, 32]
+// from measured partial vs full relower cost (cold-start stays at 8).
 inline constexpr std::size_t kDefaultPartialRelowerThreshold = 8;
+inline constexpr std::size_t kAdaptivePartialRelowerMin = 4;
+inline constexpr std::size_t kAdaptivePartialRelowerMax = 32;
+// Cold-start: need both partial and full samples before adapting.
+inline constexpr std::uint64_t kAdaptiveRelowerMinSamples = 8;
 
 inline std::atomic<std::size_t>& partial_relower_threshold_atomic() noexcept {
     static std::atomic<std::size_t> thr{kDefaultPartialRelowerThreshold};
     return thr;
 }
 
+// Explicit override (set_partial_relower_threshold) freezes adaptive.
+inline std::atomic<bool>& partial_relower_threshold_forced_atomic() noexcept {
+    static std::atomic<bool> forced{false};
+    return forced;
+}
+
+// Rolling cost history (process-wide; pure decision still reads only thr).
+inline std::atomic<std::uint64_t>& partial_relower_cost_ns_sum_atomic() noexcept {
+    static std::atomic<std::uint64_t> s{0};
+    return s;
+}
+inline std::atomic<std::uint64_t>& partial_relower_cost_samples_atomic() noexcept {
+    static std::atomic<std::uint64_t> s{0};
+    return s;
+}
+inline std::atomic<std::uint64_t>& full_relower_cost_ns_sum_atomic() noexcept {
+    static std::atomic<std::uint64_t> s{0};
+    return s;
+}
+inline std::atomic<std::uint64_t>& full_relower_cost_samples_atomic() noexcept {
+    static std::atomic<std::uint64_t> s{0};
+    return s;
+}
+
 [[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
     return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
 }
 
-// Clamp: 0 → 1 (never all-skip); very large values still mean "prefer partial".
+[[nodiscard]] inline bool partial_relower_threshold_is_forced() noexcept {
+    return partial_relower_threshold_forced_atomic().load(std::memory_order_relaxed);
+}
+
+// Clamp into adaptive band [4, 32]; 0 → default (never all-skip).
+[[nodiscard]] inline std::size_t clamp_partial_relower_threshold(std::size_t t) noexcept {
+    if (t == 0)
+        return kDefaultPartialRelowerThreshold;
+    if (t < kAdaptivePartialRelowerMin)
+        return kAdaptivePartialRelowerMin;
+    if (t > kAdaptivePartialRelowerMax)
+        return kAdaptivePartialRelowerMax;
+    return t;
+}
+
+// Explicit override for tests / Agent policy (freezes adaptive until reset).
 inline void set_partial_relower_threshold(std::size_t t) noexcept {
     if (t == 0)
-        t = 1;
+        t = 1; // legacy: 0 → 1 for "always full at 1 dirty"
+    // Agent/tests may set outside [4,32] intentionally (e.g. thr=1); allow.
     partial_relower_threshold_atomic().store(t, std::memory_order_relaxed);
+    partial_relower_threshold_forced_atomic().store(true, std::memory_order_relaxed);
+}
+
+// Average partial relower cost in ns (0 if no samples).
+[[nodiscard]] inline std::uint64_t avg_partial_relower_cost_ns() noexcept {
+    const auto n = partial_relower_cost_samples_atomic().load(std::memory_order_relaxed);
+    if (n == 0)
+        return 0;
+    return partial_relower_cost_ns_sum_atomic().load(std::memory_order_relaxed) / n;
+}
+
+[[nodiscard]] inline std::uint64_t avg_full_relower_cost_ns() noexcept {
+    const auto n = full_relower_cost_samples_atomic().load(std::memory_order_relaxed);
+    if (n == 0)
+        return 0;
+    return full_relower_cost_ns_sum_atomic().load(std::memory_order_relaxed) / n;
+}
+
+// Basis points: 10000 * avg_full / avg_partial (0 if missing samples).
+// >10000 means full is more expensive than partial on average.
+[[nodiscard]] inline std::uint64_t partial_vs_full_win_ratio_bp() noexcept {
+    const auto ap = avg_partial_relower_cost_ns();
+    const auto af = avg_full_relower_cost_ns();
+    if (ap == 0)
+        return 0;
+    return (af * 10000ull) / ap;
+}
+
+// Issue #2112: recompute threshold from cost history when not forced.
+// Cold-start (insufficient samples) leaves threshold at default 8.
+inline void maybe_adapt_partial_relower_threshold() noexcept {
+    if (partial_relower_threshold_forced_atomic().load(std::memory_order_relaxed))
+        return;
+    const auto ps = partial_relower_cost_samples_atomic().load(std::memory_order_relaxed);
+    const auto fs = full_relower_cost_samples_atomic().load(std::memory_order_relaxed);
+    if (ps < kAdaptiveRelowerMinSamples || fs < kAdaptiveRelowerMinSamples)
+        return; // AC1: no cold-start cliff — stay at default until enough data
+    const auto ap = avg_partial_relower_cost_ns();
+    const auto af = avg_full_relower_cost_ns();
+    if (ap == 0)
+        return;
+    auto thr = get_partial_relower_threshold();
+    // If full is much more expensive than partial → prefer partial longer (↑ thr).
+    // If full is cheaper relative to partial → prefer full sooner (↓ thr).
+    if (af > ap * 3)
+        thr = thr + 1;
+    else if (af < ap * 2 && thr > kAdaptivePartialRelowerMin)
+        thr = thr - 1;
+    thr = clamp_partial_relower_threshold(thr);
+    partial_relower_threshold_atomic().store(thr, std::memory_order_relaxed);
+}
+
+// Record measured cost of a partial (or full) relower attempt.
+inline void note_partial_relower_cost_ns(std::uint64_t ns) noexcept {
+    partial_relower_cost_ns_sum_atomic().fetch_add(ns, std::memory_order_relaxed);
+    partial_relower_cost_samples_atomic().fetch_add(1, std::memory_order_relaxed);
+    maybe_adapt_partial_relower_threshold();
+}
+
+inline void note_full_relower_cost_ns(std::uint64_t ns) noexcept {
+    full_relower_cost_ns_sum_atomic().fetch_add(ns, std::memory_order_relaxed);
+    full_relower_cost_samples_atomic().fetch_add(1, std::memory_order_relaxed);
+    maybe_adapt_partial_relower_threshold();
+}
+
+// Test hook: inject synthetic cost samples. Does not clear an explicit
+// threshold force (AC4 sticky override); call
+// reset_partial_relower_threshold_for_test first to re-enable adaptive.
+inline void inject_adaptive_relower_cost_samples_for_test(std::uint64_t partial_ns,
+                                                          std::uint64_t full_ns,
+                                                          std::uint64_t n) noexcept {
+    for (std::uint64_t i = 0; i < n; ++i) {
+        note_partial_relower_cost_ns(partial_ns);
+        note_full_relower_cost_ns(full_ns);
+    }
 }
 
 inline void reset_partial_relower_threshold_for_test() noexcept {
-    set_partial_relower_threshold(kDefaultPartialRelowerThreshold);
+    partial_relower_threshold_forced_atomic().store(false, std::memory_order_relaxed);
+    partial_relower_cost_ns_sum_atomic().store(0, std::memory_order_relaxed);
+    partial_relower_cost_samples_atomic().store(0, std::memory_order_relaxed);
+    full_relower_cost_ns_sum_atomic().store(0, std::memory_order_relaxed);
+    full_relower_cost_samples_atomic().store(0, std::memory_order_relaxed);
+    partial_relower_threshold_atomic().store(kDefaultPartialRelowerThreshold,
+                                             std::memory_order_relaxed);
 }
 
 // Issue #426 / #2032: estimate the re-lower cost of a dirty

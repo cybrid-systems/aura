@@ -6084,6 +6084,30 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"partial-relower-threshold-wired", make_int(1)},
                 {"schema-2032", make_int(2032)},
                 {"issue-2032", make_int(2032)},
+                // Issue #2112: adaptive partial/full threshold policy
+                {"avg-partial-relower-cost-ns",
+                 make_int(
+                     static_cast<std::int64_t>(aura::compiler::avg_partial_relower_cost_ns()))},
+                {"avg-full-relower-cost-ns",
+                 make_int(static_cast<std::int64_t>(aura::compiler::avg_full_relower_cost_ns()))},
+                {"partial-vs-full-win-ratio-bp",
+                 make_int(
+                     static_cast<std::int64_t>(aura::compiler::partial_vs_full_win_ratio_bp()))},
+                {"partial-relower-cost-samples",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::partial_relower_cost_samples_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"full-relower-cost-samples",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::full_relower_cost_samples_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"adaptive-partial-relower-min",
+                 make_int(static_cast<std::int64_t>(aura::compiler::kAdaptivePartialRelowerMin))},
+                {"adaptive-partial-relower-max",
+                 make_int(static_cast<std::int64_t>(aura::compiler::kAdaptivePartialRelowerMax))},
+                {"adaptive-partial-relower-wired", make_int(1)},
+                {"schema-2112", make_int(2112)},
+                {"issue-2112", make_int(2112)},
                 // Issue #2033: CacheEntryVersionStamp + bridge_epoch should_relower
                 {"cache_entry_version_stamp_total",
                  make_int(m ? load(m->cache_entry_version_stamp_total) : 0)},
@@ -6160,6 +6184,79 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2038 satellites
             };
             return build_hash(kv);
+        });
+
+    // Issue #2112: (query:incremental-relower-policy-stats) — adaptive
+    // partial/full threshold policy (register_stats_impl only; SlimSurface).
+    ObservabilityPrims::register_stats_impl(
+        "query:incremental-relower-policy-stats", [&ev](const auto&) -> EvalValue {
+            (void)ev;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            const std::pair<std::string, EvalValue> fields[] = {
+                {"partial-relower-threshold",
+                 make_int(static_cast<std::int64_t>(get_partial_relower_threshold()))},
+                {"threshold-forced", make_int(partial_relower_threshold_is_forced() ? 1 : 0)},
+                {"avg-partial-relower-cost-ns",
+                 make_int(static_cast<std::int64_t>(avg_partial_relower_cost_ns()))},
+                {"avg-full-relower-cost-ns",
+                 make_int(static_cast<std::int64_t>(avg_full_relower_cost_ns()))},
+                {"partial-vs-full-win-ratio-bp",
+                 make_int(static_cast<std::int64_t>(partial_vs_full_win_ratio_bp()))},
+                {"partial-relower-cost-samples",
+                 make_int(static_cast<std::int64_t>(
+                     partial_relower_cost_samples_atomic().load(std::memory_order_relaxed)))},
+                {"full-relower-cost-samples",
+                 make_int(static_cast<std::int64_t>(
+                     full_relower_cost_samples_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-min-samples",
+                 make_int(static_cast<std::int64_t>(kAdaptiveRelowerMinSamples))},
+                {"adaptive-threshold-min",
+                 make_int(static_cast<std::int64_t>(kAdaptivePartialRelowerMin))},
+                {"adaptive-threshold-max",
+                 make_int(static_cast<std::int64_t>(kAdaptivePartialRelowerMax))},
+                {"default-threshold",
+                 make_int(static_cast<std::int64_t>(kDefaultPartialRelowerThreshold))},
+                {"adaptive-partial-relower-wired", make_int(1)},
+                {"schema-2112", make_int(2112)},
+                {"issue-2112", make_int(2112)},
+                {"schema", make_int(2112)},
+            };
+            for (auto& [k, v] : fields) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 }
 
