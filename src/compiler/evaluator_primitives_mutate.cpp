@@ -6034,6 +6034,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("cascade-dirty-reemit-wired", 1);
             insert_kv("mvp-single-workspace", 1); // #1943
             insert_kv("registry-class-wired", 1);
+            // Issue #2090: outermost MutationBoundaryGuard dtor unified
+            // hot-update recovery sequence (throttle → reemit →
+            // epoch_notify → batch_deopt unmatched). 3 new counters,
+            // read directly from per-Evaluator CompilerMetrics (not
+            // global hot_update_registry state) since each boundary
+            // belongs to one Evaluator's boundary scope. Pairs with the
+            // existing cascade (#2035) path so non-cascade exits
+            // (fiber-steal restore / partial recovery / compact-only /
+            // exception unwind) drive the same recovery sequence.
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                insert_kv("boundary-reemit-success-total",
+                          static_cast<std::int64_t>(
+                              m->boundary_reemit_success_total.load(std::memory_order_relaxed)));
+                insert_kv("boundary-reemit-throttled-total",
+                          static_cast<std::int64_t>(
+                              m->boundary_reemit_throttled_total.load(std::memory_order_relaxed)));
+                insert_kv("boundary-batch-deopt-unmatched-total",
+                          static_cast<std::int64_t>(m->boundary_batch_deopt_unmatched_total.load(
+                              std::memory_order_relaxed)));
+            } else {
+                insert_kv("boundary-reemit-success-total", 0);
+                insert_kv("boundary-reemit-throttled-total", 0);
+                insert_kv("boundary-batch-deopt-unmatched-total", 0);
+            }
+            insert_kv("schema-2090", 2090);
+            insert_kv("issue-2090", 2090);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

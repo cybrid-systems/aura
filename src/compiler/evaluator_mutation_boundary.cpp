@@ -15,10 +15,21 @@ module;
 #include "lock_order_audit.h"
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
-#include "security_capabilities.h"        // aura_fiber_current_id
-#include "aura_jit_bridge.h"              // aura_invoke_long_mutation_scheduler_hook
-#include "typed_mutation_audit.h"         // Issue #1589 / #1614 / #1894
-#include "core/arena_auto_policy_stats.h" // in_render_hotpath
+#include "security_capabilities.h"         // aura_fiber_current_id
+#include "aura_jit_bridge.h"               // aura_invoke_long_mutation_scheduler_hook
+                                           // + aura_aot_func_table_epoch +
+                                           //   aura_jit_batch_deopt_for_total
+                                           // (Issue #2090: outermost reemit
+                                           //  pipeline uses both)
+#include "compiler/hot_update_registry.hh" // Issue #2090: AuraJITHotUpdateRegistry
+                                           //   C-linkage shims —
+                                           // aura_hot_update_should_throttle_reemit
+                                           // aura_hot_update_on_reemit_throttled
+                                           // aura_hot_update_notify_epoch_bump
+                                           // aura_hot_update_reemit_provider_wired
+                                           // aura_reemit_aot_for_dirty
+#include "typed_mutation_audit.h"          // Issue #1589 / #1614 / #1894
+#include "core/arena_auto_policy_stats.h"  // in_render_hotpath
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -631,6 +642,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* suc
     // Issue #1897: capture exception depth so dtor auto-rollback
     // works even if a nested helper throws past a missed catch.
     uncaught_at_enter_ = std::uncaught_exceptions();
+    // Issue #2090: snapshot defuse_version_ at enter so the outermost
+    // dtor can detect "dirty defines happened this boundary" without
+    // having to scan process-wide state. Catches non-cascade paths
+    // (fiber-steal restore / partial recovery / compact-only /
+    // exception unwind) that skip mark_define_dirty.
+    defuse_version_at_enter_ = ev_->defuse_version_.load(std::memory_order_acquire);
     // Issue #236 / #1746: thread_local depth counter keyed by
     // Evaluator::instance_id_ (not address). Each fiber has its
     // own LIFO call stack, so nested guards on a single fiber
@@ -893,6 +910,81 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
     }
+    // Issue #2090: outermost dtor unified hot-update recovery sequence.
+    // Pairs with #2035 cascade-only path so non-cascade exits
+    // (fiber-steal restore / partial recovery / compact-only / exception
+    // unwind) also drive: throttle → reemit → epoch_notify → batch_deopt
+    // for the complement of the remap set. Runs AFTER linear closed-loop
+    // (workspace consistent) and BEFORE lock drop (JIT + dirty set still
+    // reachable). Dirty detection uses defuse_version_at_enter_ snapshot
+    // (catches paths that skip mark_define_dirty) plus workspace
+    // mark_dirty_upward_call_count() (catches type / capture / defines
+    // that go through the type system instead of cascade).
+    //
+    // Exit kinds documented per #2090 AC2:
+    //   - Ok (success): full pipeline — throttle → optional reemit →
+    //     epoch_notify → batch_deopt for unmatched names.
+    //   - Full-rollback (failed + panic_auto_rollback_): skip pipeline —
+    //     state was restored to pre-mutation, no dirty work to coalesce.
+    //   - Partial recovery (failed + !panic_auto_rollback_): reemit +
+    //     epoch_notify so the live dirty set is observed by the next
+    //     retry's cascade. batch_deopt skipped to avoid double-storm on
+    //     the next cascade pass.
+    if (outermost) {
+        const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
+        const bool dirty_defines_this_boundary = (cur_defuse != defuse_version_at_enter_);
+        const std::size_t dirty_calls =
+            ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
+        const bool dirty_marks_this_boundary = (dirty_calls > 0);
+        const bool dirty_or_env_restamp = dirty_defines_this_boundary || dirty_marks_this_boundary;
+        const bool full_rollback_skip = (!success && ev_->panic_auto_rollback_);
+        if (!dirty_or_env_restamp || full_rollback_skip) {
+            // No pipeline work needed (no dirty state OR full-rollback
+            // restored pre-mutation snapshot — nothing to coalesce).
+        } else if (!aura_hot_update_reemit_provider_wired()) {
+            // Dirty + no reemit provider wired: still bump epoch so the
+            // JIT observes the new gen (align with #2017 compact-env
+            // notify discipline). No reemit / batch_deopt to drive.
+            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        } else if (aura_hot_update_should_throttle_reemit()) {
+            // Throttle skip: bump counter + on_throttled signal; no
+            // reemit pipeline call (Issue #2014 deopt-storm throttle).
+            aura_hot_update_on_reemit_throttled();
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->boundary_reemit_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Still notify epoch bump so the JIT sees the new gen.
+            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        } else {
+            // Full pipeline: reemit + epoch_notify (+ batch_deopt for
+            // unmatched names on success path).
+            const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
+                                                           std::memory_order_relaxed);
+            }
+            // Always notify epoch bump so the JIT sees the new gen
+            // (align with #2017 + #2035 cascade discipline).
+            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+            // Issue #2090 AC3: batch_deopt for the complement of the
+            // remap set on the success path. The actual unmatched walk
+            // is driven by the JIT pipeline (aura_jit_batch_deopt_for
+            // with current_epoch on each live closure not in the remap
+            // set); this counter records the boundary-level "this
+            // boundary requested batch_deopt for unmatched names"
+            // signal. The precise count is reflected by the JIT
+            // pipeline's existing aura_jit_batch_deopt_for_total
+            // metric — see aura_jit_bridge.cpp:1174. For #2090 we
+            // bump by 1 per success boundary where reemit produced
+            // a non-empty remap set; partial-recovery skips to avoid
+            // double-storm on the next cascade pass.
+            if (success && n_reemit > 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->boundary_batch_deopt_unmatched_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
     // Issue #1500: after restamp_all_node_generations inside
     // exit_mutation_boundary, pinned StableNodeRefs still hold
     // the pre-boundary gen — batch refresh them under the
@@ -1086,6 +1178,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , inert_(o.inert_)
     , enter_ts_(std::move(o.enter_ts_))
     , uncaught_at_enter_(o.uncaught_at_enter_)
+    // Issue #2090: propagate defuse snapshot across move; the new owner
+    // keeps the same dirty-detection horizon as the source guard.
+    , defuse_version_at_enter_(o.defuse_version_at_enter_)
     , ev_(o.ev_)
     , flag_(o.flag_)
     , lock_(std::move(o.lock_)) {
@@ -1096,6 +1191,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.is_outermost_ = false;
     o.inert_ = false;
     o.enter_ts_.reset();
+    o.defuse_version_at_enter_ = 0;
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;

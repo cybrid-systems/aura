@@ -6868,10 +6868,27 @@ struct CompilerMetrics {
     //   - workspace_mtx_wait_ns_total / _max: blocked wait latency
     // Hold p99 is estimated on read from mutation_boundary_hold_histogram
     // (see query:mutation-boundary-hold-stats); no extra hot-path write.
-    std::atomic<std::uint64_t> workspace_mtx_acquire_total{0};          // #2040
-    std::atomic<std::uint64_t> workspace_mtx_contended_total{0};        // #2040
-    std::atomic<std::uint64_t> workspace_mtx_wait_ns_total{0};          // #2040
-    std::atomic<std::uint64_t> workspace_mtx_wait_ns_max{0};            // #2040
+    std::atomic<std::uint64_t> workspace_mtx_acquire_total{0};   // #2040
+    std::atomic<std::uint64_t> workspace_mtx_contended_total{0}; // #2040
+    std::atomic<std::uint64_t> workspace_mtx_wait_ns_total{0};   // #2040
+    std::atomic<std::uint64_t> workspace_mtx_wait_ns_max{0};     // #2040
+    // ── Issue #2090: MutationBoundaryGuard outermost reemit pipeline ──
+    // Pairs with #2035 cascade path: non-cascade exits (fiber-steal restore,
+    // partial recovery, compact-only, exception unwind) drive the same
+    // ordered recovery sequence [throttle → reemit → epoch notify →
+    // batch_deopt unmatched]. All relaxed atomics; bumped in the outermost
+    // Guard dtor only (nested guards defer to outer via std::defer).
+    //   - boundary_reemit_success_total: reemit completed (throttle gate
+    //     passed + dirty detected)
+    //   - boundary_reemit_throttled_total: dirty detected but throttle
+    //     gate blocked reemit (epoch notify still fires)
+    //   - boundary_batch_deopt_unmatched_total: reemit succeeded and
+    //     batch_deopt_for was invoked for closures missing from the AOT
+    //     func table under the new epoch
+    // Exposed via query:hot-update-registry-stats (schema 2090).
+    std::atomic<std::uint64_t> boundary_reemit_success_total{0};        // #2090
+    std::atomic<std::uint64_t> boundary_reemit_throttled_total{0};      // #2090
+    std::atomic<std::uint64_t> boundary_batch_deopt_unmatched_total{0}; // #2090
     std::atomic<std::uint64_t> steal_inner_boundary_hardened{1};        // #1254
     std::atomic<std::uint64_t> pattern_hygiene_strict_enforced{1};      // #1255
     std::atomic<std::uint64_t> pattern_hygiene_violations_caught{0};    // #1255

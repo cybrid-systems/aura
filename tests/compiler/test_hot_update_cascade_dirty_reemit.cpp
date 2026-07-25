@@ -10,6 +10,13 @@
 //        reemit_candidates / success advance; region mask set
 //   AC5: query:hot-update-registry-stats schema-2035 keys
 //   AC6: stable func-id preserve consistent across reemit rounds
+//   AC7 (#2090): query:hot-update-registry-stats schema-2090 keys +
+//        3 new boundary counters (boundary-reemit-success-total /
+//        boundary-reemit-throttled-total / boundary-batch-deopt-
+//        unmatched-total) present
+//   AC8 (#2090): outermost MutationBoundaryGuard dtor wires the
+//        throttle → reemit → epoch_notify → batch_deopt pipeline
+//        (Issue #2090 — pairs with #2035 cascade path)
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -231,16 +238,96 @@ static void ac6_stable_id_across_reemit() {
     aura_clear_stable_func_id_map();
 }
 
+// Issue #2090: query:hot-update-registry-stats schema-2090 keys + the 3
+// new boundary counters (boundary-reemit-success-total /
+// boundary-reemit-throttled-total / boundary-batch-deopt-unmatched-total).
+// The 3 counters are bumped by the outermost MutationBoundaryGuard dtor
+// when dirty_or_env_restamp_this_boundary_ is set, so the initial values
+// are 0 on a fresh CompilerService (no boundary exits yet).
+static void ac7_query_schema_2090() {
+    std::println("\n--- AC7 (#2090): query:hot-update-registry-stats schema-2090 ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2090") == 2090, "schema-2090=2090");
+    CHECK(href(cs, "issue-2090") == 2090, "issue-2090=2090");
+    CHECK(href(cs, "boundary-reemit-success-total") >= 0,
+          "boundary-reemit-success-total present (initial 0)");
+    CHECK(href(cs, "boundary-reemit-throttled-total") >= 0,
+          "boundary-reemit-throttled-total present (initial 0)");
+    CHECK(href(cs, "boundary-batch-deopt-unmatched-total") >= 0,
+          "boundary-batch-deopt-unmatched-total present (initial 0)");
+    // Lineage retained: 1956 + 2035 keys still present.
+    CHECK(href(cs, "schema-1956") == 1956, "schema-1956 retained");
+    CHECK(href(cs, "schema-2035") == 2035, "schema-2035 retained");
+    CHECK(href(cs, "cascade-dirty-reemit-wired") == 1, "cascade wired retained");
+}
+
+// Issue #2090: outermost MutationBoundaryGuard dtor wires the unified
+// hot-update recovery sequence (throttle → reemit → epoch_notify →
+// batch_deopt unmatched). Source citation: the reemit pipeline is
+// dispatched in the outermost dtor AFTER the linear closed-loop and
+// BEFORE the lock drop — pairs with the #2035 cascade-only path so
+// non-cascade exits (fiber-steal restore / partial recovery /
+// compact-only / exception unwind) also drive a single ordered recovery
+// sequence.
+static void ac8_source_outmost_dtor_pipeline() {
+    std::println(
+        "\n--- AC8 (#2090): outermost dtor wires throttle→reemit→epoch_notify→batch_deopt ---");
+    const auto mcp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mcp.find("Issue #2090: outermost dtor unified hot-update recovery sequence") !=
+              std::string::npos,
+          "dtor wires #2090 reemit pipeline");
+    CHECK(mcp.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
+          "throttle check present");
+    CHECK(mcp.find("aura_hot_update_on_reemit_throttled") != std::string::npos,
+          "on_reemit_throttled hook present");
+    CHECK(mcp.find("aura_reemit_aot_for_dirty") != std::string::npos,
+          "reemit_aot_for_dirty call present");
+    CHECK(mcp.find("aura_hot_update_notify_epoch_bump") != std::string::npos,
+          "notify_epoch_bump present");
+    CHECK(mcp.find("boundary_reemit_success_total") != std::string::npos,
+          "boundary_reemit_success_total bump present");
+    CHECK(mcp.find("boundary_reemit_throttled_total") != std::string::npos,
+          "boundary_reemit_throttled_total bump present");
+    CHECK(mcp.find("boundary_batch_deopt_unmatched_total") != std::string::npos,
+          "boundary_batch_deopt_unmatched_total bump present");
+    // Defuse snapshot lives on the Guard so the dtor can detect dirty
+    // paths that skip mark_define_dirty (catches non-cascade exits).
+    const auto evx = read_file("src/compiler/evaluator.ixx");
+    CHECK(evx.find("defuse_version_at_enter_") != std::string::npos,
+          "Guard captures defuse_version_at_enter_ for dirty detection");
+    // Compiled via AURA_COMPILER_METRICS_FIELD so the atomic counters
+    // exist in CompilerMetrics (otherwise the fetch_add calls above
+    // would not link).
+    const auto inc = read_file("src/compiler/compiler_metrics_fields.inc");
+    CHECK(inc.find("AURA_COMPILER_METRICS_FIELD(boundary_reemit_success_total)") !=
+              std::string::npos,
+          "boundary_reemit_success_total field declared");
+    CHECK(inc.find("AURA_COMPILER_METRICS_FIELD(boundary_reemit_throttled_total)") !=
+              std::string::npos,
+          "boundary_reemit_throttled_total field declared");
+    CHECK(inc.find("AURA_COMPILER_METRICS_FIELD(boundary_batch_deopt_unmatched_total)") !=
+              std::string::npos,
+          "boundary_batch_deopt_unmatched_total field declared");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_hot_update_cascade_dirty_reemit (#2035) ===");
+    std::println("=== test_hot_update_cascade_dirty_reemit (#2035 / #2090) ===");
     ac1_source();
     ac2_region_mask_logic();
     ac3_dirty_notify_on_mark();
     ac4_reemit_when_wired();
     ac5_query_schema();
     ac6_stable_id_across_reemit();
+    // Issue #2090: outermost dtor unified hot-update recovery sequence
+    // (throttle → reemit → epoch_notify → batch_deopt unmatched). AC7
+    // verifies the 3 new boundary counters + schema-2090 are exposed via
+    // query:hot-update-registry-stats; AC8 verifies the wire-up is in
+    // evaluator_mutation_boundary.cpp + evaluator.ixx +
+    // compiler_metrics_fields.inc.
+    ac7_query_schema_2090();
+    ac8_source_outmost_dtor_pipeline();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -12396,6 +12396,14 @@ public:
         // Issue #1897: snapshot uncaught_exceptions() at enter so dtor can
         // detect stack unwind even when the caller forgot to flip *flag_.
         int uncaught_at_enter_ = 0;
+        // Issue #2090: snapshot defuse_version_ at enter so the outermost
+        // dtor can detect "dirty defines happened this boundary" without
+        // having to read process-wide state at exit (catches the
+        // non-cascade mutation paths that skip mark_define_dirty, like
+        // fiber-steal restore / partial recovery / compact-only /
+        // exception unwind). Compared against ev_->defuse_version_.load()
+        // in the outermost dtor post-cascade hook.
+        std::uint64_t defuse_version_at_enter_ = 0;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
