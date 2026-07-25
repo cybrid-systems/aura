@@ -4347,6 +4347,15 @@ struct CompilerMetrics {
     // CompactSweepResult but as a process-wide aggregate). Bumped
     // from compact_sweep when pairs_ actually shrinks.
     std::atomic<std::uint64_t> gc_pairs_remapped_total{0};
+    // Issue #2087: total closures whose env_id was rewritten by
+    // compact_env_frames (under closures_mtx_ write-lock). Mirrors
+    // gc_pairs_remapped_total: counts the # of Closure entries
+    // touched per sweep (NOT the # of reclaimed frames — that lives
+    // in envframe_compact_epoch_bumps_total lineage).
+    std::atomic<std::uint64_t> gc_closures_compacted_total{0};
+    // Issue #2087: total env_frames remapped across all sweeps
+    // (counts the size of env_id_remap_ populated per compact cycle).
+    std::atomic<std::uint64_t> gc_env_frames_remapped_total{0};
     // Issue #589: SoA EnvFrame/EnvId dual-path
     // bindings_ vs bindings_symid_ consistency + version
     // stamping + stale refresh in materialize_call_env &

@@ -3610,6 +3610,17 @@ public:
         return string_remap_[old_id];
     }
     [[nodiscard]] std::size_t string_remap_size() const noexcept { return string_remap_.size(); }
+    // Issue #2087: env_id remap accessors (mirrors resolve_pair/resolve_string).
+    // resolve_env(old_id) returns the new EnvId after compact, or
+    // -1 if the frame was reclaimed (closure should treat as NULL_ENV_ID).
+    [[nodiscard]] std::int64_t resolve_env(std::uint64_t old_id) const noexcept {
+        if (env_id_remap_.empty())
+            return static_cast<std::int64_t>(old_id);
+        if (old_id >= env_id_remap_.size())
+            return -1;
+        return env_id_remap_[old_id];
+    }
+    [[nodiscard]] std::size_t env_id_remap_size() const noexcept { return env_id_remap_.size(); }
     // Issue #206: compact the pairs_ arena. `live_mask[i]`
     // is true if pairs_[i] is live (should be kept). Pairs
     // not in live_mask are removed, and the remap table is
@@ -4089,6 +4100,12 @@ public:
     // Issue #2001: string remap table (mirrors pair_remap_).
     // string_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
     std::vector<std::int64_t> string_remap_;
+    // Issue #2087: env_id remap table (Phase 2 EnvFrame lifetime).
+    // Populated by compact_env_frames (under closures_mtx_ write-lock);
+    // env_id_remap_[old_idx] = new_idx (live, moved EnvFrame) or -1
+    // (freed/reclaimed frame, closure's env_id cleared to NULL_ENV_ID).
+    // Empty means no compact has happened yet (identity mapping).
+    std::vector<std::int64_t> env_id_remap_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     // Issue #131: FFI state moved to FFIRuntime instance

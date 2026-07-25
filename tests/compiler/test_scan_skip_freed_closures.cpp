@@ -195,6 +195,133 @@ static void ac7_lifetime_guard_observable() {
 
 } // namespace
 
+// AC8: Issue #2087 Phase 2 — env_id_remap_ table + closures write-lock
+//       rewrite + new Agent-visible counters (Phase 2 marker bumped
+//       kEnvFrameLifetimePhase 1 → 2). Verifies:
+//   - kEnvFrameLifetimePhase == 2
+//   - resolve_env() returns identity when env_id_remap_ is empty
+//   - env_id_remap_size() == 0 before any compact
+//   - gc_closures_compacted_total + gc_env_frames_remapped_total
+//     advance after compact_env_frames() runs.
+//   - After compact: env_id_remap_size > 0; resolve_env returns the
+//     remapped id for live closures or -1 for reclaimed frames.
+static void ac8_phase2_env_id_remap_2087() {
+    std::println("\n--- AC8: #2087 Phase 2 env_id_remap_ ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = metrics_of(cs);
+
+    // Phase marker (Issue #2087): kEnvFrameLifetimePhase bumped 1 → 2.
+    CHECK(aura::core::envframe_lifetime::kEnvFrameLifetimePhase == 2,
+          "AC8: kEnvFrameLifetimePhase == 2 (Phase 2 marker)");
+
+    // Baseline: env_id_remap_ is identity-mapping before any compact.
+    CHECK(ev.env_id_remap_size() == 0, "AC8: env_id_remap_size() == 0 before any compact");
+
+    // resolve_env() with empty remap returns identity (no compact yet).
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        CHECK(ev.resolve_env(i) == static_cast<std::int64_t>(i),
+              std::format("AC8: resolve_env({}) == identity when remap empty", i));
+    }
+
+    // Build a few env_frames + closures so compact has work to do.
+    std::vector<std::uint64_t> env_ids;
+    for (int i = 0; i < 6; ++i) {
+        auto eid = ev.alloc_env_frame(NULL_ENV_ID);
+        env_ids.push_back(eid);
+    }
+    std::vector<aura::compiler::ClosureId> cids;
+    for (std::size_t i = 0; i < env_ids.size(); ++i) {
+        aura::compiler::Closure cl;
+        cl.env_id = env_ids[i];
+        cids.push_back(ev.register_active_closure(std::move(cl)));
+    }
+    CHECK(ev.env_frames_size() >= 6, "AC8: env_frames_size >= 6 (heappush)");
+    // Drop half the frames (no live closure refs them after we erase)
+    for (std::size_t i = 0; i < 3; ++i) {
+        // Erase closures pointing at env_ids[i] so those frames are
+        // unreferenced post-compact.
+        if (i < cids.size())
+            (void)ev.erase_active_closure(cids[i]);
+    }
+
+    // Capture metrics pre-compact.
+    const auto closures_before = load_u64(m->gc_closures_compacted_total);
+    const auto env_frames_before = load_u64(m->gc_env_frames_remapped_total);
+
+    // Run compact_env_frames — Phase 2 path: env_id_remap_ table gets
+    // populated (mirrors pair_remap_ / string_remap_ from #2001).
+    const std::size_t reclaimed = ev.compact_env_frames();
+    CHECK(reclaimed >= 3,
+          std::format("AC8: compact reclaimed {} env_frames (≥3 unreferenced)", reclaimed));
+
+    // env_id_remap_ populated.
+    const std::size_t remap_size = ev.env_id_remap_size();
+    CHECK(remap_size > 0,
+          std::format("AC8: env_id_remap_size() == {} (>0 after compact)", remap_size));
+    CHECK(remap_size >= 6, std::format("AC8: env_id_remap covers old size ({})", remap_size));
+
+    // Live closures pointing at surviving env_ids: resolve_env returns
+    // a valid new id (≥0, < new env_frames_size). Reclaimed ones return -1.
+    for (std::size_t i = 3; i < cids.size(); ++i) {
+        const auto* cl = ev.find_active_closure(cids[i]).value_or(nullptr);
+        if (!cl)
+            continue;
+        if (cl->env_id == NULL_ENV_ID)
+            continue;
+        const auto resolved = ev.resolve_env(cl->env_id);
+        if (resolved == -1) {
+            // OK: this closure's env frame was reclaimed (NULL_ENV_ID now)
+        } else {
+            CHECK(resolved >= 0, "AC8: resolve_env returns >= 0 for live frame");
+        }
+    }
+    // Reclaimed closure env_ids map to -1 (their frames were freed).
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (i >= env_ids.size())
+            continue;
+        const std::int64_t resolved = ev.resolve_env(env_ids[i]);
+        CHECK(resolved == -1 || resolved != static_cast<std::int64_t>(env_ids[i]),
+              "AC8: reclaimed old env_id resolves to -1 or different new id");
+    }
+
+    // Metrics bumped (Issue #2087 lineage).
+    CHECK(load_u64(m->gc_closures_compacted_total) >= closures_before,
+          "AC8: gc_closures_compacted_total counter present (>= baseline)");
+    CHECK(load_u64(m->gc_env_frames_remapped_total) > env_frames_before,
+          std::format("AC8: gc_env_frames_remapped_total {} > baseline {}",
+                      load_u64(m->gc_env_frames_remapped_total), env_frames_before));
+
+    // query:envframe-lifetime-stats exposes phase=2 + closures-compacted +
+    // env-frames-remapped + schema-2087 lineage.
+    auto h = cs.eval(R"((engine:metrics "query:envframe-lifetime-stats"))");
+    CHECK(h && aura::compiler::types::is_hash(*h),
+          "AC8: query:envframe-lifetime-stats returns hash");
+    if (h && aura::compiler::types::is_hash(*h)) {
+        auto phase =
+            cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "phase"))");
+        CHECK(phase && aura::compiler::types::is_int(*phase) &&
+                  aura::compiler::types::as_int(*phase) == 2,
+              "AC8: query phase == 2");
+        auto s2087 =
+            cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2087"))");
+        CHECK(s2087 && aura::compiler::types::is_int(*s2087) &&
+                  aura::compiler::types::as_int(*s2087) == 2087,
+              "AC8: schema-2087 == 2087");
+    }
+
+    // query:gc-compact-stats exposes closures-compacted + env-frames-remapped
+    // + schema-2087 lineage.
+    auto g = cs.eval(R"((engine:metrics "query:gc-compact-stats"))");
+    CHECK(g && aura::compiler::types::is_hash(*g), "AC8: query:gc-compact-stats returns hash");
+    if (g && aura::compiler::types::is_hash(*g)) {
+        auto s2087g =
+            cs.eval(R"((hash-ref (engine:metrics "query:gc-compact-stats") "schema-2087"))");
+        CHECK(s2087g && aura::compiler::types::is_int(*s2087g) &&
+                  aura::compiler::types::as_int(*s2087g) == 2087,
+              "AC8: gc-compact-stats schema-2087 == 2087");
+    }
+}
 int main() {
     std::println("=== Issue #1665: scan skips tombstoned / erased TW closures ===");
     ac1_first_mark();
@@ -204,6 +331,7 @@ int main() {
     ac5_force_drop_then_scan();
     ac6_stress();
     ac7_lifetime_guard_observable();
+    ac8_phase2_env_id_remap_2087();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

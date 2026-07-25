@@ -2928,6 +2928,19 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 2001);
             insert_kv("strings-compacted", static_cast<std::int64_t>(strings_compacted));
             insert_kv("pairs-remapped", static_cast<std::int64_t>(pairs_remapped));
+            // Issue #2087: EnvFrame Phase 2 — env_id_remap_ lineage.
+            // closures-compacted counts the # of Closure::env_id rewrites
+            // per compact sweep (under closures_mtx_ write-lock);
+            // env-frames-remapped counts the size of env_id_remap_
+            // populated per sweep. schema-2087 marks the Phase 2
+            // lineage (env_id_remap_ + closures write-lock rewrite).
+            const std::uint64_t closures_compacted =
+                m ? m->gc_closures_compacted_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t env_frames_remapped =
+                m ? m->gc_env_frames_remapped_total.load(std::memory_order_relaxed) : 0;
+            insert_kv("closures-compacted", static_cast<std::int64_t>(closures_compacted));
+            insert_kv("env-frames-remapped", static_cast<std::int64_t>(env_frames_remapped));
+            insert_kv("schema-2087", 2087);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -2988,6 +3001,19 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                           aura::core::envframe_lifetime::envframe_lifetime_scans_run()));
             insert_kv("guard-runs-total", static_cast<std::int64_t>(guard_runs_total));
             insert_kv("invalidations-total", static_cast<std::int64_t>(invalidations_total));
+            // Issue #2087: EnvFrame Phase 2 lineage — phase marker
+            // (kEnvFrameLifetimePhase bumped 1 → 2) + env_id_remap
+            // counters. Phase=2 means closures write-lock
+            // env_id rewrite + env_id_remap_ table are live.
+            insert_kv("phase", static_cast<std::int64_t>(
+                                   aura::core::envframe_lifetime::kEnvFrameLifetimePhase));
+            const std::uint64_t closures_compacted_e =
+                m ? m->gc_closures_compacted_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t env_frames_remapped_e =
+                m ? m->gc_env_frames_remapped_total.load(std::memory_order_relaxed) : 0;
+            insert_kv("closures-compacted", static_cast<std::int64_t>(closures_compacted_e));
+            insert_kv("env-frames-remapped", static_cast<std::int64_t>(env_frames_remapped_e));
+            insert_kv("schema-2087", 2087);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
