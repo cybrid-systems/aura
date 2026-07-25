@@ -902,11 +902,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // remain usable across the Guard boundary.
     if (outermost) {
         (void)ev_->restamp_pinned_stable_refs();
-        // Issue #2000: restamp surviving pinned FFI buffers at boundary
-        // exit so pins that outlived the boundary keep tracking the
-        // current gen / arena id. Pins that compact_sweep invalidated
-        // (ptr=null) are skipped (restamp early-return on !pinned).
-        const auto n_pins = aura::core::lifetime::restamp_all_pins_for_arena(0, 0);
+        // Issue #2085: restamp surviving pinned FFI buffers at boundary
+        // exit so pins that outlived the boundary track the **current**
+        // arena generation (not the keep-current `0` sentinel). Pins
+        // constructed pre-boundary carry the old gen and would silently
+        // disagree with `validate(arena.generation(), arena_id)` after
+        // a Force live_compact that bumped the generation counter. Now
+        // the boundary dtor explicitly publishes the live arena gen so
+        // post-boundary FFI consumers see a single source of truth.
+        const std::uint64_t boundary_gen =
+            ev_->workspace_flat() != nullptr ? ev_->workspace_flat()->generation() : 0;
+        const auto n_pins = aura::core::lifetime::restamp_all_pins_for_arena(0, boundary_gen);
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             if (n_pins > 0)
                 m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(n_pins),

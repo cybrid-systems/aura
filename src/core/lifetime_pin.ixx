@@ -47,6 +47,12 @@ struct LifetimePinStats {
     std::uint64_t ffi_handoffs = 0;
     std::uint64_t invalidations = 0; // Phase 2: compact reclaimed buffer
     std::uint64_t restamps = 0;      // Phase 2: compact bumped gen, pin still valid
+    // Issue #2085: validate() detected gen drift between the pin's stored
+    // gen_ and the caller's cur_gen (or arena_id mismatch). Bumps when
+    // `validate(cur_gen, cur_arena_id)` returns false for reasons other
+    // than ptr being null. Agent-visible counter so dashboards can flag
+    // long-held pins that drifted across a Force live_compact cycle.
+    std::uint64_t gen_mismatch_total = 0;
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};
@@ -135,13 +141,21 @@ public:
 
     // Validate pin against current generation + arena id. Returns false if
     // pin was invalidated (ptr nulled) or gen / arena_id mismatch.
+    // Issue #2085: bump gen_mismatch_total on arena_id mismatch or gen
+    // mismatch (ptr-null returns false but is not a mismatch).
     [[nodiscard]] bool validate(std::uint64_t cur_gen,
                                 std::uint64_t cur_arena_id = 0) const noexcept {
         if (!ptr_)
             return false;
-        if (arena_id_ != 0 && cur_arena_id != 0 && arena_id_ != cur_arena_id)
+        if (arena_id_ != 0 && cur_arena_id != 0 && arena_id_ != cur_arena_id) {
+            ++g_lifetime_pin_stats.gen_mismatch_total;
             return false;
-        return gen_ == cur_gen;
+        }
+        if (gen_ != cur_gen) {
+            ++g_lifetime_pin_stats.gen_mismatch_total;
+            return false;
+        }
+        return true;
     }
 
     // Compact hook (Phase 2): pin survived compact, gen bumped to track
