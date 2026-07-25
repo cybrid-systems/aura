@@ -62,7 +62,7 @@ TARGET_BUDGET = 420
 # Raised 520→521 after #1907 (reflect/EDSL bridge public surface +1).
 # Raised 521→523 after #1914 (query:node-provenance + query:last-mutation-provenance
 # diagnostic hashes for AI hygiene root-cause; arg-taking, not engine:metrics-only).
-INTERIM_HARD_CEILING = 524  # bumped 523→524 in 4.4 (public primitive count is 524)
+INTERIM_HARD_CEILING = 525  # bumped 524→525 for #2080 orch:agent-touch (ProgressClock liveness)
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
