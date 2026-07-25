@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 362 | Preferred destination suites |
-| **Total scanned** | **362** | |
+| `tests/core/test_*.cpp` | 363 | Preferred destination suites |
+| **Total scanned** | **363** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 37 | 37 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 7 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 21 | 21 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 35 | 35 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 36 | 36 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 90 | 90 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
@@ -371,6 +371,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_pair_unchecked_safety.cpp`
 - `tests/core/test_panic_checkpoint_batch.cpp`
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp`
+- `tests/compiler/test_partial_relower_cascade_2041.cpp`
 - `tests/compiler/test_pass_contracts_hotpath_closed_loop.cpp`
 - `tests/compiler/test_pattern_structural_index_closed_loop.cpp`
 - `tests/compiler/test_pcv_children_safe_default_migration.cpp`
@@ -781,13 +782,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (35)
+### `jit_incremental` — JIT / AOT / incremental relower (36)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (35)
+#### domain/ (36)
 
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952/#2013 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_mangle_top.cpp` (—) [domain_suite, theme_compiler] — test_aot_mangle_top.cpp — Issue #1369 / #2015:
@@ -819,6 +820,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
 - `tests/core/test_pair_slot_lock.cpp` (—) [domain_suite, theme_core] — test_pair_slot_lock.cpp -- runtime smoke test for B-024 / #1998
+- `tests/compiler/test_partial_relower_cascade_2041.cpp` (#2041) [domain_suite, theme_compiler] — Issue #2041 — Partial re-lower + JIT hot-swap end-to-end on
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — Issue #1711 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_relower_strategy_cache_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_pass_incremental.cpp` (—) [domain_suite, theme_renderer] — AC1: RenderPass satisfies DirtyAware + SoAView + JITFriendly + Incremental

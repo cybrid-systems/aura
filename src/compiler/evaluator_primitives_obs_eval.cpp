@@ -5985,6 +5985,13 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"should-relower-bridge-epoch-wired", make_int(1)},
                 {"schema-2033", make_int(2033)},
                 {"issue-2033", make_int(2033)},
+                // Issue #2041: invalidate_function cascade respects
+                // should_partial_relower + partial_recompile end-to-end
+                {"invalidate-cascade-partial-wired", make_int(1)},
+                {"should-partial-relower-cascade-wired", make_int(1)},
+                {"jit-partial-recompile-on-cascade-wired", make_int(1)},
+                {"schema-2041", make_int(2041)},
+                {"issue-2041", make_int(2041)},
                 // Issue #2038: push-automatic post-mutate cascade + latency
                 {"post_mutate_incremental_cascade_total",
                  make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
