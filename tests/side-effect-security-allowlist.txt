@@ -1,0 +1,10 @@
+# Issue #2057: side-effect prim names exempt from the static coverage gate.
+# Prefer fixing the registration (add_mutate / require_effect) over allowlisting.
+# Format: one fully-qualified primitive name per line. # comments ok.
+#
+# mutate:set-agent-fingerprint is metadata-only (agent identity stamp), not
+# an AST side effect — registered via bare add() next to add_mutate.
+mutate:set-agent-fingerprint
+# Diagnostic / metrics-only "mutate:" names (no AST write) — security_exempt.
+mutate:validate-reflected
+mutate:validate-against-schema

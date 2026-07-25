@@ -11,6 +11,7 @@ module;
 #include <unistd.h>
 #include "runtime_shared.h"
 #include "security_capabilities.h"
+#include "security_side_effect.hh" // #2057
 
 module aura.compiler.evaluator;
 
@@ -152,7 +153,15 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(id);
     });
 
+    // AURA_SIDE_EFFECT_PRIM — write-file requires Write effect (#2057).
     add("write-file", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+        using aura::compiler::security::kEffectWrite;
+        if (!ev.require_effect(kEffectWrite, "write-file")) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        aura::compiler::security::format_deny_reason(
+                                            kEffectWrite, ev.capability_tenant_id(), "write-file"),
+                                        ev.primitive_error_counter_ptr());
+        }
         if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
                                   "capability denied: io-write required");
             is_error(denied))
