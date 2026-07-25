@@ -136,6 +136,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dep_graph_edge_miss_count{0};
     std::atomic<std::uint64_t> soa_dirty_sync_total{0};
     std::atomic<std::uint64_t> soa_consistency_partial_dirty_total{0};
+    // Issue #2111: unified SoA generation fence (silent-stale under self-evo).
+    //   - soa_generation_bump_total: mark_dirty / cascade / restamp bumps
+    //   - soa_generation_stale_prevented_total: should_relower forced by
+    //     generation advance while dirty/hash may look clean
+    std::atomic<std::uint64_t> soa_generation_bump_total{0};
+    std::atomic<std::uint64_t> soa_generation_stale_prevented_total{0};
     // Issue #2031: instruction-level impact scope observability.
     //   - instr_level_impact_hits_total: precise instr refs recorded
     //     by compute_impact_scope (source_ast_node_id mapped)

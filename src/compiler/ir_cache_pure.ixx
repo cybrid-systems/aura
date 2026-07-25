@@ -52,8 +52,11 @@ struct CacheEntryVersionStamp {
     std::uint64_t mutation_count = 0; // mutation_epoch at lower/store
     std::uint64_t bridge_epoch = 0;
     std::uint64_t defuse_version = 0;
+    // Issue #2111: SoA generation fence at lower/store time.
+    std::uint64_t soa_generation = 0;
     [[nodiscard]] bool is_stamped() const noexcept {
-        return mutation_count != 0 || bridge_epoch != 0 || defuse_version != 0;
+        return mutation_count != 0 || bridge_epoch != 0 || defuse_version != 0 ||
+               soa_generation != 0;
     }
 };
 
@@ -63,6 +66,7 @@ inline constexpr std::uint32_t kRelowerSourceHash = 1u << 1;
 inline constexpr std::uint32_t kRelowerMutationDrift = 1u << 2;
 inline constexpr std::uint32_t kRelowerBridgeEpoch = 1u << 3;
 inline constexpr std::uint32_t kRelowerDefuseVersion = 1u << 4;
+inline constexpr std::uint32_t kRelowerSoaGeneration = 1u << 5; // Issue #2111
 
 // ── should_relower ────────────────────────────────────────
 // Issue #126 / #2033: pure decision function extracted from
@@ -74,14 +78,17 @@ inline constexpr std::uint32_t kRelowerDefuseVersion = 1u << 4;
 //   - mutation-count / mutation_epoch drift
 //   - bridge_epoch mismatch (when stamp was written)
 //   - defuse_version drift (when both non-zero)
+//   - soa_generation advanced (Issue #2111; dirty may be false)
 //
 // Pure: same inputs → same output. reasons_out optional bitmask.
+// current_soa_generation: live SoA fence (0 = skip generation check).
 [[nodiscard]] inline bool should_relower(std::size_t source_hash, std::size_t cached_source_hash,
                                          bool dirty, const CacheEntryVersionStamp& stamp,
                                          std::uint64_t current_mutation_count,
                                          std::uint64_t current_bridge_epoch,
                                          std::uint64_t current_defuse_version = 0,
-                                         std::uint32_t* reasons_out = nullptr) noexcept {
+                                         std::uint32_t* reasons_out = nullptr,
+                                         std::uint64_t current_soa_generation = 0) noexcept {
     std::uint32_t reasons = 0;
     if (dirty)
         reasons |= kRelowerDirty;
@@ -96,6 +103,10 @@ inline constexpr std::uint32_t kRelowerDefuseVersion = 1u << 4;
     if (stamp.defuse_version != 0 && current_defuse_version != 0 &&
         stamp.defuse_version != current_defuse_version)
         reasons |= kRelowerDefuseVersion;
+    // Issue #2111: generation fence — cached_gen < live_gen forces re-lower
+    // even when dirty==false and hashes match (silent-stale under compact).
+    if (current_soa_generation != 0 && stamp.soa_generation < current_soa_generation)
+        reasons |= kRelowerSoaGeneration;
     if (reasons_out)
         *reasons_out = reasons;
     return reasons != 0;

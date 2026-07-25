@@ -6097,6 +6097,16 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"should-relower-bridge-epoch-wired", make_int(1)},
                 {"schema-2033", make_int(2033)},
                 {"issue-2033", make_int(2033)},
+                // Issue #2111: SoA generation fence (silent-stale under self-evo)
+                {"soa_generation_bump_total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
+                {"soa-generation-bump-total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
+                {"soa_generation_stale_prevented_total",
+                 make_int(m ? load(m->soa_generation_stale_prevented_total) : 0)},
+                {"soa-generation-stale-prevented-total",
+                 make_int(m ? load(m->soa_generation_stale_prevented_total) : 0)},
+                {"soa-generation-fence-wired", make_int(1)},
+                {"schema-2111", make_int(2111)},
+                {"issue-2111", make_int(2111)},
                 // Issue #2041: invalidate_function cascade respects
                 // should_partial_relower + partial_recompile end-to-end
                 {"invalidate-cascade-partial-wired", make_int(1)},

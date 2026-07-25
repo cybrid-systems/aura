@@ -2120,6 +2120,11 @@ aura_add_issue_test(test_dep_graph_hybrid_cascade_2110)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
+# Issue #2111: SoA generation fence (silent-stale under self-evo).
+aura_add_issue_test(test_soa_generation_fence_2111)
+aura_issue_test_link_llvm_jit(test_soa_generation_fence_2111)
+add_dependencies(all_test_issue_targets test_soa_generation_fence_2111)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

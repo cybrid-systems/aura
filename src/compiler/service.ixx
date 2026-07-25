@@ -4050,13 +4050,24 @@ public:
         // Issue #1042: access stamp for LRU eviction under long-running serve.
         std::uint64_t last_used = 0;
 
-        // Issue #2033: write stamp after successful lower / store.
-        void stamp_version(std::uint64_t mut_epoch, std::uint64_t bridge, std::uint64_t defuse) {
+        // Issue #2033 / #2111: write stamp after successful lower / store.
+        // soa_gen is the live SoA generation fence at store time.
+        void stamp_version(std::uint64_t mut_epoch, std::uint64_t bridge, std::uint64_t defuse,
+                           std::uint64_t soa_gen = 0) {
             version_stamp_.mutation_count = mut_epoch;
             version_stamp_.bridge_epoch = bridge;
             version_stamp_.defuse_version = defuse;
+            version_stamp_.soa_generation = soa_gen;
             mutation_count = static_cast<std::size_t>(mut_epoch);
             last_seen_epoch_ = mut_epoch;
+        }
+
+        // Issue #2111: bump SoA generation fence (module + functions).
+        // Called from mark_*_dirty paths so dirty=false + gen advance
+        // is still detected by should_relower.
+        void bump_soa_generation() { soa_mod.bump_generation(); }
+        [[nodiscard]] std::uint64_t live_soa_generation() const noexcept {
+            return soa_mod.max_function_generation();
         }
         // Issue #196: per-block dirty bitmask. One inner
         // vector per IRFunction; each inner vector has 1 byte
@@ -4572,20 +4583,27 @@ public:
         const auto cur_mut = aura::core::current_mutation_epoch();
         const auto cur_bridge = bridge_epoch();
         const auto cur_defuse = evaluator_.defuse_version();
+        const auto cur_soa_gen = it->second.live_soa_generation();
         std::uint32_t reasons = 0;
-        const bool need =
-            should_relower(source_hash, it->second.source_hash, it->second.dirty,
-                           it->second.version_stamp_, cur_mut, cur_bridge, cur_defuse, &reasons) ||
-            it->second.dirty_block_count() > 0;
+        const bool need = should_relower(source_hash, it->second.source_hash, it->second.dirty,
+                                         it->second.version_stamp_, cur_mut, cur_bridge, cur_defuse,
+                                         &reasons, cur_soa_gen) ||
+                          it->second.dirty_block_count() > 0;
         if (need) {
             metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2033: stamp-domain observability for silent-stale forensics.
             if (reasons & kRelowerBridgeEpoch)
                 metrics_.should_relower_bridge_epoch_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
-            if (reasons & (kRelowerMutationDrift | kRelowerBridgeEpoch | kRelowerDefuseVersion))
+            if (reasons & (kRelowerMutationDrift | kRelowerBridgeEpoch | kRelowerDefuseVersion |
+                           kRelowerSoaGeneration))
                 metrics_.should_relower_stamp_mismatch_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+            // Issue #2111: generation-only stale (dirty may be false).
+            if (reasons & kRelowerSoaGeneration) {
+                metrics_.soa_generation_stale_prevented_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            }
             return 1;
         }
         // Issue #1915: clean hit with matching source_hash — no re-lower.
@@ -4611,9 +4629,10 @@ public:
         entry.strings = std::move(strings);
         entry.dirty = false;
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
-        // Issue #2033: stamp mutation + bridge + defuse after successful lower.
+        // Issue #2033 / #2111: stamp mutation + bridge + defuse + SoA gen
+        // after successful lower (generation fence at store time).
         entry.stamp_version(aura::core::current_mutation_epoch(), bridge_epoch(),
-                            evaluator_.defuse_version());
+                            evaluator_.defuse_version(), entry.live_soa_generation());
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.
@@ -4809,10 +4828,14 @@ public:
     // Issue #2034: force SoA instruction_dirty_ parity after cascade
     // block marks and bump soa_dirty_sync_total (at least +1 so every
     // cascade that touches blocks is observable).
+    // Issue #2111: also bump SoA generation fence so silent dirty=false
+    // cannot hide gen advancement.
     void finish_cascade_soa_dirty_sync_(IRCacheEntry& entry) {
         const auto flipped = entry.force_soa_instruction_dirty_sync();
         const auto n = flipped > 0 ? static_cast<std::uint64_t>(flipped) : 1u;
         metrics_.soa_dirty_sync_total.fetch_add(n, std::memory_order_relaxed);
+        entry.bump_soa_generation();
+        metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #2031 / #2109: stamp block + instruction dirty bits from

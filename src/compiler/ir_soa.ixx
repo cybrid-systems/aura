@@ -22,6 +22,7 @@
 
 module;
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -128,6 +129,15 @@ export struct IRFunctionSoA {
     // otherwise-dirty block.
     std::pmr::vector<std::uint8_t> instruction_dirty_;
 
+    // Issue #2111: generation fence — monotonic counter bumped on every
+    // mark_*_dirty / restamp. Cached IR stores generation at lower time;
+    // should_relower forces re-lower when live gen advanced even if
+    // dirty==false (silent-stale under self-evo compact/mutate).
+    std::uint64_t generation_ = 0;
+
+    void bump_generation() noexcept { ++generation_; }
+    [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+
     // Number of instructions currently stored
     std::size_t size() const { return opcodes_.size(); }
 
@@ -175,6 +185,8 @@ export struct IRFunctionSoA {
         // as the block mask; both go to 0xFF... no wait, 0x01.
         for (auto& i : instruction_dirty_)
             i = 1;
+        // Issue #2111: generation fence on full-function dirty.
+        bump_generation();
     }
 
     // Clear a single block's dirty flag (called by the
@@ -238,9 +250,11 @@ export struct IRFunctionSoA {
     void mark_instruction_dirty(std::uint32_t idx) {
         if (idx >= instruction_dirty_.size()) {
             instruction_dirty_.resize(idx + 1, 1);
-            return;
+        } else {
+            instruction_dirty_[idx] = 1;
         }
-        instruction_dirty_[idx] = 1;
+        // Issue #2111: generation fence on instr dirty.
+        bump_generation();
     }
 
     // Mark all instructions dirty (full invalidate of
@@ -340,6 +354,8 @@ inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
             }
         }
     }
+    // Issue #2111: generation fence on block dirty (and instr cascade).
+    bump_generation();
 }
 
 // Issue #1920: invoke Fn(block_id, BasicBlockSoA&) for each dirty
@@ -428,6 +444,23 @@ export struct IRModuleV2 {
     std::uint32_t entry_function_id = 0;
     std::vector<IRFunctionSoA> functions;
     std::vector<std::string> string_pool; // string constants (for ConstString)
+    // Issue #2111: module-level generation fence (monotonic max/bump
+    // across all functions). Cached at lower time; compared by should_relower.
+    std::uint64_t generation_ = 0;
+
+    void bump_generation() noexcept {
+        ++generation_;
+        for (auto& f : functions)
+            f.bump_generation();
+    }
+    [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+    // Max of module + function generations (readable fence).
+    [[nodiscard]] std::uint64_t max_function_generation() const noexcept {
+        auto g = generation_;
+        for (const auto& f : functions)
+            g = std::max(g, f.generation());
+        return g;
+    }
 
     // Add an instruction to a function. Appends one element to
     // each SoA column. The function index must be in range.
