@@ -864,6 +864,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> blame_hygiene_frames_total{0};
     // Issue #1877: per-CompilerMetrics mirror of hygiene→provenance stamps.
     std::atomic<std::uint64_t> macro_hygiene_provenance_hits_total{0};
+    // Issue #2037: MacroIntroduced mutate hotpath (replace-pattern /
+    // query-and-replace) closed-loop hygiene.
+    //   - hygiene_mutate_restamp_total: allowed MacroIntroduced mutates
+    //     that restamped StableNodeRef provenance (non-Strict)
+    //   - hygiene_mutate_fail_on_stale_total: Strict FailOnStale blocks
+    //     on stale MacroIntroduced refs (no silent restamp)
+    //   - hygiene_mutate_marker_propagate_total: MacroIntroduced marker
+    //     stamped onto replacement roots after allowed mutate
+    std::atomic<std::uint64_t> hygiene_mutate_restamp_total{0};
+    std::atomic<std::uint64_t> hygiene_mutate_fail_on_stale_total{0};
+    std::atomic<std::uint64_t> hygiene_mutate_marker_propagate_total{0};
     // Issue #1877: last hygiene stamp for truncation blame auto-pull
     // (non-atomic last-writer; process-wide provenance stamp is primary,
     // this is the metrics_-pointer path that is always TU-shared).

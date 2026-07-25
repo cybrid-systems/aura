@@ -1,8 +1,18 @@
-// provenance_tracker.hh — Issues #1180/#1500/#1564/#1630/#1877: full StableNodeRef
-// provenance enforcement surface (header form for evaluator + tests).
-// Complements FlatAST::StableNodeRef; does not replace it.
-// Issue #1877: MacroIntroduced hygiene → provenance stamp + FailOnStale
-// under sandbox Strict (no silent restamp in multi-tenant AI self-modify).
+// provenance_tracker.hh — Issues #1180/#1500/#1564/#1630/#1877/#2037:
+// full StableNodeRef provenance enforcement surface (header form for
+// evaluator + tests). Complements FlatAST::StableNodeRef; does not replace it.
+//
+// Issue #1877 / #2037 contract (mutate hotpaths):
+//   MacroIntroduced hygiene → provenance stamp + FailOnStale under sandbox
+//   Strict (no silent restamp in multi-tenant AI self-modify).
+//   Structural mutates that can touch MacroIntroduced nodes
+//   (mutate:replace-pattern, mutate:query-and-replace, replace-subtree, …)
+//   MUST either:
+//     (a) fail closed under hygiene-protected (default; no :allow-macro?), OR
+//     (b) when allowed, stamp provenance via record_macro_hygiene_provenance
+//         and under Strict apply FailOnStale (validate; refuse silent restamp).
+//   Replacement roots of MacroIntroduced matches propagate the marker so
+//   hygiene survives query → mutate → re-query closed loops.
 
 #ifndef AURA_CORE_PROVENANCE_TRACKER_HH
 #define AURA_CORE_PROVENANCE_TRACKER_HH
@@ -102,6 +112,24 @@ inline void record_macro_hygiene_provenance_hit(std::uint64_t n = 1) noexcept {
 inline void record_fail_on_stale_strict_sandbox(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().fail_on_stale_strict_sandbox_total.fetch_add(
         n, std::memory_order_relaxed);
+}
+
+// Issue #2037: process-wide mutate hotpath hygiene restamp / fail counters
+// (mirrored into CompilerMetrics when available).
+inline std::atomic<std::uint64_t>& g_hygiene_mutate_restamp_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_hygiene_mutate_fail_on_stale_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline void record_hygiene_mutate_restamp(std::uint64_t n = 1) noexcept {
+    g_hygiene_mutate_restamp_total().fetch_add(n, std::memory_order_relaxed);
+}
+inline void record_hygiene_mutate_fail_on_stale(std::uint64_t n = 1) noexcept {
+    g_hygiene_mutate_fail_on_stale_total().fetch_add(n, std::memory_order_relaxed);
+    record_fail_on_stale_strict_sandbox(n);
 }
 
 // Issue #2026: linear ownership state codes (mirror linear_rt without
