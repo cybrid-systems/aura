@@ -2054,6 +2054,11 @@ aura_add_issue_test(test_hot_pass_dirty_soa_2060)
 aura_issue_test_link_llvm_jit(test_hot_pass_dirty_soa_2060)
 add_dependencies(all_test_issue_targets test_hot_pass_dirty_soa_2060)
 
+# Issue #2084: inject real heap sizes into mark_from_roots (stop size=0,0,0).
+aura_add_issue_test(test_gc_mark_size_inject_2084)
+aura_issue_test_link_llvm_jit(test_gc_mark_size_inject_2084)
+add_dependencies(all_test_issue_targets test_gc_mark_size_inject_2084)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

@@ -161,17 +161,14 @@ bool GCCollector::collect() {
         // high-water dead slots above any live root never enter the
         // MarkBitVector — silently under-covering the heap under
         // long-running mutate+GC loops (production review gap G-mark-size).
+        // Metrics for injection are recorded inside mark_from_roots when
+        // any size arg is non-zero (covers both size_fn_ and direct tests).
         std::size_t s_size = 0, p_size = 0, c_size = 0;
         if (size_fn_) {
             const auto sp = size_fn_();
             s_size = std::get<0>(sp);
             p_size = std::get<1>(sp);
             c_size = std::get<2>(sp);
-            if (s_size > 0 || p_size > 0 || c_size > 0) {
-                metrics_.mark_size_injected_total.fetch_add(1, std::memory_order_relaxed);
-                metrics_.mark_size_injected_heaps_total.fetch_add(
-                    static_cast<int64_t>(s_size + p_size + c_size), std::memory_order_relaxed);
-            }
         }
         mark_from_roots(roots, s_size, p_size, c_size);
         auto mark_end = std::chrono::steady_clock::now();
@@ -242,7 +239,34 @@ void GCCollector::mark_from_roots(const GCRootSet& roots, size_t string_heap_siz
     size_t p_size = pairs_size > 0 ? pairs_size : 0;
     size_t c_size = closures_size > 0 ? closures_size : 0;
 
-    // If no sizes given, compute from roots
+    // Issue #2084: when sizes are explicitly injected (non-zero args),
+    // record process-wide + per-collector metrics so Agents / tests can
+    // verify full-heap coverage (not root-max fallback).
+    const bool sizes_injected = (string_heap_size > 0 || pairs_size > 0 || closures_size > 0);
+    if (sizes_injected) {
+        metrics_.mark_size_injected_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.mark_size_injected_heaps_total.fetch_add(
+            static_cast<int64_t>(string_heap_size + pairs_size + closures_size),
+            std::memory_order_relaxed);
+        metrics_.last_injected_string_size.store(static_cast<int64_t>(string_heap_size),
+                                                 std::memory_order_relaxed);
+        metrics_.last_injected_pairs_size.store(static_cast<int64_t>(pairs_size),
+                                                std::memory_order_relaxed);
+        metrics_.last_injected_closures_size.store(static_cast<int64_t>(closures_size),
+                                                   std::memory_order_relaxed);
+        g_mark_size_injected_total.fetch_add(1, std::memory_order_relaxed);
+        g_mark_size_injected_heaps_total.fetch_add(
+            static_cast<std::int64_t>(string_heap_size + pairs_size + closures_size),
+            std::memory_order_relaxed);
+        g_last_injected_string_size.store(static_cast<std::int64_t>(string_heap_size),
+                                          std::memory_order_relaxed);
+        g_last_injected_pairs_size.store(static_cast<std::int64_t>(pairs_size),
+                                         std::memory_order_relaxed);
+        g_last_injected_closures_size.store(static_cast<std::int64_t>(closures_size),
+                                            std::memory_order_relaxed);
+    }
+
+    // If no sizes given, compute from roots (pre-#2084 fallback)
     if (s_size == 0) {
         for (auto idx : roots.string_roots)
             if (static_cast<size_t>(idx) >= s_size)

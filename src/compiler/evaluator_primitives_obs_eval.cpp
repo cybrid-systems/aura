@@ -24,6 +24,7 @@ module;
 #include "primitives_meta.h"
 #include "primitives_detail.h"
 #include "serve/metrics.h"
+#include "serve/gc_coordinator.h" // Issue #2084: mark-size injection metrics
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "core/self_healing_hooks.h"
@@ -2912,7 +2913,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                 m ? m->gc_strings_compacted_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t pairs_remapped =
                 m ? m->gc_pairs_remapped_total.load(std::memory_order_relaxed) : 0;
-            auto* ht = FlatHashTable::create(8);
+            // #2001 + #2087 + #2084: ~12 keys — create(16) headroom.
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2955,6 +2957,75 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("closures-compacted", static_cast<std::int64_t>(closures_compacted));
             insert_kv("env-frames-remapped", static_cast<std::int64_t>(env_frames_remapped));
             insert_kv("schema-2087", 2087);
+            // Issue #2084: mark-size injection lineage (shared with
+            // query:gc-mark-size-stats). Compact + mark are one STW path.
+            insert_kv("schema-2084", 2084);
+            insert_kv("mark-size-injected-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::g_mark_size_injected_total.load(std::memory_order_relaxed)));
+            insert_kv("mark-size-provider-wired",
+                      static_cast<std::int64_t>(
+                          aura::serve::g_mark_size_provider_wired.load(std::memory_order_relaxed)));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2084: query:gc-mark-size-stats — whether mark_from_roots received
+    // real heap sizes this process (vs root-max fallback). Agents use this to
+    // confirm full-heap MarkBitVector coverage under long-running mutate+GC.
+    ObservabilityPrims::register_stats_impl(
+        "query:gc-mark-size-stats", [&ev](const auto&) -> EvalValue {
+            (void)ev;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2084);
+            insert_kv("schema-2084", 2084);
+            insert_kv("issue-2084", 2084);
+            insert_kv("mark-size-injected-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::g_mark_size_injected_total.load(std::memory_order_relaxed)));
+            insert_kv("mark-size-injected-heaps-total",
+                      static_cast<std::int64_t>(aura::serve::g_mark_size_injected_heaps_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("last-injected-string-size",
+                      static_cast<std::int64_t>(aura::serve::g_last_injected_string_size.load(
+                          std::memory_order_relaxed)));
+            insert_kv("last-injected-pairs-size",
+                      static_cast<std::int64_t>(
+                          aura::serve::g_last_injected_pairs_size.load(std::memory_order_relaxed)));
+            insert_kv("last-injected-closures-size",
+                      static_cast<std::int64_t>(aura::serve::g_last_injected_closures_size.load(
+                          std::memory_order_relaxed)));
+            insert_kv("mark-size-provider-wired",
+                      static_cast<std::int64_t>(
+                          aura::serve::g_mark_size_provider_wired.load(std::memory_order_relaxed)));
+            insert_kv("size-provider-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
