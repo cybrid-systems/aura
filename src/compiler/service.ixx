@@ -5226,42 +5226,17 @@ public:
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
         // Run per-function passes on the new bundle.
-        // Issue #1574: feed IRCacheEntry dirty bitmasks into
-        // run_incremental_dirty_pipeline so ConstantFolding /
-        // ComputeKind / TypePropagation / Shape / EscapeAnalysis only
-        // touch dirty blocks (or skip entirely when mask is clean).
+        // Issue #1574 / #2044: shared incremental dirty suite.
         {
-            aura::compiler::ComputeKindWrap ck_pass;
-            aura::compiler::ConstantFoldingWrap cf_pass;
-            aura::compiler::TypePropagationPass tp_pass;
-            aura::compiler::ShapeWrap shape_pass;
-            EscapeAnalysisWrap escape_pass;
             const auto& entry = it->second;
-            aura::compiler::DefineDirtyMaskView define_mask;
+            DefineDirtyMaskView define_mask;
             if (!entry.block_dirty_per_func_.empty()) {
                 define_mask.block_dirty_per_func = &entry.block_dirty_per_func_;
                 define_mask.instruction_dirty_per_func = &entry.instruction_dirty_per_func_;
             }
-            const aura::compiler::DefineDirtyMaskView* mask_ptr =
+            const DefineDirtyMaskView* mask_ptr =
                 define_mask.block_dirty_per_func ? &define_mask : nullptr;
-
-            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
-
-            std::size_t clean_blocks_skipped = 0;
-            for (auto& func : ir_mod.functions) {
-                if (func.id == ir_mod.entry_function_id)
-                    continue;
-                // Issue #538: DCE after post-mutate re-lower.
-                run_coercion_elim_on_function(func);
-            }
-            if (mask_ptr) {
-                clean_blocks_skipped = static_cast<std::size_t>(mask_ptr->total_block_count() -
-                                                                mask_ptr->dirty_block_count());
-            }
+            const auto clean_blocks_skipped = run_incremental_dirty_pass_suite_(ir_mod, mask_ptr);
             if (!entry.block_dirty_per_func_.empty()) {
                 metrics_.linear_post_mutate_enforcements_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -8643,6 +8618,42 @@ private:
                                                                        std::memory_order_relaxed);
         }
         metrics_.dead_coercion_narrow_mutation_wired.store(1, std::memory_order_relaxed);
+    }
+
+    // Issue #2044 / #1574: full incremental dirty pass suite shared by
+    // relower_define_blocks full-fallback and invalidate_function cascade.
+    // When mask_ptr is non-null, DirtyAware passes skip clean blocks;
+    // when null, every block is treated as dirty (safe full re-opt).
+    // Returns clean blocks skipped (0 if no mask / all dirty).
+    std::size_t run_incremental_dirty_pass_suite_(aura::ir::IRModule& ir_mod,
+                                                  const DefineDirtyMaskView* mask_ptr) {
+        ComputeKindWrap ck_pass;
+        ConstantFoldingWrap cf_pass;
+        TypePropagationPass tp_pass;
+        ShapeWrap shape_pass;
+        EscapeAnalysisWrap escape_pass;
+
+        (void)run_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
+        (void)run_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
+        (void)run_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
+        (void)run_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
+        (void)run_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
+
+        for (auto& func : ir_mod.functions) {
+            if (func.id == ir_mod.entry_function_id)
+                continue;
+            // Issue #538 / #611: DCE after re-lower (full fn when no mask).
+            run_coercion_elim_on_function(func);
+        }
+
+        std::size_t clean_skipped = 0;
+        if (mask_ptr && mask_ptr->block_dirty_per_func) {
+            const auto total = mask_ptr->total_block_count();
+            const auto dirty = mask_ptr->dirty_block_count();
+            if (total > dirty)
+                clean_skipped = static_cast<std::size_t>(total - dirty);
+        }
+        return clean_skipped;
     }
 
     // Issue #538: TypeSpecialization + DCE on one function after
