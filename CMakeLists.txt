@@ -2110,6 +2110,11 @@ aura_add_issue_test(test_linear_gc_window_2043)
 aura_issue_test_link_llvm_jit(test_linear_gc_window_2043)
 add_dependencies(all_test_issue_targets test_linear_gc_window_2043)
 
+# Issue #2044: cascade re-lower full incremental dirty pass suite
+aura_add_issue_test(test_cascade_incremental_pass_suite_2044)
+aura_issue_test_link_llvm_jit(test_cascade_incremental_pass_suite_2044)
+add_dependencies(all_test_issue_targets test_cascade_incremental_pass_suite_2044)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

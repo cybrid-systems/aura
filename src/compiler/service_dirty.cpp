@@ -741,6 +741,23 @@ void CompilerService::invalidate_function(const std::string& name) {
             continue;
         flat.root = pr.root;
 
+        // Issue #2044: snapshot dirty masks BEFORE lower so the incremental
+        // pass suite can skip clean blocks (preserve shape/linear/fold state).
+        DefineDirtyMaskView define_mask;
+        std::vector<std::vector<std::uint8_t>> block_dirty_snap;
+        std::vector<std::vector<std::uint8_t>> inst_dirty_snap;
+        if (auto vit = ir_cache_v2_.find(dep_name); vit != ir_cache_v2_.end()) {
+            block_dirty_snap = vit->second.block_dirty_per_func_;
+            inst_dirty_snap = vit->second.instruction_dirty_per_func_;
+            if (!block_dirty_snap.empty()) {
+                define_mask.block_dirty_per_func = &block_dirty_snap;
+                if (!inst_dirty_snap.empty())
+                    define_mask.instruction_dirty_per_func = &inst_dirty_snap;
+            }
+        }
+        const DefineDirtyMaskView* mask_ptr =
+            define_mask.block_dirty_per_func ? &define_mask : nullptr;
+
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
@@ -748,15 +765,14 @@ void CompilerService::invalidate_function(const std::string& name) {
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
             cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
 
-        {
-            ComputeKindWrap ck_pass;
-            ConstantFoldingWrap cf_pass;
-            for (auto& func : ir_mod.functions) {
-                if (func.id == ir_mod.entry_function_id)
-                    continue;
-                ck_pass.compute_function(func);
-                (void)cf_pass.fold_function(func);
-            }
+        // Issue #2044: full incremental dirty suite (CK/CF/TypeProp/Shape/
+        // Escape + DCE) — replaces prior CK+CF-only cascade path.
+        metrics_.cascade_incremental_pass_pipeline_total.fetch_add(1, std::memory_order_relaxed);
+        const auto clean_skipped = run_incremental_dirty_pass_suite_(ir_mod, mask_ptr);
+        if (clean_skipped > 0) {
+            metrics_.cascade_incremental_pass_clean_blocks_skipped.fetch_add(
+                clean_skipped, std::memory_order_relaxed);
+            metrics_.irsoa_cache_miss_reduction.fetch_add(clean_skipped, std::memory_order_relaxed);
         }
 
         std::vector<aura::ir::IRFunction> bundle;

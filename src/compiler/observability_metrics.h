@@ -376,6 +376,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_gc_window_finalize_total{0};
     std::atomic<std::uint64_t> linear_ownership_epoch_bumps_total{0};
     std::atomic<std::uint64_t> linear_gc_window_under_mutate_total{0};
+    // Issue #2044: cascade re-lower runs full incremental dirty pass suite
+    // (CK/CF/TypeProp/Shape/Escape + DCE) instead of CK+CF only.
+    std::atomic<std::uint64_t> cascade_incremental_pass_pipeline_total{0};
+    std::atomic<std::uint64_t> cascade_incremental_pass_clean_blocks_skipped{0};
     // Issue #1889: truncate_env_frames_to_checkpoint dual-epoch observability.
     //   - bridge_epoch_bump_on_truncate_total: # of times truncate advanced
     //     bridge_epoch (must match successful drop path, not no-op)

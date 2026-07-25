@@ -5992,6 +5992,16 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"jit-partial-recompile-on-cascade-wired", make_int(1)},
                 {"schema-2041", make_int(2041)},
                 {"issue-2041", make_int(2041)},
+                // Issue #2044: cascade full re-lower uses full dirty pass suite
+                {"cascade_incremental_pass_pipeline_total",
+                 make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},
+                {"cascade-incremental-pass-pipeline-total",
+                 make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},
+                {"cascade_incremental_pass_clean_blocks_skipped",
+                 make_int(m ? load(m->cascade_incremental_pass_clean_blocks_skipped) : 0)},
+                {"cascade-incremental-pass-suite-wired", make_int(1)},
+                {"schema-2044", make_int(2044)},
+                {"issue-2044", make_int(2044)},
                 // Issue #2038: push-automatic post-mutate cascade + latency
                 {"post_mutate_incremental_cascade_total",
                  make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
