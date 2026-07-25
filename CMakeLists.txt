@@ -2044,6 +2044,11 @@ aura_add_issue_test(test_pcv_unique_hotpath_2058)
 aura_issue_test_link_llvm_jit(test_pcv_unique_hotpath_2058)
 add_dependencies(all_test_issue_targets test_pcv_unique_hotpath_2058)
 
+# Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
+aura_add_issue_test(test_arena_adaptive_compact_2059)
+aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)
+add_dependencies(all_test_issue_targets test_arena_adaptive_compact_2059)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

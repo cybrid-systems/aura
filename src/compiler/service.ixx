@@ -597,9 +597,6 @@ public:
                     // Issue #1919: feed JIT deopt pressure into intelligent
                     // auto-compact (raise frag threshold to avoid storms).
                     aura::core::arena_policy::signal_jit_deopt_pressure();
-                    // Fiber / boundary post-compact sync (clears spurious storm).
-                    (void)shape_profiler_.on_boundary_or_fiber_sync(
-                        /*clear_compact_only_storm=*/true);
                 } else {
                     // Soft path under pressure: IR dirty only + throttle count.
                     metrics_.arena_compact_deopt_throttled_total.fetch_add(
@@ -607,6 +604,16 @@ public:
                     aura::core::arena_policy::record_compact_deopt_throttled();
                     aura::core::arena_policy::signal_jit_deopt_pressure();
                 }
+                // Issue #2059: always re-sync ShapeProfiler after compact so
+                // stability can be re-asserted under AI multi-round mutation
+                // without waiting for a MutationBoundary exit. Also publish
+                // live deopt_rate / storm into adaptive compact policy.
+                (void)shape_profiler_.on_boundary_or_fiber_sync(
+                    /*clear_compact_only_storm=*/true);
+                aura::core::arena_policy::record_post_compact_resync();
+                aura::core::arena_policy::publish_shape_deopt_metrics(
+                    shape_profiler_.deopt_rate_per_fn(), shape_profiler_.deopt_storm_active(),
+                    shape_profiler_.shape_stable_ratio());
                 aura::core::arena_policy::record_shape_inval_on_compact();
                 for (auto& [_, entry] : ir_cache_v2_) {
                     entry.dirty = true;

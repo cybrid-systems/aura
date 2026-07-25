@@ -832,9 +832,14 @@ public:
             buffer_.resize(1024);
             rebuild_resource_();
         } else if (u < before) {
-            // Round up to power of 2 with 25% headroom, min 1KB.
+            // Issue #2059: adaptive headroom (default 25%) instead of fixed
+            // u/4. Under AI mutation + high frag → tighter (lower peak RSS);
+            // under deopt storm → looser (fewer compact→deopt waves).
+            const double hr = aura::core::arena_policy::current_adaptive_headroom();
+            const std::size_t headroom_bytes =
+                static_cast<std::size_t>(static_cast<double>(u) * hr);
             std::size_t target = 1024;
-            while (target < u + u / 4)
+            while (target < u + headroom_bytes)
                 target *= 2;
             if (target < before) {
                 buffer_.resize(target);
@@ -920,8 +925,12 @@ public:
             buffer_.resize(1024);
             rebuild_resource_();
         } else if (u < before) {
+            // Issue #2059: same adaptive headroom as compact() (shared policy).
+            const double hr = aura::core::arena_policy::current_adaptive_headroom();
+            const std::size_t headroom_bytes =
+                static_cast<std::size_t>(static_cast<double>(u) * hr);
             std::size_t target = 1024;
-            while (target < u + u / 4)
+            while (target < u + headroom_bytes)
                 target *= 2;
             if (target < before) {
                 buffer_.resize(target);
@@ -1408,7 +1417,10 @@ private:
             stats_.frag_reduced_bp +=
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
-        (void)decision.reason;
+        // Issue #2059: publish decision snapshot (reason + headroom + deopt rate).
+        aura::core::arena_policy::record_last_decision(
+            decision.reason_ext, decision.headroom_used,
+            aura::core::arena_policy::shape_deopt_rate_bp.load(std::memory_order_relaxed));
         (void)decision.frag_threshold_used;
     }
 
