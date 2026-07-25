@@ -99,14 +99,16 @@ inline std::string format_deny_reason(std::uint16_t effect_bits, std::uint64_t t
     return std::format("effect-denied: {} not granted tenant={} op={}", name(), tenant_id, op);
 }
 
-// Issue #2076: production default Restricted sandbox + AURA_SANDBOX env
-// override. Declaration only — definition lives in evaluator_security.cpp
-// (uses core/sandbox.hh + core/capability_model.hh which would make
-// this header too heavy if inlined). Called from main() at startup
-// (main binary links against the evaluator module so the definition
-// is available) and from Evaluator::apply_env_sandbox() (evaluator
-// method, no link issue).
+// Issue #2076 / #2053: production defaults — declarations only.
+// Definitions are header-inline in security_defaults.hh (include that
+// header at call sites: main, tests, evaluator_security). Keeping
+// definitions out of this light header avoids pulling WAL/audit into
+// every security_capabilities consumer.
 void apply_aura_sandbox_env() noexcept;
+void apply_production_security_defaults() noexcept;
+
+// Issue #2053 stamp for query surfaces / Agent discovery.
+inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 
 } // namespace aura::compiler::security
 
