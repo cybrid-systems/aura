@@ -647,7 +647,36 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* suc
         enter_ts_ = std::chrono::steady_clock::now();
         // Issue #1523: Workspace level in #1388 order (after Mutate).
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
-        lock_.lock();
+        // Issue #2040: try_lock first so uncontended path stays cheap
+        // (one try_lock + acquire counter). Contended path times the
+        // blocking wait and bumps workspace_mtx_contended_total +
+        // wait_ns (p99 proxy via wait_ns_max CAS).
+        auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics());
+        if (lock_.try_lock()) {
+            if (m)
+                m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            const auto wait_t0 = std::chrono::steady_clock::now();
+            lock_.lock();
+            const auto wait_ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - wait_t0)
+                                               .count());
+            if (m) {
+                m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
+                m->workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
+                m->workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
+                auto prev_max = m->workspace_mtx_wait_ns_max.load(std::memory_order_relaxed);
+                while (wait_ns > prev_max && !m->workspace_mtx_wait_ns_max.compare_exchange_weak(
+                                                 prev_max, wait_ns, std::memory_order_relaxed)) {
+                }
+                // Keep #762 closed-loop contention counters in lockstep.
+                m->workspace_closedloop_shared_mutex_contention_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                m->workspace_closedloop_shared_mutex_contention_ns_total.fetch_add(
+                    wait_ns, std::memory_order_relaxed);
+            }
+        }
         ev_->outermost_mutation_success_flag_ = flag_;
         ev_->bind_yield_hook_evaluator();
         // Issue #354: set the atomic flag so
@@ -659,7 +688,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* suc
         ev_->mutation_boundary_held_.store(true, std::memory_order_release);
         // Issue #1252: coverage counter — every outermost Guard wrap.
         // Issue #1364: mutation × safepoint telemetry (benign race).
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+        if (m) {
             m->mutation_boundary_primitives_wrapped.fetch_add(1, std::memory_order_relaxed);
             if (aura::gc_hooks::in_gc_safepoint()) {
                 m->mutation_in_safepoint_total.fetch_add(1, std::memory_order_relaxed);

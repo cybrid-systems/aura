@@ -318,7 +318,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:mutation-impact-snapshot",
     // Issue #504 — Guard impact log for AI decision loops
     "query:mutation-boundary-log",
-    "query:mutation-boundary-hold-stats",
+    "query:mutation-boundary-hold-stats", // #2040: also exposes workspace_mtx_ contention
     // Issue #1504 — first-class safe yield + depth instrumentation
     "query:mutation-boundary-depth",
     "query:mutation-boundary-safe-yield",
