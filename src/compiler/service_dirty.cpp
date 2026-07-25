@@ -15,6 +15,7 @@ module;
 #include "hot_update_registry.hh"          // HotUpdateRegistry notify + region mask (#2035)
 #include "render_prim_template.hh"         // #2050 aura_is_render_evolution_name
 #include "core/transparent_string_hash.hh" // TransparentStringHash for ir_cache_index
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -339,6 +340,10 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit.
     notify_hot_update_after_cascade_(name, cascade_dependents);
 
+    // Issue #2110: hybrid NodeId cascade after string BFS (precise body
+    // marks; nested free-var targeting remains authority for nested bits).
+    (void)hybrid_node_cascade_(name, cascade_dependents);
+
     // Issue #2043: close linear+GC window under mutate_mtx_ before return
     // so concurrent apply / fiber steal cannot observe half-updated
     // linear_ownership_state or stale GC roots after soft dirty.
@@ -579,7 +584,25 @@ void CompilerService::invalidate_function(const std::string& name) {
         // record_dependency that raced the exclusive window rejects.
         dep_graph_generation_.fetch_add(1, std::memory_order_release);
         metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2110: drop NodeId mirror slots/edges for erased names
+        // (rebuild via record_dependency on next re-lower). Keep root.
+        for (auto& f : dependents) {
+            auto sit = dep_name_to_slot_.find(f);
+            if (sit == dep_name_to_slot_.end())
+                continue;
+            const auto slot = sit->second;
+            const auto node = aura::compiler::dirty::encode_fn_node(slot);
+            node_dep_graph_.adj.erase(node);
+            // Drop inbound edges pointing at this node (scan adj).
+            for (auto& [from, tos] : node_dep_graph_.adj) {
+                tos.erase(std::remove(tos.begin(), tos.end(), node), tos.end());
+                (void)from;
+            }
+        }
     }
+    // Issue #2110: hybrid cascade before JIT erase (body-only marks for
+    // dependents still in ir_cache_v2_).
+    (void)hybrid_node_cascade_(name, dependents);
     // Invalidate JIT cache for affected functions.
     // Issue #491 + #1378: erase jit_cache_ AND jit_.invalidate in
     // the SAME jit_cache_mtx_ scope so a concurrent shared reader
@@ -880,6 +903,100 @@ void CompilerService::invalidate_function(const std::string& name) {
     // Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit
     // after hard invalidate cascade (root + dependents).
     notify_hot_update_after_cascade_(name, dependents);
+}
+
+// Issue #2110: hybrid NodeId cascade after string-keyed BFS.
+// Mirrors function-level edges (encode_fn_node) and ensures each
+// string-BFS dependent has body-only block dirty (call-site), without
+// marking nested lambdas that do not free-ref the root (AC2 / AC5).
+// Lock order: may take dep_graph shared; mutate should already be held
+// by mark_define_dirty / invalidate_function public entry.
+std::size_t
+CompilerService::hybrid_node_cascade_(const std::string& root_name,
+                                      const std::vector<std::string>& string_dependents) {
+    using aura::compiler::dirty::cascade_mark_dirty;
+    using aura::compiler::dirty::decode_fn_slot;
+    using aura::compiler::dirty::DirtySet;
+    using aura::compiler::dirty::encode_fn_node;
+    using aura::compiler::dirty::is_fn_node;
+    using lock_order::Level;
+    using lock_order::OrderedSharedLock;
+
+    std::uint32_t root_slot = UINT32_MAX;
+    aura::compiler::dirty::DepGraph graph_snap;
+    {
+        OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+        auto it = dep_name_to_slot_.find(root_name);
+        if (it == dep_name_to_slot_.end()) {
+            // No mirror yet (edges not recorded) — nothing to cascade.
+            return 0;
+        }
+        root_slot = it->second;
+        graph_snap = node_dep_graph_; // copy adj under lock
+    }
+
+    DirtySet set;
+    const auto marked = cascade_mark_dirty(set, encode_fn_node(root_slot), graph_snap);
+    metrics_.dep_graph_hybrid_cascade_hits.fetch_add(1, std::memory_order_relaxed);
+
+    // Apply body-only dirty for each NodeId-marked caller (fn node).
+    // Prefer string_dependents list for determinism (#401 FIFO order already
+    // sorted for hard invalidate; soft mark_define uses visit order).
+    auto apply_body_only = [&](const std::string& dep_name) {
+        auto cit = ir_cache_v2_.find(dep_name);
+        if (cit == ir_cache_v2_.end())
+            return;
+        auto& centry = cit->second;
+        // Convention: body at irs[1] when multi-fn; else irs[0].
+        const std::size_t body_idx = centry.irs.size() >= 2 ? 1 : 0;
+        if (body_idx >= centry.block_dirty_per_func_.size()) {
+            if (centry.block_dirty_per_func_.size() < centry.irs.size())
+                centry.block_dirty_per_func_.resize(centry.irs.size());
+        }
+        if (body_idx < centry.block_dirty_per_func_.size()) {
+            centry.dirty = true;
+            if (centry.block_dirty_per_func_[body_idx].empty() && body_idx < centry.irs.size()) {
+                // Ensure body mask length matches block count.
+                centry.block_dirty_per_func_[body_idx].assign(centry.irs[body_idx].blocks.size(),
+                                                              1);
+            } else {
+                for (auto& b : centry.block_dirty_per_func_[body_idx])
+                    b = 1;
+            }
+            // Nested lambdas: only free-var targeted (do not full-dirty).
+            if (centry.irs.size() > 2) {
+                for (std::size_t fi = 2; fi < centry.irs.size(); ++fi)
+                    (void)mark_nested_lambda_blocks_targeted(centry, fi, root_name);
+            }
+            finish_cascade_soa_dirty_sync_(centry);
+        }
+    };
+
+    // Walk string dependents first (stable / known cascade set).
+    for (const auto& d : string_dependents)
+        apply_body_only(d);
+
+    // Also any fn node marked by NodeId cascade not in string list.
+    for (const auto nid : set.dirty_nodes()) {
+        if (!is_fn_node(nid))
+            continue;
+        const auto slot = decode_fn_slot(nid);
+        std::string name;
+        {
+            OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+            if (slot >= dep_slot_to_name_.size())
+                continue;
+            name = dep_slot_to_name_[slot];
+        }
+        if (name == root_name)
+            continue;
+        if (std::find(string_dependents.begin(), string_dependents.end(), name) !=
+            string_dependents.end())
+            continue;
+        apply_body_only(name);
+    }
+
+    return marked;
 }
 
 } // namespace aura::compiler

@@ -369,6 +369,7 @@ inline void pull_from_global(DirtySet& dest) {
 
 // Encode (func_idx, block_idx) into a dense NodeId space for bridges.
 // Layout: node = (func_idx << 16) | block_idx  (block_idx < 65536).
+// High bit clear → block node (Issue #2110 hybrid: distinct from fn nodes).
 [[nodiscard]] inline NodeId encode_block_node(std::uint16_t func_idx,
                                               std::uint16_t block_idx) noexcept {
     return (static_cast<NodeId>(func_idx) << 16) | static_cast<NodeId>(block_idx);
@@ -376,6 +377,23 @@ inline void pull_from_global(DirtySet& dest) {
 
 [[nodiscard]] inline std::pair<std::uint16_t, std::uint16_t> decode_block_node(NodeId id) noexcept {
     return {static_cast<std::uint16_t>(id >> 16), static_cast<std::uint16_t>(id & 0xFFFFu)};
+}
+
+// Issue #2110: function-level NodeId for hybrid cascade with string dep_graph_.
+// Layout: high bit set, lower 31 bits = dense slot assigned by CompilerService.
+// Dirty propagates along edges the same way as block nodes (callee → caller).
+inline constexpr NodeId kFnNodeTag = 0x80000000u;
+
+[[nodiscard]] inline NodeId encode_fn_node(std::uint32_t fn_slot) noexcept {
+    return kFnNodeTag | (static_cast<NodeId>(fn_slot) & 0x7FFFFFFFu);
+}
+
+[[nodiscard]] inline bool is_fn_node(NodeId id) noexcept {
+    return (id & kFnNodeTag) != 0;
+}
+
+[[nodiscard]] inline std::uint32_t decode_fn_slot(NodeId id) noexcept {
+    return static_cast<std::uint32_t>(id & 0x7FFFFFFFu);
 }
 
 // Sync multi-function block dirty matrix [func][block] into DirtySet.

@@ -7121,6 +7121,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dep_graph_record_total{0};       // every record_dependency call
     std::atomic<std::uint64_t> dep_graph_record_dedup_total{0}; // skipped as already present
     std::atomic<std::uint64_t> dep_graph_record_inserted{0};    // new edges written
+    // Issue #2110: hybrid string dep_graph_ ↔ NodeId DepGraph mirror.
+    //   - dep_graph_node_mirror_edges_total: mirrored edges into NodeId graph
+    //   - dep_graph_hybrid_cascade_hits: mark_define_dirty / invalidate
+    //     ran cascade_mark_dirty after string BFS for precise marks
+    std::atomic<std::uint64_t> dep_graph_node_mirror_edges_total{0};
+    std::atomic<std::uint64_t> dep_graph_hybrid_cascade_hits{0};
     std::atomic<std::uint64_t> hot_swap_versioned_mangle_enforced{0}; // #1262
     std::atomic<std::uint64_t> aot_region_filter_enforced{1};         // #1262
     std::atomic<std::uint64_t> arena_reset_dirty_forced{0};           // #1263
