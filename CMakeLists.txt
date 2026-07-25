@@ -2110,6 +2110,11 @@ aura_add_issue_test(test_linear_escape_commit_hardblock_2108)
 aura_issue_test_link_llvm_jit(test_linear_escape_commit_hardblock_2108)
 add_dependencies(all_test_issue_targets test_linear_escape_commit_hardblock_2108)
 
+# Issue #2109: instruction-level impact + partial re-emit.
+aura_add_issue_test(test_instruction_level_impact_partial_2109)
+aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial_2109)
+add_dependencies(all_test_issue_targets test_instruction_level_impact_partial_2109)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

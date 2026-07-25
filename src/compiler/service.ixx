@@ -4137,19 +4137,33 @@ public:
         // trustworthy. Batch cascade paths should still call
         // force_soa_instruction_dirty_sync() once at the end.
         void mark_block_dirty(std::size_t func_idx, std::uint32_t block_idx) {
+            mark_block_dirty_impl(func_idx, block_idx, /*cascade_instrs=*/true);
+        }
+
+        // Issue #2109: mark block dirty without cascading every instruction
+        // dirty — used when ImpactScope has precise affected_instrs so clean
+        // instructions inside the block can be skipped on re-emit.
+        void mark_block_dirty_bit_only(std::size_t func_idx, std::uint32_t block_idx) {
+            mark_block_dirty_impl(func_idx, block_idx, /*cascade_instrs=*/false);
+        }
+
+        void mark_block_dirty_impl(std::size_t func_idx, std::uint32_t block_idx,
+                                   bool cascade_instrs) {
             if (func_idx >= block_dirty_per_func_.size()) {
                 block_dirty_per_func_.resize(func_idx + 1);
             }
             auto& fb = block_dirty_per_func_[func_idx];
             if (block_idx >= fb.size()) {
                 fb.resize(block_idx + 1, 1);
-                cascade_block_to_instructions(func_idx, block_idx);
+                if (cascade_instrs)
+                    cascade_block_to_instructions(func_idx, block_idx);
                 if (func_idx < soa_mod.functions.size())
                     soa_mod.functions[func_idx].mark_block_dirty(block_idx);
                 return;
             }
             fb[block_idx] = 1;
-            cascade_block_to_instructions(func_idx, block_idx);
+            if (cascade_instrs)
+                cascade_block_to_instructions(func_idx, block_idx);
             if (func_idx < soa_mod.functions.size())
                 soa_mod.functions[func_idx].mark_block_dirty(block_idx);
         }
@@ -4801,11 +4815,19 @@ public:
         metrics_.soa_dirty_sync_total.fetch_add(n, std::memory_order_relaxed);
     }
 
-    // Issue #2031: stamp block + instruction dirty bits from ImpactScope.
+    // Issue #2031 / #2109: stamp block + instruction dirty bits from
+    // ImpactScope. When precise affected_instrs are present, mark block
+    // dirty *without* cascading all instructions so clean slots stay
+    // skippable on partial re-emit (AC2). Block-only scopes keep cascade.
     // Returns number of instruction dirty marks applied.
     std::size_t apply_impact_scope_dirty(IRCacheEntry& entry, const ImpactScope& scope) {
-        for (const auto& b : scope.affected_blocks)
-            entry.mark_block_dirty(b.function_index, b.block_index);
+        const bool precise = !scope.affected_instrs.empty();
+        for (const auto& b : scope.affected_blocks) {
+            if (precise)
+                entry.mark_block_dirty_bit_only(b.function_index, b.block_index);
+            else
+                entry.mark_block_dirty(b.function_index, b.block_index);
+        }
         std::size_t marks = 0;
         for (const auto& ir : scope.affected_instrs) {
             entry.mark_instruction_dirty(ir.function_index, ir.block_index, ir.instr_index);
@@ -4821,8 +4843,14 @@ public:
             }
             ++marks;
         }
-        // Issue #2034: force SoA instr dirty after impact-scope marks.
-        finish_cascade_soa_dirty_sync_(entry);
+        // Issue #2034 / #2109: block-only scopes cascade-sync SoA (full
+        // block→instr). Precise instr scopes already dual-emitted dirty
+        // slots above — do NOT sync_instruction_dirty_from_block_dirty
+        // (that would re-dirty every clean instruction in the block).
+        if (precise)
+            metrics_.soa_dirty_sync_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            finish_cascade_soa_dirty_sync_(entry);
         if (scope.instr_level_hits > 0)
             metrics_.instr_level_impact_hits_total.fetch_add(scope.instr_level_hits,
                                                              std::memory_order_relaxed);
@@ -5492,28 +5520,63 @@ public:
         // (which reference the old func_id) keep working.
         const auto old_func_id = entry.irs[func_idx].id;
         new_func.id = old_func_id;
-        // Issue #1474: per-block selective copy. When the
-        // dirty bitmask has the same block count as the new
-        // (and old) function, only copy the dirty blocks from
-        // new_func into entry.irs[func_idx] — clean blocks
-        // keep their old IR. This is the per-block win: a
-        // typical mutate:set-body of a single line only marks
-        // the body block dirty, so we only re-place that one
-        // block in the cache (and only the body block's
-        // instructions get touched). When the block counts
-        // don't match (control-flow re-shape), fall back to
-        // the previous whole-function replace.
+        // Issue #1474 / #2109: selective copy.
+        //   - Block-level: only dirty blocks replaced when shapes match.
+        //   - Instruction-level (#2109): inside a dirty block, if
+        //     instruction_dirty_ has matching layout, only dirty
+        //     instructions are re-emitted; clean slots keep old IR
+        //     (relower_partial_insts_saved_total / skip metrics).
+        //   - Empty/desynced instruction_dirty_ → block-level fallback.
         std::size_t blocks_replaced = 0;
+        std::size_t insts_saved = 0;
+        std::size_t insts_emitted = 0;
         if (func_idx < entry.block_dirty_per_func_.size()) {
             auto& dirty_mask = entry.block_dirty_per_func_[func_idx];
             if (dirty_mask.size() == new_func.blocks.size() &&
                 dirty_mask.size() == entry.irs[func_idx].blocks.size()) {
+                auto* idf = (func_idx < entry.instruction_dirty_per_func_.size())
+                                ? &entry.instruction_dirty_per_func_[func_idx]
+                                : nullptr;
+                std::size_t abs_base = 0;
                 for (std::size_t bi = 0; bi < new_func.blocks.size(); ++bi) {
+                    const auto old_n = entry.irs[func_idx].blocks[bi].instructions.size();
+                    const auto new_n = new_func.blocks[bi].instructions.size();
                     if (dirty_mask[bi]) {
-                        entry.irs[func_idx].blocks[bi] = std::move(new_func.blocks[bi]);
+                        // Prefer instruction-level peel when shapes match
+                        // and idf covers this block's absolute range.
+                        const bool can_peel_instr =
+                            idf && old_n == new_n && old_n > 0 && (abs_base + old_n) <= idf->size();
+                        if (can_peel_instr) {
+                            auto& old_insts = entry.irs[func_idx].blocks[bi].instructions;
+                            auto& new_insts = new_func.blocks[bi].instructions;
+                            bool any_dirty_inst = false;
+                            for (std::size_t ii = 0; ii < old_n; ++ii) {
+                                if ((*idf)[abs_base + ii]) {
+                                    old_insts[ii] = std::move(new_insts[ii]);
+                                    (*idf)[abs_base + ii] = 0;
+                                    ++insts_emitted;
+                                    any_dirty_inst = true;
+                                } else {
+                                    ++insts_saved;
+                                    metrics_.relower_instruction_skip_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                            }
+                            if (any_dirty_inst || insts_saved > 0)
+                                ++blocks_replaced;
+                        } else {
+                            entry.irs[func_idx].blocks[bi] = std::move(new_func.blocks[bi]);
+                            ++blocks_replaced;
+                            // Clear instr dirty for this block range.
+                            if (idf) {
+                                for (std::size_t ii = 0; ii < old_n && abs_base + ii < idf->size();
+                                     ++ii)
+                                    (*idf)[abs_base + ii] = 0;
+                            }
+                        }
                         dirty_mask[bi] = 0;
-                        ++blocks_replaced;
                     }
+                    abs_base += old_n;
                 }
             } else {
                 // Shape mismatch — fall back to full replace.
@@ -5530,8 +5593,13 @@ public:
         // Issue #1474: bump per-block replaced counter.
         metrics_.incremental_relower_blocks_total.fetch_add(blocks_replaced,
                                                             std::memory_order_relaxed);
-        // Issue #1514: also clear instruction-level dirty bits for
-        // this function so partial re-lower state stays coherent.
+        // Issue #2109: instruction-level savings observability.
+        if (insts_saved > 0) {
+            metrics_.relower_partial_insts_saved_total.fetch_add(insts_saved,
+                                                                 std::memory_order_relaxed);
+        }
+        // Issue #1514 / #2109: clear remaining instruction-level dirty bits
+        // for this function so partial re-lower state stays coherent.
         if (func_idx < entry.instruction_dirty_per_func_.size()) {
             for (auto& b : entry.instruction_dirty_per_func_[func_idx])
                 b = 0;
@@ -5825,26 +5893,44 @@ public:
             // Gate: should_partial_relower OR single-function dirty
             // (body-only from #1495 mark). Large dirty surfaces still
             // go through relower_define_blocks which may full-fallback.
+            // Issue #2109: always consult should_partial_relower (metrics).
             const std::size_t dirty_n = it->second.dirty_block_count();
             if (dirty_n == 0 && !it->second.dirty) {
                 ++ok;
                 continue;
             }
+            metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
+            const bool want_partial = should_partial_relower(dirty_n);
+            if (want_partial)
+                metrics_.should_partial_relower_yes_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
+                                                          std::memory_order_relaxed);
             // Issue #1623: workspace dirty sweep is on eval/eval_ir entry.
             metrics_.eval_path_relower_total.fetch_add(1, std::memory_order_relaxed);
             const auto per_before =
                 metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
             const auto blocks_before =
                 metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
-            if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
-                ++ok;
-                // Count true partial only (per-fn / blocks), not full-fallback.
-                if (metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
-                        per_before ||
-                    metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed) >
-                        blocks_before) {
-                    metrics_.incremental_eval_relower_hits.fetch_add(1, std::memory_order_relaxed);
+            // Prefer partial path when gate says so (or dirty_n==0 edge).
+            if (want_partial || dirty_n == 0) {
+                if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
+                    ++ok;
+                    // Count true partial only (per-fn / blocks), not full-fallback.
+                    if (metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
+                            per_before ||
+                        metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed) >
+                            blocks_before) {
+                        metrics_.incremental_eval_relower_hits.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        metrics_.incremental_partial_relower_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
+            } else {
+                // Over threshold → full re-lower via relower_define_blocks
+                // (internal full-fallback path) still ok; record decision.
+                if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded))
+                    ++ok;
             }
         }
         return ok;

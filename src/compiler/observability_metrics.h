@@ -184,6 +184,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> post_mutate_incremental_latency_samples{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
+    // Issue #2109: instruction-level partial re-emit observability.
+    //   - relower_partial_insts_saved_total: clean instructions kept
+    //     (not re-emitted) inside dirty blocks during partial re-lower
+    //   - relower_instruction_skip_total: DirtyAware pass / re-lower
+    //     skipped a clean instruction slot
+    std::atomic<std::uint64_t> relower_partial_insts_saved_total{0};
+    std::atomic<std::uint64_t> relower_instruction_skip_total{0};
+    std::atomic<std::uint64_t> should_partial_relower_consult_total{0};
+    std::atomic<std::uint64_t> should_partial_relower_yes_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
     std::atomic<std::uint64_t> jit_partial_recompile_requests_total{0};
     // Issue #401: invalidate_function call counter. Bumped once per

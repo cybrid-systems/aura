@@ -147,7 +147,13 @@ struct ImpactScope {
         std::uint32_t instr_index = 0; // in-block index
     };
     std::vector<BlockRef> affected_blocks;
-    std::vector<InstrRef> affected_instrs; // NEW #2031
+    std::vector<InstrRef> affected_instrs; // #2031
+    // Issue #2109: alias name used in pipeline review / ACs.
+    // Same storage as affected_instrs (reference for readability).
+    [[nodiscard]] std::vector<InstrRef>& affected_insts() noexcept { return affected_instrs; }
+    [[nodiscard]] const std::vector<InstrRef>& affected_insts() const noexcept {
+        return affected_instrs;
+    }
     // Number of AST nodes walked (for observability).
     std::size_t ast_nodes_visited = 0;
     // Issue #2031: AST nodes in subtree with no source_to_ir mapping.
