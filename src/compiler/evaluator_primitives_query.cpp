@@ -5521,6 +5521,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence-provenance-chain-wired", 1);
             insert_kv("schema-2024", 2024);
             insert_kv("issue-2024", 2024);
+            // Issue #2102: provenance miss → force Full/contextual audit or reject.
+            const std::int64_t miss_force_audit = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_provenance_miss_force_audit_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t miss_reject = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_provenance_miss_reject_total.load(
+                    std::memory_order_relaxed));
+            insert_kv("coercion-provenance-miss-force-audit-total", miss_force_audit);
+            insert_kv("coercion_provenance_miss_force_audit_total", miss_force_audit);
+            insert_kv("coercion-provenance-miss-reject-total", miss_reject);
+            insert_kv("force-audit-on-provenance-miss",
+                      aura::compiler::force_audit_on_provenance_miss() ? 1 : 0);
+            insert_kv("reject-apply-on-provenance-miss",
+                      aura::compiler::reject_apply_on_provenance_miss() ? 1 : 0);
+            insert_kv("provenance-miss-force-audit-wired", 1);
+            insert_kv("schema-2102", 2102);
+            insert_kv("issue-2102", 2102);
             // Issue #2028: stable constraint solver surface metrics
             const std::int64_t sdo_total =
                 m ? static_cast<std::int64_t>(

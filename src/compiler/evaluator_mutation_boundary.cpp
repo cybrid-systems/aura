@@ -47,6 +47,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
+import aura.compiler.coercion_map; // Issue #2102: provenance-miss force-audit
 
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
@@ -340,6 +341,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Issue #555 / #518: selective_recheck_count_ is
     // bumped from infer_flat_partial's
     // reanalyze_occurrence_contexts path, not here.
+    // Issue #2102: always consume provenance-miss flag on boundary exit
+    // (even without workspace) so TLS does not stick across tests/fibers.
+    // Count force-audit metric here; Full-path invariant suite still needs
+    // workspace_flat_ (below).
+    const bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary();
+    if (provenance_miss) {
+        aura::compiler::g_coercion_provenance_miss_force_audit_total.fetch_add(
+            1, std::memory_order_relaxed);
+        typed_audit::g_typed_mutation_audit_counters.contextual_force_audit_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
     // Issue #456: record mutation-impact summary on
     // success only. Walk the workspace mutation log
     // from `mutation_log_size` (pre-mutation) to
@@ -418,6 +430,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // #2029: Full strategy always tries per-category partial recovery
         // (type recheck / linear re-enforce / provenance restamp) before
         // structural rollback — composite and single-boundary alike.
+        // #2102: provenance_miss (consumed above) forces Full-path audit.
         {
             const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
             const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
@@ -429,9 +442,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             const bool composite = nested_boundary || batch_active;
             const auto strat = typed_audit::get_strategy();
             // Composite paths never under-sample (self-evo multi-step safety).
-            const bool do_audit = nodes_changed > 0 && strat != typed_audit::AuditStrategy::Off &&
-                                  (composite || typed_audit::should_audit_contextual(
-                                                    mid, nodes_changed, linear_hint));
+            // Provenance miss forces audit even when Sampled would skip and
+            // even when nodes_changed==0 (apply may be the only side effect).
+            const bool do_audit =
+                strat != typed_audit::AuditStrategy::Off &&
+                (provenance_miss ||
+                 (nodes_changed > 0 && (composite || typed_audit::should_audit_contextual(
+                                                         mid, nodes_changed, linear_hint))));
             if (do_audit) {
                 typed_audit::InvariantAuditResult first{};
                 bool inv_ok = run_typed_mutation_invariant_audit(

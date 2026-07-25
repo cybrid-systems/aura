@@ -62,6 +62,51 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_chain_walk_total{
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
 export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_total{0};
 
+// Issue #2102: provenance-miss policy + force-audit / reject metrics.
+// force_audit_on_provenance_miss (default true): under Sampled, note a
+// boundary flag so MutationBoundaryGuard exit runs Full-path invariant audit.
+// reject_apply_on_provenance_miss (default false): skip CoercionNode insert
+// when chain still incomplete after walk (caller re-infers with
+// set_active_mutation_id). Sentinel stamps remain when apply is allowed.
+export inline std::atomic<std::uint32_t> g_force_audit_on_provenance_miss{1};
+export inline std::atomic<std::uint32_t> g_reject_apply_on_provenance_miss{0};
+export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_force_audit_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_reject_total{0};
+
+// Thread-local: miss recorded during this fiber's apply → consumed on
+// MutationBoundary exit (process-wide counters stay global).
+inline thread_local bool s_provenance_miss_this_boundary = false;
+
+export inline void set_force_audit_on_provenance_miss(bool on) noexcept {
+    g_force_audit_on_provenance_miss.store(on ? 1u : 0u, std::memory_order_relaxed);
+}
+export inline void set_reject_apply_on_provenance_miss(bool on) noexcept {
+    g_reject_apply_on_provenance_miss.store(on ? 1u : 0u, std::memory_order_relaxed);
+}
+export [[nodiscard]] inline bool force_audit_on_provenance_miss() noexcept {
+    return g_force_audit_on_provenance_miss.load(std::memory_order_relaxed) != 0;
+}
+export [[nodiscard]] inline bool reject_apply_on_provenance_miss() noexcept {
+    return g_reject_apply_on_provenance_miss.load(std::memory_order_relaxed) != 0;
+}
+export inline void note_provenance_miss_for_boundary() noexcept {
+    s_provenance_miss_this_boundary = true;
+}
+export [[nodiscard]] inline bool provenance_miss_pending_for_boundary() noexcept {
+    return s_provenance_miss_this_boundary;
+}
+// Returns true if a miss was noted since last consume; clears the flag.
+export [[nodiscard]] inline bool consume_provenance_miss_for_boundary() noexcept {
+    const bool v = s_provenance_miss_this_boundary;
+    s_provenance_miss_this_boundary = false;
+    return v;
+}
+export inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
+    g_force_audit_on_provenance_miss.store(1, std::memory_order_relaxed);
+    g_reject_apply_on_provenance_miss.store(0, std::memory_order_relaxed);
+    s_provenance_miss_this_boundary = false;
+}
+
 export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
     const auto c = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
     const auto m = g_coercion_provenance_miss_total.load(std::memory_order_relaxed);
@@ -102,11 +147,15 @@ export struct CoercionEntry {
     std::uint32_t narrow_evidence = 0;
 };
 
-// Issue #2024: walk provenance chain to fill missing CoercionEntry fields.
-// Order: child column → parent walk → mutation log (target/parent match) →
-// mutation log back() → hygiene tracker → sentinel. Never leaves both zero
-// after a non-elided apply candidate is processed.
-inline void fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e) noexcept {
+// Issue #2024 / #2102: walk provenance chain to fill missing CoercionEntry
+// fields. Order: child column → parent walk → mutation log → hygiene →
+// sentinel. Returns true if both predicate + mutation were non-zero *before*
+// sentinel/weak stamps (complete). On miss: bumps counters, optional
+// force-audit boundary note, and stamps forensic sentinel when apply is
+// still allowed.
+// Returns true when complete (no sentinel needed).
+[[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatAST& flat,
+                                                         CoercionEntry& e) noexcept {
     using aura::ast::NULL_NODE;
     g_coercion_provenance_chain_walk_total.fetch_add(1, std::memory_order_relaxed);
 
@@ -182,9 +231,17 @@ inline void fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEnt
     const bool complete = e.predicate_cond_node != 0 && e.source_mutation_id != 0;
     if (complete) {
         g_coercion_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
-        return;
+        return true;
     }
     g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2102: escalate to Full/contextual audit on next boundary exit
+    // when force_audit policy is on (default).
+    if (force_audit_on_provenance_miss())
+        note_provenance_miss_for_boundary();
+    // Reject-on-miss: leave fields incomplete so apply can skip insert;
+    // do not stamp sentinel (Agent re-infers with active_mutation_id).
+    if (reject_apply_on_provenance_miss())
+        return false;
     if (e.predicate_cond_node == 0) {
         // Sentinel: always non-zero; low bits = original_child for recovery.
         const auto low = static_cast<std::uint32_t>(e.original_child & 0xFFFFu);
@@ -197,6 +254,7 @@ inline void fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEnt
         e.source_mutation_id =
             e.original_child != 0 ? static_cast<std::uint64_t>(e.original_child) : 1ull;
     }
+    return false;
 }
 
 // ── CoercionMap — accumulated coercion intent ────────────
@@ -318,10 +376,17 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             continue;
         }
 
-        // Issue #1873 / #2024: full provenance chain recovery for entries
-        // that will be applied. Walk child → parent → mutation log →
-        // hygiene; stamp sentinel when still incomplete.
-        fill_coercion_provenance_chain(flat, e);
+        // Issue #1873 / #2024 / #2102: full provenance chain recovery for
+        // entries that will be applied. Walk child → parent → mutation log →
+        // hygiene; stamp sentinel when still incomplete (unless reject-on-miss).
+        const bool prov_complete = fill_coercion_provenance_chain(flat, e);
+        if (!prov_complete && reject_apply_on_provenance_miss()) {
+            // AC2: incomplete → do not insert CoercionNode; re-infer with
+            // set_active_mutation_id for a complete stamp on the next apply.
+            g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
+            ++s.skipped_stale;
+            continue;
+        }
 
         // Locate the parent and confirm it still points at the
         // original child we recorded. If it doesn't (e.g. this
