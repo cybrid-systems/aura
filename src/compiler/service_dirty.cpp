@@ -598,13 +598,15 @@ void CompilerService::invalidate_function(const std::string& name) {
             return;
         }
         flat.root = pr.root;
-        // Issue #2031: reverse-index from cached IR for instruction-level impact.
+        // Issue #2031 / #2045: reverse-index from persisted entry map
+        // (rebuilt after re-lower). Lazy ensure if empty.
         SourceToIrMap source_to_ir;
         std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                            std::equal_to<>>
             ir_cache_index;
         if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end()) {
-            populate_source_to_ir_from_irs(cit->second.irs, source_to_ir);
+            ensure_source_to_ir_map_(cit->second);
+            source_to_ir = cit->second.source_to_ir_map;
             for (std::size_t fi = 0; fi < cit->second.irs.size(); ++fi)
                 ir_cache_index[cit->second.irs[fi].name] = fi;
         }
@@ -775,13 +777,28 @@ void CompilerService::invalidate_function(const std::string& name) {
             metrics_.irsoa_cache_miss_reduction.fetch_add(clean_skipped, std::memory_order_relaxed);
         }
 
+        // Issue #2045: update ir_cache_v2_ (not only v1) so source_to_ir_map
+        // is rebuilt against the new IR layout after cascade full re-lower.
+        // store_define_v2 rebuilds the map + dual-emit SoA and runs the
+        // consistency check; mirror to v1 for legacy readers.
         std::vector<aura::ir::IRFunction> bundle;
+        std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
         for (auto& func : ir_mod.functions) {
             if (func.id != ir_mod.entry_function_id) {
+                if (func.id < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                else
+                    bridge_bundle.emplace_back();
                 bundle.push_back(std::move(func));
             }
         }
-        ir_cache_[dep_name] = std::move(bundle);
+        store_define_v2(dep_name, src_it->second, std::move(bundle), std::move(bridge_bundle),
+                        ir_mod.string_pool);
+        if (auto vit = ir_cache_v2_.find(dep_name); vit != ir_cache_v2_.end()) {
+            ir_cache_[dep_name] = vit->second.irs;
+            ir_cache_bridge_[dep_name] = vit->second.bridges;
+            ir_cache_strings_[dep_name] = vit->second.strings;
+        }
         snapshot_ir_for_disk(dep_name);
 
         for (auto& called_name : cache_hits) {

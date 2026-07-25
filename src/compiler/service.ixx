@@ -4052,6 +4052,11 @@ public:
         // Issue #684: per-instruction dirty bitmask (parallel to SoA
         // instruction_dirty_ column). Indexed [func_idx][instr_idx].
         std::vector<std::vector<std::uint8_t>> instruction_dirty_per_func_;
+        // Issue #2045: persisted NodeId → (func, block[, instr]) reverse
+        // index for compute_impact_scope. Rebuilt/patched after every
+        // store_define_v2 / partial re-lower so selective invalidate
+        // never uses a stale map against new IR layout.
+        SourceToIrMap source_to_ir_map;
 
         // Issue #196: per-block dirty bitmask helpers.
 
@@ -4581,6 +4586,9 @@ public:
         // after store shape rebuild (AoS bits may be clean; still
         // force-sync for dual-emit parity).
         (void)entry.force_soa_instruction_dirty_sync();
+        // Issue #2045: full rebuild of source_to_ir_map after store
+        // (new IR layout + dual-emit SoA); consistency check wired.
+        rebuild_or_patch_source_to_ir_map_(entry, /*only_func_idx=*/std::nullopt);
         // Issue #959: enforce max-size policy after store.
         maybe_evict_ir_cache_v2();
     }
@@ -4667,27 +4675,87 @@ public:
         }
     }
 
-    // Issue #2031: build NodeId → (func, block, instr) from lowered IR
-    // source_ast_node_id stamps (for compute_impact_scope precision).
+    // Issue #2031 / #2045: build NodeId → (func, block, instr) from
+    // lowered IR source_ast_node_id stamps. Thin wrapper over pure helper
+    // so call sites (dirty cascade, impact scope) keep a stable name.
     static void populate_source_to_ir_from_irs(const std::vector<aura::ir::IRFunction>& irs,
                                                SourceToIrMap& out) {
-        for (std::size_t fi = 0; fi < irs.size(); ++fi) {
-            const auto& fn = irs[fi];
-            for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fn.blocks.size()); ++bi) {
-                const auto& blk = fn.blocks[bi];
-                for (std::uint32_t ii = 0; ii < static_cast<std::uint32_t>(blk.instructions.size());
-                     ++ii) {
-                    const auto sn = blk.instructions[ii].source_ast_node_id;
-                    if (sn == 0)
+        populate_source_to_ir_map_from_irs(irs, out);
+    }
+
+    // Issue #2045: after every (partial or full) re-lower that updates
+    // ir_cache_v2_ / SoA, rebuild or incrementally patch source_to_ir_map
+    // and run a cheap consistency check (debug/fuzz + metrics).
+    // only_func_idx = nullopt → full rebuild; set → patch that function.
+    void rebuild_or_patch_source_to_ir_map_(IRCacheEntry& entry,
+                                            std::optional<std::size_t> only_func_idx) {
+        if (only_func_idx.has_value()) {
+            const auto fi = *only_func_idx;
+            if (fi < entry.irs.size()) {
+                patch_source_to_ir_map_for_function(entry.irs[fi], fi, entry.source_to_ir_map);
+            } else {
+                // Out-of-range patch request → full rebuild (safe).
+                rebuild_source_to_ir_map_from_irs(entry.irs, entry.source_to_ir_map);
+            }
+            metrics_.source_to_ir_map_patch_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            rebuild_source_to_ir_map_from_irs(entry.irs, entry.source_to_ir_map);
+            metrics_.source_to_ir_map_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // SoA dual-emit: when SoA columns exist, verify map indices
+        // resolve to live blocks there too (under-mapping risk if SoA
+        // and AoS diverge after partial replace).
+        if (!entry.soa_mod.functions.empty()) {
+            std::size_t soa_bad = 0;
+            for (const auto& [nid, loc] : entry.source_to_ir_map) {
+                if (loc.function_index >= entry.soa_mod.functions.size()) {
+                    ++soa_bad;
+                    continue;
+                }
+                const auto& soa_fn = entry.soa_mod.functions[loc.function_index];
+                if (loc.block_index >= soa_fn.blocks_.size()) {
+                    ++soa_bad;
+                    continue;
+                }
+                if (loc.has_instr()) {
+                    const auto& blk = soa_fn.blocks_[loc.block_index];
+                    const auto abs = blk.start_idx + loc.instr_index;
+                    if (abs >= blk.end_idx || abs >= soa_fn.source_node_ids_.size()) {
+                        ++soa_bad;
                         continue;
-                    const auto nid = static_cast<aura::ast::NodeId>(sn);
-                    SourceIrLoc loc{fi, bi, ii};
-                    auto it = out.find(nid);
-                    if (it == out.end() || !it->second.has_instr())
-                        out[nid] = loc;
+                    }
+                    const auto sn = soa_fn.source_node_ids_[abs];
+                    if (sn != 0 && static_cast<aura::ast::NodeId>(sn) != nid)
+                        ++soa_bad;
                 }
             }
+            if (soa_bad > 0) {
+                metrics_.source_to_ir_map_soa_desync_total.fetch_add(soa_bad,
+                                                                     std::memory_order_relaxed);
+                // Repair: full rebuild from AoS (authoritative) so next
+                // impact_scope cannot under-invalidate. SoA layout drift
+                // is still recorded for observability.
+                rebuild_source_to_ir_map_from_irs(entry.irs, entry.source_to_ir_map);
+                metrics_.source_to_ir_map_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
+        const auto bad = count_source_to_ir_map_inconsistencies(entry.irs, entry.source_to_ir_map);
+        if (bad > 0) {
+            metrics_.source_to_ir_map_inconsistency_total.fetch_add(bad, std::memory_order_relaxed);
+            // Self-heal: full rebuild once more from current irs.
+            rebuild_source_to_ir_map_from_irs(entry.irs, entry.source_to_ir_map);
+            metrics_.source_to_ir_map_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Debug/fuzz consistency assert (always cheap; soft return).
+        (void)assert_source_to_ir_map_consistent(entry.irs, entry.source_to_ir_map);
+        metrics_.source_to_ir_map_consistent_checks_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Ensure entry has a usable map (lazy rebuild if empty after load).
+    void ensure_source_to_ir_map_(IRCacheEntry& entry) {
+        if (!entry.source_to_ir_map.empty() || entry.irs.empty())
+            return;
+        rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
     }
 
     // Issue #2034: force SoA instruction_dirty_ parity after cascade
@@ -4746,6 +4814,9 @@ public:
                            std::equal_to<>>
             ir_cache_index;
         // Prefer IR cache reverse index when define name is known.
+        // Issue #2045: use persisted entry.source_to_ir_map (rebuilt after
+        // re-lower); lazy-rebuild if empty so impact_scope never sees stale
+        // ad-hoc maps from pre-relower IR.
         std::string define_name;
         if (flat->get(root).tag == aura::ast::NodeTag::Define) {
             if (auto* pool = evaluator_.workspace_pool())
@@ -4765,7 +4836,8 @@ public:
         }
         if (!define_name.empty()) {
             if (auto it = ir_cache_v2_.find(define_name); it != ir_cache_v2_.end()) {
-                populate_source_to_ir_from_irs(it->second.irs, source_to_ir);
+                ensure_source_to_ir_map_(it->second);
+                source_to_ir = it->second.source_to_ir_map;
                 for (std::size_t fi = 0; fi < it->second.irs.size(); ++fi)
                     ir_cache_index[it->second.irs[fi].name] = fi;
             }
@@ -5441,6 +5513,9 @@ public:
         if (v1_it != ir_cache_.end() && func_idx > 0 && (func_idx - 1) < v1_it->second.size()) {
             v1_it->second[func_idx - 1] = entry.irs[func_idx];
         }
+        // Issue #2045: patch source_to_ir_map for the re-lowered function
+        // so next impact_scope uses the new layout (no under-invalidation).
+        rebuild_or_patch_source_to_ir_map_(entry, func_idx);
         return true;
     }
 
