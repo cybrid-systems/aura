@@ -2064,6 +2064,15 @@ aura_issue_test_link_llvm_jit(test_security_audit_trail_2075)
 aura_add_issue_test(test_aura_sandbox_env_2076)
 aura_issue_test_link_llvm_jit(test_aura_sandbox_env_2076)
 
+# Issue #2077: unify has_capability string path with Effect matrix
+# (single source of truth). Effect-mapped caps (mutate, ffi, network,
+# exec, render, read, write, macro-self-evo, *) now consult
+# g_capability_registry().effects_for(tenant); caps with no effect
+# mapping keep the legacy string-list path. Wildcard keeps the
+# explicit-string-grant path so existing "*" grants stay meaningful.
+aura_add_issue_test(test_capability_unified_2077)
+aura_issue_test_link_llvm_jit(test_capability_unified_2077)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
