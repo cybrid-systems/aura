@@ -9445,10 +9445,35 @@ private:
     };
     std::unordered_map<std::string, DepEntry, aura::core::TransparentStringHash, std::equal_to<>>
         dep_graph_;
+    // Issue #2110: NodeId DepGraph mirror of function-level edges
+    // (encode_fn_node slots). Protected by the same dep_graph_mtx_.
+    // Dirty propagates callee → caller (same as called_by).
+    aura::compiler::dirty::DepGraph node_dep_graph_;
+    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        dep_name_to_slot_;
+    std::vector<std::string> dep_slot_to_name_;
     // Issue #2032: generation bumped under exclusive dep_graph_mtx_ when
     // cascade erase/rebuild runs; record_dependency rejects edges stamped
     // against a stale generation (concurrent fiber/GC/mutate window).
     std::atomic<std::uint64_t> dep_graph_generation_{0};
+
+    // Issue #2110: dense slot for encode_fn_node (under dep_graph_mtx_).
+    [[nodiscard]] std::uint32_t ensure_dep_fn_slot_(const std::string& name) {
+        auto it = dep_name_to_slot_.find(name);
+        if (it != dep_name_to_slot_.end())
+            return it->second;
+        const auto slot = static_cast<std::uint32_t>(dep_slot_to_name_.size());
+        dep_slot_to_name_.push_back(name);
+        dep_name_to_slot_.emplace(name, slot);
+        return slot;
+    }
+
+    // Issue #2110: after string BFS cascade, run NodeId cascade_mark_dirty
+    // from the mutated function root and refine block dirty via body-only
+    // marks for any caller still under-invalidated. Returns nodes marked.
+    std::size_t hybrid_node_cascade_(const std::string& root_name,
+                                     const std::vector<std::string>& string_dependents);
 
     void record_dependency(const std::string& caller, const std::string& callee) {
         // Issue #687: idempotent — skip if (caller, callee) is
@@ -9491,6 +9516,18 @@ private:
         caller_entry.calls.push_back(callee);
         dep_graph_[callee].called_by.push_back(caller);
         metrics_.dep_graph_record_inserted.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2110: mirror into NodeId DepGraph (callee → caller so
+        // dirty propagates along called_by). Dedup handled by DepGraph::add_edge.
+        {
+            const auto caller_slot = ensure_dep_fn_slot_(caller);
+            const auto callee_slot = ensure_dep_fn_slot_(callee);
+            const auto from = aura::compiler::dirty::encode_fn_node(callee_slot);
+            const auto to = aura::compiler::dirty::encode_fn_node(caller_slot);
+            const auto edges_before = node_dep_graph_.edge_count();
+            node_dep_graph_.add_edge(from, to);
+            if (node_dep_graph_.edge_count() > edges_before)
+                metrics_.dep_graph_node_mirror_edges_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     // Scan FlatAST from the given node for Variable nodes that reference cached functions.
@@ -10155,6 +10192,33 @@ public:
     }
     [[nodiscard]] std::uint64_t public_dep_graph_record_inserted() const noexcept {
         return metrics_.dep_graph_record_inserted.load(std::memory_order_relaxed);
+    }
+    // Issue #2110: NodeId mirror observability (test + Agent).
+    [[nodiscard]] std::uint64_t public_dep_graph_node_mirror_edges() const noexcept {
+        return metrics_.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_dep_graph_hybrid_cascade_hits() const noexcept {
+        return metrics_.dep_graph_hybrid_cascade_hits.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::size_t public_node_dep_graph_edge_count() const noexcept {
+        lock_order::OrderedSharedLock<std::shared_mutex> r(dep_graph_mtx_,
+                                                           lock_order::Level::DepGraph);
+        return node_dep_graph_.edge_count();
+    }
+    [[nodiscard]] bool public_node_dep_has_mirror_edge(const std::string& caller,
+                                                       const std::string& callee) const noexcept {
+        lock_order::OrderedSharedLock<std::shared_mutex> r(dep_graph_mtx_,
+                                                           lock_order::Level::DepGraph);
+        auto cit = dep_name_to_slot_.find(callee);
+        auto ait = dep_name_to_slot_.find(caller);
+        if (cit == dep_name_to_slot_.end() || ait == dep_name_to_slot_.end())
+            return false;
+        const auto from = aura::compiler::dirty::encode_fn_node(cit->second);
+        const auto to = aura::compiler::dirty::encode_fn_node(ait->second);
+        const auto* deps = node_dep_graph_.dependents(from);
+        if (!deps)
+            return false;
+        return std::find(deps->begin(), deps->end(), to) != deps->end();
     }
 
     // Issue #272: test/observability accessor.

@@ -2115,6 +2115,11 @@ aura_add_issue_test(test_instruction_level_impact_partial_2109)
 aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial_2109)
 add_dependencies(all_test_issue_targets test_instruction_level_impact_partial_2109)
 
+# Issue #2110: hybrid string dep_graph_ ↔ NodeId DepGraph cascade.
+aura_add_issue_test(test_dep_graph_hybrid_cascade_2110)
+aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
+add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
