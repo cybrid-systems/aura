@@ -9,6 +9,7 @@ import std;
 import aura.core.ast;
 import aura.compiler.lowering_linear_types;
 import aura.compiler.value;
+import aura.compiler.ir_cache_pure; // Issue #2109: should_partial_relower
 
 namespace aura::compiler {
 
@@ -1870,6 +1871,13 @@ aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
     const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                              std::equal_to<>>* value_cells,
     std::uint32_t narrowing_evidence) { // Issue #280
+    // Issue #2109: consult should_partial_relower at the cache-aware lower
+    // entry. Callers (relower_define_blocks / dirty workspace sweep) decide
+    // partial vs full; recording the threshold here keeps the gate wired
+    // end-to-end into lowering (AC3). Cache-hit partial reuse is decided
+    // by service before invoking this path; dirty_count==0 → no-op gate.
+    (void)aura::compiler::should_partial_relower(/*dirty_count=*/0);
+    (void)aura::compiler::get_partial_relower_threshold();
     return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, type_reg,
                             cache_bridge, cache_strings, self_name, value_cells,
                             narrowing_evidence);

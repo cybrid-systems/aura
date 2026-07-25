@@ -716,7 +716,7 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
         "query:soa-dirty-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(64); // #2031 instr-level impact keys
+                auto* ht = FlatHashTable::create(128); // #2031 + #2109 instr-level keys
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -814,6 +814,26 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"source-to-ir-map-consistency-wired", make_int(1)},
                 {"schema-2045", make_int(2045)},
                 {"issue-2045", make_int(2045)},
+                // Issue #2109: instruction-level partial re-emit metrics
+                {"relower_partial_insts_saved_total",
+                 make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
+                {"relower-partial-insts-saved-total",
+                 make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
+                {"relower_instruction_skip_total",
+                 make_int(L(&CompilerMetrics::relower_instruction_skip_total))},
+                {"relower-instruction-skip-total",
+                 make_int(L(&CompilerMetrics::relower_instruction_skip_total))},
+                {"should_partial_relower_consult_total",
+                 make_int(L(&CompilerMetrics::should_partial_relower_consult_total))},
+                {"should-partial-relower-consult-total",
+                 make_int(L(&CompilerMetrics::should_partial_relower_consult_total))},
+                {"should_partial_relower_yes_total",
+                 make_int(L(&CompilerMetrics::should_partial_relower_yes_total))},
+                {"relower_partial_funcs_saved_total",
+                 make_int(L(&CompilerMetrics::relower_partial_funcs_saved_total))},
+                {"instr-level-partial-reemit-wired", make_int(1)},
+                {"schema-2109", make_int(2109)},
+                {"issue-2109", make_int(2109)},
             };
             return build_hash(kv);
         });

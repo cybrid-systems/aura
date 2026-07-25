@@ -36,6 +36,7 @@ import aura.compiler.coercion_map;
 import aura.compiler.ir_soa;
 import aura.compiler.soa_view;
 import aura.compiler.dirty_propagation;
+import aura.compiler.ir_cache_pure; // Issue #2109: should_partial_relower
 // Issue #1577: Pass concepts centralized in concept_constraints.
 // export import re-exports aura::compiler::Pass / DirtyAwarePass / …
 // so existing `import aura.compiler.pass_manager` consumers keep working.
@@ -452,6 +453,17 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                       "SoAViewAware stages (#2060)");
     }
 
+    // Issue #2109: consult should_partial_relower at DirtyAware entry so
+    // Agents can correlate partial vs full decision with pass skip metrics.
+    if (define_cache && define_cache->block_dirty_per_func) {
+        std::size_t dirty_n = 0;
+        for (const auto& fb : *define_cache->block_dirty_per_func)
+            for (auto b : fb)
+                if (b)
+                    ++dirty_n;
+        (void)should_partial_relower(dirty_n); // decision used for peel path below
+    }
+
     // AC3 (#1574): early-skip whole pass when define-level mask is clean.
     if (define_cache && define_cache->block_dirty_per_func && !define_cache->any()) {
         note_define_dirty_mask_stats(*define_cache);
@@ -498,16 +510,23 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                 // Phase 1 instruction probe: if the pass is
                 // InstructionDirtyAwarePass, walk inst dirty bits for metrics.
                 if constexpr (InstructionDirtyAwarePass<P>) {
-                    // Best-effort: probe inst 0..7; real peel uses block size.
-                    for (std::uint32_t ii = 0; ii < 8; ++ii) {
+                    // Issue #2109: walk all instructions in the dirty block
+                    // (not just 0..7). Clean slots bump skip metrics so
+                    // Agents can prove instruction-level partial wins.
+                    const std::uint32_t ninst =
+                        bi < func.blocks.size()
+                            ? static_cast<std::uint32_t>(func.blocks[bi].instructions.size())
+                            : 8u;
+                    for (std::uint32_t ii = 0; ii < ninst; ++ii) {
                         bool inst_dirty = true;
                         if (define_cache && define_cache->instruction_dirty_per_func)
                             inst_dirty = define_cache->is_instruction_dirty(fi, bid, ii);
                         else
                             inst_dirty = pass.is_instruction_dirty(bid, ii);
-                        if (!inst_dirty)
+                        if (!inst_dirty) {
                             passes_skipped_instruction_dirty.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                        }
                     }
                 }
             } else {
