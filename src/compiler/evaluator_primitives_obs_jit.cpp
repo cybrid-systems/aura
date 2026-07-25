@@ -2765,7 +2765,7 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
         "query:macro-hygiene-provenance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(32); // #2037 mutate-hygiene keys
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -2795,7 +2795,6 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        // 8 slots should be enough for the 5-key hashes we build.
                         FlatHashTable::destroy(ht);
                         return make_void();
                     }
@@ -2823,12 +2822,38 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->macro_hygiene_dirty_impact_total.load(std::memory_order_relaxed))
                   : 0;
+            // Issue #2037: mutate hotpath hygiene closed-loop counters.
+            const std::int64_t hygiene_mutate_restamp =
+                m ? static_cast<std::int64_t>(
+                        m->hygiene_mutate_restamp_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_mutate_fail_on_stale =
+                m ? static_cast<std::int64_t>(
+                        m->hygiene_mutate_fail_on_stale_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hygiene_mutate_marker_propagate =
+                m ? static_cast<std::int64_t>(
+                        m->hygiene_mutate_marker_propagate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t provenance_hits =
+                m ? static_cast<std::int64_t>(
+                        m->macro_hygiene_provenance_hits_total.load(std::memory_order_relaxed))
+                  : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"provenance-captured", make_int(provenance_captured)},
                 {"inliner-policy-violations", make_int(inliner_policy_violations)},
                 {"provenance-violations", make_int(provenance_violations)},
                 {"hygiene-dirty-impact", make_int(hygiene_dirty_impact)},
                 {"schema", make_int(757)},
+                // Issue #2037
+                {"hygiene-mutate-restamp-total", make_int(hygiene_mutate_restamp)},
+                {"hygiene-mutate-fail-on-stale-total", make_int(hygiene_mutate_fail_on_stale)},
+                {"hygiene-mutate-marker-propagate-total",
+                 make_int(hygiene_mutate_marker_propagate)},
+                {"macro-hygiene-provenance-hits", make_int(provenance_hits)},
+                {"mutate-hotpath-hygiene-wired", make_int(1)},
+                {"schema-2037", make_int(2037)},
+                {"issue-2037", make_int(2037)},
             };
             return build_hash(kv);
         });

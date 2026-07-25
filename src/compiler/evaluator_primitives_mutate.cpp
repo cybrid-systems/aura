@@ -213,7 +213,7 @@ namespace {
         return subtree_has_closure(flat, body);
     }
 
-    // Issue #373: MacroIntroduced hygiene guard helper.
+    // Issue #373 / #2037: MacroIntroduced hygiene guard helper.
     //
     // mutate:* primitives call this before any structural
     // change. If the target node(s) are MacroIntroduced (set
@@ -242,6 +242,10 @@ namespace {
     //   nullopt if the mutation is allowed (no hygiene guard
     //   triggered). A populated EvalValue (the error pair)
     //   if the mutation should be rejected.
+    //
+    // Issue #2037: always stamps provenance when a MacroIntroduced
+    // target is observed (even on reject) so multi-round AI blame
+    // chains remain complete.
     static std::optional<EvalValue>
     hygiene_protected_error(Evaluator& ev, const aura::ast::FlatAST& flat,
                             std::span<const aura::ast::NodeId> target_ids, bool allow_macro_mutate,
@@ -258,7 +262,7 @@ namespace {
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
                 // Issue #1613: TypedMutationAudit trail for macro hygiene block.
-                // Issue #1877: also stamp provenance (tenant_id) for blame
+                // Issue #1877 / #2037: also stamp provenance (tenant_id) for blame
                 // chain / StableNodeRef dual-record under multi-tenant AI.
                 typed_audit::capture_macro_hygiene_audit(
                     "hygiene-protected", typed_audit::AuditOutcome::Error,
@@ -278,6 +282,92 @@ namespace {
             }
         }
         return std::nullopt;
+    }
+
+    // Issue #2037: closed-loop MacroIntroduced hygiene on structural
+    // mutate hotpaths (replace-pattern / query-and-replace).
+    //
+    // Contract (see provenance_tracker.hh):
+    //   1. Non-MacroIntroduced → no-op (return nullopt, was_macro=false).
+    //   2. MacroIntroduced + not allowed → hygiene-protected error.
+    //   3. MacroIntroduced + allowed:
+    //        - stamp provenance (record_macro_hygiene_provenance)
+    //        - Strict sandbox: FailOnStale — if StableNodeRef is stale,
+    //          fail closed (no silent restamp); count fail_on_stale.
+    //        - non-Strict: allow refresh_if_stale + count restamp.
+    //   4. Caller propagates MacroIntroduced marker onto replacement
+    //      roots via propagate_macro_introduced_marker when was_macro.
+    //
+    // Returns error optional; sets *was_macro when id is MacroIntroduced.
+    static std::optional<EvalValue> enforce_macro_hygiene_mutate_hotpath(
+        Evaluator& ev, aura::ast::FlatAST& flat, aura::ast::NodeId id,
+        aura::ast::FlatAST::StableNodeRef* ref, bool allow_macro_mutate, bool per_call_opt_out,
+        const MakeErrorVal& mev, bool* was_macro = nullptr) {
+        if (was_macro)
+            *was_macro = false;
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            return std::nullopt;
+        if (!flat.is_macro_introduced(id))
+            return std::nullopt;
+        if (was_macro)
+            *was_macro = true;
+
+        // Always stamp provenance when we observe MacroIntroduced on mutate.
+        aura::core::provenance::record_macro_hygiene_provenance(
+            static_cast<std::uint32_t>(id), ev.capability_tenant_id(),
+            /*mutation_id=*/0, static_cast<std::uint32_t>(aura_fiber_current_id()));
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
+        }
+
+        // Default: fail closed (hygiene-protected).
+        if (!allow_macro_mutate && !per_call_opt_out) {
+            aura::ast::NodeId probe[1] = {id};
+            return hygiene_protected_error(ev, flat, probe, /*allow=*/false, /*opt=*/false, mev);
+        }
+
+        // Allowed path: FailOnStale under Strict sandbox.
+        const bool strict = (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+        if (ref) {
+            if (ref->is_valid_in(flat)) {
+                (void)ref->validate_with_provenance(flat);
+            } else if (strict) {
+                // FailOnStale: no silent restamp under Strict.
+                aura::core::provenance::record_hygiene_mutate_fail_on_stale();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->hygiene_mutate_fail_on_stale_total.fetch_add(1, std::memory_order_relaxed);
+                ev.bump_macro_hygiene_provenance_violation();
+                return mev("hygiene-stale",
+                           "MacroIntroduced StableNodeRef is stale under Strict FailOnStale "
+                           "(#2037); refuse silent restamp — re-query or pass fresh capture");
+            } else {
+                // non-Strict: restamp allowed with audit.
+                if (ref->refresh_if_stale(flat)) {
+                    aura::core::provenance::record_hygiene_mutate_restamp();
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->hygiene_mutate_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    ev.bump_macro_hygiene_provenance_violation();
+                    return mev("hygiene-stale",
+                               "MacroIntroduced StableNodeRef could not be refreshed");
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Issue #2037: after allowed MacroIntroduced mutate, stamp the
+    // replacement root so hygiene survives re-query.
+    static void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
+                                                  aura::ast::NodeId new_root) {
+        if (new_root == aura::ast::NULL_NODE || new_root >= flat.size())
+            return;
+        flat.set_marker(new_root, aura::ast::SyntaxMarker::MacroIntroduced);
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->hygiene_mutate_marker_propagate_total.fetch_add(1, std::memory_order_relaxed);
+        aura::core::provenance::record_macro_hygiene_provenance(
+            static_cast<std::uint32_t>(new_root), ev.capability_tenant_id());
     }
 
     // Issue #373: parse `:allow-macro? #t` from a mutate:*
@@ -1030,12 +1120,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #1265: all-or-nothing — capture log size so parse
             // failures roll back every partial set_child (matches
             // mutate:atomic-batch pattern). No silent partial commit.
+            // Issue #2037: MacroIntroduced hygiene closed-loop.
+            const bool allow_macro_qar =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
             const std::uint64_t initial_log_size = flat.all_mutations().size();
             flat.begin_atomic_batch();
             for (auto& match_ref : matches) {
                 if (!stable_match_still_attached(flat, match_ref))
                     continue;
                 auto match_id = match_ref.id;
+                bool was_macro = false;
+                if (auto err = enforce_macro_hygiene_mutate_hotpath(
+                        ev, flat, match_id, &match_ref, allow_macro_qar, false, mev, &was_macro)) {
+                    flat.rollback_since(initial_log_size);
+                    flat.rollback_atomic_batch();
+                    ok = false;
+                    return *err;
+                }
+                match_id = match_ref.id;
                 auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
                 if (!child_idx_opt)
                     continue;
@@ -1105,6 +1207,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
 
                 flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+                // Issue #2037: propagate MacroIntroduced marker on allowed mutates.
+                if (was_macro)
+                    propagate_macro_introduced_marker(ev, flat, repl_pr.root);
                 replaced_roots.push_back(repl_pr.root);
                 flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template",
                                   summary);
@@ -2672,6 +2777,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         int expected_captures = count_wildcards(pat_pr.root);
 
         // ── Apply replacements via string substitution ────────
+        // Issue #2037: MacroIntroduced closed-loop hygiene on each match.
+        const bool allow_macro_kw = parse_allow_macro_opt_out(ev, a);
+        const bool allow_macro_all =
+            ev.get_allow_macro_mutate() || allow_macro_kw || include_macro_introduced;
         int replaced_count = 0;
         flat.begin_atomic_batch();
         for (auto& match : matches) {
@@ -2697,6 +2806,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 continue;
 
             auto match_id = match.match_ref.id;
+            // Issue #2037: stamp / FailOnStale / hygiene-protected for MacroIntroduced.
+            bool was_macro = false;
+            if (auto err = enforce_macro_hygiene_mutate_hotpath(
+                    ev, flat, match_id, &match.match_ref, allow_macro_all,
+                    /*per_call already folded into allow_macro_all*/ false, mev, &was_macro)) {
+                flat.rollback_atomic_batch();
+                ok = false;
+                return *err;
+            }
+            match_id = match.match_ref.id; // may have been restamped
             auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
             if (!child_idx_opt)
                 continue;
@@ -2758,6 +2877,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             // Replace the matched node
             flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+            // Issue #2037: propagate MacroIntroduced so re-query keeps hygiene.
+            if (was_macro)
+                propagate_macro_introduced_marker(ev, flat, repl_pr.root);
             replaced_count++;
         }
 
