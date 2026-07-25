@@ -1362,6 +1362,13 @@ aura_issue_test_link_llvm_jit(test_arena_concurrent_mutex)
 # Issue #1989: ASTArena::on_compact_hook_ protected by mutex (A-003).
 aura_add_issue_test(test_arena_compact_hook_concurrent)
 aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
+# Issue #2089: live_compact non-moving contract + LiveCompactResult.moved_live_objects
+# + optional on_layout_change callback (fires only on gen bumps). Schema bump on
+# (arena:live-compact) hash: 2004 → 2009 + new moved-live-objects field. AC1..AC4
+# (primitive layer) + AC5..AC6 (direct C++ ASTArena address-stability + callback
+# firing). Lives in tests/core/ per #81934/#81967.
+aura_add_issue_test(test_arena_auto_compact_intelligent)
+aura_issue_test_link_llvm_jit(test_arena_auto_compact_intelligent)
 # Issue #1990: (gc-temp)/(gc-stats) closures_ iteration protected by closures_mtx_ (B-009).
 aura_add_issue_test(test_issue_1990)
 aura_issue_test_link_llvm_jit(test_issue_1990)

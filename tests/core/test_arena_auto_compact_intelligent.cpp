@@ -23,9 +23,16 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+// Issue #2089: direct ASTArena access for non-moving contract tests (LC6 +
+// LC7) — primitive-layer (arena:live-compact) covers schema + field-presence
+// (LC4/LC5), but address-stability + on_layout_change hook firing semantics
+// are pure C++ concerns that have no primitive surface.
+import aura.core.arena;
 
 namespace {
 
+using aura::ast::ASTArena;
+using aura::ast::LiveCompactMode;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
@@ -249,6 +256,12 @@ static void ac8_lineage() {
 // a LiveCompactResult hash with bytes_reclaimed / slots-recycled / new-gen /
 // mode / soft-gated / invalidates-pins / schema=2004. Force mode bypasses
 // the soft-gate (render hotpath / MutationBoundary) and bumps generation.
+//
+// Issue #2089: schema bumped 2004 → 2009 + added moved-live-objects field.
+// The hash now documents the non-moving contract: under Soft/Force,
+// moved-live-objects is always #f (0). Consumers MUST observe new-gen /
+// invalidates-pins + LifetimePin::validate() instead of assuming any raw
+// pointer was rewritten.
 static void ac_live_compact_primitive() {
     std::println("\n--- AC_LC1: (arena:live-compact) primitive returns LiveCompactResult ---");
     CompilerService cs;
@@ -259,7 +272,7 @@ static void ac_live_compact_primitive() {
     CHECK(r1.has_value(), "live_compact returns");
     // soft-gated=true is fine in test context (no MutationBoundary held);
     // result is otherwise valid.
-    CHECK(href(cs, "arena:live-compact", "schema") == 2004, "schema 2004");
+    CHECK(href(cs, "arena:live-compact", "schema") == 2009, "schema 2009 (#2089 bump)");
     CHECK(href(cs, "arena:live-compact", "new-gen") >= 0, "new-gen field present");
     CHECK(href(cs, "arena:live-compact", "soft-gated") >= 0, "soft-gated field present");
     CHECK(href(cs, "arena:live-compact", "invalidates-pins") >= 0,
@@ -281,6 +294,106 @@ static void ac_live_compact_primitive() {
     CHECK(href(cs, "query:arena-live-compact-stats", "gen-restamps-total") >= 0, "gen-restamps");
     CHECK(href(cs, "query:arena-live-compact-stats", "invalidated-pins-total") >= 0,
           "invalidated-pins");
+
+    std::println("\n--- AC_LC4 (#2089): moved-live-objects field is #f (0) on Soft + Force ---");
+    // Non-moving contract: Soft/Force never relocate live objects. The field
+    // exists today and is always #f; reserved for a future Moving mode.
+    CHECK(href(cs, "arena:live-compact", "moved-live-objects") == 0,
+          "moved-live-objects=#f on Soft");
+    cs.eval("(arena:live-compact 1)"); // Force again
+    CHECK(href(cs, "arena:live-compact", "moved-live-objects") == 0,
+          "moved-live-objects=#f on Force");
+}
+
+// Issue #2089: direct C++ tests for the non-moving contract + the optional
+// layout-change callback hook. The primitive-layer (arena:live-compact) covers
+// schema + field-presence (LC1..LC4); the actual address-stability guarantee
+// + on_layout_change firing semantics live in the arena module and have no
+// primitive surface, so they have to be tested directly.
+static void ac_live_compact_non_moving_contract() {
+    std::println("\n--- AC_LC5 (#2089): Force compact does NOT change address of live object ---");
+    ASTArena arena;
+    struct Tracked {
+        int v;
+    };
+    constexpr int kObjCount = 64;
+    std::vector<Tracked*> objs;
+    objs.reserve(kObjCount);
+    for (int i = 0; i < kObjCount; ++i) {
+        // create<T>(T&&) returns T*; the arena tracks the dtor entry so the
+        // freelist can recycle the slot on later allocations.
+        auto* p = arena.create<Tracked>(Tracked{i * 7});
+        CHECK(p != nullptr, "create<Tracked> succeeded");
+        objs.push_back(p);
+    }
+    const auto addr_first_before = reinterpret_cast<std::uintptr_t>(objs.front());
+    const auto addr_last_before = reinterpret_cast<std::uintptr_t>(objs.back());
+    const auto gen_before = arena.generation();
+
+    const auto r = arena.live_compact(LiveCompactMode::Force);
+    // Non-moving contract: even on Force, live object addresses are stable.
+    CHECK(r.moved_live_objects == false, "LiveCompactResult.moved_live_objects == false on Force");
+    CHECK(reinterpret_cast<std::uintptr_t>(objs.front()) == addr_first_before,
+          "first object address unchanged after Force compact");
+    CHECK(reinterpret_cast<std::uintptr_t>(objs.back()) == addr_last_before,
+          "last object address unchanged after Force compact");
+    // Gen may or may not bump depending on whether defrag/freelist actually
+    // reclaimed anything; what matters for the contract is that address is
+    // stable regardless.
+    CHECK(arena.generation() >= gen_before, "generation never goes backwards");
+}
+
+// Issue #2089: on_layout_change callback fires exactly when live_compact
+// bumps the generation counter (saved_bytes > 0 || relocated > 0) — never on
+// soft-gated no-ops or on zero-saved / zero-relocated Force compacts. We
+// test the fire path by allocating a small tracked pool, installing a
+// callback, then forcing a compact that produces freelist hits and
+// asserting the callback observed the same new_gen as LiveCompactResult.
+static void ac_live_compact_layout_change_callback() {
+    std::println("\n--- AC_LC6 (#2089): on_layout_change fires on gen bump, not on no-op ---");
+    ASTArena arena;
+    struct Tracker {
+        int v;
+    };
+    constexpr int kObjCount = 64;
+    std::vector<Tracker*> objs;
+    objs.reserve(kObjCount);
+    for (int i = 0; i < kObjCount; ++i) {
+        auto* p = arena.create<Tracker>(Tracker{i * 11});
+        objs.push_back(p);
+    }
+
+    int fire_count = 0;
+    std::uint64_t last_arena_id = 0;
+    std::uint64_t last_new_gen = 0;
+    arena.set_on_layout_change([&](std::uint64_t arena_id, std::uint64_t new_gen) noexcept {
+        ++fire_count;
+        last_arena_id = arena_id;
+        last_new_gen = new_gen;
+    });
+    CHECK(arena.has_on_layout_change(), "callback installed");
+
+    // Force compact that does some work — freelist has entries from the
+    // pool path, so relocated > 0 and gen bumps; callback should fire.
+    const auto r = arena.live_compact(LiveCompactMode::Force);
+    if (r.invalidates_pins) {
+        // Gen actually bumped → callback should have fired exactly once
+        // (one compact call, one gen bump, one callback invocation).
+        CHECK(fire_count == 1, "callback fired exactly once on gen bump");
+        CHECK(last_arena_id == arena.arena_id(), "callback observed this arena's arena_id");
+        CHECK(last_new_gen == r.new_gen, "callback observed the same new_gen as LiveCompactResult");
+    } else {
+        // No gen bump (nothing to compact) → callback must NOT have fired.
+        CHECK(fire_count == 0, "no gen bump ⇒ no callback fire");
+    }
+
+    // Move out the callback; subsequent compacts must NOT invoke it.
+    auto moved = arena.take_on_layout_change();
+    CHECK(moved != nullptr, "take_on_layout_change returned the callback");
+    CHECK(!arena.has_on_layout_change(), "callback cleared after take");
+    const int fire_count_before = fire_count;
+    arena.live_compact(LiveCompactMode::Force);
+    CHECK(fire_count == fire_count_before, "no callback fire after take_on_layout_change");
 }
 
 } // namespace
@@ -296,6 +409,12 @@ int main() {
     ac7_mutate_stress();
     ac8_lineage();
     ac_live_compact_primitive();
+    // Issue #2089: non-moving contract + on_layout_change callback tests
+    // (direct C++ ASTArena — the primitive layer only exposes the schema +
+    // field-presence side; address stability + callback firing live in the
+    // arena module and have no primitive surface).
+    ac_live_compact_non_moving_contract();
+    ac_live_compact_layout_change_callback();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

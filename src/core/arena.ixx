@@ -430,9 +430,20 @@ private:
 // returns a struct (bytes_reclaimed / slots_recycled / new_gen / soft_gated /
 // invalidates_pins) so Agents, MutationBoundary probe, and compact_sweep body
 // can observe the outcome — replacing the prior std::size_t return.
+//
+// Issue #2089: explicit non-moving contract. live_compact(Soft|Force) does
+// NOT remap external raw pointers — it only (a) reclaims freelist holes +
+// trims buffer tail, (b) restamps the generation counter, and (c) invalidates
+// LifetimePins keyed to this arena. moved_live_objects is always false in the
+// current Soft/Force modes; a future LiveCompactMode::Moving (out of scope
+// for #2089) is the only path that would set it true. Agents, FFI handoff
+// code, and StableNodeRef-style consumers MUST observe either the generation
+// stamp (gen() before/after) or LifetimePin::validate() — they MUST NOT
+// assume any raw pointer was rewritten.
 export enum class LiveCompactMode : std::uint8_t {
     Soft = 0,  // Soft-gates under render hotpath / MutationBoundary (existing auto path)
     Force = 1, // Force path — STW-friendly, used by explicit Agent calls
+    // Moving = 2, // reserved — explicit pointer remap; not implemented (#2089).
 };
 
 export struct LiveCompactResult {
@@ -442,11 +453,25 @@ export struct LiveCompactResult {
     LiveCompactMode mode = LiveCompactMode::Soft;
     bool soft_gated = false;       // true if Soft mode skipped (render hotpath / boundary held)
     bool invalidates_pins = false; // true if new_gen bumped (LifetimePins invalidated)
+    // Issue #2089: explicit non-moving contract — Soft/Force never relocate
+    // live objects. Always false in current implementation; reserved for a
+    // future LiveCompactMode::Moving. Consumers MUST observe generation
+    // stamps or LifetimePin::validate() instead of assuming pointer rewrite.
+    bool moved_live_objects = false;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated;
     }
 };
+
+// Issue #2089: optional layout-change callback hook. Fires on each
+// successful live_compact that actually bumps the generation counter (i.e.
+// saved_bytes > 0 || relocated > 0) — never on soft-gated no-ops or on the
+// initial zero-gen state. Default-wired to pin invalidate (already in-path
+// via invalidate_all_pins_for_arena) — HotUpdate / Shape hooks can install
+// their own observer here without assuming any pointer rewrite happened.
+using LiveCompactLayoutChangeCallback =
+    std::function<void(std::uint64_t arena_id, std::uint64_t new_gen)>;
 
 // Module-internal counter used by ASTArena constructors to mint stable per-arena
 // ids. LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
@@ -567,6 +592,32 @@ public:
     }
     [[nodiscard]] bool has_on_compact_hook() const noexcept {
         return static_cast<bool>(on_compact_hook_);
+    }
+
+    // Issue #2089: optional layout-change callback. Fires exactly when
+    // live_compact(Soft|Force) actually bumps the generation counter
+    // (saved_bytes > 0 || relocated > 0) — NEVER on soft-gated no-ops or
+    // on the initial zero-gen state. Allows HotUpdate / Shape / Fiber
+    // hooks to react to layout shifts without assuming any pointer
+    // rewrite happened (live_compact Soft/Force is non-moving — see
+    // LiveCompactResult::moved_live_objects and the module-level
+    // contract comment). Default null; callers opt in via this setter.
+    // Concurrent set/take is serialized via on_layout_change_mtx_; the
+    // invoke path copies the callback under the lock and fires outside
+    // it so re-entrant set calls from inside the callback do not
+    // deadlock (same pattern as #1989's on_compact_hook_).
+    void set_on_layout_change(LiveCompactLayoutChangeCallback cb) {
+        std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+        on_layout_change_ = std::move(cb);
+    }
+    // Move out the current callback (leaves arena with no callback).
+    [[nodiscard]] LiveCompactLayoutChangeCallback take_on_layout_change() {
+        std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+        return std::move(on_layout_change_);
+    }
+    [[nodiscard]] bool has_on_layout_change() const noexcept {
+        std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+        return static_cast<bool>(on_layout_change_);
     }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
@@ -1007,6 +1058,13 @@ public:
             const std::size_t invalidated =
                 aura::core::lifetime::invalidate_all_pins_for_arena(arena_id_);
             stats_.live_compact_invalidated_pins_total += invalidated;
+            // Issue #2089: fire layout-change callback AFTER gen restamp +
+            // pin invalidate so observers (HotUpdate / Shape / Fiber) see
+            // the new gen + can re-pin on the new layout. Soft-gated no-ops
+            // and zero-saved / zero-relocated paths skip this — moved_live_objects
+            // stays false and no observer fires. Non-moving contract: callback
+            // MUST NOT assume pointer rewrite (see LiveCompactResult).
+            invoke_layout_change_(result.new_gen);
         }
 
         // ── Shape/JIT deopt coordination (throttled in service hook) ──
@@ -1387,6 +1445,25 @@ private:
         stats_.compact_deopt_throttled = static_cast<std::size_t>(thr);
     }
 
+    // Issue #2089: optional layout-change callback path. Called from
+    // live_compact immediately after the generation restamp +
+    // invalidate_all_pins_for_arena block (so the callback observes the
+    // same new_gen as the result struct). Copy the std::function under
+    // on_layout_change_mtx_ and invoke outside the lock so re-entrant
+    // set_on_layout_change / take_on_layout_change calls from inside the
+    // callback do not deadlock — same pattern as #1989's
+    // invoke_compact_hook_().
+    void invoke_layout_change_(std::uint64_t new_gen) noexcept {
+        LiveCompactLayoutChangeCallback cb_copy;
+        {
+            std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+            if (!on_layout_change_)
+                return;
+            cb_copy = on_layout_change_;
+        }
+        cb_copy(arena_id_, new_gen);
+    }
+
     std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
     std::vector<std::byte> buffer_;
     std::pmr::monotonic_buffer_resource resource_;
@@ -1400,6 +1477,11 @@ private:
     // std::function move-assign + invoke is UB; std::mutex serializes both.
     mutable std::mutex hook_mtx_;
     std::function<void()> on_compact_hook_;
+    // Issue #2089: layout-change callback (see set_on_layout_change).
+    // Same mutex-guarded std::function pattern as on_compact_hook_ above;
+    // invoke_layout_change_() copies under lock and fires outside.
+    mutable std::mutex on_layout_change_mtx_;
+    LiveCompactLayoutChangeCallback on_layout_change_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.
     mutable std::shared_mutex owner_mtx_;
@@ -1609,6 +1691,10 @@ public:
             agg.new_gen = std::max(agg.new_gen, r.new_gen);
             agg.soft_gated = agg.soft_gated || r.soft_gated;
             agg.invalidates_pins = agg.invalidates_pins || r.invalidates_pins;
+            // Issue #2089: aggregate the non-moving contract flag. Always
+            // false under Soft/Force; OR semantics future-proofs a Moving
+            // mode where some arenas move while others don't.
+            agg.moved_live_objects = agg.moved_live_objects || r.moved_live_objects;
         }
         return agg;
     }
