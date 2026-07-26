@@ -1631,6 +1631,8 @@ AURA_COMPILER_METRICS_FIELD(env_frame_version_drift_prevented)
 AURA_COMPILER_METRICS_FIELD(dual_path_desync_hard_fail_total)
 AURA_COMPILER_METRICS_FIELD(dual_path_desync_soft_continue_total)
 AURA_COMPILER_METRICS_FIELD(dual_path_desync_gc_walk_skipped_total)
+AURA_COMPILER_METRICS_FIELD(orch_agent_boundary_entered_total)
+AURA_COMPILER_METRICS_FIELD(orch_agent_steal_skipped_boundary_total)
 // Issue #1639: per-block dirty → partial re-lower observability.
 AURA_COMPILER_METRICS_FIELD(full_relower_count)
 AURA_COMPILER_METRICS_FIELD(dirty_block_ratio_numerator_total)

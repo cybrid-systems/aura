@@ -6072,6 +6072,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> orch_stable_ref_auto_refresh_total{0};
     std::atomic<std::uint64_t> orch_fiber_steal_provenance_enforced_total{0};
     std::atomic<std::uint64_t> orch_linear_violation_prevented_total{0};
+    // Issue #2118: orch agent soft mutation-boundary registration (fiber path).
+    std::atomic<std::uint64_t> orch_agent_boundary_entered_total{0};
+    std::atomic<std::uint64_t> orch_agent_steal_skipped_boundary_total{0};
     // Issue #740: linear ownership safety in JIT L2 hot paths
     // post-invalidate (Arena/DropOp/GC root re-sync).
     // Exposed via (query:linear-jit-safety-stats).

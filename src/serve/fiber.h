@@ -125,28 +125,41 @@ public:
                r == YieldReason::OperationBoundary || r == YieldReason::PassPipeline;
     }
 
-    // Issue #438 / #588 / #1254 / #2115: depth-safe mutation boundary
-    // probe for work-stealing. Uses the victim fiber's per-fiber
-    // mutation_stack_storage_ (NOT thief TLS) via C-linkage
+    // Issue #438 / #588 / #1254 / #2115 / #2118: depth-safe mutation
+    // boundary probe for work-stealing. Uses the victim fiber's
+    // per-fiber mutation_stack_storage_ (NOT thief TLS) via C-linkage
     // aura_evaluator_mutation_stack_depth_from_ptr so steal decisions
     // cannot race dual-path / linear / LifetimePin / panic checkpoint.
     //
     // Returns true if steal is safe at this yield point:
+    //   - not an orch agent soft-boundary window with depth > 0 (#2118), AND
     //   - yield reason is not MutationBoundary, OR
-    //   - yield is MutationBoundary and per-fiber stack depth == 0
-    //     (outermost Guard already released / no active checkpoint).
-    // depth > 0 (outermost or nested Guard still held) → false.
+    //   - yield is MutationBoundary and per-fiber stack depth == 0.
+    // depth > 0 (Guard or orch soft boundary) → false when MB / agent active.
     // YieldReason::MutationBoundary itself is unchanged (is_stealable
     // still treats MB as a stealable *reason class*); depth gates
     // visibility only (#2115 AC2).
     [[nodiscard]] bool is_at_mutation_boundary_safe() const noexcept {
+        const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(
+            mutation_stack_storage_.load(std::memory_order_acquire));
+        // Issue #2118: orch agent soft boundary + depth > 0 → never steal-safe
+        // (mutation window visible to steal even if yield reason is Explicit).
+        if (orch_agent_boundary_active() && depth > 0)
+            return false;
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         if (r != YieldReason::MutationBoundary)
             return true;
         // Issue #588 + #1254 + #2115: only depth == 0 is steal-safe.
-        const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(
-            mutation_stack_storage_.load(std::memory_order_acquire));
         return depth == 0;
+    }
+
+    // Issue #2118: set when orch agent body soft-registers mutation depth
+    // (lightweight; not a full MutationBoundaryGuard — fiber stack limit).
+    [[nodiscard]] bool orch_agent_boundary_active() const noexcept {
+        return orch_agent_boundary_active_.load(std::memory_order_acquire);
+    }
+    void set_orch_agent_boundary_active(bool v) noexcept {
+        orch_agent_boundary_active_.store(v, std::memory_order_release);
     }
 
     // Issue #448 / #2115: alias of depth-safe API. Historical #448
@@ -522,6 +535,9 @@ private:
     std::uint64_t resume_bridge_epoch_hint_ = 0;
     // Issue #1584: cooperative cancel flag.
     std::atomic<bool> cancel_requested_{false};
+    // Issue #2118: orch agent body soft mutation-boundary window active
+    // (per-fiber stack depth registered; steal/GC visibility).
+    std::atomic<bool> orch_agent_boundary_active_{false};
 
     // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;

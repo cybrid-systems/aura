@@ -3167,6 +3167,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                       static_cast<std::int64_t>(
                           os.agent_body_try_acquire_ok_total.load(std::memory_order_relaxed)));
             insert_kv("schema-1880", 1880);
+            // Issue #2118: soft mutation-boundary registration (fiber agent body).
+            insert_kv("orch_agent_boundary_entered_total",
+                      static_cast<std::int64_t>(
+                          os.orch_agent_boundary_entered_total.load(std::memory_order_relaxed)));
+            insert_kv("orch-agent-boundary-entered-total",
+                      static_cast<std::int64_t>(
+                          os.orch_agent_boundary_entered_total.load(std::memory_order_relaxed)));
+            insert_kv("orch_agent_steal_skipped_boundary_total",
+                      static_cast<std::int64_t>(os.orch_agent_steal_skipped_boundary_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("orch-agent-steal-skipped-boundary-total",
+                      static_cast<std::int64_t>(os.orch_agent_steal_skipped_boundary_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("orch-agent-boundary-skip-pure-total",
+                      static_cast<std::int64_t>(
+                          os.orch_agent_boundary_skip_pure_total.load(std::memory_order_relaxed)));
+            insert_kv("orch-agent-soft-boundary-wired", 1);
+            insert_kv("schema-2118", 2118);
+            insert_kv("issue-2118", 2118);
             // Issue #1881: unified orch health (agent + mailbox + parallel mirrors).
             // New query:orch-*-stats names are frozen; fold into this hash instead.
             insert_kv("agents-active",

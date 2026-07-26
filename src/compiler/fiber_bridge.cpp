@@ -70,11 +70,15 @@ __attribute__((weak, used)) void aura_evaluator_bump_steal_outermost_enforced() 
 // full module into their link unit.
 __attribute__((weak, used)) void aura_evaluator_on_fiber_join(void* /*joined_fiber*/) {}
 
-// Issue #1880: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
+// Issue #1880 / #2118: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
 __attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {
     return 0; // no evaluator → allow body
 }
+__attribute__((weak, used)) int aura_orch_agent_body_try_acquire_ex(int /*register_soft*/) {
+    return 0;
+}
 __attribute__((weak, used)) void aura_orch_agent_body_release_guard() {}
+__attribute__((weak, used)) void aura_orch_note_agent_steal_skipped_boundary() {}
 
 // Issue #2010: mailbox backpressure → orch dashboard (strong def in
 // evaluator_fiber_mutation.cpp when evaluator/orch is linked).

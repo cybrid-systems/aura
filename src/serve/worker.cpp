@@ -30,6 +30,8 @@ void aura_evaluator_bump_steal_outermost_enforced() __attribute__((weak));
 void aura_evaluator_bump_boundary_held_steal_safe() __attribute__((weak));
 void aura_evaluator_bump_steal_mutation_boundary_deferred() __attribute__((weak));
 void aura_evaluator_bump_starvation_mitigated_for_boundary() __attribute__((weak));
+// Issue #2118: orch agent soft-boundary steal skip counter.
+void aura_orch_note_agent_steal_skipped_boundary() __attribute__((weak));
 }
 
 static inline void call_steal_arena_yield() noexcept {
@@ -259,6 +261,9 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // mutation boundary (depth-safe probe failed).
             metrics::adaptive_steal_stats().steal_skipped_mutation_boundary_total.fetch_add(
                 1, std::memory_order_relaxed);
+            // Issue #2118: orch agent soft-boundary steal skip (C ABI; no orch dep).
+            if (stolen->orch_agent_boundary_active() && aura_orch_note_agent_steal_skipped_boundary)
+                aura_orch_note_agent_steal_skipped_boundary();
             stolen->bump_steal_deferred_mutation_boundary();
             call_steal_deferred_violation();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
