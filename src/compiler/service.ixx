@@ -29,6 +29,7 @@ module;
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
 #include "lock_order_audit.h"
+#include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit state machine
 #include "runtime_shared.h"
 #include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
 #include "observability_metrics.h"
@@ -9825,6 +9826,8 @@ private:
         metrics_.linear_ownership_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
 
         (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
+        // Issue #2131: PostAudit phase — close GcCoordScope if active.
+        gc_coord::note_post_audit_if_active();
         // Publish complete linear+GC window to concurrent apply / fiber steal.
         std::atomic_thread_fence(std::memory_order_release);
     }
@@ -10233,6 +10236,33 @@ public:
     }
     [[nodiscard]] std::uint64_t public_linear_gc_window_finalize_total() const noexcept {
         return metrics_.linear_gc_window_finalize_total.load(std::memory_order_relaxed);
+    }
+    // Issue #2131: GcCoordScope observability + test seams.
+    [[nodiscard]] std::uint64_t public_gc_coord_scopes_opened() const noexcept {
+        return gc_coord::scopes_opened_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_gc_coord_post_audit_total() const noexcept {
+        return gc_coord::post_audit_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_gc_coord_phase_violations() const noexcept {
+        return gc_coord::phase_violations_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_gc_coord_reverse_order() const noexcept {
+        return gc_coord::reverse_order_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_gc_coord_scopes_for_path(std::uint8_t path) const noexcept {
+        if (path >= static_cast<std::uint8_t>(gc_coord::Path::Count))
+            return 0;
+        return gc_coord::scopes_by_path[path].load(std::memory_order_relaxed);
+    }
+    void public_gc_coord_set_strict(bool on) noexcept {
+        gc_coord::strict_mode.store(on, std::memory_order_relaxed);
+    }
+    void public_gc_coord_force_reverse_violation() noexcept {
+        // Keep strict off so the test does not abort.
+        const bool prev = gc_coord::strict_mode.exchange(false, std::memory_order_relaxed);
+        gc_coord::Scope::force_reverse_violation_for_test();
+        gc_coord::strict_mode.store(prev, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t public_linear_ownership_epoch() const noexcept {
         return evaluator_.linear_ownership_epoch();
@@ -10768,10 +10798,12 @@ public:
     // name empty → stamp every known bridge / ir_cache_v2 entry (typed_mutate
     // catch-all when the affected define set is unknown).
     //
-    // Issue #1627: shared pre-cascade for soft mark_define_dirty and
+    // Issue #1627 / #2131: shared pre-cascade for soft mark_define_dirty and
     // hard invalidate_function — live closures + linear enforce + GC
-    // root audit before publishing new epochs (no half-update window).
+    // root pin/audit before publishing new epochs (GcCoord PrePin phase).
+    // Caller must hold an active gc_coord::Scope (opened at entry).
     void prepare_unified_invalidation_pre_cascade_(const std::string& name) {
+        // Issue #2131: PrePin work under active Scope (opened by soft/hard entry).
         (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
         (void)evaluator_.linear_post_mutate_enforce_all();
         on_compiler_invalidate_gc_coordination(name);
@@ -11014,8 +11046,13 @@ public:
             metrics_.jit_closure_safe_fallbacks.fetch_add(marked, std::memory_order_relaxed);
             metrics_.jit_closure_safe_fallbacks_total.fetch_add(marked, std::memory_order_relaxed);
         }
-        // Issue #1543: JIT hot-swap / batch-deopt path audit.
-        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditJitHotSwap);
+        // Issue #1543 / #2131: JIT hot-swap / batch-deopt under GcCoord Scope.
+        {
+            gc_coord::Scope hot_coord(gc_coord::Path::HotSwap);
+            hot_coord.enter_cascade();
+            (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditJitHotSwap);
+            hot_coord.after_cascade();
+        }
     }
 
     // Issue #1536: bulk walk_active_closures after epoch bump / invalidate.

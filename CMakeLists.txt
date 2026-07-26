@@ -2313,6 +2313,11 @@ aura_issue_test_link_llvm_jit(test_linear_state_stamp_apply_2129)
 aura_add_issue_test(test_dirty_aware_shape_linear_passes_2130)
 aura_issue_test_link_llvm_jit(test_dirty_aware_shape_linear_passes_2130)
 
+# Issue #2131: unify GC-root pin → cascade → audit GcCoordScope state
+# machine across invalidate / boundary / hot-swap / compact.
+aura_add_issue_test(test_gc_coord_scope_2131)
+aura_issue_test_link_llvm_jit(test_gc_coord_scope_2131)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

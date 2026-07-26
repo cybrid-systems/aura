@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
+#include "compiler/gc_coord_scope.h" // Issue #2131
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
 #include "compiler/value_tags.h"
@@ -6430,7 +6431,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->linear_postmutate_env_version_sync_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(32); // #2043: more keys than #800 base
+            // #2043 window keys + #2131 GcCoordScope metrics need ≥64 slots.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6480,6 +6482,51 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2043", 2043);
             insert_kv("issue-2043", 2043);
             insert_kv("linear-gc-window-wired", 1);
+            // Issue #2131: unified GcCoordScope pin → cascade → audit metrics
+            insert_kv("gc-coord-scopes-opened",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::scopes_opened_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-pre-pin-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::gc_coord::pre_pin_total.load(std::memory_order_relaxed)));
+            insert_kv("gc-coord-cascade-enter-total",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::cascade_enter_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-post-audit-total",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::post_audit_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-released-total",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::released_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "gc-coord-phase-violations",
+                static_cast<std::int64_t>(aura::compiler::gc_coord::phase_violations_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "gc-coord-missing-post-audit",
+                static_cast<std::int64_t>(aura::compiler::gc_coord::missing_post_audit_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("gc-coord-reverse-order",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::reverse_order_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-path-invalidate",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::scopes_by_path[0].load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-path-soft-dirty",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::scopes_by_path[1].load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-path-boundary",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::scopes_by_path[2].load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-path-hot-swap",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::scopes_by_path[3].load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-path-compact",
+                      static_cast<std::int64_t>(aura::compiler::gc_coord::scopes_by_path[4].load(
+                          std::memory_order_relaxed)));
+            insert_kv("gc-coord-wired", 1);
+            insert_kv("schema-2131", 2131);
+            insert_kv("issue-2131", 2131);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

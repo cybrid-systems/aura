@@ -13,6 +13,7 @@ module;
 #include "../core/persistent_child_vector.hh"
 #include "observability_metrics.h"
 #include "lock_order_audit.h"
+#include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
 #include "security_capabilities.h"         // aura_fiber_current_id
@@ -1067,7 +1068,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             m->outermost_exit_phase1_probes_total.fetch_add(1, std::memory_order_relaxed);
     }
     // ── Phase 1: linear + dual-path + LifetimePin probes ──
-    // Issue #1486 / #1545 / #1568 / #1634 / #2120
+    // Issue #1486 / #1545 / #1568 / #1634 / #2120 / #2131
+    // Issue #2131: outermost exit walks GcCoord PrePin → PostAudit
+    // (boundary path; audit runs inside enforce helpers).
+    std::optional<gc_coord::Scope> boundary_gc_coord;
+    if (outermost)
+        boundary_gc_coord.emplace(gc_coord::Path::Boundary);
     if (outermost) {
         if (!success) {
             // Issue #1951: 4-step closed-loop pattern consolidated helper.
@@ -1080,6 +1086,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        if (boundary_gc_coord)
+            boundary_gc_coord->enter_cascade();
         // Issue #2120 / #2116: dual-path consistency probe at boundary exit
         // (no half-consistent EnvFrame left live after probes).
         {
@@ -1114,6 +1122,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 aura::core::envframe_lifetime::EnvFrameLifetimeSite::BoundaryExit};
             (void)envframe_guard.site();
         }
+        // Issue #2131: PostAudit after pin/probe phase (audit ran in enforce).
+        if (boundary_gc_coord)
+            boundary_gc_coord->after_cascade();
     }
     // ── Phase 2–3: panic checkpoint + GC defer (before reemit) ──
     // Issue #241 / #2120: commit/restore under lock so dual-epoch observers

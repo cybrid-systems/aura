@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
 
 module aura.compiler.evaluator;
@@ -1963,6 +1964,8 @@ std::size_t Evaluator::compact_env_frames() {
     // invalidate stay under this interlock (+ caller MutationBoundaryGuard
     // on the primitive path) so they are atomic w.r.t. other mutations.
     std::lock_guard interlock(compact_env_frames_lock_);
+    // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit for compact.
+    gc_coord::Scope compact_gc_coord(gc_coord::Path::Compact);
     // Issue #2087: clear env_id_remap_ at start of compact (mirrors
     // pair_remap_.clear() at start of compact_pairs). After all
     // rewrites below, env_id_remap_ is moved-from the local remap
@@ -1978,6 +1981,7 @@ std::size_t Evaluator::compact_env_frames() {
                                                      /*only_if_moved=*/false);
         (void)linear_post_mutate_enforce_all();
     }
+    compact_gc_coord.enter_cascade();
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();
     if (orig_size == 0) {
@@ -1999,6 +2003,9 @@ std::size_t Evaluator::compact_env_frames() {
             m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
             m->env_compact_epoch_notify_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #2131: empty compact still closes PostAudit (no roots).
+        (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
+        compact_gc_coord.after_cascade();
         return 0;
     }
     const auto current_defuse = defuse_version_.load(std::memory_order_acquire);
@@ -2187,6 +2194,8 @@ std::size_t Evaluator::compact_env_frames() {
     // only needs closures_mtx_; avoid holding exclusive while auditing).
     env_lock.unlock();
     (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
+    // Issue #2131: PostAudit after compact root audit.
+    compact_gc_coord.after_cascade();
     // Issue #1598 AC3: post-compact EnvFrame + linear pin refresh (same
     // helpers as Fiber::resume post-steal). Remap/restamp above already
     // fixed env_id/bridge; this walk repairs any residual version_ drift

@@ -14,6 +14,12 @@
 //   pre-bump state or post-finalize state — never half-updated linear
 //   ownership_state with live apply.
 //
+// Issue #2131 — GcCoordScope phase machine (same order every path):
+//   PrePin → Cascade → PostAudit → Released
+//   (gc_coord_scope.h). invalidate / soft-dirty / boundary / hot-swap /
+//   compact open a Scope; reverse order or missing after_cascade bumps
+//   phase_violations_total (+ abort when gc_coord::strict_mode).
+//
 // Thread-local depth counters detect inversions (acquiring a lower
 // level while a higher level is held). Zero-cost when depths are zero
 // (single relaxed loads). Used by CompilerService invalidate paths +

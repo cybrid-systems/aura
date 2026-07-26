@@ -8,6 +8,7 @@
 module;
 
 #include "lock_order_audit.h"
+#include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "observability_metrics.h"
 #include "jit_typed_mutation_stats.h" // ir_soa_migration::record_capture_dirty_mark
 #include "aura_jit.h"
@@ -82,7 +83,7 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
     }
 }
 
-// ── mark_define_dirty (#1476 / #1523 / #1627 / #1505) ─────────────────────
+// ── mark_define_dirty (#1476 / #1523 / #1627 / #1505 / #2131) ─────────────
 void CompilerService::mark_define_dirty(const std::string& name) {
     // Issue #1476 + #1523: unify dirty mark + dual-epoch; acquire
     // mutate FIRST when safe (skip if would invert lock order).
@@ -100,9 +101,13 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         }
     }
 
+    // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit around soft dirty.
+    gc_coord::Scope gc_coord_scope(gc_coord::Path::SoftDirty);
+
     // Issue #1627: soft-path pre-cascade parity with invalidate_function
     // (live closures + linear + GC root audit before epoch publish).
     prepare_unified_invalidation_pre_cascade_(name);
+    gc_coord_scope.enter_cascade();
 
     // Issue #2050: render-critical define protection (draw/present closures).
     // Auto-register evolution-named defines; soft-dirty prefers body-only +
@@ -504,7 +509,7 @@ void CompilerService::mark_all_defines_dirty() {
 }
 
 
-// ── invalidate_function (#59 / #1378 / #1476 / #1627) ─────────────────────
+// ── invalidate_function (#59 / #1378 / #1476 / #1627 / #2131) ─────────────
 void CompilerService::invalidate_function(const std::string& name) {
     // Issue #59 Iter 3 + #1378: acquire the Mutation Lock FIRST so
     // epoch bump, block-dirty, BFS, and cache/JIT teardown are
@@ -524,10 +529,14 @@ void CompilerService::invalidate_function(const std::string& name) {
     OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
     sync_lock_order_metrics_();
 
+    // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit (hard path).
+    gc_coord::Scope gc_coord_scope(gc_coord::Path::Invalidate);
+
     // Issue #1545 / #1494 / #1606 / #1627: shared pre-cascade
     // (live closures + linear + GC root audit) — same helper as
     // mark_define_dirty soft path.
     prepare_unified_invalidation_pre_cascade_(name);
+    gc_coord_scope.enter_cascade();
 
     // Issue #1496 / #1476: SINGLE dual-epoch + bridge stamp + JIT
     // soft-deopt protocol — same helper as mark_define_dirty.
