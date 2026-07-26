@@ -1018,6 +1018,16 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# Issue #2141: ShapeProfiler shared_mutex multi-fiber concurrency.
+add_executable(test_shape_profiler_concurrency_2141
+    tests/compiler/test_shape_profiler_concurrency_2141.cpp
+    src/compiler/shape_profiler.cpp)
+target_include_directories(test_shape_profiler_concurrency_2141 PRIVATE src tests)
+target_link_libraries(test_shape_profiler_concurrency_2141 PRIVATE stdc++ pthread)
+target_sources(test_shape_profiler_concurrency_2141 PRIVATE src/core/contract_handler.cpp)
+add_test(NAME test_shape_profiler_concurrency_2141 COMMAND test_shape_profiler_concurrency_2141
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── Speculative JIT tests (Phase 2, #53) ─────────────────────
 add_executable(test_spec_jit tests/compiler/test_spec_jit.cpp
     src/compiler/spec_jit_controller.cpp

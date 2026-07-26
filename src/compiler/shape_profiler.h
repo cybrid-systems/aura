@@ -8,6 +8,7 @@
 #ifndef AURA_COMPILER_SHAPE_PROFILER_H
 #define AURA_COMPILER_SHAPE_PROFILER_H
 
+#include <atomic>
 #include <cstdint>
 // Issue #337: std::flat_map (C++23) for the
 // profiles_ container. Better cache locality
@@ -19,8 +20,10 @@
 // hash-bucket traversal.
 #include <flat_map>
 #include <functional>
-#include <vector>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
+#include <vector>
 #include "shape.h"
 
 namespace aura::compiler::shape {
@@ -28,8 +31,21 @@ namespace aura::compiler::shape {
 // ── ShapeProfiler ─────────────────────────────────────────────
 // Records shape observations per function and determines shape stability.
 //
-// Thread safety: NOT thread-safe by design. Must be called from the
-// single eval thread (consistent with Aura's single-threaded eval model).
+// Issue #2141 — concurrency model A (reader/writer shared_mutex):
+//   - Shared lock: is_stable / dominant_shape / current_snapshot /
+//     metrics / tracked_fns / shape_stable_ratio / deopt_rate_per_fn /
+//     profile_count (read-only walks of profiles_).
+//   - Unique lock: record_shape / invalidate / invalidate_all /
+//     on_arena_compact / on_boundary_or_fiber_sync / reset /
+//     config setters that touch non-atomic state.
+//   - Deopt-storm ring updates run under unique lock only.
+//   - External deopt/dirty hooks fire *after* releasing the lock so
+//     callbacks may re-enter without deadlock.
+//   - Metrics atomics remain lock-free for publish; map integrity is
+//     guarded by mtx_. Contention counted in shape_profiler_lock_contended_total.
+// Multi-fiber mutate + eval + compact is production-supported under this model.
+inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
+
 class ShapeProfiler {
 public:
     ShapeProfiler();
@@ -102,10 +118,10 @@ public:
     static constexpr double kDefaultStabilityRatio = 0.90;
     static constexpr std::uint32_t kStableThreshold = 100;
 
-    void set_window_size(std::uint32_t n) { window_size_ = n; }
-    void set_stability_ratio(double r) { stability_ratio_ = r; }
-    [[nodiscard]] std::uint32_t window_size() const noexcept { return window_size_; }
-    [[nodiscard]] double stability_ratio() const noexcept { return stability_ratio_; }
+    void set_window_size(std::uint32_t n);
+    void set_stability_ratio(double r);
+    [[nodiscard]] std::uint32_t window_size() const noexcept;
+    [[nodiscard]] double stability_ratio() const noexcept;
 
     // Issue #1468: AI high-mutation-rate preset. More conservative
     // stability judgement (larger window, lower dominant ratio, more
@@ -127,28 +143,17 @@ public:
     static constexpr Preset kHighMutationPreset = {2000, 0.95, 250, 512, 6};
     static constexpr Preset kLowMutationPreset = {500, 0.85, 50, 128, 3};
 
-    void apply_preset(Preset p) {
-        window_size_ = p.window_size;
-        stability_ratio_ = p.stability_ratio;
-        min_samples_for_stable_ = p.min_samples_for_stable;
-        deopt_storm_window_ = p.deopt_storm_window;
-        deopt_storm_threshold_ = p.deopt_storm_threshold;
-        active_preset_ = p;
-    }
-    [[nodiscard]] Preset active_preset() const noexcept { return active_preset_; }
-    [[nodiscard]] std::uint32_t min_samples_for_stable() const noexcept {
-        return min_samples_for_stable_;
-    }
-    [[nodiscard]] std::uint32_t deopt_storm_window() const noexcept { return deopt_storm_window_; }
-    [[nodiscard]] std::uint32_t deopt_storm_threshold() const noexcept {
-        return deopt_storm_threshold_;
-    }
+    void apply_preset(Preset p);
+    [[nodiscard]] Preset active_preset() const noexcept;
+    [[nodiscard]] std::uint32_t min_samples_for_stable() const noexcept;
+    [[nodiscard]] std::uint32_t deopt_storm_window() const noexcept;
+    [[nodiscard]] std::uint32_t deopt_storm_threshold() const noexcept;
 
     // Issue #992: hard cap on tracked profiles (long-running serve).
-    void set_max_profiles(std::size_t n) { max_profiles_ = n ? n : 1; }
-    [[nodiscard]] std::size_t max_profiles() const noexcept { return max_profiles_; }
-    [[nodiscard]] std::size_t profile_count() const noexcept { return profiles_.size(); }
-    [[nodiscard]] std::uint64_t profile_evictions() const noexcept { return profile_evictions_; }
+    void set_max_profiles(std::size_t n);
+    [[nodiscard]] std::size_t max_profiles() const noexcept;
+    [[nodiscard]] std::size_t profile_count() const noexcept;
+    [[nodiscard]] std::uint64_t profile_evictions() const noexcept;
 
     // Issue #1468: AI workload metrics. Atomic counters for the
     // (compile:shape-stability-stats) primitive + agent decision
@@ -187,11 +192,19 @@ public:
     [[nodiscard]] double history_hit_rate() const noexcept;
 
     // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
-    void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
-        dirty_hook_ = std::move(hook);
+    void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook);
+
+    // Issue #2141: how often exclusive/shared lock had to wait (try_lock miss).
+    [[nodiscard]] std::uint64_t lock_contended_total() const noexcept {
+        return lock_contended_total_.load(std::memory_order_relaxed);
     }
 
 private:
+    // Issue #2141: lock helpers (try → contended++ → block).
+    [[nodiscard]] std::unique_lock<std::shared_mutex> unique_lock_() const;
+    [[nodiscard]] std::shared_lock<std::shared_mutex> shared_lock_() const;
+    // Invalidate body without taking mtx_ (caller holds unique lock).
+    bool invalidate_unlocked_(FnKey fn);
     struct ShapeRecord {
         ShapeID shape_id;
         std::uint64_t timestamp;
@@ -251,13 +264,17 @@ private:
     // Issue #1468: update deopt-storm ring + active flag.
     void update_deopt_storm_state_(FnKey fn) noexcept;
 
+    // Issue #2141: guards profiles_ / history / deopt ring / config knobs.
+    mutable std::shared_mutex mtx_;
+    mutable std::atomic<std::uint64_t> lock_contended_total_{0};
+
     // Issue #337: std::flat_map (C++23) for the
     // profiles_ container. The flat_map's sorted
     // iteration matches the per-Fn history window
     // access pattern (the profiling engine iterates
     // profiles to detect stability across functions
     // — sorted access is more cache-friendly than
-    // hash-bucket iteration).
+    // hash-bucket iteration). Guarded by mtx_.
     std::flat_map<FnKey, FnProfile> profiles_;
     std::uint32_t window_size_ = kDefaultWindowSize;
     double stability_ratio_ = kDefaultStabilityRatio;

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <contracts>
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
 #include "hash_meta.h" // FNV constants (#901)
 
@@ -273,6 +274,100 @@ std::string format_shape_id(ShapeID id) {
 
 ShapeProfiler::ShapeProfiler() = default;
 
+// ── Issue #2141: lock helpers ─────────────────────────────────
+std::unique_lock<std::shared_mutex> ShapeProfiler::unique_lock_() const {
+    std::unique_lock<std::shared_mutex> lock(mtx_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        lock_contended_total_.fetch_add(1, std::memory_order_relaxed);
+        lock = std::unique_lock<std::shared_mutex>(mtx_);
+    }
+    return lock;
+}
+
+std::shared_lock<std::shared_mutex> ShapeProfiler::shared_lock_() const {
+    std::shared_lock<std::shared_mutex> lock(mtx_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        lock_contended_total_.fetch_add(1, std::memory_order_relaxed);
+        lock = std::shared_lock<std::shared_mutex>(mtx_);
+    }
+    return lock;
+}
+
+void ShapeProfiler::set_window_size(std::uint32_t n) {
+    auto lock = unique_lock_();
+    window_size_ = n;
+}
+
+void ShapeProfiler::set_stability_ratio(double r) {
+    auto lock = unique_lock_();
+    stability_ratio_ = r;
+}
+
+std::uint32_t ShapeProfiler::window_size() const noexcept {
+    auto lock = shared_lock_();
+    return window_size_;
+}
+
+double ShapeProfiler::stability_ratio() const noexcept {
+    auto lock = shared_lock_();
+    return stability_ratio_;
+}
+
+void ShapeProfiler::apply_preset(Preset p) {
+    auto lock = unique_lock_();
+    window_size_ = p.window_size;
+    stability_ratio_ = p.stability_ratio;
+    min_samples_for_stable_ = p.min_samples_for_stable;
+    deopt_storm_window_ = p.deopt_storm_window;
+    deopt_storm_threshold_ = p.deopt_storm_threshold;
+    active_preset_ = p;
+}
+
+ShapeProfiler::Preset ShapeProfiler::active_preset() const noexcept {
+    auto lock = shared_lock_();
+    return active_preset_;
+}
+
+std::uint32_t ShapeProfiler::min_samples_for_stable() const noexcept {
+    auto lock = shared_lock_();
+    return min_samples_for_stable_;
+}
+
+std::uint32_t ShapeProfiler::deopt_storm_window() const noexcept {
+    auto lock = shared_lock_();
+    return deopt_storm_window_;
+}
+
+std::uint32_t ShapeProfiler::deopt_storm_threshold() const noexcept {
+    auto lock = shared_lock_();
+    return deopt_storm_threshold_;
+}
+
+void ShapeProfiler::set_max_profiles(std::size_t n) {
+    auto lock = unique_lock_();
+    max_profiles_ = n ? n : 1;
+}
+
+std::size_t ShapeProfiler::max_profiles() const noexcept {
+    auto lock = shared_lock_();
+    return max_profiles_;
+}
+
+std::size_t ShapeProfiler::profile_count() const noexcept {
+    auto lock = shared_lock_();
+    return profiles_.size();
+}
+
+std::uint64_t ShapeProfiler::profile_evictions() const noexcept {
+    auto lock = shared_lock_();
+    return profile_evictions_;
+}
+
+void ShapeProfiler::set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
+    auto lock = unique_lock_();
+    dirty_hook_ = std::move(hook);
+}
+
 void ShapeProfiler::ShapeHistoryRing::push(const ShapeRecord& rec, std::uint32_t window_size) {
     ensure_capacity(window_size);
     if (count < window_size) {
@@ -310,84 +405,96 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     // in shape_profiler.h.
     aura::core::cpp26::record_hotpath_invariant_hit();
     contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
-    // Issue #992: cap profiles before insert.
-    if (profiles_.find(fn) == profiles_.end() && profiles_.size() >= max_profiles_)
-        maybe_evict_profiles_();
-    auto& profile = profiles_[fn];
-    auto& history = profile.history;
-    std::uint64_t now = ++global_time_;
-    profile.last_used = now;
 
-    history.push({shape_id, now}, window_size_);
+    // Issue #2141: unique lock; fire external hooks after unlock.
+    bool fire_stability_loss = false;
+    std::uint64_t fire_version = 0;
+    std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
+    bool result = false;
 
-    profile.total_calls++;
+    {
+        auto lock = unique_lock_();
+        // Issue #992: cap profiles before insert.
+        if (profiles_.find(fn) == profiles_.end() && profiles_.size() >= max_profiles_)
+            maybe_evict_profiles_();
+        auto& profile = profiles_[fn];
+        auto& history = profile.history;
+        std::uint64_t now = ++global_time_;
+        profile.last_used = now;
 
-    // Issue #1468: history_hit/miss counters. Bump hit if profile
-    // existed (which it does after the find/insert above), miss if it
-    // was newly inserted. This is a coarse signal — true hit/miss
-    // would distinguish "shape_id matches dominant" vs not — but
-    // tracking at insertion time is sufficient for agent decision
-    // metrics (warmup vs working-set pressure proxy).
-    history_hit_count_.fetch_add(1, std::memory_order_relaxed);
+        history.push({shape_id, now}, window_size_);
 
-    if (history.size() < kStableThreshold)
-        return false;
+        profile.total_calls++;
 
-    auto dominant = profile.compute_dominant();
-    auto dominant_count = 0;
-    history.for_each([&](const ShapeRecord& rec) {
-        if (rec.shape_id == dominant)
-            dominant_count++;
-    });
+        // Issue #1468: history_hit/miss counters.
+        history_hit_count_.fetch_add(1, std::memory_order_relaxed);
 
-    const auto hist_size = history.size();
-    // Issue #1519: post invariant — dominant_count <= history.size().
-    contract_assert(dominant_count >= 0);
-    contract_assert(static_cast<std::uint32_t>(dominant_count) <= hist_size);
-    double ratio = static_cast<double>(dominant_count) / static_cast<double>(hist_size);
-    contract_assert(ratio >= 0.0 && ratio <= 1.0);
-    if (ratio >= stability_ratio_ && profile.is_stable && profile.stable_shape == dominant) {
-        return true;
-    }
+        if (history.size() < kStableThreshold)
+            return false;
 
-    if (ratio >= stability_ratio_) {
-        if (!profile.is_stable) {
-            shape_stability_hit_count.fetch_add(1, std::memory_order_relaxed);
-        }
-        profile.is_stable = true;
-        profile.stable_shape = dominant;
-        profile.last_metric_time = now;
+        auto dominant = profile.compute_dominant();
+        auto dominant_count = 0;
+        history.for_each([&](const ShapeRecord& rec) {
+            if (rec.shape_id == dominant)
+                dominant_count++;
+        });
+
+        const auto hist_size = history.size();
+        contract_assert(dominant_count >= 0);
+        contract_assert(static_cast<std::uint32_t>(dominant_count) <= hist_size);
+        double ratio = static_cast<double>(dominant_count) / static_cast<double>(hist_size);
         contract_assert(ratio >= 0.0 && ratio <= 1.0);
-        aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
-        return true;
+        if (ratio >= stability_ratio_ && profile.is_stable && profile.stable_shape == dominant) {
+            return true;
+        }
+
+        if (ratio >= stability_ratio_) {
+            if (!profile.is_stable) {
+                shape_stability_hit_count.fetch_add(1, std::memory_order_relaxed);
+            }
+            profile.is_stable = true;
+            profile.stable_shape = dominant;
+            profile.last_metric_time = now;
+            contract_assert(ratio >= 0.0 && ratio <= 1.0);
+            aura::core::cpp26::record_hotpath_invariant_hit();
+            return true;
+        }
+
+        if (profile.is_stable) {
+            mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
+            shape_jit_pass::record_stability_churn_deopt();
+            shape_jit_pass::record_speculative_win_lost();
+            const std::uint64_t epoch = aura::core::current_mutation_epoch();
+            profile.version = epoch > profile.version ? epoch : profile.version + 1;
+            shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+            update_deopt_storm_state_(fn);
+            fire_stability_loss = true;
+            fire_version = profile.version;
+            dirty_hook_copy = dirty_hook_;
+        }
+        profile.is_stable = false;
+        profile.stable_shape = SHAPE_UNKNOWN;
+        result = false;
     }
 
-    if (profile.is_stable) {
-        mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
-        shape_jit_pass::record_stability_churn_deopt();
-        shape_jit_pass::record_speculative_win_lost();
-        const std::uint64_t epoch = aura::core::current_mutation_epoch();
-        profile.version = epoch > profile.version ? epoch : profile.version + 1;
-        shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
-        // Issue #1468: feed deopt-storm detector on stability-loss path.
-        update_deopt_storm_state_(fn);
-        fire_shape_deopt_hook(fn, profile.version, kShapeDirtyScopeStabilityLoss);
-        if (dirty_hook_) {
+    if (fire_stability_loss) {
+        fire_shape_deopt_hook(fn, fire_version, kShapeDirtyScopeStabilityLoss);
+        if (dirty_hook_copy) {
             shape_jit_pass::record_dirty_from_shape();
-            dirty_hook_(fn, kShapeDirtyScopeStabilityLoss);
+            dirty_hook_copy(fn, kShapeDirtyScopeStabilityLoss);
         }
     }
-    profile.is_stable = false;
-    profile.stable_shape = SHAPE_UNKNOWN;
-    return false;
+    return result;
 }
 
 bool ShapeProfiler::is_stable(FnKey fn) const {
+    auto lock = shared_lock_();
     auto it = profiles_.find(fn);
     return it != profiles_.end() && it->second.is_stable;
 }
 
 ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
+    auto lock = shared_lock_();
     auto it = profiles_.find(fn);
     if (it == profiles_.end())
         return SHAPE_UNKNOWN;
@@ -395,6 +502,7 @@ ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
 }
 
 ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
+    auto lock = shared_lock_();
     ShapeSnapshot snap;
     auto it = profiles_.find(fn);
     if (it != profiles_.end()) {
@@ -404,8 +512,8 @@ ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
     return snap;
 }
 
-bool ShapeProfiler::invalidate(FnKey fn) {
-    // The pre (fn != 0) is on the declaration in shape_profiler.h.
+bool ShapeProfiler::invalidate_unlocked_(FnKey fn) {
+    // Caller must hold unique lock on mtx_.
     auto it = profiles_.find(fn);
     if (it == profiles_.end())
         return false;
@@ -421,26 +529,54 @@ bool ShapeProfiler::invalidate(FnKey fn) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
         shape_jit_pass::record_stability_churn_deopt();
         shape_jit_pass::record_speculative_win_lost();
-        // Issue #1621: Shape churn → Arena smart auto-compact closed-loop.
         aura::core::arena_policy::signal_shape_churn();
         aura::core::arena_policy::signal_dirty_cascade();
     }
     const std::uint64_t epoch = aura::core::current_mutation_epoch();
     if (epoch > it->second.version)
         it->second.version = epoch;
-    // Issue #1468: feed deopt-storm detector on every invalidate path.
     update_deopt_storm_state_(fn);
-    fire_shape_deopt_hook(fn, it->second.version, kShapeDirtyScopeInvalidate);
-    if (dirty_hook_) {
-        shape_jit_pass::record_dirty_from_shape();
-        dirty_hook_(fn, kShapeDirtyScopeInvalidate);
+    return was_stable;
+}
+
+bool ShapeProfiler::invalidate(FnKey fn) {
+    // The pre (fn != 0) is on the declaration in shape_profiler.h.
+    bool was_stable = false;
+    std::uint64_t version = 0;
+    bool found = false;
+    std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
+    {
+        auto lock = unique_lock_();
+        auto it = profiles_.find(fn);
+        if (it == profiles_.end())
+            return false;
+        found = true;
+        was_stable = invalidate_unlocked_(fn);
+        it = profiles_.find(fn);
+        if (it != profiles_.end())
+            version = it->second.version;
+        dirty_hook_copy = dirty_hook_;
+    }
+    if (found) {
+        fire_shape_deopt_hook(fn, version, kShapeDirtyScopeInvalidate);
+        if (dirty_hook_copy) {
+            shape_jit_pass::record_dirty_from_shape();
+            dirty_hook_copy(fn, kShapeDirtyScopeInvalidate);
+        }
     }
     return was_stable;
 }
 
 void ShapeProfiler::invalidate_all() noexcept {
-    const auto keys = tracked_fns();
-    mutation_induced_invalidations_.fetch_add(keys.size(), std::memory_order_relaxed);
+    // Collect keys under unique lock, then invalidate each (hook-safe).
+    std::vector<FnKey> keys;
+    {
+        auto lock = unique_lock_();
+        keys.reserve(profiles_.size());
+        for (const auto& [k, _] : profiles_)
+            keys.push_back(k);
+        mutation_induced_invalidations_.fetch_add(keys.size(), std::memory_order_relaxed);
+    }
     for (FnKey fn : keys)
         (void)invalidate(fn);
 }
@@ -453,58 +589,56 @@ void ShapeProfiler::invalidate_all() noexcept {
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
-    // Issue #1621: arena compact is a Shape↔Arena closed-loop edge —
-    // do not re-signal shape_churn (would re-enter compact). Metrics only.
 
-    const auto keys = tracked_fns();
-    if (keys.empty()) {
-        // Still count a compact event so metrics / agents see activity.
-        deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
-        return 0;
-    }
-
-    const std::uint64_t epoch = aura::core::current_mutation_epoch();
+    // Issue #2141: mutate under unique lock; fire hooks after unlock.
+    struct HookWork {
+        FnKey fn;
+        std::uint64_t version;
+    };
+    std::vector<HookWork> hooks_to_fire;
+    std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
     std::uint32_t touched = 0;
-    std::uint32_t preserved = 0;
-    std::uint32_t hooks = 0;
 
-    for (FnKey fn : keys) {
-        auto it = profiles_.find(fn);
-        if (it == profiles_.end())
-            continue;
-        auto& profile = it->second;
-        const bool was_stable = profile.is_stable;
-        // Soft version bump (JIT guards / shape_map notice) without
-        // clearing history or flipping is_stable.
-        profile.version++;
-        if (epoch > profile.version)
-            profile.version = epoch;
-        shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
-        ++touched;
-
-        if (was_stable) {
-            ++preserved;
-            shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
-            arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
+    {
+        auto lock = unique_lock_();
+        if (profiles_.empty()) {
+            deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+            return 0;
         }
 
-        // Fire deopt hook with ArenaCompact scope — JIT may refresh
-        // entries, but deopt-storm ring is intentionally skipped.
-        fire_shape_deopt_hook(fn, profile.version, kShapeDirtyScopeArenaCompact);
-        deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
-        arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
-        ++hooks;
+        const std::uint64_t epoch = aura::core::current_mutation_epoch();
+        dirty_hook_copy = dirty_hook_;
+        hooks_to_fire.reserve(profiles_.size());
 
-        if (dirty_hook_) {
-            shape_jit_pass::record_dirty_from_shape();
-            dirty_hook_(fn, kShapeDirtyScopeArenaCompact);
+        // flat_map iterator yields pair-by-value proxy; use auto&&.
+        for (auto&& [fn, profile] : profiles_) {
+            const bool was_stable = profile.is_stable;
+            profile.version++;
+            if (epoch > profile.version)
+                profile.version = epoch;
+            shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+            ++touched;
+
+            if (was_stable) {
+                shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
+                arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            hooks_to_fire.push_back(HookWork{fn, profile.version});
+            deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+            arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
+            // Explicitly do NOT call update_deopt_storm_state_(fn).
+            deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
         }
-
-        // Explicitly do NOT call update_deopt_storm_state_(fn).
-        deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
     }
 
-    (void)hooks;
+    for (const auto& h : hooks_to_fire) {
+        fire_shape_deopt_hook(h.fn, h.version, kShapeDirtyScopeArenaCompact);
+        if (dirty_hook_copy) {
+            shape_jit_pass::record_dirty_from_shape();
+            dirty_hook_copy(h.fn, kShapeDirtyScopeArenaCompact);
+        }
+    }
     return touched;
 }
 
@@ -517,12 +651,12 @@ double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) n
     shape_fiber_steal_sync_total.fetch_add(1, std::memory_order_relaxed);
     record_shape_fiber_refresh();
 
-    if (clear_compact_only_storm && deopt_storm_active_.load(std::memory_order_acquire)) {
-        // If the deopt ring is empty/sparse relative to threshold, clear
-        // storm so compact+mutate loops do not leave agents stuck in
-        // generic mode after pressure eases.
-        if (deopt_ring_count_ < deopt_storm_threshold_) {
-            deopt_storm_active_.store(false, std::memory_order_release);
+    {
+        auto lock = unique_lock_();
+        if (clear_compact_only_storm && deopt_storm_active_.load(std::memory_order_acquire)) {
+            if (deopt_ring_count_ < deopt_storm_threshold_) {
+                deopt_storm_active_.store(false, std::memory_order_release);
+            }
         }
     }
     return shape_stable_ratio();
@@ -559,11 +693,9 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
     }
 }
 
-// Issue #1468: ratio accessors. Cheap O(profiles_) walks; the
-// shape-profiler is single-threaded so no locking needed. Safe to
-// call from any thread that holds the eval thread's mutex (which
-// is everywhere record_shape / invalidate are called).
+// Issue #1468 / #2141: ratio accessors under shared lock (multi-fiber safe).
 double ShapeProfiler::shape_stable_ratio() const noexcept {
+    auto lock = shared_lock_();
     if (profiles_.empty())
         return 0.0;
     std::uint32_t stable = 0;
@@ -576,6 +708,7 @@ double ShapeProfiler::shape_stable_ratio() const noexcept {
 }
 
 double ShapeProfiler::deopt_rate_per_fn() const noexcept {
+    auto lock = shared_lock_();
     if (profiles_.empty())
         return 0.0;
     std::uint64_t total_deopt = 0;
@@ -596,6 +729,7 @@ double ShapeProfiler::history_hit_rate() const noexcept {
 }
 
 ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
+    auto lock = shared_lock_();
     ShapeFnMetrics m;
     auto it = profiles_.find(fn);
     if (it == profiles_.end())
@@ -628,13 +762,18 @@ ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
 }
 
 void ShapeProfiler::reset() {
+    auto lock = unique_lock_();
     profiles_.clear();
     global_time_ = 0;
     profile_evictions_ = 0;
+    deopt_ring_.clear();
+    deopt_ring_head_ = 0;
+    deopt_ring_count_ = 0;
+    deopt_storm_active_.store(false, std::memory_order_release);
 }
 
 void ShapeProfiler::maybe_evict_profiles_() {
-    // Issue #992: drop oldest last_used profile until under cap.
+    // Caller must hold unique lock. Issue #992: drop oldest last_used.
     while (profiles_.size() >= max_profiles_ && !profiles_.empty()) {
         auto victim = profiles_.begin();
         std::uint64_t oldest = victim->second.last_used;
@@ -650,16 +789,9 @@ void ShapeProfiler::maybe_evict_profiles_() {
 }
 
 std::vector<FnKey> ShapeProfiler::tracked_fns() const {
+    auto lock = shared_lock_();
     std::vector<FnKey> keys;
     keys.reserve(profiles_.size());
-    // Issue #337: std::flat_map iterator's reference
-    // type is `pair<const K&, V&>` (not `pair<const K, V>&`
-    // like unordered_map). The structured-binding
-    // pattern still works (the compiler picks the
-    // right type), but the K binding is a const
-    // reference. We copy it into the local
-    // `keys` vector, which is fine for the FnKey
-    // type (cheap to copy, just an int).
     for (const auto& [k, _] : profiles_)
         keys.push_back(k);
     return keys;
