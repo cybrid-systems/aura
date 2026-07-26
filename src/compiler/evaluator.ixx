@@ -5208,6 +5208,14 @@ public:
     // the full type at the call site.
     std::unique_ptr<aura::compiler::AgentNameTable> agent_names_;
 
+    // Issue #2158: per-Evaluator gate for orch:spawn-agent apply_closure.
+    // Replaces process-static `orch_eval_mu` so multi-CompilerService /
+    // multi-workspace agent workloads can apply concurrently. Single-
+    // Evaluator multi-agent still serializes (AST / closure-heap safety).
+    // parallel-intend keeps its own batch-local eval_mu (out of scope).
+    // Public for tests/orch/test_agent_apply_mutex_2158 concurrent ACs.
+    mutable std::mutex agent_apply_mu_;
+
 private:
     static constexpr std::size_t kMutationAuditRingSize = 64;
     struct MutationAuditEntry {
