@@ -2613,7 +2613,11 @@ public:
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
-    void clear_last_mutate_error() { last_mutate_error_.clear(); }
+    void clear_last_mutate_error() {
+        last_mutate_error_.clear();
+        // Issue #2145: clearing the deny reason also releases Strict hold.
+        clear_strict_mutate_hold();
+    }
     bool has_type_error() const { return !last_mutate_error_.empty(); }
 
     // ── Panic auto-rollback (Issue #39) ─────────────────────
@@ -3087,6 +3091,22 @@ public:
     // Issue #2108: hard-block helper (Moved live roots + AST escape).
     // Returns true if escape detected; sets r.linear_ok / cross_batch flags.
     bool hard_block_cross_batch_linear_escape(typed_audit::InvariantAuditResult& r) noexcept;
+    // Issue #2145: Full/Strict hard-gate — run invariant suite + linear
+    // enforce before Agent sees commit. Returns true if ok to commit.
+    // On fail: sets last_mutate_error_ with format_invariant_deny_reason,
+    // bumps hard_gate_force_rollback_total. Under Strict sandbox, arms
+    // strict_mutate_hold_ until clear_strict_mutate_hold().
+    // Call before return make_bool(true) on mutate primitives (rebind etc.).
+    [[nodiscard]] bool finish_mutate_hard_gate(std::uint64_t nodes_changed = 0,
+                                               bool linear_ops_present = false,
+                                               std::string_view op = "mutate") noexcept;
+    // Strict sandbox: after hard-gate fail, further mutate is denied until clear.
+    [[nodiscard]] bool strict_mutate_hold() const noexcept {
+        return strict_mutate_hold_.load(std::memory_order_relaxed) != 0;
+    }
+    void clear_strict_mutate_hold() noexcept {
+        strict_mutate_hold_.store(0, std::memory_order_relaxed);
+    }
     // Issue #1595: MultiFiberMailbox attach/recv/broadcast path.
     // Returns false when a linear claim in payload fails ownership checks
     // (caller must not deliver). Always runs light StableNodeRef probe.
@@ -4709,6 +4729,8 @@ private:
     // Issue #2105: set while nested Guard / atomic_batch is open so Agents
     // can treat workspace type/linear views as not yet commit-consistent.
     std::atomic<std::uint32_t> txn_dirty_{0};
+    // Issue #2145: Strict sandbox — deny further mutate after hard-gate fail.
+    std::atomic<std::uint32_t> strict_mutate_hold_{0};
     // Issue #1612: refresh_stale_macro_frames invocation count.
     std::atomic<std::uint64_t> macro_refresh_invoke_count_{0};
     // Issue #439: safepoint wait time (sum of all

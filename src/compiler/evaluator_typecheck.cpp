@@ -4,8 +4,9 @@
 module;
 
 #include "observability_metrics.h"
-#include "typed_mutation_audit.h"  // Issue #1614 invariant audit
+#include "typed_mutation_audit.h"  // Issue #1614 / #2145 invariant audit + hard-gate
 #include "security_capabilities.h" // aura_fiber_current_id
+#include "core/sandbox.hh"         // Issue #2145 Strict sandbox hard-gate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
 
@@ -774,6 +775,106 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     if (out_result)
         *static_cast<typed_audit::InvariantAuditResult*>(out_result) = r;
     return r.all_ok();
+}
+
+// ── Issue #2145: Full/Strict hard-gate before mutate commit ───────────
+
+bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear_ops_present,
+                                        std::string_view op) noexcept {
+    using namespace aura::compiler::typed_audit;
+    auto& ac = g_typed_mutation_audit_counters;
+    // Strict hold: deny further mutate until clear_last_mutate_error / clear.
+    if (strict_mutate_hold()) {
+        last_mutate_error_ =
+            format_invariant_deny_reason("strict-hold", capability_tenant_id(), op);
+        ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    const bool strict = aura::core::sandbox::is_strict();
+    if (!requires_invariant_hard_gate(nodes_changed, linear_ops_present, strict)) {
+        ac.hard_gate_sampled_skip_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
+    const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+    const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
+    InvariantAuditResult r{};
+    // Always run type + linear suite under hard gate (not Sampled-gated).
+    const bool inv_ok = run_typed_mutation_invariant_audit(mid, op, 0, epoch, epoch,
+                                                           /*composite_mode=*/false, &r);
+    // Extra: use-after-move / Moved live roots (non-composite still needs this).
+    InvariantAuditResult esc{};
+    if (hard_block_cross_batch_linear_escape(esc)) {
+        r.linear_ok = false;
+        r.cross_batch_linear_escape = true;
+        ac.linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Full path: partial recovery before final deny (#2029).
+    bool ok = inv_ok && r.all_ok() && !esc.cross_batch_linear_escape;
+    if (!ok && (get_strategy() == AuditStrategy::Full || strict)) {
+        ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
+        if (!r.linear_ok || r.cross_batch_linear_escape) {
+            ac.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
+            (void)linear_post_mutate_enforce_all();
+            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                      /*mark_all_linear=*/true);
+        }
+        if (!r.type_ok) {
+            ac.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
+            (void)run_post_mutate_typecheck_no_lock();
+        }
+        if (!r.provenance_ok) {
+            ac.partial_recovery_provenance_total.fetch_add(1, std::memory_order_relaxed);
+            if (workspace_flat_)
+                workspace_flat_->restamp_all_node_generations();
+            (void)restamp_pinned_stable_refs();
+            (void)post_mutation_reflect_validate();
+        }
+        InvariantAuditResult after{};
+        const bool after_ok = run_typed_mutation_invariant_audit(
+            mid, "hard-gate-partial-recover", 0, epoch, epoch, /*composite_mode=*/false, &after);
+        InvariantAuditResult esc2{};
+        if (hard_block_cross_batch_linear_escape(esc2)) {
+            after.cross_batch_linear_escape = true;
+            after.linear_ok = false;
+        }
+        ok = after_ok && after.all_ok() && !esc2.cross_batch_linear_escape;
+        if (ok)
+            ac.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (ok)
+        return true;
+
+    // Deny: Agent-visible error + metrics.
+    std::string_view kind = "invariant";
+    if (r.cross_batch_linear_escape || esc.cross_batch_linear_escape)
+        kind = "linear-escape";
+    else if (!r.linear_ok)
+        kind = "linear";
+    else if (!r.type_ok)
+        kind = "type";
+    else if (!r.provenance_ok)
+        kind = "provenance";
+    last_mutate_error_ = format_invariant_deny_reason(kind, capability_tenant_id(), op);
+    ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    ac.full_strategy_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    ac.typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->typed_mutation_full_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Strict sandbox: hold further mutate until clear.
+    if (strict) {
+        strict_mutate_hold_.store(1, std::memory_order_relaxed);
+        ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Trail: Error outcome for Strict / hard fail (Agent audit surface).
+    capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0,
+                               static_cast<std::uint32_t>(nodes_changed),
+                               static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+    return false;
 }
 
 // ── Issue #2144: Guard-exit selective predicate-memo + occurrence ─────

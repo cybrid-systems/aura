@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -19,9 +20,9 @@
 namespace aura::compiler::typed_audit {
 
 inline constexpr int kTypedMutationAuditPassPhase =
-    6; // #2029 Full per-category partial recover (lineage #2027)
+    7; // #2145 Full/Strict hard-gate (lineage #2029 / #1894)
 inline constexpr int kTypedMutationAuditIssue =
-    1894; // lineage 1614 / 1589; AOT #1882; #2027/#2029 satellite
+    2145; // lineage 1894 / 1614 / 1589; AOT #1882; #2027/#2029 satellite
 // Issue #2053: production multi-tenant AI — stronger audit defaults.
 inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
@@ -106,6 +107,12 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> blame_propagation_miss_total{0};
     std::atomic<std::uint64_t> full_strategy_force_rollback_total{0};
     std::atomic<std::uint64_t> contextual_force_audit_total{0};
+    // Issue #2145: Full/Strict hard-gate (always-run suite + force rollback).
+    std::atomic<std::uint64_t> hard_gate_audits_total{0};
+    std::atomic<std::uint64_t> hard_gate_force_rollback_total{0};
+    std::atomic<std::uint64_t> hard_gate_strict_hold_total{0};
+    std::atomic<std::uint64_t> hard_gate_sampled_skip_total{0};
+    std::atomic<std::uint32_t> hard_gate_wired{1};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
     std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
     std::atomic<std::uint64_t> aot_hotupdate_audits{0};
@@ -258,6 +265,33 @@ inline void apply_dev_audit_defaults() noexcept {
         return true;
     }
     return should_audit(mutation_id);
+}
+
+// Issue #2145 Phase A — hard-gate policy:
+//   Full strategy OR Strict sandbox OR linear_ops OR nodes_changed >= N
+// → always run post_mutation_invariant_check + linear_post_mutate_enforce*
+//   and force-rollback on fail (after #2029 partial recovery).
+// Sampled + small non-linear dirty → soft path (perf; AC3).
+// Off sandbox / Off strategy → no hard gate (AC4).
+[[nodiscard]] inline bool requires_invariant_hard_gate(std::uint64_t nodes_changed,
+                                                       bool linear_ops_present,
+                                                       bool strict_sandbox) noexcept {
+    const auto s = get_strategy();
+    if (s == AuditStrategy::Off)
+        return false;
+    if (s == AuditStrategy::Full || strict_sandbox)
+        return true;
+    // Sampled: contextual force only.
+    const auto force_n =
+        production_defaults_active() ? kAuditForceNodesChangedProduction : kAuditForceNodesChanged;
+    return linear_ops_present || nodes_changed >= force_n;
+}
+
+// Issue #2145: Agent-stable deny reason (mirror #2076 format_deny_reason shape).
+// Shape: "invariant-denied: <kind> tenant=<id> op=<op>"
+[[nodiscard]] inline std::string
+format_invariant_deny_reason(std::string_view kind, std::uint64_t tenant_id, std::string_view op) {
+    return std::format("invariant-denied: {} tenant={} op={}", kind, tenant_id, op);
 }
 
 [[nodiscard]] inline MutationKind classify_kind(std::string_view op) noexcept {
@@ -696,6 +730,13 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.contextual_force_audit_total.store(0,
                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_audits_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_force_rollback_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_strict_hold_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_wired.store(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_attempts.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_audits.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_ok.store(0, std::memory_order_relaxed);
