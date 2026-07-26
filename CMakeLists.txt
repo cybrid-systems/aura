@@ -1792,6 +1792,11 @@ add_dependencies(all_test_issue_targets test_macro_intro_restamp)
 aura_add_issue_test(test_macro_schema_dirty_propagate)
 aura_issue_test_link_llvm_jit(test_macro_schema_dirty_propagate)
 add_dependencies(all_test_issue_targets test_macro_schema_dirty_propagate)
+# Issue #2097: per-fiber hygiene metrics for Agent query under
+# concurrent self-evo / fiber-steal (refine Macro Hygiene review §7.2).
+aura_add_issue_test(test_macro_fiber_hygiene)
+aura_issue_test_link_llvm_jit(test_macro_fiber_hygiene)
+add_dependencies(all_test_issue_targets test_macro_fiber_hygiene)
 
 # Issue #2020: Agent-visible reflect:hygiene-stats + provenance-blame.
 aura_add_issue_test(test_reflect_hygiene_agent_diagnostics)

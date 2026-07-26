@@ -936,6 +936,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> blame_hygiene_frames_total{0};
     // Issue #1877: per-CompilerMetrics mirror of hygiene→provenance stamps.
     std::atomic<std::uint64_t> macro_hygiene_provenance_hits_total{0};
+    // Issue #2097: per-fiber hygiene query counters (Agent-throttlable
+    // observability under concurrent self-evo / fiber-steal). Process-wide
+    // cumulative — the per-fiber-id keyed snapshot lives in macro_expansion.cpp's
+    // g_fiber_hygiene_map + get_fiber_hygiene_metrics(fiber_id) accessor).
+    std::atomic<std::uint64_t> fiber_hygiene_query_total{0};
+    std::atomic<std::uint64_t> fiber_hygiene_violation_per_fiber_total{0};
     // Issue #2037: MacroIntroduced mutate hotpath (replace-pattern /
     // query-and-replace) closed-loop hygiene.
     //   - hygiene_mutate_restamp_total: allowed MacroIntroduced mutates

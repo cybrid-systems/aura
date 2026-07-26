@@ -320,6 +320,41 @@ std::atomic<std::uint64_t> g_macro_clone_concurrent_peak{0};
 std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0};
 std::atomic<std::uint64_t> g_hygiene_tracer_expansions{0};
 std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0};
+// Issue #2097: per-fiber hygiene metrics for Agent query under concurrent
+// self-evo / fiber-steal. Mutex-guarded; populated only on expand entry/exit
+// + violation path bumps (same hot path that already bumps the global atomics).
+// Zero-cost-when-not-requested: hash lookups amortized, queries that don't
+// pass a fiber_id see nothing. #2018 rest-param gensym-map-size is left at
+// 0 here (placeholder for forward compat; future rest-param tracker can
+// bump it on pre-scan entry).
+namespace {
+    inline std::mutex g_fiber_hygiene_mu{};
+}
+inline std::unordered_map<std::uint32_t, FiberHygieneStats> g_fiber_hygiene_map{};
+inline std::atomic<std::uint64_t> g_fiber_hygiene_query_total{0};
+inline std::atomic<std::uint64_t> g_fiber_hygiene_violation_per_fiber_total{0};
+
+inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    g_fiber_hygiene_map[fiber_id].depth = depth;
+}
+inline void bump_fiber_hygiene_on_violation(std::uint32_t fiber_id) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    g_fiber_hygiene_map[fiber_id].violations += 1;
+    g_fiber_hygiene_violation_per_fiber_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id) noexcept {
+    // Issue #2097: on exit we don't remove the entry — keep last snapshot
+    // for agent diagnostic. depth zeroed so re-entry bumps cleanly.
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    g_fiber_hygiene_map[fiber_id].depth = 0;
+}
+FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
+    g_fiber_hygiene_query_total.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    auto it = g_fiber_hygiene_map.find(fiber_id);
+    return it == g_fiber_hygiene_map.end() ? FiberHygieneStats{} : it->second;
+}
 // Issue #1652: clone_macro_body expand observability counters (paired with
 // #1611 MacroIntroduced hygiene gate). Bumped at the success path +
 // early-return hygiene-violation paths inside clone_macro_body. Exposed via
@@ -388,6 +423,13 @@ std::uint64_t aura_macro_clone_in_flight_v_read() noexcept {
 std::uint64_t aura_hygiene_tracer_depth_max_v_read() noexcept {
     return g_hygiene_tracer_depth_max.load(std::memory_order_relaxed);
 }
+// Issue #2097: per-fiber hygiene query counter (Agent-throttlable).
+std::uint64_t aura_fiber_hygiene_query_total_v_read() noexcept {
+    return g_fiber_hygiene_query_total.load(std::memory_order_relaxed);
+}
+std::uint64_t aura_fiber_hygiene_violation_per_fiber_total_v_read() noexcept {
+    return g_fiber_hygiene_violation_per_fiber_total.load(std::memory_order_relaxed);
+}
 std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept {
     return g_macro_clone_concurrent_fiber_total.load(std::memory_order_relaxed);
 }
@@ -430,6 +472,13 @@ void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
     // and (engine:metrics) views for rest-param + nested qq visibility).
     m->macro_schema_cache_dirty_stamped_total.store(
         g_macro_schema_cache_dirty_stamped_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    // Issue #2097: mirror per-fiber hygiene query counters into CompilerMetrics
+    // for (engine:metrics) views + (query:macro-fiber-hygiene) primitive.
+    m->fiber_hygiene_query_total.store(g_fiber_hygiene_query_total.load(std::memory_order_relaxed),
+                                       std::memory_order_relaxed);
+    m->fiber_hygiene_violation_per_fiber_total.store(
+        g_fiber_hygiene_violation_per_fiber_total.load(std::memory_order_relaxed),
         std::memory_order_relaxed);
 }
 } // extern "C"
@@ -474,6 +523,7 @@ aura::ast::NodeId clone_macro_body(
     // re-entries on the same thread). Peak is visible via query/metrics.
     struct ConcurrentCloneGuard {
         bool armed = false;
+        std::uint32_t captured_fiber_id = 0;
         ConcurrentCloneGuard() noexcept {
             if (s_hygiene_depth != 0)
                 return;
@@ -483,10 +533,23 @@ aura::ast::NodeId clone_macro_body(
             while (n > peak && !g_macro_clone_concurrent_peak.compare_exchange_weak(
                                    peak, n, std::memory_order_relaxed)) {
             }
+            // Issue #2097: capture fiber-id for per-fiber hygiene snapshot.
+            // Top-level entry only (nested recursion on the same thread
+            // already inherited depth from the outermost call). The per-fiber
+            // map is keyed by fiber-id, so two concurrent top-level expand
+            // calls on different fibers get independent snapshots (AC1).
+            captured_fiber_id = aura_fiber_current_id();
+            if (captured_fiber_id != 0)
+                bump_fiber_hygiene_on_enter(captured_fiber_id, s_hygiene_depth);
         }
         ~ConcurrentCloneGuard() noexcept {
-            if (armed)
+            if (armed) {
                 g_macro_clone_in_flight.fetch_sub(1, std::memory_order_relaxed);
+                // Issue #2097: zero per-fiber depth on exit (violations
+                // persist for agent diagnostic; depth re-bumps on entry).
+                if (captured_fiber_id != 0)
+                    bump_fiber_hygiene_on_exit(captured_fiber_id);
+            }
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
@@ -578,6 +641,9 @@ aura::ast::NodeId clone_macro_body(
             // Issue #1652: paired bump — depth exceeded is a hygiene violation
             // against the macro expand contract. Bump the new g_* counter.
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2097: per-fiber hygiene violation snapshot (zero-cost
+            // when not requested; live fiber-id here gives per-fiber attribution).
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
             if (depth_limit < MAX_HYGIENE_DEPTH)
                 g_macro_self_evo_depth_clamp_total.fetch_add(1, std::memory_order_relaxed);
             const char* origin = (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced)
@@ -606,6 +672,8 @@ aura::ast::NodeId clone_macro_body(
         // Issue #1652: paired bump — invalid body_id is a hygiene violation
         // (caller passed an out-of-range NodeId for the macro body).
         g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2097: per-fiber hygiene violation snapshot.
+        bump_fiber_hygiene_on_violation(aura_fiber_current_id());
         return NULL_NODE;
     }
     auto v = source.get(body_id);

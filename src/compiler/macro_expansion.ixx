@@ -91,6 +91,12 @@ export extern std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total;
 // stamp counter (clone_macro_body walk visibility for rest-param
 // + nested qq + schema_cache copy paths).
 export extern std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total;
+// Issue #2097: per-fiber hygiene query counters (Agent-throttlable
+// surface under concurrent self-evo / fiber-steal; #2021's depth /
+// concurrent counters are process-wide; #2097 adds per-fiber-id keyed
+// map + per-fiber query counters).
+export extern std::atomic<std::uint64_t> g_fiber_hygiene_query_total;
+export extern std::atomic<std::uint64_t> g_fiber_hygiene_violation_per_fiber_total;
 
 // Issue #2023: MacroSelfEvo capability gate observability.
 export extern std::atomic<std::uint64_t> g_macro_self_evo_denied_total;
@@ -105,6 +111,23 @@ export struct MacroExpansionDef {
     aura::ast::StringPool* pool = nullptr;
     aura::ast::NodeId body_id = aura::ast::NULL_NODE;
 };
+
+// Issue #2097: per-fiber hygiene metrics for Agent query under concurrent
+// self-evo / fiber-steal. Each fiber's expansion state (depth snapshot,
+// hygiene violations observed on that fiber, gensym map occupancy) is
+// kept per-fiber-id so Agents can throttle / diagnose without log scraping.
+// Zero-cost when fiber_id not requested — the per-fiber map is only
+// populated on expand entry/exit events (same hot path that already bumps
+// the global atomics); the hash lookup is amortized.
+export struct FiberHygieneStats {
+    int depth = 0;
+    std::uint64_t violations = 0;
+    std::size_t gensym_map_size = 0;
+};
+
+// Snapshot a fiber's accumulated hygiene state. Returns a default-constructed
+// FiberHygieneStats (all zeros) if the fiber_id has no recorded expand events.
+export [[nodiscard]] FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept;
 
 // Clone a FlatAST subtree with optional param substitution and
 // hygienic renaming (name_map). hyg_ctr is per-call (instance-local).
