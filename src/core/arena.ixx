@@ -1586,6 +1586,23 @@ public:
             arena->reset();
     }
 
+    // Issue #2170: expose primary arena's id + generation for the unified
+    // LayoutStamp capture (boundary / compact / AOT emit publishers).
+    // Returns false if the group is empty (caller treats as "no arena",
+    // the LayoutStamp field stays 0 = unset sentinel matching the
+    // lifetime_pin.hh / workspace_epoch.hh convention). Uses shared_lock
+    // (concurrent reads; primary-lookup is a cheap map walk).
+    [[nodiscard]] bool primary_arena_id_and_gen(std::uint64_t& out_id,
+                                                std::uint64_t& out_gen) const noexcept {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        if (arenas_.empty())
+            return false;
+        const auto& arena = arenas_.begin()->second;
+        out_id = arena->arena_id();
+        out_gen = arena->generation();
+        return true;
+    }
+
     // Issue #187 (P0): compact a specific module's arena. Returns
     // bytes reclaimed, or 0 if the module isn't found.
     [[nodiscard]] std::size_t compact_module(const std::string& name) {

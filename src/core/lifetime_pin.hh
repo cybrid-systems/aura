@@ -10,6 +10,8 @@
 #include <mutex>
 #include <vector>
 
+#include "layout_stamp.hh" // Issue #2170: LayoutStamp validate overload
+
 namespace aura::core::lifetime {
 
 inline constexpr int kLifetimePinPhase = 2;
@@ -112,6 +114,22 @@ public:
         if (arena_id_ != 0 && cur_arena_id != 0 && arena_id_ != cur_arena_id)
             return false;
         return gen_ == cur_gen;
+    }
+
+    // Issue #2170: LayoutStamp overload — unified freshness check.
+    // Per #2170 ("document which fields pin uses — arena_gen + arena_id
+    // only"), the pin only consults arena_gen + arena_id out of the 6
+    // stamp fields. Other fields (flat_gen / mutation_epoch / env_gen
+    // / defuse_version) are not part of pin validity — they describe
+    // the surrounding mutation boundary / AOT emit context, but the
+    // pin itself only survives an arena compact. Matches the existing
+    // 2-arg validate() semantics exactly.
+    [[nodiscard]] bool validate(const aura::core::LayoutStamp& stamp) const noexcept {
+        if (!ptr_)
+            return false;
+        if (arena_id_ != 0 && stamp.arena_id != 0 && arena_id_ != stamp.arena_id)
+            return false;
+        return gen_ == stamp.arena_gen;
     }
 
     void restamp(std::uint64_t new_gen = 0, std::uint64_t new_arena_id = 0) noexcept {

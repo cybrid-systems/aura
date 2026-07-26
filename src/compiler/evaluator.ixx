@@ -7,6 +7,7 @@
 module;
 
 #include "../core/persistent_child_vector.hh"
+#include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp decls in evaluator
 // Issue #441 (rolled into #450): bump_primitive_call_count
 // needs the CompilerMetrics struct (defined in
 // observability_metrics.h). observability_metrics.h is a
@@ -11815,6 +11816,26 @@ public:
     // Test / observability accessors.
     [[nodiscard]] std::size_t hygiene_checkpoint_pending_count() const noexcept;
     void clear_hygiene_checkpoints() noexcept;
+
+    // Issue #2170: LayoutStamp / unified generation truth-source API.
+    // Captures all 6 cross-subsystem epoch fields in a single acquire
+    // burst (per-AST arena_id+arena_gen, per-FlatAST flat_gen,
+    // process-global mutation_epoch from workspace_epoch.hh,
+    // per-Evaluator env_gen + defuse_version). The single source of
+    // truth that boundary dtor + live_compact + AOT emit + FFI
+    // validate should all read from instead of each picking a
+    // different "current" value (per #2170 problem statement).
+    [[nodiscard]] aura::core::LayoutStamp current_layout_stamp() const noexcept;
+    // Publish the stamp at boundary exit / live_compact completion;
+    // bumps layout_stamp_publish_total + writes last-stamp fields.
+    // Returns the captured stamp for chainable observability wiring.
+    aura::core::LayoutStamp publish_layout_stamp() noexcept;
+    // Bumpers + getters backing the layout-stamp-* keys in
+    // (query:stable-ref-stats-hash).
+    void bump_layout_stamp_publish_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_layout_stamp_last_arena_gen() const noexcept;
+    [[nodiscard]] std::uint64_t get_layout_stamp_last_flat_gen() const noexcept;
+    [[nodiscard]] std::uint64_t get_layout_stamp_publish_total() const noexcept;
     // Bumpers backing the (query:hygiene-checkpoint-stats) primitive
     // (schema = 2099). Cross-fiber reject is a *subset* of restore_fail
     // (also bumped) for easy dashboard drill-down.
