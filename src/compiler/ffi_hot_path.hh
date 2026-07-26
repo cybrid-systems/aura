@@ -29,6 +29,9 @@ struct FFIBatchHotPathStats {
     std::atomic<std::uint64_t> batch_dispatch_total{0};
     std::atomic<std::uint64_t> invoke_total{0};
     std::atomic<std::uint64_t> invoke_skip_total{0}; // resolved but ABI not invocable
+    // Issue #2136: Render effect gate denials on FFI batch hand-off.
+    std::atomic<std::uint64_t> effect_denied_render_total{0};
+    std::atomic<std::uint64_t> effect_granted_render_total{0};
 };
 
 inline FFIBatchHotPathStats& g_ffi_hot_path_stats() noexcept {
@@ -140,10 +143,20 @@ struct FFIBatchHotPath {
     // Core dispatch: check likely(cached_sig_match) → direct call; else slow path.
     // `resolved_fn` / `abi` come from the slow-path resolver on miss (or known on first call).
     // On hit, uses cached ptr/abi (ignores resolved_fn unless null cache).
+    //
+    // Issue #2136: `render_effect_ok` must be true (caller ran require_effect(Render)
+    // or sandbox Off). When false, no side-effect invoke occurs; counters bump.
     [[nodiscard]] std::int64_t dispatch_batch(std::uint64_t sig_hash, void* resolved_fn,
-                                              RenderFfiAbi abi,
-                                              std::span<const std::int64_t> args) noexcept {
+                                              RenderFfiAbi abi, std::span<const std::int64_t> args,
+                                              bool render_effect_ok = true) noexcept {
         g_ffi_hot_path_stats().batch_dispatch_total.fetch_add(1, std::memory_order_relaxed);
+        if (!render_effect_ok) {
+            g_ffi_hot_path_stats().effect_denied_render_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            g_ffi_hot_path_stats().invoke_skip_total.fetch_add(1, std::memory_order_relaxed);
+            return -1;
+        }
+        g_ffi_hot_path_stats().effect_granted_render_total.fetch_add(1, std::memory_order_relaxed);
 
         const auto cached_h = cached_sig_hash.load(std::memory_order_acquire);
         const auto cached_fn = cached_func_ptr.load(std::memory_order_acquire);
@@ -162,11 +175,11 @@ struct FFIBatchHotPath {
 
     // Convenience: hash name+sig, dispatch.
     [[nodiscard]] std::int64_t dispatch_named(std::string_view name, std::string_view signature,
-                                              void* resolved_fn,
-                                              std::span<const std::int64_t> args) noexcept {
+                                              void* resolved_fn, std::span<const std::int64_t> args,
+                                              bool render_effect_ok = true) noexcept {
         const auto h = ffi_sig_hash(name, signature);
         const auto abi = abi_from_signature(signature);
-        return dispatch_batch(h, resolved_fn, abi, args);
+        return dispatch_batch(h, resolved_fn, abi, args, render_effect_ok);
     }
 
     void clear_cache() noexcept {
@@ -190,6 +203,8 @@ struct FFIBatchHotPathSnapshot {
     std::uint64_t batch_dispatch_total = 0;
     std::uint64_t invoke_total = 0;
     std::uint64_t invoke_skip_total = 0;
+    std::uint64_t effect_denied_render_total = 0;  // #2136
+    std::uint64_t effect_granted_render_total = 0; // #2136
     int phase = kFfiHotPathPhase;
 };
 
@@ -201,6 +216,8 @@ struct FFIBatchHotPathSnapshot {
         s.batch_dispatch_total.load(std::memory_order_relaxed),
         s.invoke_total.load(std::memory_order_relaxed),
         s.invoke_skip_total.load(std::memory_order_relaxed),
+        s.effect_denied_render_total.load(std::memory_order_relaxed),
+        s.effect_granted_render_total.load(std::memory_order_relaxed),
         kFfiHotPathPhase,
     };
 }
@@ -212,6 +229,8 @@ inline void reset_ffi_hot_path_for_test() noexcept {
     s.batch_dispatch_total.store(0, std::memory_order_relaxed);
     s.invoke_total.store(0, std::memory_order_relaxed);
     s.invoke_skip_total.store(0, std::memory_order_relaxed);
+    s.effect_denied_render_total.store(0, std::memory_order_relaxed);
+    s.effect_granted_render_total.store(0, std::memory_order_relaxed);
     global_ffi_batch_hot_path().clear_cache();
 }
 

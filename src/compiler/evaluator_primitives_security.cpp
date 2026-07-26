@@ -315,6 +315,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       m ? static_cast<std::int64_t>(
                               m->capability_denial_ffi_total.load(std::memory_order_relaxed))
                         : 0);
+            // Issue #2136: Render effect deny / grant (batch + FFI matrix)
+            insert_kv("denial-render",
+                      m ? static_cast<std::int64_t>(
+                              m->effect_denied_render_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("render-effect-granted",
+                      m ? static_cast<std::int64_t>(
+                              m->render_effect_granted_total.load(std::memory_order_relaxed))
+                        : 0);
             insert_kv("provenance-records",
                       m ? static_cast<std::int64_t>(
                               m->sandbox_provenance_records_total.load(std::memory_order_relaxed))

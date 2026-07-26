@@ -23,6 +23,7 @@
 #include "primitives_meta.h"
 #include "runtime_shared.h"
 #include "hash_meta.h"
+#include "security_capabilities.h"
 #include "terminal_buffer_registry.hh"
 #include <string>
 #include <vector>
@@ -59,9 +60,11 @@ inline constexpr int kPrimCaptureContractVersion = 2;
         .schema = SCHEMA, .security_level = static_cast<std::uint8_t>(SECURITY)                    \
     }
 
-// Issue #1317/#1563: high-perf render primitive template — perf_tier=hot,
+// Issue #1317/#1563/#2136: high-perf render primitive template — perf_tier=hot,
 // category=rendering, render_critical + stable_hot_path (deopt throttle).
 // safety includes I/O (+ optional fiber). Agents use this for terminal/draw.
+// Issue #2136: required_effects=kEffectRender so invoke_prim_with_telemetry
+// enforces require_effect(Render) when capability checking is enabled.
 #define RENDER_PRIMITIVE_META(ARITY, DOC, SCHEMA)                                                  \
     ::aura::compiler::PrimMeta {                                                                   \
         .arity = static_cast<std::uint8_t>(ARITY), .pure = false,                                  \
@@ -69,7 +72,8 @@ inline constexpr int kPrimCaptureContractVersion = 2;
                                                   ::aura::compiler::kPrimSafetyFiber),             \
         .perf_tier = ::aura::compiler::kPrimPerfHot,                                               \
         .security_level = ::aura::compiler::kPrimSecSandboxed, .render_critical = true,            \
-        .stable_hot_path = true, .doc = DOC, .category = "rendering", .schema = SCHEMA             \
+        .stable_hot_path = true, .required_effects = ::aura::compiler::security::kEffectRender,    \
+        .doc = DOC, .category = "rendering", .schema = SCHEMA                                      \
     }
 
 // Issue #498: use Evaluator::prim_registrar_with_meta() as register_with_spec.

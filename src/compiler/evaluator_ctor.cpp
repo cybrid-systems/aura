@@ -106,6 +106,20 @@ Evaluator::Evaluator() {
 
     build_primitive_slots();
 
+    // Issue #2136: stamp Effect::Render on FFI render batch hand-off prims so
+    // invoke_prim_with_telemetry enforces require_effect before any C backend call.
+    // Must run after build_primitive_slots() so slot_for_name resolves.
+    {
+        const char* render_ffi_names[] = {"c-render-call", "c-render-draw", "c-present-batch",
+                                          "c-ansi-emit", "c-render-bind"};
+        for (const char* n : render_ffi_names) {
+            PrimMeta m = RENDER_PRIMITIVE_META(
+                255, "Render FFI batch / bind entry (#2136 Effect::Render gate).",
+                "([string|int] ...) -> int|bool");
+            primitives_.set_meta_for_name(n, std::move(m));
+        }
+    }
+
     primitives_detail::register_network_primitives(prim_registrar(), *this);
 
     // Issues #1331–#1343 Phase 1: TUI pixel/cell rendering surface.

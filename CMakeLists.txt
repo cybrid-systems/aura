@@ -2337,6 +2337,10 @@ aura_issue_test_link_llvm_jit(test_tui_batch_draw_present_2134)
 aura_add_issue_test(test_zero_copy_present_default_2135)
 aura_issue_test_link_llvm_jit(test_zero_copy_present_default_2135)
 
+# Issue #2136: Render effect gate on batch draw/present + FFI hot-path hand-off.
+aura_add_issue_test(test_render_effect_gate_2136)
+aura_issue_test_link_llvm_jit(test_render_effect_gate_2136)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

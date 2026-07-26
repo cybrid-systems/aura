@@ -5550,10 +5550,24 @@ public:
             if (slot < primitives_.slot_count()) {
                 const auto& meta = primitives_.meta_for_slot(slot);
                 // Issue #1676: render-critical / rendering+hot fast path —
-                // trusted tier skips capability gate + deprecation tax.
-                // Security is enforced at sandbox boundary; present/draw
-                // must not re-pay slot security checks every frame.
+                // trusted tier skips string capability / deprecation tax.
+                // Issue #2136: still enforce PrimMeta.required_effects (Render)
+                // when capability checking is enabled (Restricted/Strict) —
+                // bit check only; Off sandbox keeps zero-cost present.
                 if (is_render_critical_meta(meta)) {
+                    if (meta.required_effects != 0 && !meta.security_exempt &&
+                        !meta.effect_enforced_in_body && effect_sandbox_mode() != 0) {
+                        if (!require_effect(meta.required_effects, name)) {
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                            }
+                            return primitives_detail::make_primitive_error(
+                                string_heap_, error_values_,
+                                security::format_deny_reason(meta.required_effects,
+                                                             capability_tenant_id_, name),
+                                primitive_error_counter_ptr());
+                        }
+                    }
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                         m->render_hotpath_dispatch_fast_total.fetch_add(1,
                                                                         std::memory_order_relaxed);

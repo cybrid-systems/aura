@@ -41,12 +41,28 @@ inline void apply_aura_sandbox_env() noexcept {
     g_workspace_isolation().set_strict_sandbox_linked(mode == 2);
 }
 
+// Issue #2136: permanent Render effect for the kernel principal (tenant 0).
+// Ordinary multi-tenant Agents must acquire "render" (or wildcard) explicitly.
+// Called from production defaults so unrestricted host/REPL paths keep working
+// under Restricted sandbox without silent grant to foreign tenants.
+inline void grant_render_kernel_principal() noexcept {
+    using namespace ::aura::core::capability;
+    EffectProvenance prov{};
+    prov.epoch = 1;
+    prov.mutation_id = 1;
+    // Name "render-kernel" is Agent-discoverable; effects include Render.
+    g_capability_registry().grant(/*tenant=*/0, "render-kernel", Effect::Render, prov);
+    // Also grant the canonical cap name so has_capability("render") is true.
+    g_capability_registry().grant(/*tenant=*/0, "render", Effect::Render, prov);
+}
+
 // Issue #2053: production multi-tenant AI security defaults (single entry).
 // Applies (in order):
 //   1. AURA_SANDBOX → Restricted (default) | off | strict  (#2076)
 //   2. AURA_MULTI_TENANT=1|true|yes → escalate to Strict
 //   3. TypedMutationAudit Full (or AURA_TYPED_AUDIT=sampled|off|full)
 //   4. AURA_MUTATION_AUDIT_WAL or AURA_PERSIST_DIR → enable WAL when set
+//   5. Kernel principal (tenant 0) holds permanent Render (#2136)
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
@@ -113,6 +129,12 @@ inline void apply_production_security_defaults() noexcept {
             (void)g_mutation_audit_wal().enable(std::string_view(wal), nullptr, 0);
         }
     }
+
+    // 5) Issue #2136: kernel principal (tenant 0) always holds Render under
+    //    production sandbox so host/REPL terminal I/O keeps working while
+    //    multi-tenant Agents still need an explicit grant.
+    if (!dev_off)
+        grant_render_kernel_principal();
 }
 
 } // namespace aura::compiler::security
