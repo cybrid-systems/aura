@@ -211,8 +211,16 @@ private:
     // (touched_roots snapshot + cross-delta CONFLICT detection).
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
     std::function<void()> on_cross_delta_conflict_;
+    // Issue #2146: adaptive clean-reverify budget (base + dirty impact).
     static constexpr std::size_t kReverifyCleanScanLimit = 256;
     static constexpr std::size_t kReverifyCleanScanMax = 4096;
+
+public:
+    // Issue #2146: expose base/max for Agent / tests (schema + AC1).
+    static constexpr std::size_t kReverifyCleanScanLimitPublic = kReverifyCleanScanLimit;
+    static constexpr std::size_t kReverifyCleanScanMaxPublic = kReverifyCleanScanMax;
+
+private:
     std::uint64_t active_mutation_id_ = 0;
     // Issue #1529: active occurrence / affected node context stamped
     // onto add_delta constraints (predicate + NodeId sequence).
@@ -229,8 +237,12 @@ private:
     // so record_cross_delta_blame_hit can mark truncated chains.
     bool last_reverify_truncated_ = false;
     std::size_t last_reverify_unscanned_ = 0;
+    // Issue #2146: last effective_reverify_limit() observed by reverify.
+    std::size_t last_reverify_limit_used_ = kReverifyCleanScanLimit;
     // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
     bool force_next_delta_timeout_ = false;
+    // Issue #2146: test-only reverify limit pin (0 = adaptive).
+    std::size_t force_reverify_limit_ = 0;
     void note_touched_var(aura::core::TypeId id);
     [[nodiscard]] std::uint32_t union_find_rep_index(aura::core::TypeId id) const;
     [[nodiscard]] int constraint_reverify_priority(std::size_t idx) const;
@@ -302,10 +314,22 @@ public:
     void force_next_delta_timeout_for_test(bool v = true) noexcept {
         force_next_delta_timeout_ = v;
     }
+    // Issue #2146: pin clean-reverify scan limit for truncation tests
+    // (0 = use adaptive effective_reverify_limit). Production leaves 0.
+    void force_reverify_limit_for_test(std::size_t lim = 0) noexcept {
+        force_reverify_limit_ = lim;
+    }
     [[nodiscard]] bool last_reverify_truncated() const noexcept { return last_reverify_truncated_; }
     [[nodiscard]] std::size_t last_reverify_unscanned() const noexcept {
         return last_reverify_unscanned_;
     }
+    // Issue #2146: last adaptive reverify scan limit used by
+    // reverify_clean_constraints_for_touched (Agent / tests).
+    [[nodiscard]] std::size_t last_reverify_limit_used() const noexcept {
+        return last_reverify_limit_used_;
+    }
+    // Issue #2146: public adaptive budget (base 256 + dirty/occ/let-poly/pending).
+    [[nodiscard]] std::size_t reverify_limit() const noexcept { return effective_reverify_limit(); }
     // Issue #536: wire solve_delta touched_roots snapshot +
     // cross-delta conflict hooks to Evaluator counters.
     void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,

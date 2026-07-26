@@ -2384,6 +2384,10 @@ aura_issue_test_link_llvm_jit(test_guard_exit_occurrence_refresh_2144)
 aura_add_issue_test(test_hard_gate_full_strict_2145)
 aura_issue_test_link_llvm_jit(test_hard_gate_full_strict_2145)
 
+# Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
+aura_add_issue_test(test_adaptive_reverify_limit_2146)
+aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
