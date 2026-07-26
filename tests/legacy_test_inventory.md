@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 449 | Preferred destination suites |
-| **Total scanned** | **449** | |
+| `tests/core/test_*.cpp` | 450 | Preferred destination suites |
+| **Total scanned** | **450** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 46 | 46 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 47 | 47 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 127 | 127 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 44 | 44 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
@@ -292,6 +292,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_gc_compact_batch.cpp`
 - `tests/serve/test_gc_compact_sweep_batch.cpp`
 - `tests/compiler/test_gc_coord_scope_2131.cpp`
+- `tests/core/test_gc_defer_render_pin_2160.cpp`
 - `tests/core/test_gc_evaluator_integration.cpp`
 - `tests/serve/test_gc_mark_size_inject_2084.cpp`
 - `tests/compiler/test_grant_epoch_fiber_bind_2055.cpp`
@@ -634,13 +635,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (46)
+### `arena_compaction` — Arena / compaction / GC (47)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (46)
+#### domain/ (47)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -666,6 +667,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_gc_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_batch.cpp — GC compact family batch driver.
 - `tests/serve/test_gc_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_sweep_batch.cpp — GC compact sweep batch driver.
 - `tests/compiler/test_gc_coord_scope_2131.cpp` (#2131) [domain_suite, theme_compiler] — AC1: source cites #2131; GcCoordScope + PrePin/Cascade/PostAudit order
+- `tests/core/test_gc_defer_render_pin_2160.cpp` (#2160) [domain_suite, theme_core] — (arm/release on render hotpath + should_defer + stats).
 - `tests/core/test_gc_evaluator_integration.cpp` (—) [domain_suite, theme_core] — test_gc_evaluator_integration.cpp — Issue #113 verification
 - `tests/serve/test_gc_mark_size_inject_2084.cpp` (#2084) [domain_suite, theme_serve] — AC1: mark_from_roots with injected sizes → MarkBitVector size == heap size
 - `tests/compiler/test_grant_epoch_retain_window_2154.cpp` (#2154) [domain_suite, theme_compiler] — AC1: K=0 → no auto advance (identical to #2074 manual-only)

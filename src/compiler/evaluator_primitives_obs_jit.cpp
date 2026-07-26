@@ -10600,6 +10600,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
             const std::uint64_t ffi_pin_depth =
                 aura::gc_hooks::g_ffi_pin_defer_depth.load(std::memory_order_acquire);
+            // Issue #2160: RenderPin nesting depth + defer-because-render totals.
+            const std::uint64_t render_pin_depth = aura::gc_hooks::render_pin_defer_depth();
+            const std::uint64_t defer_because_render =
+                aura::gc_hooks::g_defer_because_render_total.load(std::memory_order_relaxed);
+            const std::uint64_t request_deferred_render =
+                aura::gc_hooks::g_gc_request_deferred_render_total.load(std::memory_order_relaxed);
             // Issue #2173: configurable max-armed cap + overflow policy +
             // rejected-arm counter. Read live (env-derived cached value
             // plus per-process override for tests). Policy name is the
@@ -10620,11 +10626,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t arm_rejected_overflow_total =
                 aura::gc_hooks::g_gc_defer_arm_rejected_overflow_total.load(
                     std::memory_order_relaxed);
-            // ~20 keys — create(32) headroom (Issue #2173 added 7 keys:
-            // schema-2173, issue-2173, max-armed-effective, overflow-policy,
-            // overflow-policy-name, arm-rejected-overflow-total,
-            // table-overflow-total).
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #2088 + #2173 + #2160 RenderPin keys (FNV headroom).
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10673,6 +10676,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("any-total", static_cast<std::int64_t>(any_total));
             insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
             insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
+            // Issue #2160: RenderPin end-to-end surface for Agents.
+            insert_kv("render-pin-depth", static_cast<std::int64_t>(render_pin_depth));
+            insert_kv("defer-because-render", static_cast<std::int64_t>(defer_because_render));
+            insert_kv("request-deferred-render-total",
+                      static_cast<std::int64_t>(request_deferred_render));
+            insert_kv("schema-2160", 2160);
+            insert_kv("issue-2160", 2160);
+            insert_kv("render-pin-wired", 1);
             insert_kv("unified-defer-wired", 1);
             // Issue #2173: configurable max-armed cap + overflow policy +
             // rejected-arm counter (operator dashboards can size the

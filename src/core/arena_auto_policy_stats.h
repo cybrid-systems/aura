@@ -4,6 +4,8 @@
 #ifndef AURA_CORE_ARENA_AUTO_POLICY_STATS_H
 #define AURA_CORE_ARENA_AUTO_POLICY_STATS_H
 
+#include "core/gc_hooks.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -75,10 +77,16 @@ inline std::atomic<std::uint64_t> compact_soft_gated_boundary_total{0};
 inline void enter_render_hotpath() noexcept {
     ++g_render_hotpath_depth;
     render_hotpath_enter_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2160: process-wide RenderPin arm (nesting-safe depth). TLS
+    // hotpath depth still soft-gates Soft compact per-thread; the unified
+    // bitmask drives GCCollector / compact_sweep / Force live_compact.
+    aura::gc_hooks::arm_render_pin_defer();
 }
 inline void exit_render_hotpath() noexcept {
     if (g_render_hotpath_depth > 0)
         --g_render_hotpath_depth;
+    // Issue #2160: mirror release (depth→0 clears RenderPin bit).
+    aura::gc_hooks::release_render_pin_defer();
 }
 [[nodiscard]] inline bool in_render_hotpath() noexcept {
     return g_render_hotpath_depth > 0;

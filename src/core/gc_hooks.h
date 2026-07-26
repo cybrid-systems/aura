@@ -296,7 +296,7 @@ enum class GcDeferReason : std::uint32_t {
     None = 0,
     Panic = 1u << 0,
     FfiPin = 1u << 1,
-    RenderPin = 1u << 2, // reserved for future render-critical pin defer
+    RenderPin = 1u << 2, // Issue #2160: frame-level render-critical present defer
 };
 inline constexpr std::uint32_t kGcDeferReasonNone = 0;
 // Issue #2088: process-wide defer-reason bitmask. Atomic bitmask
@@ -562,6 +562,49 @@ inline void release_ffi_pin_defer() noexcept {
     return g_ffi_pin_defer_depth.load(std::memory_order_acquire);
 }
 
+// Issue #2160: frame-level RenderPin defer (distinct from buffer-level FfiPin).
+// Nested via process-wide depth so multi-thread concurrent present stays armed
+// until the last exit. Wired from arena_policy::enter/exit_render_hotpath so
+// Soft compact soft-gate + unified should_defer_destructive_gc share one enter.
+inline std::atomic<std::uint32_t> g_render_pin_defer_depth{0};
+// request()/collect()/compact_sweep deferred because RenderPin was armed.
+inline std::atomic<std::uint64_t> g_gc_request_deferred_render_total{0};
+inline std::atomic<std::uint64_t> g_gc_sweep_skipped_render_total{0};
+inline std::atomic<std::uint64_t> g_defer_because_render_total{0};
+
+inline void arm_render_pin_defer() noexcept {
+    g_render_pin_defer_depth.fetch_add(1, std::memory_order_acq_rel);
+    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    (void)arm_defer(GcDeferReason::RenderPin);
+    note_defer_reason_armed(GcDeferReason::RenderPin, prev);
+}
+inline void release_render_pin_defer() noexcept {
+    auto prev = g_render_pin_defer_depth.load(std::memory_order_relaxed);
+    while (prev > 0) {
+        const auto next = prev - 1;
+        if (g_render_pin_defer_depth.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
+                                                           std::memory_order_relaxed)) {
+            if (next == 0)
+                (void)release_defer(GcDeferReason::RenderPin);
+            return;
+        }
+    }
+    (void)release_defer(GcDeferReason::RenderPin);
+}
+[[nodiscard]] inline bool render_pin_defer_active() noexcept {
+    return g_render_pin_defer_depth.load(std::memory_order_acquire) > 0;
+}
+[[nodiscard]] inline std::uint32_t render_pin_defer_depth() noexcept {
+    return g_render_pin_defer_depth.load(std::memory_order_acquire);
+}
+inline void note_gc_request_deferred_render() noexcept {
+    g_gc_request_deferred_render_total.fetch_add(1, std::memory_order_relaxed);
+    g_defer_because_render_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_gc_sweep_skipped_render() noexcept {
+    g_gc_sweep_skipped_render_total.fetch_add(1, std::memory_order_relaxed);
+    g_defer_because_render_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Issue #2002: per-evaluator release. Decrements the entry's depth;
 // when the entry's depth hits 0, clears the id slot. Always decrements

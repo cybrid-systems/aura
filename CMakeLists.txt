@@ -1383,6 +1383,10 @@ aura_issue_test_link_llvm_jit(test_arena_auto_compact_intelligent)
 # Issue #2157: Force live_compact hard-mutex with LifetimePin + EnvFrameLifetimeGuard.
 aura_add_issue_test(test_force_compact_hard_mutex_2157)
 aura_issue_test_link_llvm_jit(test_force_compact_hard_mutex_2157)
+
+# Issue #2160: GcDeferReason::RenderPin end-to-end (arm/release + should_defer + stats).
+aura_add_issue_test(test_gc_defer_render_pin_2160)
+aura_issue_test_link_llvm_jit(test_gc_defer_render_pin_2160)
 # Issue #1990: (gc-temp)/(gc-stats) closures_ iteration protected by closures_mtx_ (B-009).
 aura_add_issue_test(test_issue_1990)
 aura_issue_test_link_llvm_jit(test_issue_1990)
