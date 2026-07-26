@@ -2443,6 +2443,10 @@ aura_issue_test_link_llvm_jit(test_hard_fiber_isolation_2151)
 aura_add_issue_test(test_dispatch_required_effects_2152)
 aura_issue_test_link_llvm_jit(test_dispatch_required_effects_2152)
 
+# Issue #2154: sliding grant_min_valid_epoch window on Mutation epoch bump.
+aura_add_issue_test(test_grant_epoch_retain_window_2154)
+aura_issue_test_link_llvm_jit(test_grant_epoch_retain_window_2154)
+
 # Issue #2077: unify has_capability string path with Effect matrix
 # (single source of truth). Effect-mapped caps (mutate, ffi, network,
 # exec, render, read, write, macro-self-evo, *) now consult

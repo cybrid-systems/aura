@@ -122,6 +122,26 @@ inline std::uint64_t fetch_add_workspace_epoch(WorkspaceEpochKind kind,
     return g_workspace_epoch_storage(kind).fetch_add(delta, std::memory_order_acq_rel);
 }
 
+// Issue #2154: optional hook after Mutation epoch advances (capability
+// grant_min_valid sliding window). Null = no-op. Installed by
+// capability_model.hh when the retain-window policy is present — keeps
+// this header free of capability includes (no cycle).
+using MutationEpochBumpHook = void (*)(std::uint64_t new_epoch) noexcept;
+
+[[nodiscard]] inline std::atomic<MutationEpochBumpHook>& g_mutation_epoch_bump_hook() noexcept {
+    static std::atomic<MutationEpochBumpHook> h{nullptr};
+    return h;
+}
+
+inline void set_mutation_epoch_bump_hook(MutationEpochBumpHook fn) noexcept {
+    g_mutation_epoch_bump_hook().store(fn, std::memory_order_release);
+}
+
+inline void notify_mutation_epoch_bump(std::uint64_t new_epoch) noexcept {
+    if (auto* fn = g_mutation_epoch_bump_hook().load(std::memory_order_acquire))
+        fn(new_epoch);
+}
+
 // ── Mutation epoch (process-global; #1964 2b + #2039 2d) ─────
 // Sole storage: g_workspace_epoch_storage(Mutation). The legacy
 // CompilerService::mutation_epoch_ field is deleted in #2039.
@@ -130,13 +150,18 @@ inline std::uint64_t fetch_add_workspace_epoch(WorkspaceEpochKind kind,
 // CapabilityGrant::grant_epoch, EffectProvenance::epoch on the
 // effect-check path, grant_min_valid_epoch fence, and SecurityEvent
 // correlation. Do not use Bridge as a capability fence key.
+//
+// Issue #2154: bump notifies the optional grant-epoch retain-window hook.
 
 [[nodiscard]] inline std::uint64_t current_mutation_epoch() noexcept {
     return load_workspace_epoch(WorkspaceEpochKind::Mutation);
 }
 
 inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
-    fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
+    if (delta == 0)
+        return;
+    const auto prev = fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
+    notify_mutation_epoch_bump(prev + delta);
 }
 
 // ── Bridge epoch (process-global; #1964 2c + #2039 2d) ─────
@@ -160,8 +185,11 @@ inline void bump_bridge_epoch(std::uint64_t delta = 1) noexcept {
 // Keep Bridge kind aligned with Mutation when the service uses the
 // Cycle-1 "shared counter" protocol (bump both in lockstep).
 inline void bump_mutation_and_bridge_epochs(std::uint64_t delta = 1) noexcept {
+    if (delta == 0)
+        return;
     const auto prev = fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
     store_workspace_epoch(WorkspaceEpochKind::Bridge, prev + delta);
+    notify_mutation_epoch_bump(prev + delta);
 }
 
 } // namespace aura::core

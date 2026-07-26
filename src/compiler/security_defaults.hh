@@ -73,6 +73,10 @@ inline void grant_render_kernel_principal() noexcept {
 //        - default soft (false) preserves #2055 same-tenant multi-fiber share
 //        - multi-tenant + Strict enables hard-deny on grant_fiber_id mismatch
 //        - AURA_HARD_FIBER_ISOLATION=0|1|true|false|on|off overrides
+//   7. Grant epoch retain window (#2154):
+//        - multi-tenant / Strict default K=64 (last 64 Mutation epochs)
+//        - AURA_GRANT_EPOCH_RETAIN=<N> overrides (0 disables auto fence)
+//        - AURA_SANDBOX=off forces K=0 (unit tests must not auto-fence)
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft fiber.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
@@ -196,6 +200,34 @@ inline void apply_production_security_defaults() noexcept {
                                 g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
             // Multi-tenant Strict: hard-deny on fiber mismatch (commercial default).
             g_capability_registry().set_hard_fiber_isolation(multi_tenant && strict);
+        }
+    }
+
+    // 7) Issue #2154: sliding grant_min_valid_epoch retain window.
+    //    K=0 (default for single-tenant / Restricted) preserves #2074 manual
+    //    fence only. Multi-tenant or Strict production enables K=64 so
+    //    ancient grants expire as Mutation epoch advances. Env
+    //    AURA_GRANT_EPOCH_RETAIN always wins when set. sandbox=off → K=0.
+    if (dev_off) {
+        g_capability_registry().set_grant_epoch_retain_window(0);
+        g_capability_registry().set_grant_min_valid_epoch(0);
+    } else {
+        const char* ger = std::getenv("AURA_GRANT_EPOCH_RETAIN");
+        if (ger && *ger) {
+            char* end = nullptr;
+            const auto v = std::strtoull(ger, &end, 10);
+            if (end != ger)
+                g_capability_registry().set_grant_epoch_retain_window(
+                    static_cast<std::uint64_t>(v));
+        } else {
+            const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
+                                g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+            if (multi_tenant || strict) {
+                g_capability_registry().set_grant_epoch_retain_window(
+                    kDefaultGrantEpochRetainWindowMultiTenant);
+            } else {
+                g_capability_registry().set_grant_epoch_retain_window(0);
+            }
         }
     }
 }

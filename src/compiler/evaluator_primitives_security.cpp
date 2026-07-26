@@ -429,6 +429,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
                 insert_kv("hard-fiber-isolation-wired", 1);
             }
+            // Issue #2154: sliding grant_min_valid_epoch retain window
+            {
+                using aura::core::capability::kGrantEpochRetainWindowIssue;
+                insert_kv("schema-2154", kGrantEpochRetainWindowIssue);
+                insert_kv("issue-2154", kGrantEpochRetainWindowIssue);
+                insert_kv("grant-min-valid-epoch",
+                          static_cast<std::int64_t>(snap.grant_min_valid_epoch));
+                insert_kv("grant-epoch-retain-window",
+                          static_cast<std::int64_t>(snap.grant_epoch_retain_window));
+                insert_kv("grant-epoch-window-advance",
+                          static_cast<std::int64_t>(snap.grant_epoch_window_advance));
+                insert_kv("grant-epoch-window-wired", 1);
+            }
             // Issue #2152: dispatch-level non-bypassable required_effects
             {
                 using aura::compiler::kDispatchRequiredEffectsIssue;

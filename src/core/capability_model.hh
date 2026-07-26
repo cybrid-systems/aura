@@ -22,6 +22,10 @@ inline constexpr int kCapabilityModelPhase = 2; // #1565 enforcement
 inline constexpr int kCapabilityModelIssue = 1565;
 // Issue #2055: grant/revoke bound to WorkspaceEpoch Mutation + fiber.
 inline constexpr int kGrantEpochFiberBindIssue = 2055;
+// Issue #2154: sliding grant_min_valid_epoch window on Mutation epoch bump.
+inline constexpr int kGrantEpochRetainWindowIssue = 2154;
+// Production multi-tenant / Strict default retain window (last K epochs).
+inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowMultiTenant = 64;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -142,6 +146,8 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_mutation_bridge_split_total{0};
     // Issue #2151: hard-deny on grant_fiber_id mismatch (when policy on).
     std::atomic<std::uint64_t> capability_fiber_hard_deny_total{0};
+    // Issue #2154: sliding grant_min_valid window advanced on epoch bump.
+    std::atomic<std::uint64_t> capability_grant_epoch_window_advance_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -187,6 +193,10 @@ struct CapabilityRegistry {
     // grant_epoch < grant_min_valid_epoch_ are denied in provenance_ok().
     // 0 = disabled (legacy behavior). Set via set_grant_min_valid_epoch.
     std::atomic<std::uint64_t> grant_min_valid_epoch_{0};
+    // Issue #2154: retain last K mutation epochs of grants (0 = no auto
+    // advance; default 0 for compat). On Mutation epoch bump to new_ep,
+    // when K>0 && new_ep>K, min_valid advances to new_ep-K (forward only).
+    std::atomic<std::uint64_t> grant_epoch_retain_window_{0};
     // Issue #2151: when true, grant_fiber_id mismatch is a hard deny
     // (not observability-only). Default false preserves #2055 soft share.
     std::atomic<bool> hard_fiber_isolation_{false};
@@ -197,6 +207,37 @@ struct CapabilityRegistry {
     }
     [[nodiscard]] std::uint64_t grant_min_valid_epoch() const noexcept {
         return grant_min_valid_epoch_.load(std::memory_order_acquire);
+    }
+
+    // Issue #2154: sliding retain-window policy (0 disables auto fence).
+    void set_grant_epoch_retain_window(std::uint64_t k) noexcept {
+        grant_epoch_retain_window_.store(k, std::memory_order_release);
+        // Apply immediately against the current Mutation epoch so operators
+        // enabling K mid-process get a fence without waiting for a bump.
+        if (k > 0)
+            on_mutation_epoch_bump(::aura::core::current_mutation_epoch());
+    }
+    [[nodiscard]] std::uint64_t grant_epoch_retain_window() const noexcept {
+        return grant_epoch_retain_window_.load(std::memory_order_acquire);
+    }
+
+    // Issue #2154: called from bump_mutation_epoch via process hook.
+    // When retain window K is set and new_ep > K, raise min_valid to
+    // new_ep - K (never lowers an existing higher manual fence).
+    void on_mutation_epoch_bump(std::uint64_t new_ep) noexcept {
+        const auto k = grant_epoch_retain_window_.load(std::memory_order_acquire);
+        if (k == 0 || new_ep <= k)
+            return;
+        const auto next_min = new_ep - k;
+        auto cur = grant_min_valid_epoch_.load(std::memory_order_acquire);
+        while (next_min > cur) {
+            if (grant_min_valid_epoch_.compare_exchange_weak(
+                    cur, next_min, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                g_capability_effect_metrics().capability_grant_epoch_window_advance_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                break;
+            }
+        }
     }
 
     // Issue #2151: hard fiber isolation policy.
@@ -304,9 +345,10 @@ struct CapabilityRegistry {
                 g.bound_mutation_id != prov.mutation_id) {
                 return false;
             }
-            // Issue #2074 / #2055: expired grant — grant_epoch behind min_valid.
-            if (g.grant_epoch != 0 && grant_min_valid_epoch_ != 0 &&
-                g.grant_epoch < grant_min_valid_epoch_) {
+            // Issue #2074 / #2055 / #2154: expired grant — grant_epoch behind
+            // min_valid (manual set or sliding retain window).
+            const auto min_valid = grant_min_valid_epoch_.load(std::memory_order_acquire);
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid) {
                 g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
                     1, std::memory_order_relaxed);
                 return false;
@@ -416,12 +458,31 @@ struct CapabilityRegistry {
         sandbox_mode = EffectSandboxMode::Off;
         audit_seq.store(0, std::memory_order_relaxed);
         grant_min_valid_epoch_.store(0, std::memory_order_relaxed);
+        grant_epoch_retain_window_.store(0, std::memory_order_relaxed);
         hard_fiber_isolation_.store(false, std::memory_order_relaxed);
     }
 };
 
+// Forward decl — trampoline body needs the registry accessor.
+[[nodiscard]] inline CapabilityRegistry& g_capability_registry() noexcept;
+
+// Issue #2154: trampoline installed once so Mutation epoch bumps advance
+// the sliding grant fence without workspace_epoch → capability include cycle.
+inline void grant_epoch_window_bump_trampoline(std::uint64_t new_ep) noexcept {
+    g_capability_registry().on_mutation_epoch_bump(new_ep);
+}
+
+inline void install_grant_epoch_window_hook() noexcept {
+    static std::atomic<bool> done{false};
+    bool expected = false;
+    if (done.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        ::aura::core::set_mutation_epoch_bump_hook(&grant_epoch_window_bump_trampoline);
+    }
+}
+
 inline CapabilityRegistry& g_capability_registry() noexcept {
     static CapabilityRegistry r;
+    install_grant_epoch_window_hook();
     return r;
 }
 
@@ -506,6 +567,8 @@ make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutat
 inline void reset_capability_effects_for_test() noexcept {
     g_capability_registry().clear_for_test();
     g_capability_registry().set_grant_min_valid_epoch(0);
+    // set_grant_epoch_retain_window(0) only stores; clear_for_test already zeroed K.
+    g_capability_registry().set_grant_epoch_retain_window(0);
     g_capability_registry().set_hard_fiber_isolation(false);
     set_effect_fiber_id_override(0);
     auto& m = g_capability_effect_metrics();
@@ -528,6 +591,7 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
     m.capability_mutation_bridge_split_total.store(0, std::memory_order_relaxed);
     m.capability_fiber_hard_deny_total.store(0, std::memory_order_relaxed);
+    m.capability_grant_epoch_window_advance_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -558,10 +622,15 @@ struct CapabilityEffectStatsSnapshot {
     // Issue #2151
     std::uint64_t fiber_hard_deny = 0;
     int hard_fiber_isolation = 0;
+    // Issue #2154
+    std::uint64_t grant_min_valid_epoch = 0;
+    std::uint64_t grant_epoch_retain_window = 0;
+    std::uint64_t grant_epoch_window_advance = 0;
 };
 
 [[nodiscard]] inline CapabilityEffectStatsSnapshot snapshot_capability_effect_stats() noexcept {
     auto& m = g_capability_effect_metrics();
+    auto& reg = g_capability_registry();
     return CapabilityEffectStatsSnapshot{
         m.capability_effect_enforced_total.load(std::memory_order_relaxed),
         m.capability_effect_denied_total.load(std::memory_order_relaxed),
@@ -572,7 +641,7 @@ struct CapabilityEffectStatsSnapshot {
         m.capability_audit_total.load(std::memory_order_relaxed),
         kCapabilityModelPhase,
         kCapabilityModelIssue,
-        static_cast<int>(g_capability_registry().sandbox_mode),
+        static_cast<int>(reg.sandbox_mode),
         m.macro_self_evo_check_total.load(std::memory_order_relaxed),
         m.macro_self_evo_allowed_total.load(std::memory_order_relaxed),
         m.macro_self_evo_denied_total.load(std::memory_order_relaxed),
@@ -585,7 +654,10 @@ struct CapabilityEffectStatsSnapshot {
         m.capability_epoch_fence_hit_total.load(std::memory_order_relaxed),
         m.capability_mutation_bridge_split_total.load(std::memory_order_relaxed),
         m.capability_fiber_hard_deny_total.load(std::memory_order_relaxed),
-        g_capability_registry().hard_fiber_isolation() ? 1 : 0,
+        reg.hard_fiber_isolation() ? 1 : 0,
+        reg.grant_min_valid_epoch(),
+        reg.grant_epoch_retain_window(),
+        m.capability_grant_epoch_window_advance_total.load(std::memory_order_relaxed),
     };
 }
 
