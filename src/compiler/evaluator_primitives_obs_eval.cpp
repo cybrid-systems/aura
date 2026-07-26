@@ -7788,6 +7788,18 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                 "hotpath-contracts-1620-active",
                 static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_1620_active.load(
                     std::memory_order_relaxed)));
+            // Issue #2142: unified AURA_HOT_CONTRACT surface
+            insert_kv(
+                "hotpath-contracts-2142-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_2142_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv("aura-hot-contract-wired",
+                      static_cast<std::int64_t>(aura::core::cpp26::aura_hot_contract_wired.load(
+                          std::memory_order_relaxed)));
+            insert_kv("hot-contract-unify-issue",
+                      static_cast<std::int64_t>(aura::core::cpp26::kHotContractUnifyIssue));
+            insert_kv("schema-2142", 2142);
+            insert_kv("issue-2142", 2142);
             insert_kv("arena-tier-contracts-active",
                       static_cast<std::int64_t>(aura::core::cpp26::arena_tier_contracts_active.load(
                           std::memory_order_relaxed)));
