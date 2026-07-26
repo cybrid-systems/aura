@@ -2290,16 +2290,33 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         return 0;
     }
 
-    // Issue #2014: during a deopt storm, coalesce reemit (skip this call).
+    // Issue #2014 / #2132: during a deopt storm, coalesce reemit (skip).
     // Dual-check / deopt correctness is unchanged; only recovery is delayed
     // until the sliding window rolls and throttle clears.
-    if (aura::compiler::hot_update_registry().should_throttle_reemit()) {
-        aura::compiler::hot_update_registry().on_reemit_throttled();
-        g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
-        g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
-        g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
-        g_last_reemit_success_count.store(0, std::memory_order_relaxed);
-        return 0;
+    // Issue #2132: region/priority-aware — critical mask may bypass soft
+    // storm; hard ceiling still throttles everyone.
+    {
+        auto& hur_thr = aura::compiler::hot_update_registry();
+        const std::uint64_t dirty_mask = hur_thr.last_region_mask_from_dirty();
+        const std::uint64_t emit_mask = hur_thr.emit_region_mask();
+        const std::uint64_t region_or_prio = dirty_mask != 0 ? dirty_mask : emit_mask;
+        if (hur_thr.should_throttle_reemit(region_or_prio)) {
+            using TR = aura::compiler::HotUpdateRegistry::ThrottleReason;
+            TR reason = TR::Global;
+            if (hur_thr.hard_storm_active())
+                reason = TR::Hard;
+            else if (region_or_prio != 0)
+                reason = TR::Region;
+            hur_thr.on_reemit_throttled(reason);
+            g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
+            g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
+            g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
+            g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+            return 0;
+        }
+        // Soft storm active but critical region allowed reemit.
+        if (hur_thr.should_throttle_reemit() && hur_thr.is_critical_region(region_or_prio))
+            hur_thr.on_reemit_critical_bypass();
     }
 
     // Issue #2114: HotUpdate reemit ↔ MutationBoundary explicit handshake.

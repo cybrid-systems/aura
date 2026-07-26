@@ -1,4 +1,4 @@
-// hot_update_registry.hh — Issue #1956 / #2014 / #2035 / #2046 / #2114
+// hot_update_registry.hh — Issue #1956 / #2014 / #2035 / #2046 / #2114 / #2132
 // Unified coordination center for hot-update / incremental re-emit
 // callbacks, region mask, epoch listeners, and aggregated metrics.
 //
@@ -113,17 +113,48 @@ public:
     // Hot path: relaxed atomics only; clock read amortized to window edges.
     void on_stale_deopt() noexcept;
     // When true, reemit pipeline should skip this call (coalesce / delay).
+    // No-arg form is the process-global soft-storm flag (#2014 / StormLevel).
     [[nodiscard]] bool should_throttle_reemit() const noexcept;
+    // Issue #2132: region / priority-aware decision.
+    // Soft storm: critical_region_mask bits that overlap region_or_priority
+    // bypass throttle (allow reemit). Hard storm always throttles.
+    // region_or_priority == 0 → treat as non-critical (global throttle).
+    [[nodiscard]] bool should_throttle_reemit(std::uint64_t region_or_priority) const noexcept;
+    // True when region_or_priority overlaps critical_region_mask (nonzero).
+    [[nodiscard]] bool is_critical_region(std::uint64_t region_or_priority) const noexcept;
+    // True when hard-storm ceiling is active (no critical bypass).
+    [[nodiscard]] bool hard_storm_active() const noexcept;
     // Note a reemit that was skipped due to throttle (observability).
+    // No-arg counts as global soft skip (legacy).
     void on_reemit_throttled() noexcept;
+    // Issue #2132: reason-tagged skip / bypass counters.
+    enum class ThrottleReason : std::uint8_t {
+        Global = 0,         // soft storm, non-critical / unknown region
+        Region = 1,         // soft storm, known non-critical region bits
+        Hard = 2,           // hard ceiling — no bypass
+        CriticalBypass = 3, // allowed despite soft storm
+    };
+    void on_reemit_throttled(ThrottleReason reason) noexcept;
+    void on_reemit_critical_bypass() noexcept;
     // Configure storm threshold (default 1000 deopts / 100 ms).
     void set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                    std::uint64_t window_ms) noexcept;
+    // Issue #2132: hard ceiling (default 0 → 4× soft threshold). Always
+    // throttles, including critical regions.
+    void set_hard_deopt_storm_threshold(std::uint64_t deopts_per_window) noexcept;
+    [[nodiscard]] std::uint64_t hard_deopt_storm_threshold() const noexcept;
+    // Issue #2132: Agent-tunable critical region / priority bit mask.
+    void set_critical_region_mask(std::uint64_t mask) noexcept;
+    [[nodiscard]] std::uint64_t critical_region_mask() const noexcept;
     [[nodiscard]] std::uint64_t deopt_storm_threshold() const noexcept;
     [[nodiscard]] std::uint64_t deopt_storm_window_ms() const noexcept;
     // Issue #2127: current sliding-window deopt count (adaptive thr signal).
     [[nodiscard]] std::uint64_t deopt_window_count() const noexcept {
         return deopt_window_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #2132 / #2035: last cascade-derived dirty region mask.
+    [[nodiscard]] std::uint64_t last_region_mask_from_dirty() const noexcept {
+        return last_region_mask_from_dirty_.load(std::memory_order_relaxed);
     }
     // Test / recovery: clear throttle + open a fresh window.
     void reset_deopt_storm_state_for_test() noexcept;
@@ -225,6 +256,17 @@ public:
         std::int64_t deopt_storm_window_ms = 100;
         std::int64_t reemit_throttle_active = 0;
         std::int64_t reemit_throttle_skips_total = 0;
+        // Issue #2132: throttle reason breakdown + critical bypass.
+        std::int64_t reemit_throttle_skips_global_total = 0;
+        std::int64_t reemit_throttle_skips_region_total = 0;
+        std::int64_t reemit_throttle_skips_hard_total = 0;
+        std::int64_t reemit_critical_bypass_total = 0;
+        std::int64_t hard_storm_active = 0;
+        std::int64_t hard_storm_detected_total = 0;
+        std::int64_t hard_deopt_storm_threshold = 0; // 0 → auto 4× soft
+        std::int64_t critical_region_mask = 0;
+        std::int64_t schema_2132 = 2132;
+        std::int64_t issue_2132 = 2132;
         std::int64_t storm_listeners = 0;
         // Issue #2016: adaptive region mask.
         std::int64_t region_mask_adapt_clears_total = 0;
@@ -317,6 +359,15 @@ private:
     std::atomic<std::uint64_t> deopt_storm_window_ms_{100};
     std::atomic<bool> reemit_throttled_{false};
     std::atomic<std::uint64_t> reemit_throttle_skips_{0};
+    // Issue #2132: region/priority-aware throttle + hard ceiling.
+    std::atomic<bool> hard_storm_active_{false};
+    std::atomic<std::uint64_t> hard_storm_detected_{0};
+    std::atomic<std::uint64_t> hard_deopt_storm_threshold_{0}; // 0 → 4× soft
+    std::atomic<std::uint64_t> critical_region_mask_{0};
+    std::atomic<std::uint64_t> reemit_throttle_skips_global_{0};
+    std::atomic<std::uint64_t> reemit_throttle_skips_region_{0};
+    std::atomic<std::uint64_t> reemit_throttle_skips_hard_{0};
+    std::atomic<std::uint64_t> reemit_critical_bypass_{0};
     // Issue #2094: ShapeProfiler publishes its deopt_storm_active
     // state here so current_storm_level() can OR both detectors
     // without importing shape_profiler.h.
@@ -390,6 +441,17 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t deopt_storm_window_ms;
     std::int64_t reemit_throttle_active;
     std::int64_t reemit_throttle_skips_total;
+    // Issue #2132
+    std::int64_t reemit_throttle_skips_global_total;
+    std::int64_t reemit_throttle_skips_region_total;
+    std::int64_t reemit_throttle_skips_hard_total;
+    std::int64_t reemit_critical_bypass_total;
+    std::int64_t hard_storm_active;
+    std::int64_t hard_storm_detected_total;
+    std::int64_t hard_deopt_storm_threshold;
+    std::int64_t critical_region_mask;
+    std::int64_t schema_2132;
+    std::int64_t issue_2132;
     std::int64_t storm_listeners;
     std::int64_t region_mask_adapt_clears_total;   // #2016
     std::int64_t region_mask_adapt_restores_total; // #2016
@@ -413,6 +475,12 @@ void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* ou
 // Issue #2014: C entry points for deopt feed / throttle / config.
 void aura_hot_update_note_deopt(void);
 int aura_hot_update_should_throttle_reemit(void);
+// Issue #2132: region/priority-aware throttle (1 = skip reemit).
+int aura_hot_update_should_throttle_reemit_for_region(std::uint64_t region_or_priority);
+void aura_hot_update_set_critical_region_mask(std::uint64_t mask);
+std::uint64_t aura_hot_update_critical_region_mask(void);
+void aura_hot_update_set_hard_deopt_storm_threshold(std::uint64_t deopts_per_window);
+std::uint64_t aura_hot_update_hard_deopt_storm_threshold(void);
 void aura_hot_update_on_reemit_throttled(void);
 
 // Issue #2094: StormLevel facade accessor (C ABI). Returns the

@@ -136,9 +136,11 @@ void HotUpdateRegistry::on_cascade_reemit_trigger(std::uint64_t /*candidates_hin
     cascade_reemit_trigger_total_.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #2014: sliding-window deopt rate. Under threshold this is:
+// Issue #2014 / #2132: sliding-window deopt rate. Under threshold this is:
 //   1× fetch_add (observed) + 1× load start + 1× load window + branch.
 // Clock is read only when the window may have rolled or on first deopt.
+// Soft storm (threshold) sets reemit_throttled_; hard ceiling (default 4×)
+// sets hard_storm_active_ so critical-region bypass is disabled.
 void HotUpdateRegistry::on_stale_deopt() noexcept {
     deopt_observed_total_.fetch_add(1, std::memory_order_relaxed);
 
@@ -158,6 +160,7 @@ void HotUpdateRegistry::on_stale_deopt() noexcept {
         deopt_window_count_.store(1, std::memory_order_relaxed);
         // Fresh window clears reemit throttle so recovery can proceed.
         reemit_throttled_.store(false, std::memory_order_relaxed);
+        hard_storm_active_.store(false, std::memory_order_relaxed);
         return;
     }
 
@@ -165,21 +168,80 @@ void HotUpdateRegistry::on_stale_deopt() noexcept {
     if (n < threshold)
         return;
 
-    // Trip throttle for the remainder of this window.
+    // Trip soft throttle for the remainder of this window.
     reemit_throttled_.store(true, std::memory_order_relaxed);
     // Count storm once when the threshold is first crossed.
     if (n == threshold) {
         deopt_storm_detected_.fetch_add(1, std::memory_order_relaxed);
         notify_deopt_storm_locked(n, window_ms);
     }
+
+    // Issue #2132: hard ceiling — no critical bypass once crossed.
+    std::uint64_t hard_thr = hard_deopt_storm_threshold_.load(std::memory_order_relaxed);
+    if (hard_thr == 0) {
+        // Auto: 4× soft threshold (at least soft+1).
+        hard_thr = threshold * 4;
+        if (hard_thr <= threshold)
+            hard_thr = threshold + 1;
+    }
+    if (n >= hard_thr) {
+        const bool was = hard_storm_active_.exchange(true, std::memory_order_relaxed);
+        if (!was)
+            hard_storm_detected_.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool HotUpdateRegistry::should_throttle_reemit() const noexcept {
-    return reemit_throttled_.load(std::memory_order_relaxed);
+    // Process-global soft (or hard) storm flag — StormLevel / legacy callers.
+    return reemit_throttled_.load(std::memory_order_relaxed) ||
+           hard_storm_active_.load(std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::is_critical_region(std::uint64_t region_or_priority) const noexcept {
+    const auto mask = critical_region_mask_.load(std::memory_order_relaxed);
+    return mask != 0 && region_or_priority != 0 && (region_or_priority & mask) != 0;
+}
+
+bool HotUpdateRegistry::hard_storm_active() const noexcept {
+    return hard_storm_active_.load(std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::should_throttle_reemit(std::uint64_t region_or_priority) const noexcept {
+    // Issue #2132: hard ceiling always throttles (critical cannot bypass).
+    if (hard_storm_active_.load(std::memory_order_relaxed))
+        return true;
+    if (!reemit_throttled_.load(std::memory_order_relaxed))
+        return false;
+    // Soft storm: critical region / priority bits may still reemit.
+    if (is_critical_region(region_or_priority))
+        return false;
+    return true;
 }
 
 void HotUpdateRegistry::on_reemit_throttled() noexcept {
+    on_reemit_throttled(ThrottleReason::Global);
+}
+
+void HotUpdateRegistry::on_reemit_throttled(ThrottleReason reason) noexcept {
     reemit_throttle_skips_.fetch_add(1, std::memory_order_relaxed);
+    switch (reason) {
+        case ThrottleReason::Global:
+            reemit_throttle_skips_global_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case ThrottleReason::Region:
+            reemit_throttle_skips_region_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case ThrottleReason::Hard:
+            reemit_throttle_skips_hard_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case ThrottleReason::CriticalBypass:
+            // Not a skip — use on_reemit_critical_bypass instead.
+            break;
+    }
+}
+
+void HotUpdateRegistry::on_reemit_critical_bypass() noexcept {
+    reemit_critical_bypass_.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2094: ShapeProfiler publishes its deopt_storm_active state
@@ -212,6 +274,22 @@ void HotUpdateRegistry::set_deopt_storm_threshold(std::uint64_t deopts_per_windo
     deopt_storm_window_ms_.store(window_ms, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::set_hard_deopt_storm_threshold(std::uint64_t deopts_per_window) noexcept {
+    hard_deopt_storm_threshold_.store(deopts_per_window, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::hard_deopt_storm_threshold() const noexcept {
+    return hard_deopt_storm_threshold_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::set_critical_region_mask(std::uint64_t mask) noexcept {
+    critical_region_mask_.store(mask, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::critical_region_mask() const noexcept {
+    return critical_region_mask_.load(std::memory_order_relaxed);
+}
+
 std::uint64_t HotUpdateRegistry::deopt_storm_threshold() const noexcept {
     return deopt_storm_threshold_.load(std::memory_order_relaxed);
 }
@@ -224,7 +302,8 @@ void HotUpdateRegistry::reset_deopt_storm_state_for_test() noexcept {
     deopt_window_start_ms_.store(0, std::memory_order_relaxed);
     deopt_window_count_.store(0, std::memory_order_relaxed);
     reemit_throttled_.store(false, std::memory_order_relaxed);
-    // Keep lifetime counters (detected / observed / skips) for dashboards.
+    hard_storm_active_.store(false, std::memory_order_relaxed);
+    // Keep lifetime counters (detected / observed / skips / bypass) for dashboards.
 }
 
 // ── Issue #2114: reemit ↔ MutationBoundary handshake ──
@@ -473,9 +552,30 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
         static_cast<std::int64_t>(deopt_storm_threshold_.load(std::memory_order_relaxed));
     s.deopt_storm_window_ms =
         static_cast<std::int64_t>(deopt_storm_window_ms_.load(std::memory_order_relaxed));
-    s.reemit_throttle_active = reemit_throttled_.load(std::memory_order_relaxed) ? 1 : 0;
+    s.reemit_throttle_active = (reemit_throttled_.load(std::memory_order_relaxed) ||
+                                hard_storm_active_.load(std::memory_order_relaxed))
+                                   ? 1
+                                   : 0;
     s.reemit_throttle_skips_total =
         static_cast<std::int64_t>(reemit_throttle_skips_.load(std::memory_order_relaxed));
+    // Issue #2132
+    s.reemit_throttle_skips_global_total =
+        static_cast<std::int64_t>(reemit_throttle_skips_global_.load(std::memory_order_relaxed));
+    s.reemit_throttle_skips_region_total =
+        static_cast<std::int64_t>(reemit_throttle_skips_region_.load(std::memory_order_relaxed));
+    s.reemit_throttle_skips_hard_total =
+        static_cast<std::int64_t>(reemit_throttle_skips_hard_.load(std::memory_order_relaxed));
+    s.reemit_critical_bypass_total =
+        static_cast<std::int64_t>(reemit_critical_bypass_.load(std::memory_order_relaxed));
+    s.hard_storm_active = hard_storm_active_.load(std::memory_order_relaxed) ? 1 : 0;
+    s.hard_storm_detected_total =
+        static_cast<std::int64_t>(hard_storm_detected_.load(std::memory_order_relaxed));
+    s.hard_deopt_storm_threshold =
+        static_cast<std::int64_t>(hard_deopt_storm_threshold_.load(std::memory_order_relaxed));
+    s.critical_region_mask =
+        static_cast<std::int64_t>(critical_region_mask_.load(std::memory_order_relaxed));
+    s.schema_2132 = 2132;
+    s.issue_2132 = 2132;
     s.region_mask_adapt_clears_total =
         static_cast<std::int64_t>(region_mask_adapt_clears_.load(std::memory_order_relaxed));
     s.region_mask_adapt_restores_total =
@@ -552,6 +652,17 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->deopt_storm_window_ms = s.deopt_storm_window_ms;
     out->reemit_throttle_active = s.reemit_throttle_active;
     out->reemit_throttle_skips_total = s.reemit_throttle_skips_total;
+    // Issue #2132
+    out->reemit_throttle_skips_global_total = s.reemit_throttle_skips_global_total;
+    out->reemit_throttle_skips_region_total = s.reemit_throttle_skips_region_total;
+    out->reemit_throttle_skips_hard_total = s.reemit_throttle_skips_hard_total;
+    out->reemit_critical_bypass_total = s.reemit_critical_bypass_total;
+    out->hard_storm_active = s.hard_storm_active;
+    out->hard_storm_detected_total = s.hard_storm_detected_total;
+    out->hard_deopt_storm_threshold = s.hard_deopt_storm_threshold;
+    out->critical_region_mask = s.critical_region_mask;
+    out->schema_2132 = s.schema_2132;
+    out->issue_2132 = s.issue_2132;
     out->storm_listeners = s.storm_listeners;
     out->region_mask_adapt_clears_total = s.region_mask_adapt_clears_total;
     out->region_mask_adapt_restores_total = s.region_mask_adapt_restores_total;
@@ -580,6 +691,27 @@ extern "C" void aura_hot_update_note_deopt(void) {
 
 extern "C" int aura_hot_update_should_throttle_reemit(void) {
     return aura::compiler::hot_update_registry().should_throttle_reemit() ? 1 : 0;
+}
+
+// Issue #2132: region/priority-aware throttle decision.
+extern "C" int aura_hot_update_should_throttle_reemit_for_region(std::uint64_t region_or_priority) {
+    return aura::compiler::hot_update_registry().should_throttle_reemit(region_or_priority) ? 1 : 0;
+}
+
+extern "C" void aura_hot_update_set_critical_region_mask(std::uint64_t mask) {
+    aura::compiler::hot_update_registry().set_critical_region_mask(mask);
+}
+
+extern "C" std::uint64_t aura_hot_update_critical_region_mask(void) {
+    return aura::compiler::hot_update_registry().critical_region_mask();
+}
+
+extern "C" void aura_hot_update_set_hard_deopt_storm_threshold(std::uint64_t deopts_per_window) {
+    aura::compiler::hot_update_registry().set_hard_deopt_storm_threshold(deopts_per_window);
+}
+
+extern "C" std::uint64_t aura_hot_update_hard_deopt_storm_threshold(void) {
+    return aura::compiler::hot_update_registry().hard_deopt_storm_threshold();
 }
 
 // Issue #2094: StormLevel facade accessor (C ABI). Returns the
