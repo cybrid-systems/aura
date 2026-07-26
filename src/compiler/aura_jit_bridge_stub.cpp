@@ -597,6 +597,15 @@ extern "C" __attribute__((weak)) std::uint8_t aura_hot_update_current_storm_leve
     return 0; // StormLevel::None
 }
 extern "C" __attribute__((weak)) void aura_hot_update_set_shape_storm_active(int /*active*/) {}
+// Issue #2095: weak stubs for the default-LLVM reemit postmortem hook.
+// Light test binaries that don't link the production bridge TU still
+// link cleanly; the real impl reads AURA_REEMIT_KEEP_FAIL env and
+// renames failed .o into /tmp/aura_reemit_failed/.
+extern "C" __attribute__((weak)) int aura_reemit_keep_fail_enabled(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_reemit_keep_failed_obj(const char* /*obj_path*/,
+                                                                  const char* /*reason*/) {}
 extern "C" __attribute__((weak)) void
 aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w*/) {}
 extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}

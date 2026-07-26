@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <sys/stat.h> // Issue #2095: ::mkdir for the debug dir
 #include <fstream>
 #include <limits>
 #include <mutex>
@@ -252,6 +253,40 @@ extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
 
 extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
     return g_aot_metrics_explicit_sets.load(std::memory_order_relaxed);
+}
+
+// Issue #2095: default-LLVM reemit postmortem hook. When
+// AURA_REEMIT_KEEP_FAIL=1 (or AURA_REEMIT_KEEP_FAIL_N=count), the
+// failed .o is renamed into /tmp/aura_reemit_failed/ instead of
+// being removed. Agent can then inspect with llvm-objdump /
+// llvm-dis to diagnose the actual failure.
+extern "C" int aura_reemit_keep_fail_enabled(void) {
+    if (const char* e = std::getenv("AURA_REEMIT_KEEP_FAIL")) {
+        if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+            return 1;
+    }
+    if (const char* n = std::getenv("AURA_REEMIT_KEEP_FAIL_N")) {
+        if (n[0] != '\0' && n[0] != '0')
+            return 1;
+    }
+    return 0;
+}
+
+extern "C" void aura_reemit_keep_failed_obj(const char* obj_path, const char* reason) {
+    if (!obj_path)
+        return;
+    constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
+    ::mkdir(kDebugDir, 0755);
+    // Derive a stable suffix from the basename + sequence-ish counter so
+    // multiple failures within the same second don't collide.
+    static std::atomic<std::uint64_t> keep_seq{0};
+    const auto seq = keep_seq.fetch_add(1, std::memory_order_relaxed);
+    const char* base = std::strrchr(obj_path, '/');
+    base = base ? (base + 1) : obj_path;
+    std::string dst =
+        std::format("{}/{}_{}_{}{}", kDebugDir, base, reason ? reason : "fail",
+                    static_cast<unsigned long long>(seq), std::strrchr(obj_path, '.') ? "" : ".o");
+    std::rename(obj_path, dst.c_str());
 }
 
 // ── Issue #287: AOT module version (hot-reload / multi-agent) ───────────
@@ -2150,9 +2185,22 @@ static bool default_llvm_incremental_emit(const char* name, std::uint64_t region
         std::format("/tmp/aura_reemit_{}_{}.o", safe, static_cast<unsigned long long>(seq));
 
     const bool ok = g_batch_deopt_jit->compile_function_to_object_by_name(name, obj_path);
-    std::remove(obj_path.c_str());
-    if (!ok)
+    if (!ok) {
+        // Issue #2095: bump fail counter + optionally keep the bad .o for
+        // postmortem (env AURA_REEMIT_KEEP_FAIL=1). Without this, failed
+        // compiles silently fall through to the skeleton path and the
+        // success-only counter under-reports real LLVM work.
+        if (aot_metrics())
+            aot_metrics()->aot_incremental_llvm_emit_fail_total.fetch_add(
+                1, std::memory_order_relaxed);
+        if (aura_reemit_keep_fail_enabled()) {
+            aura_reemit_keep_failed_obj(obj_path.c_str(), "compile_failed");
+        } else {
+            std::remove(obj_path.c_str());
+        }
         return false;
+    }
+    std::remove(obj_path.c_str()); // success: still ephemeral
     if (aot_metrics())
         aot_metrics()->aot_incremental_llvm_emit_total.fetch_add(1, std::memory_order_relaxed);
     return true;

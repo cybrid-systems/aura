@@ -85,6 +85,23 @@ void* aura_get_aot_metrics(void);
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
 
+// Issue #2094: StormLevel facade accessor (C ABI). Returns the
+// combined bitmask of shape-storm + global-deopt-storm detectors
+// so external callers can branch on a single recovery-policy value.
+// Result mapping (uint8_t): 0=None, 1=Shape, 2=Global, 3=Both.
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+
+// Issue #2094: setter for ShapeProfiler (or tests) to publish its
+// deopt_storm_active state without needing to import shape_profiler.h.
+extern "C" void aura_hot_update_set_shape_storm_active(int active);
+
+// Issue #2095: postmortem hook for default-LLVM reemit failures.
+// env-gated via AURA_REEMIT_KEEP_FAIL=1 (or AURA_REEMIT_KEEP_FAIL_N>0).
+// When enabled, the failed .o is renamed into /tmp/aura_reemit_failed/
+// instead of being removed so the Agent can inspect with llvm-objdump.
+extern "C" int aura_reemit_keep_fail_enabled(void);
+extern "C" void aura_reemit_keep_failed_obj(const char* obj_path, const char* reason);
+
 // Issue #2093: structured reload-failure reason codes. Agents branch
 // on this enum (via aura_aot_last_reload_fail_reason or the
 // query:aot-reload-stats snapshot) to pick a recovery policy without
