@@ -5,6 +5,8 @@
 #include "spec_jit_controller.h"
 #include "value_tags.h"
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 
@@ -90,6 +92,25 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
 
 // ── SpecJITController ─────────────────────────────────────────
 
+// Issue #2172: forward decl for the unified StormLevel facade C-linkage
+// accessor (defined in hot_update_registry.cpp). The conservative gate
+// uses the StormLevel Shape bit so reemit (which uses the Global bit)
+// and SpecJIT (which uses the Shape bit) decouple per the policy table
+// in hot_update_registry.hh:79 — Shape-only storms do NOT block reemit
+// (they only enter SpecJIT/GuardShape conservative mode).
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+
+// Issue #2172: per-SpecJITController conservative-due-to-shape-storm
+// counter (file-level atomic, paired with a C-linkage reader below).
+// Bumped whenever the Shape-storm conservative gate fires inside
+// compile_specialized so the Agent dashboard can observe how often
+// new shape specialization is suppressed without logging scraping.
+static std::atomic<std::uint64_t> g_specjit_conservative_due_to_shape_storm_total{0};
+
+extern "C" std::uint64_t aura_specjit_conservative_due_to_shape_storm_total_v_read(void) {
+    return g_specjit_conservative_due_to_shape_storm_total.load(std::memory_order_relaxed);
+}
+
 SpecJITController::SpecJITController(aura::jit::AuraJIT& jit)
     : jit_(jit) {}
 
@@ -98,6 +119,28 @@ SpecJITController::compile_specialized(const std::string& fn_name, const std::ui
                                        std::uint32_t shape_map_size, aura::jit::ScalarFn generic_fn,
                                        std::uint32_t arg_count, std::uint32_t local_count) {
     (void)generic_fn; // Unused in Phase 2 — the guard is at the call site
+
+    // Issue #2172: StormLevel-driven conservative gate. When the
+    // Shape bit of the unified StormLevel facade is set (Shape-only
+    // or Both), skip new shape-specialization compilation. Cached
+    // specializations (returned via has_specialization / get_specialized)
+    // are still served — the conservative mode is "no new specialization",
+    // not "drop cache". The caller falls back to the generic
+    // (non-specialized) function, which goes through the IR executor
+    // path that is shape-safe. Counter bump is per-call so the Agent
+    // dashboard sees how often the conservative gate fires.
+    {
+        const auto sl = aura_hot_update_current_storm_level();
+        constexpr std::uint8_t kShape = 0x01;
+        if (sl & kShape) {
+            g_specjit_conservative_due_to_shape_storm_total.fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr,
+                         "spec: conservative-skip specialization for '%s' "
+                         "(StormLevel::Shape set)\n",
+                         fn_name.c_str());
+            return nullptr;
+        }
+    }
 
     // Issue #170 Phase 2 / item #1: deopt gate. If the
     // underlying AuraJIT has seen ANY unhandled opcode,

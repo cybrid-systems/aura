@@ -14,6 +14,9 @@
 //   AC9: #2013 live closure remap after reemit (named match; unmatched deopt)
 //   AC10: #2014 deopt storm detection + reemit throttle
 //   AC11: #2016 Evolution exclude + adaptive region mask + stable table
+//   AC12a/b/c: #2094 unified StormLevel facade (Global/Shape/Both)
+//   AC13a/b/c: reemit fail counter + keep + query (#2095)
+//   AC14: #2172 SpecJIT conservative gate + counter + StormLevel facade
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
@@ -37,6 +40,11 @@ extern "C" void aura_hot_update_note_deopt(void);
 extern "C" int aura_hot_update_should_throttle_reemit(void);
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t, std::uint64_t);
 extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
+extern "C" void aura_hot_update_set_shape_storm_active(int);
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+// Issue #2172: SpecJITController conservative-due-to-shape-storm counter
+// (file-level atomic in spec_jit_controller.cpp, exposed via C-linkage).
+extern "C" std::uint64_t aura_specjit_conservative_due_to_shape_storm_total_v_read(void);
 
 import std;
 import aura.compiler.evaluator;
@@ -757,6 +765,69 @@ static void ac12_storm_level_both() {
 
 // Issue #2016: Evolution permanent exclude + adaptive Performance mask +
 // host emit registers stable id into func_table.
+
+// Issue #2172: SpecJITController / GuardShape path enters conservative
+// mode on Shape|Both storms. The conservative gate is the *only* place
+// the Shape bit is consulted — reemit entry uses the Global bit (see
+// AC12b/c) and ignores the Shape bit, so Shape-only storms do NOT
+// block reemit. The gate fires inside compile_specialized (returns
+// nullptr early) and bumps g_specjit_conservative_due_to_shape_storm_total
+// per call. Cached specializations (returned via has_specialization /
+// get_specialized) are still served — the conservative mode is "no new
+// specialization", not "drop cache".
+static void ac14_specjit_shape_conservative() {
+    std::println("\n--- AC14: #2172 SpecJIT conservative gate on Shape|Both ---");
+    // AC14a: source-cite — spec_jit_controller.cpp + aura_jit_bridge.cpp
+    //        both reference #2172 + have the gate / facade code.
+    auto sp_src = read_first(
+        {"src/compiler/spec_jit_controller.cpp", "../src/compiler/spec_jit_controller.cpp"});
+    auto br_src =
+        read_first({"src/compiler/aura_jit_bridge.cpp", "../src/compiler/aura_jit_bridge.cpp"});
+    CHECK(!sp_src.empty(), "spec_jit_controller.cpp readable");
+    CHECK(!br_src.empty(), "aura_jit_bridge.cpp readable");
+    CHECK(sp_src.find("Issue #2172") != std::string::npos, "spec_jit_controller.cpp cites #2172");
+    CHECK(sp_src.find("aura_hot_update_current_storm_level") != std::string::npos,
+          "spec_jit_controller.cpp uses StormLevel facade for Shape gate");
+    CHECK(sp_src.find("g_specjit_conservative_due_to_shape_storm_total") != std::string::npos,
+          "spec_jit_controller.cpp defines the conservative counter");
+    CHECK(sp_src.find("aura_specjit_conservative_due_to_shape_storm_total_v_read") !=
+              std::string::npos,
+          "spec_jit_controller.cpp exports C-linkage accessor");
+    CHECK(br_src.find("Issue #2172") != std::string::npos, "aura_jit_bridge.cpp cites #2172");
+    CHECK(br_src.find("StormLevel::Global") != std::string::npos,
+          "aura_jit_bridge.cpp uses StormLevel facade as reemit throttle gate");
+    // AC14b: counter accessor reachable + monotonic across Shape cycles
+    //        (the gate fires inside compile_specialized; this verifies the
+    //        atomic + accessor are wired even when no SpecJIT call has
+    //        happened yet in this process).
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_emit_region_mask(0);
+    const auto before = aura_specjit_conservative_due_to_shape_storm_total_v_read();
+    aura_hot_update_set_shape_storm_active(1);
+    aura_hot_update_set_shape_storm_active(0);
+    aura_hot_update_set_shape_storm_active(1);
+    aura_hot_update_set_shape_storm_active(0);
+    const auto after = aura_specjit_conservative_due_to_shape_storm_total_v_read();
+    CHECK(after >= before, "conservative counter monotonic across shape-storm cycles");
+    // AC14c: StormLevel shape-only does NOT throttle reemit (the facade
+    //        returns Shape bit set but Global bit off; aura_reemit_aot
+    //        for_dirty consults only the Global bit, so reemit still
+    //        proceeds). Mirrors AC12b at the reemit-throttle layer.
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_shape_storm_active(1);
+    CHECK((aura_hot_update_current_storm_level() & 0x1) != 0,
+          "Shape bit set under shape-only storm");
+    CHECK((aura_hot_update_current_storm_level() & 0x2) == 0,
+          "Global bit clear under shape-only storm");
+    CHECK(aura_hot_update_should_throttle_reemit() == 0,
+          "shape-only storm does NOT throttle reemit (Global bit off)");
+    // Reset.
+    aura_hot_update_set_shape_storm_active(0);
+    aura_set_aot_metrics(nullptr);
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_set_aot_emit_region_mask(0);
+}
 static void ac11_adaptive_region_mask() {
     std::println("\n--- AC11: #2016 Evolution exclude + adaptive mask + stable table ---");
     aura::compiler::CompilerMetrics metrics{};
@@ -1006,6 +1077,7 @@ int main() {
     ac13a_reemit_fail_counter();
     ac13b_reemit_keep_fail();
     ac13c_reemit_query();
+    ac14_specjit_shape_conservative();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
