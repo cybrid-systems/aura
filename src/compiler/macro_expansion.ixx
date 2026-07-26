@@ -87,6 +87,10 @@ export extern std::atomic<std::uint64_t> g_macro_restamp_after_flat_total;
 // Issue #2096: per-cloned-subtree MacroIntroduced restamp counter
 // (subtree-local coherence at expand exit + critical mutate entry).
 export extern std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total;
+// Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
+// stamp counter (clone_macro_body walk visibility for rest-param
+// + nested qq + schema_cache copy paths).
+export extern std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total;
 
 // Issue #2023: MacroSelfEvo capability gate observability.
 export extern std::atomic<std::uint64_t> g_macro_self_evo_denied_total;
