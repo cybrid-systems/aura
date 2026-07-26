@@ -2057,6 +2057,23 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                            : ("mutation rejected: " + ev.last_mutate_error_));
         }
 
+        // Issue #2145: Full/Strict hard-gate before Agent sees commit.
+        // Runs invariant suite + linear enforce; on fail sets last_mutate_error_
+        // and forces Guard rollback via ok=false.
+        {
+            const std::uint64_t nchg =
+                ev.workspace_flat_ ? static_cast<std::uint64_t>(
+                                         ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0)
+                                   : 0;
+            if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
+                ok = false;
+                return mev("invariant-denied",
+                           ev.panic_auto_rollback_
+                               ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
+                               : ("mutation rejected: " + ev.last_mutate_error_));
+            }
+        }
+
         // Issue #1677: track render-logic rebinds for AI Native evolution stats.
         if (aura_is_render_evolution_name(name)) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -2325,6 +2342,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (!ev.last_mutate_error_.empty()) {
                     ok = false;
                     return mev("mutation-failed", "mutation rejected: " + ev.last_mutate_error_);
+                }
+
+                // Issue #2145: Full/Strict hard-gate before Agent sees commit.
+                if (!ev.finish_mutate_hard_gate(/*nodes_changed=*/1, /*linear=*/false,
+                                                "mutate:set-body")) {
+                    ok = false;
+                    return mev("invariant-denied", "mutation rejected: " + ev.last_mutate_error_);
                 }
 
                 // Issue #1506: mark IR cache dirty so eval / eval_ir /
@@ -5599,6 +5623,26 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("contextual-should-audit-wired", 1);
             insert_kv("full-force-rollback-wired", 1);
             insert_kv("dirty-aware-pass-inventory", 1);
+            // Issue #2145: Full/Strict hard-gate surface
+            {
+                const auto& c = g_typed_mutation_audit_counters;
+                insert_kv("hard-gate-audits-total",
+                          static_cast<std::int64_t>(
+                              c.hard_gate_audits_total.load(std::memory_order_relaxed)));
+                insert_kv("hard-gate-force-rollback-total",
+                          static_cast<std::int64_t>(
+                              c.hard_gate_force_rollback_total.load(std::memory_order_relaxed)));
+                insert_kv("hard-gate-strict-hold-total",
+                          static_cast<std::int64_t>(
+                              c.hard_gate_strict_hold_total.load(std::memory_order_relaxed)));
+                insert_kv("hard-gate-sampled-skip-total",
+                          static_cast<std::int64_t>(
+                              c.hard_gate_sampled_skip_total.load(std::memory_order_relaxed)));
+                insert_kv("hard-gate-wired", static_cast<std::int64_t>(c.hard_gate_wired.load(
+                                                 std::memory_order_relaxed)));
+                insert_kv("schema-2145", 2145);
+                insert_kv("issue-2145", 2145);
+            }
             // Issue #2027: composite / nested txn + partial recover counters
             {
                 const auto& c = g_typed_mutation_audit_counters;

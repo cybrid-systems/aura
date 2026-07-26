@@ -31,7 +31,8 @@ module;
                                            // aura_hot_update_notify_epoch_bump
                                            // aura_hot_update_reemit_provider_wired
                                            // aura_reemit_aot_for_dirty
-#include "typed_mutation_audit.h"          // Issue #1589 / #1614 / #1894
+#include "typed_mutation_audit.h"          // Issue #1589 / #1614 / #1894 / #2145
+#include "core/sandbox.hh"                 // Issue #2145 Strict hard-gate
 #include "core/arena_auto_policy_stats.h"  // in_render_hotpath
 #include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
 #include <chrono>
@@ -496,16 +497,24 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                       (workspace_flat_ && workspace_flat_->atomic_batch_active());
             const bool composite = nested_boundary || batch_active;
             const auto strat = typed_audit::get_strategy();
+            // Issue #2145: Strict sandbox links Full-class hard gate.
+            const bool strict_sandbox = aura::core::sandbox::is_strict();
+            const bool hard_gate = typed_audit::requires_invariant_hard_gate(
+                nodes_changed, linear_hint, strict_sandbox);
             // Composite paths never under-sample (self-evo multi-step safety).
             // Provenance miss forces audit even when Sampled would skip and
             // even when nodes_changed==0 (apply may be the only side effect).
             // Issue #2108: linear_ops_present (linear_hint) and composite
             // always force the escape hard-block path — Sampled must not
             // skip analyze_linear_escape / Moved live-root checks.
+            // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
             const bool do_audit = strat != typed_audit::AuditStrategy::Off &&
-                                  (provenance_miss || composite || linear_hint ||
+                                  (hard_gate || provenance_miss || composite || linear_hint ||
                                    (nodes_changed > 0 && typed_audit::should_audit_contextual(
                                                              mid, nodes_changed, linear_hint)));
+            if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
+                typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.fetch_add(
+                    1, std::memory_order_relaxed);
             if (do_audit) {
                 typed_audit::InvariantAuditResult first{};
                 bool inv_ok = false;
@@ -528,10 +537,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         epoch_after,
                         /*composite_mode=*/false, &first);
                 }
-                // #1894 / #2029: non-composite Full → per-category partial recover.
-                if (!composite && !inv_ok && strat == typed_audit::AuditStrategy::Full) {
+                // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
+                // per-category partial recover before structural rollback.
+                if (!composite && !inv_ok && hard_gate) {
                     auto& ac = typed_audit::g_typed_mutation_audit_counters;
                     ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
+                    ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
                     // Prefer linear re-enforce first (cheap; often fixes Moved live roots).
                     if (!first.linear_ok || first.cross_batch_linear_escape) {
                         ac.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
@@ -565,12 +576,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
                     }
                 }
-                if (!inv_ok && !recovered &&
-                    (composite || strat == typed_audit::AuditStrategy::Full)) {
+                // Issue #2145: hard-gate force rollback for Full / Strict / composite.
+                if (!inv_ok && !recovered && (composite || hard_gate)) {
                     auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                    if (strat == typed_audit::AuditStrategy::Full) {
+                    if (strat == typed_audit::AuditStrategy::Full || hard_gate) {
                         ac.full_strategy_force_rollback_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+                        ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
                     }
                     if (composite) {
                         ac.composite_full_rollback_total.fetch_add(1, std::memory_order_relaxed);
@@ -578,6 +590,24 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                         m->typed_mutation_full_force_rollback_total.fetch_add(
                             1, std::memory_order_relaxed);
+                    // Agent-visible deny reason (#2145 / #2076 shape).
+                    std::string_view deny_kind = "invariant";
+                    if (first.cross_batch_linear_escape)
+                        deny_kind = "linear-escape";
+                    else if (!first.linear_ok)
+                        deny_kind = "linear";
+                    else if (!first.type_ok)
+                        deny_kind = "type";
+                    else if (!first.provenance_ok)
+                        deny_kind = "provenance";
+                    last_mutate_error_ = typed_audit::format_invariant_deny_reason(
+                        deny_kind, capability_tenant_id(),
+                        composite ? "composite-invariant-force-rollback"
+                                  : "invariant-force-rollback");
+                    if (strict_sandbox) {
+                        strict_mutate_hold_.store(1, std::memory_order_relaxed);
+                        ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+                    }
                     // Structural undo (same as failure path; preserves fine_rollback).
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled =
@@ -615,6 +645,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                   : "invariant-force-rollback",
                         cp.version, epoch_after, /*success=*/false,
                         static_cast<std::uint32_t>(audit_target), 0, fid);
+                    // Strict trail: Error outcome for Agent dashboards.
+                    if (strict_sandbox)
+                        typed_audit::capture_audit_event_forced(
+                            mid, "strict-invariant-denied", typed_audit::MutationKind::Structural,
+                            cp.version, epoch_after, typed_audit::AuditOutcome::Error,
+                            static_cast<std::uint32_t>(audit_target), 0, fid, 0);
                     return cp;
                 }
                 // Success path: record outcome when audit passed / recovered.
