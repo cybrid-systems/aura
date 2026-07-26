@@ -55,6 +55,9 @@ extern "C" {
 // hot_update_registry.hh into this TU since only the getter is used).
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 extern "C" void aura_hot_update_set_shape_storm_active(int active);
+// Issue #2095: postmortem hook for default-LLVM reemit failures.
+// env-gated via AURA_REEMIT_KEEP_FAIL; rename to /tmp/aura_reemit_failed/.
+extern "C" int aura_reemit_keep_fail_enabled(void);
 extern "C" std::uint64_t aura_fiber_init_aura_result_err_total();
 extern "C" std::uint64_t aura_fiber_init_aura_result_ok_total();
 extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total();
@@ -12403,6 +12406,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t forced_recompile = 0;
         std::uint64_t cascade_joint = 0;
         std::uint64_t cascade_names = 0;
+        // Issue #2095: per-reason fail counter + keep-fail env-gated
+        // observability for the default-LLVM reemit path.
+        std::uint64_t reemit_fail = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             joint_bump = m->aot_joint_epoch_bump_total.load(std::memory_order_relaxed);
@@ -12414,7 +12420,17 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             cascade_joint =
                 m->aot_cascade_joint_epoch_observe_total.load(std::memory_order_relaxed);
             cascade_names = m->aot_cascade_region_stale_names_total.load(std::memory_order_relaxed);
+            // Issue #2095: default-LLVM incremental reemit fail counter.
+            reemit_fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
         }
+        // Issue #2095: keep-fail env state read OUTSIDE the metrics
+        // if-block since aura_reemit_keep_fail_enabled() is a file-scope
+        // C function (mirrors #2094 storm_level pattern — agents want
+        // the live value even when compiler_metrics_ is null).
+        const int keep_fail_enabled = ::aura_reemit_keep_fail_enabled();
+        constexpr const char* kKeepFailDebugDir = "/tmp/aura_reemit_failed";
+        auto kfdd_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(kKeepFailDebugDir);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
@@ -12448,9 +12464,88 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-jit-joint-versioning-wired", make_int(1)},
             {"schema-2046", make_int(2046)},
             {"issue-2046", make_int(2046)},
+            // Issue #2095: default-LLVM incremental reemit fail
+            // observability + env-gated postmortem keep-fail hook.
+            // Agents branch on these to decide whether to inspect a
+            // failed .o on disk (AURA_REEMIT_KEEP_FAIL=1) or just retry.
+            {"aot-incremental-llvm-emit-fail-total",
+             make_int(static_cast<std::int64_t>(reemit_fail))},
+            {"aot-reemit-keep-fail-enabled",
+             make_int(static_cast<std::int64_t>(keep_fail_enabled))},
+            {"aot-reemit-keep-fail-debug-dir", make_string(kfdd_idx)},
+            {"schema-2095", make_int(2095)},
+            {"issue-2095", make_int(2095)},
         };
         return build_hash(kv);
     });
+
+    // Issue #2095: default-LLVM reemit observability. Surfaces the
+    // per-reason fail counter + the env-gated postmortem hook so the
+    // Agent can branch on whether failed .o are kept for inspection
+    // (lineage 2095 — pipeline-phase, >= 5 fields).
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-incremental-reemit-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t success = 0;
+            std::uint64_t fail = 0;
+            int keep_enabled = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                success = m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
+                fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
+            }
+            keep_enabled = ::aura_reemit_keep_fail_enabled();
+            constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
+            auto dd_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(kDebugDir);
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
+                {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
+                {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
+                {"aot-reemit-keep-fail-debug-dir", make_string(dd_idx)},
+                {"aot-incremental-reemit-stats-lineage", make_int(2095)},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 92 (orig lines 10618-10682)
@@ -12523,6 +12618,7 @@ void ObservabilityPrims::register_eval_p92(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 }
+
 
 // Issue #909 part 93 (orig lines 10683-10762)
 void ObservabilityPrims::register_eval_p93(PrimRegistrar add, Evaluator& ev) {
