@@ -10,6 +10,14 @@
 //   AC4: re_pin + post-steal refresh safe under pending checkpoint
 //   AC5: 1000-iter concurrent save/restore + GC + steal-refresh stress
 //   AC6: after commit/restore, GC request path works again (eval ok)
+//   AC7: per-evaluator discriminator (#2002) — distinct ids don't collide
+//   AC8: steal-style clear of orphan defer + overflow counter (#2086)
+//   AC9: unified GcDeferReason bitmask (#2088) + per-reason arm totals
+//   AC12: query:gc-defer-reason-stats schema-2088 surface
+//   AC_O1: #2173 ProcessWide overflow bumps counter + process depth
+//   AC_O2: #2173 HardFail → arm rejected, process depth unchanged
+//   AC_O3: #2173 steal clear still zeros depth under HardFail
+//   AC_O4: #2173 capacity override + clamp (env + test setters)
 
 #include "test_harness.hpp"
 #include <fstream>
@@ -379,6 +387,233 @@ static void ac8_toctou_stress_per_evaluator() {
 
 } // namespace
 
+// ── Issue #2173: configurable kMaxArmedEvaluators + overflow policy
+// (ProcessWide | HardFail | Expand). Non-duplicative to #2002 #2086 #2088.
+// Extends the existing test suite (no separate file) so we keep the
+// shared gc_defer_pending_panic_depth / table state under one roof and
+// verify steal-clear / overflow semantics against the same evaluator
+// ids the older ACs used. Test setters (set/reset) gate the env-derived
+// default so other ACs in the file stay deterministic.
+
+// AC_O1: fill the table to capacity under ProcessWide; the next arm
+// falls back to legacy process-wide depth bump + table_overflow_total.
+// Verifies the env-configurable cap (default 64, set to 8 here for
+// fast overflow) actually constrains the arm loop.
+static void ac_o1_overflow_process_wide_2173() {
+    std::println("\n--- AC_O1: #2173 ProcessWide overflow bumps counter + process depth ---");
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+    aura::gc_hooks::set_gc_defer_overflow_policy_for_test(
+        aura::gc_hooks::GcDeferOverflowPolicy::ProcessWide);
+    aura::gc_hooks::set_gc_defer_max_armed_for_test(8); // small cap for fast overflow
+
+    const std::size_t cap = aura::gc_hooks::gc_defer_max_armed();
+    CHECK(cap == 8, "AC_O1: effective cap reflects override (8)");
+
+    const auto overflow_before =
+        aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed);
+    const auto depth_before = aura::gc_hooks::gc_defer_pending_panic_depth();
+
+    // Fill the table with `cap` distinct evaluators (each depth=1).
+    std::vector<void*> ids;
+    for (std::size_t i = 0; i < cap; ++i) {
+        void* id = reinterpret_cast<void*>(0xC0DE0000u + static_cast<unsigned>(i));
+        ids.push_back(id);
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(id);
+    }
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth_before + cap,
+          "AC_O1: process depth += cap after table-fill");
+
+    // One more arm → ProcessWide overflow path. Legacy semantics:
+    // process-wide depth bumped + table_overflow_total bumped.
+    void* extra_id = reinterpret_cast<void*>(0xDEADCAFEu);
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(extra_id);
+    CHECK(aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed) ==
+              overflow_before + 1,
+          "AC_O1: ProcessWide overflow bumps table-overflow-total");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth_before + cap + 1,
+          "AC_O1: ProcessWide overflow still bumps process depth");
+
+    // Cleanup: release table-fill ids + the overflow arm (depth bump
+    // without table slot — release decrements process depth directly).
+    for (auto* id : ids)
+        aura::gc_hooks::release_gc_defer_pending_panic_for(id);
+    aura::gc_hooks::release_gc_defer_pending_panic_for(extra_id);
+
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+}
+
+// AC_O2: HardFail overflow → arm rejected (try_arm returns false),
+// arm-rejected-overflow-total bumped, table-overflow-total NOT bumped,
+// process depth NOT bumped. The caller must observe the return value
+// (or this counter) before assuming GC deferral.
+static void ac_o2_hardfail_arm_rejected_2173() {
+    std::println("\n--- AC_O2: #2173 HardFail → arm rejected, process depth unchanged ---");
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+    aura::gc_hooks::set_gc_defer_overflow_policy_for_test(
+        aura::gc_hooks::GcDeferOverflowPolicy::HardFail);
+    aura::gc_hooks::set_gc_defer_max_armed_for_test(8);
+
+    const auto rejected_before = aura::gc_hooks::gc_defer_arm_rejected_overflow_total();
+    const auto overflow_before =
+        aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed);
+    const auto depth_before = aura::gc_hooks::gc_defer_pending_panic_depth();
+
+    // Fill the table.
+    std::vector<void*> ids;
+    for (std::size_t i = 0; i < 8; ++i) {
+        void* id = reinterpret_cast<void*>(0xBEEF0000u + static_cast<unsigned>(i));
+        ids.push_back(id);
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(id);
+    }
+
+    // HardFail overflow: try_arm returns false, dedicated counter bumps.
+    void* extra_id = reinterpret_cast<void*>(0xDEADCAFEu);
+    const bool armed = aura::gc_hooks::try_arm_gc_defer_pending_panic_for(extra_id);
+    CHECK(armed == false, "AC_O2: HardFail overflow → try_arm returns false");
+    CHECK(aura::gc_hooks::gc_defer_arm_rejected_overflow_total() == rejected_before + 1,
+          "AC_O2: HardFail overflow bumps arm-rejected-overflow-total");
+    CHECK(aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed) ==
+              overflow_before,
+          "AC_O2: HardFail overflow does NOT bump table-overflow-total");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth_before + 8,
+          "AC_O2: HardFail overflow does NOT bump process depth");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(extra_id),
+          "AC_O2: rejected arm does NOT mark extra_id as deferred");
+
+    // Cleanup.
+    for (auto* id : ids)
+        aura::gc_hooks::release_gc_defer_pending_panic_for(id);
+
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+}
+
+// AC_O3: HardFail overflow doesn't leave "sticky global defer without
+// counter signal". Steal-style clear of a table-backed id still zeros
+// its slot + decrements process depth (the table-fill arms ARE in the
+// table; the overflow rejection is not). Verifies the steal clear path
+// is correct regardless of overflow policy.
+//
+// Note: the cap setter clamps to [8, 512] (matches production guard),
+// so we use cap=8 and arm 9 ids (8 succeed, the 9th overflows →
+// HardFail rejects). Using a smaller cap would silently clamp up to 8
+// and the overflow path would never trigger.
+static void ac_o3_steal_clear_under_overflow_2173() {
+    std::println("\n--- AC_O3: #2173 steal clear still zeros depth under HardFail ---");
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+    aura::gc_hooks::set_gc_defer_overflow_policy_for_test(
+        aura::gc_hooks::GcDeferOverflowPolicy::HardFail);
+    aura::gc_hooks::set_gc_defer_max_armed_for_test(8);
+
+    // Fill the table with 8 table-backed ids (each depth=1) + arm a
+    // 9th that must overflow → HardFail rejection.
+    std::vector<void*> ids;
+    for (std::size_t i = 0; i < 8; ++i) {
+        void* id = reinterpret_cast<void*>(0xCAFE0000u + static_cast<unsigned>(i));
+        ids.push_back(id);
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(id);
+    }
+    // Relative baseline (captured AFTER 8 arms; AC1-AC12 + AC_O1 +
+    // AC_O2 may leave depth in non-zero state, so use relative).
+    const auto depth_before = aura::gc_hooks::gc_defer_pending_panic_depth();
+
+    // Trigger overflow (rejected) — must NOT bump depth, must NOT
+    // leave a sticky global defer (nothing for steal-clear to find).
+    void* extra_id = reinterpret_cast<void*>(0xDEAD0000u);
+    (void)aura::gc_hooks::try_arm_gc_defer_pending_panic_for(extra_id);
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth_before,
+          "AC_O3: rejected overflow does NOT bump depth (no sticky global defer)");
+
+    // Steal-style clear of a table-backed id still works.
+    const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(ids[1]);
+    CHECK(cleared == 1, "AC_O3: clear returned 1 (depth of ids[1])");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth_before - 1,
+          "AC_O3: process depth -= 1 after steal-style clear of table-backed id");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(ids[1]),
+          "AC_O3: ids[1] table slot empty after clear");
+
+    // Cleanup remaining table-fill ids (ids[1] already cleared).
+    for (std::size_t i = 0; i < 8; ++i) {
+        if (i == 1)
+            continue; // already cleared
+        aura::gc_hooks::release_gc_defer_pending_panic_for(ids[i]);
+    }
+
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+}
+
+// AC_O4: capacity override + clamp behavior + env var source-cite.
+// Override path applies the same clamp logic as env (8..512).
+static void ac_o4_capacity_clamp_and_env_2173() {
+    std::println("\n--- AC_O4: #2173 capacity override + clamp + env source-cite ---");
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+
+    // Clamp low: below 8 → 8.
+    aura::gc_hooks::set_gc_defer_max_armed_for_test(2);
+    CHECK(aura::gc_hooks::gc_defer_max_armed() == 8, "AC_O4: cap clamps up from 2 to 8");
+
+    // Clamp high: above 512 → 512.
+    aura::gc_hooks::set_gc_defer_max_armed_for_test(1000);
+    CHECK(aura::gc_hooks::gc_defer_max_armed() == 512, "AC_O4: cap clamps down from 1000 to 512");
+
+    // In range: 64 → 64 (no clamp).
+    aura::gc_hooks::set_gc_defer_max_armed_for_test(64);
+    CHECK(aura::gc_hooks::gc_defer_max_armed() == 64, "AC_O4: cap reflects override (no clamp)");
+
+    // Reset to env default (64).
+    aura::gc_hooks::reset_gc_defer_max_armed_for_test();
+    CHECK(aura::gc_hooks::gc_defer_max_armed() == 64,
+          "AC_O4: cap returns to env default (64) after reset");
+
+    // Overflow policy override + reset.
+    aura::gc_hooks::set_gc_defer_overflow_policy_for_test(
+        aura::gc_hooks::GcDeferOverflowPolicy::HardFail);
+    CHECK(aura::gc_hooks::gc_defer_overflow_policy() ==
+              aura::gc_hooks::GcDeferOverflowPolicy::HardFail,
+          "AC_O4: policy override reflects HardFail");
+    aura::gc_hooks::set_gc_defer_overflow_policy_for_test(
+        aura::gc_hooks::GcDeferOverflowPolicy::Expand);
+    CHECK(aura::gc_hooks::gc_defer_overflow_policy() ==
+              aura::gc_hooks::GcDeferOverflowPolicy::Expand,
+          "AC_O4: policy override reflects Expand");
+    aura::gc_hooks::reset_gc_defer_overflow_policy_for_test();
+    CHECK(aura::gc_hooks::gc_defer_overflow_policy() ==
+              aura::gc_hooks::GcDeferOverflowPolicy::ProcessWide,
+          "AC_O4: policy returns to env default (ProcessWide) after reset");
+
+    // Source-cite: env vars + new types + try_arm + counter.
+    std::ifstream gh("src/core/gc_hooks.h");
+    std::string gh_contents((std::istreambuf_iterator<char>(gh)), std::istreambuf_iterator<char>());
+    CHECK(gh_contents.find("AURA_GC_DEFER_MAX_ARMED") != std::string::npos,
+          "AC_O4: gc_hooks.h references AURA_GC_DEFER_MAX_ARMED env var");
+    CHECK(gh_contents.find("AURA_GC_DEFER_OVERFLOW_POLICY") != std::string::npos,
+          "AC_O4: gc_hooks.h references AURA_GC_DEFER_OVERFLOW_POLICY env var");
+    CHECK(gh_contents.find("GcDeferOverflowPolicy") != std::string::npos,
+          "AC_O4: gc_hooks.h defines GcDeferOverflowPolicy enum");
+    CHECK(gh_contents.find("g_gc_defer_arm_rejected_overflow_total") != std::string::npos,
+          "AC_O4: gc_hooks.h defines arm-rejected-overflow-total counter");
+    CHECK(gh_contents.find("try_arm_gc_defer_pending_panic_for") != std::string::npos,
+          "AC_O4: gc_hooks.h defines try_arm_gc_defer_pending_panic_for");
+    CHECK(gh_contents.find("Issue #2173") != std::string::npos, "AC_O4: gc_hooks.h cites #2173");
+
+    // Source-cite: query:gc-defer-reason-stats exposes new keys.
+    std::ifstream ep("src/compiler/evaluator_primitives_obs_jit.cpp");
+    std::string ep_contents((std::istreambuf_iterator<char>(ep)), std::istreambuf_iterator<char>());
+    CHECK(ep_contents.find("schema-2173") != std::string::npos,
+          "AC_O4: query prim exposes schema-2173 key");
+    CHECK(ep_contents.find("max-armed-effective") != std::string::npos,
+          "AC_O4: query prim exposes max-armed-effective key");
+    CHECK(ep_contents.find("overflow-policy") != std::string::npos,
+          "AC_O4: query prim exposes overflow-policy key");
+    CHECK(ep_contents.find("arm-rejected-overflow-total") != std::string::npos,
+          "AC_O4: query prim exposes arm-rejected-overflow-total key");
+}
+
 // ── Issue #2086 AC: fiber-steal / cross-evaluator resume must
 // clear orphan panic-defer depth from the previous host. After steal
 // from A (with armed panic defer) to B, process-wide depth attributable
@@ -651,6 +886,10 @@ int main() {
     ac8_steal_clears_orphan_defer_2086();
     ac9_unified_gc_defer_reason_2088();
     ac12_query_gc_defer_reason_stats_2088();
+    ac_o1_overflow_process_wide_2173();
+    ac_o2_hardfail_arm_rejected_2173();
+    ac_o3_steal_clear_under_overflow_2173();
+    ac_o4_capacity_clamp_and_env_2173();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -22,6 +22,8 @@
 #define AURA_CORE_GC_HOOKS_H
 
 #include <cstddef>
+#include <cstdlib>
+#include <string_view>
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -157,14 +159,129 @@ inline void note_safepoint_wait_while_mutation(std::uint64_t wait_us) noexcept {
 // per-call lock is fine).
 inline std::atomic<std::uint32_t> g_gc_defer_pending_panic_depth{0};
 namespace detail {
-    constexpr std::size_t kMaxArmedEvaluators = 64;
+    // Issue #2173: bumped to 512 (max possible) — the effective per-process
+    // cap is configurable via AURA_GC_DEFER_MAX_ARMED env var (default 64,
+    // clamp 8..512). All arm/release/clear loops bound on gc_defer_max_armed()
+    // instead of the constexpr so the env var + test setters take effect.
+    constexpr std::size_t kMaxArmedEvaluators = 512;
     struct ArmedEvaluatorEntry {
         void* id = nullptr;
         std::uint32_t depth = 0;
     };
     inline std::array<ArmedEvaluatorEntry, kMaxArmedEvaluators> g_gc_defer_armed_table{};
     inline std::mutex g_gc_defer_armed_mtx{};
+    // Issue #2173: per-process override for the effective max-armed cap.
+    // 0 = use env-derived default (AURA_GC_DEFER_MAX_ARMED, default 64).
+    // Tests set this via set_gc_defer_max_armed_for_test(n) to control
+    // the loop bound on arm/release/clear without depending on env.
+    inline std::atomic<std::size_t> g_max_armed_override{0};
+    // Issue #2173: per-process override for the overflow policy.
+    // 0 = use env-derived default (AURA_GC_DEFER_OVERFLOW_POLICY, default
+    // ProcessWide). Tests set via set_gc_defer_overflow_policy_for_test(p).
+    inline std::atomic<int> g_overflow_policy_override{0};
 } // namespace detail
+
+// Issue #2173: overflow policy enum. ProcessWide is the legacy default
+// (bump process-wide depth + table_overflow_total on overflow). HardFail
+// returns false from try_arm_gc_defer_pending_panic_for without bumping
+// process-wide depth — instead bumps dedicated
+// g_gc_defer_arm_rejected_overflow_total. Expand is reserved for a
+// future Phase 3 heap-backed table; current implementation falls back
+// to ProcessWide semantics when Expand is selected.
+enum class GcDeferOverflowPolicy : std::uint8_t {
+    ProcessWide = 0,
+    HardFail = 1,
+    Expand = 2,
+};
+
+// Issue #2173: configurable per-process max-armed cap. Reads
+// AURA_GC_DEFER_MAX_ARMED env var at first call (cached in static),
+// clamped to [8, 512]. Tests override via set_gc_defer_max_armed_for_test.
+[[nodiscard]] inline std::size_t gc_defer_max_armed() noexcept {
+    const auto override = detail::g_max_armed_override.load(std::memory_order_acquire);
+    if (override > 0) {
+        if (override < 8)
+            return 8;
+        if (override > 512)
+            return 512;
+        return override;
+    }
+    static const std::size_t cached = []() noexcept -> std::size_t {
+        const char* env = std::getenv("AURA_GC_DEFER_MAX_ARMED");
+        if (!env || !*env)
+            return std::size_t{64};
+        char* end = nullptr;
+        const long v = std::strtol(env, &end, 10);
+        if (end == env)
+            return std::size_t{64};
+        if (v < 8)
+            return std::size_t{8};
+        if (v > 512)
+            return std::size_t{512};
+        return static_cast<std::size_t>(v);
+    }();
+    return cached;
+}
+
+// Issue #2173: configurable overflow policy. Reads
+// AURA_GC_DEFER_OVERFLOW_POLICY env var at first call. Valid values:
+// "ProcessWide" (default, legacy), "HardFail", "Expand" (Phase 3, falls
+// back to ProcessWide semantics). Tests override via
+// set_gc_defer_overflow_policy_for_test.
+[[nodiscard]] inline GcDeferOverflowPolicy gc_defer_overflow_policy() noexcept {
+    const auto override = detail::g_overflow_policy_override.load(std::memory_order_acquire);
+    if (override > 0) {
+        if (override == 1)
+            return GcDeferOverflowPolicy::HardFail;
+        if (override == 2)
+            return GcDeferOverflowPolicy::Expand;
+        return GcDeferOverflowPolicy::ProcessWide;
+    }
+    static const GcDeferOverflowPolicy cached = []() noexcept -> GcDeferOverflowPolicy {
+        const char* env = std::getenv("AURA_GC_DEFER_OVERFLOW_POLICY");
+        if (!env || !*env)
+            return GcDeferOverflowPolicy::ProcessWide;
+        // std::string_view reads up to but not including the null terminator,
+        // and operator== does element-wise comparison (no over-read UB that
+        // memcmp(env, "HardFail", 10) would trigger when "HardFail" is only
+        // 9 chars + null).
+        const std::string_view v(env);
+        if (v == "HardFail")
+            return GcDeferOverflowPolicy::HardFail;
+        if (v == "Expand")
+            return GcDeferOverflowPolicy::Expand;
+        if (v == "ProcessWide")
+            return GcDeferOverflowPolicy::ProcessWide;
+        return GcDeferOverflowPolicy::ProcessWide;
+    }();
+    return cached;
+}
+
+// Issue #2173: test setters (per-process override). Reset to use env
+// default by calling the reset variant (sets override back to 0).
+inline void set_gc_defer_max_armed_for_test(std::size_t n) noexcept {
+    detail::g_max_armed_override.store(n, std::memory_order_release);
+}
+inline void reset_gc_defer_max_armed_for_test() noexcept {
+    detail::g_max_armed_override.store(0, std::memory_order_release);
+}
+inline void set_gc_defer_overflow_policy_for_test(GcDeferOverflowPolicy p) noexcept {
+    detail::g_overflow_policy_override.store(static_cast<int>(p), std::memory_order_release);
+}
+inline void reset_gc_defer_overflow_policy_for_test() noexcept {
+    detail::g_overflow_policy_override.store(0, std::memory_order_release);
+}
+
+// Issue #2173: bumped when arm_gc_defer_pending_panic_for (or
+// try_arm_gc_defer_pending_panic_for) overflows the bounded table AND
+// the active overflow policy is HardFail. ProcessWide overflow bumps
+// g_gc_defer_table_overflow_total instead (legacy semantics). Distinct
+// counter so operators can distinguish "silent fallback" from
+// "arm rejected" via (query:gc-defer-reason-stats).
+inline std::atomic<std::uint64_t> g_gc_defer_arm_rejected_overflow_total{0};
+[[nodiscard]] inline std::uint64_t gc_defer_arm_rejected_overflow_total() noexcept {
+    return g_gc_defer_arm_rejected_overflow_total.load(std::memory_order_relaxed);
+}
 
 // Issue #2088: unified GcDeferReason bitmask. Combines all independent
 // defer signals (panic, ffi-pin, future render-pin) into a single
@@ -305,13 +422,19 @@ inline void release_gc_defer_pending_panic() noexcept {
 // AND the process-wide aggregate depth (so existing gc_deferred_for_pending_panic()
 // checks continue to work without changes). If evaluator_id is null,
 // falls back to the legacy process-wide increment (no discriminator).
+// Issue #2173: loop bound on gc_defer_max_armed() (env-configurable,
+// default 64). Overflow path dispatches on gc_defer_overflow_policy():
+//   - ProcessWide (legacy): bump process-wide depth + g_gc_defer_table_overflow_total
+//   - HardFail: bump g_gc_defer_arm_rejected_overflow_total, no process depth bump
 inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     if (!evaluator_id) {
         arm_gc_defer_pending_panic();
         return;
     }
+    const auto cap = gc_defer_max_armed();
     std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
-    for (auto& e : detail::g_gc_defer_armed_table) {
+    for (std::size_t i = 0; i < cap; ++i) {
+        auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {
             ++e.depth;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
@@ -322,7 +445,8 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             return;
         }
     }
-    for (auto& e : detail::g_gc_defer_armed_table) {
+    for (std::size_t i = 0; i < cap; ++i) {
+        auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == nullptr) {
             e.id = evaluator_id;
             e.depth = 1;
@@ -334,20 +458,72 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             return;
         }
     }
-    // Overflow: still bump process-wide depth (legacy behavior). The
-    // per-evaluator table is bounded; in practice # of evaluators with
-    // active PanicCheckpoints is tiny.
-    // Issue #2086: observable overflow path. Surfaces table-full
-    // situations to dashboards (under many concurrent evaluators the
-    // per-evaluator arm silently falls back to process-wide-only
-    // depth — without this counter, the silent fallback hides
-    // accidental depth accumulation across steal boundaries).
+    // Overflow: dispatch on policy (Issue #2173).
+    const auto policy = gc_defer_overflow_policy();
+    if (policy == GcDeferOverflowPolicy::HardFail) {
+        // HardFail: don't bump process-wide depth; bump dedicated counter.
+        // Do not arm the Panic bit either — defer is NOT actually armed,
+        // caller must observe try_arm_gc_defer_pending_panic_for return
+        // value (or check this counter) before assuming GC deferral.
+        g_gc_defer_arm_rejected_overflow_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    // ProcessWide (default + Expand fallback): legacy behavior. Bump
+    // process-wide depth + table_overflow_total + arm Panic bit.
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
     g_gc_defer_table_overflow_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #2088: overflow path still arms the unified Panic bit.
     const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
     (void)arm_defer(GcDeferReason::Panic);
     note_defer_reason_armed(GcDeferReason::Panic, prev);
+}
+
+// Issue #2173: try-arm variant. Same semantics as arm_gc_defer_pending_panic_for
+// except returns bool: true = armed (per-eval slot or ProcessWide overflow
+// fallback), false = rejected by HardFail overflow policy. Caller MUST
+// check the return value when HardFail policy is active — GC deferral is
+// NOT armed on false return.
+[[nodiscard]] inline bool try_arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
+    if (!evaluator_id) {
+        arm_gc_defer_pending_panic();
+        return true;
+    }
+    const auto cap = gc_defer_max_armed();
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    for (std::size_t i = 0; i < cap; ++i) {
+        auto& e = detail::g_gc_defer_armed_table[i];
+        if (e.id == evaluator_id) {
+            ++e.depth;
+            g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+            (void)arm_defer(GcDeferReason::Panic);
+            note_defer_reason_armed(GcDeferReason::Panic, prev);
+            return true;
+        }
+    }
+    for (std::size_t i = 0; i < cap; ++i) {
+        auto& e = detail::g_gc_defer_armed_table[i];
+        if (e.id == nullptr) {
+            e.id = evaluator_id;
+            e.depth = 1;
+            g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+            (void)arm_defer(GcDeferReason::Panic);
+            note_defer_reason_armed(GcDeferReason::Panic, prev);
+            return true;
+        }
+    }
+    // Overflow: dispatch on policy.
+    const auto policy = gc_defer_overflow_policy();
+    if (policy == GcDeferOverflowPolicy::HardFail) {
+        g_gc_defer_arm_rejected_overflow_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+    g_gc_defer_table_overflow_total.fetch_add(1, std::memory_order_relaxed);
+    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    (void)arm_defer(GcDeferReason::Panic);
+    note_defer_reason_armed(GcDeferReason::Panic, prev);
+    return true;
 }
 // Issue #2005: explicit ffi-pin defer — increments while any
 // (ffi:pin-buffer) primitive holds a LifetimePin for an FFI buffer that
@@ -391,13 +567,17 @@ inline void release_ffi_pin_defer() noexcept {
 // when the entry's depth hits 0, clears the id slot. Always decrements
 // the process-wide aggregate too (so the aggregate matches what was
 // armed, even if the per-evaluator slot is no longer found).
+// Issue #2173: loop bound on gc_defer_max_armed() (only iterates slots
+// that the active cap allows, matching the arm-loop bound).
 inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     if (!evaluator_id) {
         release_gc_defer_pending_panic();
         return;
     }
+    const auto cap = gc_defer_max_armed();
     std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
-    for (auto& e : detail::g_gc_defer_armed_table) {
+    for (std::size_t i = 0; i < cap; ++i) {
+        auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {
             if (e.depth > 0)
                 --e.depth;
@@ -428,11 +608,14 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
 // armed in the per-evaluator table. Returns false if the id is null
 // or not found. Cross-evaluator steal can use this to detect stale
 // defer depth owned by the previous host.
+// Issue #2173: loop bound on gc_defer_max_armed().
 [[nodiscard]] inline bool gc_deferred_for_evaluator(void* evaluator_id) noexcept {
     if (!evaluator_id)
         return false;
+    const auto cap = gc_defer_max_armed();
     std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
-    for (const auto& e : detail::g_gc_defer_armed_table) {
+    for (std::size_t i = 0; i < cap; ++i) {
+        const auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id)
             return e.depth > 0;
     }
@@ -442,12 +625,18 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
 // Issue #2002: clear any deferred depth belonging to evaluator_id
 // (used by fiber-steal path to orphan stale depth from the previous
 // host). Returns the # of slots that were cleared (0 if none).
+// Issue #2173: loop bound on gc_defer_max_armed(). Process-wide depth
+// decrement + Panic bit clear on 0 remain correct for all slots that
+// were actually table-backed (HardFail overflow path doesn't arm the
+// bit, so there's nothing to clear for those slots).
 [[nodiscard]] inline std::uint32_t clear_gc_defer_for_evaluator(void* evaluator_id) noexcept {
     if (!evaluator_id)
         return 0;
     std::uint32_t cleared = 0;
+    const auto cap = gc_defer_max_armed();
     std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
-    for (auto& e : detail::g_gc_defer_armed_table) {
+    for (std::size_t i = 0; i < cap; ++i) {
+        auto& e = detail::g_gc_defer_armed_table[i];
         if (e.id == evaluator_id) {
             cleared = e.depth;
             e.depth = 0;
