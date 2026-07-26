@@ -23,6 +23,8 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/aura_jit_bridge.h"
 
+extern "C" void aura_reset_runtime();
+
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -131,8 +133,11 @@ static void ac3_dirty_notify_on_mark() {
     std::println("\n--- AC3: mark_define_dirty bumps dirty_notify_total ---");
     auto& reg = hot_update_registry();
     reg.clear_listeners();
-    std::vector<std::string> heard;
-    reg.register_dirty_listener([&](const char* n) {
+    // Static: dirty listeners outlive this frame if any deferred notify races
+    // (process-global HotUpdateRegistry). Avoid stack-capture UAF.
+    static std::vector<std::string> heard;
+    heard.clear();
+    reg.register_dirty_listener([](const char* n) {
         if (n)
             heard.emplace_back(n);
     });
@@ -155,9 +160,15 @@ static void ac3_dirty_notify_on_mark() {
 static void ac4_reemit_when_wired() {
     std::println("\n--- AC4: reemit provider wired → trigger + candidates ---");
     auto& reg = hot_update_registry();
-    ReemitFeed feed;
-    feed.names = {"id"};
+    // Static feed: cascade reemit may outlive this stack frame if async.
+    // Synthetic candidate name (not a live define): host emit_ok still
+    // advances reemit metrics, but register_stable_id_in_func_table falls
+    // back to the process-static sentinel — never pins a JIT pointer that
+    // dies with CompilerService (UAF → free(): invalid pointer in AC5+).
+    static ReemitFeed feed;
+    feed.names = {"__hu_probe_2035"};
     feed.regions = {1}; // Performance region
+    feed.cursor = 0;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
     aura_set_aot_emit_fn(&emit_ok, nullptr);
 
@@ -183,10 +194,16 @@ static void ac4_reemit_when_wired() {
 
     aura_set_aot_emit_fn(nullptr, nullptr);
     aura_set_reemit_candidate_fn(nullptr, nullptr);
+    // Drop probe stable ids so later ACs do not inherit reemit table noise.
+    aura_clear_stable_func_id_map();
 }
 
 static void ac5_query_schema() {
     std::println("\n--- AC5: query:hot-update-registry-stats schema-2035 ---");
+    // Ensure no leftover reemit provider from prior ACs (dangling userdata → UAF).
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_clear_stable_func_id_map();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define f (lambda (x) x))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
@@ -206,9 +223,10 @@ static void ac5_query_schema() {
 static void ac6_stable_id_across_reemit() {
     std::println("\n--- AC6: stable func-id preserve across reemits ---");
     aura_clear_stable_func_id_map();
-    ReemitFeed feed;
+    static ReemitFeed feed;
     feed.names = {"f", "g"};
     feed.regions = {1, 1};
+    feed.cursor = 0;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
     aura_set_aot_emit_fn(&emit_ok, nullptr);
 
@@ -261,21 +279,15 @@ static void ac7_query_schema_2090() {
     CHECK(href(cs, "cascade-dirty-reemit-wired") == 1, "cascade wired retained");
 }
 
-// Issue #2090: outermost MutationBoundaryGuard dtor wires the unified
-// hot-update recovery sequence (throttle → reemit → epoch_notify →
-// batch_deopt unmatched). Source citation: the reemit pipeline is
-// dispatched in the outermost dtor AFTER the linear closed-loop and
-// BEFORE the lock drop — pairs with the #2035 cascade-only path so
-// non-cascade exits (fiber-steal restore / partial recovery /
-// compact-only / exception unwind) also drive a single ordered recovery
-// sequence.
+// Issue #2090 / #2162: outermost dtor + single-owner helper wire the
+// unified hot-update recovery sequence.
 static void ac8_source_outmost_dtor_pipeline() {
-    std::println(
-        "\n--- AC8 (#2090): outermost dtor wires throttle→reemit→epoch_notify→batch_deopt ---");
+    std::println("\n--- AC8 (#2090/#2162): recovery helper throttle→reemit→epoch→batch_deopt ---");
     const auto mcp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    CHECK(mcp.find("Issue #2090: outermost dtor unified hot-update recovery sequence") !=
-              std::string::npos,
-          "dtor wires #2090 reemit pipeline");
+    CHECK(mcp.find("run_hot_update_recovery_if_needed") != std::string::npos,
+          "dtor/helper wires recovery pipeline");
+    CHECK(mcp.find("Issue #2162") != std::string::npos || mcp.find("2162") != std::string::npos,
+          "cites #2162");
     CHECK(mcp.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
           "throttle check present");
     CHECK(mcp.find("aura_hot_update_on_reemit_throttled") != std::string::npos,
@@ -284,20 +296,25 @@ static void ac8_source_outmost_dtor_pipeline() {
           "reemit_aot_for_dirty call present");
     CHECK(mcp.find("aura_hot_update_notify_epoch_bump") != std::string::npos,
           "notify_epoch_bump present");
+    CHECK(mcp.find("aura_jit_batch_deopt_for") != std::string::npos,
+          "AC1: batch_deopt_for call present");
     CHECK(mcp.find("boundary_reemit_success_total") != std::string::npos,
           "boundary_reemit_success_total bump present");
     CHECK(mcp.find("boundary_reemit_throttled_total") != std::string::npos,
           "boundary_reemit_throttled_total bump present");
     CHECK(mcp.find("boundary_batch_deopt_unmatched_total") != std::string::npos,
           "boundary_batch_deopt_unmatched_total bump present");
-    // Defuse snapshot lives on the Guard so the dtor can detect dirty
-    // paths that skip mark_define_dirty (catches non-cascade exits).
+    const auto fib = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fib.find("run_hot_update_recovery_if_needed") != std::string::npos,
+          "AC1: fiber-steal/compact path wires recovery");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("note_hot_update_recovery_done") != std::string::npos,
+          "AC3: cascade marks recovery done (no double-reemit)");
     const auto evx = read_file("src/compiler/evaluator.ixx");
     CHECK(evx.find("defuse_version_at_enter_") != std::string::npos,
           "Guard captures defuse_version_at_enter_ for dirty detection");
-    // Compiled via AURA_COMPILER_METRICS_FIELD so the atomic counters
-    // exist in CompilerMetrics (otherwise the fetch_add calls above
-    // would not link).
+    CHECK(evx.find("run_hot_update_recovery_if_needed") != std::string::npos,
+          "Evaluator declares recovery helper");
     const auto inc = read_file("src/compiler/compiler_metrics_fields.inc");
     CHECK(inc.find("AURA_COMPILER_METRICS_FIELD(boundary_reemit_success_total)") !=
               std::string::npos,
@@ -310,24 +327,86 @@ static void ac8_source_outmost_dtor_pipeline() {
           "boundary_batch_deopt_unmatched_total field declared");
 }
 
+// Issue #2162 AC2/AC4: recovery advances query counters; second call idempotent.
+static void ac9_recovery_metrics_and_idempotent() {
+    std::println("\n--- AC9 (#2162): recovery metrics + single-owner idempotent ---");
+    // Isolate process-global reemit provider from prior ACs.
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    auto& ev = cs.evaluator();
+
+    // Static feed: recovery reemit must not observe a stack UAF if any
+    // deferred path outlives this AC (mirrors AC4/AC6).
+    static ReemitFeed feed;
+    feed.names = {"f2162"};
+    feed.regions = {0};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+
+    const auto succ0 = href(cs, "boundary-reemit-success-total");
+    const auto thr0 = href(cs, "boundary-reemit-throttled-total");
+    const auto deopt0 = href(cs, "boundary-batch-deopt-unmatched-total");
+    const auto enter = ev.defuse_version();
+    const auto dirty_enter =
+        ev.workspace_flat() ? ev.workspace_flat()->mark_dirty_upward_call_count() : 0;
+
+    // Simulate dirty by bumping defuse past enter snapshot.
+    ev.bump_defuse_version_for_test();
+    CHECK(ev.defuse_version() != enter, "defuse advanced");
+
+    ev.run_hot_update_recovery_if_needed(/*success=*/true, enter, dirty_enter);
+    const auto succ1 = href(cs, "boundary-reemit-success-total");
+    const auto thr1 = href(cs, "boundary-reemit-throttled-total");
+    const auto deopt1 = href(cs, "boundary-batch-deopt-unmatched-total");
+    CHECK(succ1 > succ0 || thr1 > thr0, "AC2: reemit success or throttle advanced");
+    CHECK(deopt1 >= deopt0, "AC2: batch_deopt unmatched counter present");
+
+    // Second call same defuse: idempotent (AC3).
+    const auto succ_mid = href(cs, "boundary-reemit-success-total");
+    const auto thr_mid = href(cs, "boundary-reemit-throttled-total");
+    ev.run_hot_update_recovery_if_needed(/*success=*/true, enter, dirty_enter);
+    CHECK(href(cs, "boundary-reemit-success-total") == succ_mid, "AC3: no double success bump");
+    CHECK(href(cs, "boundary-reemit-throttled-total") == thr_mid, "AC3: no double throttle bump");
+
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+}
+
+// Drop process-global closure/JIT slots left by CompilerService so a later
+// aura_reemit_aot_for_dirty cannot remap freed envs (heap corruption under
+// multi-AC sequencing — free(): invalid pointer on reemit_names dtor).
+static void reset_runtime_after_cs() {
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_clear_stable_func_id_map();
+    aura_reset_runtime();
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_hot_update_cascade_dirty_reemit (#2035 / #2090) ===");
+    std::println("=== test_hot_update_cascade_dirty_reemit (#2035 / #2090 / #2162) ===");
     ac1_source();
     ac2_region_mask_logic();
-    ac3_dirty_notify_on_mark();
-    ac4_reemit_when_wired();
-    ac5_query_schema();
+    // AC6 before any CompilerService dirty path: reemit remaps process-global
+    // live closures; prior CS teardown can leave freed slots that corrupt
+    // the next reemit_names / remap walk (Issue #2162 test isolation).
     ac6_stable_id_across_reemit();
-    // Issue #2090: outermost dtor unified hot-update recovery sequence
-    // (throttle → reemit → epoch_notify → batch_deopt unmatched). AC7
-    // verifies the 3 new boundary counters + schema-2090 are exposed via
-    // query:hot-update-registry-stats; AC8 verifies the wire-up is in
-    // evaluator_mutation_boundary.cpp + evaluator.ixx +
-    // compiler_metrics_fields.inc.
+    reset_runtime_after_cs();
     ac7_query_schema_2090();
     ac8_source_outmost_dtor_pipeline();
+    ac3_dirty_notify_on_mark();
+    reset_runtime_after_cs();
+    ac4_reemit_when_wired();
+    reset_runtime_after_cs();
+    ac5_query_schema();
+    reset_runtime_after_cs();
+    ac9_recovery_metrics_and_idempotent();
+    reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -16,7 +16,8 @@ module;
 #include "orch/agent_spawn.h" // #2010: g_orch_module_stats for mailbox BP mirror
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
-#include "core/sandbox.hh" // #2056: is_strict for cross-tenant ensure
+#include "core/sandbox.hh"                 // #2056: is_strict for cross-tenant ensure
+#include "compiler/hot_update_registry.hh" // Issue #2162: aura_hot_update_has_deferred_reemit
 #include <cassert>
 #include <chrono>
 #include <memory> // Issue #1880: unique_ptr for orch agent body guard
@@ -756,6 +757,17 @@ void aura::compiler::Evaluator::on_arena_compact_hook() {
     // (paired with the resume path via run_post_restore_lifecycle_close
     // in evaluator_workspace_tree.cpp).
     restore_panic_checkpoint_on_arena_compact_if_needed();
+    // Issue #2162: compact-only recovery when no Guard owns the pipeline.
+    // Compact has no boundary enter snapshot — only drain deferred reemit
+    // (SoftEnter/Defer left pending). Do not use lifetime dirty_upward
+    // alone: that would re-fire recovery on every GC compact after any
+    // historical mark_dirty and can re-register AOT slots under host
+    // reemit fixtures (heap corruption under multi-AC tests).
+    if (mutation_boundary_depth() == 0 && aura_hot_update_has_deferred_reemit() != 0) {
+        const auto cur = defuse_version_.load(std::memory_order_acquire);
+        const auto dirty_n = workspace_flat_ ? workspace_flat_->mark_dirty_upward_call_count() : 0;
+        run_hot_update_recovery_if_needed(/*success=*/true, cur, dirty_n);
+    }
 }
 
 bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
@@ -890,6 +902,16 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
             bump_panic_checkpoint_lost_on_steal();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
                 m->panic_transfer_failed.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #2162: fiber-steal version-drift with no Guard still on this
+        // host (depth==0) must not leave deferred dirty without recovery.
+        // When Guard remains (depth>0), dtor owns the pipeline (AC3 single-owner).
+        // Snapshot current dirty_upward so only defuse delta / deferred fires
+        // (not lifetime mark_dirty count).
+        if (mutation_boundary_depth() == 0 && version_drift) {
+            const auto dirty_n =
+                workspace_flat_ ? workspace_flat_->mark_dirty_upward_call_count() : 0;
+            run_hot_update_recovery_if_needed(/*success=*/false, cp.defuse_version, dirty_n);
         }
         return false;
     }
