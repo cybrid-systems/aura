@@ -7461,6 +7461,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_critical_jit_keep_total{0};
     std::atomic<std::uint64_t> render_critical_partial_prefer_total{0};
     std::atomic<std::uint64_t> render_critical_define_registered_total{0};
+    // Issue #2137: frame-budget cascade isolation (protect present p99).
+    //   - frame_budget_deferred_cascade_total: non-render cascade deferred
+    //   - frame_budget_flush_total: drain rounds after present
+    //   - present_p99_under_cascade_us: hold histogram p99 (µs)
+    //   - render_hotpath_hold_ns: cumulative hold duration
+    //   - frame_budget_pending: names still waiting to re-mark
+    //   - frame_budget_wired: constant 1 for Agent discovery
+    std::atomic<std::uint64_t> frame_budget_deferred_cascade_total{0};
+    std::atomic<std::uint64_t> frame_budget_flush_total{0};
+    std::atomic<std::uint64_t> present_p99_under_cascade_us{0};
+    std::atomic<std::uint64_t> render_hotpath_hold_ns{0};
+    std::atomic<std::uint64_t> frame_budget_pending{0};
+    std::atomic<std::uint64_t> frame_budget_wired{1};
     // Issue #2051: Agent closed-loop — render-related mutate cost + loop rounds.
     //   - render_mutate_cost_ns_total / samples / last_ns: soft-dirty cost for
     //     render-critical defines (Agents: "was this mutate cheap enough?")

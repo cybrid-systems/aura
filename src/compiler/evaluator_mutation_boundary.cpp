@@ -33,6 +33,7 @@ module;
                                            // aura_reemit_aot_for_dirty
 #include "typed_mutation_audit.h"          // Issue #1589 / #1614 / #1894
 #include "core/arena_auto_policy_stats.h"  // in_render_hotpath
+#include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -57,6 +58,46 @@ import aura.compiler.coercion_map; // Issue #2102: provenance-miss force-audit
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler {
+
+// ── Issue #2137: render hotpath + frame budget ───────────────────────────
+void Evaluator::enter_render_hotpath() const noexcept {
+    aura::core::arena_policy::enter_render_hotpath();
+    frame_budget::enter();
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->render_hotpath_enter_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void Evaluator::exit_render_hotpath() const noexcept {
+    aura::core::arena_policy::exit_render_hotpath();
+    frame_budget::exit();
+    // Mirror hold + present histogram into CompilerMetrics for Agents.
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        const auto snap = frame_budget::snapshot();
+        m->frame_budget_deferred_cascade_total.store(snap.deferred_cascade_total,
+                                                     std::memory_order_relaxed);
+        m->frame_budget_flush_total.store(snap.flush_total, std::memory_order_relaxed);
+        m->present_p99_under_cascade_us.store(snap.present_p99_us, std::memory_order_relaxed);
+        m->render_hotpath_hold_ns.store(snap.hold_ns_total, std::memory_order_relaxed);
+        m->frame_budget_wired.store(1, std::memory_order_relaxed);
+    }
+}
+
+// flush_frame_budget_deferred is implemented in service_dirty (needs
+// mark_define_dirty). Evaluator stub leaves deferred names for service drain.
+void Evaluator::flush_frame_budget_deferred() const noexcept {
+    // Names stay queued; CompilerService::flush_frame_budget_deferred_ drains
+    // via mark_define_dirty. Metrics sync only.
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        const auto snap = frame_budget::snapshot();
+        m->frame_budget_deferred_cascade_total.store(snap.deferred_cascade_total,
+                                                     std::memory_order_relaxed);
+        m->frame_budget_pending.store(snap.deferred_pending, std::memory_order_relaxed);
+    }
+}
 
 // ── enter / exit mutation boundary (Wave 4) ──────────────────────────────
 // Called from MutationBoundaryGuard ctor/dtor. Bodies moved out of

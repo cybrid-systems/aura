@@ -15,6 +15,8 @@ module;
 #include "aura_jit_bridge.h"               // aura_reemit_aot_for_dirty (#2035)
 #include "hot_update_registry.hh"          // HotUpdateRegistry notify + region mask (#2035)
 #include "render_prim_template.hh"         // #2050 aura_is_render_evolution_name
+#include "compiler/frame_budget.hh"        // #2137 frame-budget cascade isolation
+#include "core/arena_auto_policy_stats.h"  // in_render_hotpath
 #include "core/transparent_string_hash.hh" // TransparentStringHash for ir_cache_index
 #include <algorithm>
 #include <chrono>
@@ -39,6 +41,16 @@ namespace aura::compiler {
 // path marks AOT region identity for root+dependents and optionally reemits.
 void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                                                        const std::vector<std::string>& dependents) {
+    // Issue #2137: under frame budget, skip HotUpdate reemit fan-out for
+    // non-render roots (cascade body already deferred in mark_define_dirty;
+    // this is a safety net if hard invalidate still reaches here).
+    if (frame_budget::active() && frame_budget::should_defer_cascade(name)) {
+        frame_budget::defer_cascade(name);
+        for (const auto& d : dependents)
+            frame_budget::defer_cascade(d);
+        metrics_.frame_budget_deferred_cascade_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     auto& reg = hot_update_registry();
     // Always fan-out dirty listeners (agents / plugins / tests).
     reg.notify_dirty_define(name.c_str());
@@ -83,8 +95,60 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
     }
 }
 
-// ── mark_define_dirty (#1476 / #1523 / #1627 / #1505 / #2131) ─────────────
+// ── Issue #2137: drain deferred non-render cascades after present ────────
+void CompilerService::flush_frame_budget_deferred_() {
+    // Re-enter mark_define_dirty for each coalesced name. Guard against
+    // nested flush (thread-local) so a deferred name that re-defers is safe.
+    static thread_local int t_flushing = 0;
+    if (t_flushing > 0)
+        return;
+    if (aura::core::arena_policy::in_render_hotpath() || frame_budget::active())
+        return;
+    auto pending = frame_budget::drain_deferred();
+    if (pending.empty())
+        return;
+    ++t_flushing;
+    for (const auto& n : pending) {
+        if (!n.empty())
+            mark_define_dirty(n);
+    }
+    --t_flushing;
+    metrics_.frame_budget_flush_total.fetch_add(1, std::memory_order_relaxed);
+    metrics_.frame_budget_pending.store(frame_budget::deferred_pending(),
+                                        std::memory_order_relaxed);
+    const auto snap = frame_budget::snapshot();
+    metrics_.frame_budget_deferred_cascade_total.store(snap.deferred_cascade_total,
+                                                       std::memory_order_relaxed);
+    metrics_.present_p99_under_cascade_us.store(snap.present_p99_us, std::memory_order_relaxed);
+    metrics_.render_hotpath_hold_ns.store(snap.hold_ns_total, std::memory_order_relaxed);
+}
+
+// ── mark_define_dirty (#1476 / #1523 / #1627 / #1505 / #2131 / #2137) ─────
 void CompilerService::mark_define_dirty(const std::string& name) {
+    // Issue #2137: outside hotpath, drain deferred cascades first (eventual run).
+    if (!aura::core::arena_policy::in_render_hotpath() && !frame_budget::active()) {
+        if (frame_budget::deferred_pending() > 0)
+            flush_frame_budget_deferred_();
+    }
+    // Issue #2137: while present/frame budget holds, defer non-render cascade.
+    // Render-related names (draw/present/tui/…) proceed; others coalesce.
+    if (frame_budget::should_defer_cascade(name) ||
+        (aura::core::arena_policy::in_render_hotpath() &&
+         !frame_budget::is_render_related_name(name) &&
+         !evaluator_.is_render_critical_define(name))) {
+        frame_budget::defer_cascade(name);
+        metrics_.frame_budget_deferred_cascade_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.frame_budget_pending.store(frame_budget::deferred_pending(),
+                                            std::memory_order_relaxed);
+        metrics_.frame_budget_wired.store(1, std::memory_order_relaxed);
+        return;
+    }
+    if (aura::core::arena_policy::in_render_hotpath() || frame_budget::active()) {
+        if (frame_budget::is_render_related_name(name) ||
+            evaluator_.is_render_critical_define(name))
+            frame_budget::note_render_allowed_cascade();
+    }
+
     // Issue #1476 + #1523: unify dirty mark + dual-epoch; acquire
     // mutate FIRST when safe (skip if would invert lock order).
     using aura::compiler::lock_order::Level;

@@ -27,6 +27,7 @@ module;
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
 #include "compiler/ffi_hot_path.hh"
+#include "compiler/frame_budget.hh" // #2137
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_ffi.hh"
 #include "renderer/render_frame_arena.hh"
@@ -1544,6 +1545,23 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("render-effect-gate-wired", 1);
             insert_kv("schema-2136", 2136);
             insert_kv("issue-2136", 2136);
+            // Issue #2137: frame-budget cascade isolation
+            {
+                const auto fb = aura::compiler::frame_budget::snapshot();
+                insert_kv("frame-budget-deferred-cascade-total",
+                          static_cast<std::int64_t>(fb.deferred_cascade_total));
+                insert_kv("frame-budget-flush-total", static_cast<std::int64_t>(fb.flush_total));
+                insert_kv("frame-budget-pending", static_cast<std::int64_t>(fb.deferred_pending));
+                insert_kv("present-p99-under-cascade-us",
+                          static_cast<std::int64_t>(fb.present_p99_us));
+                insert_kv("render-hotpath-hold-ns", static_cast<std::int64_t>(fb.hold_ns_total));
+                insert_kv("frame-budget-us", static_cast<std::int64_t>(fb.budget_us));
+                insert_kv("frame-budget-render-allowed-cascade",
+                          static_cast<std::int64_t>(fb.render_allowed_cascade_total));
+                insert_kv("frame-budget-wired", 1);
+                insert_kv("schema-2137", 2137);
+                insert_kv("issue-2137", 2137);
+            }
             insert_kv("term-render-clear", m ? load(m->term_render_clear_total) : 0);
             insert_kv("term-buf-diff", m ? load(m->term_buf_diff_total) : 0);
             insert_kv("term-buf-diff-hits", m ? load(m->term_buf_diff_hits_total) : 0);

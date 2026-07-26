@@ -7183,18 +7183,17 @@ public:
         bump_jit_deopt_on_mutate();
         return true;
     }
-    void enter_render_hotpath() const noexcept {
-        aura::core::arena_policy::enter_render_hotpath();
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->render_hotpath_enter_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    void exit_render_hotpath() const noexcept { aura::core::arena_policy::exit_render_hotpath(); }
+    // Issue #2137: enter/exit also arm FrameBudget cascade isolation (out-of-line).
+    void enter_render_hotpath() const noexcept;
+    void exit_render_hotpath() const noexcept;
     [[nodiscard]] bool in_render_hotpath() const noexcept {
         return aura::core::arena_policy::in_render_hotpath();
     }
+    // Issue #2137: drain deferred non-render cascades (re-mark dirty).
+    void flush_frame_budget_deferred() const noexcept;
     // Issue #1676: RAII enter + fence for TUI/render prim bodies.
+    // Issue #2137: exit records frame-budget hold; deferred cascades drain
+    // on the next soft dirty outside hotpath (or explicit service flush).
     struct RenderHotEntryGuard {
         const Evaluator* ev;
         explicit RenderHotEntryGuard(const Evaluator& e) noexcept
@@ -7203,8 +7202,10 @@ public:
             (void)e.fence_render_hot_entry();
         }
         ~RenderHotEntryGuard() noexcept {
-            if (ev)
+            if (ev) {
                 ev->exit_render_hotpath();
+                ev->flush_frame_budget_deferred(); // metrics sync; service drains
+            }
         }
         RenderHotEntryGuard(const RenderHotEntryGuard&) = delete;
         RenderHotEntryGuard& operator=(const RenderHotEntryGuard&) = delete;
