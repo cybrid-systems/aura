@@ -5670,6 +5670,39 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2104", 2104);
             insert_kv("issue-2104", 2104);
             insert_kv("schema-2068", 2068);
+            // Issue #2144: outermost Guard-exit selective memo + occurrence reanalyze.
+            const std::int64_t guard_refresh =
+                m ? static_cast<std::int64_t>(
+                        m->guard_exit_occurrence_refresh_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_skip =
+                m ? static_cast<std::int64_t>(
+                        m->guard_exit_occurrence_early_skip_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_reanalyze =
+                m ? static_cast<std::int64_t>(
+                        m->guard_exit_occurrence_reanalyze_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_sel =
+                m ? static_cast<std::int64_t>(
+                        m->guard_exit_selective_invalidate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t narrow_recovery =
+                m ? static_cast<std::int64_t>(
+                        m->narrowing_dirty_recovery_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("guard-exit-occurrence-refresh-total", guard_refresh);
+            insert_kv("guard-exit-occurrence-early-skip-total", guard_skip);
+            insert_kv("guard-exit-occurrence-reanalyze-total", guard_reanalyze);
+            insert_kv("guard-exit-selective-invalidate-total", guard_sel);
+            insert_kv("narrowing-dirty-recovery", narrow_recovery);
+            insert_kv("narrowing_dirty_recovery", narrow_recovery);
+            insert_kv("guard-exit-occurrence-refresh-wired",
+                      m ? static_cast<std::int64_t>(m->guard_exit_occurrence_refresh_wired.load(
+                              std::memory_order_relaxed))
+                        : 1);
+            insert_kv("schema-2144", 2144);
+            insert_kv("issue-2144", 2144);
             // Issue #1924: DeltaBlameChain / typed_mutate blame propagation
             insert_kv("blame-chain-complete-total", blame_complete);
             insert_kv("blame_chain_complete_total", blame_complete);

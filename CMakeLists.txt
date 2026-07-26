@@ -2376,6 +2376,10 @@ aura_issue_test_link_llvm_jit(test_hot_contract_unify_2142)
 aura_add_issue_test(test_soa_dirty_aware_pipeline_2143)
 aura_issue_test_link_llvm_jit(test_soa_dirty_aware_pipeline_2143)
 
+# Issue #2144: Guard-exit selective predicate-memo + occurrence reanalyze.
+aura_add_issue_test(test_guard_exit_occurrence_refresh_2144)
+aura_issue_test_link_llvm_jit(test_guard_exit_occurrence_refresh_2144)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

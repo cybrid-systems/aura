@@ -7689,6 +7689,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> predicate_memo_selective_invalidate_total{0};
     std::atomic<std::uint64_t> predicate_memo_boundary_selective_total{0};
     std::atomic<std::uint64_t> predicate_memo_boundary_selective_wired{1};
+    // Issue #2144: outermost Guard-exit selective memo + occurrence reanalyze.
+    std::atomic<std::uint64_t> guard_exit_occurrence_refresh_total{0};
+    std::atomic<std::uint64_t> guard_exit_occurrence_early_skip_total{0};
+    std::atomic<std::uint64_t> guard_exit_occurrence_reanalyze_total{0};
+    std::atomic<std::uint64_t> guard_exit_selective_invalidate_total{0};
+    std::atomic<std::uint64_t> guard_exit_occurrence_refresh_wired{1};
     std::atomic<std::uint64_t> incremental_locality_minimal_recheck_wired{1};
     // #1338 Type → IR + DeadCoercionElimination parent-type stamp
     std::atomic<std::uint64_t> ir_parent_type_stamp_active{1};
