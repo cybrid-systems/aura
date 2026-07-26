@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 421 | Preferred destination suites |
-| **Total scanned** | **421** | |
+| `tests/core/test_*.cpp` | 422 | Preferred destination suites |
+| **Total scanned** | **422** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 40 | 40 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 44 | 44 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 18 | 18 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 98 | 98 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
@@ -309,6 +309,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_inner_steal_starvation.cpp`
 - `tests/compiler/test_instr_impact_minimal_dirty_2126.cpp`
 - `tests/compiler/test_instr_level_impact_scope.cpp`
+- `tests/compiler/test_instr_level_relower_pass_2133.cpp`
 - `tests/compiler/test_instruction_level_impact_partial_2109.cpp`
 - `tests/compiler/test_invalidate_cascade_order.cpp`
 - `tests/compiler/test_invalidate_consistency.cpp`
@@ -883,13 +884,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (44)
+### `jit_incremental` — JIT / AOT / incremental relower (45)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (44)
+#### domain/ (45)
 
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952/#2013 (#1978 renamed): issue# moved from filename to header.
@@ -913,6 +914,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_incremental_soundness_oracle_2113.cpp` (#2113) [domain_suite, theme_compiler] — Enable docs (AC5):
 - `tests/compiler/test_incremental_type_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_incremental_type_batch.cpp — batch driver for incremental_type family.
 - `tests/compiler/test_inline_pass_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_inline_pass_batch.cpp — inline_pass pair dup-merge (R19 phase 14).
+- `tests/compiler/test_instr_level_relower_pass_2133.cpp` (#2133) [domain_suite, theme_compiler] — AC1: has_instr_precision / instr_level_eligible under threshold
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_jit_aot_hot_update_batch.cpp — consolidated AOT hot-update + steal-boundary drivers
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_issue_1996.cpp — Issue #1996 (B-003): `g_batch_deopt_jit` raw
 - `tests/compiler/test_jit_closure_cache_race.cpp` (—) [domain_suite, theme_compiler] — Issue #1707 (#1978 renamed): issue# moved from filename to header.

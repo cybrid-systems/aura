@@ -215,6 +215,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> relower_instruction_skip_total{0};
     std::atomic<std::uint64_t> should_partial_relower_consult_total{0};
     std::atomic<std::uint64_t> should_partial_relower_yes_total{0};
+    // Issue #2133: consume ImpactScope affected_instrs in relower + pass pipeline.
+    //   - instr_level_relower_total: times relower_affected_instrs path ran
+    //   - instr_level_pass_skipped_clean: clean instrs skipped inside dirty blocks
+    //   - instr_level_pass_runs_total: DirtyAware pass runs under instr precision
+    //   - instr_level_unmapped_ratio_bp: last unmapped AST ratio (basis points)
+    //   - instr_level_equiv_checks / ok: partial-instr ≡ full-block pass checks
+    std::atomic<std::uint64_t> instr_level_relower_total{0};
+    std::atomic<std::uint64_t> instr_level_pass_skipped_clean{0};
+    std::atomic<std::uint64_t> instr_level_pass_runs_total{0};
+    std::atomic<std::uint64_t> instr_level_unmapped_ratio_bp{0};
+    std::atomic<std::uint64_t> instr_level_equiv_checks_total{0};
+    std::atomic<std::uint64_t> instr_level_equiv_ok_total{0};
     // Issue #2113: incremental soundness oracle (partial ≡ full IR).
     // Zero cost when oracle disabled (service path gated on
     // incremental_soundness_enabled()). Process atomics in

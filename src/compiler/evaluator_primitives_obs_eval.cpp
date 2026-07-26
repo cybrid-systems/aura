@@ -6302,8 +6302,23 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"workload-adaptive-relower-wired", make_int(1)},
                 {"schema-2127", make_int(2127)},
                 {"issue-2127", make_int(2127)},
+                // Issue #2133: consume affected_instrs in relower + DirtyAware peel
+                {"instr-level-relower-total", make_int(m ? load(m->instr_level_relower_total) : 0)},
+                {"instr-level-pass-skipped-clean",
+                 make_int(m ? load(m->instr_level_pass_skipped_clean) : 0)},
+                {"instr-level-pass-runs-total",
+                 make_int(m ? load(m->instr_level_pass_runs_total) : 0)},
+                {"instr-level-unmapped-ratio-bp",
+                 make_int(m ? load(m->instr_level_unmapped_ratio_bp) : 0)},
+                {"instr-level-equiv-checks-total",
+                 make_int(m ? load(m->instr_level_equiv_checks_total) : 0)},
+                {"instr-level-equiv-ok-total",
+                 make_int(m ? load(m->instr_level_equiv_ok_total) : 0)},
+                {"instr-level-relower-wired", make_int(1)},
+                {"schema-2133", make_int(2133)},
+                {"issue-2133", make_int(2133)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2127 satellites
+                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2133 satellites
             };
             return build_hash(kv);
         });

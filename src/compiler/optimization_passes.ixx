@@ -278,6 +278,16 @@ public:
             return true;
         return block_dirty_fn_(block_id);
     }
+    // Issue #2133: instruction-level peel.
+    void set_instruction_dirty_fn(std::function<bool(std::uint32_t, std::uint32_t)> fn) {
+        instruction_dirty_fn_ = std::move(fn);
+        impl_.set_instruction_dirty_fn(instruction_dirty_fn_);
+    }
+    [[nodiscard]] bool is_instruction_dirty(std::uint32_t block_id, std::uint32_t inst_id) const {
+        if (!instruction_dirty_fn_)
+            return true;
+        return instruction_dirty_fn_(block_id, inst_id);
+    }
 
     void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
         note_pass_run(PassKind::ShapeAwareFold, false);
@@ -355,6 +365,7 @@ public:
 private:
     aura::compiler::ShapeAwareFoldingPass impl_;
     std::function<bool(std::uint32_t)> block_dirty_fn_;
+    std::function<bool(std::uint32_t, std::uint32_t)> instruction_dirty_fn_;
     bool error_ = false;
 };
 
@@ -385,6 +396,15 @@ public:
         if (!block_dirty_fn_)
             return true;
         return block_dirty_fn_(block_id);
+    }
+    // Issue #2133: instruction-level peel (ImpactScope precision).
+    void set_instruction_dirty_fn(std::function<bool(std::uint32_t, std::uint32_t)> fn) {
+        instruction_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_instruction_dirty(std::uint32_t block_id, std::uint32_t inst_id) const {
+        if (!instruction_dirty_fn_)
+            return true;
+        return instruction_dirty_fn_(block_id, inst_id);
     }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { impl_.set_pipeline_epoch(epoch); }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept {
@@ -419,6 +439,9 @@ public:
     void run(aura::ir::IRFunction& f) {
         aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
         pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
+        // Issue #2133: forward instruction-dirty peel into DCE impl.
+        if (instruction_dirty_fn_)
+            pass.set_instruction_dirty_fn(instruction_dirty_fn_);
         // Dirty-aware: when a block dirty fn is set, only process dirty blocks.
         // Issue #2106: empty dirty cone after cascade skip → early-out without
         // a full IR walk (zero-overhead synergy with cascade_skip_subtree).
@@ -463,6 +486,7 @@ private:
     aura::compiler::DeadCoercionEliminationPass impl_;
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::function<bool(std::uint32_t)> block_dirty_fn_;
+    std::function<bool(std::uint32_t, std::uint32_t)> instruction_dirty_fn_;
     bool error_ = false;
     std::size_t last_eliminated_ = 0;
     std::size_t last_narrow_hits_ = 0;
@@ -473,6 +497,8 @@ static_assert(aura::compiler::DirtyAwarePass<DeadCoercionPass>,
               "DeadCoercionPass must be DirtyAware (#2025)");
 static_assert(aura::compiler::IncrementalPass<DeadCoercionPass>,
               "DeadCoercionPass must be Incremental (#2025)");
+static_assert(aura::compiler::InstructionDirtyAwarePass<DeadCoercionPass>,
+              "DeadCoercionPass must be InstructionDirtyAware (#2133)");
 
 static_assert(aura::compiler::Pass<ComputeKindPass>, "ComputeKindPass must satisfy Pass (#1576)");
 static_assert(aura::compiler::DirtyAwarePass<ComputeKindPass>,
@@ -487,6 +513,8 @@ static_assert(aura::compiler::DirtyAwarePass<ShapeAwareFoldingPass>,
               "ShapeAwareFoldingPass must be DirtyAware (#1576)");
 static_assert(aura::compiler::IncrementalPass<ShapeAwareFoldingPass>,
               "ShapeAwareFoldingPass must be Incremental (#2130)");
+static_assert(aura::compiler::InstructionDirtyAwarePass<ShapeAwareFoldingPass>,
+              "ShapeAwareFoldingPass must be InstructionDirtyAware (#2133)");
 
 // ── Issue #2130: LinearOwnershipPass — dirty-aware pure analysis wrap ──
 // Skips functions with zero dirty blocks. When any block is dirty, walks

@@ -104,8 +104,13 @@ export inline std::atomic<std::uint64_t> pipeline_hotpath_light_analysis_total{0
 export struct DefineDirtyMaskView {
     // Parallel to IRCacheEntry::block_dirty_per_func_ [func][block] = 1 dirty.
     const std::vector<std::vector<std::uint8_t>>* block_dirty_per_func = nullptr;
-    // Parallel to IRCacheEntry::instruction_dirty_per_func_ [func][inst] = 1.
+    // Parallel to IRCacheEntry::instruction_dirty_per_func_ [func][abs_inst] = 1.
+    // Indices are absolute in the function instruction stream (block-major).
     const std::vector<std::vector<std::uint8_t>>* instruction_dirty_per_func = nullptr;
+    // Issue #2133: [func][block] = instruction count — converts (block, inst_in_block)
+    // → absolute index for instruction_dirty_per_func. When null, inst_id is
+    // treated as absolute (legacy single-block / test views).
+    const std::vector<std::vector<std::uint32_t>>* block_instr_counts = nullptr;
 
     // True if any block bit is set. Empty / null → treated as dirty (safe).
     [[nodiscard]] bool any() const noexcept {
@@ -132,6 +137,7 @@ export struct DefineDirtyMaskView {
     }
 
     // Instruction-level: prefer instruction mask when present; else block.
+    // inst_id is in-block index when block_instr_counts is set (#2133).
     [[nodiscard]] bool is_instruction_dirty(std::size_t func_idx, std::uint32_t block_id,
                                             std::uint32_t inst_id) const noexcept {
         if (!is_block_dirty(func_idx, block_id))
@@ -139,9 +145,17 @@ export struct DefineDirtyMaskView {
         if (!instruction_dirty_per_func || func_idx >= instruction_dirty_per_func->size())
             return true;
         const auto& idf = (*instruction_dirty_per_func)[func_idx];
-        if (inst_id >= idf.size())
+        std::uint32_t abs = inst_id;
+        if (block_instr_counts && func_idx < block_instr_counts->size()) {
+            const auto& counts = (*block_instr_counts)[func_idx];
+            abs = 0;
+            for (std::uint32_t bi = 0; bi < block_id && bi < counts.size(); ++bi)
+                abs += counts[bi];
+            abs += inst_id;
+        }
+        if (abs >= idf.size())
             return true;
-        return idf[inst_id] != 0;
+        return idf[abs] != 0;
     }
 
     // Observability helpers for dirty_block_relower_ratio.
@@ -389,6 +403,10 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
 
 // Metric: instruction-level dirty skips (#1197).
 export inline std::atomic<std::uint64_t> passes_skipped_instruction_dirty{0};
+// Issue #2133: process-wide clean-instr skips during DirtyAware peel
+// (mirrors CompilerMetrics::instr_level_pass_skipped_clean for pure tests).
+export inline std::atomic<std::uint64_t> instr_level_pass_skipped_clean_total{0};
+export inline std::atomic<std::uint64_t> instr_level_pass_runs_total{0};
 
 // ── Issue #744: ShapeStable probe hooks (runtime; concept is centralized) ──
 export using FnShapeStableProbeFn = bool (*)(std::string_view fn_name) noexcept;
@@ -494,6 +512,21 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                 });
             }
         }
+        // Issue #2133: wire instruction dirty from ImpactScope / define cache
+        // so DirtyAware passes can peel clean slots inside dirty blocks.
+        if constexpr (requires(P& p, std::function<bool(std::uint32_t, std::uint32_t)> f) {
+                          p.set_instruction_dirty_fn(std::move(f));
+                      }) {
+            if (define_cache && define_cache->instruction_dirty_per_func) {
+                const auto* cache = define_cache;
+                const std::size_t func_idx = fi;
+                pass.set_instruction_dirty_fn(
+                    [cache, func_idx](std::uint32_t block_id, std::uint32_t inst_id) -> bool {
+                        return cache->is_instruction_dirty(func_idx, block_id, inst_id);
+                    });
+                instr_level_pass_runs_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
 
         bool any_dirty = false;
         std::uint64_t dirty_blocks = 0;
@@ -510,9 +543,9 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                 // Phase 1 instruction probe: if the pass is
                 // InstructionDirtyAwarePass, walk inst dirty bits for metrics.
                 if constexpr (InstructionDirtyAwarePass<P>) {
-                    // Issue #2109: walk all instructions in the dirty block
-                    // (not just 0..7). Clean slots bump skip metrics so
-                    // Agents can prove instruction-level partial wins.
+                    // Issue #2109 / #2133: walk all instructions in the dirty
+                    // block. Clean slots bump skip metrics so Agents can prove
+                    // instruction-level partial wins (instr ImpactScope peel).
                     const std::uint32_t ninst =
                         bi < func.blocks.size()
                             ? static_cast<std::uint32_t>(func.blocks[bi].instructions.size())
@@ -526,6 +559,8 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                         if (!inst_dirty) {
                             passes_skipped_instruction_dirty.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                            instr_level_pass_skipped_clean_total.fetch_add(
+                                1, std::memory_order_relaxed);
                         }
                     }
                 }
@@ -1700,22 +1735,37 @@ public:
     // Issue #611: when dirty_blocks is non-empty and matches
     // func.blocks.size(), only dirty blocks are processed.
     // Empty span means "all blocks" (full-function DCE).
+    //
+    // Issue #2133: optional instruction dirty mask (absolute index in
+    // function instruction stream, parallel to instruction_dirty_per_func_).
+    // Empty → process all instrs in selected blocks.
+    void set_instruction_dirty_fn(std::function<bool(std::uint32_t, std::uint32_t)> fn) {
+        instruction_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_instruction_dirty(std::uint32_t block_id, std::uint32_t inst_id) const {
+        if (!instruction_dirty_fn_)
+            return true;
+        return instruction_dirty_fn_(block_id, inst_id);
+    }
+
     void run_function(aura::ir::IRFunction& func, std::span<const std::uint8_t> dirty_blocks = {}) {
         if (keep_for_debug_)
             return;
         const bool dirty_only = !dirty_blocks.empty() && dirty_blocks.size() == func.blocks.size();
-        for (auto& block : func.blocks) {
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            auto& block = func.blocks[bi];
             if (dirty_only) {
-                const auto bid = block.id;
+                const auto bid = static_cast<std::uint32_t>(bi);
                 if (bid >= dirty_blocks.size() || dirty_blocks[bid] == 0)
                     continue;
             }
-            run_on_block(block);
+            run_on_block(block, static_cast<std::uint32_t>(bi));
         }
     }
 
     // Issue #538: per-block entry for incremental passes.
-    bool run_on_block(aura::ir::BasicBlock& block) {
+    // Issue #2133: block_index used for instruction-dirty peel.
+    bool run_on_block(aura::ir::BasicBlock& block, std::uint32_t block_index = 0) {
         if (keep_for_debug_)
             return false;
         bool any_change = false;
@@ -1742,6 +1792,12 @@ public:
                 }
             }
             for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+                // Issue #2133: skip clean instructions when mask set.
+                if (instruction_dirty_fn_ &&
+                    !is_instruction_dirty(block_index, static_cast<std::uint32_t>(i))) {
+                    instr_level_pass_skipped_clean_total.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
                 auto& instr = block.instructions[i];
                 if (instr.opcode != aura::ir::IROpcode::CastOp)
                     continue;
@@ -1989,6 +2045,8 @@ private:
     std::uint64_t elapsed_us_ = 0;
     bool keep_for_debug_ = false;
     std::uint64_t pipeline_epoch_ = 0;
+    // Issue #2133: optional (block, inst) dirty peel.
+    std::function<bool(std::uint32_t, std::uint32_t)> instruction_dirty_fn_;
 };
 
 static_assert(JITFriendlyPass<DeadCoercionEliminationPass>,
@@ -4639,9 +4697,21 @@ public:
         }
     }
 
+    // Issue #2133: optional instruction-dirty peel (block_id, inst_id).
+    void set_instruction_dirty_fn(std::function<bool(std::uint32_t, std::uint32_t)> fn) {
+        instruction_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_instruction_dirty(std::uint32_t block_id, std::uint32_t inst_id) const {
+        if (!instruction_dirty_fn_)
+            return true;
+        return instruction_dirty_fn_(block_id, inst_id);
+    }
+
     // Issue #2130: optional dirty mask (size == blocks). Empty → process all.
     // Clean blocks are skipped for fold work; ownership scan for MoveOp elide
     // still walks the full function (correctness).
+    // Issue #2133: within dirty blocks, clean instructions are skipped when
+    // instruction_dirty_fn_ is set (ImpactScope precision).
     void run_on_function(aura::ir::IRFunction& func,
                          std::span<const std::uint8_t> dirty_blocks = {}) {
         blocks_processed_ = 0;
@@ -4671,7 +4741,15 @@ public:
             }
             ++blocks_processed_;
             auto& block = func.blocks[bi];
-            for (auto& instr : block.instructions) {
+            for (std::size_t ii = 0; ii < block.instructions.size(); ++ii) {
+                // Issue #2133: peel clean instructions inside dirty blocks.
+                if (instruction_dirty_fn_ &&
+                    !is_instruction_dirty(static_cast<std::uint32_t>(bi),
+                                          static_cast<std::uint32_t>(ii))) {
+                    instr_level_pass_skipped_clean_total.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                auto& instr = block.instructions[ii];
                 // Count GuardShape occurrences (signal for
                 // downstream passes + deopt collaboration).
                 if (instr.opcode == aura::ir::IROpcode::GuardShape) {
@@ -4751,6 +4829,8 @@ private:
     std::uint64_t blocks_processed_ = 0;
     std::uint64_t blocks_skipped_ = 0;
     std::map<std::string, std::vector<std::uint8_t>> escape_maps_;
+    // Issue #2133: optional (block, inst) dirty peel.
+    std::function<bool(std::uint32_t, std::uint32_t)> instruction_dirty_fn_;
 };
 
 // ── SoAtoAoSBridgePass — Issue #463 (Phase 2 wiring scaffold) ─────

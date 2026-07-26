@@ -172,6 +172,20 @@ struct ImpactScope {
     std::size_t unmapped_ast_nodes = 0;
     // Issue #2031: how many mapped locs had a precise instr index.
     std::size_t instr_level_hits = 0;
+
+    // Issue #2133: true when affected_instrs carries precise work.
+    [[nodiscard]] bool has_instr_precision() const noexcept { return !affected_instrs.empty(); }
+    // Eligible for instr-only relower/pass when under partial threshold.
+    [[nodiscard]] bool instr_level_eligible(std::size_t thr) const noexcept {
+        return has_instr_precision() && thr > 0 && affected_instrs.size() < thr;
+    }
+    // Unmapped AST ratio in basis points (0..10000). 0 if no visit.
+    [[nodiscard]] std::uint64_t unmapped_ratio_bp() const noexcept {
+        if (ast_nodes_visited == 0)
+            return 0;
+        return (static_cast<std::uint64_t>(unmapped_ast_nodes) * 10000u) /
+               static_cast<std::uint64_t>(ast_nodes_visited);
+    }
 };
 
 // Map type used by compute_impact_scope (block+optional instr).
