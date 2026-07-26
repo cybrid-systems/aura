@@ -43,6 +43,9 @@ enum class SecurityEventKind : std::uint8_t {
 
 // Issue #2054 stamp (schema key on query:security-audit / stats).
 inline constexpr int kSecurityAuditUnifyIssue = 2054;
+// Issue #2156: isolation-deny SecurityEvent.mutation_id is Mutation epoch
+// (or non-zero audit mid), never a tenant id.
+inline constexpr int kIsolationAuditMidIssue = 2156;
 
 // Issue #2075 / #2054: shared SecurityEvent record. Fixed-size, no allocation.
 // check_and_record_effect always appends (allow + deny); isolation deny
