@@ -60,6 +60,24 @@ namespace aura::compiler {
 // not need this; the metric `aot_emit_env_linear_stamped_total`
 // vs `aot_emit_env_linear_default_zero_total` is the canonical
 // signal that the host is wired (stamped counter > 0).
+//
+// Issue #2168 (CI gate / annotation contract):
+//   Production call sites of mangle_aot_name / aot_link_name MUST
+//   thread live env_frame_version + linear_state (via
+//   aot_resolve_emit_env_frame_version / emit_linear_state or
+//   equivalent). Literal (0, 0) on both slots is a hard
+//   `./build.py gate` failure from
+//   scripts/check_aot_env_linear_stamp_coverage.py unless the
+//   same line or the previous line carries an explicit opt-out:
+//
+//     // # 2091-allow-zero   — deliberate zero stamps (documented)
+//     // # 2091-legacy       — alias for allow-zero
+//
+//   Skipped paths (no annotation required): tests/, aot_mangle.h
+//   (this header's defaults), aura_jit_bridge_stub.cpp. The force
+//   flag above does NOT replace the gate — it only affects the
+//   emitted symbol shape at runtime; the linter still wants live
+//   values on production emit/reemit/registration TUs.
 inline std::atomic<bool>& aot_force_env_linear_suffix_flag() noexcept {
     static std::atomic<bool> flag{false};
     return flag;

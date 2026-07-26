@@ -1,26 +1,35 @@
 #!/usr/bin/env python3
 # scripts/check_aot_env_linear_stamp_coverage.py
 #
-# Issue #2091 linter: ensure every production AOT emit / reemit /
-# registration site threads live env_frame_version + linear_state
-# into mangle_aot_name / aot_link_name. Pre-#2091 most call sites
+# Issue #2091 + #2168 linter (hard `./build.py gate` step):
+# ensure every production AOT emit / reemit / registration site
+# threads live env_frame_version + linear_state into
+# mangle_aot_name / aot_link_name. Pre-#2091 most call sites
 # passed literal (0, 0) so the `_eN_lN` suffix was omitted and
 # captured-env / captured-linear drift became invisible to
 # dlopen-based stale probes. This linter fails CI when any
 # production emit path passes literal (0, 0) without an
-# explicit `# 2091-allow-zero` annotation OR the force flag.
+# explicit `# 2091-allow-zero` annotation.
+#
+# Wired into gate via build.py `cmd_aot_env_linear_stamp` (#2168).
+# Annotation contract is documented next to the force-flag
+# comment in src/compiler/aot_mangle.h.
 #
 # Allowed patterns:
 #   1. Both args are NOT literal 0 (i.e. live / computed value).
-#   2. Literal 0,0 paired with `# 2091-allow-zero` or `# 2091-legacy`.
-#   3. Test files (`tests/`) — full allowance; production wire-up
-#      is verified by tests rather than the linter.
-#   4. The aot_mangle.h header itself (defines the helpers).
+#   2. Literal 0,0 paired with `# 2091-allow-zero` or `# 2091-legacy`
+#      on the same line or the previous line.
+#   3. Test files (`tests/`) — full allowance (script scans only
+#      src/compiler/; tests never enter the walk).
+#   4. SKIP_BASENAMES: aot_mangle.h (defaults), aura_jit_bridge_stub.cpp,
+#      and known test helpers under src/compiler/.
 #
 # Pattern detection: simple regex over mangle_aot_name(...) /
 # aot_link_name(...) calls. Counts literal 0 args in slots 4 + 5
 # (env_frame_version, linear_state). Fails when both are literal 0
 # and no allow annotation is on the same line or one line above.
+# 3-arg calls (defuse-only; env/linear defaulted) are also flagged
+# in production TUs (same allow annotation opts out).
 
 import argparse
 import os
@@ -267,18 +276,19 @@ def scan_file(path: Path) -> list[tuple[int, str, str, str]]:
             continue
         args = split_args(args_text)
         # Strip default values: name, disambiguator, defuse_version[, env, linear]
+        line_no = text[: m.start()].count("\n") + 1
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        line_end = text.find("\n", m.start())
+        if line_end < 0:
+            line_end = len(text)
+        full_line = text[line_start:line_end]
+        prev_line_start = text.rfind("\n", 0, line_start - 1) + 1
+        prev_line = text[prev_line_start : max(line_start - 1, prev_line_start)]
+        # Annotation contract (#2168): same line OR previous line.
+        if ALLOW_RE.search(prev_line) or ALLOW_RE.search(full_line):
+            continue
         if len(args) < 5:
-            # 3-arg call (defuse only) — pre-#2091 shape; flag if NOT
-            # in a test context, because production should thread env/linear.
-            # Allow in the bridge TU itself when the call is paired with a
-            # helper that resolves live values downstream (rare; tracked).
-            line_no = text[: m.start()].count("\n") + 1
-            # Look back one line for an allow marker.
-            line_start = text.rfind("\n", 0, m.start()) + 1
-            prev_line_start = text.rfind("\n", 0, line_start - 1) + 1
-            prev_line = text[prev_line_start : line_start - 1]
-            if ALLOW_RE.search(prev_line) or ALLOW_RE.search(text[line_start : m.start()]):
-                continue
+            # 3-arg call (defuse only) — pre-#2091 shape; flag production.
             findings.append((line_no, func, "<3-arg>", "<3-arg>"))
             continue
         env_arg = args[3]
@@ -290,12 +300,6 @@ def scan_file(path: Path) -> list[tuple[int, str, str, str]]:
         env_is_zero = env_clean in ("0", "0u", "0ULL", "0ull", "0UL", "0ul", "(std::uint64_t)0")
         lin_is_zero = lin_clean in ("0", "0u", "0ULL", "0ull", "(std::uint8_t)0")
         if env_is_zero and lin_is_zero:
-            line_no = text[: m.start()].count("\n") + 1
-            line_start = text.rfind("\n", 0, m.start()) + 1
-            prev_line_start = text.rfind("\n", 0, line_start - 1) + 1
-            prev_line = text[prev_line_start : line_start - 1]
-            if ALLOW_RE.search(prev_line) or ALLOW_RE.search(text[line_start : m.start()]):
-                continue
             findings.append((line_no, func, env_clean, lin_clean))
     return findings
 
