@@ -125,6 +125,11 @@ inline std::uint64_t fetch_add_workspace_epoch(WorkspaceEpochKind kind,
 // ── Mutation epoch (process-global; #1964 2b + #2039 2d) ─────
 // Sole storage: g_workspace_epoch_storage(Mutation). The legacy
 // CompilerService::mutation_epoch_ field is deleted in #2039.
+//
+// Issue #2149: **security provenance uses Mutation only** —
+// CapabilityGrant::grant_epoch, EffectProvenance::epoch on the
+// effect-check path, grant_min_valid_epoch fence, and SecurityEvent
+// correlation. Do not use Bridge as a capability fence key.
 
 [[nodiscard]] inline std::uint64_t current_mutation_epoch() noexcept {
     return load_workspace_epoch(WorkspaceEpochKind::Mutation);
@@ -140,6 +145,9 @@ inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
 // for lib/runtime.c aura_closure_call. CompilerService::bridge_epoch()
 // historically aliases Mutation for Cycle 1 lockstep; prefer these
 // accessors for new code that wants the Bridge kind explicitly.
+//
+// Issue #2149: Bridge is AOT/JIT/closure freshness only — independent
+// bumps must not flip capability allow/deny for a valid grant.
 
 [[nodiscard]] inline std::uint64_t current_bridge_epoch() noexcept {
     return load_workspace_epoch(WorkspaceEpochKind::Bridge);
