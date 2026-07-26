@@ -98,26 +98,25 @@ double aura_float_ref(std::int64_t val);
 // All keep the same signature as before — this is a transparent refactor.
 
 export inline EvalValue make_int(std::int64_t v) noexcept {
-    // Issue #1519: fixnum must fit after << kFixnumShift (hot path contract).
+    // Issue #1519 / #2142: fixnum must fit after << kFixnumShift.
     constexpr auto kMin = std::numeric_limits<std::int64_t>::min() >> kFixnumShift;
     constexpr auto kMax = std::numeric_limits<std::int64_t>::max() >> kFixnumShift;
-    contract_assert(v >= kMin && v <= kMax);
-    aura::core::cpp26::record_hotpath_invariant_hit();
+    AURA_HOT_CONTRACT(v >= kMin && v <= kMax);
     return EvalValue(v << kFixnumShift); // fixnum encoding (#907)
 }
 export inline bool is_int(const EvalValue& v) noexcept {
     return classify_eval_value_tag(v.val) == EvalValueTag::Fixnum;
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
-    // Issue #571 / #1622: Contracts on tagged fixnum range before shift.
-    contract_assert(is_int(v));
-    contract_assert((v.val & 1) == 0);                 // fixnum low bit clear
-    aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
+    // Issue #571 / #1622 / #2142: tagged fixnum contracts (unified helper).
+    AURA_HOT_RECORD();
+    AURA_HOT_CHECK(is_int(v));
+    AURA_HOT_CHECK((v.val & 1) == 0); // fixnum low bit clear
     return v.val >> kFixnumShift;
 }
 
 export inline EvalValue make_bool(bool v) noexcept {
-    aura::core::cpp26::record_hotpath_invariant_hit();  // Issue #1519
+    AURA_HOT_RECORD();                                  // Issue #1519 / #2142
     return EvalValue(v ? kSpecialTrue : kSpecialFalse); // #902
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
@@ -125,8 +124,7 @@ export inline bool is_bool(const EvalValue& v) noexcept {
            (v.val == kSpecialFalse || v.val == kSpecialTrue);
 }
 export inline bool as_bool(const EvalValue& v) noexcept {
-    contract_assert(is_bool(v));
-    aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
+    AURA_HOT_CONTRACT(is_bool(v)); // Issue #1519 / #2142
     return v.val == kSpecialTrue;
 }
 
@@ -144,7 +142,7 @@ export inline bool is_float(const EvalValue& v) noexcept {
     return classify_eval_value_tag(v.val) == EvalValueTag::Float;
 }
 export inline double as_float(const EvalValue& v) {
-    contract_assert(is_float(v));
+    AURA_HOT_CONTRACT(is_float(v)); // Issue #2142
     return aura_float_ref(v.val);
 }
 
@@ -162,11 +160,11 @@ export inline bool is_string(const EvalValue& v) noexcept {
     return classify_eval_value_tag(v.val) == EvalValueTag::StringV2;
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
-    // Issue #1622: Contracts on v2 string tag + bias range.
-    contract_assert(is_string(v));
-    contract_assert((v.val & 3) == 2);
-    contract_assert(v.val <= STRING_BIAS_VAL_2);
-    aura::core::cpp26::record_hotpath_invariant_hit();
+    // Issue #1622 / #2142: v2 string tag + bias range (unified helper).
+    AURA_HOT_RECORD();
+    AURA_HOT_CHECK(is_string(v));
+    AURA_HOT_CHECK((v.val & 3) == 2);
+    AURA_HOT_CHECK(v.val <= STRING_BIAS_VAL_2);
     return string_idx_raw_v2(v.val);
 }
 

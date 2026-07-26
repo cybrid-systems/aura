@@ -332,9 +332,9 @@ export struct BasicBlockSoA {
 // downstream importers get the same definition without ODR
 // violations.
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
-    contract_assert(block_id < blocks_.size() || block_dirty_.empty() ||
-                    block_id <= block_dirty_.size());
-    aura::core::cpp26::record_hotpath_invariant_hit();
+    // Issue #2142: unified hot-path contract (record + enforce/observe).
+    AURA_HOT_CONTRACT(block_id < blocks_.size() || block_dirty_.empty() ||
+                      block_id <= block_dirty_.size());
     if (block_id >= block_dirty_.size()) {
         block_dirty_.resize(block_id + 1, 1);
     } else {
@@ -599,7 +599,7 @@ export struct IRModuleV2 {
     // function is not modified.
     IRInstructionView view_at(std::size_t func_idx, std::uint32_t idx) const
         pre(func_idx < functions.size()) pre(idx < functions[func_idx].size()) {
-        aura::core::cpp26::record_hotpath_invariant_hit();
+        AURA_HOT_RECORD(); // Issue #2142 (pre already enforces bounds)
         return IRInstructionView(functions[func_idx], idx);
     }
 

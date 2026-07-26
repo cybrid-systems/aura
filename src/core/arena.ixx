@@ -262,7 +262,7 @@ public:
                     --free_count_;
                 allocated_from_small_ += c.obj_sz;
                 ++recycle_hits_;
-                aura::core::cpp26::record_hotpath_invariant_hit();
+                AURA_HOT_RECORD(); // Issue #2142 freelist hit
                 return ptr;
             }
             // Hard cap: bump must stay within both tier.end and buffer.
@@ -272,11 +272,11 @@ public:
             if (next <= hard_end && next >= c.start) {
                 c.bump = next;
                 allocated_from_small_ += c.obj_sz;
-                aura::core::cpp26::record_hotpath_invariant_hit();
+                AURA_HOT_RECORD(); // Issue #2142 bump hit
                 return ptr;
             }
             // This tier is exhausted — signal overflow (no bump advance).
-            aura::core::cpp26::record_hotpath_invariant_hit();
+            AURA_HOT_RECORD(); // Issue #2142 tier overflow probe
             return nullptr;
         }
         return nullptr; // too large for any tier
@@ -705,7 +705,7 @@ public:
         // Issue #1519: nullptr is a documented no-op (safe for Guard cleanup).
         if (!ptr)
             return;
-        aura::core::cpp26::record_hotpath_invariant_hit();
+        AURA_HOT_RECORD(); // Issue #2142
         for (auto it = dtors_.begin(); it != dtors_.end(); ++it) {
             if (it->ptr == ptr) {
                 ptr->~T();
@@ -899,7 +899,7 @@ public:
     // invoke_hook=false: live_compact runs its own single deopt-coord hook.
     [[nodiscard]] std::size_t defrag_impl(bool clear_request_flag,
                                           bool invoke_hook = true) noexcept {
-        aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
+        AURA_HOT_RECORD(); // Issue #1519 / #2142
         // Issue #604: same fiber-context coordination as compact().
         if (aura::gc_hooks::fiber_active()) {
             stats_.compaction_yield_checks++;
