@@ -57,15 +57,14 @@ namespace {
         [[nodiscard]] bool valid() const noexcept { return pin.pinned() && pin.validate(1, 0); }
     };
 
-    // Build dirty-aware ANSI into scratch, place in Arena-backed zero-copy view.
+    // Issue #2135: build dirty-aware ANSI **directly** into Arena-backed view
+    // (preferred). Residual TLS scratch + single measured memcpy only on
+    // capacity overflow / retry failure. Caps scratch growth after warm-up.
     // Out: sgr_emits, cells_emitted. Returns frame byte count.
     template <typename ArenaLike>
     std::size_t build_frame_zero_copy_arena(const FramebufferSoA& fb, DirtyRegion& dirty,
                                             ArenaLike& arena, std::uint64_t& sgr_emits,
                                             std::uint64_t& cells_emitted) {
-        thread_local std::string ansi_scratch;
-        ansi_scratch.clear();
-
         // Clamp dirty AABB into framebuffer.
         DirtyRegion region = dirty;
         if (!region.clamp_to(static_cast<std::uint32_t>(fb.width),
@@ -75,34 +74,99 @@ namespace {
             return 0;
         }
 
-        const auto emit = build_terminal_frame_ansi_dirty(ansi_scratch, fb.width, fb.height,
-                                                          fb.cells_c(), region);
-        sgr_emits = emit.sgr_emits;
-        cells_emitted = emit.cells_emitted;
-
-        const std::uint64_t full_cells =
-            static_cast<std::uint64_t>(fb.width) * static_cast<std::uint64_t>(fb.height);
-        record_dirty_emit_sample(cells_emitted, full_cells);
-        if (emit.partial) {
-            ++g_render_hot_path_stats.dirty_partial_presents;
-            g_dirty_delta_metrics().dirty_partial_presents.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            g_dirty_delta_metrics().dirty_full_frame_presents.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-        }
-        g_render_hot_path_stats.dirty_cells_emitted += cells_emitted;
+        auto note_emit = [&](const DirtyFrameEmitResult& emit) {
+            sgr_emits = emit.sgr_emits;
+            cells_emitted = emit.cells_emitted;
+            const std::uint64_t full_cells =
+                static_cast<std::uint64_t>(fb.width) * static_cast<std::uint64_t>(fb.height);
+            record_dirty_emit_sample(cells_emitted, full_cells);
+            if (emit.partial) {
+                ++g_render_hot_path_stats.dirty_partial_presents;
+                g_dirty_delta_metrics().dirty_partial_presents.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+            } else {
+                g_dirty_delta_metrics().dirty_full_frame_presents.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            g_render_hot_path_stats.dirty_cells_emitted += cells_emitted;
+        };
 
         auto& zc = aura::core::zero_copy::g_zero_copy_fb;
+        auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
         if constexpr (requires { arena.reset(); }) {
             arena.reset();
         }
+        // Pre-warm arena capacity so allocate stays on arena path (no vector fallback).
+        const std::size_t est = estimate_dirty_ansi_bytes(fb.width, fb.height, region);
+        if constexpr (requires { arena.reserve(est); }) {
+            arena.reserve(est * 2 + 64);
+        }
+
+        // ── Preferred: direct emit into arena view (zero residual memcpy) ──
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const std::size_t want = est * (attempt == 0 ? 2u : 4u) + 64u;
+            auto view = zc.acquire_view(want, arena);
+            ++g_render_hot_path_stats.zero_copy_acquire_total;
+            ++g_engine_counters.zero_copy_acquires;
+            if (!view.data() || view.size() < 64) {
+                // OOM / reject — fall through to scratch path.
+                zc.release_view(view, arena);
+                break;
+            }
+            AnsiFixedBuf buf;
+            buf.data = reinterpret_cast<char*>(view.data());
+            buf.cap = view.size();
+            buf.len = 0;
+            buf.overflow = false;
+            const auto emit =
+                build_terminal_frame_ansi_dirty_buf(buf, fb.width, fb.height, fb.cells_c(), region);
+            if (!buf.overflow) {
+                // Trim last_view to exact length (no second copy).
+                zc.last_size = buf.len;
+                zc.last_ptr = view.data();
+                zc.last_was_arena = true;
+                note_emit(emit);
+                zm.direct_arena_build_total.fetch_add(1, std::memory_order_relaxed);
+                zc.release_view(view, arena);
+                return buf.len;
+            }
+            zc.release_view(view, arena);
+            // Retry with larger want; if second attempt overflows, scratch fallback.
+            if constexpr (requires { arena.reset(); }) {
+                arena.reset();
+            }
+            if constexpr (requires { arena.reserve(want * 2); }) {
+                arena.reserve(want * 2);
+            }
+        }
+
+        // ── Fallback: TLS scratch + single measured memcpy ──
+        thread_local std::string ansi_scratch;
+        ansi_scratch.clear();
+        // Cap growth: reserve estimate once; never shrink mid-loop (warm-up).
+        constexpr std::size_t kScratchCapMax = 4u * 1024u * 1024u; // 4 MiB hard cap
+        const std::size_t want_scratch = std::min(est * 2 + 64u, kScratchCapMax);
+        if (ansi_scratch.capacity() < want_scratch)
+            ansi_scratch.reserve(want_scratch);
+        zm.scratch_capacity_bytes.store(
+            std::max(zm.scratch_capacity_bytes.load(std::memory_order_relaxed),
+                     static_cast<std::uint64_t>(ansi_scratch.capacity())),
+            std::memory_order_relaxed);
+
+        const auto emit = build_terminal_frame_ansi_dirty(ansi_scratch, fb.width, fb.height,
+                                                          fb.cells_c(), region);
+        note_emit(emit);
+
         const std::size_t n = ansi_scratch.size();
         const std::size_t want = n > 0 ? n : 1;
         auto view = zc.acquire_view(want, arena);
         ++g_render_hot_path_stats.zero_copy_acquire_total;
         ++g_engine_counters.zero_copy_acquires;
-        if (n > 0 && view.size() >= n)
+        if (n > 0 && view.size() >= n) {
             std::memcpy(view.data(), ansi_scratch.data(), n);
+            zm.residual_memcpy_count.fetch_add(1, std::memory_order_relaxed);
+            zm.residual_memcpy_bytes.fetch_add(n, std::memory_order_relaxed);
+        }
         zc.release_view(view, arena);
         return n;
     }

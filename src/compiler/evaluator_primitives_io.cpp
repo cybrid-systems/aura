@@ -1500,6 +1500,37 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("tui-batch-draw-wired", 1);
             insert_kv("schema-2134", 2134);
             insert_kv("issue-2134", 2134);
+            // Issue #2135: default zero-copy / direct-arena present path
+            {
+                auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
+                insert_kv(
+                    "zero-copy-hit-in-render",
+                    static_cast<std::int64_t>(zm.hit_in_render.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-arena-acquire-count",
+                          static_cast<std::int64_t>(
+                              zm.arena_acquire_count.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-vector-fallback-count",
+                          static_cast<std::int64_t>(
+                              zm.vector_fallback_count.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-arena-path-active",
+                          static_cast<std::int64_t>(
+                              zm.arena_path_active.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-direct-arena-build-total",
+                          static_cast<std::int64_t>(
+                              zm.direct_arena_build_total.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-residual-memcpy-count",
+                          static_cast<std::int64_t>(
+                              zm.residual_memcpy_count.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-residual-memcpy-bytes",
+                          static_cast<std::int64_t>(
+                              zm.residual_memcpy_bytes.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-scratch-capacity-bytes",
+                          static_cast<std::int64_t>(
+                              zm.scratch_capacity_bytes.load(std::memory_order_relaxed)));
+                insert_kv("zero-copy-default-arena-wired", 1);
+                insert_kv("schema-2135", 2135);
+                insert_kv("issue-2135", 2135);
+            }
             insert_kv("term-render-clear", m ? load(m->term_render_clear_total) : 0);
             insert_kv("term-buf-diff", m ? load(m->term_buf_diff_total) : 0);
             insert_kv("term-buf-diff-hits", m ? load(m->term_buf_diff_hits_total) : 0);

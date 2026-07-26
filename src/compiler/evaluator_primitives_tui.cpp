@@ -599,7 +599,8 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (tui:present-batch buf-id [fd]) → bytes-written (0 = clean skip)
-    // Dirty AABB only via present_batch → build_terminal_frame_ansi_dirty.
+    // Issue #2134/#2135: Dirty AABB via present_batch; default FrameBumpArena /
+    // RenderFrameArena path with direct-to-arena ANSI when capacity allows.
     add("tui:present-batch", [&ev](std::span<const EvalValue> a) -> EvalValue {
         AURA_RENDER_HOT_ENTRY(ev);
         if (a.empty() || !is_int(a[0]))
