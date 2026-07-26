@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 445 | Preferred destination suites |
-| **Total scanned** | **445** | |
+| `tests/core/test_*.cpp` | 446 | Preferred destination suites |
+| **Total scanned** | **446** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 45 | 45 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 126 | 126 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 127 | 127 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 42 | 42 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
@@ -331,6 +331,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_ir_metadata_interpreter_jit_closed_loop.cpp`
 - `tests/compiler/test_ir_soa_dual_emit_batch.cpp`
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp`
+- `tests/compiler/test_isolation_audit_mid_2156.cpp`
 - `tests/reflect/test_issue_178.cpp`
 - `tests/reflect/test_issue_178_reflect.cpp`
 - `tests/serve/test_issue_1990.cpp`
@@ -684,13 +685,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (126)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (127)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (126)
+#### domain/ (127)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -744,6 +745,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hygiene_mutate_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2037; enforce_macro_hygiene_mutate_hotpath +
 - `tests/compiler/test_incremental_typed_selfmod_dirty_narrowing.cpp` (—) [domain_suite, theme_compiler] — test_incremental_typed_selfmod_dirty_narrowing.cpp — Merged #509/#518/#526/#536/#537/#550 +
 - `tests/compiler/test_invalidate_cascade_order.cpp` (—) [domain_suite, theme_compiler] — test_invalidate_cascade_order.cpp — Issue #1378:
+- `tests/compiler/test_isolation_audit_mid_2156.cpp` (#2156) [domain_suite, theme_compiler] — AC1: Isolation deny SecurityEvent.mutation_id is Mutation epoch space,
 - `tests/compiler/test_issues_819_829_batch.cpp` (#819) [batch_driver, domain_suite, theme_compiler] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.
 - `tests/renderer/test_lifetime_pin_batch_ffi_present_2048.cpp` (#2048) [batch_driver, domain_suite, theme_renderer] — AC1: source cites #2048; LifetimePin Phase 2; present FfiPresentPinGuard
 - `tests/compiler/test_linear_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_batch.cpp
