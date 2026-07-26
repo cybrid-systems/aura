@@ -15,6 +15,7 @@ module;
 #include "security_capabilities.h"
 #include "terminal_buffer_registry.hh" // Issue #2134: TermBuf + DirtyRegion
 #include "renderer/render_primitives.hh"
+#include "renderer/render_strategy.hh" // #2138
 #include "tui/tui_input.hh"
 #include "tui/tui_runtime.hh"
 #include <chrono>
@@ -623,13 +624,15 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
             std::unique_lock<std::shared_mutex> buf(b.rwlock);
             dirty_cells = b.dirty.cell_count();
             aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
-            n = aura::renderer::present_batch(fb, b.dirty, fd);
+            // Issue #2138: consult evolvable RenderStrategy (kernel stays stable).
+            n = aura::renderer::strategy::present_batch_with_strategy(fb, b.dirty, fd);
         }
         const auto us =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                                            std::chrono::steady_clock::now() - t0)
                                            .count());
-        const bool skipped = aura::renderer::render_engine_counters().present_skips > skips_before;
+        const bool skipped =
+            aura::renderer::render_engine_counters().present_skips > skips_before || n == 0;
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->tui_present_batch_total.fetch_add(1, std::memory_order_relaxed);
             m->tui_present_batch_us_total.fetch_add(us, std::memory_order_relaxed);

@@ -10,6 +10,8 @@
 //   4. Bump targeted metrics; never grow SlimSurface public add() for dashboards
 //   5. FFI batch hand-off: FFIBatchHotPath::dispatch_batch(..., render_effect_ok)
 //      after require_effect(kEffectRender) (#2136)
+//   6. Present policy via RenderStrategy (render:set-strategy); kernel paths
+//      stay fixed — dirty-aabb / full / skip / auto (#2138)
 //
 // Agent discoverability: schema string on PrimMeta + facade query:render-* stats.
 // Evolution: (mutate :rebind …) for draw logic; (mutate :render-optimize …) for
