@@ -915,7 +915,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (!ev.workspace_flat_)
             return make_void();
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto ref = ev.workspace_flat_->make_ref(id);
+        // Issue #2224: route Agent-facing ref through export_ref so
+        // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
+        // required_effects; primary outbound surface for ast: / query: /
+        // mutate return paths).
+        auto ref = ev.export_ref(id);
         // Pack as (id . gen) pair
         std::size_t pid = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),

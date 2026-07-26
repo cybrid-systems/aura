@@ -32,6 +32,7 @@ module;
 #include "typed_mutation_audit.h"
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
+#include "core/workspace_isolation.hh" // #2224: tenant-isolation-stats primitive
 #include "core/zero_copy_output.hh"
 
 module aura.compiler.evaluator;
@@ -9763,6 +9764,115 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv(
                 "isolation-capture-tenant",
                 static_cast<std::int64_t>(aura::core::provenance::isolation_capture_tenant()));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2224: query:tenant-isolation-stats — Agent-discoverable
+    // workspace isolation enforcement dashboard (multi-tenant ref
+    // export + resolve-stamped gate). Mirrors the #2056 / #2125 /
+    // #2152 / #2156 lineage. SlimSurface fold-in for the cross-tenant
+    // deny path; non-duplicative with stable-ref-provenance-stats
+    // (which focuses on stamp/refresh/fiber) and
+    // typed-mutation-audit-stats (which focuses on mutate epoch joins).
+    //
+    // Fields (process-wide snapshot via
+    // aura::core::workspace_isolation::snapshot_tenant_isolation_stats()
+    // + per-Evaluator CompilerMetrics mirror):
+    //   - schema-2224               issue stamp (2224)
+    //   - issue-2224                same, for parity with #2056
+    //   - phase / issue             kWorkspaceIsolationPhase (2) / #1566
+    //   - active                    wired (= 1)
+    //   - tenant-boundary-checks-total
+    //   - tenant-boundary-violation-prevented-total   AC2
+    //   - cross-tenant-provenance-deny-total          AC2
+    //   - cross-tenant-capability-grant-total         AC5 (cross-grant)
+    //   - cross-tenant-capability-deny-total          AC2
+    //   - isolation-audit-total
+    //   - strict-sandbox-isolation-denials            AC4
+    //   - current-tenant                              g_workspace_isolation().current.id
+    //   - isolation-enabled                           process-wide flag
+    //   - allow-cross-tenant                          principal flag
+    //   - strict-linked                               strict_sandbox_linked
+    //   - atomic-batch-tenant-isolation-denials       per-Evaluator mirror
+    //                                                (compiler_metrics())
+    //   - export-ref-mandate                          wired (= 1) —
+    //                                                primitive surface
+    //                                                signal for Phase A
+    //                                                (every Agent-visible
+    //                                                StableNodeRef goes
+    //                                                through export_ref)
+    //   - resolve-stamped-gate                        wired (= 1) —
+    //                                                Phase B signal
+    //                                                (resolve-side
+    //                                                isolation check
+    //                                                active)
+    ObservabilityPrims::register_stats_impl(
+        "query:tenant-isolation-stats", [&ev](const auto&) -> EvalValue {
+            using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+            const auto snap = snapshot_tenant_isolation_stats();
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema-2224", 2224);
+            insert_kv("issue-2224", 2224);
+            insert_kv("phase", static_cast<std::int64_t>(snap.phase));
+            insert_kv("issue", static_cast<std::int64_t>(snap.issue));
+            insert_kv("active", 1);
+            insert_kv("tenant-boundary-checks-total", static_cast<std::int64_t>(snap.checks));
+            insert_kv("tenant-boundary-violation-prevented-total",
+                      static_cast<std::int64_t>(snap.boundary_violations_prevented));
+            insert_kv("cross-tenant-provenance-deny-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_provenance_deny));
+            insert_kv("cross-tenant-capability-grant-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_capability_grants));
+            insert_kv("cross-tenant-capability-deny-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_capability_deny));
+            insert_kv("isolation-audit-total", static_cast<std::int64_t>(snap.audits));
+            insert_kv("strict-sandbox-isolation-denials",
+                      static_cast<std::int64_t>(snap.strict_denials));
+            insert_kv("current-tenant", static_cast<std::int64_t>(snap.current_tenant));
+            insert_kv("isolation-enabled", static_cast<std::int64_t>(snap.isolation_enabled));
+            insert_kv("allow-cross-tenant", static_cast<std::int64_t>(snap.allow_cross));
+            insert_kv("strict-linked", static_cast<std::int64_t>(snap.strict_linked));
+            // Per-Evaluator mirror: the atomic-batch deny counter is on
+            // CompilerMetrics; surface it here so Agents can join
+            // isolation-stats with mutate epoch for AC2 / #2156 lineage.
+            insert_kv(
+                "atomic-batch-tenant-isolation-denials",
+                m ? static_cast<std::int64_t>(m->atomic_batch_tenant_isolation_denials_total.load(
+                        std::memory_order_relaxed))
+                  : 0);
+            // Phase A / Phase B wired signal — primitive surface flag for
+            // Agent / CI / docs to verify the mandate + gate are active.
+            insert_kv("export-ref-mandate", 1);
+            insert_kv("resolve-stamped-gate", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
