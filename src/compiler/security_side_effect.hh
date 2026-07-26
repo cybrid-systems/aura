@@ -37,6 +37,7 @@ namespace aura::compiler {
 inline constexpr int kSideEffectInheritIssue = 2057;
 
 // Infer default Effect bits from a primitive name prefix (gate + helpers).
+// Issue #2136: tui:*, terminal-present*, c-render-*, c-present-batch are Render.
 [[nodiscard]] inline std::uint16_t
 infer_required_effects_from_name(std::string_view name) noexcept {
     using namespace security;
@@ -44,7 +45,12 @@ infer_required_effects_from_name(std::string_view name) noexcept {
         return kEffectMutate;
     if (name.starts_with("ffi:") || name.starts_with("ffi-"))
         return kEffectFfi;
-    if (name.starts_with("render3d:") || name.starts_with("render:") || name.starts_with("render-"))
+    if (name.starts_with("render3d:") || name.starts_with("render:") ||
+        name.starts_with("render-") || name.starts_with("tui:") ||
+        name.starts_with("terminal-present") || name.starts_with("c-render-") ||
+        name == "c-present-batch" || name == "c-ansi-emit" ||
+        name.starts_with("make-terminal-buffer") || name.starts_with("terminal-set-cell") ||
+        name.starts_with("terminal-draw") || name.starts_with("terminal-mark"))
         return kEffectRender;
     if (name.starts_with("tcp-") || name.starts_with("http:") || name.starts_with("http-") ||
         name.starts_with("net:") || name.starts_with("network:"))

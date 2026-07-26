@@ -44,6 +44,8 @@ COVERAGE_MARKERS = (
     "security_exempt",
     "SECURITY_EXEMPT",
     "effect_enforced_in_body",
+    "required_effects",  # PrimMeta stamp (RENDER_PRIMITIVE_META / #2136)
+    "RENDER_PRIMITIVE_META",  # auto stamps kEffectRender (#2136)
 )
 
 # High-risk side-effect surface that MUST show coverage markers in the same
@@ -51,12 +53,17 @@ COVERAGE_MARKERS = (
 # auto-evolve / tcp / git) are tracked via allowlist until wired through
 # require_effect; the gate still catches new mutate/ffi/render/exec/file
 # registrations without enforcement.
+# Issue #2136: tui: / terminal-present / c-render are Render-gated.
 SIDE_EFFECT_PREFIXES = (
     "mutate:",
     "mutate-",
     "ffi:",
     "ffi-",
     "render3d:",
+    "render:",
+    "tui:",
+    "terminal-present",
+    "c-render-",
     "file:write",
     "sys-write",
     "sys-open",
@@ -65,7 +72,7 @@ SIDE_EFFECT_PREFIXES = (
     "exec-",
     "syscall",
 )
-SIDE_EFFECT_EXACT = frozenset({"write-file"})
+SIDE_EFFECT_EXACT = frozenset({"write-file", "c-present-batch", "c-ansi-emit"})
 
 
 def is_side_effect_name(name: str) -> bool:

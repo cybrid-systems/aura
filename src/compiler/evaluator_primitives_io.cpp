@@ -1531,6 +1531,19 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2135", 2135);
                 insert_kv("issue-2135", 2135);
             }
+            // Issue #2136: Render effect matrix (batch + FFI hand-off)
+            insert_kv("effect-denied-render-total", m ? load(m->effect_denied_render_total) : 0);
+            insert_kv("render-effect-granted-total", m ? load(m->render_effect_granted_total) : 0);
+            {
+                const auto hot = aura::compiler::ffi_hot::snapshot_ffi_hot_path();
+                insert_kv("ffi-effect-denied-render",
+                          static_cast<std::int64_t>(hot.effect_denied_render_total));
+                insert_kv("ffi-effect-granted-render",
+                          static_cast<std::int64_t>(hot.effect_granted_render_total));
+            }
+            insert_kv("render-effect-gate-wired", 1);
+            insert_kv("schema-2136", 2136);
+            insert_kv("issue-2136", 2136);
             insert_kv("term-render-clear", m ? load(m->term_render_clear_total) : 0);
             insert_kv("term-buf-diff", m ? load(m->term_buf_diff_total) : 0);
             insert_kv("term-buf-diff-hits", m ? load(m->term_buf_diff_hits_total) : 0);

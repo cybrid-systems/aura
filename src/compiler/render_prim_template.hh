@@ -3,10 +3,13 @@
 // Canonical pattern for production terminal/TUI/draw primitives:
 //   1. Register with RENDER_PRIMITIVE_META(arity, doc, schema)
 //      → perf_tier=hot, category=rendering, render_critical + stable_hot_path
+//      → required_effects=kEffectRender (#2136 — auto require_effect at dispatch)
 //   2. Body opens with AURA_RENDER_HOT_ENTRY(ev)
 //      → enter render hotpath + linear/epoch fence (#1676)
 //   3. Prefer frame bump arena / zero-copy / dirty short-circuit (#1559–#1675)
 //   4. Bump targeted metrics; never grow SlimSurface public add() for dashboards
+//   5. FFI batch hand-off: FFIBatchHotPath::dispatch_batch(..., render_effect_ok)
+//      after require_effect(kEffectRender) (#2136)
 //
 // Agent discoverability: schema string on PrimMeta + facade query:render-* stats.
 // Evolution: (mutate :rebind …) for draw logic; (mutate :render-optimize …) for

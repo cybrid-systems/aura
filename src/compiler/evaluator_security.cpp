@@ -105,6 +105,11 @@ void Evaluator::grant_capability(std::string cap) {
         auto prov = make_grant_provenance(/*mutation_id=*/0, force_bind, /*node_id=*/0, fiber);
         g_capability_registry().grant(capability_tenant_id_, granted_capabilities_.back(), eff,
                                       prov);
+        // Issue #2136: count Render effect grants for Agent dashboards.
+        if (has_effect(eff, Effect::Render)) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 }
 
@@ -219,10 +224,14 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                                      std::memory_order_relaxed);
             using aura::compiler::security::kEffectFfi;
             using aura::compiler::security::kEffectMutate;
+            using aura::compiler::security::kEffectRender;
             if (required_effect_bits & kEffectMutate)
                 m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
             if (required_effect_bits & kEffectFfi)
                 m->capability_denial_ffi_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2136: first-class Render deny counter (batch/FFI matrix).
+            if (required_effect_bits & kEffectRender)
+                m->effect_denied_render_total.fetch_add(1, std::memory_order_relaxed);
         }
     } else if (sb_active) {
         // Issue #1876: all allowed effects under sandbox record provenance.
@@ -237,6 +246,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     {
         using aura::compiler::security::kEffectFfi;
         using aura::compiler::security::kEffectMutate;
+        using aura::compiler::security::kEffectRender;
         using ::aura::core::security_event::append_security_event;
         using ::aura::core::security_event::g_security_event_ring;
         using ::aura::core::security_event::SecurityEventKind;
@@ -250,6 +260,8 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                 reason_str = "mutate-deny";
             else if (required_effect_bits & kEffectFfi)
                 reason_str = "ffi-deny";
+            else if (required_effect_bits & kEffectRender)
+                reason_str = "render-deny";
         }
         append_security_event(g_security_event_ring(), kind, tenant, mid, prov.epoch,
                               required_effect_bits, op, reason_str, /*denied=*/!ok, slot.fiber_id);
@@ -354,6 +366,12 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
     auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
     g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov);
+    // Issue #2136: count Render grants (effect-only path when name empty;
+    // named "render" also bumps via grant_capability below).
+    if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
+    }
     // Also string-grant for legacy has_capability path.
     if (!name.empty())
         grant_capability(std::string(name));

@@ -6713,6 +6713,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> capability_denials_by_effect{0};
     std::atomic<std::uint64_t> capability_denial_mutate_total{0};
     std::atomic<std::uint64_t> capability_denial_ffi_total{0};
+    // Issue #2136: Render effect matrix — deny / grant counters for batch + FFI.
+    std::atomic<std::uint64_t> effect_denied_render_total{0};
+    std::atomic<std::uint64_t> render_effect_granted_total{0};
     std::atomic<std::uint64_t> sandbox_provenance_records_total{0};
     std::atomic<std::uint64_t> sandbox_provenance_invalid_total{0};
     // Issue #2052: force capability + isolation on every mutate:* entry.

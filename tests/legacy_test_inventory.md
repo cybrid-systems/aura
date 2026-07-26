@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 425 | Preferred destination suites |
-| **Total scanned** | **425** | |
+| `tests/core/test_*.cpp` | 426 | Preferred destination suites |
+| **Total scanned** | **426** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 18 | 18 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 99 | 99 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 100 | 100 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -476,6 +476,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_render_batch.cpp`
 - `tests/renderer/test_render_critical_hotswap_2050.cpp`
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp`
+- `tests/compiler/test_render_effect_gate_2136.cpp`
 - `tests/renderer/test_render_ffi_hotpath.cpp`
 - `tests/renderer/test_render_frame_arena_2049.cpp`
 - `tests/renderer/test_render_hotpath_observability.cpp`
@@ -971,13 +972,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (99)
+### `observability` — Observability / metrics / query:*-stats (100)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (99)
+#### domain/ (100)
 
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
@@ -1050,6 +1051,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_raw_pointer_safety.cpp` (—) [domain_suite, theme_core] — Issue #1898 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_refinement_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #432/#467/#495/#509/#574 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_agent_closedloop_2051.cpp` (#2051) [domain_suite, theme_renderer] — AC1: query:render-stats schema-2051 + Agent decision keys present
+- `tests/compiler/test_render_effect_gate_2136.cpp` (#2136) [domain_suite, theme_compiler] — AC1: RENDER_PRIMITIVE_META stamps required_effects=kEffectRender
 - `tests/renderer/test_render_ffi_hotpath.cpp` (—) [domain_suite, theme_renderer] — c-render-bind / c-render-draw / c-present-batch / c-ansi-emit, micro-benchmark.
 - `tests/renderer/test_render_hotpath_observability.cpp` (—) [obs_named, domain_suite, theme_renderer] — Issue #1674/#1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_hotpath_stability_under_mutation.cpp` (—) [domain_suite, theme_renderer] — high-frequency mutate + present; no deopt storm; AOT hit rate observable.
