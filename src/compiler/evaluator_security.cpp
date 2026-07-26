@@ -4,6 +4,7 @@ module;
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 
 #include "security_capabilities.h"
@@ -585,17 +586,37 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         // (absolute path) because we're inside namespace aura::compiler
         // and `aura::core::` would otherwise resolve as nested
         // (aura::compiler::aura::core::) which doesn't exist.
+        //
+        // Issue #2156: mutation_id must be real Mutation epoch / audit join
+        // space — NEVER a tenant id. Pre-#2156 this path wrote
+        // ref_tenant/target into mutation_id, polluting trail_find_by_mutation_id
+        // and query:security-audit forensic joins. Tenant stays in tenant_id;
+        // foreign ref principal is encoded in the reason string when present.
         using ::aura::core::security_event::append_security_event;
         using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::kIsolationAuditMidIssue;
         using ::aura::core::security_event::SecurityEventKind;
         const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        // Prefer Mutation epoch as mid (join with effect denials on same attempt).
+        // Non-zero stamp: epoch==0 is "unset" — use 1 for joinability (grant paths).
+        const auto mid = epoch != 0 ? epoch : 1;
+        char reason_buf[64];
+        const char* reason_str = "isolation-deny";
+        if (ref_tenant != 0) {
+            // Keep foreign principal for Agents without polluting mutation_id.
+            std::snprintf(reason_buf, sizeof(reason_buf), "isolation-deny:ref-tenant=%llu",
+                          static_cast<unsigned long long>(ref_tenant));
+            reason_str = reason_buf;
+        }
+        (void)kIsolationAuditMidIssue; // stamp for Agent / docs grep
         append_security_event(g_security_event_ring(), SecurityEventKind::IsolationDeny, target,
-                              ref_tenant, ::aura::core::current_mutation_epoch(),
-                              static_cast<std::uint16_t>(required_effects), op, "isolation-deny",
+                              mid, epoch != 0 ? epoch : mid,
+                              static_cast<std::uint16_t>(required_effects), op, reason_str,
                               /*denied=*/true, fiber);
-        // #2054: correlate isolation deny into TypedMutation trail.
-        typed_audit::capture_security_correlated_audit(ref_tenant != 0 ? ref_tenant : target, op,
-                                                       ::aura::core::current_mutation_epoch(),
+        // #2054 / #2156: correlate isolation deny into TypedMutation trail
+        // with the same mid as SecurityEvent (never tenant id).
+        typed_audit::capture_security_correlated_audit(mid, op, epoch != 0 ? epoch : mid,
                                                        /*denied=*/true, /*target_node=*/0, fiber);
     }
     return ok;

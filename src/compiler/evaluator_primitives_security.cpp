@@ -3992,7 +3992,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::core::security_event::kSecurityAuditUnifyIssue;
             using aura::core::security_event::kSecurityEventRingSize;
             auto& ring = g_security_event_ring();
-            auto* ht = FlatHashTable::create(16);
+            // Capacity 32: schema-2054 fields + schema-2156 isolation-mid keys.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4019,8 +4020,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
             };
+            using aura::core::security_event::kIsolationAuditMidIssue;
             insert_kv("schema", kSecurityAuditUnifyIssue);
             insert_kv("schema-2054", kSecurityAuditUnifyIssue);
+            // Issue #2156: isolation-deny mutation_id is epoch, never tenant.
+            insert_kv("schema-2156", kIsolationAuditMidIssue);
+            insert_kv("issue-2156", kIsolationAuditMidIssue);
+            insert_kv("isolation-audit-mid-wired", 1);
             insert_kv("ring-size", static_cast<std::int64_t>(kSecurityEventRingSize));
             insert_kv("seq", static_cast<std::int64_t>(ring.seq.load(std::memory_order_relaxed)));
             insert_kv("total",
