@@ -1855,6 +1855,11 @@ public:
     // + dirty bit repair on the immediately introduced subtree, scoped
     // to the NodeId root rather than the full AST).
     mutable std::atomic<std::uint64_t> macro_expand_mutate_restamp_total_{0};
+    // Issue #2176: Agent experimental rollback path. Bumped per successful
+    // selective unstamp of MacroIntroduced subtrees (reset marker to
+    // User, optional provenance zero, clear kMacroExpansion dirty bit).
+    // Independent of restamp counters (those set the bit; this clears it).
+    mutable std::atomic<std::uint64_t> unstamp_macro_introduced_total_{0};
 
 public:
     // Issue #437 / #1840: per-reason verify-dirty stat accessors.
@@ -7297,6 +7302,82 @@ public:
 
     [[nodiscard]] std::uint64_t macro_expand_mutate_restamp_total() const noexcept {
         return macro_expand_mutate_restamp_total_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #2176: selective unstamp for MacroIntroduced subtrees. The
+    // primary Agent-facing primitive for experimental self-evolution
+    // rollback: when an experimental macro/agent step fails hygiene or
+    // validation, selectively clear the MacroIntroduced marker (reset
+    // to User), optionally zero provenance + clear kMacroExpansion dirty
+    // bit, while preserving structure + generation. Non-MacroIntroduced
+    // descendants are visited but untouched (their marker stays
+    // SyntaxMarker::User). Returns count of nodes actually unstampped.
+    //
+    // Skips free_list_ slots (no-op on freed nodes). Bounds checks
+    // every SoA column access. Cheap O(subtree) walk — no full-AST
+    // rebuild. Safe for composite checkpoint + restore (issue #1893):
+    // callers can snapshot_metadata_columns() before, then call this,
+    // then restore_metadata_columns() to undo a bad step.
+    //
+    // Pair with restamp_macro_introduced_subtree(root) for the inverse
+    // direction (re-stamp after a fresh macro expansion). Independent
+    // of the macro hygiene contract check (validate_macro_hygiene_invariants):
+    // this WRITES the SoA, that READS without modifying.
+    std::size_t unstamp_macro_introduced(NodeId root, bool keep_provenance = false) {
+        if (root == NULL_NODE || root >= size())
+            return 0;
+        constexpr auto kExpansion = static_cast<std::uint8_t>(MacroDirtyReason::kMacroExpansion);
+        std::vector<NodeId> stack;
+        std::vector<std::uint8_t> on_free(size(), 0);
+        for (NodeId fid : free_list_) {
+            if (fid < on_free.size())
+                on_free[fid] = 1;
+        }
+        std::vector<std::uint8_t> seen(size(), 0);
+        std::size_t unstampped = 0;
+        seen[root] = 1;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            auto id = stack.back();
+            stack.pop_back();
+            if (id == NULL_NODE || id >= size() || seen[id] == 0)
+                continue;
+            seen[id] = 1;
+            if (on_free[id] == 0 && is_macro_introduced(id)) {
+                // Reset marker: MacroIntroduced → User (no longer query-visible
+                // as macro-introduced; matches the user's intent that the
+                // experimental macro/agent step was rolled back).
+                if (id < marker_.size())
+                    marker_[id] = SyntaxMarker::User;
+                // Optional provenance zeroing (AC2): keeps metadata
+                // columns consistent (no dangling provenance) when
+                // !keep_provenance. For experimental rollback this is
+                // the safe default — the closure can no longer be
+                // blamed to the (now-revoked) macro expansion.
+                if (!keep_provenance && id < provenance_.size())
+                    provenance_[id] = 0;
+                // Clear kMacroExpansion dirty bit (idempotent AND-NOT).
+                // Other dirty bits (kGeneralDirty + kMacroSelfModify)
+                // are preserved — only the expansion provenance bit is
+                // cleared, matching the roll-back semantics.
+                if (id < macro_dirty_.size() && (macro_dirty_[id] & kExpansion) != 0)
+                    macro_dirty_[id] = static_cast<std::uint8_t>(macro_dirty_[id] & ~kExpansion);
+                ++unstampped;
+            }
+            // Descend into children (MacroIntroduced + User + ...).
+            for (NodeId cid : children(id)) {
+                if (cid != NULL_NODE && cid < size() && seen[cid] == 0) {
+                    stack.push_back(cid);
+                }
+            }
+        }
+        if (unstampped > 0)
+            unstamp_macro_introduced_total_.fetch_add(1, std::memory_order_relaxed);
+        return unstampped;
+    }
+
+    [[nodiscard]] std::uint64_t unstamp_macro_introduced_total() const noexcept {
+        return unstamp_macro_introduced_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #2171: validate the post-expand hygiene invariant:

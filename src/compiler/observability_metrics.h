@@ -6945,6 +6945,9 @@ struct CompilerMetrics {
     // (subtree-local coherence at expand exit + critical mutate
     // entry, scoped to the NodeId root rather than the full AST).
     std::atomic<std::uint64_t> macro_expand_mutate_restamp_total{0};
+    // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
+    // experimental rollback path). Bumped per successful unstamp.
+    std::atomic<std::uint64_t> unstamp_macro_introduced_total{0};
     // Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
     // stamp counter (mirrors g_macro_schema_cache_dirty_stamped_total into
     // CompilerMetrics so engine:metrics + query primitives see the
