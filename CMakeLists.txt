@@ -1825,6 +1825,11 @@ aura_add_issue_test(test_reflect_hygiene_agent_diagnostics)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_agent_diagnostics)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_agent_diagnostics)
 
+# Issue #2167: Agent-visible hygiene-diagnostic + macro-provenance-chain.
+aura_add_issue_test(test_hygiene_diagnostic_2167)
+aura_issue_test_link_llvm_jit(test_hygiene_diagnostic_2167)
+add_dependencies(all_test_issue_targets test_hygiene_diagnostic_2167)
+
 # Issue #2021: macro hygiene depth + concurrent peak observability.
 aura_add_issue_test(test_macro_hygiene_depth_concurrent_obs)
 aura_issue_test_link_llvm_jit(test_macro_hygiene_depth_concurrent_obs)

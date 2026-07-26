@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 452 | Preferred destination suites |
-| **Total scanned** | **452** | |
+| `tests/core/test_*.cpp` | 453 | Preferred destination suites |
+| **Total scanned** | **453** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 128 | 128 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 43 | 43 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 25 | 25 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 20 | 20 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 105 | 105 | P2 — often thin schema probes; collapse into obs matrix |
@@ -312,6 +312,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp`
 - `tests/core/test_hotpath_matrix_batch.cpp`
 - `tests/compiler/test_hygiene_checkpoint_2099.cpp`
+- `tests/reflect/test_hygiene_diagnostic_2167.cpp`
 - `tests/compiler/test_hygiene_mutate_closed_loop.cpp`
 - `tests/compiler/test_incremental_effectiveness_snapshot_fail.cpp`
 - `tests/compiler/test_incremental_perblock_closure_bridge_safety.cpp`
@@ -903,16 +904,17 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (24)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (25)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (24)
+#### domain/ (25)
 
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
+- `tests/reflect/test_hygiene_diagnostic_2167.cpp` (#2167) [domain_suite, theme_reflect] — AC1: (query:hygiene-diagnostic node-id) returns structured hash schema 2167
 - `tests/reflect/test_ir_cache_v2.cpp` (—) [small, domain_suite, theme_reflect] — tests/test_ir_cache_v2.cpp
 - `tests/reflect/test_issue_178.cpp` (#178) [small, early_issue, domain_suite, theme_reflect] — test_issue_178.cpp — Issue #178 / #268: production NodeView
 - `tests/reflect/test_issue_178_reflect.cpp` (#178) [early_issue, domain_suite, theme_reflect] — Non-module TU: P2996 reflection (Issue #268).
