@@ -600,6 +600,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Declares the current AI agent identity for MutationRecord
     // author_fingerprint stamping. 0 = system. Does not require a
     // MutationBoundaryGuard (metadata only — not an AST mutate).
+    // SECURITY_EXEMPT: metadata-only agent identity stamp (#2057/#2152 allowlist).
     add("mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (mutate:set-agent-fingerprint <int>)");
@@ -607,6 +608,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.set_current_agent_fingerprint(fp);
         return make_int(static_cast<std::int64_t>(fp));
     });
+    {
+        ::aura::compiler::PrimMeta ex{};
+        ex.security_exempt = true;
+        ex.pure = false;
+        ex.doc = "SECURITY_EXEMPT: metadata-only agent fingerprint (#2152)";
+        ev.primitives().set_meta_for_name("mutate:set-agent-fingerprint", std::move(ex));
+    }
 
     // Issue #489: unified StableNodeRef / raw NodeId resolution for mutate hot paths.
     // Defined inside register_mutate_primitives (Evaluator friend) for private access.

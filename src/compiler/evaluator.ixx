@@ -24,6 +24,8 @@ module;
 #include "core/resource_quota.hh" // Issue #1579
 // Issue #1416: capability names for invoke_prim_with_telemetry gate
 #include "security_capabilities.h"
+// Issue #2057 / #2152: side-effect name inference + dispatch required_effects
+#include "security_side_effect.hh"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
 #include "runtime_shared.h"
 // Issue #1443/#1445: aura_invoke_long_mutation_scheduler_hook (C ABI)
@@ -188,6 +190,15 @@ public:
     [[nodiscard]] std::optional<PrimFn> lookup(std::string_view n) const pre(!n.empty());
     void add(const std::string& name, PrimFn fn) { add(name, std::move(fn), PrimMeta{}); }
     void add(const std::string& name, PrimFn fn, PrimMeta meta) {
+        // Issue #2152: construction-time auto-stamp required_effects from the
+        // primitive name when unset. Closes the residual gap where a new
+        // effectful prim skips PrimMeta / add_mutate but still matches a
+        // side-effect prefix — dispatch then enforces non-bypassably.
+        if (meta.required_effects == 0 && !meta.security_exempt) {
+            const auto inferred = infer_required_effects_from_name(name);
+            if (inferred != 0)
+                meta.required_effects = inferred;
+        }
         const std::size_t slot = ordered_names_.size();
         ordered_names_.push_back(name);
         const bool is_hot = (meta.perf_tier == kPrimPerfHot);
@@ -241,6 +252,12 @@ public:
     }
     // Issue #697: post-registration meta backfill for domain primitives.
     void set_meta_for_name(const std::string& name, PrimMeta meta) {
+        // Issue #2152: keep auto-stamp consistent on late meta backfill.
+        if (meta.required_effects == 0 && !meta.security_exempt) {
+            const auto inferred = infer_required_effects_from_name(name);
+            if (inferred != 0)
+                meta.required_effects = inferred;
+        }
         const auto slot = slot_for_name(name);
         if (slot < meta_.size())
             meta_[slot] = std::move(meta);
@@ -5581,21 +5598,33 @@ public:
                 const auto& meta = primitives_.meta_for_slot(slot);
                 // Issue #1676: render-critical / rendering+hot fast path —
                 // trusted tier skips string capability / deprecation tax.
-                // Issue #2136: still enforce PrimMeta.required_effects (Render)
-                // when capability checking is enabled (Restricted/Strict) —
-                // bit check only; Off sandbox keeps zero-cost present.
+                // Issue #2136 / #2152: still enforce required_effects (explicit
+                // or name-inferred) when capability checking is enabled —
+                // Off sandbox keeps zero-cost present.
                 if (is_render_critical_meta(meta)) {
-                    if (meta.required_effects != 0 && !meta.security_exempt &&
-                        !meta.effect_enforced_in_body && effect_sandbox_mode() != 0) {
-                        if (!require_effect(meta.required_effects, name)) {
+                    if (!meta.security_exempt && !meta.effect_enforced_in_body &&
+                        effect_sandbox_mode() != 0) {
+                        const auto req = effective_required_effects(name, meta.required_effects,
+                                                                    meta.security_exempt);
+                        if (req != 0) {
                             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                                m->dispatch_required_effects_check_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                if (meta.required_effects == 0)
+                                    m->dispatch_required_effects_inferred_total.fetch_add(
+                                        1, std::memory_order_relaxed);
                             }
-                            return primitives_detail::make_primitive_error(
-                                string_heap_, error_values_,
-                                security::format_deny_reason(meta.required_effects,
-                                                             capability_tenant_id_, name),
-                                primitive_error_counter_ptr());
+                            if (!require_effect(req, name)) {
+                                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                                    m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                                    m->dispatch_required_effects_deny_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                                return primitives_detail::make_primitive_error(
+                                    string_heap_, error_values_,
+                                    security::format_deny_reason(req, capability_tenant_id_, name),
+                                    primitive_error_counter_ptr());
+                            }
                         }
                     }
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
@@ -5637,21 +5666,33 @@ public:
                         "capability denied: sandboxed primitive requires kCapSandbox",
                         primitive_error_counter_ptr());
                 }
-                // Issue #2057: PrimMeta.required_effects → automatic require_effect
-                // unless the body already enforces (add_mutate / wrap) or the
-                // primitive is documented security_exempt. Prevents new
-                // effectful prims from bypassing capability checks by omission.
-                if (meta.required_effects != 0 && !meta.security_exempt &&
-                    !meta.effect_enforced_in_body) {
-                    if (!require_effect(meta.required_effects, name)) {
+                // Issue #2057 / #2152: non-bypassable required_effects at dispatch.
+                // Uses explicit PrimMeta bits, or name-inferred bits when unset
+                // (#2152 last line of defense). Skipped only when body already
+                // enforces (add_mutate) or security_exempt is documented.
+                // require_effect itself is a no-op under Off sandbox.
+                if (!meta.security_exempt && !meta.effect_enforced_in_body) {
+                    const auto req = effective_required_effects(name, meta.required_effects,
+                                                                meta.security_exempt);
+                    if (req != 0) {
                         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                            m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                            m->dispatch_required_effects_check_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            if (meta.required_effects == 0)
+                                m->dispatch_required_effects_inferred_total.fetch_add(
+                                    1, std::memory_order_relaxed);
                         }
-                        return primitives_detail::make_primitive_error(
-                            string_heap_, error_values_,
-                            security::format_deny_reason(meta.required_effects,
-                                                         capability_tenant_id_, name),
-                            primitive_error_counter_ptr());
+                        if (!require_effect(req, name)) {
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                                m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                                m->dispatch_required_effects_deny_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                            return primitives_detail::make_primitive_error(
+                                string_heap_, error_values_,
+                                security::format_deny_reason(req, capability_tenant_id_, name),
+                                primitive_error_counter_ptr());
+                        }
                     }
                 }
                 // Cold / non-render-critical while a frame is in flight.
