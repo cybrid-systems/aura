@@ -48,6 +48,16 @@ inline std::atomic<std::uint64_t> dead_coercion_ir_narrow_evidence_hits{0};
 inline std::atomic<std::uint64_t> dead_coercion_pipeline_runs_total{0};
 inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_skips{0};
 
+// Issue #2130: ShapeAwareFold / LinearOwnership dirty-aware peel metrics.
+inline std::atomic<std::uint64_t> shape_fold_dirty_blocks_processed{0};
+inline std::atomic<std::uint64_t> shape_fold_clean_blocks_skipped{0};
+inline std::atomic<std::uint64_t> shape_fold_dirty_aware_runs{0};
+inline std::atomic<std::uint64_t> linear_own_dirty_funcs_processed{0};
+inline std::atomic<std::uint64_t> linear_own_clean_funcs_skipped{0};
+inline std::atomic<std::uint64_t> linear_own_dirty_blocks_scanned{0};
+inline std::atomic<std::uint64_t> linear_own_clean_blocks_skipped{0};
+inline std::atomic<std::uint64_t> linear_own_dirty_aware_runs{0};
+
 enum class PassKind : std::uint8_t {
     ConstantFold = 0,
     Inline = 1,
@@ -87,7 +97,9 @@ inline constexpr PassDescriptor kDefaultPassTable[] = {
     {PassKind::Inline, "inline", false, false, false, false},
     {PassKind::TypeCheck, "type-check", false, true, false, false},
     {PassKind::Arity, "arity", false, false, false, true},
-    {PassKind::LinearOwnership, "linear-ownership", false, false, false, true},
+    // Issue #2130: LinearOwnership is dirty-aware (skip clean functions;
+    // scan dirty blocks for metrics; full walk when any dirty for correctness).
+    {PassKind::LinearOwnership, "linear-ownership", true, false, false, true},
     // #1578: RenderPass is dirty-aware + shape_stable + contracts-enabled.
     {PassKind::Render, "render-present", true, true, true, false},
 };
@@ -269,35 +281,72 @@ public:
 
     void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
         note_pass_run(PassKind::ShapeAwareFold, false);
+        // Issue #2130: dirty-aware peel — only process dirty blocks when mask set.
         if (block_dirty_fn_) {
-            // Dirty-aware peel: only fold functions with any dirty block.
+            shape_fold_dirty_aware_runs.fetch_add(1, std::memory_order_relaxed);
             for (auto& func : m.functions) {
+                std::vector<std::uint8_t> dirty(func.blocks.size(), 0);
                 bool any = false;
                 for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-                    if (is_block_dirty(static_cast<std::uint32_t>(bi))) {
-                        any = true;
-                        break;
-                    }
+                    const bool d = is_block_dirty(static_cast<std::uint32_t>(bi));
+                    dirty[bi] = d ? 1 : 0;
+                    any = any || d;
                 }
-                if (!any)
+                if (!any) {
+                    shape_fold_clean_blocks_skipped.fetch_add(func.blocks.size(),
+                                                              std::memory_order_relaxed);
                     continue;
-                // Delegate single-function work via full module clone of one fn
-                // is expensive — ShapeAwareFoldingPass runs whole module today;
-                // for dirty-aware we still run full impl (correctness-first).
-                (void)func;
+                }
+                impl_.run_on_function(func, dirty);
+                shape_fold_dirty_blocks_processed.fetch_add(impl_.blocks_processed(),
+                                                            std::memory_order_relaxed);
+                shape_fold_clean_blocks_skipped.fetch_add(impl_.blocks_skipped(),
+                                                          std::memory_order_relaxed);
             }
+        } else {
+            impl_.run(m);
+            shape_fold_dirty_blocks_processed.fetch_add(impl_.blocks_processed(),
+                                                        std::memory_order_relaxed);
         }
-        impl_.run(m);
         error_ = impl_.has_error();
         if (error_)
             opt_pass_errors_total.fetch_add(1, std::memory_order_relaxed);
         if (!dirty_flags_cleared_or_ok(m, error_))
             opt_contract_violations_soft_total.fetch_add(1, std::memory_order_relaxed);
     }
-    void run(aura::ir::IRFunction& /*f*/) {
-        // Whole-module pass; IncrementalPass stub for DirtyAware pipeline.
+    // Issue #2130: IncrementalPass / dirty pipeline entry.
+    void run(aura::ir::IRFunction& f) {
+        if (block_dirty_fn_) {
+            shape_fold_dirty_aware_runs.fetch_add(1, std::memory_order_relaxed);
+            std::vector<std::uint8_t> dirty(f.blocks.size(), 0);
+            bool any = false;
+            for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+                const bool d = is_block_dirty(static_cast<std::uint32_t>(bi));
+                dirty[bi] = d ? 1 : 0;
+                any = any || d;
+            }
+            if (!any) {
+                shape_fold_clean_blocks_skipped.fetch_add(f.blocks.size(),
+                                                          std::memory_order_relaxed);
+                return;
+            }
+            impl_.run_on_function(f, dirty);
+            shape_fold_dirty_blocks_processed.fetch_add(impl_.blocks_processed(),
+                                                        std::memory_order_relaxed);
+            shape_fold_clean_blocks_skipped.fetch_add(impl_.blocks_skipped(),
+                                                      std::memory_order_relaxed);
+        } else {
+            impl_.run_on_function(f);
+            shape_fold_dirty_blocks_processed.fetch_add(impl_.blocks_processed(),
+                                                        std::memory_order_relaxed);
+        }
     }
-    void run(aura::ir::BasicBlock& /*b*/) {}
+    void run(aura::ir::BasicBlock& b) {
+        // Single-block entry: process as fully dirty.
+        (void)b;
+        // No function context for MoveOp ownership scan — skip local-only folds.
+    }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { run(f); }
 
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "shape-aware-fold"; }
@@ -436,6 +485,99 @@ static_assert(aura::compiler::Pass<ShapeAwareFoldingPass>,
               "ShapeAwareFoldingPass must satisfy Pass (#1576)");
 static_assert(aura::compiler::DirtyAwarePass<ShapeAwareFoldingPass>,
               "ShapeAwareFoldingPass must be DirtyAware (#1576)");
+static_assert(aura::compiler::IncrementalPass<ShapeAwareFoldingPass>,
+              "ShapeAwareFoldingPass must be Incremental (#2130)");
+
+// ── Issue #2130: LinearOwnershipPass — dirty-aware pure analysis wrap ──
+// Skips functions with zero dirty blocks. When any block is dirty, walks
+// the full function (use-after-move needs cross-block moved[] state) but
+// records clean vs dirty block metrics for Agent dashboards.
+class LinearOwnershipPass {
+public:
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+
+    void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
+        note_pass_run(PassKind::LinearOwnership, false);
+        if (block_dirty_fn_) {
+            linear_own_dirty_aware_runs.fetch_add(1, std::memory_order_relaxed);
+            for (auto& func : m.functions)
+                run_function_(func);
+        } else {
+            impl_.run(m);
+            linear_own_dirty_funcs_processed.fetch_add(impl_.functions_scanned(),
+                                                       std::memory_order_relaxed);
+            linear_own_dirty_blocks_scanned.fetch_add(impl_.blocks_scanned(),
+                                                      std::memory_order_relaxed);
+        }
+        error_ = impl_.has_error();
+        if (error_)
+            opt_pass_errors_total.fetch_add(1, std::memory_order_relaxed);
+        if (!dirty_flags_cleared_or_ok(m, error_))
+            opt_contract_violations_soft_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void run(aura::ir::IRFunction& f) {
+        if (block_dirty_fn_) {
+            linear_own_dirty_aware_runs.fetch_add(1, std::memory_order_relaxed);
+            run_function_(f);
+        } else {
+            // Full function via temporary module-shaped walk (analysis only).
+            aura::ir::IRModule tmp;
+            tmp.functions.push_back(f);
+            impl_.run(tmp);
+            linear_own_dirty_funcs_processed.fetch_add(1, std::memory_order_relaxed);
+            linear_own_dirty_blocks_scanned.fetch_add(f.blocks.size(), std::memory_order_relaxed);
+        }
+    }
+    void run(aura::ir::BasicBlock& /*b*/) {}
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { run(f); }
+
+    [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
+    [[nodiscard]] std::string_view name() const { return "linear-ownership"; }
+    [[nodiscard]] std::size_t use_after_move_count() const { return impl_.use_after_move_count(); }
+
+private:
+    void run_function_(aura::ir::IRFunction& func) {
+        std::size_t dirty_n = 0;
+        std::size_t clean_n = 0;
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (is_block_dirty(static_cast<std::uint32_t>(bi)))
+                ++dirty_n;
+            else
+                ++clean_n;
+        }
+        if (dirty_n == 0) {
+            linear_own_clean_funcs_skipped.fetch_add(1, std::memory_order_relaxed);
+            linear_own_clean_blocks_skipped.fetch_add(clean_n, std::memory_order_relaxed);
+            return;
+        }
+        // Correctness: full-function walk when any dirty (moved[] spans blocks).
+        // Analysis-only: does not mutate IR.
+        aura::ir::IRModule tmp;
+        tmp.functions.push_back(func);
+        impl_.run(tmp);
+        linear_own_dirty_funcs_processed.fetch_add(1, std::memory_order_relaxed);
+        linear_own_dirty_blocks_scanned.fetch_add(dirty_n, std::memory_order_relaxed);
+        linear_own_clean_blocks_skipped.fetch_add(clean_n, std::memory_order_relaxed);
+    }
+
+    aura::compiler::LinearOwnershipWrap impl_;
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    bool error_ = false;
+};
+
+static_assert(aura::compiler::Pass<LinearOwnershipPass>,
+              "LinearOwnershipPass must satisfy Pass (#2130)");
+static_assert(aura::compiler::DirtyAwarePass<LinearOwnershipPass>,
+              "LinearOwnershipPass must be DirtyAware (#2130)");
+static_assert(aura::compiler::IncrementalPass<LinearOwnershipPass>,
+              "LinearOwnershipPass must be Incremental (#2130)");
 
 // ── RenderPass (#1578) ─────────────────────────────────────────
 // Dirty-aware + shape_stable + SoAView + JIT-friendly incremental render.
@@ -690,6 +832,11 @@ inline bool run_pass_kind(aura::ir::IRModule& mod, PassKind kind) {
         }
         case PassKind::ShapeAwareFold: {
             ShapeAwareFoldingPass p;
+            return aura::compiler::run_one(mod, p);
+        }
+        case PassKind::LinearOwnership: {
+            // Issue #2130: dirty-aware LinearOwnership pure analysis.
+            LinearOwnershipPass p;
             return aura::compiler::run_one(mod, p);
         }
         case PassKind::Render: {
