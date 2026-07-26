@@ -44,8 +44,11 @@
 // in fiber_bridge.cpp for serve-only link units).
 extern "C" void aura_evaluator_post_resume_refresh();
 extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
-// Issue #1880: MutationBoundaryGuard::try_acquire around agent body (0=ok, 1=reject).
+// Issue #1880 / #2118: MutationBoundary around agent body (0=ok, 1=reject).
+// register_soft_boundary: when 1 (default), fiber path soft-registers
+// per-fiber mutation depth for steal/GC visibility without full Guard.
 extern "C" int aura_orch_agent_body_try_acquire();
+extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary);
 extern "C" void aura_orch_agent_body_release_guard();
 
 namespace aura::orch {
@@ -83,6 +86,11 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> resource_quota_rejects_total{0};
     std::atomic<std::uint64_t> agent_body_try_acquire_rejects_total{0};
     std::atomic<std::uint64_t> agent_body_try_acquire_ok_total{0};
+    // Issue #2118: soft mutation-boundary registration for agent fiber body
+    // (steal/GC visibility without full Guard on small fiber stacks).
+    std::atomic<std::uint64_t> orch_agent_boundary_entered_total{0};
+    std::atomic<std::uint64_t> orch_agent_steal_skipped_boundary_total{0};
+    std::atomic<std::uint64_t> orch_agent_boundary_skip_pure_total{0}; // AC2 pure path
     // Issue #1881: observability — hot-path counters (no dead bumps).
     std::atomic<std::uint64_t> agents_active{0}; // spawn - joined (approx live)
     std::atomic<std::uint64_t> send_backpressure_total{0};
@@ -313,6 +321,11 @@ struct AgentSpec {
     // Issue #2008: 0 = disabled (default, zero-cost). When > 0 and mailbox
     // attached, a helper fiber emits "keepalive:<us>" at this cadence.
     std::uint32_t keepalive_interval_ms = 0;
+    // Issue #2118: when true (default), agent fiber body soft-registers
+    // MutationBoundary depth on the per-fiber stack so steal (#2115) and
+    // GC see the mutation window. Set false for pure-reasoning agents
+    // that never mutate (AC2 zero-cost path — quota check only).
+    bool mutation_boundary = true;
 };
 
 // Spawn a fiber agent on `sched`, optionally with a private MultiFiberMailbox
@@ -422,8 +435,9 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         live->interval_ms = ka_interval;
     }
 
+    const bool register_soft = spec.mutation_boundary;
     serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach, live,
-                                   progress_clock = want_progress_clock]() mutable {
+                                   progress_clock = want_progress_clock, register_soft]() mutable {
         if (attach && mb && serve::g_current_fiber)
             mb->attach(serve::g_current_fiber);
         // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
@@ -435,12 +449,15 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
             live->last_keepalive_us.store(t0, std::memory_order_release);
             g_orch_module_stats.last_keepalive_us.store(t0, std::memory_order_relaxed);
         }
-        // Issue #1880: try_acquire mutation boundary when Evaluator is bound.
+        // Issue #1880 / #2118: try_acquire mutation boundary when Evaluator
+        // is bound. On fiber: soft-registers per-fiber depth when
+        // mutation_boundary is true (default) so steal/GC see the window;
+        // mutation_boundary=false keeps pure-reasoning zero-cost (AC2).
         // On reject: skip body (typed quota path already recorded); no panic.
         // Issue #2006: provenance closed-loop only after a successful body
         // that actually entered the acquire path — reject must not call
         // aura_evaluator_post_resume_refresh or bump provenance counters.
-        const int acq = aura_orch_agent_body_try_acquire();
+        const int acq = aura_orch_agent_body_try_acquire_ex(register_soft ? 1 : 0);
         if (acq == 0) {
             g_orch_module_stats.agent_body_try_acquire_ok_total.fetch_add(
                 1, std::memory_order_relaxed);

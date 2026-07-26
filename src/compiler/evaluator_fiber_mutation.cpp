@@ -1732,25 +1732,71 @@ extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber) {
     ev->complete_post_join_linear_enforcement(joined_fiber);
 }
 
-// Issue #1880: thread-local MutationBoundaryGuard for orch agent body.
+// Issue #1880 / #2118: thread-local MutationBoundaryGuard for orch agent body
+// (host path) + soft per-fiber depth registration (fiber path).
 // try_acquire → typed ResourceQuotaExceeded (never panic/throw).
 namespace {
     thread_local std::unique_ptr<aura::compiler::Evaluator::MutationBoundaryGuard>
         g_orch_agent_body_guard{};
+    // Issue #2118: soft boundary depth pushed on fiber agent body (nested-safe).
+    thread_local int g_orch_soft_boundary_depth = 0;
+
+    void orch_soft_boundary_enter(Evaluator* ev) noexcept {
+        if (!ev)
+            return;
+        // Push a lightweight checkpoint onto the per-fiber mutation stack so
+        // is_at_mutation_boundary_safe / steal / GC see depth > 0. Does NOT
+        // acquire workspace_mtx_ (full Guard stack-smashes on fiber #1881).
+        Evaluator::MutationCheckpoint cp{};
+        cp.version = ev->defuse_version_for_test(); // snapshot; soft marker
+        cp.evaluator_id = static_cast<void*>(ev);
+        Evaluator::active_mutation_stack_static().push_back(std::move(cp));
+        ++g_orch_soft_boundary_depth;
+        if (aura::serve::g_current_fiber)
+            aura::serve::g_current_fiber->set_orch_agent_boundary_active(true);
+        aura::orch::g_orch_module_stats.orch_agent_boundary_entered_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->orch_agent_boundary_entered_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void orch_soft_boundary_exit() noexcept {
+        if (g_orch_soft_boundary_depth <= 0)
+            return;
+        auto& stack = Evaluator::active_mutation_stack_static();
+        if (!stack.empty())
+            stack.pop_back();
+        --g_orch_soft_boundary_depth;
+        if (g_orch_soft_boundary_depth == 0 && aura::serve::g_current_fiber)
+            aura::serve::g_current_fiber->set_orch_agent_boundary_active(false);
+    }
 } // namespace
 
 extern "C" int aura_orch_agent_body_try_acquire() {
-    // Release any stale guard from a previous agent on this worker.
+    return aura_orch_agent_body_try_acquire_ex(/*register_soft_boundary=*/1);
+}
+
+extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
+    // Release any stale full Guard from a previous host agent.
+    // Soft depth is nested-safe (AC3): re-enter pushes without clearing.
+    // Stale soft depth (fiber died without release) is drained when fiber
+    // flag is clear or soft depth is unbalanced at next outermost release.
     g_orch_agent_body_guard.reset();
+    if (g_orch_soft_boundary_depth > 0 &&
+        (aura::serve::g_current_fiber == nullptr ||
+         !aura::serve::g_current_fiber->orch_agent_boundary_active())) {
+        while (g_orch_soft_boundary_depth > 0)
+            orch_soft_boundary_exit();
+    }
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
         return 0; // serve-only / no Evaluator → body runs without guard
-    // Issue #1881: Fiber stacks are small — do not construct a full
+    // Issue #1881 / #2118: Fiber stacks are small — do not construct a full
     // MutationBoundaryGuard on the fiber path (stack smash under spawn
-    // stress). Use lightweight check_mutation_quota only; host-side
-    // call sites may still try_acquire for a full Guard.
+    // stress). Lightweight: quota check + optional soft depth push for
+    // steal/GC visibility. Host-side call sites still get full Guard.
     const bool on_fiber =
-        (Evaluator::g_current_fiber_void != nullptr) || (aura::serve::g_current_fiber != nullptr);
+        (Evaluator::get_current_fiber() != nullptr) || (aura::serve::g_current_fiber != nullptr);
     if (on_fiber) {
         if (auto err = ev->check_mutation_quota(/*pending=*/1)) {
             (void)err;
@@ -1763,6 +1809,13 @@ extern "C" int aura_orch_agent_body_try_acquire() {
         }
         if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
             m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
+        if (register_soft_boundary) {
+            orch_soft_boundary_enter(ev);
+        } else {
+            // AC2: pure-reasoning agent — no soft depth (zero extra cost).
+            aura::orch::g_orch_module_stats.orch_agent_boundary_skip_pure_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         return 0;
     }
     bool ok = true;
@@ -1775,11 +1828,30 @@ extern "C" int aura_orch_agent_body_try_acquire() {
         return 1; // typed reject — caller skips body, no panic
     }
     g_orch_agent_body_guard = std::move(*g);
+    if (register_soft_boundary) {
+        // Host path already has full Guard (depth via slot). Still count enter.
+        aura::orch::g_orch_module_stats.orch_agent_boundary_entered_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->orch_agent_boundary_entered_total.fetch_add(1, std::memory_order_relaxed);
+    }
     return 0;
 }
 
 extern "C" void aura_orch_agent_body_release_guard() {
+    orch_soft_boundary_exit();
     g_orch_agent_body_guard.reset();
+}
+
+// Issue #2118: worker steal path notes orch agent soft-boundary skip.
+extern "C" void aura_orch_note_agent_steal_skipped_boundary() {
+    aura::orch::g_orch_module_stats.orch_agent_steal_skipped_boundary_total.fetch_add(
+        1, std::memory_order_relaxed);
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (ev) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->orch_agent_steal_skipped_boundary_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // Issue #2010: MultiFiberMailbox backpressure → OrchModuleStats dashboard.

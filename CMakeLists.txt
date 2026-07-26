@@ -2155,6 +2155,11 @@ aura_add_issue_test(test_atomic_mark_bitvector_2117)
 aura_issue_test_link_llvm_jit(test_atomic_mark_bitvector_2117)
 add_dependencies(all_test_issue_targets test_atomic_mark_bitvector_2117)
 
+# Issue #2118: orch agent MutationBoundary soft depth for steal/GC visibility.
+aura_add_issue_test(test_orch_agent_mutation_boundary_2118)
+aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary_2118)
+add_dependencies(all_test_issue_targets test_orch_agent_mutation_boundary_2118)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
