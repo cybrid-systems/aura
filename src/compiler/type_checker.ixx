@@ -428,6 +428,11 @@ public:
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.
     bool is_dirty() const { return dirty_count_ > 0; }
+    // Issue #2180: import dirty constraints + priority roots + blame
+    // anchors from a short-lived InferenceEngine CS into the long-lived
+    // TypeChecker / Evaluator commit CS so composite_txn_commit can
+    // re-run solve_delta_occurrence on real post-partial state.
+    void import_delta_marks_from(ConstraintSystem& src);
     // O(n) clear of dirty flags without removing constraints.
     // Useful when a full solve() has run and we want to reset
     // the delta tracking without losing constraint state.
@@ -1521,6 +1526,19 @@ export struct TypeChecker {
     std::uint64_t last_occurrence_refresh_count() const noexcept {
         return last_occurrence_refresh_count_;
     }
+    // Issue #2180: occurrence TypeIds + live-CS flag from last
+    // infer_flat_partial (threaded into composite_txn_commit).
+    [[nodiscard]] const std::vector<aura::core::TypeId>& last_occurrence_vars() const noexcept {
+        return last_occurrence_vars_;
+    }
+    [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
+    // Issue #2180: solve_delta_cs_ after partial import (commit reuse).
+    [[nodiscard]] bool commit_cs_has_work() const noexcept {
+        return last_partial_cs_live_ || solve_delta_cs_.is_dirty() ||
+               solve_delta_cs_.touched_roots_size() > 0 ||
+               solve_delta_cs_.occurrence_priority_roots_size() > 0 ||
+               !last_occurrence_vars_.empty();
+    }
 
     // Issue #283 follow-up #5 / #627: bidirectional-mode opt-out.
     // Forwarded to InferenceEngine in infer_flat / infer_flat_partial.
@@ -1801,6 +1819,9 @@ public:
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
     std::function<void()> on_cross_delta_conflict_;
     std::uint64_t last_occurrence_refresh_count_ = 0;
+    // Issue #2180: occurrence vars + CS-live flag for composite commit reuse.
+    std::vector<aura::core::TypeId> last_occurrence_vars_;
+    bool last_partial_cs_live_ = false;
 
     // Issue #283 follow-up #5 / #627: plumb bidirectional flag
     // from CompilerService into per-call InferenceEngine instances.

@@ -3698,6 +3698,8 @@ public:
                                 ? static_cast<void*>(&per_defuse_index_tracker_)
                                 : nullptr;
         auto n = tc.infer_flat_partial(*flat, *pool, rec, diag, tracker_ptr);
+        // Issue #2180: stash partial CS + occurrence vars for composite commit.
+        evaluator_.stash_partial_constraint_state(static_cast<void*>(&tc));
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
                                                      std::memory_order_relaxed);
         // Issue #387: Type Dependency Graph observability.

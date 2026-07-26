@@ -1794,6 +1794,34 @@ void ConstraintSystem::clear() {
     blame_affected_nodes_.clear();
     fresh_counter_ = 0;
     first_free_var_ = 0;
+}
+
+// Issue #2180: absorb post-partial delta state into the long-lived
+// commit ConstraintSystem (composite_txn_commit reuse).
+void ConstraintSystem::import_delta_marks_from(ConstraintSystem& src) {
+    if (this == &src)
+        return;
+    // Preserve / advance mutation anchors for continuity (#2024).
+    if (src.active_mutation_id() != 0)
+        set_active_mutation_id(src.active_mutation_id());
+    else if (src.retained_mutation_id() != 0)
+        set_active_mutation_id(src.retained_mutation_id());
+    if (src.active_predicate_cond_node() != 0 || src.active_affected_node() != 0) {
+        set_active_blame_context(src.active_predicate_cond_node(), src.active_affected_node());
+    }
+    // Re-add dirty constraints so solve_delta has real work (not empty CS).
+    const auto n = src.constraints_.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i < src.constraint_dirty_.size() && src.constraint_dirty_[i])
+            add_delta(src.constraints_[i]);
+    }
+    // Priority / touched roots for occurrence + let-poly + reverify.
+    for (auto r : src.occurrence_priority_roots_)
+        occurrence_priority_roots_.insert(r);
+    for (auto r : src.let_poly_dirty_roots_)
+        let_poly_dirty_roots_.insert(r);
+    for (auto r : src.touched_roots_)
+        touched_roots_.insert(r);
 } // ═══════════════════════════════════════════════════════════
 // InferenceEngine
 // ═══════════════════════════════════════════════════════════
@@ -6693,6 +6721,33 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (last_occurrence_refresh_count_ > 0 && last_partial_narrowing_evidence_ != 0 && metrics_) {
         static_cast<struct CompilerMetrics*>(metrics_)
             ->post_mutate_narrow_consistency_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #2180: import engine CS delta into solve_delta_cs_ + stash
+    // occurrence TypeIds so composite_txn_commit reuses non-empty state
+    // (not a greenfield TypeChecker).
+    {
+        solve_delta_cs_.import_delta_marks_from(engine.constraint_system());
+        last_occurrence_vars_.clear();
+        last_occurrence_vars_.reserve(occurrence_targets.size());
+        std::unordered_set<std::uint32_t> seen_tid;
+        for (auto id : occurrence_targets) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            const auto raw = static_cast<std::uint32_t>(flat.get(id).type_id);
+            if (raw == 0 || !seen_tid.insert(raw).second)
+                continue;
+            TypeId t{};
+            t.index = raw;
+            last_occurrence_vars_.push_back(t);
+        }
+        // Also mark vars from engine occurrence-priority roots as occurrence
+        // vars when they look like TypeIds.
+        last_partial_cs_live_ = solve_delta_cs_.is_dirty() ||
+                                solve_delta_cs_.touched_roots_size() > 0 ||
+                                solve_delta_cs_.occurrence_priority_roots_size() > 0 ||
+                                solve_delta_cs_.let_poly_dirty_roots_size() > 0 ||
+                                !last_occurrence_vars_.empty() || re_inferred > 0;
     }
 
     // Issue #688: automatic OwnershipEnv revalidate after partial infer

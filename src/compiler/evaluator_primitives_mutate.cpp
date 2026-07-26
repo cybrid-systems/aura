@@ -5798,6 +5798,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("composite-commit-linear-fail-total",
                           static_cast<std::int64_t>(c.composite_commit_linear_fail_total.load(
                               std::memory_order_relaxed)));
+                // Issue #2180: reuse vs empty greenfield CS at commit.
+                insert_kv("composite-commit-solve-reuse-hit-total",
+                          static_cast<std::int64_t>(c.composite_commit_solve_reuse_hit_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-commit-solve-empty-cs-total",
+                          static_cast<std::int64_t>(c.composite_commit_solve_empty_cs_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("commit-cs-live", ev.commit_cs_live() ? 1 : 0);
+                insert_kv("composite-commit-cs-reuse-wired", 1);
+                insert_kv("schema-2180", 2180);
+                insert_kv("issue-2180", 2180);
                 insert_kv("composite-txn-commit-wired", 1);
                 insert_kv("txn-dirty", ev.txn_dirty() ? 1 : 0);
                 insert_kv("schema-2105", 2105);

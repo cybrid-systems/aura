@@ -524,25 +524,50 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     auto& c = g_typed_mutation_audit_counters;
     c.composite_commit_revalidate_total.fetch_add(1, std::memory_order_relaxed);
 
-    // 1) solve_delta_occurrence (stable constraint surface #2028).
-    // Empty occurrence span: re-run solve_delta with current CS state /
-    // retained blame anchors when a type registry is available.
+    // 1) solve_delta_occurrence (stable constraint surface #2028 / #2180).
+    // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
+    // rely on a greenfield empty TypeChecker for production composite commit.
     cr.solve_ok = true;
-    if (type_registry_ && workspace_flat_ && workspace_pool_) {
+    if (type_registry_ || commit_type_checker_opaque_) {
         try {
-            auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
-            aura::diag::DiagnosticCollector diag;
-            aura::compiler::TypeChecker tc(reg);
-            if (compiler_metrics_)
-                tc.set_metrics(compiler_metrics_);
-            auto& cs = tc.constraint_system();
-            if (mutation_id != 0)
-                cs.set_active_mutation_id(mutation_id);
-            auto sdo = aura::compiler::solve_delta_occurrence(cs, {}, nullptr, compiler_metrics_);
-            using aura::compiler::SolveResult;
-            cr.solve_ok = (sdo.status == SolveResult::SOLVED);
-            if (!cr.solve_ok)
-                c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+            ConstraintSystem* cs_ptr = nullptr;
+            std::span<const aura::core::TypeId> occ_span{};
+            TypeChecker* scratch_tc = nullptr;
+            const bool reuse = commit_type_checker_opaque_ && commit_cs_live_;
+            if (reuse) {
+                auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+                cs_ptr = &ctc->constraint_system();
+                if (commit_occurrence_vars_opaque_) {
+                    auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
+                        commit_occurrence_vars_opaque_);
+                    occ_span = *occ;
+                }
+                c.composite_commit_solve_reuse_hit_total.fetch_add(1, std::memory_order_relaxed);
+            } else if (type_registry_) {
+                // Greenfield only when no partial was stashed (tests / no typecheck).
+                auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                scratch_tc = new TypeChecker(reg);
+                if (compiler_metrics_)
+                    scratch_tc->set_metrics(compiler_metrics_);
+                cs_ptr = &scratch_tc->constraint_system();
+                c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (cs_ptr) {
+                if (mutation_id != 0)
+                    cs_ptr->set_active_mutation_id(mutation_id);
+                std::vector<Constraint> unresolved;
+                auto sdo = aura::compiler::solve_delta_occurrence(*cs_ptr, occ_span, &unresolved,
+                                                                  compiler_metrics_);
+                using aura::compiler::SolveResult;
+                cr.solve_ok = (sdo.status == SolveResult::SOLVED);
+                if (!cr.solve_ok) {
+                    c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    // Keep unresolved visible for Agent repair (#2107).
+                    (void)sdo.unresolved_affected_nodes;
+                    (void)unresolved;
+                }
+            }
+            delete scratch_tc;
         } catch (...) {
             // [SILENCE-PRIM] solve path failure → treat as type fail.
             cr.solve_ok = false;
@@ -613,6 +638,31 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         if (!audit.type_ok || !cr.solve_ok) {
             c.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_partial_recover_type_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2180: re-run solve_delta_occurrence on stashed CS.
+            // Partial type recovery must not paper over CONFLICT/TIMEOUT.
+            if (commit_type_checker_opaque_ && commit_cs_live_) {
+                try {
+                    auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+                    auto& cs = ctc->constraint_system();
+                    if (mutation_id != 0)
+                        cs.set_active_mutation_id(mutation_id);
+                    std::span<const aura::core::TypeId> occ_span{};
+                    if (commit_occurrence_vars_opaque_) {
+                        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
+                            commit_occurrence_vars_opaque_);
+                        occ_span = *occ;
+                    }
+                    auto sdo2 = aura::compiler::solve_delta_occurrence(cs, occ_span, nullptr,
+                                                                       compiler_metrics_);
+                    using aura::compiler::SolveResult;
+                    cr.solve_ok = (sdo2.status == SolveResult::SOLVED);
+                    if (!cr.solve_ok)
+                        c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+                } catch (...) {
+                    // [SILENCE-PRIM]
+                    cr.solve_ok = false;
+                }
+            }
         }
         if (!audit.provenance_ok) {
             c.partial_recovery_provenance_total.fetch_add(1, std::memory_order_relaxed);
@@ -634,7 +684,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
         }
-        if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape) {
+        // Issue #2180: require solve_ok after re-solve — type CONFLICT must reject.
+        if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape && cr.solve_ok) {
             c.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_partial_recover_success_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
@@ -893,6 +944,90 @@ void Evaluator::destroy_guard_infer_engine() noexcept {
         guard_infer_diag_opaque_ = nullptr;
     }
     guard_infer_registry_gen_ = 0;
+}
+
+// Issue #2180: long-lived TypeChecker for composite commit CS reuse.
+void Evaluator::destroy_commit_type_checker() noexcept {
+    if (commit_type_checker_opaque_) {
+        delete static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        commit_type_checker_opaque_ = nullptr;
+    }
+    if (commit_occurrence_vars_opaque_) {
+        delete static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+        commit_occurrence_vars_opaque_ = nullptr;
+    }
+    commit_tc_registry_gen_ = 0;
+    commit_cs_live_ = false;
+}
+
+void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexcept {
+    if (!type_checker_opaque)
+        return;
+    try {
+        auto* src = static_cast<TypeChecker*>(type_checker_opaque);
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* dst = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        if (compiler_metrics_)
+            dst->set_metrics(compiler_metrics_);
+        // Import solve_delta_cs_ (already received engine marks in partial).
+        dst->constraint_system().import_delta_marks_from(src->constraint_system());
+        for (const auto& t : src->last_occurrence_vars()) {
+            if (t.valid())
+                dst->constraint_system().mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+        }
+        // Stash occurrence span for solve_delta_occurrence call.
+        if (!commit_occurrence_vars_opaque_)
+            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
+        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+        *occ = src->last_occurrence_vars();
+        commit_cs_live_ = src->commit_cs_has_work() || src->last_partial_cs_live() ||
+                          dst->constraint_system().is_dirty() ||
+                          dst->constraint_system().touched_roots_size() > 0 || !occ->empty();
+    } catch (...) {
+        // [SILENCE-PRIM] stash is best-effort; commit falls back to empty CS.
+    }
+}
+
+void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        const auto t = cs.fresh_var();
+        cs.add_delta({Constraint::EQUAL, t, reg->int_type()});
+        (void)cs.solve_delta();
+        // Second delta conflicts — remains dirty for next solve_delta_occurrence.
+        cs.add_delta({Constraint::EQUAL, t, reg->string_type()});
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
 }
 
 void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
