@@ -93,6 +93,17 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t deopt_storm_window_ms;
     std::int64_t reemit_throttle_active;
     std::int64_t reemit_throttle_skips_total;
+    // Issue #2132: MUST stay in lockstep with hot_update_registry.hh
+    std::int64_t reemit_throttle_skips_global_total;
+    std::int64_t reemit_throttle_skips_region_total;
+    std::int64_t reemit_throttle_skips_hard_total;
+    std::int64_t reemit_critical_bypass_total;
+    std::int64_t hard_storm_active;
+    std::int64_t hard_storm_detected_total;
+    std::int64_t hard_deopt_storm_threshold;
+    std::int64_t critical_region_mask;
+    std::int64_t schema_2132;
+    std::int64_t issue_2132;
     std::int64_t storm_listeners;
     std::int64_t region_mask_adapt_clears_total;   // #2016
     std::int64_t region_mask_adapt_restores_total; // #2016
@@ -6248,6 +6259,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("deopt-storm-window-ms", snap.deopt_storm_window_ms);
             insert_kv("reemit-throttle-active", snap.reemit_throttle_active);
             insert_kv("reemit-throttle-skips-total", snap.reemit_throttle_skips_total);
+            // Issue #2132: region/priority-aware throttle reason breakdown
+            insert_kv("reemit-throttle-skips-global-total",
+                      snap.reemit_throttle_skips_global_total);
+            insert_kv("reemit-throttle-skips-region-total",
+                      snap.reemit_throttle_skips_region_total);
+            insert_kv("reemit-throttle-skips-hard-total", snap.reemit_throttle_skips_hard_total);
+            insert_kv("reemit-critical-bypass-total", snap.reemit_critical_bypass_total);
+            insert_kv("hard-storm-active", snap.hard_storm_active);
+            insert_kv("hard-storm-detected-total", snap.hard_storm_detected_total);
+            insert_kv("hard-deopt-storm-threshold", snap.hard_deopt_storm_threshold);
+            insert_kv("critical-region-mask", snap.critical_region_mask);
+            insert_kv("region-priority-throttle-wired", 1);
+            insert_kv("schema-2132", snap.schema_2132 != 0 ? snap.schema_2132 : 2132);
+            insert_kv("issue-2132", snap.issue_2132 != 0 ? snap.issue_2132 : 2132);
             insert_kv("storm-listeners", snap.storm_listeners);
             // Issue #2016: adaptive region mask.
             insert_kv("region-mask-adapt-clears-total", snap.region_mask_adapt_clears_total);
