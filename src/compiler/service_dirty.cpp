@@ -849,6 +849,30 @@ void CompilerService::invalidate_function(const std::string& name) {
                 ir_cache_index[cit->second.irs[fi].name] = fi;
         }
         auto scope = compute_impact_scope(flat, pr.root, source_to_ir, ir_cache_index);
+        // Issue #2179: cross-function instruction-level impact scope
+        // (refine #2109). When irs + node_dep_graph_ are present in
+        // the entry, run the cross-fn fan-out overload — it scans each
+        // caller's IR for Call instructions whose callee resolves to
+        // affected_name and merges precise (caller_func, caller_block,
+        // caller_instr) into affected_instrs / affected_blocks.
+        // Bumps metrics_.impact_scope_cross_fn_{blocks,instrs}_total
+        // so AC3 dashboards can observe precision gain.
+        if (auto cit2 = ir_cache_v2_.find(affected_name); cit2 != ir_cache_v2_.end()) {
+            const auto fn_idx_before = scope.affected_blocks.size();
+            const auto instr_before = scope.affected_instrs.size();
+            scope = compute_impact_scope(flat, pr.root, source_to_ir, ir_cache_index,
+                                         cit2->second.irs, node_dep_graph_, affected_name);
+            metrics_.impact_scope_cross_fn_blocks_total.fetch_add(
+                scope.affected_blocks.size() > fn_idx_before
+                    ? static_cast<std::uint64_t>(scope.affected_blocks.size() - fn_idx_before)
+                    : 0u,
+                std::memory_order_relaxed);
+            metrics_.impact_scope_cross_fn_instrs_total.fetch_add(
+                scope.affected_instrs.size() > instr_before
+                    ? static_cast<std::uint64_t>(scope.affected_instrs.size() - instr_before)
+                    : 0u,
+                std::memory_order_relaxed);
+        }
         // Issue #2126 AC2: quote/lambda prefers impact instr/block dirty
         // under threshold; only unmapped/over-threshold falls back to
         // selective bridge without full AoS wipe (bridge path is selective).
