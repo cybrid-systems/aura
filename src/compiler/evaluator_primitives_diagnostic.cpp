@@ -195,7 +195,13 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
             return make_bool(false);
         bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &guard_ok);
+        if (!guard_r) {
+            return make_bool(false);
+        }
+        auto guard = std::move(*guard_r);
         ev.bump_verify_tool_guard_capture();
         auto code_idx = as_string_idx(a[0]);
         if (code_idx >= ev.string_heap_.size())
@@ -284,7 +290,13 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.size() < 2 || !is_int(a[0]) || !ev.workspace_flat_)
             return make_bool(false);
         bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &guard_ok);
+        if (!guard_r) {
+            return make_bool(false);
+        }
+        auto guard = std::move(*guard_r);
         ev.bump_verify_tool_guard_capture();
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;

@@ -1596,8 +1596,8 @@ def cmd_catch_silent_swallow():
 
 
 def cmd_mutation_guard_coverage():
-    """Issue #1931 / #1950 / #1953: compile:*/mutate:* must use MutationBoundaryGuard."""
-    print(f"{B}═══ MutationBoundaryGuard coverage (#1931 / #1950 / #1953) ═══{N}")
+    """Issue #1931 / #1950 / #1953 / #2124: mutate/compile via try_acquire only."""
+    print(f"{B}═══ MutationBoundaryGuard coverage (#1931 / #1950 / #1953 / #2124) ═══{N}")
     script = ROOT / "scripts" / "check_mutation_guard_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
@@ -1607,9 +1607,12 @@ def cmd_mutation_guard_coverage():
         cwd=ROOT,
     )
     if r.returncode != 0:
-        fail("uncovered compile:*/mutate:* primitive(s) — wrap with run_under_mutation_guard")
+        fail(
+            "uncovered compile:*/mutate:* or residual legacy Guard ctor — "
+            "use MutationBoundaryGuard::try_acquire / run_under_mutation_guard (#2124)"
+        )
         return 1
-    ok("mutation guard coverage 100%")
+    ok("mutation guard coverage 100% (try_acquire, 0 legacy ctor)")
     return 0
 
 

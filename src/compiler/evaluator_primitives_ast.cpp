@@ -181,7 +181,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // defuse_version_ + rollback. ok = false on every error path so
         // the Guard's dtor triggers rollback consistently.
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return make_int(-1);
+        }
+        auto guard = std::move(*guard_r);
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
             ok = false;
             return make_int(-1);
@@ -445,7 +451,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         {
             // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return make_bool(false);
+            }
+            auto guard = std::move(*guard_r);
             if (ev.workspace_read_only_) {
                 ok = false;
                 return make_bool(false);
@@ -1111,7 +1123,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     add("ast:recycle-nodes", [&ev](const auto&) -> EvalValue {
         // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return make_void();
+        }
+        auto guard = std::move(*guard_r);
         if (!ev.workspace_flat_) {
             ok = false;
             return make_int(0);
@@ -1123,7 +1141,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     add("ast:compact-nodes", [&ev](const auto&) -> EvalValue {
         // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return make_void();
+        }
+        auto guard = std::move(*guard_r);
         if (!ev.workspace_flat_) {
             ok = false;
             return make_int(0);

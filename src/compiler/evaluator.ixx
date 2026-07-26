@@ -12627,14 +12627,16 @@ public:
                                std::uint64_t pending_count = 1, bool* success_flag = nullptr,
                                bool fine_rollback = false) noexcept;
 
-        // Issue #1547 / #1556 / #1590: legacy RAII ctor — now enforces mutation
-        // quota via soft-fail (success_flag=false, inert guard) because ctors
-        // cannot return AuraResult. Prefer try_acquire() for typed errors.
-        // Marked [[deprecated]] per #1556 AC2; project uses
-        // -Wno-deprecated-declarations so remaining call-sites still compile.
+        // Issue #1547 / #1556 / #1590 / #2124: legacy RAII ctor — soft-fails
+        // quota (success_flag=false, inert) because ctors cannot return
+        // AuraResult. Production must use try_acquire() for typed
+        // ResourceQuotaExceeded + mutation_guard_try_acquire_* metrics.
+        // #2124: residual production call sites migrated to try_acquire;
+        // coverage script fails --strict on any new legacy ctor usage.
+        // Marked [[deprecated]]; tests may still use legacy for isolation.
         // Impl: evaluator_mutation_boundary.cpp
         [[deprecated("use MutationBoundaryGuard::try_acquire for typed ResourceQuotaExceeded "
-                     "(#1547/#1556/#1590)")]]
+                     "(#1547/#1556/#1590/#2124)")]]
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
                               bool fine_rollback = false) noexcept;
 

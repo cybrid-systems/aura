@@ -33,7 +33,14 @@ static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev, const std::st
     if (!ws)
         return 0;
     bool ok = true;
-    aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+    // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+    auto guard_r =
+        aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+    if (!guard_r) {
+        // Issue #2124: quota reject — typed fail, no PanicCheckpoint (Guard never entered).
+        return 0;
+    }
+    auto guard = std::move(*guard_r);
     ev.bump_verify_tool_guard_capture();
 
     std::uint64_t marked = 0;
@@ -110,7 +117,13 @@ void register_verify_tool_primitives(
             if (a.empty() || !is_string(a[0]))
                 return mev("bad-arg", "usage: (verify:run-external-sim \"cmd\" [timeout-ms])");
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return mev("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
             ev.bump_verify_tool_guard_capture();
             ev.bump_verify_tool_call();
             auto cmd_idx = as_string_idx(a[0]);

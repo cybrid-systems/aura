@@ -74,7 +74,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // any mutations if `ok` is false. Every early-return error
             // path sets ok = false so the rollback is consistent.
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return mev("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
             if (ev.workspace_read_only_) {
                 ok = false;
                 return mev("read-only", "workspace is read-only");
