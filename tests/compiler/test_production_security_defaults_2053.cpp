@@ -46,6 +46,7 @@ using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::should_audit;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -136,7 +137,8 @@ int main() {
         CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         auto r = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" \"prod-deny\")");
-        const bool denied = !r || is_pair(*r);
+        // Deny is make_merr (Error) or legacy pair; success is a non-error value.
+        const bool denied = !r || is_error(*r) || is_pair(*r);
         CHECK(denied, "Restricted without grant denies set-body");
         auto v = cs.eval("(f 1)");
         if (v && is_int(*v))

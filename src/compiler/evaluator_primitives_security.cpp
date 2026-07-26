@@ -381,6 +381,20 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2053", 2053);
                 insert_kv("issue-2053", 2053);
                 insert_kv("production-security-wired", 1);
+                // Issue #2150: forced WAL under multi-tenant / Strict
+                {
+                    const auto wsnap = snapshot_audit_wal_stats();
+                    insert_kv("audit-wal-forced",
+                              static_cast<std::int64_t>(wsnap.forced_by_multi_tenant > 0 ? 1 : 0));
+                    insert_kv("audit-wal-forced-total",
+                              static_cast<std::int64_t>(wsnap.forced_by_multi_tenant));
+                    insert_kv("audit-wal-enabled", static_cast<std::int64_t>(wsnap.enabled));
+                    insert_kv("audit-wal-default-dir",
+                              static_cast<std::int64_t>(wsnap.using_default_dir));
+                    insert_kv("schema-2150", kAuditWalForceMultiTenantIssue);
+                    insert_kv("issue-2150", kAuditWalForceMultiTenantIssue);
+                    insert_kv("audit-wal-force-wired", 1);
+                }
             }
             // Issue #2055: grant/revoke WorkspaceEpoch + fiber bind surface
             {
@@ -3621,7 +3635,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(ev.enable_mutation_audit_wal(path));
     });
 
-    // Issue #1567: query:audit-wal-stats
+    // Issue #1567 / #2150: query:audit-wal-stats
     ObservabilityPrims::register_stats_impl(
         "query:audit-wal-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::core::audit_wal;
@@ -3633,7 +3647,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                                       std::memory_order_relaxed);
                 m->audit_wal_bytes_written.store(snap.bytes_written, std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(16);
+            // Capacity 32: pre-#2150 keys + force/schema-2150/flush-every.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3674,6 +3689,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("segments", static_cast<std::int64_t>(snap.segments));
             insert_kv("last-seq", static_cast<std::int64_t>(snap.last_seq));
             insert_kv("wal-enabled", ev.mutation_audit_wal_enabled() ? 1 : 0);
+            // Issue #2150: force-under-multi-tenant Agent surface
+            insert_kv("audit-wal-forced",
+                      static_cast<std::int64_t>(snap.forced_by_multi_tenant > 0 ? 1 : 0));
+            insert_kv("audit-wal-forced-total",
+                      static_cast<std::int64_t>(snap.forced_by_multi_tenant));
+            insert_kv("audit-wal-default-dir", static_cast<std::int64_t>(snap.using_default_dir));
+            insert_kv("schema-2150", kAuditWalForceMultiTenantIssue);
+            insert_kv("issue-2150", kAuditWalForceMultiTenantIssue);
+            insert_kv("flush-every", static_cast<std::int64_t>(MutationAuditWal::kFlushEvery));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

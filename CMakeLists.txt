@@ -2426,6 +2426,10 @@ aura_issue_test_link_llvm_jit(test_aura_sandbox_env_2076)
 aura_add_issue_test(test_effect_epoch_mutation_unify_2149)
 aura_issue_test_link_llvm_jit(test_effect_epoch_mutation_unify_2149)
 
+# Issue #2150: force mutation-audit WAL under multi-tenant / Strict production.
+aura_add_issue_test(test_audit_wal_force_multi_tenant_2150)
+aura_issue_test_link_llvm_jit(test_audit_wal_force_multi_tenant_2150)
+
 # Issue #2077: unify has_capability string path with Effect matrix
 # (single source of truth). Effect-mapped caps (mutate, ffi, network,
 # exec, render, read, write, macro-self-evo, *) now consult
