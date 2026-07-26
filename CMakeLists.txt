@@ -1952,6 +1952,11 @@ aura_add_issue_test(test_agent_apply_mutex_2158)
 aura_issue_test_link_llvm_jit(test_agent_apply_mutex_2158)
 add_dependencies(all_test_issue_targets test_agent_apply_mutex_2158)
 
+# Issue #2163: parallel-intend :pure #t path (skip eval_mu for pure thunks).
+aura_add_issue_test(test_parallel_intend_pure_2163)
+aura_issue_test_link_llvm_jit(test_parallel_intend_pure_2163)
+add_dependencies(all_test_issue_targets test_parallel_intend_pure_2163)
+
 # Issue #2159: fiber-native keepalive helper (replace detached std::thread).
 aura_add_issue_test(test_fiber_native_keepalive_2159)
 aura_issue_test_link_llvm_jit(test_fiber_native_keepalive_2159)
