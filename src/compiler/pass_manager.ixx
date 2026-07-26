@@ -4635,31 +4635,17 @@ export class ShapeAwareFoldingPass {
 public:
     void run(aura::ir::IRModule& module) {
         for (auto& func : module.functions) {
-            run_on_function(func);
+            run_on_function(func, /*dirty_blocks=*/{});
         }
     }
 
-    bool has_error() const { return false; }
-    std::string_view name() const { return "shape-aware-folding"; }
-
-    // Counters for (query:shape-folding-stats) primitive.
-    std::uint64_t fold_count() const { return fold_count_; }
-    std::uint64_t linear_elide_count() const { return linear_elide_count_; }
-    std::uint64_t narrow_check_count() const { return narrow_check_count_; }
-    std::uint64_t guard_shape_hits() const { return guard_shape_hits_; }
-    // Issue #1661: specialized_for / shape_id collaborative fold opportunities.
-    std::uint64_t specialized_shape_fold_opportunities() const {
-        return specialized_shape_fold_opportunities_;
-    }
-
-    // Test seam: cycle the pass with a known escape map
-    // (production prefers IRFunction::escape_map from EscapeAnalysisPass).
-    void set_escape_map(std::string function_name, std::vector<std::uint8_t> escape) {
-        escape_maps_[std::move(function_name)] = std::move(escape);
-    }
-
-private:
-    void run_on_function(aura::ir::IRFunction& func) {
+    // Issue #2130: optional dirty mask (size == blocks). Empty → process all.
+    // Clean blocks are skipped for fold work; ownership scan for MoveOp elide
+    // still walks the full function (correctness).
+    void run_on_function(aura::ir::IRFunction& func,
+                         std::span<const std::uint8_t> dirty_blocks = {}) {
+        blocks_processed_ = 0;
+        blocks_skipped_ = 0;
         // #1661: prefer EscapeAnalysisPass-filled func.escape_map;
         // then set_escape_map override; default all-escape (conservative).
         std::vector<std::uint8_t> escape_map(func.local_count, 1);
@@ -4677,7 +4663,14 @@ private:
         if (func.specialized_for != 0)
             ++specialized_shape_fold_opportunities_;
 
-        for (auto& block : func.blocks) {
+        const bool have_mask = !dirty_blocks.empty();
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (have_mask && bi < dirty_blocks.size() && dirty_blocks[bi] == 0) {
+                ++blocks_skipped_;
+                continue;
+            }
+            ++blocks_processed_;
+            auto& block = func.blocks[bi];
             for (auto& instr : block.instructions) {
                 // Count GuardShape occurrences (signal for
                 // downstream passes + deopt collaboration).
@@ -4727,11 +4720,36 @@ private:
         }
     }
 
+    bool has_error() const { return false; }
+    std::string_view name() const { return "shape-aware-folding"; }
+
+    // Counters for (query:shape-folding-stats) primitive.
+    std::uint64_t fold_count() const { return fold_count_; }
+    std::uint64_t linear_elide_count() const { return linear_elide_count_; }
+    std::uint64_t narrow_check_count() const { return narrow_check_count_; }
+    std::uint64_t guard_shape_hits() const { return guard_shape_hits_; }
+    // Issue #1661: specialized_for / shape_id collaborative fold opportunities.
+    std::uint64_t specialized_shape_fold_opportunities() const {
+        return specialized_shape_fold_opportunities_;
+    }
+    // Issue #2130: dirty peel observability.
+    std::uint64_t blocks_processed() const noexcept { return blocks_processed_; }
+    std::uint64_t blocks_skipped() const noexcept { return blocks_skipped_; }
+
+    // Test seam: cycle the pass with a known escape map
+    // (production prefers IRFunction::escape_map from EscapeAnalysisPass).
+    void set_escape_map(std::string function_name, std::vector<std::uint8_t> escape) {
+        escape_maps_[std::move(function_name)] = std::move(escape);
+    }
+
+private:
     std::uint64_t fold_count_ = 0;
     std::uint64_t linear_elide_count_ = 0;
     std::uint64_t narrow_check_count_ = 0;
     std::uint64_t guard_shape_hits_ = 0;
     std::uint64_t specialized_shape_fold_opportunities_ = 0;
+    std::uint64_t blocks_processed_ = 0;
+    std::uint64_t blocks_skipped_ = 0;
     std::map<std::string, std::vector<std::uint8_t>> escape_maps_;
 };
 

@@ -14249,8 +14249,8 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:optimization-passes-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
-            // #1576 + #2025 + #2106 keys → 64 slots.
-            auto* ht = FlatHashTable::create(64);
+            // #1576 + #2025 + #2106 + #2130 keys → 128 slots.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -14322,8 +14322,26 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::optimization_passes_skipped_by_define_dirty.load(
                          std::memory_order_relaxed)))},
-                // lineage 1576 + #2025 DeadCoercion + #2106 cascade skip
-                {"schema", make_int(2106)},
+                // Issue #2130: ShapeAwareFold / LinearOwnership dirty peel
+                {"shape-fold-dirty-blocks-processed",
+                 make_int(load(shape_fold_dirty_blocks_processed))},
+                {"shape-fold-clean-blocks-skipped",
+                 make_int(load(shape_fold_clean_blocks_skipped))},
+                {"shape-fold-dirty-aware-runs", make_int(load(shape_fold_dirty_aware_runs))},
+                {"linear-own-dirty-funcs-processed",
+                 make_int(load(linear_own_dirty_funcs_processed))},
+                {"linear-own-clean-funcs-skipped", make_int(load(linear_own_clean_funcs_skipped))},
+                {"linear-own-dirty-blocks-scanned",
+                 make_int(load(linear_own_dirty_blocks_scanned))},
+                {"linear-own-clean-blocks-skipped",
+                 make_int(load(linear_own_clean_blocks_skipped))},
+                {"linear-own-dirty-aware-runs", make_int(load(linear_own_dirty_aware_runs))},
+                {"linear-ownership-dirty-aware", make_int(1)},
+                {"shape-aware-fold-dirty-aware", make_int(1)},
+                {"schema-2130", make_int(2130)},
+                {"issue-2130", make_int(2130)},
+                // lineage 1576 + #2025 + #2106 + #2130 dirty peel
+                {"schema", make_int(2130)},
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
