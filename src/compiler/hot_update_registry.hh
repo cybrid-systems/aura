@@ -121,6 +121,10 @@ public:
                                    std::uint64_t window_ms) noexcept;
     [[nodiscard]] std::uint64_t deopt_storm_threshold() const noexcept;
     [[nodiscard]] std::uint64_t deopt_storm_window_ms() const noexcept;
+    // Issue #2127: current sliding-window deopt count (adaptive thr signal).
+    [[nodiscard]] std::uint64_t deopt_window_count() const noexcept {
+        return deopt_window_count_.load(std::memory_order_relaxed);
+    }
     // Test / recovery: clear throttle + open a fresh window.
     void reset_deopt_storm_state_for_test() noexcept;
 

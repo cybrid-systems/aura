@@ -53,6 +53,7 @@ module;
 #include "spec_jit_controller.h"
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "hot_update_registry.hh" // #2127: deopt-window signals for adaptive thr
 
 export module aura.compiler.service;
 import std;
@@ -4839,6 +4840,19 @@ public:
         metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #2127: consult deopt-storm + dirty density + base thr (#2112)
+    // for partial/full decision. Records effective thr on CompilerMetrics.
+    AdaptiveRelowerDecision
+    consult_workload_adaptive_partial_(std::size_t dirty_n, std::size_t total_blocks = 0) noexcept {
+        auto& reg = hot_update_registry();
+        const bool storm = reg.should_throttle_reemit() || reg.shape_storm_active();
+        auto d = decide_workload_adaptive_partial_relower(
+            dirty_n, total_blocks, reg.deopt_window_count(), reg.deopt_storm_threshold(), storm);
+        metrics_.partial_relower_threshold_used.store(d.effective_threshold,
+                                                      std::memory_order_relaxed);
+        return d;
+    }
+
     // Issue #2126: prefer compute_impact_scope instr/block dirty under
     // get_partial_relower_threshold() instead of mark_all_blocks_dirty.
     // Returns true when impact dirty was applied (caller skips full mark).
@@ -6037,11 +6051,14 @@ public:
                 continue;
             }
             metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
-            const bool want_partial = should_partial_relower(dirty_n);
+            // Issue #2127: deopt + density adaptive threshold (base #2032/#2112).
+            std::size_t total_blocks = 0;
+            for (const auto& fb : it->second.block_dirty_per_func_)
+                total_blocks += fb.size();
+            const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
+            const bool want_partial = adaptive.want_partial;
             if (want_partial)
                 metrics_.should_partial_relower_yes_total.fetch_add(1, std::memory_order_relaxed);
-            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
-                                                          std::memory_order_relaxed);
             // Issue #1623: workspace dirty sweep is on eval/eval_ir entry.
             metrics_.eval_path_relower_total.fetch_add(1, std::memory_order_relaxed);
             const auto per_before =

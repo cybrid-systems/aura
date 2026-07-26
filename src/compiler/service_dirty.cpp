@@ -851,11 +851,13 @@ void CompilerService::invalidate_function(const std::string& name) {
         // Clean entry — nothing to re-lower.
         if (dirty_n == 0 && !vit->second.dirty)
             return true;
-        // Issue #2041 AC: respect should_partial_relower for the cascade.
-        // Large dirty surfaces (≥ threshold) go to the full path below.
-        if (dirty_n > 0 && !should_partial_relower(dirty_n)) {
-            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
-                                                          std::memory_order_relaxed);
+        // Issue #2041 / #2127: workload-adaptive partial gate (deopt + density).
+        // Large dirty surfaces (≥ effective threshold) go to the full path below.
+        std::size_t total_blocks = 0;
+        for (const auto& fb : vit->second.block_dirty_per_func_)
+            total_blocks += fb.size();
+        const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
+        if (dirty_n > 0 && !adaptive.want_partial) {
             return false;
         }
         auto alloc = arena_.allocator();
@@ -889,7 +891,8 @@ void CompilerService::invalidate_function(const std::string& name) {
                 blocks_before;
         if (true_partial) {
             metrics_.incremental_partial_relower_total.fetch_add(1, std::memory_order_relaxed);
-            metrics_.partial_relower_threshold_used.store(get_partial_relower_threshold(),
+            // Issue #2127: keep threshold_used at last adaptive effective thr.
+            metrics_.partial_relower_threshold_used.store(get_effective_partial_relower_threshold(),
                                                           std::memory_order_relaxed);
         } else {
             // relower_define_blocks took full-fallback internally — still

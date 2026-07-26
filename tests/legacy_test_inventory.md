@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 415 | Preferred destination suites |
-| **Total scanned** | **415** | |
+| `tests/core/test_*.cpp` | 416 | Preferred destination suites |
+| **Total scanned** | **416** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 40 | 40 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 9 | 9 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 42 | 42 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 43 | 43 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 18 | 18 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 97 | 97 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
@@ -558,6 +558,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_voxel_shade.cpp`
 - `tests/renderer/test_voxel_volume.cpp`
 - `tests/compiler/test_walk_batch.cpp`
+- `tests/compiler/test_workload_adaptive_relower_2127.cpp`
 - `tests/compiler/test_workspace_delete_child.cpp`
 - `tests/compiler/test_workspace_dispatch.cpp`
 - `tests/core/test_workspace_isolation_wire_2073.cpp`
@@ -874,13 +875,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (42)
+### `jit_incremental` — JIT / AOT / incremental relower (43)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (42)
+#### domain/ (43)
 
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952/#2013 (#1978 renamed): issue# moved from filename to header.
@@ -924,6 +925,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_pass_incremental.cpp` (—) [domain_suite, theme_renderer] — AC1: RenderPass satisfies DirtyAware + SoAView + JITFriendly + Incremental
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
 - `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
+- `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 
 ### `shape_soa` — Shape / SoA / column layout (18)
 
