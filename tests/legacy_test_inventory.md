@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 430 | Preferred destination suites |
-| **Total scanned** | **430** | |
+| `tests/core/test_*.cpp` | 431 | Preferred destination suites |
+| **Total scanned** | **431** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 18 | 18 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 19 | 19 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 102 | 102 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
@@ -514,6 +514,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp`
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp`
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp`
+- `tests/compiler/test_shape_profiler_concurrency_2141.cpp`
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp`
 - `tests/compiler/test_shape_soa_unit_batch.cpp`
 - `tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp`
@@ -951,13 +952,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 
-### `shape_soa` — Shape / SoA / column layout (18)
+### `shape_soa` — Shape / SoA / column layout (19)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (18)
+#### domain/ (19)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
@@ -969,6 +970,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape.cpp` (—) [large, domain_suite, theme_compiler] — test_shape.cpp — Unit tests for shape infrastructure (Phase 1, #53)
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_shape_profiler_concurrency_2141.cpp` (#2141) [domain_suite, theme_compiler] — AC1: docs model A (shared_mutex) in shape_profiler.h
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp` (—) [domain_suite, theme_compiler] — test_shape_profiler_stability_deopt_fiber_task4.cpp — Issue #570:
 - `tests/compiler/test_shape_soa_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_shape_soa_unit_batch.cpp — Wave 36+ (#1957) shape_soa theme
 - `tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shapeprofiler_stability_deopt_jit_mutate.cpp — Issue #605:
