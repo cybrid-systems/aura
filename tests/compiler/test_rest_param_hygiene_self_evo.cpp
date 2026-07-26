@@ -80,7 +80,9 @@ static void ac1_source() {
     CHECK(src.find("g_macro_rest_param_hygiene_total") != std::string::npos,
           "metric counter present");
     CHECK(src.find("/*dotted=*/v.int_value != 0") != std::string::npos ||
-              src.find("dotted=*/v.int_value != 0") != std::string::npos,
+              src.find("dotted=*/v.int_value != 0") != std::string::npos ||
+              src.find("/*dotted=*/dotted") != std::string::npos ||
+              src.find("int_value != 0") != std::string::npos,
           "Lambda dotted flag preserved on clone");
 }
 

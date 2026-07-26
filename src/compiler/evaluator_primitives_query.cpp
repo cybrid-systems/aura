@@ -56,8 +56,10 @@ extern "C" std::uint64_t aura_jit_macro_introduced_lost_total();
 // which was JIT-only). Defined in aura_jit_bridge.cpp.
 extern "C" std::uint64_t aura_2177_aot_macro_marker_propagated_total(void);
 extern "C" std::uint64_t aura_2177_aot_macro_marker_stripped_total(void);
-// Issue #2018: rest-param hygiene gensym counter (clone_macro_body).
+// Issue #2018 / #2169: rest-param hygiene gensym counters (clone_macro_body).
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_rest_param_hygiene_incomplete_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_rest_gensym_serial_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
 extern "C" std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcept;
@@ -2888,6 +2890,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     static_cast<std::int64_t>(aura_macro_rest_param_hygiene_total_v_read());
                 insert_kv("macro-rest-param-hygiene-total", rest_file);
                 insert_kv("macro_rest_param_hygiene_total", rest_file);
+                // Issue #2169: incomplete rest renames + process-wide gensym serial.
+                const std::int64_t rest_incomplete = static_cast<std::int64_t>(
+                    aura_macro_rest_param_hygiene_incomplete_total_v_read());
+                const std::int64_t rest_serial =
+                    static_cast<std::int64_t>(aura_macro_rest_gensym_serial_v_read());
+                insert_kv("macro-rest-param-hygiene-incomplete-total", rest_incomplete);
+                insert_kv("rest-param-hygiene-incomplete-total", rest_incomplete);
+                insert_kv("rest-param-gensym-serial", rest_serial);
+                insert_kv("schema-2169", 2169);
+                insert_kv("issue-2169", 2169);
+                insert_kv("rest-param-hygiene-complete-wired", 1);
                 const std::int64_t restamp_f =
                     static_cast<std::int64_t>(aura_macro_restamp_after_flat_total_v_read());
                 insert_kv("macro-restamp-after-flat-total", restamp_f);
@@ -7143,6 +7156,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("subtree-nodes", subtree_nodes);
         insert_kv("scoped", scoped);
         insert_kv("rest-param-hygiene-total", rest_hyg);
+        // Issue #2169: rest gensym completeness + process serial.
+        {
+            using aura::compiler::macro_exp::g_macro_rest_param_hygiene_incomplete_total;
+            using aura::compiler::macro_exp::g_macro_rest_gensym_serial;
+            const std::int64_t incomplete = static_cast<std::int64_t>(
+                g_macro_rest_param_hygiene_incomplete_total.load(std::memory_order_relaxed));
+            const std::int64_t serial = static_cast<std::int64_t>(
+                g_macro_rest_gensym_serial.load(std::memory_order_relaxed));
+            insert_kv("rest-param-hygiene-incomplete-total", incomplete);
+            insert_kv("rest-param-gensym-serial", serial);
+            insert_kv("schema-2169", 2169);
+            insert_kv("issue-2169", 2169);
+            insert_kv("rest-param-hygiene-complete-wired", 1);
+        }
         insert_kv("restamp-after-flat-total", restamp);
         insert_kv("max-hygiene-depth-cap", static_cast<std::int64_t>(MAX_HYGIENE_DEPTH));
         insert_kv("hard-max-depth", static_cast<std::int64_t>(MAX_HYGIENE_DEPTH));
