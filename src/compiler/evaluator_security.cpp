@@ -169,7 +169,24 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     prov.node_id = static_cast<std::uint32_t>(target_node);
     prov.mutation_id = provenance_mutation_id;
     prov.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
-    prov.epoch = current_bridge_epoch();
+    // Issue #2149: security provenance uses WorkspaceEpoch Mutation only
+    // (same vocabulary as make_grant_provenance / grant_epoch). Bridge is
+    // AOT/JIT/closure — never the capability fence key. Pre-#2149 this
+    // path used Evaluator::current_bridge_epoch(), which can diverge from
+    // Mutation under independent bumps and misalign audit / grant epochs.
+    {
+        const auto me = ::aura::core::current_mutation_epoch();
+        prov.epoch = me != 0 ? me : 1;
+        // Optional observability: Mutation vs Bridge split under Strict
+        // (does not deny — Agent sees capability_mutation_bridge_split_total).
+        if (is_strict()) {
+            const auto be = ::aura::core::current_bridge_epoch();
+            if (be != 0 && me != 0 && be != me) {
+                ::aura::core::capability::g_capability_effect_metrics()
+                    .capability_mutation_bridge_split_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
 
     const auto tenant = tenant_id != 0 ? tenant_id : capability_tenant_id_;
     const bool wildcard = has_capability(kCapWildcard);

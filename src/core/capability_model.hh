@@ -70,13 +70,16 @@ struct MacroSelfEvoCheck {
 using TenantId = std::uint64_t;
 
 // Provenance snapshot for audit (does not change StableNodeRef layout).
+// Issue #2149: `epoch` is WorkspaceEpoch **Mutation** only (same counter
+// as make_grant_provenance / CapabilityGrant::grant_epoch). Bridge is
+// AOT/JIT/closure freshness — not a security fence key.
 struct EffectProvenance {
     std::uint32_t node_id = 0;
     std::uint16_t gen = 0;
     std::uint64_t mutation_id = 0;
     std::uint32_t workspace_id = 0;
     std::uint32_t fiber_id = 0;
-    std::uint64_t epoch = 0;
+    std::uint64_t epoch = 0; // Mutation epoch (never Bridge as primary)
 };
 
 // CapabilityGrant — keep field set stable (name, effects, tenant_id).
@@ -134,7 +137,13 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_grant_fiber_bound_total{0};
     std::atomic<std::uint64_t> capability_fiber_mismatch_total{0};
     std::atomic<std::uint64_t> capability_epoch_fence_hit_total{0};
+    // Issue #2149: Mutation vs Bridge diverge on effect-check path
+    // (observability only; Bridge is never the security fence key).
+    std::atomic<std::uint64_t> capability_mutation_bridge_split_total{0};
 };
+
+// Issue #2149: security provenance vocabulary — Mutation only.
+inline constexpr int kEffectEpochUnifyIssue = 2149;
 
 inline CapabilityEffectMetrics& g_capability_effect_metrics() noexcept {
     static CapabilityEffectMetrics m;
@@ -475,6 +484,7 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_grant_fiber_bound_total.store(0, std::memory_order_relaxed);
     m.capability_fiber_mismatch_total.store(0, std::memory_order_relaxed);
     m.capability_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
+    m.capability_mutation_bridge_split_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -500,6 +510,8 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t grant_fiber_bound = 0;
     std::uint64_t fiber_mismatch = 0;
     std::uint64_t epoch_fence_hits = 0;
+    // Issue #2149
+    std::uint64_t mutation_bridge_split = 0;
 };
 
 [[nodiscard]] inline CapabilityEffectStatsSnapshot snapshot_capability_effect_stats() noexcept {
@@ -525,6 +537,7 @@ struct CapabilityEffectStatsSnapshot {
         m.capability_grant_fiber_bound_total.load(std::memory_order_relaxed),
         m.capability_fiber_mismatch_total.load(std::memory_order_relaxed),
         m.capability_epoch_fence_hit_total.load(std::memory_order_relaxed),
+        m.capability_mutation_bridge_split_total.load(std::memory_order_relaxed),
     };
 }
 

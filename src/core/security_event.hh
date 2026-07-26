@@ -53,7 +53,7 @@ struct SecurityEvent {
     std::uint64_t seq = 0; // ring seq at append (stable filter key)
     std::uint64_t tenant_id = 0;
     std::uint64_t mutation_id = 0; // caller's mutation_id / provenance
-    std::uint64_t epoch = 0;       // current_bridge_epoch() at emit
+    std::uint64_t epoch = 0;       // Mutation epoch at emit (#2149; was Bridge)
     std::int64_t fiber_id = 0;     // #2054: multi-fiber filter
     std::uint16_t effect_bits = 0;
     bool denied = true;

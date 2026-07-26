@@ -394,6 +394,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("epoch-fence-hits", static_cast<std::int64_t>(snap.epoch_fence_hits));
                 insert_kv("grant-epoch-fiber-wired", 1);
             }
+            // Issue #2149: effect-check stamps Mutation epoch (not Bridge)
+            {
+                using aura::core::capability::kEffectEpochUnifyIssue;
+                insert_kv("schema-2149", kEffectEpochUnifyIssue);
+                insert_kv("issue-2149", kEffectEpochUnifyIssue);
+                insert_kv("mutation-bridge-split-total",
+                          static_cast<std::int64_t>(snap.mutation_bridge_split));
+                insert_kv("effect-epoch-mutation-wired", 1);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
