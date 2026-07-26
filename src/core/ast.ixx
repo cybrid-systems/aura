@@ -7299,6 +7299,36 @@ public:
         return macro_expand_mutate_restamp_total_.load(std::memory_order_relaxed);
     }
 
+    // Issue #2171: validate the post-expand hygiene invariant:
+    // every live MacroIntroduced node must carry the kMacroExpansion
+    // bit in its macro_dirty_ column. Cheap O(n) walk; skips free_list
+    // slots. Returns the count of violations (0 in a healthy flat).
+    // Used as the cross-flat clone post-condition guard in
+    // `ensure_cross_flat_expand_consistency()` (macro_expansion.cpp)
+    // and as a callable from mutation boundary / agent probe.
+    // Pair with `restamp_macro_introduced_generations()` — that
+    // helper repairs the column on the flat, this method verifies
+    // the column is intact without modifying it.
+    [[nodiscard]] std::size_t validate_macro_hygiene_invariants() const noexcept {
+        constexpr auto kExpansion = static_cast<std::uint8_t>(MacroDirtyReason::kMacroExpansion);
+        std::vector<NodeId> on_free(size(), 0);
+        for (NodeId fid : free_list_) {
+            if (fid < on_free.size())
+                on_free[fid] = 1;
+        }
+        std::size_t violations = 0;
+        const auto n = size();
+        for (NodeId id = 0; id < n; ++id) {
+            if (id < on_free.size() && on_free[id])
+                continue;
+            if (!is_macro_introduced(id))
+                continue;
+            if ((macro_dirty(id) & kExpansion) == 0)
+                ++violations;
+        }
+        return violations;
+    }
+
     // Issue #1282: if a generation wrap marked auto_restamp_pending_,
     // restamp live node_gen_ now. Safe to call from non-noexcept
     // paths (restore_children, mutation boundary exit).

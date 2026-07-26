@@ -504,6 +504,42 @@ static void restamp_after_expand(aura::ast::FlatAST& flat,
     }
 }
 
+// Issue #2171: when a clone_macro_body invocation crosses FlatAST +
+// StringPool boundaries (target.flat != source.flat OR target.pool !=
+// source.pool), force a restamp on the target + bump the
+// g_macro_restamp_after_flat_total counter so subsequent mutate /
+// query / JIT consumers see consistent marker / provenance /
+// kMacroExpansion bits even when the source pool's generation counter
+// differs from the target's. Single-flat clones are a no-op (no perf
+// regression on the hot in-flat path used by `macro_expand_all` and
+// the closure-materialization path).
+//
+// In debug builds, also runs `FlatAST::validate_macro_hygiene_invariants()`
+// on the target post-restamp and aborts on > 0 violations — guaranteed
+// invariant for the post-cross-flat-clone state. Wire into
+// `clone_macro_body` top-level exit so every cross-flat clone site is
+// covered without per-callsite plumbing.
+static void
+ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
+                                     aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
+                                     aura::ast::NodeId new_root = aura::ast::NULL_NODE) {
+    const bool cross_flat = (&target != &source) || (&target_pool != &source_pool);
+    if (!cross_flat)
+        return;
+    restamp_after_expand(target, new_root);
+#ifndef NDEBUG
+    const auto violations = target.validate_macro_hygiene_invariants();
+    if (violations > 0) {
+        std::fprintf(stderr,
+                     "[#2171 invariant violation] post-cross-flat MacroIntroduced "
+                     "nodes missing kMacroExpansion: %zu (target.size()=%zu, "
+                     "new_root=%u)\n",
+                     violations, target.size(), static_cast<unsigned>(new_root));
+        std::abort();
+    }
+#endif
+}
+
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
     aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
@@ -513,6 +549,13 @@ aura::ast::NodeId clone_macro_body(
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
+    // Issue #2171: capture cross-flat status at top-level entry so the
+    // success-path exit can call ensure_cross_flat_expand_consistency()
+    // exactly once per top-level clone (recursive calls walk the same
+    // target/source so all recursions share the cross_flat status; we
+    // only need to restamp + counter-bump once for the whole subtree).
+    const bool cross_flat_top =
+        (s_hygiene_depth == 0) && ((&target != &source) || (&target_pool != &source_pool));
     // Issue #1652: per-call success-path observability bump (fired once per
     // clone_macro_body invocation that survives the early-return hygiene
     // checks). The per-node count (clone_macro_introduced_nodes_created) is
@@ -1040,6 +1083,15 @@ aura::ast::NodeId clone_macro_body(
                 }
             }
         }
+    }
+    // Issue #2171: cross-flat top-level clones must restamp + counter-bump
+    // before returning so the freshly introduced MacroIntroduced subtree
+    // leaves consistent marker / provenance / kMacroExpansion bits in
+    // the target even when source pool's generation counter differs.
+    // Single-flat and recursive frames are no-op (perf-stable for the
+    // hot in-flat path used by macro_expand_all).
+    if (cross_flat_top && new_id != NULL_NODE) {
+        ensure_cross_flat_expand_consistency(target, target_pool, source, source_pool, new_id);
     }
     return new_id;
 }
