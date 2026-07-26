@@ -2756,6 +2756,20 @@ public:
     // defer per #1489) and bumps the cross_fiber_panic_heal_success +
     // (optionally) mutation_boundary_steal_safe_total outcome counters.
     void run_post_restore_lifecycle_close(bool safe_total_event) noexcept;
+    // Issue #2162 / #2090: single-owner hot-update recovery sequence
+    // (throttle → reemit → epoch notify → batch_deopt unmatched).
+    // Called from outermost MutationBoundaryGuard dtor and from
+    // fiber-steal / compact-only paths when no Guard owns the pipeline.
+    // Idempotent within one defuse-enter window (AC3: no double-reemit).
+    // success=false + panic_auto_rollback_ → full-rollback skip.
+    // dirty_upward_at_enter: mark_dirty_upward_call_count() snapshot at
+    // boundary enter (not lifetime-only — count is cumulative).
+    void run_hot_update_recovery_if_needed(bool success, std::uint64_t defuse_version_at_enter,
+                                           std::uint64_t dirty_upward_at_enter = 0) noexcept;
+    // Issue #2162: cascade path marks recovery done so Guard dtor is no-op.
+    void note_hot_update_recovery_done(std::uint64_t defuse) noexcept {
+        hot_update_recovery_done_defuse_ = defuse;
+    }
     // Issue #1638: dual-path consistency gate for EnvFrame dual-path
     // (bindings_ vs bindings_symid_ + bindings_linear_ownership_state_)
     // access sites. Called from materialize_call_env / lookup_by_symid_chain
@@ -5040,6 +5054,9 @@ private:
     // dtor updates
     // mutation_boundary_hold_* / mutation_hold_* CompilerMetrics.
     std::atomic<bool> mutation_boundary_held_{false};
+    // Issue #2162: last defuse_version for which run_hot_update_recovery
+    // completed (single-owner vs cascade path — no double-reemit/epoch).
+    std::uint64_t hot_update_recovery_done_defuse_ = 0;
     // Set by outermost MutationBoundaryGuard; used by
     // restore_post_yield_or_rollback to signal rollback on
     // cross-thread migration / yield desync during an active boundary.
@@ -12749,6 +12766,10 @@ public:
         // exception unwind). Compared against ev_->defuse_version_.load()
         // in the outermost dtor post-cascade hook.
         std::uint64_t defuse_version_at_enter_ = 0;
+        // Issue #2162: snapshot mark_dirty_upward_call_count at enter.
+        // The FlatAST counter is lifetime-cumulative; dirty-marks for this
+        // boundary is (exit_count > enter_count), not (exit_count > 0).
+        std::uint64_t dirty_upward_at_enter_ = 0;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.

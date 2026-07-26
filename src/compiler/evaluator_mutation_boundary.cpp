@@ -21,9 +21,8 @@ module;
 #include "security_capabilities.h"         // aura_fiber_current_id
 #include "aura_jit_bridge.h"               // aura_invoke_long_mutation_scheduler_hook
                                            // + aura_aot_func_table_epoch +
-                                           //   aura_jit_batch_deopt_for_total
-                                           // (Issue #2090: outermost reemit
-                                           //  pipeline uses both)
+                                           //   aura_jit_batch_deopt_for (+ empty-name
+                                           //   deopt-all, Issue #2162)
 #include "compiler/hot_update_registry.hh" // Issue #2090: AuraJITHotUpdateRegistry
                                            //   C-linkage shims —
                                            // aura_hot_update_should_throttle_reemit
@@ -841,6 +840,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // (fiber-steal restore / partial recovery / compact-only /
     // exception unwind) that skip mark_define_dirty.
     defuse_version_at_enter_ = ev_->defuse_version_.load(std::memory_order_acquire);
+    // Issue #2162: dirty-upward is cumulative — snapshot for boundary delta.
+    dirty_upward_at_enter_ =
+        ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
     // Issue #236 / #1746: thread_local depth counter keyed by
     // Evaluator::instance_id_ (not address). Each fiber has its
     // own LIFO call stack, so nested guards on a single fiber
@@ -1246,42 +1248,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // ── Phase 4: hot-update throttle → reemit → epoch notify (#2090 / #2114) ──
-    // Issue #2090: outermost dtor unified hot-update recovery sequence.
-    // Pairs with #2035 cascade-only path so non-cascade exits also drive
-    // throttle → reemit → epoch_notify → batch_deopt under the held lock.
+    // ── Phase 4: hot-update throttle → reemit → epoch notify (#2090 / #2114 / #2162) ──
+    // Issue #2090 / #2162: outermost dtor drives the single-owner helper so
+    // fiber-steal restore / partial recovery / exception unwind / compact-only
+    // share the same ordered sequence (no silent stale closures).
     if (outermost) {
-        const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
-        const bool dirty_defines_this_boundary = (cur_defuse != defuse_version_at_enter_);
-        const std::size_t dirty_calls =
-            ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
-        const bool dirty_marks_this_boundary = (dirty_calls > 0);
-        const bool dirty_or_env_restamp = dirty_defines_this_boundary || dirty_marks_this_boundary;
-        const bool deferred_reemit = aura_hot_update_has_deferred_reemit() != 0;
-        const bool full_rollback_skip = (!success && ev_->panic_auto_rollback_);
-        if ((!dirty_or_env_restamp && !deferred_reemit) || full_rollback_skip) {
-            // No pipeline work (clean exit or full-rollback restored snapshot).
-        } else if (!aura_hot_update_reemit_provider_wired()) {
-            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-        } else if (aura_hot_update_should_throttle_reemit()) {
-            aura_hot_update_on_reemit_throttled();
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                m->boundary_reemit_throttled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-        } else {
-            const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
-                                                           std::memory_order_relaxed);
-            }
-            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-            if (success && n_reemit > 0) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    m->boundary_batch_deopt_unmatched_total.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-        }
+        ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
+                                               dirty_upward_at_enter_);
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
             m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1527,6 +1500,60 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
 // reinstalled).
 //
 // AC contract:
+// Issue #2162 / #2090: single-owner hot-update recovery sequence.
+// throttle → reemit → epoch notify (always on dirty) → batch_deopt unmatched.
+// Idempotent: same defuse_version after a successful run is a no-op (AC3).
+void Evaluator::run_hot_update_recovery_if_needed(bool success,
+                                                  std::uint64_t defuse_version_at_enter,
+                                                  std::uint64_t dirty_upward_at_enter) noexcept {
+    const std::uint64_t cur_defuse = defuse_version_.load(std::memory_order_acquire);
+    const std::uint64_t dirty_calls =
+        workspace_flat_ ? workspace_flat_->mark_dirty_upward_call_count() : 0;
+    const bool dirty_defines = (cur_defuse != defuse_version_at_enter);
+    // Boundary-scoped dirty marks (not lifetime): FlatAST counter is cumulative.
+    const bool dirty_marks = (dirty_calls > dirty_upward_at_enter);
+    const bool deferred_reemit = aura_hot_update_has_deferred_reemit() != 0;
+    const bool dirty_or_env_restamp = dirty_defines || dirty_marks;
+    const bool full_rollback_skip = (!success && panic_auto_rollback_);
+    if ((!dirty_or_env_restamp && !deferred_reemit) || full_rollback_skip)
+        return;
+    // AC3: single-owner — cascade path may have already recovered for this defuse.
+    if (hot_update_recovery_done_defuse_ == cur_defuse && !deferred_reemit)
+        return;
+
+    if (!aura_hot_update_reemit_provider_wired()) {
+        aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        hot_update_recovery_done_defuse_ = cur_defuse;
+        return;
+    }
+    if (aura_hot_update_should_throttle_reemit()) {
+        aura_hot_update_on_reemit_throttled();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->boundary_reemit_throttled_total.fetch_add(1, std::memory_order_relaxed);
+        // Epoch notify always on dirty (even when throttled) — AC1 step 3.
+        aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        hot_update_recovery_done_defuse_ = cur_defuse;
+        return;
+    }
+    const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
+                                                   std::memory_order_relaxed);
+    }
+    const auto epoch = aura_aot_func_table_epoch();
+    aura_hot_update_notify_epoch_bump(epoch);
+    // Issue #2162: unmatched closures stay on dual-epoch deopt after
+    // remap (#2013); record the recovery step for Agents (AC2 metrics).
+    // Named batch_deopt_for requires a define name; epoch notify above is
+    // the global unmatched safety net.
+    if (n_reemit > 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->boundary_batch_deopt_unmatched_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    (void)epoch;
+    hot_update_recovery_done_defuse_ = cur_defuse;
+}
+
 //   AC1: depth-limit / hygiene-violation expand can call restore
 //        → pre-expand state recovered; partial MacroIntroduced
 //          nodes are un-marked.

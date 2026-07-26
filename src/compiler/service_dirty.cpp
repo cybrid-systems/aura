@@ -92,6 +92,10 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
         metrics_.aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
         if (n > 0)
             metrics_.commercial_reemits_total.fetch_add(n, std::memory_order_relaxed);
+        // Issue #2162 AC3: cascade path is single-owner for this defuse when
+        // reemit actually ran — Guard dtor must not double-reemit.
+        if (n > 0)
+            evaluator_.note_hot_update_recovery_done(evaluator_.defuse_version());
     }
 }
 
