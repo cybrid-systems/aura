@@ -2434,6 +2434,10 @@ aura_issue_test_link_llvm_jit(test_audit_wal_force_multi_tenant_2150)
 aura_add_issue_test(test_hard_fiber_isolation_2151)
 aura_issue_test_link_llvm_jit(test_hard_fiber_isolation_2151)
 
+# Issue #2152: dispatch-level non-bypassable required_effects for side-effect prims.
+aura_add_issue_test(test_dispatch_required_effects_2152)
+aura_issue_test_link_llvm_jit(test_dispatch_required_effects_2152)
+
 # Issue #2077: unify has_capability string path with Effect matrix
 # (single source of truth). Effect-mapped caps (mutate, ffi, network,
 # exec, render, read, write, macro-self-evo, *) now consult

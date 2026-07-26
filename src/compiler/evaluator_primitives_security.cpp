@@ -9,7 +9,8 @@ module;
 #include "shape.h"
 #include "value_tags.h"
 #include "security_capabilities.h"
-#include "typed_mutation_audit.h" // #2053 production defaults query keys
+#include "security_side_effect.hh" // #2152 kDispatchRequiredEffectsIssue
+#include "typed_mutation_audit.h"  // #2053 production defaults query keys
 #include "serve/http_health.h"
 #include "serve/metrics.h"
 #include "hash_meta.h"                 // FNV constants (#901)
@@ -427,6 +428,28 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.hard_fiber_isolation));
                 insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
                 insert_kv("hard-fiber-isolation-wired", 1);
+            }
+            // Issue #2152: dispatch-level non-bypassable required_effects
+            {
+                using aura::compiler::kDispatchRequiredEffectsIssue;
+                insert_kv("schema-2152", kDispatchRequiredEffectsIssue);
+                insert_kv("issue-2152", kDispatchRequiredEffectsIssue);
+                insert_kv(
+                    "dispatch-required-effects-check",
+                    m ? static_cast<std::int64_t>(m->dispatch_required_effects_check_total.load(
+                            std::memory_order_relaxed))
+                      : 0);
+                insert_kv(
+                    "dispatch-required-effects-deny",
+                    m ? static_cast<std::int64_t>(
+                            m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed))
+                      : 0);
+                insert_kv(
+                    "dispatch-required-effects-inferred",
+                    m ? static_cast<std::int64_t>(m->dispatch_required_effects_inferred_total.load(
+                            std::memory_order_relaxed))
+                      : 0);
+                insert_kv("dispatch-required-effects-wired", 1);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

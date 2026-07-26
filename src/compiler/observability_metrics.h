@@ -6763,6 +6763,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutate_force_isolation_denied_total{0};
     std::atomic<std::uint64_t> mutate_force_effect_allowed_total{0};
     std::atomic<std::uint64_t> mutate_force_wired{1};
+    // Issue #2152: dispatch-level PrimMeta.required_effects gate
+    // (invoke_prim_with_telemetry; name-inferred when meta bits unset).
+    std::atomic<std::uint64_t> dispatch_required_effects_check_total{0};
+    std::atomic<std::uint64_t> dispatch_required_effects_deny_total{0};
+    std::atomic<std::uint64_t> dispatch_required_effects_inferred_total{0};
     std::atomic<std::uint64_t> dirty_subtree_bfs_walks_total{0};   // #1036
     std::atomic<std::uint64_t> ir_marker_stats_queries_total{0};   // #1039
     std::atomic<std::uint64_t> ir_cache_v2_lru_evictions_total{0}; // #1042

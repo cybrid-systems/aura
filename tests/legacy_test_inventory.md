@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 441 | Preferred destination suites |
-| **Total scanned** | **441** | |
+| `tests/core/test_*.cpp` | 442 | Preferred destination suites |
+| **Total scanned** | **442** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 20 | 20 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 104 | 104 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 105 | 105 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -251,6 +251,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dirty_propagation_cascade.cpp`
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp`
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp`
+- `tests/compiler/test_dispatch_required_effects_2152.cpp`
 - `tests/compiler/test_dual_path_desync_hard_fail_2116.cpp`
 - `tests/compiler/test_edsl_concurrent_fiber_boundary_task1.cpp`
 - `tests/compiler/test_edsl_concurrent_query_mutate.cpp`
@@ -998,13 +999,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (104)
+### `observability` — Observability / metrics / query:*-stats (105)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (104)
+#### domain/ (105)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
@@ -1027,6 +1028,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_dead_coercion_elision_narrow_batch.cpp — dead_coercion_elision_narrow pair
 - `tests/compiler/test_defuse_version_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #189/#417/#419/#456 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dep_graph_hybrid_cascade_2110.cpp` (#2110) [domain_suite, theme_compiler] — AC1: record_dependency populates both string graph and NodeId mirror
+- `tests/compiler/test_dispatch_required_effects_2152.cpp` (#2152) [domain_suite, theme_compiler] — AC1: Prim with required_effects=Mutate, no body check → deny under
 - `tests/compiler/test_dual_path_desync_hard_fail_2116.cpp` (#2116) [domain_suite, theme_compiler] — AC1: inject desync → hard path; metric++; materialize bindings empty
 - `tests/compiler/test_engine_metrics_facade.cpp` (—) [domain_suite, theme_compiler] — AC1: (engine:metrics) returns hash with nested groups + ≥200 metric fields
 - `tests/compiler/test_envframe_resolve_distinction.cpp` (—) [domain_suite, theme_compiler] — Issue #1708/#1709/#1754/#1756/#1890 (#1978 renamed): issue# moved from filename to header.

@@ -11331,6 +11331,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // Returns the sum of reflect_post_mutation_validate_total +
     // reflect_hygiene_macro_reject_total + reflect_dirty_macro_nodes_total
     // after bumping validate_reflected_query_total by 1.
+    // SECURITY_EXEMPT: diagnostic counters only — no AST write (#2057/#2152).
     add("mutate:validate-reflected", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         // Public accessor: register_query_primitives is not a friend of
@@ -11343,6 +11344,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t dirty_macro = ev.get_reflect_dirty_macro_nodes_total();
         return make_int(static_cast<std::int64_t>(post_validate + macro_reject + dirty_macro));
     });
+    {
+        ::aura::compiler::PrimMeta ex{};
+        ex.security_exempt = true;
+        ex.pure = true;
+        ex.doc = "SECURITY_EXEMPT: diagnostic reflect counters only (#2152)";
+        ev.primitives().set_meta_for_name("mutate:validate-reflected", std::move(ex));
+    }
 
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
@@ -11429,6 +11437,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // integer literals, malformed s-exprs). This is a "cheap,
     // best-effort" check — full type-level validation is a
     // follow-up.
+    // SECURITY_EXEMPT: read-only schema check — no AST write (#2057/#2152).
     add("mutate:validate-against-schema",
         [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
@@ -11487,6 +11496,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             return make_bool(true);
         });
+    {
+        ::aura::compiler::PrimMeta ex{};
+        ex.security_exempt = true;
+        ex.pure = true;
+        ex.doc = "SECURITY_EXEMPT: read-only schema check (#2152)";
+        ev.primitives().set_meta_for_name("mutate:validate-against-schema", std::move(ex));
+    }
 
     // (query:occurrence-stale? if-node-id) — Issue #339:
     // returns #t when the if-node's occurrence-narrowing
