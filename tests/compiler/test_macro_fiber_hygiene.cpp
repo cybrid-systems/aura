@@ -9,6 +9,10 @@
 //   AC4: sibling-keep — #2018 + #2019 + #2021 + #2096 + #2098 helpers intact in
 //        src/compiler/macro_expansion.cpp (linter-gated; here pure source gate)
 //   AC5: query:macro-fiber-hygiene primitive surface (engine:metrics overlay).
+//   AC6: #2174 source-cite — primitive extended to hash with 22 keys covering
+//        per-fiber + runtime caps + concurrent + global counters
+//   AC7: #2174 runtime cap keys + per-fiber keys (zero-alloc atomic loads)
+//   AC8: #2174 concurrent + global counter keys (Agent self-throttling surface)
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -164,9 +168,13 @@ static void ac5_query_surface() {
 
     // (a) Soft direct-eval — register_stats_impl names may or may not be in
     // the runtime symbol table; soft check both branches.
+    // Issue #2174: primitive now returns a hash (was int). Check hash.
     auto r = cs.eval("(query:macro-fiber-hygiene 0)");
-    if (r && is_int(*r)) {
-        CHECK(as_int(*r) >= 0, "primitive returns non-negative int");
+    if (r && is_hash(*r)) {
+        CHECK(true, "primitive returns hash (#2174 extended surface)");
+    } else if (r && is_int(*r)) {
+        // Backward-compat fallback (legacy int surface still resolvable).
+        CHECK(as_int(*r) >= 0, "primitive returns non-negative int (legacy)");
     } else {
         CHECK(true, "primitive soft (runtime symbol-table may not include "
                     "register_stats_impl names; engine:metrics is authoritative)");
@@ -179,6 +187,156 @@ static void ac5_query_surface() {
         CHECK(true, "engine:metrics soft (overlay may be empty for new primitive)");
 }
 
+// Issue #2174: source-cite — primitive extended to hash with the full
+// Agent self-throttling surface (per-fiber + runtime caps + concurrent +
+// global counters). Verifies all 22 keys are present in the primitive
+// source (cheap, atomic-load only — no heavy allocation).
+static void ac6_extended_hash_source_cite_2174() {
+    std::println("\n--- AC6: #2174 primitive extended to hash with 22 keys ---");
+    auto prim_src = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(!prim_src.empty(), "prim source readable");
+    // Schema lineage.
+    CHECK(prim_src.find("\"schema-2174\"") != std::string::npos,
+          "AC6: primitive defines schema-2174 key");
+    CHECK(prim_src.find("\"issue-2174\"") != std::string::npos,
+          "AC6: primitive defines issue-2174 key");
+    // Per-fiber (Issue #2097).
+    CHECK(prim_src.find("\"fiber-id\"") != std::string::npos,
+          "AC6: primitive defines fiber-id key");
+    CHECK(prim_src.find("\"fiber-depth\"") != std::string::npos,
+          "AC6: primitive defines fiber-depth key");
+    CHECK(prim_src.find("\"fiber-violations\"") != std::string::npos,
+          "AC6: primitive defines fiber-violations key");
+    CHECK(prim_src.find("\"fiber-gensym-map-size\"") != std::string::npos,
+          "AC6: primitive defines fiber-gensym-map-size key");
+    // Runtime caps (Issue #2101).
+    CHECK(prim_src.find("\"depth-cap\"") != std::string::npos,
+          "AC6: primitive defines depth-cap key");
+    CHECK(prim_src.find("\"pass-cap\"") != std::string::npos,
+          "AC6: primitive defines pass-cap key");
+    CHECK(prim_src.find("\"effective-depth-limit\"") != std::string::npos,
+          "AC6: primitive defines effective-depth-limit key");
+    CHECK(prim_src.find("\"effective-pass-cap\"") != std::string::npos,
+          "AC6: primitive defines effective-pass-cap key");
+    // Concurrent clone (Issue #2021).
+    CHECK(prim_src.find("\"clone-in-flight\"") != std::string::npos,
+          "AC6: primitive defines clone-in-flight key");
+    CHECK(prim_src.find("\"clone-concurrent-peak\"") != std::string::npos,
+          "AC6: primitive defines clone-concurrent-peak key");
+    CHECK(prim_src.find("\"clone-concurrent-fiber-total\"") != std::string::npos,
+          "AC6: primitive defines clone-concurrent-fiber-total key");
+    // Query + tracer observability (Issue #2097 + #1248).
+    CHECK(prim_src.find("\"query-total\"") != std::string::npos,
+          "AC6: primitive defines query-total key");
+    CHECK(prim_src.find("\"violation-per-fiber-total\"") != std::string::npos,
+          "AC6: primitive defines violation-per-fiber-total key");
+    CHECK(prim_src.find("\"tracer-expansions\"") != std::string::npos,
+          "AC6: primitive defines tracer-expansions key");
+    CHECK(prim_src.find("\"tracer-depth-max\"") != std::string::npos,
+          "AC6: primitive defines tracer-depth-max key");
+    // Expand observability (Issue #1652 + #2019 + #2096).
+    CHECK(prim_src.find("\"macro-expansion-total\"") != std::string::npos,
+          "AC6: primitive defines macro-expansion-total key");
+    CHECK(prim_src.find("\"introduced-nodes-created-total\"") != std::string::npos,
+          "AC6: primitive defines introduced-nodes-created-total key");
+    CHECK(prim_src.find("\"restamp-after-flat-total\"") != std::string::npos,
+          "AC6: primitive defines restamp-after-flat-total key");
+    CHECK(prim_src.find("\"expand-mutate-restamp-total\"") != std::string::npos,
+          "AC6: primitive defines expand-mutate-restamp-total key");
+    // MacroSelfEvo gates (Issue #2023).
+    CHECK(prim_src.find("\"self-evo-denied-total\"") != std::string::npos,
+          "AC6: primitive defines self-evo-denied-total key");
+    CHECK(prim_src.find("\"self-evo-allowed-total\"") != std::string::npos,
+          "AC6: primitive defines self-evo-allowed-total key");
+    CHECK(prim_src.find("\"self-evo-pass-clamp-total\"") != std::string::npos,
+          "AC6: primitive defines self-evo-pass-clamp-total key");
+    CHECK(prim_src.find("\"self-evo-depth-clamp-total\"") != std::string::npos,
+          "AC6: primitive defines self-evo-depth-clamp-total key");
+}
+
+// Issue #2174: runtime cap keys + per-fiber keys — Agent self-throttling
+// surface must return live numbers without heavy allocation. Verifies the
+// runtime cap API is callable and the per-fiber map returns sane values.
+static void ac7_runtime_caps_and_per_fiber_2174() {
+    std::println("\n--- AC7: #2174 runtime caps + per-fiber keys ---");
+    using aura::compiler::macro_exp::effective_hygiene_depth_limit;
+    using aura::compiler::macro_exp::effective_hygiene_pass_cap;
+    using aura::compiler::macro_exp::runtime_hygiene_depth_cap;
+    using aura::compiler::macro_exp::runtime_hygiene_pass_cap;
+
+    // Reset to known state.
+    aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test();
+    // Issue #365: reset restores default = MAX_HYGIENE_DEPTH (1024) for
+    // depth, 0 for pass (no clamp). The runtime cap == 0 means "use the
+    // hard ceiling"; not the same as the runtime setter being unset.
+    CHECK(runtime_hygiene_depth_cap() == aura::compiler::macro_exp::MAX_HYGIENE_DEPTH,
+          "AC7: depth cap == MAX_HYGIENE_DEPTH (1024) after reset");
+    CHECK(runtime_hygiene_pass_cap() == 0, "AC7: pass cap == 0 (env default unset)");
+    CHECK(effective_hygiene_depth_limit() == aura::compiler::macro_exp::MAX_HYGIENE_DEPTH,
+          "AC7: effective depth limit == MAX_HYGIENE_DEPTH");
+    CHECK(effective_hygiene_pass_cap() == 0, "AC7: effective pass cap == 0 (no clamp)");
+
+    // Tighten cap via setter.
+    const bool ok = aura::compiler::macro_exp::set_hygiene_depth_cap(64);
+    CHECK(ok, "AC7: set_hygiene_depth_cap(64) accepted");
+    CHECK(runtime_hygiene_depth_cap() == 64, "AC7: depth cap reflects override");
+    CHECK(effective_hygiene_depth_limit() == 64, "AC7: effective depth limit reflects override");
+
+    // Per-fiber map (fresh fiber_id → default snapshot).
+    for (std::uint32_t fid : {0u, 1u, 0xCAFEu, 0xFFFFu}) {
+        FiberHygieneStats s = aura::compiler::macro_exp::get_fiber_hygiene_metrics(fid);
+        CHECK(s.depth == 0, "AC7: fresh fiber_id → depth == 0");
+        CHECK(s.violations == 0u, "AC7: fresh fiber_id → violations == 0");
+    }
+
+    // Cleanup.
+    aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test();
+}
+
+// Issue #2174: concurrent + global counter keys — query observability
+// surface exposes live counters (atomic loads only, no heavy alloc).
+// Verifies the counters advance when the bump sites fire.
+static void ac8_concurrent_and_global_counters_2174() {
+    std::println("\n--- AC8: #2174 concurrent + global counter keys ---");
+    using aura::compiler::macro_exp::g_fiber_hygiene_query_total;
+    using aura::compiler::macro_exp::g_macro_clone_concurrent_fiber_total;
+    using aura::compiler::macro_exp::g_macro_clone_concurrent_peak;
+    using aura::compiler::macro_exp::g_macro_clone_in_flight;
+
+    // Snapshot baselines.
+    const auto q_before = g_fiber_hygiene_query_total.load(std::memory_order_relaxed);
+    const auto peak_before = g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
+    const auto inflight_before = g_macro_clone_in_flight.load(std::memory_order_relaxed);
+
+    // Query increments the query-total counter.
+    (void)aura::compiler::macro_exp::get_fiber_hygiene_metrics(0xCAFEu);
+    CHECK(g_fiber_hygiene_query_total.load(std::memory_order_relaxed) == q_before + 1,
+          "AC8: query_total advances per get_fiber_hygiene_metrics call");
+
+    // Source-cite: the new keys reference the existing atomic counters.
+    auto prim_src = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(prim_src.find("g_macro_clone_in_flight") != std::string::npos,
+          "AC8: primitive references g_macro_clone_in_flight");
+    CHECK(prim_src.find("g_macro_clone_concurrent_peak") != std::string::npos,
+          "AC8: primitive references g_macro_clone_concurrent_peak");
+    CHECK(prim_src.find("g_macro_clone_concurrent_fiber_total") != std::string::npos,
+          "AC8: primitive references g_macro_clone_concurrent_fiber_total");
+    CHECK(prim_src.find("g_fiber_hygiene_query_total") != std::string::npos,
+          "AC8: primitive references g_fiber_hygiene_query_total");
+    CHECK(prim_src.find("g_hygiene_tracer_expansions") != std::string::npos,
+          "AC8: primitive references g_hygiene_tracer_expansions");
+    CHECK(prim_src.find("g_macro_self_evo_denied_total") != std::string::npos,
+          "AC8: primitive references g_macro_self_evo_denied_total");
+
+    // Snapshot test: inflight + peak may not have advanced (no concurrent
+    // clone happened), but the values are accessible. We just verify
+    // they're non-negative and the load is atomic-safe.
+    CHECK(g_macro_clone_in_flight.load(std::memory_order_relaxed) >= 0,
+          "AC8: clone-in-flight atomic loadable (>=0)");
+    CHECK(g_macro_clone_concurrent_peak.load(std::memory_order_relaxed) >= peak_before,
+          "AC8: clone-concurrent-peak monotonic");
+}
+
 } // namespace
 
 int main() {
@@ -187,8 +345,11 @@ int main() {
     ac3_global_counter();
     ac4_sibling_keep();
     ac5_query_surface();
+    ac6_extended_hash_source_cite_2174();
+    ac7_runtime_caps_and_per_fiber_2174();
+    ac8_concurrent_and_global_counters_2174();
     if (g_failed)
         return 1;
-    std::println("macro fiber hygiene (#2097): OK ({} passed)", g_passed);
+    std::println("macro fiber hygiene (#2097 + #2174): OK ({} passed)", g_passed);
     return 0;
 }

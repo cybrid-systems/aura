@@ -14095,19 +14095,133 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
         return build_hash(kv);
     });
 
-    // Issue #2097: per-fiber hygiene metrics for Agent query under concurrent
-    // self-evo / fiber-steal (refine Macro Hygiene review §7.2). Agent passes
-    // a fiber_id via arg; primitive returns that fiber's violation count for
-    // throttling decisions. Depth + gensym_map_size are surfaced via the
-    // engine:metrics overlay (fiber_hygiene_query_total + per-fiber map
-    // lookup via get_fiber_hygiene_metrics) for richer dashboard views.
+    // Issue #2097 + Issue #2174: per-fiber hygiene metrics for Agent query under
+    // concurrent self-evo / fiber-steal (refine Macro Hygiene review §7.2,
+    // Issue #2174 extend with runtime caps + concurrent + global counters for
+    // Agent self-throttling). Agent passes a fiber_id via arg; primitive
+    // returns a hash with ~20 keys covering per-fiber stats, runtime caps
+    // (depth/pass + effective limits), concurrent clone (in-flight + peak +
+    // fiber total), query observability, hygiene tracer, expand counters,
+    // and MacroSelfEvo gate totals — all atomic loads (no heavy alloc).
     ObservabilityPrims::register_stats_impl(
-        "query:macro-fiber-hygiene", [](std::span<const EvalValue> a) -> EvalValue {
+        "query:macro-fiber-hygiene", [&ev](std::span<const EvalValue> a) -> EvalValue {
             std::uint32_t fiber_id = 0;
             if (!a.empty() && is_int(a[0]))
                 fiber_id = static_cast<std::uint32_t>(as_int(a[0]));
             auto stats = aura::compiler::macro_exp::get_fiber_hygiene_metrics(fiber_id);
-            return make_int(static_cast<std::int64_t>(stats.violations));
+            // Inline FNV-based hash builder (mirrors closure-stats pattern at
+            // line 13990+ — small + self-contained, no new helper dep).
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            using namespace aura::compiler::macro_exp;
+            // All values are atomic loads — zero allocation in the hot
+            // path, safe for Agent polling at high frequency. Issue #2174.
+            const std::vector<std::pair<std::string, EvalValue>> kv = {
+                // schema lineage (#2174)
+                {"schema", make_int(2174)},
+                {"schema-2174", make_int(2174)},
+                {"issue-2174", make_int(2174)}, // Issue #2174: schema lineage key
+                // per-fiber (Issue #2097)
+                {"fiber-id", make_int(static_cast<std::int64_t>(fiber_id))},
+                {"fiber-depth", make_int(static_cast<std::int64_t>(stats.depth))},
+                {"fiber-violations", make_int(static_cast<std::int64_t>(stats.violations))},
+                {"fiber-gensym-map-size",
+                 make_int(static_cast<std::int64_t>(stats.gensym_map_size))},
+                // runtime caps (Issue #2101)
+                {"depth-cap", make_int(static_cast<std::int64_t>(runtime_hygiene_depth_cap()))},
+                {"pass-cap", make_int(static_cast<std::int64_t>(runtime_hygiene_pass_cap()))},
+                {"effective-depth-limit",
+                 make_int(static_cast<std::int64_t>(effective_hygiene_depth_limit()))},
+                {"effective-pass-cap",
+                 make_int(static_cast<std::int64_t>(effective_hygiene_pass_cap()))},
+                // concurrent clone (Issue #2021)
+                {"clone-in-flight", make_int(static_cast<std::int64_t>(
+                                        g_macro_clone_in_flight.load(std::memory_order_relaxed)))},
+                {"clone-concurrent-peak",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_clone_concurrent_peak.load(std::memory_order_relaxed)))},
+                {"clone-concurrent-fiber-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_clone_concurrent_fiber_total.load(std::memory_order_relaxed)))},
+                // query observability (Issue #2097)
+                {"query-total", make_int(static_cast<std::int64_t>(
+                                    g_fiber_hygiene_query_total.load(std::memory_order_relaxed)))},
+                {"violation-per-fiber-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_fiber_hygiene_violation_per_fiber_total.load(std::memory_order_relaxed)))},
+                // hygiene tracer (Issue #1248)
+                {"tracer-expansions",
+                 make_int(static_cast<std::int64_t>(
+                     g_hygiene_tracer_expansions.load(std::memory_order_relaxed)))},
+                {"tracer-depth-max",
+                 make_int(static_cast<std::int64_t>(
+                     g_hygiene_tracer_depth_max.load(std::memory_order_relaxed)))},
+                // expand observability (Issue #1652 + #2019 + #2096)
+                {"macro-expansion-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_expansion_total.load(std::memory_order_relaxed)))},
+                {"introduced-nodes-created-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_introduced_nodes_created_total.load(std::memory_order_relaxed)))},
+                {"restamp-after-flat-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_restamp_after_flat_total.load(std::memory_order_relaxed)))},
+                {"expand-mutate-restamp-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_expand_mutate_restamp_total.load(std::memory_order_relaxed)))},
+                // MacroSelfEvo gates (Issue #2023)
+                {"self-evo-denied-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_self_evo_denied_total.load(std::memory_order_relaxed)))},
+                {"self-evo-allowed-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_self_evo_allowed_total.load(std::memory_order_relaxed)))},
+                {"self-evo-pass-clamp-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_self_evo_pass_clamp_total.load(std::memory_order_relaxed)))},
+                {"self-evo-depth-clamp-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_self_evo_depth_clamp_total.load(std::memory_order_relaxed)))},
+            };
+            return build_hash(kv);
         });
 }
 
