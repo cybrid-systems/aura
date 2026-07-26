@@ -10988,12 +10988,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t assigned = qev->get_stable_func_id_assigned_total();
             const std::uint64_t closure_dep = qev->get_aot_closure_dependency_reemit_total();
             const std::uint64_t live_remap = qev->get_live_closure_remap_total();
+            // Issue #2175: legacy sid=0 backfill (independent of name fallback).
+            const std::uint64_t live_backfill = qev->get_live_closure_stable_id_backfill_total();
             // Legacy compact sum path: (engine:metrics "query:..." "sum")
             if (!a.empty() && is_string(a[0])) {
                 auto sidx = as_string_idx(a[0]);
                 if (sidx < string_heap.size() && string_heap[sidx] == "sum") {
                     return make_int(static_cast<std::int64_t>(total + success + preserved +
-                                                              assigned + closure_dep + live_remap));
+                                                              assigned + closure_dep + live_remap +
+                                                              live_backfill));
                 }
             }
             auto* ht = FlatHashTable::create(32);
@@ -11039,6 +11042,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(closure_dep));
             // Issue #2013: live closures retargeted after reemit.
             insert_kv("live_closure_remap_total", static_cast<std::int64_t>(live_remap));
+            // Issue #2175: legacy sid=0 backfill counter (one-shot lookup
+            // per successful backfill during remap walk — fires when
+            // stored_sid == 0 but the name resolves in the live stable map).
+            insert_kv("live_closure_stable_id_backfill_total",
+                      static_cast<std::int64_t>(live_backfill));
+            insert_kv("schema-2175", 2175);
+            insert_kv("issue-2175", 2175);
             // Issue #2016 metrics (may be 0 if CompilerMetrics not wired).
             {
                 auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());

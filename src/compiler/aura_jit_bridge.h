@@ -84,6 +84,12 @@ void* aura_get_aot_metrics(void);
 // Production impl in aura_jit_bridge.cpp; weak stub in
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
+// Issue #2175: legacy sid=0 closures (allocated / set_name'd before
+// their define entered the stable map, or anonymous paths that never
+// set_name) get a one-shot backfill via aura_lookup_stable_func_id
+// during aura_remap_live_closures_after_reemit. Bumped inline by the
+// remap walk under the closure-table lock — no aggregator needed.
+void aura_bump_live_closure_stable_id_backfill_total(std::uint64_t n);
 // Issue #2128: MustDeoptBeforeNextCall metric bumps (runtime → bridge).
 void aura_bump_must_deopt_before_next_call_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n);

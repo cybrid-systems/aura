@@ -172,6 +172,19 @@ extern "C" void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n
     }
 }
 
+// Issue #2175: legacy sid=0 backfill counter (one-shot lookup per
+// successful backfill during aura_remap_live_closures_after_reemit).
+// Independent of the name-fallback path (AC2) — fires whenever the
+// closure has stored_sid == 0 and the name resolves in the live stable
+// map. Tuned so operators can distinguish "legacy closures remapped
+// via backfill" (counter > 0 is healthy) from "name fallback used"
+// (counter > 0 is suspect — strict default keeps it at 0).
+extern "C" void aura_bump_live_closure_stable_id_backfill_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_stable_id_backfill_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2128: metric bumps from aura_jit_runtime (no CompilerMetrics layout).
 extern "C" void aura_bump_must_deopt_before_next_call_total(std::uint64_t n) {
     if (auto* m = aot_metrics()) {

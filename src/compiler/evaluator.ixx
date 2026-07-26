@@ -1868,6 +1868,14 @@ public:
             return m->live_closure_remap_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2175: legacy sid=0 backfill counter (one-shot lookup
+    // per successful backfill during aura_remap_live_closures_after_reemit
+    // — independent of the name-fallback path).
+    [[nodiscard]] std::uint64_t get_live_closure_stable_id_backfill_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     void bump_aot_live_closure_refresh_on_mutation_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

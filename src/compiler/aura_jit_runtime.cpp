@@ -1246,6 +1246,28 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         if (cid < g_closure_stable_func_ids.size())
             cid_stable_id = g_closure_stable_func_ids[cid];
 
+        // Issue #2175: legacy backfill. If the closure was allocated /
+        // set_name'd before its define entered the stable map (or an
+        // anonymous path that never set_name'd), it has stored_sid == 0
+        // and falls through to the deopt-only path. Backfill with a
+        // one-shot lookup against the live stable map; if the name now
+        // resolves, stamp the closure + bump the dedicated counter, then
+        // fall through to the normal membership remap (same path as a
+        // sid-stamped closure). Backfill is independent of
+        // g_remap_name_fallback_enabled — closures with empty name
+        // stay unreemapped (Issue #2175 AC3).
+        bool via_backfill = false;
+        if (cid_stable_id == 0 && cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
+            const std::uint32_t looked_up =
+                aura_lookup_stable_func_id(g_closure_names[cid].c_str());
+            if (looked_up != 0 && reemit_ids.count(looked_up)) {
+                g_closure_stable_func_ids[cid] = looked_up;
+                cid_stable_id = looked_up;
+                via_backfill = true;
+                aura_bump_live_closure_stable_id_backfill_total(1);
+            }
+        }
+
         std::uint32_t match_id = 0;
         bool via_name_fallback = false;
         bool name_candidate_no_remap = false;
@@ -1306,6 +1328,9 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // runtime_shared.h, so we don't touch the struct directly).
         aura_bump_live_closure_remap_name_fallback_total(name_fallback_count);
     }
+    // Issue #2175: backfill counter is bumped inline above (per
+    // successful backfill) — no separate aggregation needed here since
+    // the helper is C-linkage + atomic and called under the table lock.
     // Issue #2128: only residual flags (remap miss) count — remapped
     // candidates cleared must_deopt above.
     const auto still_flagged = must_deopt_set > remapped ? (must_deopt_set - remapped) : 0;
