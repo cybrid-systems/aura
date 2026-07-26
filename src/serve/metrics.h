@@ -360,6 +360,21 @@ struct AdaptiveStealStats {
     // for YieldReason::MutationBoundary. Query surface:
     // query:orchestration-steal-stats schema-2115.
     std::atomic<std::uint64_t> steal_skipped_mutation_boundary_total{0};
+    // Issue #2119: MutationBoundary yield frequency + hold time + pressure.
+    //   yield_mutation_boundary_total: process-wide MB yield count
+    //   yield_mutation_boundary_hold_ns_total: sum of (resume - yield) ns
+    //   steal_starvation_boundary_pressure: sliding-window proxy =
+    //     min(10000, skips * 10000 / max(1, attempts)) basis points of
+    //     recent skip density (updated on each skip)
+    // Adaptive (default OFF): when pressure_bp >= threshold, prefer
+    // non-boundary victims in fiber_steal_priority (lower MB base).
+    std::atomic<std::uint64_t> yield_mutation_boundary_total{0};
+    std::atomic<std::uint64_t> yield_mutation_boundary_hold_ns_total{0};
+    std::atomic<std::uint64_t> steal_starvation_boundary_pressure{0}; // basis points 0..10000
+    std::atomic<std::uint64_t> steal_attempt_sample_total{0};         // for pressure ratio
+    std::atomic<std::uint64_t> adaptive_prefer_non_boundary_total{0};
+    std::atomic<int> adaptive_boundary_policy_enabled{0};                     // 0=off (default AC3)
+    std::atomic<std::uint64_t> adaptive_boundary_pressure_threshold_bp{5000}; // 50%
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {

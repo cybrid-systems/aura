@@ -286,6 +286,21 @@ public:
     // follow-up).
     void bump_yield_mutation_boundary() noexcept {
         yield_mutation_boundary_count_.fetch_add(1, std::memory_order_relaxed);
+        static_yield_mutation_boundary_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2119: process-wide MB yield count (all fibers).
+    [[nodiscard]] static std::uint64_t static_yield_mutation_boundary_total() noexcept {
+        return static_yield_mutation_boundary_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2119: timestamp (steady ns) when last MB yield began; 0 if none.
+    void note_mutation_boundary_yield_enter_ns(std::uint64_t ns) noexcept {
+        mb_yield_enter_ns_.store(ns, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t mutation_boundary_yield_enter_ns() const noexcept {
+        return mb_yield_enter_ns_.load(std::memory_order_relaxed);
+    }
+    void clear_mutation_boundary_yield_enter_ns() noexcept {
+        mb_yield_enter_ns_.store(0, std::memory_order_relaxed);
     }
     void bump_yield_explicit() noexcept {
         yield_explicit_count_.fetch_add(1, std::memory_order_relaxed);
@@ -513,6 +528,8 @@ private:
     static std::atomic<std::uint64_t> static_steal_outermost_mutation_boundary_count_;
     static std::atomic<std::uint64_t> static_steal_inner_mutation_boundary_deferred_count_;
     static std::atomic<std::uint64_t> static_cross_fiber_mutation_safe_steal_count_;
+    // Issue #2119: process-wide MutationBoundary yield count.
+    static std::atomic<std::uint64_t> static_yield_mutation_boundary_total_;
 
     // Trampoline: called when fiber starts
     static void trampoline(uint32_t high, uint32_t low);
@@ -538,6 +555,8 @@ private:
     // Issue #2118: orch agent body soft mutation-boundary window active
     // (per-fiber stack depth registered; steal/GC visibility).
     std::atomic<bool> orch_agent_boundary_active_{false};
+    // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
+    std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
 
     // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;

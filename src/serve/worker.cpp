@@ -259,17 +259,27 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             !stolen->is_at_mutation_boundary_safe()) {
             // Issue #2115 AC4: steal skipped because victim holds a
             // mutation boundary (depth-safe probe failed).
-            metrics::adaptive_steal_stats().steal_skipped_mutation_boundary_total.fetch_add(
-                1, std::memory_order_relaxed);
+            auto& ads = metrics::adaptive_steal_stats();
+            ads.steal_skipped_mutation_boundary_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2119: update boundary starvation pressure (bp).
+            {
+                const auto skips =
+                    ads.steal_skipped_mutation_boundary_total.load(std::memory_order_relaxed);
+                const auto attempts =
+                    ads.steal_attempt_sample_total.fetch_add(1, std::memory_order_relaxed) + 1;
+                // Pressure ≈ skips / max(attempts, skips) as basis points, capped 10000.
+                const auto den = attempts > skips ? attempts : (skips == 0 ? 1 : skips);
+                const auto bp = (skips * 10000ull) / den;
+                ads.steal_starvation_boundary_pressure.store(bp > 10000 ? 10000 : bp,
+                                                             std::memory_order_relaxed);
+            }
             // Issue #2118: orch agent soft-boundary steal skip (C ABI; no orch dep).
             if (stolen->orch_agent_boundary_active() && aura_orch_note_agent_steal_skipped_boundary)
                 aura_orch_note_agent_steal_skipped_boundary();
             stolen->bump_steal_deferred_mutation_boundary();
             call_steal_deferred_violation();
-            metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
-                1, std::memory_order_relaxed);
-            metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,
-                                                                         std::memory_order_relaxed);
+            ads.global_deferred_mutation_total.fetch_add(1, std::memory_order_relaxed);
+            ads.mutation_bias_hits.fetch_add(1, std::memory_order_relaxed);
             if (stolen->is_at_inner_mutation_boundary()) {
                 // #1633 AC1: bump_deferred_inner + apply_starvation_mitigation + defer
                 stolen->bump_steal_inner_mutation_boundary_deferred();

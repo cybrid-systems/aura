@@ -7,6 +7,7 @@
 // #1950 / #1953 / #1954 for the deferred correctness work.
 #include "fiber.h"
 #include "scheduler.h"
+#include "metrics.h"                      // Issue #2119: adaptive_steal_stats yield/hold
 #include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
 #include "../compiler/shape.h"            // Issue #570: record_shape_fiber_refresh
 #include "aura_platform.h"
@@ -133,6 +134,7 @@ extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total
 std::atomic<std::uint64_t> Fiber::static_steal_outermost_mutation_boundary_count_{0};
 std::atomic<std::uint64_t> Fiber::static_steal_inner_mutation_boundary_deferred_count_{0};
 std::atomic<std::uint64_t> Fiber::static_cross_fiber_mutation_safe_steal_count_{0};
+std::atomic<std::uint64_t> Fiber::static_yield_mutation_boundary_total_{0};
 // The runtime-side hook installer (defined in
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
@@ -328,6 +330,21 @@ void Fiber::resume() {
         return;
     }
 
+    // Issue #2119: close MutationBoundary yield hold-time sample.
+    if (last_yield_reason() == YieldReason::MutationBoundary) {
+        const auto enter = mutation_boundary_yield_enter_ns();
+        if (enter != 0) {
+            using namespace std::chrono;
+            const auto now = static_cast<std::uint64_t>(
+                duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count());
+            if (now >= enter) {
+                metrics::adaptive_steal_stats().yield_mutation_boundary_hold_ns_total.fetch_add(
+                    now - enter, std::memory_order_relaxed);
+            }
+            clear_mutation_boundary_yield_enter_ns();
+        }
+    }
+
     auto prev = g_current_fiber;
     g_current_fiber = this;
     // Issue #213 Cycle 3: also update the Evaluator's
@@ -470,6 +487,15 @@ void Fiber::yield(YieldReason reason) {
             break;
         case YieldReason::MutationBoundary:
             fb->bump_yield_mutation_boundary();
+            // Issue #2119: process-wide total + hold-time start (resume closes).
+            {
+                using namespace std::chrono;
+                const auto ns = static_cast<std::uint64_t>(
+                    duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count());
+                fb->note_mutation_boundary_yield_enter_ns(ns);
+                metrics::adaptive_steal_stats().yield_mutation_boundary_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             aura::compiler::shape::record_shape_fiber_refresh();
             break;
         case YieldReason::Explicit:
