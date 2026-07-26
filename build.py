@@ -6,7 +6,7 @@ Usage:
   ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
   ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
   ./build.py check            # gate + ci（与 CI 相同）
-  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap + inventory
+  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap + aot-stamp + inventory
   ./build.py gate --fix       # 同上，但 auto-regen docs/registry/inventory + lint/format --fix（#1572/#1957）
   ./build.py gate --scripts-only  # 跳过 clang-format（脚本-only,无 C++ 编译）
   ./build.py legacy-test-inventory  # #1957 inventory freshness (--fix to regen)
@@ -30,6 +30,7 @@ Usage:
   ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
   ./build.py dead-heap-push    # dead string_heap_ push audit --strict（#1668）
   ./build.py catch-silent-swallow  # catch(...) SILENCE-PRIM audit --strict（#1669）
+  ./build.py aot-env-linear-stamp  # AOT mangle (0,0) env/linear stamp fence（#2091/#2168）
   ./build.py repro [--verify]  # 可复现 Release 构建（#675）
 
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
@@ -1637,6 +1638,46 @@ def cmd_orch_mvp_scope():
     return 0
 
 
+def cmd_aot_env_linear_stamp():
+    """Issue #2091 / #2168: forbid literal (0,0) env/linear on production mangle/emit.
+
+    Runs scripts/check_aot_env_linear_stamp_coverage.py as a hard gate:
+    any production call to mangle_aot_name / aot_link_name that passes
+    literal (0, 0) without `# 2091-allow-zero` (or `# 2091-legacy`) fails
+    the build. Tests/stubs/header defaults remain allowed (script skip list).
+    """
+    print(f"{B}═══ AOT env/linear stamp coverage (#2091 / #2168) ═══{N}")
+    script = ROOT / "scripts" / "check_aot_env_linear_stamp_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    # Unit tests for the linter itself (annotation contract + self-test).
+    ut = ROOT / "tests" / "python" / "test_aot_env_linear_stamp_gate.py"
+    if ut.exists():
+        r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
+        if r0.returncode != 0:
+            fail("test_aot_env_linear_stamp_gate unit tests failed")
+            return 1
+    # Built-in self-test (bridge TU has no bare (0,0)).
+    r_st = subprocess.run(
+        [sys.executable, str(script), "--self-test"],
+        cwd=ROOT,
+    )
+    if r_st.returncode != 0:
+        fail("aot env/linear stamp self-test failed (aura_jit_bridge.cpp regression)")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail(
+            "production mangle_aot_name/aot_link_name passes literal (0,0) — "
+            "thread live env/linear via aot_resolve_emit_* or add "
+            "`# 2091-allow-zero` (see aot_mangle.h / #2168)"
+        )
+        return 1
+    ok("aot env/linear stamp coverage clean (no bare (0,0) emit paths)")
+    return 0
+
+
 def cmd_legacy_test_inventory():
     """Issue #1957: living legacy test inventory freshness check.
 
@@ -1683,6 +1724,7 @@ def cmd_gate():
     Issue #1957: also runs legacy test inventory --check (regen with --fix).
     Issue #1966: also runs orch MVP scope linter (--strict; removed multi-agent symbols).
     Issue #2057: also runs side-effect security coverage (--strict).
+    Issue #2168: also runs AOT env/linear stamp coverage (forbid bare (0,0) mangle).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1715,6 +1757,7 @@ def cmd_gate():
         or cmd_catch_silent_swallow()
         or cmd_mutation_guard_coverage()
         or cmd_orch_mvp_scope()
+        or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
     )
 
@@ -2369,6 +2412,7 @@ def main():
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "mutation-guard-coverage": cmd_mutation_guard_coverage,
         "orch-mvp-scope": cmd_orch_mvp_scope,
+        "aot-env-linear-stamp": cmd_aot_env_linear_stamp,
         "legacy-test-inventory": cmd_legacy_test_inventory,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
