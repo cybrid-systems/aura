@@ -24,7 +24,9 @@ import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
 import aura.compiler.lowering_linear_types;
 import aura.core.ast;
+import aura.core.arena;
 import aura.core.lifetime_pin;
+import aura.core.envframe_lifetime;
 
 namespace aura::compiler::primitives_detail {
 
@@ -793,6 +795,20 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"batch-ffi-present-wired", make_int(1)},
                 {"schema-2048", make_int(2048)},
                 {"issue-2048", make_int(2048)},
+                // Issue #2157: Force live_compact hard-mutex with pin / EnvFrame hold.
+                {"force-blocked-by-pin-total",
+                 make_int(static_cast<std::int64_t>(aura::ast::g_force_compact_blocked_by_pin_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"force-blocked-by-envframe-guard-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::ast::g_force_compact_blocked_by_envframe_guard_total.load(
+                         std::memory_order_relaxed)))},
+                {"envframe-active-guard-depth",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::envframe_lifetime::active_guard_depth()))},
+                {"schema-2157", make_int(aura::ast::kForceCompactHardMutexIssue)},
+                {"issue-2157", make_int(2157)},
+                {"force-hard-mutex-wired", make_int(1)},
             };
             return build_kv_hash(ev, kv);
         });

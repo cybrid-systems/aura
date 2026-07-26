@@ -59,8 +59,21 @@ struct EnvFrameLifetimeStats {
 
 inline EnvFrameLifetimeStats g_envframe_lifetime_stats{};
 
+// Issue #2157: process-wide active EnvFrameLifetimeGuard depth so arena
+// Force live_compact can hard-gate without importing Evaluator.
+// Ctor +1 / dtor -1 (saturating sub). Query via active_guard_depth().
+inline std::atomic<std::uint64_t>& g_envframe_active_guard_depth() noexcept {
+    static std::atomic<std::uint64_t> d{0};
+    return d;
+}
+
+[[nodiscard]] inline std::uint64_t active_guard_depth() noexcept {
+    return g_envframe_active_guard_depth().load(std::memory_order_acquire);
+}
+
 inline void reset_envframe_lifetime_stats() noexcept {
     g_envframe_lifetime_stats = {};
+    g_envframe_active_guard_depth().store(0, std::memory_order_relaxed);
 }
 
 inline std::uint64_t envframe_lifetime_guards_constructed() noexcept {
@@ -94,8 +107,18 @@ public:
         : host_(host)
         , site_(site) {
         ++g_envframe_lifetime_stats.guards_constructed;
+        // Issue #2157: publish hold so Force live_compact can hard-mutex.
+        g_envframe_active_guard_depth().fetch_add(1, std::memory_order_acq_rel);
     }
     ~EnvFrameLifetimeGuard() noexcept {
+        // Drop depth before scan so concurrent Force can proceed after hold.
+        auto cur = g_envframe_active_guard_depth().load(std::memory_order_relaxed);
+        for (;;) {
+            const auto next = cur > 0 ? cur - 1 : 0;
+            if (g_envframe_active_guard_depth().compare_exchange_weak(
+                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
+                break;
+        }
         ++g_envframe_lifetime_stats.guards_destructed;
         if (host_.scan_skip_freed && host_.ctx) {
             host_.scan_skip_freed(host_.ctx, site_);

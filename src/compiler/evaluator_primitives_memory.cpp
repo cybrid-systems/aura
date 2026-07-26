@@ -585,9 +585,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                         std::memory_order_relaxed),
                     std::memory_order_relaxed);
             }
+            // Capacity 32: #1518 production keys + #2157 Force hard-mutex counters.
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(32);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -648,6 +649,18 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 {"soft-gated-boundary",
                  make_int(m ? load(m->arena_compact_soft_gated_boundary_total) : 0)},
                 {"schema", make_int(1518)},
+                // Issue #2157: Force hard-mutex blocked counters (process-wide).
+                // This registration wins over obs_eval p11 (same name, later ctor path).
+                {"force-blocked-by-pin-total",
+                 make_int(static_cast<std::int64_t>(aura::ast::g_force_compact_blocked_by_pin_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"force-blocked-by-envframe-guard-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::ast::g_force_compact_blocked_by_envframe_guard_total.load(
+                         std::memory_order_relaxed)))},
+                {"schema-2157", make_int(aura::ast::kForceCompactHardMutexIssue)},
+                {"issue-2157", make_int(aura::ast::kForceCompactHardMutexIssue)},
+                {"force-hard-mutex-wired", make_int(1)},
             };
             return build_hash(kv);
         });

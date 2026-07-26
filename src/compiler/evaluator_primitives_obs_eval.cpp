@@ -1632,7 +1632,8 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 invalidated =
                     m->arena_live_compact_invalidated_pins_total.load(std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(8);
+            // Capacity 32: schema-2004 keys + #2157 Force hard-mutex counters.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1666,6 +1667,18 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gen-restamps-total", static_cast<std::int64_t>(restamps));
             insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
             insert_kv("schema", 2004);
+            // Issue #2157: Force hard-mutex blocked counters (process-wide).
+            insert_kv(
+                "force-blocked-by-pin-total",
+                static_cast<std::int64_t>(aura::ast::g_force_compact_blocked_by_pin_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("force-blocked-by-envframe-guard-total",
+                      static_cast<std::int64_t>(
+                          aura::ast::g_force_compact_blocked_by_envframe_guard_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2157", aura::ast::kForceCompactHardMutexIssue);
+            insert_kv("issue-2157", aura::ast::kForceCompactHardMutexIssue);
+            insert_kv("force-hard-mutex-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
