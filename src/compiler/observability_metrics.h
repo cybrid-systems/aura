@@ -6975,6 +6975,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> boundary_reemit_success_total{0};        // #2090
     std::atomic<std::uint64_t> boundary_reemit_throttled_total{0};      // #2090
     std::atomic<std::uint64_t> boundary_batch_deopt_unmatched_total{0}; // #2090
+    // ── Issue #2120: outermost MutationBoundaryGuard exit order phases ──
+    // Unified exit pipeline (AC5): workspace exit/defuse → linear+dual-path+
+    // LifetimePin probes → panic commit/restore + GC defer drain →
+    // hot-update reemit/epoch → flush + depth_slot-- + unlock LAST.
+    // Each phase counter bumps once per outermost dtor that reaches that
+    // phase; outermost_exit_order_complete_total marks full pipeline.
+    // Nested guards do not bump (outer owns the pipeline).
+    // Exposed via query:mutation-boundary-hold-stats (schema-2120).
+    std::atomic<std::uint64_t> outermost_exit_phase1_probes_total{0};   // #2120
+    std::atomic<std::uint64_t> outermost_exit_phase3_gc_defer_total{0}; // #2120
+    std::atomic<std::uint64_t> outermost_exit_phase4_reemit_total{0};   // #2120
+    std::atomic<std::uint64_t> outermost_exit_phase5_unlock_total{0};   // #2120
+    std::atomic<std::uint64_t> outermost_exit_order_complete_total{0};  // #2120
     // Issue #2114: reemit ↔ MutationBoundary handshake (mirrors HotUpdateRegistry;
     // primary counters live on registry snapshot / query:hot-update-registry-stats).
     // Prefer registry atomics; these optional mirrors exist for dump export.
