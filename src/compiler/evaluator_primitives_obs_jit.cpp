@@ -10297,6 +10297,15 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("orch_agent_body_try_acquire_wired", 1);
             insert_kv("orch_spawn_memory_preflight_wired", 1);
             insert_kv("schema-1880", 1880);
+            // Issue #2155: storm-clean gauges (usage must restore after rejects).
+            insert_kv("fibers_used", static_cast<std::int64_t>(
+                                         pq.used(aura::core::resource_quota::Dimension::Fibers)));
+            insert_kv("agent-arena-usage-bytes",
+                      static_cast<std::int64_t>(
+                          pq.agent_arena_usage_bytes.load(std::memory_order_relaxed)));
+            insert_kv("schema-2155", 2155);
+            insert_kv("issue-2155", 2155);
+            insert_kv("spawn-quota-no-leak-wired", 1);
             insert_kv("issue", 1634);  // primary lineage id (1628|1618|1600…)
             insert_kv("schema", 1634); // keep stable; Agents use schema-1880 for #1880 fields
             auto hidx = g_hash_tables.size();

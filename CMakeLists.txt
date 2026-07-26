@@ -2195,6 +2195,11 @@ aura_add_issue_test(test_join_drain_timeout_2153)
 aura_issue_test_link_llvm_jit(test_join_drain_timeout_2153)
 add_dependencies(all_test_issue_targets test_join_drain_timeout_2153)
 
+# Issue #2155: quota-reject spawn path — no name-table put + arena no-leak.
+aura_add_issue_test(test_spawn_quota_no_leak_2155)
+aura_issue_test_link_llvm_jit(test_spawn_quota_no_leak_2155)
+add_dependencies(all_test_issue_targets test_spawn_quota_no_leak_2155)
+
 # Issue #2119: MutationBoundary yield hold + steal starvation metrics + adaptive.
 aura_add_issue_test(test_boundary_yield_steal_metrics_2119)
 aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics_2119)
