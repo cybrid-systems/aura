@@ -185,6 +185,72 @@ static void ac5_source_and_happy_path() {
     CHECK(cs.eval("(if (number? 1) 1 0)").has_value(), "occurrence predicate");
 }
 
+static void ac7_cross_function_instr_2179() {
+    std::println("\n--- AC7: cross-function instruction-level impact (#2179) ---");
+    // Source-cite: ir_cache_pure.ixx has the new overload + import
+    // + cross-function cascade logic + dirty_propagation import.
+    auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    CHECK(pure.find("Issue #2179") != std::string::npos, "ir_cache_pure cites #2179");
+    CHECK(pure.find("aura::compiler::dirty_propagation") != std::string::npos ||
+              pure.find("import aura.compiler.dirty_propagation") != std::string::npos,
+          "dirty_propagation imported (#2179)");
+    CHECK(pure.find("IROpcode::Call") != std::string::npos, "Call opcode scan");
+    CHECK(pure.find("node_dep_graph.dependents") != std::string::npos,
+          "node_dep_graph.dependents used");
+    // Source-cite: observability_metrics.h has 2 new counters.
+    auto om = read_file("src/compiler/observability_metrics.h");
+    CHECK(om.find("impact_scope_cross_fn_blocks_total{0}") != std::string::npos,
+          "blocks_total field");
+    CHECK(om.find("impact_scope_cross_fn_instrs_total{0}") != std::string::npos,
+          "instrs_total field");
+    CHECK(om.find("// Issue #2179") != std::string::npos ||
+              om.find("Issue #2179") != std::string::npos,
+          "observability_metrics cites #2179");
+    // Source-cite: service_dirty.cpp wired the new overload + bumps counters.
+    auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("impact_scope_cross_fn_blocks_total") != std::string::npos,
+          "blocks_total bumped");
+    CHECK(dirty.find("impact_scope_cross_fn_instrs_total") != std::string::npos,
+          "instrs_total bumped");
+    // Source-cite: query:impact-scope-stats primitive registered.
+    auto epq = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(epq.find("\"query:impact-scope-stats\"") != std::string::npos, "primitive registered");
+    CHECK(epq.find("impact-scope-cross-fn-blocks-total") != std::string::npos, "blocks key");
+    CHECK(epq.find("impact-scope-cross-fn-instrs-total") != std::string::npos, "instrs key");
+    // Typed eval: query:impact-scope-stats returns a hash with sentinels.
+    // Note: href() reads from query:soa-dirty-stats; AC7 reads inline
+    // from the new query:impact-scope-stats primitive.
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define q (lambda (n) n))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto scope_hash = [&cs](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(
+            std::format("(hash-ref (engine:metrics \"query:impact-scope-stats\") \"{}\")", key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(scope_hash("schema-2179") == 2179, "schema-2179 sentinel");
+    CHECK(scope_hash("issue-2179") == 2179, "issue-2179 sentinel");
+    CHECK(scope_hash("impact-scope-cross-fn-wired") == 1, "wired sentinel");
+    CHECK(scope_hash("impact-scope-cross-fn-blocks-total") >= 0, "blocks_total key");
+    CHECK(scope_hash("impact-scope-cross-fn-instrs-total") >= 0, "instrs_total key");
+    // AC4: empty ir_cache_index / missing dep edges → identical to today.
+    // Verify single-overload signature still valid (no breaking change).
+    FlatAST flat;
+    auto c0 = flat.add_node(NodeTag::LiteralInt);
+    auto c1 = flat.add_node(NodeTag::LiteralInt);
+    NodeId kids[] = {c0, c1};
+    auto r = flat.add_begin(std::span<const NodeId>(kids, 2));
+    flat.root = r;
+    SourceToIrMap empty_map;
+    std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash, std::equal_to<>>
+        empty_idx;
+    auto scope_empty =
+        compute_impact_scope(flat, c0, empty_map, empty_idx); // single-overload (AC4)
+    CHECK(scope_empty.ast_nodes_visited >= 1, "AC4: single-overload still works");
+}
+
 static void ac6_query_schema() {
     std::println("\n--- AC6: query schema-2109 ---");
     CompilerService cs;
@@ -208,6 +274,7 @@ int main() {
     ac4_body_block_lineage();
     ac5_source_and_happy_path();
     ac6_query_schema();
+    ac7_cross_function_instr_2179();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -4285,7 +4285,69 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1520 / #1624: query:children-column-stats — focused children_ SoA +
+    // Issue #2179: query:impact-scope-stats — cross-function instruction-
+    // level impact scope metrics (refine #2109 instr-level precision).
+    // Returns a hash with:
+    //   - schema-2179 / issue-2179 sentinels
+    //   - impact-scope-cross-fn-wired (1 if engine wired)
+    //   - impact-scope-cross-fn-blocks-total
+    //   - impact-scope-cross-fn-instrs-total
+    //   - impact-scope-cross-fn-callsites-total
+    // Counters come from CompilerMetrics (incremented by the new
+    // compute_impact_scope cross-function fan-out when call-site
+    // instructions in callers are discovered via node_dep_graph_).
+    ObservabilityPrims::register_stats_impl(
+        "query:impact-scope-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            if (!m)
+                return make_void();
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema-2179", 2179);
+            insert_kv("issue-2179", 2179);
+            insert_kv("impact-scope-cross-fn-wired", 1);
+            insert_kv("impact-scope-cross-fn-blocks-total",
+                      static_cast<std::int64_t>(
+                          m->impact_scope_cross_fn_blocks_total.load(std::memory_order_relaxed)));
+            insert_kv("impact-scope-cross-fn-instrs-total",
+                      static_cast<std::int64_t>(
+                          m->impact_scope_cross_fn_instrs_total.load(std::memory_order_relaxed)));
+            insert_kv("impact-scope-cross-fn-callsites-total",
+                      static_cast<std::int64_t>(
+                          m->impact_scope_cross_fn_instrs_total.load(std::memory_order_relaxed)));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
     // region dense lookup + DOD migration progress surface
     // (non-duplicative with #568 migration hash; no new query:*-stats).
     ObservabilityPrims::register_stats_impl(

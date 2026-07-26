@@ -6346,6 +6346,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_fail_linear_total{0};  // #2093
     std::atomic<std::uint64_t> aot_reload_fail_staging_total{0}; // #2093
     std::atomic<std::uint64_t> aot_reload_fail_other_total{0};   // #2093
+    // Issue #2179: cross-function instruction-level impact scope
+    // counters (refine #2109). Increments when compute_impact_scope
+    // discovers call-site instructions in callers via node_dep_graph_
+    // (or name-keyed ir_cache_index fan-out) that need precise dirty
+    // when the mutated root is called from elsewhere. AC3 metric —
+    // surfaces on query:impact-scope-stats primitive.
+    std::atomic<std::uint64_t> impact_scope_cross_fn_blocks_total{0}; // #2179
+    std::atomic<std::uint64_t> impact_scope_cross_fn_instrs_total{0}; // #2179
     // Issue #2178: cross-workspace / cross-COW hot-update reject counter.
     // Bumped when aura_reload_aot_module_for_eval / reemit callbacks are
     // invoked with a foreign eval_ptr (or when COW generation diverges).

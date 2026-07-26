@@ -42,6 +42,7 @@ export module aura.compiler.ir_cache_pure;
 
 import aura.core.ast;
 import aura.compiler.ir;
+import aura.compiler.dirty_propagation; // DepGraph (Issue #2179)
 
 export namespace aura::compiler {
 
@@ -239,6 +240,94 @@ ImpactScope compute_impact_scope(
     };
     walk(walk, root);
     (void)ir_cache_index; // reserved for cross-function cascade
+    return result;
+}
+
+// Issue #2179: cross-function instruction-level impact scope
+// (refine #2109). When the mutated root's define has callers in
+// node_dep_graph_ (encoded fn-name slots), scan each caller's IR
+// for Call instructions whose callee matches the mutated_name and
+// emit precise (caller_func, caller_block, caller_instr) into
+// affected_instrs. Same block also goes into affected_blocks.
+//
+// AC1: precise call-site instrs in callers (not whole nested lambdas
+// that do not free-ref the name).
+// AC4: empty irs OR empty mutated_name OR empty node_dep_graph_ →
+// behavior identical to today (local subtree only — no cross-fn
+// fan-out). Single-overload callers are unchanged.
+inline ImpactScope compute_impact_scope(
+    const aura::ast::FlatAST& flat, aura::ast::NodeId root, const SourceToIrMap& source_to_ir_map,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>& ir_cache_index,
+    const std::vector<aura::ir::IRFunction>& irs,
+    const aura::compiler::dirty::DepGraph& node_dep_graph, const std::string& mutated_name) {
+    // Run the single-function walk first.
+    auto result = compute_impact_scope(flat, root, source_to_ir_map, ir_cache_index);
+    // AC4 guard: empty irs / missing mutated_name / missing dep edges
+    // → identical to today (skip cross-fn fan-out entirely).
+    if (irs.empty() || mutated_name.empty() || node_dep_graph.adj.empty()) {
+        return result;
+    }
+    // Find mutated_name's slot via ir_cache_index; if not present,
+    // there's no NodeId-encoding for it — fall back to silent skip.
+    auto slot_it = ir_cache_index.find(mutated_name);
+    if (slot_it == ir_cache_index.end())
+        return result;
+    const auto mutated_slot = static_cast<std::uint32_t>(slot_it->second);
+    // encode_fn_node convention (dirty_propagation.ixx):
+    //   kFnNodeTag = 0x80000000u
+    //   mutated_nid = 0x80000000u | (mutated_slot & 0x7FFFFFFFu)
+    constexpr aura::ast::NodeId kFnNodeTag = 0x80000000u;
+    const auto mutated_nid = static_cast<aura::ast::NodeId>(
+        kFnNodeTag | (static_cast<aura::ast::NodeId>(mutated_slot) & 0x7FFFFFFFu));
+    // Look up callers of mutated fn via node_dep_graph.dependents.
+    const auto* callers = node_dep_graph.dependents(mutated_nid);
+    if (!callers || callers->empty())
+        return result;
+    // For each caller fn (NodeId-encoded slot), scan its IR for
+    // Call instructions whose operand[0] (callee slot) resolves to
+    // the mutated function. Emit (caller_func, caller_block,
+    // caller_instr) into affected_instrs.
+    std::unordered_set<std::uint64_t> seen_blocks_cf;
+    std::unordered_set<std::uint64_t> seen_instrs_cf;
+    for (const auto& caller_nid : *callers) {
+        const auto caller_slot =
+            static_cast<std::uint32_t>(static_cast<uint32_t>(caller_nid) & 0x7FFFFFFFu);
+        if (caller_slot == 0 || caller_slot > irs.size())
+            continue;
+        const auto caller_func_idx = static_cast<std::size_t>(caller_slot - 1u);
+        const auto& fn = irs[caller_func_idx];
+        for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fn.blocks.size()); ++bi) {
+            const auto& blk = fn.blocks[bi];
+            for (std::uint32_t ii = 0; ii < static_cast<std::uint32_t>(blk.instructions.size());
+                 ++ii) {
+                const auto& ins = blk.instructions[ii];
+                // Only Call instructions can reference a callee function.
+                if (ins.opcode != aura::ir::IROpcode::Call)
+                    continue;
+                // Operand[0] is the callee slot — resolve to name via
+                // ir_cache_index. If it matches mutated_name, this
+                // call site is impacted by the mutation.
+                if (ins.operands[0] >= irs.size())
+                    continue;
+                const auto& callee_fn = irs[ins.operands[0]];
+                if (callee_fn.name != mutated_name)
+                    continue;
+                const auto bkey_cf = (static_cast<std::uint64_t>(caller_func_idx) << 32) |
+                                     static_cast<std::uint64_t>(bi);
+                if (seen_blocks_cf.insert(bkey_cf).second) {
+                    result.affected_blocks.push_back({caller_func_idx, bi});
+                }
+                const auto ikey_cf = (static_cast<std::uint64_t>(caller_func_idx) << 40) |
+                                     (static_cast<std::uint64_t>(bi) << 20) |
+                                     static_cast<std::uint64_t>(ii);
+                if (seen_instrs_cf.insert(ikey_cf).second) {
+                    result.affected_instrs.push_back({caller_func_idx, bi, ii});
+                    ++result.instr_level_hits;
+                }
+            }
+        }
+    }
     return result;
 }
 
