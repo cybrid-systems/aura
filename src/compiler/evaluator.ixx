@@ -13070,6 +13070,34 @@ public:
     // fallback otherwise. Applies CoercionMap before return.
     // Issue #1769: exception-safe (see run_typecheck_no_lock).
     bool run_post_mutate_typecheck_no_lock();
+
+    // ── Issue #2144: Guard-exit selective predicate-memo + occurrence ──
+    //
+    // Long-lived InferenceEngine (opaque) retains predicate_memo_ across
+    // multi-round mutate so selective invalidation can drop only affected
+    // entries (unrelated survive — not LRU-thrashed). Constructed lazily
+    // against ensure_type_registry(); rebuilt when registry generation changes.
+    //
+    // Called from exit_mutation_boundary on outermost success when
+    // nodes_changed > 0 or occurrence-dirty Ifs exist. Early-outs when
+    // the affected set is empty (AC4).
+    void refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
+                                          std::uint64_t nodes_changed) noexcept;
+    // Cache epoch for Guard-exit / infer_flat_partial stamp (defuse_version).
+    [[nodiscard]] std::uint64_t current_cache_epoch() const noexcept;
+    // Test / Agent accessor: non-null after first successful refresh.
+    [[nodiscard]] void* guard_infer_engine() noexcept { return guard_infer_engine_opaque_; }
+    [[nodiscard]] const void* guard_infer_engine() const noexcept {
+        return guard_infer_engine_opaque_;
+    }
+
+private:
+    // Opaque InferenceEngine* + DiagnosticCollector* (#2144). Managed only
+    // in evaluator_typecheck.cpp (avoids type_checker import in this iface).
+    void* guard_infer_engine_opaque_ = nullptr;
+    void* guard_infer_diag_opaque_ = nullptr;
+    std::uint64_t guard_infer_registry_gen_ = 0;
+    void destroy_guard_infer_engine() noexcept;
 };
 
 

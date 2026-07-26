@@ -383,14 +383,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // linear_post_mutate_enforcements / guard_dirty_epoch.
     bump_linear_post_mutate_enforcement();
     // Issue #2068 Phase 2 / #2104: selective predicate-memo invalidation is
-    // wired in TypeChecker::infer_flat_partial (dirty var_names + min_gen
-    // before reanalyze_occurrence_contexts). Post-mutate typecheck
-    // (run_post_mutate_typecheck_no_lock, mutate:rebind Guard) and
-    // typecheck-incremental invoke that path. Empty dirty → zero cost.
-    // Prefer selective when var set known; #1923 node invalidate still runs.
+    // also wired in TypeChecker::infer_flat_partial (dirty var_names + min_gen
+    // before reanalyze_occurrence_contexts) for post-mutate typecheck /
+    // typecheck-incremental. Issue #2144: outermost Guard success also
+    // calls refresh_occurrence_on_guard_exit (below, with cascade) so
+    // multi-round mutate:* does not wait for query:type / full infer.
+    // Empty dirty → zero cost (AC4 early exit).
     // Issue #555 / #518: selective_recheck_count_ is
-    // bumped from infer_flat_partial's
-    // reanalyze_occurrence_contexts path, not here.
+    // bumped from reanalyze_occurrence_contexts paths.
     // Issue #2102: always consume provenance-miss flag on boundary exit
     // (even without workspace) so TLS does not stick across tests/fibers.
     // Count force-audit metric here; Full-path invariant suite still needs
@@ -473,6 +473,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // invalidate. Scoped to mutation-log targets + staged defuse
         // names (not a global flush). No-op when log empty.
         push_post_mutate_incremental_cascade(cp.mutation_log_size);
+        // Issue #2144: selective predicate-memo invalidate + occurrence
+        // reanalyze on outermost success exit only (long-lived engine).
+        // Nested guards defer to outer; after cascade so dirty bits stamp.
+        if (!nested_boundary)
+            refresh_occurrence_on_guard_exit(cp.mutation_log_size, nodes_changed);
         // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
         // trail + real invariant suite on mutation boundary hot path.
         // Contextual sampling (#1894) forces audit for large dirty / linear.

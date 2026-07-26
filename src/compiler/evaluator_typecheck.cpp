@@ -7,6 +7,7 @@ module;
 #include "typed_mutation_audit.h"  // Issue #1614 invariant audit
 #include "security_capabilities.h" // aura_fiber_current_id
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
 
 module aura.compiler.evaluator;
 
@@ -773,6 +774,207 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     if (out_result)
         *static_cast<typed_audit::InvariantAuditResult*>(out_result) = r;
     return r.all_ok();
+}
+
+// ── Issue #2144: Guard-exit selective predicate-memo + occurrence ─────
+
+std::uint64_t Evaluator::current_cache_epoch() const noexcept {
+    return defuse_version_.load(std::memory_order_relaxed);
+}
+
+void Evaluator::destroy_guard_infer_engine() noexcept {
+    if (guard_infer_engine_opaque_) {
+        delete static_cast<InferenceEngine*>(guard_infer_engine_opaque_);
+        guard_infer_engine_opaque_ = nullptr;
+    }
+    if (guard_infer_diag_opaque_) {
+        delete static_cast<aura::diag::DiagnosticCollector*>(guard_infer_diag_opaque_);
+        guard_infer_diag_opaque_ = nullptr;
+    }
+    guard_infer_registry_gen_ = 0;
+}
+
+void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
+                                                 std::uint64_t nodes_changed) noexcept {
+    // Issue #2144: never throw into Guard dtor.
+    try {
+        auto* m = compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
+        if (m)
+            m->guard_exit_occurrence_refresh_wired.store(1, std::memory_order_relaxed);
+
+        if (!workspace_flat_ || !workspace_pool_) {
+            if (m)
+                m->guard_exit_occurrence_early_skip_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        auto& flat = *workspace_flat_;
+        auto& pool = *workspace_pool_;
+
+        // ── Collect dirty var names + occurrence-dirty If nodes ──
+        std::unordered_set<std::string> dirty_var_names;
+        std::vector<aura::ast::NodeId> occurrence_targets;
+        std::unordered_set<aura::ast::NodeId> occurrence_seen;
+        constexpr auto kOcc =
+            static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+
+        auto note_var = [&](std::string_view nm) {
+            if (!nm.empty())
+                dirty_var_names.insert(std::string(nm));
+        };
+        auto collect_if_dirty = [&](aura::ast::NodeId root) {
+            if (root == aura::ast::NULL_NODE || root >= flat.size())
+                return;
+            std::vector<aura::ast::NodeId> stack{root};
+            std::vector<std::uint8_t> visited(flat.size(), 0);
+            visited[static_cast<std::size_t>(root)] = 1;
+            int hops = 0;
+            while (!stack.empty() && hops < 256) {
+                ++hops;
+                const auto id = stack.back();
+                stack.pop_back();
+                auto v = flat.get(id);
+                if (v.tag == aura::ast::NodeTag::IfExpr) {
+                    // Ensure reanalyze can see this if after structural mutate.
+                    if (!flat.is_dirty_for(id, kOcc) && flat.is_occurrence_stale(id) == 0)
+                        flat.mark_dirty(id, kOcc);
+                    if (occurrence_seen.insert(id).second)
+                        occurrence_targets.push_back(id);
+                }
+                if (v.tag == aura::ast::NodeTag::Variable && v.sym_id != aura::ast::INVALID_SYM)
+                    note_var(pool.resolve(v.sym_id));
+                if ((v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::Let ||
+                     v.tag == aura::ast::NodeTag::LetRec) &&
+                    v.sym_id != aura::ast::INVALID_SYM)
+                    note_var(pool.resolve(v.sym_id));
+                for (auto c : v.children) {
+                    if (c == aura::ast::NULL_NODE || c >= flat.size())
+                        continue;
+                    if (visited[static_cast<std::size_t>(c)])
+                        continue;
+                    visited[static_cast<std::size_t>(c)] = 1;
+                    stack.push_back(c);
+                }
+            }
+        };
+
+        // Also scan any already-stale Ifs workspace-wide (bounded sample).
+        auto collect_existing_stale = [&]() {
+            const std::size_t n = flat.size();
+            const std::size_t cap = n < 4096 ? n : 4096;
+            for (aura::ast::NodeId id = 0; id < cap; ++id) {
+                if (flat.get(id).tag != aura::ast::NodeTag::IfExpr)
+                    continue;
+                if (flat.is_dirty_for(id, kOcc) || flat.is_occurrence_stale(id) != 0) {
+                    if (occurrence_seen.insert(id).second)
+                        occurrence_targets.push_back(id);
+                }
+            }
+        };
+
+        const auto& log = flat.all_mutations();
+        if (mutation_log_begin < log.size()) {
+            for (std::size_t i = mutation_log_begin; i < log.size(); ++i) {
+                const auto& rec = log[i];
+                if (rec.target_node != aura::ast::NULL_NODE)
+                    collect_if_dirty(rec.target_node);
+                if (rec.parent_id != aura::ast::NULL_NODE)
+                    collect_if_dirty(rec.parent_id);
+            }
+        }
+        // Names staged by precise mutates (defuse set).
+        for (const auto& n : defuse_affected_syms_)
+            note_var(n);
+
+        if (nodes_changed == 0)
+            collect_existing_stale();
+
+        // AC4: happy-path mutate without if-predicates / dirty names does
+        // not pay reanalyze. Selective invalidate alone only runs when a
+        // prior Guard exit already built a memo (engine non-null).
+        if (occurrence_targets.empty() &&
+            (dirty_var_names.empty() || guard_infer_engine_opaque_ == nullptr)) {
+            if (m)
+                m->guard_exit_occurrence_early_skip_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        // ── Ensure long-lived InferenceEngine (memo survives rounds) ──
+        void* reg_raw = ensure_type_registry();
+        if (!reg_raw) {
+            if (m)
+                m->guard_exit_occurrence_early_skip_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (guard_infer_engine_opaque_ && guard_infer_registry_gen_ != reg_gen)
+            destroy_guard_infer_engine();
+        if (!guard_infer_engine_opaque_) {
+            auto* diag = new aura::diag::DiagnosticCollector();
+            auto* eng = new InferenceEngine(*reg, *diag);
+            guard_infer_diag_opaque_ = diag;
+            guard_infer_engine_opaque_ = eng;
+            guard_infer_registry_gen_ = reg_gen;
+        }
+        auto* eng = static_cast<InferenceEngine*>(guard_infer_engine_opaque_);
+        eng->set_cache_epoch(current_cache_epoch());
+        if (compiler_metrics_) {
+            // ConstraintSystem metrics pointer (narrowing_dirty_recovery etc.)
+            // InferenceEngine doesn't expose set_metrics directly on all paths;
+            // reanalyze bumps stats_ / narrowing_dirty_recovery_ on the engine.
+        }
+        eng->set_narrowing_observability_hooks([this]() { bump_narrowing_refresh_count(); },
+                                               [this]() { bump_selective_recheck_count(); });
+
+        // ── Selective memo invalidate (preserve unrelated entries) ──
+        const auto dropped_vars = eng->invalidate_predicate_memo_for_var_names(dirty_var_names);
+        const auto epoch = current_cache_epoch();
+        const auto dropped_gen = eng->invalidate_predicate_memo_for_min_gen(epoch > 0 ? epoch : 0);
+        const auto selective_n = dropped_vars + dropped_gen;
+
+        // ── Reanalyze dirty if-contexts; clear kOccurrenceDirty / stale ──
+        std::size_t refreshed = 0;
+        if (!occurrence_targets.empty()) {
+            refreshed = eng->reanalyze_occurrence_contexts(flat, pool, occurrence_targets);
+            // Expand uses for partial recheck bookkeeping (no full infer here).
+            std::vector<aura::ast::NodeId> affected = occurrence_targets;
+            eng->propagate_narrowing_to_uses(flat, pool, affected);
+            (void)affected;
+        }
+
+        // ── Metrics ──
+        if (m) {
+            m->guard_exit_occurrence_refresh_total.fetch_add(1, std::memory_order_relaxed);
+            if (selective_n > 0) {
+                m->guard_exit_selective_invalidate_total.fetch_add(selective_n,
+                                                                   std::memory_order_relaxed);
+                m->predicate_memo_selective_invalidate_total.fetch_add(selective_n,
+                                                                       std::memory_order_relaxed);
+                m->predicate_memo_boundary_selective_total.fetch_add(selective_n,
+                                                                     std::memory_order_relaxed);
+            }
+            if (refreshed > 0) {
+                m->guard_exit_occurrence_reanalyze_total.fetch_add(refreshed,
+                                                                   std::memory_order_relaxed);
+                // reanalyze bumps engine stats once per refreshed if; use
+                // `refreshed` (delta), not the engine lifetime total.
+                m->narrowing_dirty_recovery_total.fetch_add(refreshed, std::memory_order_relaxed);
+            }
+            m->predicate_memo_boundary_selective_wired.store(1, std::memory_order_relaxed);
+        }
+        // Linear ∩ occurrence dirty observability (#747 counters ready).
+        if (refreshed > 0 || !occurrence_targets.empty())
+            linear_occurrence_mutate::record_linear_occurrence_dirty();
+        if (refreshed > 0)
+            linear_occurrence_mutate::record_revalidate_hit();
+
+        (void)nodes_changed;
+    } catch (...) {
+        // [SILENCE-PRIM-#1769] Guard dtor must never throw.
+        if (auto* m =
+                compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr)
+            m->guard_exit_occurrence_early_skip_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 } // namespace aura::compiler
