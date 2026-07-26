@@ -16,6 +16,7 @@ module;
 #include <variant>
 #include <vector>
 #include "runtime_shared.h"
+#include "aura_jit_bridge.h" // #2129: aura_get_aot_live_linear_state_fingerprint
 #include "observability_logger.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "core/provenance_tracker.hh" // Issue #2026: validate_linear_provenance
@@ -363,6 +364,33 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
             if (metrics)
                 metrics->linear_ownership_violation_prevented.fetch_add(1,
                                                                         std::memory_order_relaxed);
+        }
+    }
+    // Issue #2129: stamped linear_state dual-check (frame version + bridge).
+    if (cl.linear_state != 0) {
+        if (metrics)
+            metrics->linear_apply_dual_check_total.fetch_add(1, std::memory_order_relaxed);
+        const auto cur_ver = ev->defuse_version();
+        std::uint64_t frame_ver = cl.env_version != 0 ? cl.env_version : cur_ver;
+        constexpr auto kNullEnv2 = std::numeric_limits<std::uint32_t>::max();
+        if (cl.env_id != kNullEnv2) {
+            // Prefer live frame version when available.
+            const auto eid = static_cast<EnvId>(cl.env_id);
+            if (!ev->is_env_frame_invalid(eid)) {
+                // resolve may be null under race — fall back to env_version.
+                if (const auto* fr = ev->resolve_env_frame(eid))
+                    frame_ver = fr->version_;
+            }
+        }
+        if (!Evaluator::validate_linear_ownership_state(
+                cl.linear_state, frame_ver, cur_ver, cl.bridge_epoch, cur_epoch,
+                metrics ? &metrics->linear_validate_bridge_epoch_drift_total : nullptr)) {
+            stale = true;
+            if (metrics) {
+                metrics->linear_apply_dual_check_reject_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                metrics->linear_runtime_violation_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // Expired views (invalidate cleared flat/pool while epoch still set).
@@ -1402,6 +1430,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // did not stamp one (legacy empty bridge slot).
                         if (ircl.bridge_epoch == 0)
                             ircl.bridge_epoch = context_.evaluator->current_bridge_epoch();
+                        // Issue #2129: stamp linear_state from MakeClosure
+                        // instruction metadata, else host fingerprint.
+                        std::uint8_t lin =
+                            static_cast<std::uint8_t>(instr.linear_ownership_state & 0xFFu);
+                        if (lin == 0)
+                            lin = aura_get_aot_live_linear_state_fingerprint();
+                        ircl.linear_state = lin;
+                        if (lin != 0 && context_.metrics)
+                            context_.metrics->linear_closure_state_stamp_total.fetch_add(
+                                1, std::memory_order_relaxed);
                     }
                     runtime_closures_[id] = std::move(ircl);
                     locals[ops[0]] = make_closure(id);

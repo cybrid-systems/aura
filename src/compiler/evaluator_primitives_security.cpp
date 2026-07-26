@@ -3249,7 +3249,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:linear-ownership-enforcement-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(32); // #2129 keys fold-in
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -3305,6 +3305,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 recommended_action = 1; // tighten policy
             else if (leaks > 0)
                 recommended_action = 2; // audit linear-bindings
+            const std::uint64_t lin_viol =
+                m ? m->linear_runtime_violation_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t stamp_n =
+                m ? m->linear_closure_state_stamp_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t dual_n =
+                m ? m->linear_apply_dual_check_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t dual_rej =
+                m ? m->linear_apply_dual_check_reject_total.load(std::memory_order_relaxed) : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"post-mutate-enforcements", make_int(static_cast<std::int64_t>(enforcements))},
                 {"violations-caught", make_int(static_cast<std::int64_t>(violations))},
@@ -3313,6 +3321,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"leak-prevented", make_int(static_cast<std::int64_t>(leaks))},
                 {"recommended-action", make_int(recommended_action)},
                 {"schema", make_int(672)},
+                // Issue #2129: Closure/JIT linear_state stamp + apply dual-check
+                {"linear-runtime-violation-total", make_int(static_cast<std::int64_t>(lin_viol))},
+                {"linear_runtime_violation_total", make_int(static_cast<std::int64_t>(lin_viol))},
+                {"linear-closure-state-stamp-total", make_int(static_cast<std::int64_t>(stamp_n))},
+                {"linear-apply-dual-check-total", make_int(static_cast<std::int64_t>(dual_n))},
+                {"linear-apply-dual-check-reject-total",
+                 make_int(static_cast<std::int64_t>(dual_rej))},
+                {"linear-state-stamp-wired", make_int(1)},
+                {"schema-2129", make_int(2129)},
+                {"issue-2129", make_int(2129)},
             };
             return build_hash(kv);
         });

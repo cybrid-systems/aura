@@ -461,6 +461,33 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     if (cl_found) {
         if (metrics)
             metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2129: apply dual-check when closure carries linear_state.
+        // Fail → bump linear_runtime_violation + safe fallback / reject.
+        if (cl_copy.linear_state != 0 && metrics) {
+            metrics->linear_apply_dual_check_total.fetch_add(1, std::memory_order_relaxed);
+            const auto cur_ver = defuse_version_.load(std::memory_order_acquire);
+            std::uint64_t frame_ver = cur_ver;
+            if (cl_copy.env_id != NULL_ENV_ID) {
+                std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+                if (cl_copy.env_id < env_frames_.size())
+                    frame_ver = env_frames_[cl_copy.env_id].version_;
+            }
+            const bool lin_ok = validate_linear_ownership_state(
+                cl_copy.linear_state, frame_ver, cur_ver, cl_copy.bridge_epoch,
+                current_bridge_epoch(), &metrics->linear_validate_bridge_epoch_drift_total);
+            if (!lin_ok) {
+                metrics->linear_apply_dual_check_reject_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                metrics->linear_runtime_violation_total.fetch_add(1, std::memory_order_relaxed);
+                metrics->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+                metrics->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                                 metrics, &cl_copy))
+                    return bridged;
+                return std::nullopt;
+            }
+        }
         // Issue #2128: MustDeoptBeforeNextCall — force safe path; never
         // silently eval pre-reemit body after a failed live remount.
         if (cl_copy.must_deopt_before_next_call) {

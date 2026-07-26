@@ -63,6 +63,9 @@ export struct IRClosure {
     // ir_closure_needs_safe_fallback for hygiene-aware dispatch.
     std::uint8_t source_marker = 0;
     std::uint32_t provenance = 0;
+    // Issue #2129: aggregate linear ownership stamp (0=Untracked).
+    // Mirrored into AOT mangle `_lN` and apply dual-check.
+    std::uint8_t linear_state = 0;
 };
 
 // Returned by run_function's Call handler to signal a new call is needed.

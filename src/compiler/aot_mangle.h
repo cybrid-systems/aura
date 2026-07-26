@@ -205,6 +205,10 @@ inline std::string mangle_aot_name(std::string_view original, std::uint32_t disa
     // stamps are still 0 (e.g. before any env/linear tracking
     // has run). Without the flag we still omit the suffix when
     // both are 0 (pre-#2091 legacy back-compat).
+    // Issue #2091 / #2129: emit `_eN_lN` whenever either stamp is non-zero
+    // OR the process-wide force flag is on. Production hosts that track
+    // linear (publish fingerprint / ownership epoch) always thread non-zero
+    // linear_state into this call via generate_registration_c / JIT emit.
     const bool want_env_linear =
         (env_frame_version != 0) || (linear_state != 0) || aot_force_env_linear_suffix();
     if (want_env_linear) {
