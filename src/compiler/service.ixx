@@ -4839,6 +4839,65 @@ public:
         metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #2126: prefer compute_impact_scope instr/block dirty under
+    // get_partial_relower_threshold() instead of mark_all_blocks_dirty.
+    // Returns true when impact dirty was applied (caller skips full mark).
+    // Free-var nested targeting remains a separate backup after this.
+    bool try_apply_impact_minimal_dirty_(IRCacheEntry& entry, const std::string& name,
+                                         aura::ast::NodeId root_hint = aura::ast::NULL_NODE) {
+        auto* flat = evaluator_.workspace_flat();
+        auto* pool = evaluator_.workspace_pool();
+        if (!flat || !pool)
+            return false;
+        aura::ast::NodeId root = root_hint;
+        if (root == aura::ast::NULL_NODE || root >= flat->size()) {
+            auto found = flat->find_define_by_name(*pool, name);
+            if (!found)
+                return false;
+            root = *found;
+        }
+        ensure_source_to_ir_map_(entry);
+        if (entry.source_to_ir_map.empty()) {
+            metrics_.instr_level_impact_prefer_fallback_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
+        std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            ir_cache_index;
+        for (std::size_t fi = 0; fi < entry.irs.size(); ++fi)
+            ir_cache_index[entry.irs[fi].name] = fi;
+        auto scope = compute_impact_scope(*flat, root, entry.source_to_ir_map, ir_cache_index);
+        const auto thr = get_partial_relower_threshold();
+        const bool instr_ok = !scope.affected_instrs.empty() && scope.affected_instrs.size() < thr;
+        const bool block_ok = !scope.affected_blocks.empty() && scope.affected_blocks.size() < thr;
+        if (!instr_ok && !block_ok) {
+            metrics_.instr_level_impact_prefer_fallback_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            if (scope.unmapped_ast_nodes > 0)
+                metrics_.instr_level_impact_misses_total.fetch_add(scope.unmapped_ast_nodes,
+                                                                   std::memory_order_relaxed);
+            return false;
+        }
+        // Prefer instr-granularity when present; else block-only impact.
+        // apply_impact_scope_dirty already handles precise vs block cascade.
+        entry.dirty = true;
+        (void)apply_impact_scope_dirty(entry, scope);
+        metrics_.instr_level_impact_prefer_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.incremental_impact_blocks_hit_total.fetch_add(1, std::memory_order_relaxed);
+        evaluator_.bump_impact_scope_calls(
+            scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size());
+        // Credit nested/__top__ kept clean when impact did not touch them.
+        const auto dirty_fns = entry.dirty_func_count();
+        const auto total_fns = entry.irs.size();
+        if (total_fns > dirty_fns) {
+            metrics_.minimal_recompile_clean_funcs_saved.fetch_add(total_fns - dirty_fns,
+                                                                   std::memory_order_relaxed);
+            metrics_.minimal_recompile_scope_samples.fetch_add(1, std::memory_order_relaxed);
+        }
+        return true;
+    }
+
     // Issue #2031 / #2109: stamp block + instruction dirty bits from
     // ImpactScope. When precise affected_instrs are present, mark block
     // dirty *without* cascading all instructions so clean slots stay

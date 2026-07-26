@@ -2290,6 +2290,11 @@ aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
 aura_add_issue_test(test_stable_ref_tenant_capture_2125)
 aura_issue_test_link_llvm_jit(test_stable_ref_tenant_capture_2125)
 
+# Issue #2126: prefer instr/block impact dirty over nested/quote-lambda
+# mark_all_blocks_dirty full-relower fallback (#2031 / #2109 consumer).
+aura_add_issue_test(test_instr_impact_minimal_dirty_2126)
+aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty_2126)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

@@ -152,6 +152,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> instr_level_impact_hits_total{0};
     std::atomic<std::uint64_t> instr_level_impact_misses_total{0};
     std::atomic<std::uint64_t> instr_level_dirty_marks_total{0};
+    // Issue #2126: mark_define_dirty / invalidate prefer instr|block impact
+    // under partial threshold instead of mark_all_blocks_dirty.
+    //   - instr_level_impact_prefer_total: impact scope applied (instr or block)
+    //   - instr_level_impact_prefer_fallback_total: unmapped / over-threshold
+    //     → body-only or full last resort
+    //   - nested_lambda_full_dirty_avoided_total: nested free-var body-only
+    //     path kept nested clean (did not take mark_all_blocks_dirty)
+    std::atomic<std::uint64_t> instr_level_impact_prefer_total{0};
+    std::atomic<std::uint64_t> instr_level_impact_prefer_fallback_total{0};
+    std::atomic<std::uint64_t> nested_lambda_full_dirty_avoided_total{0};
     // Issue #2045: source_to_ir_map consistency after re-lower.
     //   - source_to_ir_map_rebuild_total: full rebuilds after store / repair
     //   - source_to_ir_map_patch_total: per-function patches after partial

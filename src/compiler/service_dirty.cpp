@@ -139,38 +139,75 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     if (it != ir_cache_v2_.end()) {
         auto& primary = it->second;
         primary.dirty = true;
-        // Issue #1495 / #1505 / #1506: prefer body-only dirty so partial
-        // re-lower wins on set-body.
+        // Issue #1495 / #1505 / #1506 / #2126: prefer impact-scope instr/block
+        // dirty under partial threshold, then body-only; last resort full.
         // Shapes:
         //   - synthetic / dual: irs[0]=__top__, irs[1]=body
         //   - real lower bundle: only non-entry funcs → body at irs[0]
         // Nested (irs[2..N] or >1 with free-ref self): free-var scan.
         const bool nested_primary = primary.irs.size() > 2;
-        // Issue #1915: unified body-only dirty stamp (partial re-lower path).
-        // Issue #2050: render-critical always prefers body-only when possible.
-        const auto body_blocks = primary.mark_body_only_dirty();
-        if (body_blocks > 0 && !primary.irs.empty()) {
+        bool minimal_applied = false;
+        // Issue #2126 AC1/AC2: compute_impact_scope first when source map ready.
+        if (try_apply_impact_minimal_dirty_(primary, name)) {
+            minimal_applied = true;
             if (render_critical)
                 metrics_.render_critical_partial_prefer_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-            // Issue #1505 / #1625: free-var + per-block targeted dirty
-            // of nested lambdas for self (not whole nested fn).
+            // Free-var backup: nested that reference self may be outside
+            // impact map — still target only those blocks, never full entry.
             if (nested_primary) {
                 for (std::size_t fi = 2; fi < primary.irs.size(); ++fi)
                     (void)mark_nested_lambda_blocks_targeted(primary, fi, name);
                 metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
                     1, std::memory_order_relaxed);
+                metrics_.nested_lambda_full_dirty_avoided_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
             metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
             metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
-            metrics_.dirty_propagation_block_marks.fetch_add(body_blocks,
-                                                             std::memory_order_relaxed);
-        } else {
+        }
+        // Issue #1915: unified body-only dirty stamp (partial re-lower path).
+        // Issue #2050: render-critical always prefers body-only when possible.
+        if (!minimal_applied) {
+            const auto body_blocks = primary.mark_body_only_dirty();
+            if (body_blocks > 0 && !primary.irs.empty()) {
+                minimal_applied = true;
+                if (render_critical)
+                    metrics_.render_critical_partial_prefer_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                // Issue #1505 / #1625: free-var + per-block targeted dirty
+                // of nested lambdas for self (not whole nested fn).
+                if (nested_primary) {
+                    for (std::size_t fi = 2; fi < primary.irs.size(); ++fi)
+                        (void)mark_nested_lambda_blocks_targeted(primary, fi, name);
+                    metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics_.nested_lambda_full_dirty_avoided_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                metrics_.dirty_propagation_block_marks.fetch_add(body_blocks,
+                                                                 std::memory_order_relaxed);
+                // Issue #2126 / #1915: credit nested/__top__ left clean.
+                const auto dirty_fns = primary.dirty_func_count();
+                const auto total_fns = primary.irs.size();
+                if (total_fns > dirty_fns) {
+                    metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
+                        total_fns - dirty_fns, std::memory_order_relaxed);
+                    metrics_.minimal_recompile_scope_samples.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                }
+            }
+        }
+        if (!minimal_applied) {
             primary.mark_all_blocks_dirty();
             // Issue #946/#950 Phase 1: instruction dirty bitmask.
             primary.mark_all_instruction_dirty();
             metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
             metrics_.dirty_propagation_full_func_marks.fetch_add(1, std::memory_order_relaxed);
+            metrics_.instr_level_impact_prefer_fallback_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
             if (nested_primary) {
                 metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(1, std::memory_order_relaxed);
             }
@@ -183,9 +220,10 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
         (void)evaluator_.scan_live_closures_for_linear_captures(
             /*mark_invalid=*/true, /*only_if_moved=*/true);
-        // Issue #1920 / #1046: closure capture dirty tracking —
-        // free_vars (captures) on nested / body IR force SoA block
-        // dirty so partial re-lower revisits capture sites.
+        // Issue #1920 / #1046 / #2126: capture dirty tracking — record
+        // metric + free-var targeted nested only. Do NOT
+        // soa_mod.mark_all_blocks_dirty() here: that wiped body-only /
+        // impact-scope precision and forced full re-lower cascades.
         bool has_captures = false;
         for (const auto& irf : primary.irs) {
             if (!irf.free_vars.empty()) {
@@ -193,12 +231,15 @@ void CompilerService::mark_define_dirty(const std::string& name) {
                 break;
             }
         }
-        if (has_captures || primary.irs.size() > 1) {
+        if (has_captures) {
             aura::compiler::ir_soa_migration::record_capture_dirty_mark(1);
-            for (auto& sfn : primary.soa_mod.functions)
-                sfn.mark_all_blocks_dirty();
+            if (nested_primary) {
+                for (std::size_t fi = 2; fi < primary.irs.size(); ++fi)
+                    (void)mark_nested_lambda_blocks_targeted(primary, fi, name);
+            }
         }
-        // Issue #2034: force SoA instruction_dirty_ after primary cascade.
+        // Issue #2034: force SoA instruction_dirty_ after primary cascade
+        // (mirrors existing AoS block/instr bits only — no full wipe).
         finish_cascade_soa_dirty_sync_(primary);
     }
     // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
@@ -307,23 +348,67 @@ void CompilerService::mark_define_dirty(const std::string& name) {
                     }
                 }
                 metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                if (nested_lambdas) {
+                    metrics_.nested_lambda_full_dirty_avoided_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    const auto dirty_fns = centry.dirty_func_count();
+                    const auto total_fns = centry.irs.size();
+                    if (total_fns > dirty_fns) {
+                        metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
+                            total_fns - dirty_fns, std::memory_order_relaxed);
+                        metrics_.minimal_recompile_scope_samples.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
                 // Issue #2034: AoS body bits set directly above —
                 // force SoA instruction_dirty_ parity.
                 finish_cascade_soa_dirty_sync_(centry);
             } else if (nested_lambdas) {
-                // Fallback: no body bitmask → full dirty (pre-#1505).
+                // Issue #2126: no body bitmask layout — prefer body-only
+                // + free-var targeted nested over mark_all_blocks_dirty.
                 centry.dirty = true;
-                centry.mark_all_blocks_dirty();
-                finish_cascade_soa_dirty_sync_(centry);
-                metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
-                metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(1, std::memory_order_relaxed);
+                const auto n = centry.mark_body_only_dirty();
+                if (n > 0) {
+                    for (std::size_t fi = 2; fi < centry.irs.size(); ++fi)
+                        (void)mark_nested_lambda_blocks_targeted(centry, fi, cur);
+                    finish_cascade_soa_dirty_sync_(centry);
+                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics_.nested_lambda_full_dirty_avoided_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    const auto dirty_fns = centry.dirty_func_count();
+                    const auto total_fns = centry.irs.size();
+                    if (total_fns > dirty_fns) {
+                        metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
+                            total_fns - dirty_fns, std::memory_order_relaxed);
+                        metrics_.minimal_recompile_scope_samples.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                } else {
+                    centry.mark_all_blocks_dirty();
+                    finish_cascade_soa_dirty_sync_(centry);
+                    metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics_.instr_level_impact_prefer_fallback_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             } else {
-                // Fallback: convention doesn't hold —
-                // conservatively mark all blocks dirty.
+                // Issue #2126: convention doesn't hold — still try body-only
+                // before full-function degradation.
                 centry.dirty = true;
-                centry.mark_all_blocks_dirty();
-                finish_cascade_soa_dirty_sync_(centry);
-                metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
+                const auto n = centry.mark_body_only_dirty();
+                if (n > 0) {
+                    finish_cascade_soa_dirty_sync_(centry);
+                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    centry.mark_all_blocks_dirty();
+                    finish_cascade_soa_dirty_sync_(centry);
+                    metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.instr_level_impact_prefer_fallback_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             }
         }
     }
@@ -691,8 +776,24 @@ void CompilerService::invalidate_function(const std::string& name) {
                 ir_cache_index[cit->second.irs[fi].name] = fi;
         }
         auto scope = compute_impact_scope(flat, pr.root, source_to_ir, ir_cache_index);
-        if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end())
-            (void)apply_impact_scope_dirty(cit->second, scope);
+        // Issue #2126 AC2: quote/lambda prefers impact instr/block dirty
+        // under threshold; only unmapped/over-threshold falls back to
+        // selective bridge without full AoS wipe (bridge path is selective).
+        const auto thr = get_partial_relower_threshold();
+        const bool instr_ok = !scope.affected_instrs.empty() && scope.affected_instrs.size() < thr;
+        const bool block_ok = !scope.affected_blocks.empty() && scope.affected_blocks.size() < thr;
+        if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end()) {
+            if (instr_ok || block_ok) {
+                (void)apply_impact_scope_dirty(cit->second, scope);
+                metrics_.instr_level_impact_prefer_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                // Still stamp what we have; count as fallback observability.
+                if (!scope.affected_blocks.empty() || !scope.affected_instrs.empty())
+                    (void)apply_impact_scope_dirty(cit->second, scope);
+                metrics_.instr_level_impact_prefer_fallback_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
         selective_invalidate_bridge_for_impact(affected_name, scope);
         metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
             1, std::memory_order_relaxed);
