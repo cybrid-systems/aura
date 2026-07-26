@@ -711,7 +711,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:replace-type",
                [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
                    bool ok = true;
-                   aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+                   // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+                   auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                       ev, /*pending=*/1, &ok);
+                   if (!guard_r) {
+                       return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+                   }
+                   auto guard = std::move(*guard_r);
                    // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
                    if (aura::messaging::g_fiber_yield_mutation_boundary)
                        aura::messaging::g_fiber_yield_mutation_boundary();
@@ -786,7 +792,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "mutate:replace-value",
         [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
             // (Step 0.2/0.3) local merr removed; using centralized make_merr
             // (declared in evaluator.ixx, defined above).
             aura::messaging::g_fiber_yield_mutation_boundary
@@ -909,7 +921,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // restoration needed.
     add_mutate("mutate:record-patch", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         // (Step 0.3 continuation) local merr removed; use centralized make_merr
         aura::messaging::g_fiber_yield_mutation_boundary
             ? aura::messaging::g_fiber_yield_mutation_boundary()
@@ -951,7 +969,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
             // defuse_version_ + rollback. ok = false on every error path.
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return mev("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
             if (ev.workspace_read_only_) {
                 ok = false;
                 return mev("read-only", "workspace is read-only");
@@ -2315,7 +2339,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Issue #213 Cycle 2: MutationBoundaryGuard RAII owns lock + version.
     add_mutate("mutate:remove-node", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         aura::messaging::g_fiber_yield_mutation_boundary
             ? aura::messaging::g_fiber_yield_mutation_boundary()
             : (void)0; // safe point before mutation
@@ -2340,7 +2370,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         std::string mut_err;
         std::size_t edge_count = 0;
         std::string threw;
-        if (!guard.run_or_rollback(
+        if (!guard->run_or_rollback(
                 [&] {
                     auto result = aura::ast::mutators::remove_node_from_all_parents(
                         flat, target, [&](aura::ast::NodeId parent, std::uint32_t ci) {
@@ -2386,7 +2416,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // handling.
     add_mutate("mutate:insert-child", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         aura::messaging::g_fiber_yield_mutation_boundary
             ? aura::messaging::g_fiber_yield_mutation_boundary()
             : (void)0; // safe point before mutation
@@ -2452,7 +2488,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         std::string mut_tag = "mutation-error";
         bool mut_ok = false;
         std::string threw;
-        if (!guard.run_or_rollback(
+        if (!guard->run_or_rollback(
                 [&] {
                     auto result = aura::ast::mutators::apply_mutation(
                         flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
@@ -2499,7 +2535,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "mutate:tweak-literal",
         [resolve_mutate_node_arg, &ev, mev, safe_str](const auto& a) -> EvalValue {
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return mev("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
             aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0; // safe point before mutation
@@ -2578,7 +2620,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // defuse index, so readers know the workspace state changed.
     add_mutate("mutate:replace-pattern", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         using namespace aura::ast;
         aura::messaging::g_fiber_yield_mutation_boundary
             ? aura::messaging::g_fiber_yield_mutation_boundary()
@@ -3042,7 +3090,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // and re-attach it at (parent_id, child_idx).
     add_mutate("mutate:replace-subtree", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         if (ev.workspace_read_only_) {
             ok = false;
             return mev("read-only", "workspace is read-only");
@@ -3342,7 +3396,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // a mid-op throw does not commit a half-applied subtree swap.
         {
             std::string threw;
-            if (!guard.run_or_rollback(
+            if (!guard->run_or_rollback(
                     [&] {
                         flat.set_child(parent_id, child_idx, pr.root);
                         flat.mark_dirty_upward(parent_id);
@@ -3522,8 +3576,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
         bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        guard.suppress_generation_bump(true);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &guard_ok);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
+        guard->suppress_generation_bump(true);
         const bool in_fiber =
             (aura::messaging::g_fiber_set_yield_reason_mutation_boundary != nullptr);
         if (in_fiber)
@@ -3651,7 +3711,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // exclusive under the outer Guard for STRONG atomicity.
             {
                 std::string threw;
-                if (!guard.run_or_rollback([&] { sub_result = (ev.*op_fn)(op_args); }, &threw)) {
+                if (!guard->run_or_rollback([&] { sub_result = (ev.*op_fn)(op_args); }, &threw)) {
                     ok = false;
                     guard_ok = false;
                     ev.workspace_flat_->rollback_since(initial_log_size);
@@ -3821,7 +3881,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // path is "bump version + invalidate ev.defuse_index_".
     add_mutate("mutate:splice", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         // (Step 0.3) local merr removed; centralized make_merr
         if (ev.workspace_read_only_) {
             ok = false;
@@ -3940,7 +4006,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // "bump version + invalidate ev.defuse_index_".
     add_mutate("mutate:wrap", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         // local merr removed; now centralized make_merr (phase complete)
         if (ev.workspace_read_only_) {
             ok = false;
@@ -4096,7 +4168,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate(
         "mutate:refactor/extract", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
-            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
             // local merr removed; now centralized make_merr (phase complete)
             if (ev.workspace_read_only_) {
                 ok = false;
@@ -4385,7 +4463,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:rename-symbol", [&ev, safe_str](const auto& a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
+        if (!guard_r) {
+            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         // local merr removed; now centralized make_merr (phase complete)
         if (ev.workspace_read_only_) {
             ok = false;
@@ -4461,7 +4545,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:move-node", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok, /*fine_rollback=*/true);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
+        if (!guard_r) {
+            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         // local merr removed; now centralized make_merr (phase complete)
         if (ev.workspace_read_only_) {
             ok = false;
@@ -4711,16 +4801,27 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         using aura::ast::SymId;
         using aura::ast::NULL_NODE;
         // local merr removed (last one); all calls now use centralized make_merr
-        // Issue #1904: removed redundant manual defuse_version_ +
-        // total_mutations_ bump — MutationBoundaryGuard owns the bump.
-        if (ev.workspace_read_only_)
+        // Issue #1904 / #2124: MutationBoundaryGuard::try_acquire owns lock + bump.
+        bool ok = true;
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r)
+            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+        auto guard = std::move(*guard_r);
+        if (ev.workspace_read_only_) {
+            ok = false;
             return ev.make_merr("read-only", "workspace is read-only");
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_)
+        }
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_) {
+            ok = false;
             return ev.make_merr("bad-arg", "usage: (mutate:inline-call call-node-id)");
+        }
         auto call_id = static_cast<NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
-        if (call_id >= flat.size())
+        if (call_id >= flat.size()) {
+            ok = false;
             return ev.make_merr("out-of-range", "call node ID out of range");
+        }
 
         auto cv = flat.get(call_id);
         if (cv.tag != NodeTag::Call || cv.children.empty())
@@ -5002,7 +5103,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // unlocked workspace_flat access, no Guard — sibling of #1683).
     add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return make_bool(false);
+        }
+        auto guard = std::move(*guard_r);
         if (ev.workspace_read_only_) {
             ok = false;
             return make_bool(false);
@@ -5028,7 +5135,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         cg_id = cref.id;
 
         std::string threw;
-        if (!guard.run_or_rollback(
+        if (!guard->run_or_rollback(
                 [&] {
                     ws->bump_sv_mutate_attempt();
                     // Add a mutation record (so the change is visible
@@ -5068,7 +5175,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // sv-add-coverpoint (this issue locks the weaken-property sibling).
     add_mutate("mutate:sv-weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return make_bool(false);
+        }
+        auto guard = std::move(*guard_r);
         if (ev.workspace_read_only_) {
             ok = false;
             return make_bool(false);
@@ -5091,7 +5204,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         pid = pref.id;
 
         std::string threw;
-        if (!guard.run_or_rollback(
+        if (!guard->run_or_rollback(
                 [&] {
                     ws->bump_sv_mutate_attempt();
                     ws->add_mutation(pid, "sv-weaken-property", "property", "property+disable-iff",

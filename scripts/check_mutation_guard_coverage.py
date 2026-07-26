@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""check_mutation_guard_coverage.py — Issue #1950 / #1931 / #1953
+"""check_mutation_guard_coverage.py — Issue #1950 / #1931 / #1953 / #2124
 
 Audit script that scans all `add("compile:*", ...)` and
 `add("mutate:*", ...)` primitive registrations in
 src/compiler/evaluator_primitives_*.cpp and reports which ones are
-wrapped in `run_under_mutation_guard(...)` (Issue #1842/#1889
-pattern) vs which ones have raw `ev.*` mutation calls without a
-Guard.
+wrapped in production Guard entry (`try_acquire` / helpers) vs which
+ones lack a Guard.
 
-Issue #1950 / #1931 / #1953 AC: "所有 compile:* / mutate:* primitives
-100% 包装 Guard + StableNodeRef 验证". The dtor atomic-batching was
-shipped in #1747 / #1931 / #1953 (≤6 atomics on common path). This
-linter is the regression gate for primitive-surface Guard coverage.
+Issue #2124: production must use MutationBoundaryGuard::try_acquire
+(or run_under_mutation_guard / run_compile_dirty_under_guard /
+orch body acquire). Legacy `MutationBoundaryGuard guard(ev, &ok)`
+ctors are residual technical debt — --strict fails if any remain
+outside test/docs comments.
 
 Default: non-strict (exit 0, prints coverage stats). Use
---strict to enforce (exit 1 if any uncovered primitive found —
-use after cycle 1d migration closes the gap).
+--strict to enforce (exit 1 if uncovered primitives OR residual
+legacy ctors — required for production Agent backpressure).
 """
 
 from __future__ import annotations
@@ -27,43 +27,57 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Primitive-registration pattern: add("compile:xxx", ...) and
-# add("mutate:xxx", ...). Other prefixes (seva/eda/etc.) are
-# out-of-scope for this AC.
-ADD_RE = re.compile(r'add\("(compile|mutate):([a-z0-9\-_?!+]+)"')
+# Issue #2124: also match add_mutate("mutate:…") (security-gated register).
+ADD_RE = re.compile(r'(?:add|add_mutate)\("(compile|mutate):([a-z0-9\-_?!+]+)"')
 
-# Patterns indicating the primitive is wrapped in a Guard.
-GUARD_PATTERNS = [
+# Production-approved Guard entry (Issue #2124: try_acquire family only).
+TRY_ACQUIRE_PATTERNS = [
     re.compile(r"run_under_mutation_guard\("),
-    re.compile(r"run_compile_dirty_under_guard\("),  # compile-dirty Guard (Issue #1950)
-    re.compile(r"with_compiler_service_pin\("),  # relower-strategy Guard (#1855)
+    re.compile(r"run_compile_dirty_under_guard\("),
+    re.compile(r"with_compiler_service_pin\("),
     re.compile(r"MutationBoundaryGuard::try_acquire\("),
-    re.compile(r"MutationBoundaryGuard\s+\w+\s*\("),  # ctor invocation
-    re.compile(r"aura_orch_agent_body_try_acquire\("),  # orch body guard
+    re.compile(r"aura_orch_agent_body_try_acquire\("),
 ]
 
-# Patterns indicating the primitive is read-only or metadata-only
-# (no Guard needed). Issue #1950 AC #2 only requires Guard on
-# primitives that perform AST/IR mutation; metadata-only and
-# read-only primitives are out of scope.
+# Legacy ctor — residual; fails --strict under #2124 AC1.
+LEGACY_CTOR_RE = re.compile(r"MutationBoundaryGuard\s+\w+\s*\(\s*(?:ev|evaluator)\s*,")
+
+# Still count legacy as "has some Guard" for soft coverage % during
+# transition reporting (AC2 wants try_acquire specifically).
+SOFT_GUARD_PATTERNS = TRY_ACQUIRE_PATTERNS + [
+    re.compile(r"MutationBoundaryGuard\s+\w+\s*\("),
+]
+
 READONLY_PATTERNS = [
-    re.compile(r"\?\s*$"),  # predicate primitives (e.g., compile:dirty?)
+    re.compile(r"\?\s*$"),
     re.compile(r"-stats\b"),
     re.compile(r"-count\b"),
     re.compile(r"query-"),
     re.compile(r"verify-dirty\?"),
     re.compile(r"is-"),
-    re.compile(r"^set-agent-fingerprint$"),  # #1419 metadata-only
-    re.compile(r"^validate-reflected$"),  # #1907 reflect metric bump only
-    re.compile(r"^validate-against-schema$"),  # #1907 reflect metric bump only
-    re.compile(r"^snapshot$"),  # read-only fast-path
-    re.compile(r"^hw-bitvec-width$"),  # read-only type-registry lookup
-    re.compile(r"^per-defuse-index-callers$"),  # read-only hash-table build
+    re.compile(r"^set-agent-fingerprint$"),
+    re.compile(r"^validate-reflected$"),
+    re.compile(r"^validate-against-schema$"),
+    re.compile(r"^snapshot$"),
+    re.compile(r"^hw-bitvec-width$"),
+    re.compile(r"^per-defuse-index-callers$"),
+    # Issue #2124: metadata / policy / probe-only mutate:* (no AST write).
+    re.compile(r"^check-stable-ref$"),
+    re.compile(r"^set-stale-ref-policy$"),
+    re.compile(r"^set-pattern-index-policy$"),
+    re.compile(r"^request-gc-safepoint$"),
 ]
 
-# Scan targets.
 SCAN_DIR = REPO_ROOT / "src" / "compiler"
 SCAN_GLOB = "evaluator_primitives_*.cpp"
+
+# Production sources scanned for residual legacy ctor (#2124 AC1).
+LEGACY_SCAN_GLOBS = (
+    "evaluator_primitives_*.cpp",
+    "verify_tool.cpp",
+    "evaluator_fiber_mutation.cpp",
+    "evaluator_mutation_boundary.cpp",
+)
 
 
 def is_readonly(name: str) -> bool:
@@ -71,18 +85,13 @@ def is_readonly(name: str) -> bool:
 
 
 def scan_file(path: Path) -> tuple[list[tuple[int, str, bool]], list[tuple[int, str, bool]]]:
-    """Return (covered, uncovered) primitive entries from the file.
-
-    Each entry is (line_no, primitive_name, is_mutation_kind).
-    """
+    """Return (covered_try_acquire, uncovered) primitive entries."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return [], []
     covered: list[tuple[int, str, bool]] = []
     uncovered: list[tuple[int, str, bool]] = []
-    # Walk line-by-line; for each add() primitive, look at the
-    # surrounding ~30 lines for Guard-wrapping patterns.
     lines = text.splitlines()
     for i, line in enumerate(lines, start=1):
         m = ADD_RE.search(line)
@@ -90,29 +99,54 @@ def scan_file(path: Path) -> tuple[list[tuple[int, str, bool]], list[tuple[int, 
             continue
         kind, name = m.group(1), m.group(2)
         is_mutation_kind = kind == "mutate"
-        # Read-only / metadata-only primitives don't need a Guard.
-        # Applies to BOTH compile:* AND mutate:* (some mutate:* are
-        # metadata-only per #1419 / #1907 documented exceptions).
         if is_readonly(name):
             covered.append((i, f"{kind}:{name}", is_mutation_kind))
             continue
-        # Look at the next ~80 lines for Guard wrapping (some primitives
-        # have lengthy capability gates / arg validation before the Guard
-        # call; the run_compile_dirty_under_guard wrap can sit 40+
-        # lines below the add()).
-        window_end = min(len(lines), i + 80)
+        # Issue #2124: long arg parsing (e.g. mutate:atomic-batch) may put
+        # try_acquire ~100+ lines below add_mutate — window 160 lines.
+        window_end = min(len(lines), i + 160)
         window = "\n".join(lines[i - 1 : window_end])
-        has_guard = any(p.search(window) for p in GUARD_PATTERNS)
-        if has_guard:
+        # #2124: only try_acquire family counts as production covered.
+        has_try = any(p.search(window) for p in TRY_ACQUIRE_PATTERNS)
+        if has_try:
             covered.append((i, f"{kind}:{name}", is_mutation_kind))
         else:
             uncovered.append((i, f"{kind}:{name}", is_mutation_kind))
     return covered, uncovered
 
 
+def find_legacy_ctors() -> list[tuple[str, int, str]]:
+    """List residual production legacy ctor call sites (line content)."""
+    out: list[tuple[str, int, str]] = []
+    for glob in LEGACY_SCAN_GLOBS:
+        for path in sorted(SCAN_DIR.glob(glob)):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for i, line in enumerate(text.splitlines(), start=1):
+                stripped = line.lstrip()
+                if stripped.startswith("//") or stripped.startswith("*"):
+                    continue
+                # try_acquire lines also contain MutationBoundaryGuard::try_acquire —
+                # exclude those.
+                if "try_acquire" in line:
+                    continue
+                if "doomed" in line:  # move-assign release
+                    continue
+                if LEGACY_CTOR_RE.search(line):
+                    rel = str(path.relative_to(REPO_ROOT))
+                    out.append((rel, i, line.strip()))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    ap.add_argument("--strict", action="store_true", help="Exit 1 if any uncovered primitive found.")
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 if uncovered primitives OR residual legacy ctors (#2124).",
+    )
     ap.add_argument("--quiet", action="store_true", help="Only print summary line.")
     args = ap.parse_args()
 
@@ -130,20 +164,25 @@ def main() -> int:
         total_uncovered += len(uncovered)
         per_file.append((path, len(covered), len(uncovered), uncovered))
 
+    legacy = find_legacy_ctors()
     total = total_covered + total_uncovered
     pct = (100.0 * total_covered / total) if total > 0 else 0.0
 
     if args.quiet:
         print(
             f"mutation_guard_coverage: {total_covered}/{total} covered ({pct:.1f}%) — "
-            f"{total_uncovered} uncovered across {len(per_file)} files (Issue #1950)"
+            f"{total_uncovered} uncovered, {len(legacy)} legacy-ctor residual "
+            f"(Issue #1950 / #2124)"
         )
-        return 1 if (args.strict and total_uncovered > 0) else 0
+        if args.strict and (total_uncovered > 0 or legacy):
+            return 1
+        return 0
 
-    print("Issue #1950 mutation_guard_coverage report:")
+    print("Issue #1950 / #2124 mutation_guard_coverage report:")
     print(f"  total primitives scanned : {total}")
-    print(f"  covered                  : {total_covered} ({pct:.1f}%)")
+    print(f"  covered (try_acquire+)   : {total_covered} ({pct:.1f}%)")
     print(f"  uncovered                : {total_uncovered}")
+    print(f"  legacy ctor residual     : {len(legacy)}  (#2124 AC1 target 0)")
     print()
     for path, covered, uncovered, _unc_list in per_file:
         rel = path.relative_to(REPO_ROOT)
@@ -162,13 +201,32 @@ def main() -> int:
                 shown += 1
             if shown >= 30:
                 break
+    if legacy:
+        print()
+        print("  Residual legacy MutationBoundaryGuard ctor (#2124 AC1):")
+        for rel, lineno, line in legacy[:40]:
+            print(f"    {rel}:{lineno}: {line[:100]}")
+        if len(legacy) > 40:
+            print(f"    ... and {len(legacy) - 40} more")
 
+    fail = False
     if args.strict and total_uncovered > 0:
         print(
-            f"\nFAIL: {total_uncovered} uncovered primitive(s). Use --strict after migration closes the gap.",
+            f"\nFAIL: {total_uncovered} uncovered primitive(s) without try_acquire family.",
             file=sys.stderr,
         )
+        fail = True
+    if args.strict and legacy:
+        print(
+            f"\nFAIL: {len(legacy)} residual legacy MutationBoundaryGuard ctor site(s) "
+            f"(Issue #2124 AC1 — migrate to try_acquire).",
+            file=sys.stderr,
+        )
+        fail = True
+    if fail:
         return 1
+    if args.strict:
+        print("\nOK: 100% try_acquire coverage + 0 legacy ctor residual (#2124)")
     return 0
 
 
