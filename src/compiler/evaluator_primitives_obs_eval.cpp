@@ -13997,6 +13997,21 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
         };
         return build_hash(kv);
     });
+
+    // Issue #2097: per-fiber hygiene metrics for Agent query under concurrent
+    // self-evo / fiber-steal (refine Macro Hygiene review §7.2). Agent passes
+    // a fiber_id via arg; primitive returns that fiber's violation count for
+    // throttling decisions. Depth + gensym_map_size are surfaced via the
+    // engine:metrics overlay (fiber_hygiene_query_total + per-fiber map
+    // lookup via get_fiber_hygiene_metrics) for richer dashboard views.
+    ObservabilityPrims::register_stats_impl(
+        "query:macro-fiber-hygiene", [](std::span<const EvalValue> a) -> EvalValue {
+            std::uint32_t fiber_id = 0;
+            if (!a.empty() && is_int(a[0]))
+                fiber_id = static_cast<std::uint32_t>(as_int(a[0]));
+            auto stats = aura::compiler::macro_exp::get_fiber_hygiene_metrics(fiber_id);
+            return make_int(static_cast<std::int64_t>(stats.violations));
+        });
 }
 
 
