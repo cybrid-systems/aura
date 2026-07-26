@@ -332,6 +332,13 @@ extern "C" __attribute__((weak)) int aura_get_remap_name_fallback_enabled(void) 
 // binaries that don't link the production TU).
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_remap_name_fallback_total(std::uint64_t /*n*/) {}
+// Issue #2175: weak stub for legacy sid=0 backfill counter bumper.
+// Production impl is in aura_jit_bridge.cpp; light bundles compile
+// aura_jit_runtime.cpp + this stub (not the full bridge). Without
+// this symbol, test_issues_light / light_late fail to link with
+// undefined reference to aura_bump_live_closure_stable_id_backfill_total.
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_stable_id_backfill_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_must_deopt_before_next_call_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
