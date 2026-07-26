@@ -56,38 +56,62 @@ inline constexpr const char* kFields_arena_auto_compact[] = {
     "auto-trigger", "live-move-yield", "guard-defrag", "schema"};
 inline constexpr const char* kFields_arena_concurrent[] = {
     "active", "compact-total", "defrag-total", "schema"};
+// Custom-layout dashboards (no standard active/total/hits/savings).
+// Probed against runtime hash-keys (CI 2026-07): only schema-bearing
+// field lists — not the StandardTotalHits bump path.
+inline constexpr const char* kFields_shape_jit_closedloop[] = {
+    "stability-churn-deopts", "dirty-from-shape", "incremental-recompile-hits",
+    "speculative-win-lost", "schema"};
+inline constexpr const char* kFields_edsl_core_stability[] = {
+    "nested-atomic-rollbacks", "children-safe-views", "mutate-invalidate-precision",
+    "cow-stable-ref-remaps", "schema"};
+inline constexpr const char* kFields_linear_boundary[] = {
+    "active", "boundaries-wired-count", "violation-audit-total", "schema"};
+inline constexpr const char* kFields_seva_longrunning_slo[] = {
+    "longrunning-harness-active", "convergence-rate", "dirty-consistency-hits", "schema"};
+inline constexpr const char* kFields_longrunning_infra[] = {
+    "infra-events-total", "heal-triggers", "deployment-slo-hits", "schema"};
+inline constexpr const char* kFields_macro_hygiene[] = {
+    "hygiene-health-score", "hygiene-violations", "schema", "schema-2101"};
 
-// Standard cases — schema + query + bump_slug. Order matches bump_standard switch
-// in tests/compiler/test_obs_schema_matrix.cpp:62-…
+// Standard cases — only surfaces that truly expose active/total/hits/savings
+// and honor Evaluator bump_* helpers. Custom-field dashboards live in
+// kFieldListCases (CI fix: light/fast issues were red on schema-only rows).
 // Schema values are runtime-truth (probed R15).
-inline constexpr std::array<StandardCase, 8> kStandardCases{{
-    // 1: shape-jit-pass-closedloop stats (Issue #744 / lineage)
-    {744, "query:shape-jit-pass-closedloop-stats", "pass_shape_epoch"},
-    // 2: edsl-core-stability stats (#655)
-    {655, "query:edsl-core-stability-stats", "edsl_hotpath_real"},
-    // 3: linear-boundary-consistency stats (#1895)
-    {1895, "query:linear-boundary-consistency-stats", "linear_escape_mutate"},
-    // 4: seva-longrunning-concurrent-slo (#803)
-    {803, "query:seva-longrunning-concurrent-slo", "seva_harness_v2"},
-    // 5: longrunning-infra stats (#753)
-    {753, "query:longrunning-infra-stats", "longrun_ai_infra"},
-    // 6: ai-native-meta-extension stats (#843)
+inline constexpr std::array<StandardCase, 2> kStandardCases{{
+    // ai-native-meta-extension stats (#843)
     {843, "query:ai-native-meta-extension-stats", "ai_native_meta"},
-    // 7: aot-hotswap-pipeline stats (#846)
+    // aot-hotswap-pipeline stats (#846)
     {846, "query:aot-hotswap-pipeline-stats", "aot_hotswap_pipe"},
-    // 8: macro-hygiene stats (#1613, lineage 1599|1597|1593|1499)
-    {1613, "query:macro-hygiene-stats", "macro_hyg_query_v2"},
 }};
 
 // Field list cases — schema + query + fields[] + n_fields
 // Schema values are runtime-truth (probed R15).
-inline constexpr std::array<FieldListCase, 2> kFieldListCases{{
+inline constexpr std::array<FieldListCase, 8> kFieldListCases{{
     // Issue #642 — arena-auto-compaction-stats field-list (drift detection)
     {642, "query:arena-auto-compaction-stats", kFields_arena_auto_compact,
      sizeof(kFields_arena_auto_compact) / sizeof(kFields_arena_auto_compact[0])},
     // Issue #731 — arena-concurrent-compact-stats field-list
     {731, "query:arena-concurrent-compact-stats", kFields_arena_concurrent,
      sizeof(kFields_arena_concurrent) / sizeof(kFields_arena_concurrent[0])},
+    // Issue #744 — shape-jit closed-loop (custom keys, not StandardTotalHits)
+    {744, "query:shape-jit-pass-closedloop-stats", kFields_shape_jit_closedloop,
+     sizeof(kFields_shape_jit_closedloop) / sizeof(kFields_shape_jit_closedloop[0])},
+    // Issue #655 — edsl-core-stability
+    {655, "query:edsl-core-stability-stats", kFields_edsl_core_stability,
+     sizeof(kFields_edsl_core_stability) / sizeof(kFields_edsl_core_stability[0])},
+    // Issue #1895 — linear-boundary-consistency
+    {1895, "query:linear-boundary-consistency-stats", kFields_linear_boundary,
+     sizeof(kFields_linear_boundary) / sizeof(kFields_linear_boundary[0])},
+    // Issue #803 — seva longrunning concurrent SLO
+    {803, "query:seva-longrunning-concurrent-slo", kFields_seva_longrunning_slo,
+     sizeof(kFields_seva_longrunning_slo) / sizeof(kFields_seva_longrunning_slo[0])},
+    // Issue #753 — longrunning-infra
+    {753, "query:longrunning-infra-stats", kFields_longrunning_infra,
+     sizeof(kFields_longrunning_infra) / sizeof(kFields_longrunning_infra[0])},
+    // Issue #1613 — macro-hygiene (custom keys + schema-2101)
+    {1613, "query:macro-hygiene-stats", kFields_macro_hygiene,
+     sizeof(kFields_macro_hygiene) / sizeof(kFields_macro_hygiene[0])},
 }};
 
 inline constexpr std::size_t kStandardCasesCount = kStandardCases.size();
