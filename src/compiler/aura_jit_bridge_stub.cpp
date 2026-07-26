@@ -460,6 +460,12 @@ extern "C" __attribute__((weak)) std::uint8_t aura_aot_last_reload_fail_reason(v
     return 0; // AotReloadFail::Ok
 }
 
+// Issue #2165: auto-retry flag stubs (default off in light test binaries).
+extern "C" __attribute__((weak)) void aura_set_aot_reload_auto_retry(int /*enabled*/) {}
+extern "C" __attribute__((weak)) int aura_aot_reload_auto_retry_enabled(void) {
+    return 0;
+}
+
 extern "C" void aura_jit_epoch_acquire_fence(void) {
     std::atomic_thread_fence(std::memory_order_acquire);
 }

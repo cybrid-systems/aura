@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib> // Issue #2165: getenv AURA_AOT_RELOAD_AUTO_RETRY
 #include <cstring>
 #include <format>
 #include <sys/stat.h> // Issue #2095: ::mkdir for the debug dir
@@ -933,6 +934,11 @@ extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept {
     if (eval_ptr == nullptr)
         return true; // process-default AotState is always current
     std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    // Issue #2178 / #2165: empty map → first-touch Evaluator is allowed (MVP
+    // single-workspace). Only reject when another eval_ptr is already registered
+    // (true cross-workspace). aot_state_for() will insert on first use.
+    if (g_aot_state_map.empty())
+        return true;
     return g_aot_state_map.find(eval_ptr) != g_aot_state_map.end();
 }
 
@@ -1894,10 +1900,44 @@ static void aot_log(const char* fmt, ...) {
     va_end(ap);
 }
 
+// Issue #2165: process flag for auto reemit+retry (default ON; tests set 0).
+// Env AURA_AOT_RELOAD_AUTO_RETRY=0|1 overrides when set.
+static std::atomic<int> g_aot_reload_auto_retry_pref{-1}; // -1 = use env/default
+
+extern "C" void aura_set_aot_reload_auto_retry(int enabled) {
+    g_aot_reload_auto_retry_pref.store(enabled ? 1 : 0, std::memory_order_release);
+}
+
+extern "C" int aura_aot_reload_auto_retry_enabled(void) {
+    const int pref = g_aot_reload_auto_retry_pref.load(std::memory_order_acquire);
+    if (pref == 0 || pref == 1)
+        return pref;
+    if (const char* e = std::getenv("AURA_AOT_RELOAD_AUTO_RETRY")) {
+        if (e[0] == '0')
+            return 0;
+        if (e[0] == '1')
+            return 1;
+    }
+    return 1; // production default ON
+}
+
+static bool aot_reload_fail_is_auto_retryable(AotReloadFail reason) noexcept {
+    switch (reason) {
+        case AotReloadFail::Version:
+        case AotReloadFail::Env:
+        case AotReloadFail::Linear:
+        case AotReloadFail::Defuse:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Issue #1367: eval_ptr selects per-agent AotState (nullptr = process default).
 // Issue #2012: version-keyed atomic func_table swap with staging + rollback.
-extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
-                                                std::uint64_t version) {
+// Issue #2165: single attempt body; public for_eval wraps auto-retry.
+static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* path,
+                                                 std::uint64_t version) {
     // Serialize concurrent reloads so staging state is single-writer.
     std::lock_guard<std::mutex> reload_lock(g_aot_reload_mtx);
 
@@ -2100,6 +2140,51 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     aura::compiler::typed_audit::capture_aot_hotupdate_audit(
         /*success=*/true, epoch_before, g_aot_last_commit_epoch, "aot-hotupdate");
     return true;
+}
+
+// Issue #2165: public entry — one reemit + one retry for Version/Env/Linear/Defuse.
+// TLS depth prevents reemit→reload recursion from nested auto-retry.
+extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
+                                                std::uint64_t version) {
+    thread_local int t_auto_retry_depth = 0;
+
+    const bool ok1 = aura_reload_aot_module_for_eval_once(eval_ptr, path, version);
+    if (ok1)
+        return true;
+
+    if (t_auto_retry_depth > 0 || !aura_aot_reload_auto_retry_enabled())
+        return false;
+
+    const auto reason = static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason());
+    if (!aot_reload_fail_is_auto_retryable(reason))
+        return false; // AC2: Dlopen / Region / Staging / Other — no retry
+
+    ++t_auto_retry_depth;
+    if (aot_metrics())
+        aot_metrics()->aot_reload_auto_retry_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Step 1: force one incremental reemit (may be no-op without host emit).
+    (void)aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+
+    // Step 2: retry once. Version recovery trusts binary after reemit
+    // (host expected version may be stale relative to rebuilt stamps).
+    const std::uint64_t retry_version = (reason == AotReloadFail::Version) ? 0 : version;
+    const bool ok2 = aura_reload_aot_module_for_eval_once(eval_ptr, path, retry_version);
+
+    if (aot_metrics()) {
+        if (ok2) {
+            // AC4: success path clears last-fail inside once(); intermediate
+            // Version/Env fail counters remain for Agents (observability).
+            aot_metrics()->aot_reload_auto_retry_success_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        } else {
+            aot_metrics()->aot_reload_auto_retry_exhausted_total.fetch_add(
+                1, std::memory_order_relaxed);
+            // last-fail is the *final* reason from the second attempt.
+        }
+    }
+    --t_auto_retry_depth;
+    return ok2;
 }
 
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {

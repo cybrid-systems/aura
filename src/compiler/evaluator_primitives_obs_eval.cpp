@@ -12517,6 +12517,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t fail_linear = 0;
         std::uint64_t fail_staging = 0;
         std::uint64_t fail_other = 0;
+        // Issue #2165: auto reemit+retry recovery counters.
+        std::uint64_t auto_retry = 0;
+        std::uint64_t auto_retry_ok = 0;
+        std::uint64_t auto_retry_exh = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
@@ -12532,6 +12536,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             fail_linear = m->aot_reload_fail_linear_total.load(std::memory_order_relaxed);
             fail_staging = m->aot_reload_fail_staging_total.load(std::memory_order_relaxed);
             fail_other = m->aot_reload_fail_other_total.load(std::memory_order_relaxed);
+            auto_retry = m->aot_reload_auto_retry_total.load(std::memory_order_relaxed);
+            auto_retry_ok = m->aot_reload_auto_retry_success_total.load(std::memory_order_relaxed);
+            auto_retry_exh =
+                m->aot_reload_auto_retry_exhausted_total.load(std::memory_order_relaxed);
         }
         // Issue #2094: read the unified StormLevel facade OUTSIDE the
         // metrics if-block since aura_hot_update_current_storm_level() is
@@ -12540,7 +12548,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         // ev.compiler_metrics_ was null — agents still want the live value).
         storm_level = static_cast<std::uint64_t>(::aura_hot_update_current_storm_level());
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(32); // #2046 joint versioning keys
+            // Capacity 64: #2046/#2093/#2095/#2165 keys (power-of-2 probe).
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -12628,6 +12637,16 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-fail-linear-count", make_int(static_cast<std::int64_t>(fail_linear))},
             {"aot-reload-fail-staging-count", make_int(static_cast<std::int64_t>(fail_staging))},
             {"aot-reload-fail-other-count", make_int(static_cast<std::int64_t>(fail_other))},
+            // Issue #2165: auto reemit+retry recovery.
+            {"aot-reload-auto-retry-total", make_int(static_cast<std::int64_t>(auto_retry))},
+            {"aot-reload-auto-retry-success-total",
+             make_int(static_cast<std::int64_t>(auto_retry_ok))},
+            {"aot-reload-auto-retry-exhausted-total",
+             make_int(static_cast<std::int64_t>(auto_retry_exh))},
+            {"aot-reload-auto-retry-enabled",
+             make_int(static_cast<std::int64_t>(::aura_aot_reload_auto_retry_enabled()))},
+            {"schema-2165", make_int(2165)},
+            {"issue-2165", make_int(2165)},
             // Issue #2046: joint AOT/JIT region versioning after invalidate
             {"aot_joint_epoch_bump_total", make_int(static_cast<std::int64_t>(joint_bump))},
             {"aot-joint-epoch-bump-total", make_int(static_cast<std::int64_t>(joint_bump))},

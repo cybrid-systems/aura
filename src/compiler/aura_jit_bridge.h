@@ -137,6 +137,15 @@ enum class AotReloadFail : std::uint8_t {
 // Returns AotReloadFail as uint8_t for C ABI stability.
 extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void);
 
+// Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
+// Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
+// aura_set_aot_reload_auto_retry(0) for strict tests (#2093 counters).
+// When enabled: one reemit via aura_reemit_aot_for_dirty then one retry;
+// Version retry uses version=0 (trust binary after reemit). Dlopen/Region/
+// Staging/Other never auto-retry.
+extern "C" void aura_set_aot_reload_auto_retry(int enabled);
+extern "C" int aura_aot_reload_auto_retry_enabled(void);
+
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 
