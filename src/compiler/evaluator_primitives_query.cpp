@@ -52,6 +52,10 @@ extern "C" std::uint32_t aura_jit_fn_provenance(std::int64_t func_id);
 // Issue #2100: deopt round-trip preserved/lost (IR attrs → AST restamp).
 extern "C" std::uint64_t aura_jit_macro_introduced_preserved_total();
 extern "C" std::uint64_t aura_jit_macro_introduced_lost_total();
+// Issue #2177: AOT marker propagation observability (refine #2100
+// which was JIT-only). Defined in aura_jit_bridge.cpp.
+extern "C" std::uint64_t aura_2177_aot_macro_marker_propagated_total(void);
+extern "C" std::uint64_t aura_2177_aot_macro_marker_stripped_total(void);
 // Issue #2018: rest-param hygiene gensym counter (clone_macro_body).
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
@@ -7311,6 +7315,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("ir-macro-attr-source-marker-wired", 1);
         insert_kv("schema-2100", 2100);
         insert_kv("issue-2100", 2100);
+        // Issue #2177: AOT marker propagation observability (refine #2100
+        // which was JIT-only). Companion to the existing jit-* keys for
+        // full AOT/JIT parity in the Agent dashboard.
+        insert_kv("aot-macro-marker-propagated-total",
+                  static_cast<std::int64_t>(aura_2177_aot_macro_marker_propagated_total()));
+        insert_kv("aot-macro-marker-stripped-total",
+                  static_cast<std::int64_t>(aura_2177_aot_macro_marker_stripped_total()));
+        insert_kv("schema-2177", 2177);
+        insert_kv("issue-2177", 2177);
         insert_kv("issue", 2022);
         insert_kv("schema", 2022); // lineage 2100 / 2022 / 1891 / 1610
         auto hidx = g_hash_tables.size();

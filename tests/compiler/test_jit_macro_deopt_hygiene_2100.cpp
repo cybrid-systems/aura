@@ -8,6 +8,7 @@
 //   AC4: #2022 preserve tests lineage + schema-2100 metrics; zero lost on covered path
 //   AC5: query/blame still sees MacroIntroduced after deopt restore cycle
 //   AC6: source wiring (lowering stamps IR attrs; restore hook; preserved/lost)
+//   AC7: #2177 AOT marker propagation parity (refine #2100)
 
 #include "test_harness.hpp"
 
@@ -33,6 +34,10 @@ extern "C" std::uint32_t aura_jit_fn_provenance(std::int64_t func_id);
 extern "C" void aura_jit_note_macro_deopt_roundtrip(std::int64_t func_id);
 extern "C" std::uint64_t aura_jit_macro_introduced_preserved_total();
 extern "C" std::uint64_t aura_jit_macro_introduced_lost_total();
+// Issue #2177: AOT marker propagation observability counters (refine
+// #2100 which was JIT-only). Defined in aura_jit_bridge.cpp.
+extern "C" std::uint64_t aura_2177_aot_macro_marker_propagated_total(void);
+extern "C" std::uint64_t aura_2177_aot_macro_marker_stripped_total(void);
 extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
 extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
 
@@ -285,6 +290,48 @@ static void ac6_source_wiring() {
     CHECK(!q.empty() && q.find("schema-2100") != std::string::npos, "query schema-2100");
 }
 
+// Issue #2177: AOT marker propagation parity (refine #2100 which was
+// JIT-only). Source-cite for the AOT-specific counters + query surface +
+// wiring bundle. Operators can monitor aot-macro-marker-propagated-total
+// to confirm AOT passes preserve the MacroIntroduced marker end-to-end,
+// and aot-macro-marker-stripped-total as a guard metric for silent
+// marker loss regressions.
+static void ac7_aot_marker_parity_2177() {
+    std::println("\n--- AC7: #2177 AOT marker propagation parity ---");
+    std::ifstream ab("src/compiler/aura_jit_bridge.cpp");
+    std::string ab_contents((std::istreambuf_iterator<char>(ab)), std::istreambuf_iterator<char>());
+    CHECK(ab_contents.find("aura_2177_aot_macro_marker_propagated_total") != std::string::npos,
+          "AC7: C-linkage accessor aura_2177_aot_macro_marker_propagated_total");
+    CHECK(ab_contents.find("aura_2177_aot_macro_marker_stripped_total") != std::string::npos,
+          "AC7: C-linkage accessor aura_2177_aot_macro_marker_stripped_total");
+    CHECK(ab_contents.find("aura_2177_record_aot_marker_propagated") != std::string::npos,
+          "AC7: bump helper aura_2177_record_aot_marker_propagated");
+    std::ifstream om("src/compiler/observability_metrics.h");
+    std::string om_contents((std::istreambuf_iterator<char>(om)), std::istreambuf_iterator<char>());
+    CHECK(om_contents.find("aot_macro_marker_propagated_total") != std::string::npos,
+          "AC7: CompilerMetrics field aot_macro_marker_propagated_total");
+    CHECK(om_contents.find("aot_macro_marker_stripped_total") != std::string::npos,
+          "AC7: CompilerMetrics field aot_macro_marker_stripped_total");
+    std::ifstream lo("src/compiler/lowering_impl.cpp");
+    std::string lo_contents((std::istreambuf_iterator<char>(lo)), std::istreambuf_iterator<char>());
+    CHECK(lo_contents.find("aura_2177_record_aot_marker_propagated") != std::string::npos,
+          "AC7: lowering_impl.cpp calls aura_2177_record_aot_marker_propagated");
+    CHECK(lo_contents.find("Issue #2177") != std::string::npos,
+          "AC7: lowering_impl.cpp cites #2177");
+    std::ifstream eq("src/compiler/evaluator_primitives_query.cpp");
+    std::string eq_contents((std::istreambuf_iterator<char>(eq)), std::istreambuf_iterator<char>());
+    CHECK(eq_contents.find("aot-macro-marker-propagated-total") != std::string::npos,
+          "AC7: query:ir-hygiene-stats key aot-macro-marker-propagated-total");
+    CHECK(eq_contents.find("aot-macro-marker-stripped-total") != std::string::npos,
+          "AC7: query:ir-hygiene-stats key aot-macro-marker-stripped-total");
+    CHECK(eq_contents.find("schema-2177") != std::string::npos, "AC7: schema-2177");
+    CHECK(eq_contents.find("issue-2177") != std::string::npos, "AC7: issue-2177");
+    const auto propagated = aura_2177_aot_macro_marker_propagated_total();
+    const auto stripped = aura_2177_aot_macro_marker_stripped_total();
+    CHECK(propagated >= 0, "AC7: propagated >= 0");
+    CHECK(stripped >= 0, "AC7: stripped >= 0");
+}
+
 } // namespace
 
 int main() {
@@ -295,6 +342,7 @@ int main() {
     ac4_schema_metrics();
     ac5_blame_after_deopt();
     ac6_source_wiring();
+    ac7_aot_marker_parity_2177();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

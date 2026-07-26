@@ -1334,6 +1334,17 @@ extern "C" std::uint64_t aura_post_steal_aot_revalidate_total(void) {
 //                   MacroIntroduced path is a repin candidate per #1908 AC).
 static std::atomic<std::uint64_t> g_1908_repin_fallback_total{0};
 static std::atomic<std::uint64_t> g_1908_hygiene_prevented_fallback_total{0};
+// Issue #2177: AOT-side MacroIntroduced marker observability (refine #2100
+// which was JIT-only). Two complementary counters:
+//   - g_2177_aot_macro_marker_propagated_total: bumped when an AOT
+//     pass (lowering_impl.cpp:1203) propagates SyntaxMarker::MacroIntroduced
+//     from the source FlatAST node into the IRFunction.marker field.
+//   - g_2177_aot_macro_marker_stripped_total: guard metric bumped when an
+//     AOT pass observes a MacroIntroduced marker on the source node but
+//     fails to propagate it (e.g., a future pass that strips markers).
+//     Operators can monitor this for "silent marker loss" regressions.
+static std::atomic<std::uint64_t> g_2177_aot_macro_marker_propagated_total{0};
+static std::atomic<std::uint64_t> g_2177_aot_macro_marker_stripped_total{0};
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker) {
     (void)ev_ptr;        // per-eval path uses Evaluator::bump_* directly
                          // (see wire-up sites in evaluator_fiber_mutation.cpp
@@ -1361,6 +1372,31 @@ extern "C" std::uint64_t aura_macro_provenance_repin_on_steal_total(void) {
 // aura_macro_provenance_repin_on_steal_total above).
 extern "C" std::uint64_t aura_hygiene_violation_prevented_on_boundary_total(void) {
     return g_1908_hygiene_prevented_fallback_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2177: C-linkage accessors for the AOT marker-propagation counters.
+// Companion to (query:ir-hygiene-stats) keys aot-macro-marker-propagated-total
+// and aot-macro-marker-stripped-total. Reads from the file-level atomics
+// (no per-Evaluator mirror needed — these are process-wide AOT stats).
+extern "C" std::uint64_t aura_2177_aot_macro_marker_propagated_total(void) {
+    return g_2177_aot_macro_marker_propagated_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_2177_aot_macro_marker_stripped_total(void) {
+    return g_2177_aot_macro_marker_stripped_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2177: helper used by lowering_impl.cpp to bump the AOT
+// marker-propagated counter (when a marker is successfully propagated
+// to the IRFunction) or the marker-stripped counter (when an AOT pass
+// observes a MacroIntroduced marker on the source but the propagation
+// path is unavailable — e.g., pass runs on a node with no current_flat
+// context). Exposed as a single C-linkage helper so the lowering pass
+// can call one function instead of two (cleaner call site).
+extern "C" void aura_2177_record_aot_marker_propagated(int propagated) noexcept {
+    if (propagated)
+        g_2177_aot_macro_marker_propagated_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_2177_aot_macro_marker_stripped_total.fetch_add(1, std::memory_order_relaxed);
 }
 // Issue #1522: C-API batch_deopt for fn_trackers_ (host registers AuraJIT*).
 namespace {

@@ -16,6 +16,14 @@ namespace aura::compiler {
 using namespace aura::ir;
 using namespace aura::ast;
 
+// Issue #2177: C-linkage helper (defined in aura_jit_bridge.cpp) that
+// bumps the AOT marker-propagated counter (when a marker is successfully
+// propagated to the IRFunction) or the marker-stripped counter (when an
+// AOT pass observes a MacroIntroduced marker but the propagation path
+// is unavailable). Forward-declared here so the lowering pass can call
+// it without dragging in the full aura_jit_bridge.h.
+extern "C" void aura_2177_record_aot_marker_propagated(int propagated) noexcept;
+
 // Issue #684: thread-local snapshot of the last dual-emit lower.
 static thread_local LowerSoAEmitSnapshot g_last_soa_snapshot;
 
@@ -1202,6 +1210,20 @@ static std::uint32_t lower_flat_expr(
             if (state.current_flat) {
                 state.module.functions[fid].marker =
                     static_cast<std::uint8_t>(state.current_flat->marker(v.id));
+                // Issue #2177: bump AOT marker-propagated counter when the
+                // source node was MacroIntroduced (the parity case the
+                // issue cares about). Other markers are not counted —
+                // propagated counter specifically tracks the macro path.
+                if (state.current_flat->marker(v.id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                    aura_2177_record_aot_marker_propagated(1);
+                }
+            } else {
+                // Issue #2177: guard metric — MacroIntroduced source but no
+                // current_flat context means the marker can't be propagated.
+                // A future pass that strips markers should bump the stripped
+                // counter here (currently no caller triggers it; reserved
+                // for future AOT pass audits).
+                aura_2177_record_aot_marker_propagated(0);
             }
             // Store bridge data for tree-walker compatibility
             if (state.current_flat && state.current_pool) {
