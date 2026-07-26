@@ -57,6 +57,8 @@ inline constexpr int kOrchModulePhase = 4; // #1881 orch health observability
 inline constexpr int kOrchModuleIssue = 1881;
 // Issue #2153: configurable secondary drain after non-Ok join cancel.
 inline constexpr int kJoinDrainTimeoutIssue = 2153;
+// Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
+inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Default secondary drain window after request_cancel (#2082 preserved).
 inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
 
@@ -89,6 +91,13 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> parallel_batches{0};
     // Issue #1600
     std::atomic<std::uint64_t> spawn_quota_rejects{0};
+    // Issue #2155: quota-reject accounting invariants (no leaked arena / put).
+    // no_leak_ok: reject path left reserved_memory_bytes==0 (or defensive release).
+    // leak_detect: should stay 0 in production (residual reserved on reject).
+    // no_leak: last reject path verified clean (Agent gauge 0|1).
+    std::atomic<std::uint64_t> spawn_quota_reject_no_leak_ok_total{0};
+    std::atomic<std::uint64_t> spawn_quota_reject_leak_detect_total{0};
+    std::atomic<std::uint32_t> spawn_quota_reject_no_leak{0};
     // Issue #1879: StableNodeRef + linear ownership on orch spawn/join/steal.
     std::atomic<std::uint64_t> stable_ref_auto_refresh_total{0};
     std::atomic<std::uint64_t> fiber_steal_provenance_enforced_total{0};
@@ -381,6 +390,26 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
     return st;
 }
 
+// Issue #2155: finalize quota-reject accounting. Contract:
+//   !ok ⇒ reserved_memory_bytes == 0 (no permanent arena charge).
+// Defensive release if residual reserved (should never fire). Bumps
+// spawn_quota_reject_no_leak_ok_total when clean so Agents can trust storms.
+inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
+    if (h.ok)
+        return;
+    if (h.reserved_memory_bytes != 0) {
+        aura::core::resource_quota::process_resource_quota().release_agent_arena(
+            h.reserved_memory_bytes);
+        h.reserved_memory_bytes = 0;
+        g_orch_module_stats.spawn_quota_reject_leak_detect_total.fetch_add(
+            1, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_quota_reject_no_leak.store(0, std::memory_order_relaxed);
+        return;
+    }
+    g_orch_module_stats.spawn_quota_reject_no_leak_ok_total.fetch_add(1, std::memory_order_relaxed);
+    g_orch_module_stats.spawn_quota_reject_no_leak.store(1, std::memory_order_relaxed);
+}
+
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
@@ -413,6 +442,8 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         h.quota_limit = ferr->limit;
         h.retry_after_ms = 50;
         h.error = "ResourceQuotaExceeded: " + ferr->message;
+        // Issue #2155: reserved never set on fiber preflight; assert no-leak.
+        finalize_spawn_quota_reject(h);
         return h;
     }
 
@@ -430,6 +461,8 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         h.retry_after_ms = 100;
         h.error = "ResourceQuotaExceeded: " +
                   aura::core::resource_quota::ResourceQuotaManager::format_reason(*merr);
+        // Issue #2155: try_consume failed ⇒ no permanent arena charge / reserved=0.
+        finalize_spawn_quota_reject(h);
         return h;
     }
     h.reserved_memory_bytes = mem_cost;
@@ -496,7 +529,9 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
     });
 
     if (!f) {
-        // Issue #1600: Scheduler::spawn returns nullptr on fiber ResourceQuota.
+        // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber
+        // ResourceQuota after arena was already reserved — must release
+        // before return so agent_arena_usage_bytes does not leak under storms.
         pq.release_agent_arena(mem_cost);
         h.reserved_memory_bytes = 0;
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
@@ -510,6 +545,7 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         h.quota_limit = pq.limit(aura::core::resource_quota::Dimension::Fibers);
         h.retry_after_ms = 50;
         h.error = "ResourceQuotaExceeded: fibers quota exceeded";
+        finalize_spawn_quota_reject(h);
         return h;
     }
 

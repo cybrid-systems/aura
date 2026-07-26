@@ -2841,6 +2841,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const std::uint64_t qused = handle.quota_used;
             const std::uint64_t qlimit = handle.quota_limit;
             const std::uint64_t qretry = handle.retry_after_ms;
+            // Issue #2079 / #2155: put ONLY on ok. Quota-reject must never
+            // register into agent_names_ (no leaked name-table slots).
             if (ok)
                 ev.agent_names_->put(std::move(handle));
 
@@ -2850,6 +2852,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // strings. Field names align with `query:resource-quota-stats` and
             // `query:orch-module-stats` keys for consistency.
             if (!ok && quota_exceeded) {
+                // Issue #2155: invariant — this attempt did not put. A prior
+                // live agent may still occupy the same name; that is fine.
+                // Handle was never moved into the table on this path.
+                (void)handle; // not put; destructor releases any residual (none)
                 std::vector<std::pair<std::string, EvalValue>> qkv = {
                     {"ok", make_bool(false)},
                     {"id", make_int(0)},
@@ -2858,9 +2864,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"schema", make_int(1588)},
                     {"schema-2011", make_int(2011)},
                     {"schema-2079", make_int(2079)},
+                    {"schema-2155", make_int(aura::orch::kSpawnQuotaNoLeakIssue)},
+                    {"spawn-quota-reject-no-leak",
+                     make_int(static_cast<std::int64_t>(
+                         aura::orch::g_orch_module_stats.spawn_quota_reject_no_leak.load(
+                             std::memory_order_relaxed)))},
                 };
-                // Sentinel name for quota-reject (out_name was not yet assigned;
-                // we never put the handle into agent_names_).
+                // Sentinel name for quota-reject (we never put into agent_names_).
                 ev.string_heap_.push_back(out_name);
                 if (!qdim.empty()) {
                     auto qidx = ev.string_heap_.size();
@@ -3202,6 +3212,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                       static_cast<std::int64_t>(os.agents_active.load(std::memory_order_relaxed)));
             insert_kv("quota-rejects", static_cast<std::int64_t>(
                                            os.spawn_quota_rejects.load(std::memory_order_relaxed)));
+            // Issue #2155: quota-reject no-leak surface for commercial storms.
+            insert_kv("spawn-quota-reject-no-leak",
+                      static_cast<std::int64_t>(
+                          os.spawn_quota_reject_no_leak.load(std::memory_order_relaxed)));
+            insert_kv("spawn-quota-reject-no-leak-ok-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_quota_reject_no_leak_ok_total.load(std::memory_order_relaxed)));
+            insert_kv("spawn-quota-reject-leak-detect-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_quota_reject_leak_detect_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2155", aura::orch::kSpawnQuotaNoLeakIssue);
+            insert_kv("issue-2155", aura::orch::kSpawnQuotaNoLeakIssue);
+            insert_kv("spawn-quota-no-leak-wired", 1);
             insert_kv("send-backpressure",
                       static_cast<std::int64_t>(
                           os.send_backpressure_total.load(std::memory_order_relaxed)));
