@@ -4896,6 +4896,10 @@ public:
         }
         // Prefer instr-granularity when present; else block-only impact.
         // apply_impact_scope_dirty already handles precise vs block cascade.
+        // Issue #2133: when instr-eligible, record unmapped ratio for Agents.
+        if (scope.has_instr_precision())
+            metrics_.instr_level_unmapped_ratio_bp.store(scope.unmapped_ratio_bp(),
+                                                         std::memory_order_relaxed);
         entry.dirty = true;
         (void)apply_impact_scope_dirty(entry, scope);
         metrics_.instr_level_impact_prefer_total.fetch_add(1, std::memory_order_relaxed);
@@ -4910,6 +4914,99 @@ public:
                                                                    std::memory_order_relaxed);
             metrics_.minimal_recompile_scope_samples.fetch_add(1, std::memory_order_relaxed);
         }
+        return true;
+    }
+
+    // Issue #2133: build [func][block] instruction counts for DefineDirtyMaskView.
+    static std::vector<std::vector<std::uint32_t>>
+    build_block_instr_counts_(const IRCacheEntry& entry) {
+        std::vector<std::vector<std::uint32_t>> counts;
+        counts.resize(entry.irs.size());
+        for (std::size_t fi = 0; fi < entry.irs.size(); ++fi) {
+            counts[fi].resize(entry.irs[fi].blocks.size());
+            for (std::size_t bi = 0; bi < entry.irs[fi].blocks.size(); ++bi)
+                counts[fi][bi] =
+                    static_cast<std::uint32_t>(entry.irs[fi].blocks[bi].instructions.size());
+        }
+        return counts;
+    }
+
+    // Issue #2133: when ImpactScope has precise affected_instrs under the
+    // partial threshold, run DirtyAware passes on those instructions only
+    // (no full-function re-lower from AST). Keeps clean instrs in dirty
+    // blocks. Returns true when instr-level path fully handled the entry.
+    bool relower_affected_instrs_(const std::string& name, IRCacheEntry& entry,
+                                  const ImpactScope& scope) {
+        const auto thr = get_partial_relower_threshold();
+        if (!scope.instr_level_eligible(thr))
+            return false;
+        metrics_.instr_level_relower_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.instr_level_unmapped_ratio_bp.store(scope.unmapped_ratio_bp(),
+                                                     std::memory_order_relaxed);
+        // Stamp precise dirty (idempotent if already applied).
+        (void)apply_impact_scope_dirty(entry, scope);
+
+        // Count clean instrs inside dirty blocks (saved work).
+        std::size_t clean_in_dirty = 0;
+        std::size_t dirty_instrs = 0;
+        for (std::size_t fi = 0; fi < entry.irs.size(); ++fi) {
+            for (std::size_t bi = 0; bi < entry.irs[fi].blocks.size(); ++bi) {
+                const bool bd = fi < entry.block_dirty_per_func_.size() &&
+                                bi < entry.block_dirty_per_func_[fi].size() &&
+                                entry.block_dirty_per_func_[fi][bi] != 0;
+                if (!bd)
+                    continue;
+                const auto n = entry.irs[fi].blocks[bi].instructions.size();
+                for (std::uint32_t ii = 0; ii < n; ++ii) {
+                    if (entry.is_instruction_dirty(fi, static_cast<std::uint32_t>(bi), ii))
+                        ++dirty_instrs;
+                    else
+                        ++clean_in_dirty;
+                }
+            }
+        }
+        if (clean_in_dirty > 0) {
+            metrics_.relower_partial_insts_saved_total.fetch_add(clean_in_dirty,
+                                                                 std::memory_order_relaxed);
+            metrics_.relower_instruction_skip_total.fetch_add(clean_in_dirty,
+                                                              std::memory_order_relaxed);
+            metrics_.instr_level_pass_skipped_clean.fetch_add(clean_in_dirty,
+                                                              std::memory_order_relaxed);
+        }
+
+        // Run DirtyAware suite with instr-precision mask (mutates entry.irs).
+        {
+            aura::ir::IRModule mod;
+            mod.functions = entry.irs; // copy for pass mutability then write back
+            DefineDirtyMaskView define_mask;
+            define_mask.block_dirty_per_func = &entry.block_dirty_per_func_;
+            define_mask.instruction_dirty_per_func = &entry.instruction_dirty_per_func_;
+            auto counts = build_block_instr_counts_(entry);
+            define_mask.block_instr_counts = &counts;
+            const DefineDirtyMaskView* mask_ptr = &define_mask;
+            const auto skipped = run_incremental_dirty_pass_suite_(mod, mask_ptr);
+            (void)skipped;
+            metrics_.instr_level_pass_runs_total.fetch_add(1, std::memory_order_relaxed);
+            // Mirror process atomics into CompilerMetrics.
+            metrics_.instr_level_pass_skipped_clean.fetch_add(
+                aura::compiler::instr_level_pass_skipped_clean_total.exchange(
+                    0, std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            entry.irs = std::move(mod.functions);
+        }
+
+        // Clear dirty bits after instr-level pass work.
+        entry.clear_all_instruction_dirty();
+        for (auto& fb : entry.block_dirty_per_func_)
+            for (auto& b : fb)
+                b = 0;
+        entry.dirty = false;
+        metrics_.relower_instruction_level_hits.fetch_add(1, std::memory_order_relaxed);
+        evaluator_.bump_relower_instruction_level_hit();
+        if (dirty_instrs > 0)
+            metrics_.relower_block_count.fetch_add(scope.affected_blocks.size(),
+                                                   std::memory_order_relaxed);
+        (void)name;
         return true;
     }
 
@@ -5295,6 +5392,43 @@ public:
             // No entry → caller needs to do a full first-time lower.
             return false;
         }
+        // Issue #2133: when precise instruction dirty is present and under
+        // partial threshold, consume ImpactScope-style instr path (pass peel
+        // only; no full AST re-lower). Falls through to block/fn paths if
+        // over threshold or no instr precision.
+        {
+            std::size_t dirty_instr_n = 0;
+            ImpactScope synthetic;
+            for (std::size_t fi = 0; fi < it->second.irs.size(); ++fi) {
+                for (std::size_t bi = 0; bi < it->second.irs[fi].blocks.size(); ++bi) {
+                    const auto n = it->second.irs[fi].blocks[bi].instructions.size();
+                    bool any_in_block = false;
+                    for (std::uint32_t ii = 0; ii < n; ++ii) {
+                        if (it->second.is_instruction_dirty(fi, static_cast<std::uint32_t>(bi),
+                                                            ii)) {
+                            ++dirty_instr_n;
+                            synthetic.affected_instrs.push_back(
+                                {fi, static_cast<std::uint32_t>(bi), ii});
+                            any_in_block = true;
+                        }
+                    }
+                    if (any_in_block)
+                        synthetic.affected_blocks.push_back({fi, static_cast<std::uint32_t>(bi)});
+                }
+            }
+            synthetic.instr_level_hits = dirty_instr_n;
+            if (synthetic.instr_level_eligible(get_partial_relower_threshold()) &&
+                relower_affected_instrs_(name, it->second, synthetic)) {
+                if (!source.empty()) {
+                    it->second.source = std::string(source);
+                    it->second.source_hash = fnv1a_64(it->second.source);
+                }
+                (void)flat;
+                (void)pool;
+                (void)expanded_root;
+                return true;
+            }
+        }
         const std::size_t dirty_blocks = it->second.dirty_block_count();
         // Issue #603: bump the block_dirty_hits counter whenever the
         // bitmask reports ≥1 dirty block in this entry. Pair with
@@ -5516,9 +5650,13 @@ public:
         {
             const auto& entry = it->second;
             DefineDirtyMaskView define_mask;
+            std::vector<std::vector<std::uint32_t>> instr_counts;
             if (!entry.block_dirty_per_func_.empty()) {
                 define_mask.block_dirty_per_func = &entry.block_dirty_per_func_;
                 define_mask.instruction_dirty_per_func = &entry.instruction_dirty_per_func_;
+                // Issue #2133: absolute↔in-block conversion for instr peel.
+                instr_counts = build_block_instr_counts_(entry);
+                define_mask.block_instr_counts = &instr_counts;
             }
             const DefineDirtyMaskView* mask_ptr =
                 define_mask.block_dirty_per_func ? &define_mask : nullptr;
@@ -5644,6 +5782,7 @@ public:
             one.functions.push_back(std::move(new_func));
             std::vector<std::vector<std::uint8_t>> single_mask;
             std::vector<std::vector<std::uint8_t>> inst_mask;
+            std::vector<std::vector<std::uint32_t>> instr_counts;
             aura::compiler::DefineDirtyMaskView define_mask;
             if (!dirty_copy.empty()) {
                 single_mask.push_back(dirty_copy);
@@ -5651,6 +5790,15 @@ public:
                 if (func_idx < entry.instruction_dirty_per_func_.size()) {
                     inst_mask.push_back(entry.instruction_dirty_per_func_[func_idx]);
                     define_mask.instruction_dirty_per_func = &inst_mask;
+                }
+                // Issue #2133: single-func instr counts for peel.
+                if (func_idx < entry.irs.size()) {
+                    instr_counts.resize(1);
+                    instr_counts[0].resize(entry.irs[func_idx].blocks.size());
+                    for (std::size_t bi = 0; bi < entry.irs[func_idx].blocks.size(); ++bi)
+                        instr_counts[0][bi] = static_cast<std::uint32_t>(
+                            entry.irs[func_idx].blocks[bi].instructions.size());
+                    define_mask.block_instr_counts = &instr_counts;
                 }
             }
             const aura::compiler::DefineDirtyMaskView* mask_ptr =

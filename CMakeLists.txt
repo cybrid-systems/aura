@@ -2323,6 +2323,11 @@ aura_issue_test_link_llvm_jit(test_gc_coord_scope_2131)
 aura_add_issue_test(test_region_priority_deopt_throttle_2132)
 aura_issue_test_link_llvm_jit(test_region_priority_deopt_throttle_2132)
 
+# Issue #2133: consume ImpactScope affected_instrs in relower +
+# DirtyAware pass peel (instr precision under partial thr).
+aura_add_issue_test(test_instr_level_relower_pass_2133)
+aura_issue_test_link_llvm_jit(test_instr_level_relower_pass_2133)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
