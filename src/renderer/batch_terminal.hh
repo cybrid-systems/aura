@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
 
 namespace aura::renderer {
 
@@ -347,6 +349,150 @@ inline DirtyFrameEmitResult build_terminal_frame_ansi_dirty(std::string& out, st
     // note_batch_terminal_dirty_present after zero-copy build.
     (void)full_est;
     (void)r;
+    return r;
+}
+
+// Issue #2135: fixed-capacity char buffer for direct arena ANSI emit (no
+// std::string growth / no second memcpy when capacity is sufficient).
+struct AnsiFixedBuf {
+    char* data = nullptr;
+    std::size_t len = 0;
+    std::size_t cap = 0;
+    bool overflow = false;
+
+    void push_back(char c) {
+        if (len >= cap) {
+            overflow = true;
+            return;
+        }
+        data[len++] = c;
+    }
+    void append(std::string_view s) {
+        if (s.empty())
+            return;
+        if (len + s.size() > cap) {
+            overflow = true;
+            return;
+        }
+        std::memcpy(data + len, s.data(), s.size());
+        len += s.size();
+    }
+    void append(const std::string& s) { append(std::string_view(s)); }
+    void append(const char* s) {
+        if (!s)
+            return;
+        append(std::string_view(s));
+    }
+    void reserve(std::size_t) noexcept {} // fixed capacity
+    [[nodiscard]] std::size_t size() const noexcept { return len; }
+};
+
+// Estimate dirty-AABB ANSI budget (upper bound; matches present path reserve).
+[[nodiscard]] inline std::size_t estimate_dirty_ansi_bytes(std::int32_t w, std::int32_t h,
+                                                           const DirtyRegion& dirty) noexcept {
+    if (dirty.is_clean() || w <= 0 || h <= 0)
+        return 128;
+    const auto cells = dirty.cell_count();
+    // 16 B/cell SGR-heavy + CSI bookends + safety.
+    return static_cast<std::size_t>(cells) * 16u + 128u;
+}
+
+// Issue #2135: dirty build into fixed buffer (arena-backed view). Returns
+// result; check buf.overflow — caller should retry with larger capacity.
+inline DirtyFrameEmitResult build_terminal_frame_ansi_dirty_buf(AnsiFixedBuf& out, std::int32_t w,
+                                                                std::int32_t h,
+                                                                const TermCell* cells,
+                                                                const DirtyRegion& dirty) {
+    DirtyFrameEmitResult r;
+    if (dirty.is_clean() || w <= 0 || h <= 0 || !cells)
+        return r;
+    std::uint32_t x0 = dirty.x0, y0 = dirty.y0, x1 = dirty.x1, y1 = dirty.y1;
+    if (x0 >= static_cast<std::uint32_t>(w) || y0 >= static_cast<std::uint32_t>(h))
+        return r;
+    x1 = std::min(x1, static_cast<std::uint32_t>(w - 1));
+    y1 = std::min(y1, static_cast<std::uint32_t>(h - 1));
+    if (x0 > x1 || y0 > y1)
+        return r;
+    const bool full = x0 == 0 && y0 == 0 && x1 + 1 >= static_cast<std::uint32_t>(w) &&
+                      y1 + 1 >= static_cast<std::uint32_t>(h);
+    r.partial = !full;
+
+    auto push_s = [&](std::string_view s) { out.append(s); };
+    auto push_u = [&](unsigned v) {
+        char tmp[16];
+        auto n = static_cast<std::size_t>(std::snprintf(tmp, sizeof(tmp), "%u", v));
+        out.append(std::string_view(tmp, n));
+    };
+
+    push_s("\033[?2026h");
+    push_s("\033[?25l");
+    std::uint64_t last_key = ~0ull;
+    for (std::uint32_t y = y0; y <= y1; ++y) {
+        // CSI H 1-based
+        out.push_back('\033');
+        out.push_back('[');
+        push_u(y + 1);
+        out.push_back(';');
+        push_u(x0 + 1);
+        out.push_back('H');
+        last_key = ~0ull;
+        for (std::uint32_t x = x0; x <= x1; ++x) {
+            const auto& cell = cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + x];
+            const auto key = cell.color_key();
+            if (key != last_key) {
+                if (cell.mode == 0) {
+                    push_s("\033[38;5;");
+                    push_u(cell.fg_r);
+                    push_s(";48;5;");
+                    push_u(cell.bg_r);
+                    out.push_back('m');
+                } else {
+                    push_s("\033[38;2;");
+                    push_u(cell.fg_r);
+                    out.push_back(';');
+                    push_u(cell.fg_g);
+                    out.push_back(';');
+                    push_u(cell.fg_b);
+                    push_s(";48;2;");
+                    push_u(cell.bg_r);
+                    out.push_back(';');
+                    push_u(cell.bg_g);
+                    out.push_back(';');
+                    push_u(cell.bg_b);
+                    out.push_back('m');
+                }
+                last_key = key;
+                ++r.sgr_emits;
+            }
+            // UTF-8 (same as append_utf8)
+            const auto cp = cell.ch;
+            if (cp < 32u || (cp >= 0x7Fu && cp < 0xA0u)) {
+                out.push_back(' ');
+            } else if (cp <= 0x7Fu) {
+                out.push_back(static_cast<char>(cp));
+            } else if (cp <= 0x7FFu) {
+                out.push_back(static_cast<char>(0xC0 | ((cp >> 6) & 0x1F)));
+                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else if (cp <= 0xFFFFu) {
+                out.push_back(static_cast<char>(0xE0 | ((cp >> 12) & 0x0F)));
+                out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else if (cp <= 0x10FFFFu) {
+                out.push_back(static_cast<char>(0xF0 | ((cp >> 18) & 0x07)));
+                out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else {
+                out.push_back(' ');
+            }
+            ++r.cells_emitted;
+            if (out.overflow)
+                return r;
+        }
+    }
+    push_s("\033[0m");
+    push_s("\033[?25h");
+    push_s("\033[?2026l");
     return r;
 }
 

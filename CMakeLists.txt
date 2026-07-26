@@ -2333,6 +2333,10 @@ aura_issue_test_link_llvm_jit(test_instr_level_relower_pass_2133)
 aura_add_issue_test(test_tui_batch_draw_present_2134)
 aura_issue_test_link_llvm_jit(test_tui_batch_draw_present_2134)
 
+# Issue #2135: default zero-copy present (direct arena ANSI; residual memcpy).
+aura_add_issue_test(test_zero_copy_present_default_2135)
+aura_issue_test_link_llvm_jit(test_zero_copy_present_default_2135)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

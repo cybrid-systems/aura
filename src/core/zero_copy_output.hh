@@ -18,7 +18,7 @@ namespace aura::core::zero_copy {
 inline constexpr int kZeroCopyOutputPhase = 2; // #1561: Arena path
 inline constexpr int kZeroCopyOutputIssue = 1561;
 
-// Process-wide metrics (#1561 AC4 / #2048 handoff).
+// Process-wide metrics (#1561 AC4 / #2048 handoff / #2135 direct arena).
 struct ZeroCopyMetrics {
     std::atomic<std::uint64_t> acquire_count{0};
     std::atomic<std::uint64_t> release_count{0};
@@ -31,6 +31,11 @@ struct ZeroCopyMetrics {
     std::atomic<std::uint64_t> zero_copy_handoff_hits{0};
     std::atomic<std::uint64_t> zero_copy_large_handoff_hits{0}; // batches ≥ 4 KiB
     std::atomic<std::uint64_t> present_pin_handoffs{0};
+    // Issue #2135: direct-to-arena ANSI (no residual scratch memcpy).
+    std::atomic<std::uint64_t> direct_arena_build_total{0};
+    std::atomic<std::uint64_t> residual_memcpy_count{0};
+    std::atomic<std::uint64_t> residual_memcpy_bytes{0};
+    std::atomic<std::uint64_t> scratch_capacity_bytes{0}; // high-water of TLS scratch
 };
 
 inline ZeroCopyMetrics& g_zero_copy_metrics() noexcept {
@@ -181,6 +186,10 @@ inline void reset_zero_copy_metrics_for_test() noexcept {
     m.zero_copy_handoff_hits.store(0, std::memory_order_relaxed);
     m.zero_copy_large_handoff_hits.store(0, std::memory_order_relaxed);
     m.present_pin_handoffs.store(0, std::memory_order_relaxed);
+    m.direct_arena_build_total.store(0, std::memory_order_relaxed);
+    m.residual_memcpy_count.store(0, std::memory_order_relaxed);
+    m.residual_memcpy_bytes.store(0, std::memory_order_relaxed);
+    m.scratch_capacity_bytes.store(0, std::memory_order_relaxed);
     g_zero_copy_fb.acquire_count = 0;
     g_zero_copy_fb.release_count = 0;
     g_zero_copy_fb.last_ptr = nullptr;
