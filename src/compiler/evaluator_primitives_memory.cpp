@@ -585,10 +585,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                         std::memory_order_relaxed),
                     std::memory_order_relaxed);
             }
-            // Capacity 32: #1518 production keys + #2157 Force hard-mutex counters.
+            // Capacity 64: #1518 + #2157 Force hard-mutex + #2166 Moving densify.
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -661,6 +661,20 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 {"schema-2157", make_int(aura::ast::kForceCompactHardMutexIssue)},
                 {"issue-2157", make_int(aura::ast::kForceCompactHardMutexIssue)},
                 {"force-hard-mutex-wired", make_int(1)},
+                // Issue #2166: opt-in Moving densify (process-wide counters).
+                {"live-compact-moving-count",
+                 make_int(static_cast<std::int64_t>(
+                     aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed)))},
+                {"objects-moved-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::ast::g_objects_moved_total.load(std::memory_order_relaxed)))},
+                {"moving-blocked-precondition-total",
+                 make_int(static_cast<std::int64_t>(aura::ast::g_moving_blocked_precondition_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"moving-compact-enabled", make_int(aura::ast::moving_compact_enabled())},
+                {"schema-2166", make_int(aura::ast::kMovingCompactIssue)},
+                {"issue-2166", make_int(aura::ast::kMovingCompactIssue)},
+                {"moving-compact-wired", make_int(1)},
             };
             return build_hash(kv);
         });

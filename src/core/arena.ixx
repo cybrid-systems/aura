@@ -2,6 +2,8 @@ module;
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdlib> // Issue #2166: getenv AURA_ARENA_MOVING_COMPACT
+#include <cstring> // Issue #2166: memcpy for Moving densify
 #include <expected>
 #include <format>
 #include <functional>
@@ -148,6 +150,10 @@ export struct ArenaStats {
     // Issue #2157: Force blocked by live pin / EnvFrameLifetimeGuard hold.
     std::size_t force_compact_blocked_by_pin = 0;
     std::size_t force_compact_blocked_by_envframe_guard = 0;
+    // Issue #2166: opt-in Moving compact.
+    std::size_t live_compact_moving_count = 0;
+    std::size_t objects_moved_total = 0;
+    std::size_t moving_blocked_precondition_total = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
@@ -202,6 +208,9 @@ export struct ArenaStats {
         live_compact_invalidated_pins_total += other.live_compact_invalidated_pins_total;
         force_compact_blocked_by_pin += other.force_compact_blocked_by_pin;
         force_compact_blocked_by_envframe_guard += other.force_compact_blocked_by_envframe_guard;
+        live_compact_moving_count += other.live_compact_moving_count;
+        objects_moved_total += other.objects_moved_total;
+        moving_blocked_precondition_total += other.moving_blocked_precondition_total;
         if (other.frag_post_compact_bp > 0)
             frag_post_compact_bp = other.frag_post_compact_bp;
         if (other.defrag_attempted_count > 0)
@@ -437,15 +446,11 @@ private:
 // invalidates_pins) so Agents, MutationBoundary probe, and compact_sweep body
 // can observe the outcome — replacing the prior std::size_t return.
 //
-// Issue #2089: explicit non-moving contract. live_compact(Soft|Force) does
-// NOT remap external raw pointers — it only (a) reclaims freelist holes +
-// trims buffer tail, (b) restamps the generation counter, and (c) invalidates
-// LifetimePins keyed to this arena. moved_live_objects is always false in the
-// current Soft/Force modes; a future LiveCompactMode::Moving (out of scope
-// for #2089) is the only path that would set it true. Agents, FFI handoff
-// code, and StableNodeRef-style consumers MUST observe either the generation
-// stamp (gen() before/after) or LifetimePin::validate() — they MUST NOT
-// assume any raw pointer was rewritten.
+// Issue #2089: Soft/Force non-moving contract — freelist holes + gen restamp
+// + pin invalidate only. Issue #2166: opt-in LiveCompactMode::Moving densifies
+// tracked create<T> objects with an object_remap_ table (default OFF via
+// AURA_ARENA_MOVING_COMPACT / set_moving_compact_enabled). Consumers MUST
+// re-resolve via gen / LifetimePin / resolve_object_remap after Moving.
 //
 // Issue #2157: Force hard-mutex with live LifetimePin + EnvFrameLifetimeGuard.
 // Soft already gates on MutationBoundary / render hotpath. Force must NOT
@@ -453,16 +458,39 @@ private:
 // envframe_lifetime::active_guard_depth()>0 — post-facto restamp is not a
 // hold-time guarantee under fiber-steal + concurrent Force.
 export enum class LiveCompactMode : std::uint8_t {
-    Soft = 0,  // Soft-gates under render hotpath / MutationBoundary (existing auto path)
-    Force = 1, // Force path — STW-friendly, used by explicit Agent calls
-    // Moving = 2, // reserved — explicit pointer remap; not implemented (#2089).
+    Soft = 0,   // Soft-gates under render hotpath / MutationBoundary
+    Force = 1,  // Force path — STW-friendly, used by explicit Agent calls
+    Moving = 2, // Issue #2166: opt-in pointer densify + object_remap_
 };
 
 export inline constexpr int kForceCompactHardMutexIssue = 2157;
+export inline constexpr int kMovingCompactIssue = 2166;
 
 // Process-wide Force-block metrics (Agents query via arena-live-compact-stats).
 export inline std::atomic<std::uint64_t> g_force_compact_blocked_by_pin_total{0};
 export inline std::atomic<std::uint64_t> g_force_compact_blocked_by_envframe_guard_total{0};
+// Issue #2166: Moving compact process-wide metrics.
+export inline std::atomic<std::uint64_t> g_live_compact_moving_count{0};
+export inline std::atomic<std::uint64_t> g_objects_moved_total{0};
+export inline std::atomic<std::uint64_t> g_moving_blocked_precondition_total{0};
+// Feature flag: default OFF (env AURA_ARENA_MOVING_COMPACT=1 enables).
+export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/default
+
+export inline void set_moving_compact_enabled(int enabled) noexcept {
+    g_moving_compact_enabled_pref.store(enabled ? 1 : 0, std::memory_order_release);
+}
+export inline int moving_compact_enabled() noexcept {
+    const int pref = g_moving_compact_enabled_pref.load(std::memory_order_acquire);
+    if (pref == 0 || pref == 1)
+        return pref;
+    if (const char* e = std::getenv("AURA_ARENA_MOVING_COMPACT")) {
+        if (e[0] == '1')
+            return 1;
+        if (e[0] == '0')
+            return 0;
+    }
+    return 0; // production default OFF (Agent opt-in)
+}
 
 export struct LiveCompactResult {
     std::size_t bytes_reclaimed = 0; // bytes saved by defrag_impl (buffer resize)
@@ -471,18 +499,19 @@ export struct LiveCompactResult {
     LiveCompactMode mode = LiveCompactMode::Soft;
     bool soft_gated = false;       // true if Soft mode skipped (render hotpath / boundary held)
     bool invalidates_pins = false; // true if new_gen bumped (LifetimePins invalidated)
-    // Issue #2089: explicit non-moving contract — Soft/Force never relocate
-    // live objects. Always false in current implementation; reserved for a
-    // future LiveCompactMode::Moving. Consumers MUST observe generation
-    // stamps or LifetimePin::validate() instead of assuming pointer rewrite.
+    // Issue #2089 / #2166: Soft/Force always false; Moving may set true.
     bool moved_live_objects = false;
+    std::size_t objects_moved = 0; // #2166: count of tracked objects remapped
     // Issue #2157: Force hard-mutex outcomes (no gen bump when true).
     bool force_blocked_by_pin = false;
     bool force_blocked_by_envframe_guard = false;
+    // Issue #2166: Moving preconditions failed or feature flag off.
+    bool moving_blocked_precondition = false;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
-               !force_blocked_by_pin && !force_blocked_by_envframe_guard;
+               !force_blocked_by_pin && !force_blocked_by_envframe_guard &&
+               !moving_blocked_precondition && objects_moved == 0;
     }
     [[nodiscard]] bool force_blocked() const noexcept {
         return force_blocked_by_pin || force_blocked_by_envframe_guard;
@@ -710,7 +739,9 @@ public:
             return nullptr;
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
-        dtors_.push_back({result, +[](void* p) { static_cast<T*>(p)->~T(); }});
+        // Issue #2166: record size/align for opt-in Moving densify remap.
+        dtors_.push_back(
+            {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
         return result;
     }
 
@@ -757,6 +788,7 @@ public:
         stats_.used = 0;
         stats_.allocation_count = 0;
         stats_.wasted = 0;
+        last_object_remap_.clear(); // Issue #2166
     }
 
     // Get a pmr-compatible allocator for std::pmr containers
@@ -1012,11 +1044,10 @@ public:
         return live_compact(LiveCompactMode::Force).slots_recycled;
     }
 
-    // Issue #1518 + #2004 + #2157: live_compact — explicit controllable API
-    // with LiveCompactMode (Soft / Force) + LiveCompactResult. Soft gates on
-    // render / MutationBoundary. Force (#2157) hard-mutexes on live
-    // LifetimePin or active EnvFrameLifetimeGuard — no gen bump / pin invalidate
-    // while holds are live (hold-time guarantee under fiber-steal).
+    // Issue #1518 + #2004 + #2157 + #2166: live_compact Soft / Force / Moving.
+    // Soft gates on render / MutationBoundary. Force (#2157) hard-mutexes on
+    // live LifetimePin or EnvFrameLifetimeGuard. Moving (#2166) is opt-in densify
+    // of tracked create objects + object_remap_ (default OFF).
     [[nodiscard]] LiveCompactResult
     live_compact(LiveCompactMode mode = LiveCompactMode::Soft) noexcept {
         aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
@@ -1040,21 +1071,55 @@ public:
                 return result;
             }
             ++stats_.live_compact_soft_count;
+        } else if (mode == LiveCompactMode::Moving) {
+            // Issue #2166: Moving requires feature flag + Force-level preconditions.
+            if (!moving_compact_enabled()) {
+                result.moving_blocked_precondition = true;
+                result.soft_gated = true;
+                ++stats_.moving_blocked_precondition_total;
+                g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
+                return result;
+            }
+            if (aura::core::arena_policy::in_render_hotpath() ||
+                arena_mutation_boundary_depth() > 0 ||
+                aura::gc_hooks::should_defer_destructive_gc() ||
+                aura::core::lifetime::live_pin_count() > 0 ||
+                aura::core::envframe_lifetime::active_guard_depth() > 0) {
+                result.moving_blocked_precondition = true;
+                result.soft_gated = true;
+                if (aura::core::lifetime::live_pin_count() > 0) {
+                    result.force_blocked_by_pin = true;
+                    ++stats_.force_compact_blocked_by_pin;
+                    g_force_compact_blocked_by_pin_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (aura::core::envframe_lifetime::active_guard_depth() > 0) {
+                    result.force_blocked_by_envframe_guard = true;
+                    ++stats_.force_compact_blocked_by_envframe_guard;
+                    g_force_compact_blocked_by_envframe_guard_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                ++stats_.moving_blocked_precondition_total;
+                g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
+                return result;
+            }
+            ++stats_.live_compact_moving_count;
+            g_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
+            // Densify tracked create objects before freelist/tail compact.
+            result.objects_moved = relocate_tracked_objects_for_moving_();
+            result.moved_live_objects = result.objects_moved > 0;
+            stats_.objects_moved_total += result.objects_moved;
+            g_objects_moved_total.fetch_add(result.objects_moved, std::memory_order_relaxed);
         } else {
-            // Issue #2160: Force observes the same unified GC-defer predicate
-            // (panic / FfiPin / RenderPin) as GCCollector + compact_sweep — no
-            // gen bump while render-critical present holds RenderPin.
+            // Force path (#2160 / #2157).
             if (aura::gc_hooks::should_defer_destructive_gc()) {
                 result.soft_gated = true;
                 if (aura::gc_hooks::render_pin_defer_active())
                     aura::gc_hooks::note_gc_sweep_skipped_render();
                 return result;
             }
-            // Issue #2157: Force hard-mutex — busy/soft-gated style result,
-            // no gen bump, no pin invalidate while holds are live.
             if (aura::core::lifetime::live_pin_count() > 0) {
                 result.force_blocked_by_pin = true;
-                result.soft_gated = true; // Agent-visible "did not run" marker
+                result.soft_gated = true;
                 ++stats_.force_compact_blocked_by_pin;
                 g_force_compact_blocked_by_pin_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
@@ -1071,8 +1136,6 @@ public:
         }
 
         // ── Mark ──
-        // Tracked create<T> objects + small-pool slot proxy (try_allocate path
-        // without dtor tracking — min tier size 16B lower-bounds slot count).
         const std::size_t marked_objs = dtors_.size();
         const std::size_t marked_bytes = small_pool_.allocated();
         const std::size_t pool_slot_proxy = marked_bytes / SmallObjectPool::kTierSizes[0];
@@ -1081,7 +1144,6 @@ public:
         stats_.live_objects_marked_total += total_marked;
 
         // ── Relocate (freelist protocol) ──
-        // Free slots are already "relocated out"; recycle hits are real reuses.
         const std::size_t holes = small_pool_.free_slot_count();
         const std::size_t reuses = small_pool_.recycle_hits();
         const std::size_t relocated = holes + reuses;
@@ -1090,7 +1152,7 @@ public:
         aura::core::arena_policy::record_live_relocate(relocated);
         result.slots_recycled = relocated;
 
-        // ── Compact tail (no hook — we invoke once below) ──
+        // ── Compact tail ──
         const auto frag_before = stats().fragmentation_ratio();
         const std::size_t saved_bytes =
             defrag_impl(/*clear_request_flag=*/false, /*invoke_hook=*/false);
@@ -1106,30 +1168,41 @@ public:
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
 
-        // ── Generation restamp + LifetimePin invalidation (Issue #2004) ──
-        // Bump generation if we actually changed layout (saved bytes OR
-        // recycled slots). Soft-gated no-op runs return early above so they
-        // never bump gen. invalidate_all_pins_for_arena is keyed to THIS
-        // arena_id_ (other arenas' pins are untouched).
-        if (saved_bytes > 0 || relocated > 0) {
+        // ── Generation restamp + LifetimePin invalidation ──
+        // Moving always restamps when any object moved (even if freelist quiet).
+        if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {
             result.new_gen = generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
             result.invalidates_pins = true;
             ++stats_.live_compact_gen_restamps_total;
             const std::size_t invalidated =
                 aura::core::lifetime::invalidate_all_pins_for_arena(arena_id_);
             stats_.live_compact_invalidated_pins_total += invalidated;
-            // Issue #2089: fire layout-change callback AFTER gen restamp +
-            // pin invalidate so observers (HotUpdate / Shape / Fiber) see
-            // the new gen + can re-pin on the new layout. Soft-gated no-ops
-            // and zero-saved / zero-relocated paths skip this — moved_live_objects
-            // stays false and no observer fires. Non-moving contract: callback
-            // MUST NOT assume pointer rewrite (see LiveCompactResult).
             invoke_layout_change_(result.new_gen);
         }
 
-        // ── Shape/JIT deopt coordination (throttled in service hook) ──
         invoke_compact_hook_with_deopt_();
         return result;
+    }
+
+    // Issue #2166: resolve old create-object address after Moving densify.
+    // Returns nullptr if unknown (not remapped / Soft-Force path).
+    [[nodiscard]] void* resolve_object_remap(void* old_ptr) const noexcept {
+        if (!old_ptr)
+            return nullptr;
+        auto it = last_object_remap_.find(old_ptr);
+        return it == last_object_remap_.end() ? nullptr : it->second;
+    }
+    [[nodiscard]] std::size_t object_remap_size() const noexcept {
+        return last_object_remap_.size();
+    }
+    [[nodiscard]] std::uint64_t live_compact_moving_count_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_moving_count);
+    }
+    [[nodiscard]] std::uint64_t objects_moved_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.objects_moved_total);
+    }
+    [[nodiscard]] std::uint64_t moving_blocked_precondition_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.moving_blocked_precondition_total);
     }
 
     // Issue #2004: backwards-compat bool wrapper. New callers should use the
@@ -1267,10 +1340,89 @@ private:
     // Type-erased destructor pair. The thunk is bound at the create<T>
     // call site to call ~T() on the specific type, so a single
     // vector<DtorEntry> can host heterogeneous Ts.
+    // Issue #2166: size/align enable opt-in Moving densify + object_remap_.
     struct DtorEntry {
-        void* ptr;
-        void (*dtor)(void*);
+        void* ptr = nullptr;
+        void (*dtor)(void*) = nullptr;
+        std::size_t size = 0;
+        std::size_t align = 0;
     };
+
+    // Issue #2166: densify tracked small-pool create objects for Moving.
+    // Snapshot → freelist recycle (no dtor) → reallocate → memcpy → remap.
+    // Non-small-pool / untracked slots stay put. Avoids allocate_raw_impl
+    // auto-compact re-entry. Returns count of objects whose address changed.
+    [[nodiscard]] std::size_t relocate_tracked_objects_for_moving_() noexcept {
+        last_object_remap_.clear();
+        if (dtors_.empty())
+            return 0;
+
+        struct Pending {
+            void* old = nullptr;
+            void (*dtor)(void*) = nullptr;
+            std::size_t size = 0;
+            std::size_t align = 0;
+            std::vector<std::byte> bytes;
+        };
+        std::vector<Pending> pending;
+        pending.reserve(dtors_.size());
+        std::vector<DtorEntry> kept;
+        kept.reserve(dtors_.size());
+
+        for (auto& e : dtors_) {
+            if (!e.ptr || e.size == 0 || e.dtor == nullptr) {
+                kept.push_back(e);
+                continue;
+            }
+            // Only densify freelist-reclaimable small-pool objects.
+            if (!small_pool_.owns(e.ptr) || e.size > SmallObjectPool::kMaxSmallSize) {
+                kept.push_back(e);
+                continue;
+            }
+            Pending p;
+            p.old = e.ptr;
+            p.dtor = e.dtor;
+            p.size = e.size;
+            p.align = e.align != 0 ? e.align : alignof(std::max_align_t);
+            p.bytes.resize(e.size);
+            std::memcpy(p.bytes.data(), e.ptr, e.size);
+            // Recycle WITHOUT dtor — object remains logically live at new addr.
+            if (!small_pool_.recycle(e.ptr, e.size)) {
+                kept.push_back(e);
+                continue;
+            }
+            pending.push_back(std::move(p));
+        }
+
+        // Ascending size → denser tier packing after freelist reverse LIFO.
+        std::stable_sort(
+            pending.begin(), pending.end(),
+            [](const Pending& a, const Pending& b) noexcept { return a.size < b.size; });
+
+        std::size_t moved = 0;
+        for (auto& p : pending) {
+            // Prefer freelist; skip allocate_raw_impl (auto-compact re-entry).
+            void* neu = small_pool_.try_allocate(p.size);
+            if (!neu) {
+                // Should be rare: freelist held recycled slots. Fall back pmr.
+                try {
+                    neu = resource_.allocate(p.size, p.align);
+                    stats_.used += p.size;
+                } catch (...) {
+                    neu = nullptr;
+                }
+            }
+            if (!neu)
+                continue; // fail closed: drop tracking (should not happen)
+            std::memcpy(neu, p.bytes.data(), p.size);
+            kept.push_back(DtorEntry{neu, p.dtor, p.size, p.align});
+            last_object_remap_[p.old] = neu;
+            if (neu != p.old)
+                ++moved;
+        }
+        dtors_ = std::move(kept);
+        return moved;
+    }
 
     void run_destructors() noexcept {
         // Reverse order: last-constructed destroyed first, matching
@@ -1533,6 +1685,9 @@ private:
     SmallObjectPool small_pool_;
     ArenaStats stats_;
     std::vector<DtorEntry> dtors_;
+    // Issue #2166: old→new create-object addresses from last Moving densify.
+    // Cleared/rebuilt each Moving call; Soft/Force leave it empty.
+    std::unordered_map<void*, void*> last_object_remap_;
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};
@@ -1771,10 +1926,11 @@ public:
             agg.new_gen = std::max(agg.new_gen, r.new_gen);
             agg.soft_gated = agg.soft_gated || r.soft_gated;
             agg.invalidates_pins = agg.invalidates_pins || r.invalidates_pins;
-            // Issue #2089: aggregate the non-moving contract flag. Always
-            // false under Soft/Force; OR semantics future-proofs a Moving
-            // mode where some arenas move while others don't.
+            // Issue #2089 / #2166: aggregate Moving + non-moving flags.
             agg.moved_live_objects = agg.moved_live_objects || r.moved_live_objects;
+            agg.objects_moved += r.objects_moved;
+            agg.moving_blocked_precondition =
+                agg.moving_blocked_precondition || r.moving_blocked_precondition;
             // Issue #2157: OR Force hard-mutex flags across arenas.
             agg.force_blocked_by_pin = agg.force_blocked_by_pin || r.force_blocked_by_pin;
             agg.force_blocked_by_envframe_guard =
