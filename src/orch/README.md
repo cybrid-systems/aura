@@ -55,10 +55,13 @@ auto& h2 = scope.spawn({.name = "b", .body = [] { /* ... */ }});
 scope.cancel_all();                       // best-effort request_cancel
 auto jr = scope.join_all(/*timeout_ms=*/5000); // mirror #2082 cancel+drain (default 2s)
 // Issue #2153: JoinPolicy{.primary_ms, .drain_ms} for SLA-tuned cancel→release.
+// Issue #2161: batch liveness (no global registry)
+//   auto wr = scope.watch_all(/*stall_ms=*/50, StallPolicy::Cancel);
+//   // wr.alive / stalled / done / closed / cancelled
 // ~AgentScope: cancel + best-effort drain + reservation release.
 ```
 
-Rules (per Issue #2083 AC4):
+Rules (per Issue #2083 AC4 / #2161 AC5):
 1. **No** process-global registry (linter still forbids `AgentRegistry` /
    `global_agent_registry` / `conduct_parallel`).
 2. Scope destructor is the supervision root (cancel + best-effort drain +
@@ -72,8 +75,9 @@ Rules (per Issue #2083 AC4):
      primitives (`orch:spawn-agent` / `orch:agent-join`).
    - `parallel_intend`: short-lived batch thunks (no long-lived names).
    - `AgentScope`: long-lived named agents, parent-cancel + `join_all`
-     semantics, bound to an explicit owner (Scheduler reference).
+     + `watch_all` (#2161) semantics, bound to an explicit owner
+     (Scheduler reference).
 
-Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6).
+Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6 + #2161 watch_all).
 
 See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.md`](../../docs/wire-formats.md) §10.
