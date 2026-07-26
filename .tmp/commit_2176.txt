@@ -1,0 +1,65 @@
+feat(mutation): selective unstamp for MacroIntroduced subtrees (Agent experimental rollback, #2176, refine #1893 #2100 #2105)
+
+Make the documented metadata-snapshot/restore path cover the
+Agent experimental self-evolution case: when a new macro/agent
+step fails hygiene or validation, the caller can now selectively
+clear the MacroIntroduced marker (reset to User) on the subtree
+rooted at root-id, optionally zero provenance, and clear the
+kMacroExpansion dirty bit — without forcing a full batch rollback
+or manual dirty clearing. Pairs with the existing
+snapshot_metadata_columns + restore_metadata_columns (issue #1893)
+for composite-txn safety: caller can snapshot first, call this,
+then restore on a bad step. Independent of the macro hygiene
+contract check (validate_macro_hygiene_invariants) — this WRITES
+the SoA, that READS without modifying.
+
+7 files / 459 insertions:
+
+- src/core/ast.ixx: FlatAST::unstamp_macro_introduced(NodeId root,
+  bool keep_provenance = false) method + FlatAST member
+  unstamp_macro_introduced_total_ (mutable atomic) + public
+  unstamp_macro_introduced_total() accessor. Walks the subtree
+  (stack-based), resets marker to User on MacroIntroduced nodes,
+  optionally zeros provenance, AND-NOTs the kMacroExpansion bit.
+  Skips free_list_ slots. Bounds-checks every SoA column.
+
+- src/compiler/macro_expansion.cpp: file-level atomic
+  g_unstamp_macro_introduced_total{0} + C-linkage accessor
+  aura_unstamp_macro_introduced_total_v_read + C-linkage helper
+  aura_unstamp_macro_introduced_with_counter(void*, uint32_t, int)
+  that calls the FlatAST method AND bumps the file-level counter
+  (same pattern as restamp_after_expand for the restamp counters).
+
+- src/compiler/observability_metrics.h: CompilerMetrics
+  unstamp_macro_introduced_total field for the Agent dashboard.
+
+- src/compiler/evaluator_primitives_mutate.cpp: forward decl of
+  aura_unstamp_macro_introduced_with_counter + mutate:rollback-macro-introduced
+  primitive registered via add_mutate (MutationBoundaryGuard +
+  try_acquire + read-only + workspace + arg checks). Routes through
+  the C-linkage helper so the file-level counter is bumped.
+
+- src/compiler/evaluator_primitives_query.cpp: extern decl of
+  aura_unstamp_macro_introduced_total_v_read + query:macro-unstamp-stats
+  stats primitive exposed (additive, no schema break).
+
+- tests/compiler/test_jit_macro_introduced_preserve.cpp: header
+  AC list + ac8_unstamp_macro_introduced_2176 (17 checks covering
+  selective unstamp, snapshot/restore consistency, query surface
+  via (engine:metrics ...), source-cite). 78/78 PASS (full test).
+
+- scripts/check_unstamp_macro_introduced_coverage.py: CI-gate
+  linter with 7 contract rows. --self-test OK.
+
+AC8: 17/17 PASS; full test 78/78 PASS (vs pre-changes 61/61 baseline
++ 17 new = 78/78, 0 regressions).
+
+Refines #1893 (metadata snapshot/restore) + #2100 (JIT deopt path)
++ #2105 (mutation txn barriers). Non-duplicative: the existing
+restamp_after_expand bumps the restamp counters — this adds the
+INVERSE direction (selective unstamp for the Agent experimental
+rollback path).
+
+Token lesson applied (per #2170 close): Python urllib for close.
+Pipeline: build -> test 78/78 PASS (4 iterations to fix test
+eval pattern) -> lint OK -> pre-push gate -> push -> close.

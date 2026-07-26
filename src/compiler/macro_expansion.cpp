@@ -380,6 +380,14 @@ std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total{0};
 // Agents / observability dashboards visibility into the stamping rate
 // (previously silent). Surfaces via (query:macro-schema-cache-dirty-stamp-stats).
 std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total{0};
+// Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
+// experimental rollback path). Bumped per successful unstamp via the
+// C-linkage helper aura_unstamp_macro_introduced_with_counter below.
+// Mirrors the g_macro_restamp_after_flat_total pattern (file-level
+// atomic bumped by the helper, NOT by the FlatAST method itself — the
+// method only updates the per-instance FlatAST member, which the
+// snapshot function syncs into CompilerMetrics).
+std::atomic<std::uint64_t> g_unstamp_macro_introduced_total{0};
 
 // Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
 // primitive can read these file-level atomics from another TU without the
@@ -408,6 +416,32 @@ std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept {
 // (subtree-local coherence at expand exit + critical mutate entry).
 std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcept {
     return g_macro_expand_mutate_restamp_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2176: C-linkage helper for the mutate:rollback-macro-introduced
+// primitive. Calls FlatAST::unstamp_macro_introduced (the per-instance
+// method, which updates the FlatAST member for snapshot) AND bumps the
+// file-level g_unstamp_macro_introduced_total (which the C-linkage
+// accessor reads for cross-TU query stats). Same pattern as
+// restamp_after_expand() for the restamp counter — method updates
+// FlatAST member, helper bumps file-level atomic.
+extern "C" std::uint64_t aura_unstamp_macro_introduced_with_counter(void* flat_ptr,
+                                                                    std::uint32_t root,
+                                                                    int keep_provenance) noexcept {
+    auto* flat = static_cast<aura::ast::FlatAST*>(flat_ptr);
+    if (!flat)
+        return 0;
+    const auto n =
+        flat->unstamp_macro_introduced(static_cast<aura::ast::NodeId>(root), keep_provenance != 0);
+    if (n > 0)
+        g_unstamp_macro_introduced_total.fetch_add(n, std::memory_order_relaxed);
+    return n;
+}
+
+// Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
+// experimental rollback path). Bumped per successful unstamp.
+std::uint64_t aura_unstamp_macro_introduced_total_v_read() noexcept {
+    return g_unstamp_macro_introduced_total.load(std::memory_order_relaxed);
 }
 // Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
 // stamp counter C-linkage reader (clone_macro_body walk visibility).

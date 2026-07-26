@@ -41,6 +41,13 @@ import aura.compiler.soa_view;
 #include "core/transaction_guard.hh"
 // Issue #1964 cycle 2: WorkspaceEpoch accessors.
 #include "core/workspace_epoch.hh"
+// Issue #2176: C-linkage helper for mutate:rollback-macro-introduced
+// (calls FlatAST::unstamp_macro_introduced + bumps the file-level
+// g_unstamp_macro_introduced_total counter). Defined in macro_expansion.cpp.
+extern "C" std::uint64_t aura_unstamp_macro_introduced_with_counter(void* flat_ptr,
+                                                                    std::uint32_t root,
+                                                                    int keep_provenance) noexcept;
+
 // Issue #1956: C snapshot only (do not attach HotUpdateRegistry to module).
 extern "C" {
 struct aura_hot_update_registry_snapshot {
@@ -1501,6 +1508,56 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         return make_bool(false);
     });
+
+    // Issue #2176: (mutate:rollback-macro-introduced root-id [:keep-provenance? #f])
+    // — primary Agent-facing primitive for experimental self-evolution
+    // rollback. Selectively clears MacroIntroduced marker (resets to User)
+    // on the subtree rooted at root-id; optionally zeroes provenance +
+    // clears kMacroExpansion dirty bit. Preserves structure + generation.
+    // Returns the number of nodes actually unstampped. Composes with
+    // (issue #1893) metadata snapshot/restore: caller can snapshot_metadata_columns
+    // first, then call this, then restore_metadata_columns to undo a
+    // bad step. Pairs with restamp_macro_introduced_subtree(root) for the
+    // inverse direction (re-stamp after a fresh macro expansion).
+    add_mutate(
+        "mutate:rollback-macro-introduced", [&ev, mev, safe_str](const auto& a) -> EvalValue {
+            bool ok = true;
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return mev("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
+            if (ev.workspace_read_only_) {
+                ok = false;
+                return mev("read-only", "workspace is read-only");
+            }
+            if (a.empty() || !is_int(a[0])) {
+                ok = false;
+                return mev(
+                    "bad-arg",
+                    "usage: (mutate:rollback-macro-introduced root-id [:keep-provenance? #f])");
+            }
+            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+                ok = false;
+                return mev("no-workspace", "no workspace AST loaded");
+            }
+            auto& flat = *ev.workspace_flat_;
+            const auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            bool keep_provenance = false;
+            if (a.size() >= 2 && is_int(a[1])) {
+                keep_provenance = as_int(a[1]) != 0;
+            }
+            // No-op on NULL_NODE or out-of-bounds (caller bug; report 0 unstampped).
+            // Routes through C-linkage helper aura_unstamp_macro_introduced_with_counter
+            // (in macro_expansion.cpp) so the file-level counter is bumped alongside
+            // the FlatAST member — same pattern as restamp_after_expand for the
+            // restamp counters.
+            const std::uint64_t unstampped = aura_unstamp_macro_introduced_with_counter(
+                ev.workspace_flat_, root, keep_provenance);
+            return make_int(static_cast<std::int64_t>(unstampped));
+        });
 
     // Issue #391: (query:stale-ref-policy) — return the
     // current StaleRefPolicy as a string ("disabled" /
