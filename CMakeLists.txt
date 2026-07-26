@@ -2180,6 +2180,11 @@ aura_add_issue_test(test_outermost_exit_order_2120)
 aura_issue_test_link_llvm_jit(test_outermost_exit_order_2120)
 add_dependencies(all_test_issue_targets test_outermost_exit_order_2120)
 
+# Issue #2121: region-based / optimistic workspace write concurrency (multi-Agent).
+aura_add_issue_test(test_workspace_region_concurrency_2121)
+aura_issue_test_link_llvm_jit(test_workspace_region_concurrency_2121)
+add_dependencies(all_test_issue_targets test_workspace_region_concurrency_2121)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

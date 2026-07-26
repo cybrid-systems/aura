@@ -5187,7 +5187,38 @@ private:
     // env_frames → dep_graph. Reverse order is NOT allowed.
     std::shared_mutex workspace_mtx_;
 
+    // ── Issue #2121: region-sharded write concurrency (private state) ──
+    // RegionExclusive: shared_lock(workspace_mtx_) + region_mtx_[shard]
+    // GlobalExclusive: unique_lock(workspace_mtx_)
+    // Topology / atomic-batch / cross-region must use GlobalExclusive.
+    static constexpr std::size_t kWorkspaceRegionShardsPrivate = 8;
+    mutable std::array<std::mutex, kWorkspaceRegionShardsPrivate> workspace_region_mtx_{};
+    mutable std::array<std::atomic<std::uint32_t>, kWorkspaceRegionShardsPrivate>
+        workspace_region_holders_{};
+    std::atomic<bool> workspace_region_concurrency_enabled_{true};
+    bool force_lightweight_checkpoint_for_next_boundary_ = false;
+
 public:
+    // Issue #2121: public shard count + region helpers (Agents / tests).
+    static constexpr std::size_t kWorkspaceRegionShards = kWorkspaceRegionShardsPrivate;
+    void set_workspace_region_concurrency_enabled(bool on) noexcept {
+        workspace_region_concurrency_enabled_.store(on, std::memory_order_release);
+    }
+    [[nodiscard]] bool workspace_region_concurrency_enabled() const noexcept {
+        return workspace_region_concurrency_enabled_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] static std::uint32_t workspace_region_shard(std::uint64_t region_key) noexcept {
+        return static_cast<std::uint32_t>(region_key % kWorkspaceRegionShards);
+    }
+    // FNV-1a 64-bit hash of a define/module name → region key.
+    [[nodiscard]] static std::uint64_t
+    workspace_region_key_from_name(std::string_view name) noexcept {
+        std::uint64_t h = 14695981039346656037ull;
+        for (unsigned char c : name)
+            h = (h ^ c) * 1099511628211ull;
+        return h;
+    }
+
     // Issue #373: hygiene guard accessors. The flag gates
     // mutate:* operations on MacroIntroduced nodes (those
     // produced by clone_macro_body from a hygienic macro
@@ -12490,6 +12521,9 @@ public:
         bool suppress_bump_ = false;
         // Issue #1253: outermost mutation hold-time tracking.
         bool is_outermost_ = false;
+        // Issue #2121: RegionExclusive vs GlobalExclusive lock mode.
+        bool region_mode_ = false;
+        std::uint32_t region_shard_ = 0;
         // Issue #1590: inert guard after legacy-ctor mutation-quota reject
         // (no lock, no depth, dtor is a no-op). try_acquire returns AuraError
         // instead of constructing inert.
@@ -12513,6 +12547,10 @@ public:
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
         [[nodiscard]] bool is_outermost() const noexcept { return is_outermost_; }
+        // Issue #2121: true when this outermost Guard holds region shard
+        // locks (shared workspace + region exclusive) instead of global unique.
+        [[nodiscard]] bool is_region_mode() const noexcept { return region_mode_; }
+        [[nodiscard]] std::uint32_t region_shard() const noexcept { return region_shard_; }
         // Issue #1590: true when legacy ctor soft-failed on mutation quota.
         [[nodiscard]] bool is_inert() const noexcept { return inert_; }
         // Issue #1684: mark success_flag false so dtor rolls back (if
@@ -12574,6 +12612,17 @@ public:
         [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
         try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
                     bool fine_rollback = false) noexcept;
+
+        // Issue #2121: region-scoped acquire for multi-Agent disjoint Defines.
+        // When region concurrency is enabled and the op is not atomic-batch /
+        // topology, takes shared_lock(workspace_mtx_) + unique region shard
+        // instead of global unique_lock for the full body (AC2). Cross-region
+        // / atomic-batch / topology must use try_acquire() (global exclusive).
+        // Impl: evaluator_mutation_boundary.cpp
+        [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
+        try_acquire_for_region(Evaluator& ev, std::uint64_t region_key,
+                               std::uint64_t pending_count = 1, bool* success_flag = nullptr,
+                               bool fine_rollback = false) noexcept;
 
         // Issue #1547 / #1556 / #1590: legacy RAII ctor — now enforces mutation
         // quota via soft-fail (success_flag=false, inert guard) because ctors
@@ -12637,22 +12686,24 @@ public:
 
     private:
         struct AcquireTag {};
-        // Shared implementation for try_acquire + legacy ctor.
+        // Shared implementation for try_acquire + legacy ctor + region path.
         // quota_prechecked=true: caller already ran check_mutation_quota + bump.
         // quota_prechecked=false (#1590 legacy): check here; on reject → inert_.
+        // region_key: nullopt → GlobalExclusive; some → RegionExclusive when policy on.
         // Impl: evaluator_mutation_boundary.cpp
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag, bool fine_rollback, AcquireTag,
-                              bool quota_prechecked = true) noexcept;
+                              bool quota_prechecked = true,
+                              std::optional<std::uint64_t> region_key = std::nullopt) noexcept;
 
         Evaluator* ev_;
         bool* flag_;
-        // Issue #233: hold the exclusive workspace write lock
-        // for the guard's lifetime. The lock is initialized in
-        // deferred mode and only locked for the outermost guard
-        // (depth 0→1). Nested guards increment the depth counter
-        // but do NOT touch the mutex — the outer guard already
-        // holds it.
+        // Issue #233 / #2121:
+        //   GlobalExclusive: unique_lock(workspace_mtx_) in lock_
+        //   RegionExclusive: shared_lock_ on workspace + region_lock_ on shard
+        // Nested guards do NOT touch locks (outer owns them).
         std::unique_lock<std::shared_mutex> lock_;
+        std::shared_lock<std::shared_mutex> shared_lock_;
+        std::unique_lock<std::mutex> region_lock_;
     };
 
 public:

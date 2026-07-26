@@ -5433,7 +5433,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         "query:mutation-boundary-hold-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // ~30 base fields + 9 histogram buckets → need room
+                // ~50 fields (#2040 + #2120 + #2121) + 9 histogram buckets
                 auto* ht = FlatHashTable::create(128);
                 if (!ht)
                     return make_void();
@@ -5582,6 +5582,25 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"outermost-exit-order-wired", make_int(1)},
                 {"schema-2120", make_int(2120)},
                 {"issue-2120", make_int(2120)},
+                // Issue #2121: region / optimistic write concurrency (AC5 equivalent
+                // surface — extends existing hold-stats; no new *-stats freeze name).
+                {"workspace-region-acquire-total",
+                 make_int(m ? load(m->workspace_region_acquire_total) : 0)},
+                {"workspace-global-exclusive-total",
+                 make_int(m ? load(m->workspace_global_exclusive_total) : 0)},
+                {"workspace-region-collision-total",
+                 make_int(m ? load(m->workspace_region_collision_total) : 0)},
+                {"workspace-region-fallback-global-total",
+                 make_int(m ? load(m->workspace_region_fallback_global_total) : 0)},
+                {"workspace-region-hold-samples",
+                 make_int(m ? load(m->workspace_region_hold_samples) : 0)},
+                {"workspace-region-shards",
+                 make_int(static_cast<std::int64_t>(Evaluator::kWorkspaceRegionShards))},
+                {"workspace-region-concurrency-enabled",
+                 make_int(ev.workspace_region_concurrency_enabled() ? 1 : 0)},
+                {"region-concurrency-wired", make_int(1)},
+                {"schema-2121", make_int(2121)},
+                {"issue-2121", make_int(2121)},
             };
             return build_hash(kv);
         });
