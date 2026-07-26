@@ -12,6 +12,9 @@
 //   AC7: 1000-iter fuzz candidates + partial emit failure — no crash
 //   AC8: #1952 getters + #1480 count lineage retained
 //   AC9: #2013 live closure remap after reemit (named match; unmatched deopt)
+//   AC9b: #2092 same-name redefine safety
+//   AC9c: #2092 name fallback off by default
+//   AC9d: #2175 legacy sid=0 backfill (independent of name fallback)
 //   AC10: #2014 deopt storm detection + reemit throttle
 //   AC11: #2016 Evolution exclude + adaptive region mask + stable table
 //   AC12a/b/c: #2094 unified StormLevel facade (Global/Shape/Both)
@@ -580,6 +583,108 @@ static void ac9c_name_fallback() {
     aura_set_aot_defuse_version(0);
 }
 
+// Issue #2175: legacy sid=0 backfill. One-shot lookup against the live
+// stable map when stored_sid == 0 but the closure name resolves.
+// Independent of the name-fallback path (AC2) — backfill fires whenever
+// the name resolves, even with fallback disabled. Closures with empty
+// name stay unreemapped (AC3); already-stamped sids are untouched
+// (AC4 — same-name redefine safety from #2092 preserved).
+static void ac9d_legacy_sid_backfill_2175() {
+    std::println("\n--- AC9d: #2175 legacy sid=0 backfill (independent of name fallback) ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+
+    // PART 1: legacy scenario — allocate closure + set_name BEFORE the
+    // define enters the map → stored stable_func_id = 0. Then process
+    // the define (post-closure). Reemit should backfill + remap the
+    // closure via the new Issue #2175 path (NOT the name-fallback path).
+    const auto c_legacy = aura_alloc_closure(300);
+    CHECK(c_legacy >= 0, "alloc c_legacy");
+    aura_closure_set_name(c_legacy, "legacy_backfill");
+    const auto sid_legacy = aura_get_or_preserve_stable_func_id("legacy_backfill", nullptr);
+    CHECK(sid_legacy != 0, "legacy stable id assigned (post-closure)");
+
+    ReemitFixture rf;
+    rf.candidates = {{"legacy_backfill", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto rb0 = metrics.live_closure_remap_total.load(std::memory_order_relaxed);
+    const auto fb0 = metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
+    const auto bb0 = metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    // Fallback stays OFF (AC9c default). Backfill should fire anyway.
+    CHECK(aura_get_remap_name_fallback_enabled() == 0, "name fallback off by default");
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "reemit legacy (backfill path)");
+    const auto epoch_after = aura_aot_func_table_epoch();
+    CHECK(aura_get_closure_bridge_epoch(c_legacy) == epoch_after,
+          "c_legacy remapped via backfill (fallback OFF but backfill fired)");
+    CHECK(metrics.live_closure_remap_total.load(std::memory_order_relaxed) >= rb0 + 1,
+          "live_closure_remap_total +1 (backfill path)");
+    CHECK(metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed) == bb0 + 1,
+          "live_closure_stable_id_backfill_total +1 (Issue #2175 AC1)");
+    CHECK(metrics.live_closure_remap_name_fallback_total.load(std::memory_order_relaxed) == fb0,
+          "name fallback metric unchanged (AC2 — independent path)");
+
+    // PART 2: empty name + sid=0 → no backfill, no remap (AC3 strict).
+    // Note: AC3 explicitly tests "empty name and sid 0" — using an
+    // unknown non-empty name would actually trigger backfill after the
+    // emit step creates a stable_id for it, so use truly empty name.
+    const auto c_unknown = aura_alloc_closure(300);
+    CHECK(c_unknown >= 0, "alloc c_unknown");
+    // Intentionally do NOT call aura_closure_set_name — default name is empty.
+    const auto rb1 = metrics.live_closure_remap_total.load(std::memory_order_relaxed);
+    const auto bb1 = metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    aura_set_aot_defuse_version(2);
+    rf.candidates.clear();
+    rf.candidates.push_back({"unknown_name_2175", 1, false});
+    const auto emit_n = aura_reemit_aot_for_dirty(0);
+    CHECK(emit_n >= 1, "AC9d PART 2: aura_reemit_aot_for_dirty emits candidate (>=1)");
+    const auto epoch_after_unknown = aura_aot_func_table_epoch();
+    // c_unknown has empty name → backfill condition (cid_stable_id == 0 &&
+    // !g_closure_names[cid].empty()) is FALSE → no backfill attempt → no remap.
+    CHECK(aura_get_closure_bridge_epoch(c_unknown) != epoch_after_unknown,
+          "AC9d PART 2: c_unknown NOT remapped (AC3 — empty name + sid 0)");
+    // Counters should not advance for c_unknown (no closure remapped for it).
+    CHECK(metrics.live_closure_remap_total.load(std::memory_order_relaxed) == rb1,
+          "AC9d PART 2: live_closure_remap_total unchanged for c_unknown (AC3)");
+    CHECK(metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed) == bb1,
+          "AC9d PART 2: live_closure_stable_id_backfill_total unchanged for c_unknown (AC3)");
+
+    // PART 3: already-stamped closure (sid != 0) — backfill does NOT rewrite
+    // the existing sid (AC4 — #2092 same-name redefine safety).
+    const auto c_stamped = aura_alloc_closure(300);
+    CHECK(c_stamped >= 0, "alloc c_stamped");
+    aura_closure_set_name(c_stamped, "already_stamped_2175");
+    // Pre-stamp the closure's sid by calling set_name AFTER the define
+    // (so set_name captures the sid at the stamp line).
+    aura_get_or_preserve_stable_func_id("already_stamped_2175", nullptr);
+    aura_closure_set_name(c_stamped, "already_stamped_2175"); // re-stamp with current sid
+    const auto stamped_sid_pre = aura_lookup_stable_func_id("already_stamped_2175");
+    CHECK(stamped_sid_pre != 0, "c_stamped sid pre-stamped (not 0)");
+    const auto bb2 = metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    aura_set_aot_defuse_version(3);
+    rf.candidates.clear();
+    rf.candidates.push_back({"already_stamped_2175", 1, false});
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "reemit already_stamped");
+    CHECK(metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed) == bb2,
+          "backfill counter unchanged for already-stamped closure (AC4 — backfill only when sid == "
+          "0)");
+
+    // Cleanup.
+    aura_free_closure(c_legacy);
+    aura_free_closure(c_unknown);
+    aura_free_closure(c_stamped);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_defuse_version(0);
+}
+
 // Issue #2014: deopt storm detection + reemit recovery throttle.
 static void ac10_deopt_storm_throttle() {
     std::println("\n--- AC10: #2014 deopt storm detection + reemit throttle ---");
@@ -1069,6 +1174,7 @@ int main() {
     ac9_live_closure_remap();
     ac9b_same_name_redefine();
     ac9c_name_fallback();
+    ac9d_legacy_sid_backfill_2175();
     ac10_deopt_storm_throttle();
     ac11_adaptive_region_mask();
     ac12_storm_level_global();

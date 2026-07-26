@@ -7841,6 +7841,14 @@ struct CompilerMetrics {
     // indicates a host is relying on the legacy behavior; AC3 says
     // strict tests must keep this at 0.
     std::atomic<std::uint64_t> live_closure_remap_name_fallback_total{0}; // #2092
+    // Issue #2175: legacy sid=0 backfill counter. Bumped per successful
+    // backfill during aura_remap_live_closures_after_reemit (when
+    // stored_sid == 0 but the closure name now resolves in the live
+    // stable map). Independent of the name-fallback path: backfill
+    // fires regardless of aura_get_remap_name_fallback_enabled(). Operators
+    // can distinguish "legacy closures remapped cleanly" (backfill > 0)
+    // from "legacy closures relying on name fallback" (fallback > 0).
+    std::atomic<std::uint64_t> live_closure_stable_id_backfill_total{0}; // #2175
     // Issue #2128: reemit success + remap miss → MustDeoptBeforeNextCall.
     // must_deopt_before_next_call_total: flags set on live closures
     // must_deopt_force_deopt_success_total: apply/call observed flag + forced deopt
