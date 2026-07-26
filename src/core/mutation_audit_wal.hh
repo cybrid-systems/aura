@@ -58,7 +58,13 @@ struct AuditWalMetrics {
     std::atomic<std::uint64_t> audit_wal_bytes_written{0};
     std::atomic<std::uint64_t> audit_wal_enabled{0};
     std::atomic<std::uint64_t> audit_wal_segments{0};
+    // Issue #2150: WAL force-enabled under multi-tenant / Strict production.
+    std::atomic<std::uint64_t> audit_wal_forced_by_multi_tenant_total{0};
+    std::atomic<std::uint64_t> audit_wal_using_default_dir{0};
 };
+
+// Issue #2150 stamp (schema key on query:audit-wal-stats / capability-effect).
+inline constexpr int kAuditWalForceMultiTenantIssue = 2150;
 
 inline AuditWalMetrics& g_audit_wal_metrics() noexcept {
     static AuditWalMetrics m;
@@ -67,7 +73,7 @@ inline AuditWalMetrics& g_audit_wal_metrics() noexcept {
 
 // Process-wide WAL controller (optional persist).
 struct MutationAuditWal {
-    std::mutex mtx;
+    mutable std::mutex mtx;
     bool enabled = false;
     std::string dir;
     std::string current_path;
@@ -213,6 +219,13 @@ struct MutationAuditWal {
 
     [[nodiscard]] bool is_enabled() const noexcept { return enabled; }
 
+    // Issue #2150: path used by enable() so Evaluator attach / Agents can
+    // re-open the same directory without re-parsing env.
+    [[nodiscard]] std::string directory() const noexcept {
+        std::lock_guard<std::mutex> lock(mtx);
+        return dir;
+    }
+
     bool append(const AuditWalRecord& rec) noexcept {
         std::lock_guard<std::mutex> lock(mtx);
         if (!enabled || !fp) {
@@ -282,11 +295,36 @@ struct MutationAuditWal {
         m.audit_wal_bytes_written.store(0, std::memory_order_relaxed);
         m.audit_wal_enabled.store(0, std::memory_order_relaxed);
         m.audit_wal_segments.store(0, std::memory_order_relaxed);
+        m.audit_wal_forced_by_multi_tenant_total.store(0, std::memory_order_relaxed);
+        m.audit_wal_using_default_dir.store(0, std::memory_order_relaxed);
         last_seq_persisted = 0;
         segment_index = 0;
         current_bytes = 0;
     }
 };
+
+// Issue #2150: resolve WAL directory.
+//   AURA_MUTATION_AUDIT_WAL → AURA_PERSIST_DIR → $TMPDIR/aura-audit (default).
+// Explicit env always wins over the default dir (AC4).
+[[nodiscard]] inline std::string
+resolve_mutation_audit_wal_dir(bool* used_default = nullptr) noexcept {
+    if (used_default)
+        *used_default = false;
+    const char* wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+    if (wal && *wal)
+        return std::string(wal);
+    const char* persist = std::getenv("AURA_PERSIST_DIR");
+    if (persist && *persist)
+        return std::string(persist);
+    const char* tmp = std::getenv("TMPDIR");
+    if (!tmp || !*tmp)
+        tmp = std::getenv("TMP");
+    if (!tmp || !*tmp)
+        tmp = "/tmp";
+    if (used_default)
+        *used_default = true;
+    return std::string(tmp) + "/aura-audit";
+}
 
 inline MutationAuditWal& g_mutation_audit_wal() noexcept {
     static MutationAuditWal w;
@@ -309,6 +347,9 @@ struct AuditWalStatsSnapshot {
     std::uint64_t last_seq = 0;
     int phase = kAuditWalPhase;
     int issue = kAuditWalIssue;
+    // Issue #2150
+    std::uint64_t forced_by_multi_tenant = 0;
+    std::uint64_t using_default_dir = 0;
 };
 
 [[nodiscard]] inline AuditWalStatsSnapshot snapshot_audit_wal_stats() noexcept {
@@ -326,6 +367,8 @@ struct AuditWalStatsSnapshot {
         w.last_seq_persisted,
         kAuditWalPhase,
         kAuditWalIssue,
+        m.audit_wal_forced_by_multi_tenant_total.load(std::memory_order_relaxed),
+        m.audit_wal_using_default_dir.load(std::memory_order_relaxed),
     };
 }
 

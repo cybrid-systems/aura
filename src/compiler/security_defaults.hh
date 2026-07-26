@@ -13,8 +13,11 @@
 #include "core/sandbox.hh"
 #include "core/workspace_isolation.hh"
 
+#include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace aura::compiler::security {
@@ -56,14 +59,17 @@ inline void grant_render_kernel_principal() noexcept {
     g_capability_registry().grant(/*tenant=*/0, "render", Effect::Render, prov);
 }
 
-// Issue #2053: production multi-tenant AI security defaults (single entry).
+// Issue #2053 / #2150: production multi-tenant AI security defaults (single entry).
 // Applies (in order):
 //   1. AURA_SANDBOX → Restricted (default) | off | strict  (#2076)
 //   2. AURA_MULTI_TENANT=1|true|yes → escalate to Strict
 //   3. TypedMutationAudit Full (or AURA_TYPED_AUDIT=sampled|off|full)
-//   4. AURA_MUTATION_AUDIT_WAL or AURA_PERSIST_DIR → enable WAL when set
+//   4. Mutation audit WAL (#2150):
+//        - AURA_MUTATION_AUDIT_WAL / AURA_PERSIST_DIR when set (always win)
+//        - else force default dir under multi-tenant OR Strict
+//        - skipped entirely when AURA_SANDBOX=off (tests / local)
 //   5. Kernel principal (tenant 0) holds permanent Render (#2136)
-// Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit.
+// Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -79,11 +85,13 @@ inline void apply_production_security_defaults() noexcept {
 
     // 2) Multi-tenant: escalate to Strict when AURA_MULTI_TENANT is set
     //    (unless explicitly AURA_SANDBOX=off for local iteration).
+    bool multi_tenant = false;
     if (!dev_off) {
         const char* mt = std::getenv("AURA_MULTI_TENANT");
         if (mt && *mt) {
             std::string_view mv(mt);
             if (mv == "1" || mv == "true" || mv == "yes" || mv == "on") {
+                multi_tenant = true;
                 set_mode(SandboxMode::Strict);
                 g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
                 g_workspace_isolation().set_strict_sandbox_linked(true);
@@ -117,16 +125,45 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
-    // 4) Mutation audit WAL: enable when path env is set (single-flag).
-    //    Skipped under AURA_SANDBOX=off so tests do not spill WAL files.
+    // 4) Mutation audit WAL (#2150).
+    //    Explicit path env always wins. Under multi-tenant OR Strict, force
+    //    a durable default dir so commercial deploys get forensic trail
+    //    without tribal knowledge of env vars. AURA_SANDBOX=off never enables
+    //    WAL (unit tests must not spill files).
     if (!dev_off) {
-        const char* wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
-        if (!wal || !*wal)
-            wal = std::getenv("AURA_PERSIST_DIR");
-        if (wal && *wal) {
+        const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
+                            g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+        const bool force_wal = multi_tenant || strict;
+        const char* explicit_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+        if (!explicit_wal || !*explicit_wal)
+            explicit_wal = std::getenv("AURA_PERSIST_DIR");
+        const bool has_explicit = explicit_wal && *explicit_wal;
+
+        if (has_explicit || force_wal) {
+            bool used_default = false;
+            const auto dir = has_explicit ? std::string(explicit_wal)
+                                          : resolve_mutation_audit_wal_dir(&used_default);
             // Process-wide enable; ring replay happens when an Evaluator
             // later calls enable_mutation_audit_wal on the same path.
-            (void)g_mutation_audit_wal().enable(std::string_view(wal), nullptr, 0);
+            if (g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0)) {
+                if (force_wal && !has_explicit) {
+                    g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                if (used_default || (force_wal && !has_explicit)) {
+                    g_audit_wal_metrics().audit_wal_using_default_dir.store(
+                        1, std::memory_order_relaxed);
+                    // One-shot stderr note so operators see the durable path.
+                    static std::atomic<bool> warned{false};
+                    bool expected = false;
+                    if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+                        std::fprintf(stderr,
+                                     "[aura] mutation audit WAL forced under multi-tenant/Strict "
+                                     "→ %s (set AURA_MUTATION_AUDIT_WAL to override)\n",
+                                     dir.c_str());
+                    }
+                }
+            }
         }
     }
 

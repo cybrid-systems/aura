@@ -487,13 +487,16 @@ void Evaluator::apply_env_sandbox() noexcept {
     const auto mode =
         static_cast<std::uint8_t>(::aura::core::capability::g_capability_registry().sandbox_mode);
     set_effect_sandbox_mode(mode);
-    // If production enabled WAL via env, also attach this Evaluator's ring.
+    // Issue #2150: if production enabled WAL (env path OR forced multi-tenant
+    // / Strict default dir), attach this Evaluator's ring + replay SecurityEvent.
     if (::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
-        const char* wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
-        if (!wal || !*wal)
-            wal = std::getenv("AURA_PERSIST_DIR");
-        if (wal && *wal)
-            (void)enable_mutation_audit_wal(wal);
+        auto dir = ::aura::core::audit_wal::g_mutation_audit_wal().directory();
+        if (dir.empty()) {
+            // Fallback: re-resolve from env / default (same as force policy).
+            dir = ::aura::core::audit_wal::resolve_mutation_audit_wal_dir();
+        }
+        if (!dir.empty())
+            (void)enable_mutation_audit_wal(dir);
     }
 }
 
