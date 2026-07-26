@@ -4453,6 +4453,47 @@ private:
     // `total_mutations()`. Relaxed-ordering for stats; not
     // used for control flow.
     std::atomic<std::uint64_t> total_mutations_{0};
+    // Issue #2099: lightweight, Agent-visible HygieneCheckpoint for
+    // what-if / self-evo rollback semantics. Captures the
+    // MacroIntroduced / dirty / provenance metadata columns
+    // (FlatAST::snapshot_metadata_columns from #1893) plus a
+    // freshness token (defuse_version_, macro_introduced_count_,
+    // flat_generation_, fiber thread id) so a subsequent restore
+    // can detect compaction / cross-fiber mismatch and refuse
+    // rather than corrupt the parent MutationBoundary's structural
+    // topology. Declared here (before the storage member below) so
+    // the std::vector<std::optional<...>> sees a complete type.
+    //
+    // Two access paths:
+    //   - C++ API: save_hygiene_checkpoint() returns the struct
+    //     by value; restore_hygiene_checkpoint(cp) takes const ref.
+    //   - Primitive API (Issue #2099): mutate:save-hygiene-checkpoint
+    //     returns an opaque int handle; mutate:restore-hygiene-checkpoint
+    //     takes the handle + returns bool. The handle indirection lets
+    //     the Aura script layer thread the checkpoint through
+    //     boundary crossings without copying 4 std::pmr::vector cols.
+    struct HygieneCheckpoint {
+        aura::ast::FlatAST::MetadataColumnsSnapshot meta;
+        std::uint64_t saved_defuse_version = 0;
+        std::uint64_t saved_macro_introduced_count = 0;
+        std::uint16_t saved_flat_generation = 0;
+        // Fiber identity at save time (used by restore to refuse
+        // cross-fiber restore — AC4 concurrent safety contract).
+        std::uint64_t saved_fiber_thread_id = 0;
+        bool valid = false;
+    };
+    // Issue #2099: per-Evaluator HygieneCheckpoint storage. Each
+    // save_hygiene_checkpoint_handle() bumps next_hygiene_checkpoint_id_
+    // and appends a HygieneCheckpoint at index (id-1); restore invalidates
+    // the slot. Sized to typical Agent what-if depth (32); over-cap is
+    // handled by reclaiming the lowest-id invalid slot, falling back to
+    // a fresh append. NOT thread_local — the (mutate:*) primitives go
+    // through the workspace_mtx_ inside MutationBoundaryGuard, so all
+    // access is serialized. Cross-fiber restore is rejected by comparing
+    // saved_fiber_thread_id (captured at save) against the current
+    // thread's id at restore time.
+    std::vector<std::optional<HygieneCheckpoint>> hygiene_checkpoints_;
+    std::atomic<std::uint64_t> next_hygiene_checkpoint_id_{1};
     // Issue #895: pack atomic-batch counters on one cache line to
     // reduce false sharing vs adjacent panic/self-evolution domains.
     struct alignas(64) AtomicBatchDomain {
@@ -11738,6 +11779,37 @@ public:
     // enter and exit are rolled back (see MutationRecord inverse).
     // Returns the popped checkpoint (or {0} if the stack is empty).
     MutationCheckpoint exit_mutation_boundary(bool success);
+
+    // Issue #2099: lightweight, Agent-visible HygieneCheckpoint for
+    // what-if / self-evo rollback semantics. The struct definition
+    // lives at the top of the class (just before the storage
+    // member at line ~4466) so the std::vector<std::optional<...>>
+    // storage member sees a complete type. Public API surface
+    // (save/restore + bumpers) is declared here.
+    [[nodiscard]] HygieneCheckpoint save_hygiene_checkpoint() noexcept;
+    bool restore_hygiene_checkpoint(const HygieneCheckpoint& cp) noexcept;
+    // Int-handle variants for the (mutate:*) primitive surface.
+    // Returns 0 when no workspace is loaded (caller treats 0 as
+    // "no-op checkpoint", distinct from a valid saved id).
+    std::uint64_t save_hygiene_checkpoint_handle() noexcept;
+    // Returns false on: handle == 0, handle not found, already
+    // restored, cross-fiber mismatch, or generation drift
+    // (workspace compacted / recycled since save).
+    bool restore_hygiene_checkpoint_handle(std::uint64_t handle) noexcept;
+    // Test / observability accessors.
+    [[nodiscard]] std::size_t hygiene_checkpoint_pending_count() const noexcept;
+    void clear_hygiene_checkpoints() noexcept;
+    // Bumpers backing the (query:hygiene-checkpoint-stats) primitive
+    // (schema = 2099). Cross-fiber reject is a *subset* of restore_fail
+    // (also bumped) for easy dashboard drill-down.
+    void bump_hygiene_checkpoint_save_total() const noexcept;
+    void bump_hygiene_checkpoint_restore_success_total() const noexcept;
+    void bump_hygiene_checkpoint_restore_fail_total() const noexcept;
+    void bump_hygiene_checkpoint_cross_fiber_reject_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_hygiene_checkpoint_save_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_hygiene_checkpoint_restore_success_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_hygiene_checkpoint_restore_fail_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_hygiene_checkpoint_cross_fiber_reject_total() const noexcept;
 
     // Get the current checkpoint stack depth (for testing /
     // observability). Returns 0 if the stack is empty.

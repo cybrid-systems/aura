@@ -2618,6 +2618,27 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
 
+    // Issue #2099: HygieneCheckpoint save/restore counters for Agent
+    // what-if / self-evo rollback semantics.
+    //   - hygiene_checkpoint_save_total: every successful save_hygiene_checkpoint()
+    //                                    (captures marker_/provenance_/dirty_/macro_dirty_
+    //                                    snapshot + defuse_version + macro_introduced_count
+    //                                    + flat generation)
+    //   - hygiene_checkpoint_restore_success_total: every successful
+    //                                    restore_hygiene_checkpoint() (metadata columns
+    //                                    reinstalled, pending checkpoint invalidated)
+    //   - hygiene_checkpoint_restore_fail_total: every restore_hygiene_checkpoint()
+    //                                    that refused (empty handle, cross-fiber
+    //                                    restore, generation mismatch → unsafe)
+    //   - hygiene_checkpoint_cross_fiber_reject_total: subset of restore_fail
+    //                                    where the saved checkpoint came from a
+    //                                    different fiber than the restore caller
+    //                                    (AC4 concurrent stress contract signal)
+    std::atomic<std::uint64_t> hygiene_checkpoint_save_total{0};               // #2099
+    std::atomic<std::uint64_t> hygiene_checkpoint_restore_success_total{0};    // #2099
+    std::atomic<std::uint64_t> hygiene_checkpoint_restore_fail_total{0};       // #2099
+    std::atomic<std::uint64_t> hygiene_checkpoint_cross_fiber_reject_total{0}; // #2099
+
     // Issue #1614: TypedMutationAudit real invariant suite metrics.
     std::atomic<std::uint64_t> typed_mutation_invariant_audits_total{0};
     std::atomic<std::uint64_t> typed_mutation_invariant_violations_total{0};

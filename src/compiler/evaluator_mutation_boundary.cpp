@@ -1410,4 +1410,210 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
     return *this;
 }
 
+// ── Issue #2099: HygieneCheckpoint save / restore ─────────────────────
+//
+// Agent-visible primitives for what-if / self-evo rollback semantics.
+// Captures the FlatAST metadata columns (marker_ / provenance_ /
+// dirty_ / macro_dirty_ from #1893 snapshot_metadata_columns) plus a
+// freshness token (defuse_version_, macro_introduced_count_, flat
+// generation, fiber thread id). Restoring rolls back to pre-save
+// state without tearing down the parent MutationBoundary's
+// structural topology (children_ / parent_ / children_snapshot
+// stay valid; only the hygiene-relevant metadata columns are
+// reinstalled).
+//
+// AC contract:
+//   AC1: depth-limit / hygiene-violation expand can call restore
+//        → pre-expand state recovered; partial MacroIntroduced
+//          nodes are un-marked.
+//   AC2: nested under MutationBoundaryGuard → outer boundary's
+//        structural checkpoint (children_snapshot etc.) untouched;
+//        restore only mutates the metadata columns.
+//   AC3: happy-path expand never calls save → zero overhead
+//        (the optional<> slots stay default-constructed; the
+//         std::vector is reserved but not allocated until first save).
+//   AC4: cross-fiber restore is refused (saved_fiber_thread_id
+//        mismatch bumps cross_fiber_reject_total + restore_fail_total);
+//        concurrent stress contract holds.
+//   AC5: (query:hygiene-checkpoint-stats) reports the 4 counters
+//        + pending slot count for Agent dashboards.
+
+Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
+    HygieneCheckpoint cp;
+    if (!workspace_flat_) {
+        // No workspace: return invalid; primitive layer treats
+        // invalid as a no-op (still bumps save counter so the
+        // Agent sees "save attempted, no workspace").
+        bump_hygiene_checkpoint_save_total();
+        return cp;
+    }
+    cp.meta = workspace_flat_->snapshot_metadata_columns();
+    cp.saved_defuse_version = defuse_version_.load(std::memory_order_acquire);
+    cp.saved_macro_introduced_count = 0;
+    for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+        if (workspace_flat_->is_macro_introduced(id))
+            ++cp.saved_macro_introduced_count;
+    }
+    cp.saved_flat_generation = workspace_flat_->generation();
+    cp.saved_fiber_thread_id =
+        static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    cp.valid = true;
+    bump_hygiene_checkpoint_save_total();
+    return cp;
+}
+
+bool Evaluator::restore_hygiene_checkpoint(const HygieneCheckpoint& cp) noexcept {
+    if (!cp.valid) {
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    if (!workspace_flat_) {
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    // AC4: refuse cross-fiber restore. Saved thread id was hashed
+    // std::thread::id at save time; recompute now and compare.
+    const std::uint64_t cur_thread_id =
+        static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    if (cur_thread_id != cp.saved_fiber_thread_id) {
+        bump_hygiene_checkpoint_cross_fiber_reject_total();
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    // Generation drift = workspace was compacted / recycled since
+    // save; restoring metadata columns onto a different generation
+    // would corrupt parent_/children_ topology invariants (PCV
+    // share_ptrs in any pre-existing MutationCheckpoint point at
+    // the OLD generation). Refuse rather than partially restoring.
+    if (workspace_flat_->generation() != cp.saved_flat_generation) {
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    // AC1/AC2: restore only the metadata columns. Structural
+    // topology (children_ / parent_ / atomic_batch_meta_snap_) is
+    // left alone — the parent MutationBoundary still owns it.
+    workspace_flat_->restore_metadata_columns(aura::ast::FlatAST::MetadataColumnsSnapshot{
+        std::pmr::vector<aura::ast::SyntaxMarker>(cp.meta.marker.begin(), cp.meta.marker.end()),
+        std::pmr::vector<std::uint32_t>(cp.meta.provenance.begin(), cp.meta.provenance.end()),
+        std::pmr::vector<std::uint8_t>(cp.meta.dirty.begin(), cp.meta.dirty.end()),
+        std::pmr::vector<std::uint8_t>(cp.meta.macro_dirty.begin(), cp.meta.macro_dirty.end())});
+    // Bump defuse_version_ once so any reader holding a snapshot
+    // across the restore sees a version mismatch and re-reads.
+    defuse_version_.fetch_add(1, std::memory_order_release);
+    bump_hygiene_checkpoint_restore_success_total();
+    return true;
+}
+
+std::uint64_t Evaluator::save_hygiene_checkpoint_handle() noexcept {
+    auto cp = save_hygiene_checkpoint();
+    if (!cp.valid)
+        return 0; // 0 = "no workspace" — caller treats as no-op
+    // Reserve slot 0 as a sentinel "invalid"; real ids start at 1.
+    if (hygiene_checkpoints_.empty())
+        hygiene_checkpoints_.resize(16, std::nullopt);
+    std::size_t slot = 0;
+    for (std::size_t i = 0; i < hygiene_checkpoints_.size(); ++i) {
+        if (!hygiene_checkpoints_[i].has_value()) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == 0) {
+        // All slots used; reclaim the lowest-id valid one (oldest
+        // checkpoint is least likely to be restored by an Agent
+        // mid-session — typical pattern is save → restore within
+        // a single expand-attempt block).
+        std::size_t victim = 0;
+        std::uint64_t best_age = std::numeric_limits<std::uint64_t>::max();
+        for (std::size_t i = 0; i < hygiene_checkpoints_.size(); ++i) {
+            if (hygiene_checkpoints_[i].has_value()) {
+                // Approximate age by saved_defuse_version (older = smaller).
+                const auto v = hygiene_checkpoints_[i]->saved_defuse_version;
+                if (v < best_age) {
+                    best_age = v;
+                    victim = i;
+                }
+            }
+        }
+        hygiene_checkpoints_[victim].reset();
+        slot = victim;
+    }
+    hygiene_checkpoints_[slot] = std::move(cp);
+    const std::uint64_t id = static_cast<std::uint64_t>(slot) + 1;
+    next_hygiene_checkpoint_id_.store(id + 1, std::memory_order_relaxed);
+    return id;
+}
+
+bool Evaluator::restore_hygiene_checkpoint_handle(std::uint64_t handle) noexcept {
+    if (handle == 0) {
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    const std::size_t slot = static_cast<std::size_t>(handle) - 1;
+    if (slot >= hygiene_checkpoints_.size() || !hygiene_checkpoints_[slot].has_value()) {
+        bump_hygiene_checkpoint_restore_fail_total();
+        return false;
+    }
+    HygieneCheckpoint cp = std::move(*hygiene_checkpoints_[slot]);
+    hygiene_checkpoints_[slot].reset();
+    return restore_hygiene_checkpoint(cp);
+}
+
+std::size_t Evaluator::hygiene_checkpoint_pending_count() const noexcept {
+    std::size_t n = 0;
+    for (const auto& slot : hygiene_checkpoints_) {
+        if (slot.has_value())
+            ++n;
+    }
+    return n;
+}
+
+void Evaluator::clear_hygiene_checkpoints() noexcept {
+    for (auto& slot : hygiene_checkpoints_)
+        slot.reset();
+    next_hygiene_checkpoint_id_.store(1, std::memory_order_relaxed);
+}
+
+void Evaluator::bump_hygiene_checkpoint_save_total() const noexcept {
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->hygiene_checkpoint_save_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+void Evaluator::bump_hygiene_checkpoint_restore_success_total() const noexcept {
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->hygiene_checkpoint_restore_success_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+void Evaluator::bump_hygiene_checkpoint_restore_fail_total() const noexcept {
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->hygiene_checkpoint_restore_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+void Evaluator::bump_hygiene_checkpoint_cross_fiber_reject_total() const noexcept {
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->hygiene_checkpoint_cross_fiber_reject_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+std::uint64_t Evaluator::get_hygiene_checkpoint_save_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->hygiene_checkpoint_save_total.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_hygiene_checkpoint_restore_success_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->hygiene_checkpoint_restore_success_total.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_hygiene_checkpoint_restore_fail_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->hygiene_checkpoint_restore_fail_total.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_hygiene_checkpoint_cross_fiber_reject_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->hygiene_checkpoint_cross_fiber_reject_total.load(std::memory_order_relaxed) : 0;
+}
+
 } // namespace aura::compiler
