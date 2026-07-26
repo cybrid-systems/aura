@@ -59,7 +59,7 @@ inline void grant_render_kernel_principal() noexcept {
     g_capability_registry().grant(/*tenant=*/0, "render", Effect::Render, prov);
 }
 
-// Issue #2053 / #2150: production multi-tenant AI security defaults (single entry).
+// Issue #2053 / #2150 / #2151: production multi-tenant AI security defaults.
 // Applies (in order):
 //   1. AURA_SANDBOX → Restricted (default) | off | strict  (#2076)
 //   2. AURA_MULTI_TENANT=1|true|yes → escalate to Strict
@@ -69,7 +69,11 @@ inline void grant_render_kernel_principal() noexcept {
 //        - else force default dir under multi-tenant OR Strict
 //        - skipped entirely when AURA_SANDBOX=off (tests / local)
 //   5. Kernel principal (tenant 0) holds permanent Render (#2136)
-// Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL.
+//   6. Hard fiber isolation (#2151):
+//        - default soft (false) preserves #2055 same-tenant multi-fiber share
+//        - multi-tenant + Strict enables hard-deny on grant_fiber_id mismatch
+//        - AURA_HARD_FIBER_ISOLATION=0|1|true|false|on|off overrides
+// Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft fiber.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -172,6 +176,28 @@ inline void apply_production_security_defaults() noexcept {
     //    multi-tenant Agents still need an explicit grant.
     if (!dev_off)
         grant_render_kernel_principal();
+
+    // 6) Issue #2151: hard fiber isolation policy.
+    //    Soft default preserves #2055 (same-tenant multi-fiber share grants;
+    //    TenantScope remains the principal boundary). Commercial multi-tenant
+    //    + Strict enables hard-deny so fiber B cannot exercise fiber A's grant.
+    //    AURA_HARD_FIBER_ISOLATION=0|1|true|false|on|off always wins when set.
+    //    AURA_SANDBOX=off forces soft (unit tests must not inherit hard deny).
+    if (dev_off) {
+        g_capability_registry().set_hard_fiber_isolation(false);
+    } else {
+        const char* hfi = std::getenv("AURA_HARD_FIBER_ISOLATION");
+        if (hfi && *hfi) {
+            std::string_view hv(hfi);
+            const bool on = (hv == "1" || hv == "true" || hv == "yes" || hv == "on");
+            g_capability_registry().set_hard_fiber_isolation(on);
+        } else {
+            const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
+                                g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+            // Multi-tenant Strict: hard-deny on fiber mismatch (commercial default).
+            g_capability_registry().set_hard_fiber_isolation(multi_tenant && strict);
+        }
+    }
 }
 
 } // namespace aura::compiler::security
