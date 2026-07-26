@@ -1800,6 +1800,11 @@ aura_add_issue_test(test_rest_param_hygiene_self_evo)
 aura_issue_test_link_llvm_jit(test_rest_param_hygiene_self_evo)
 add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
 
+# Issue #2169: complete rest-param hygienic renaming (unique gensyms + shadow).
+aura_add_issue_test(test_rest_param_hygiene_2169)
+aura_issue_test_link_llvm_jit(test_rest_param_hygiene_2169)
+add_dependencies(all_test_issue_targets test_rest_param_hygiene_2169)
+
 # Issue #2019: MacroIntroduced restamp after expand → FlatAST.
 aura_add_issue_test(test_macro_restamp_after_flat)
 aura_issue_test_link_llvm_jit(test_macro_restamp_after_flat)

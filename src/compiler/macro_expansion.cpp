@@ -363,9 +363,14 @@ FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
 std::atomic<std::uint64_t> g_macro_expansion_total{0};
 std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total{0};
 std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0};
-// Issue #2018: rest-param gensyms applied in clone_macro_body pre-scan /
-// rename path (`__rest_<name>_<n>`). Folded into macro-hygiene-stats.
+// Issue #2018 / #2169: rest-param gensyms applied in clone_macro_body
+// pre-scan / rename path (`__rest_<name>_<serial>`). Folded into
+// macro-hygiene-stats / reflect:hygiene-stats.
 std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total{0};
+// Issue #2169: incomplete rest hygiene (rename skipped while policy on).
+std::atomic<std::uint64_t> g_macro_rest_param_hygiene_incomplete_total{0};
+// Process-wide serial for concurrent fiber uniqueness of rest gensyms.
+std::atomic<std::uint64_t> g_macro_rest_gensym_serial{0};
 // Issue #2019: post-expand MacroIntroduced generation restamp calls.
 std::atomic<std::uint64_t> g_macro_restamp_after_flat_total{0};
 // Issue #2096: per-cloned-subtree restamp counter (subtree-local coherence
@@ -408,6 +413,12 @@ inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexc
 // Non-inline: other TUs (query:macro-hygiene-stats) read this counter.
 std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept {
     return g_macro_rest_param_hygiene_total.load(std::memory_order_relaxed);
+}
+std::uint64_t aura_macro_rest_param_hygiene_incomplete_total_v_read() noexcept {
+    return g_macro_rest_param_hygiene_incomplete_total.load(std::memory_order_relaxed);
+}
+std::uint64_t aura_macro_rest_gensym_serial_v_read() noexcept {
+    return g_macro_rest_gensym_serial.load(std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept {
     return g_macro_restamp_after_flat_total.load(std::memory_order_relaxed);
@@ -764,22 +775,35 @@ aura::ast::NodeId clone_macro_body(
     // are per-FlatAST). The fix: detect this case and return the
     // arg's NodeId as-is, then recursively clone its children from
     // `target` (not `source`).
+    //
+    // Issue #2169: template-introduced *rest* gensyms in name_map shadow
+    // macro-param subst so nested `(lambda (... . rest) rest)` does not
+    // capture the outer rest list wrap. Ordinary template bindings keep
+    // pre-#2169 subst-first semantics (free macro-param uses).
     if (subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
         auto name = std::string(source_pool.resolve(v.sym_id));
-        auto it = subst->find(name);
-        if (it != subst->end()) {
-            // Issue #334 follow-up: REVERTED Quote-wrap from commit
-            // 6b90641. The Quote-wrap made Variables in macro
-            // bodies evaluate to the literal arg value (helped
-            // define-struct), but it broke `set!` semantics in
-            // normal macros: the set! target became a literal
-            // symbol (the arg name) instead of the caller's
-            // variable, causing test_issue_137/190 to fail. The
-            // original AST subst (returning the arg NodeId
-            // directly) is restored for now. The proper fix for
-            // #230 #1 (define-struct) is the env-binding path
-            // (tracked in issue 334), not Quote-wrap.
-            return it->second;
+        bool shadowed_by_rest_gensym = false;
+        if (name_map) {
+            auto mit = name_map->find(name);
+            if (mit != name_map->end() && mit->second.rfind("__rest_", 0) == 0)
+                shadowed_by_rest_gensym = true;
+        }
+        if (!shadowed_by_rest_gensym) {
+            auto it = subst->find(name);
+            if (it != subst->end()) {
+                // Issue #334 follow-up: REVERTED Quote-wrap from commit
+                // 6b90641. The Quote-wrap made Variables in macro
+                // bodies evaluate to the literal arg value (helped
+                // define-struct), but it broke `set!` semantics in
+                // normal macros: the set! target became a literal
+                // symbol (the arg name) instead of the caller's
+                // variable, causing test_issue_137/190 to fail. The
+                // original AST subst (returning the arg NodeId
+                // directly) is restored for now. The proper fix for
+                // #230 #1 (define-struct) is the env-binding path
+                // (tracked in issue 334), not Quote-wrap.
+                return it->second;
+            }
         }
     }
 
@@ -808,6 +832,8 @@ aura::ast::NodeId clone_macro_body(
         if (sid == INVALID_SYM || !name_map)
             return transplant(sid);
         auto name = std::string(source_pool.resolve(sid));
+        // Ordinary template bindings: keep free macro-param names substitutable
+        // (subst wins). Builtins keep their name.
         if ((subst && subst->count(name)) || detail::hygiene_builtins().count(name))
             return transplant(sid);
         auto it = name_map->find(name);
@@ -818,30 +844,40 @@ aura::ast::NodeId clone_macro_body(
         return target_pool.intern(fresh);
     };
 
-    // Issue #2018: rest-param binding hygiene. Dotted Lambda / MacroDef last
-    // params get a dedicated `__rest_<name>_<n>` gensym so call-site free
-    // identifiers cannot collide with the rest binding. name_map is filled
-    // in pre-scan so body uses resolve via resolve_name / rename_binding.
-    // Macro-param names that appear only as free uses still go through the
-    // Variable subst path (source-name lookup) and are not forced through
-    // this map when they are not template-introduced rest bindings.
+    // Issue #2018 / #2169: rest-param binding hygiene. Dotted Lambda /
+    // MacroDef last params ALWAYS get a process-unique
+    // `__rest_<name>_<serial>` gensym (unless MacroSelfEvo disables via
+    // s_allow_rest_hygiene). name_map is filled in pre-scan so body uses
+    // resolve via resolve_name / rename_binding. Free uses of the *macro
+    // formal* rest still hit Variable subst when not shadowed by a
+    // template rest binding of the same source name.
     auto rename_rest_binding_pre = [&](SymId sid) -> SymId {
+        // No name_map → caller opted into untracked clone (not a violation).
         if (sid == INVALID_SYM || !name_map)
             return transplant(sid);
-        // Issue #2023: MacroSelfEvo policy may disable rest hygiene.
+        // Issue #2023: MacroSelfEvo policy may disable rest hygiene (opt-out).
         if (!s_allow_rest_hygiene)
             return transplant(sid);
         auto name = std::string(source_pool.resolve(sid));
-        // Macro rest param itself is substituted (subst), not a template
-        // binding — leave free uses substitutable under the original name.
-        if (subst && subst->count(name))
-            return transplant(sid);
         if (detail::hygiene_builtins().count(name))
             return transplant(sid);
         auto it = name_map->find(name);
-        if (it != name_map->end())
+        if (it != name_map->end()) {
+            // Already mapped — ensure rest-shaped gensym; repair if not.
+            if (it->second.rfind("__rest_", 0) != 0) {
+                const auto serial =
+                    g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+                auto fresh = std::string("__rest_") + name + "_" + std::to_string(serial);
+                it->second = fresh;
+                g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
+                g_macro_rest_param_hygiene_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+                return target_pool.intern(fresh);
+            }
             return target_pool.intern(it->second);
-        auto fresh = std::string("__rest_") + name + "_" + std::to_string(hyg_ctr++);
+        }
+        // Process-wide serial — concurrent fiber expand cannot collide.
+        const auto serial = g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+        auto fresh = std::string("__rest_") + name + "_" + std::to_string(serial);
         (*name_map)[name] = fresh;
         g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
         return target_pool.intern(fresh);
@@ -969,10 +1005,33 @@ aura::ast::NodeId clone_macro_body(
                 new_id = target.add_if(child_ids[0], child_ids[1], child_ids[2]);
             break;
         case NodeTag::Lambda:
-            // Issue #2018: preserve dotted rest flag (int_value != 0).
-            if (!child_ids.empty())
-                new_id = target.add_lambda(param_syms, child_ids[0],
-                                           /*dotted=*/v.int_value != 0);
+            // Issue #2018 / #2169: preserve dotted rest flag (int_value != 0).
+            // Fallback: if dotted rest param did not get a __rest_ gensym
+            // while hygiene is on, force-repair + incomplete counter.
+            if (!child_ids.empty()) {
+                const bool dotted = v.int_value != 0;
+                if (dotted && !param_syms.empty() && name_map && s_allow_rest_hygiene) {
+                    auto rest_name = std::string(target_pool.resolve(param_syms.back()));
+                    if (rest_name.rfind("__rest_", 0) != 0) {
+                        const auto serial =
+                            g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+                        auto fresh =
+                            std::string("__rest_fb_") + rest_name + "_" + std::to_string(serial);
+                        param_syms.back() = target_pool.intern(fresh);
+                        // Also map original source last-param name if known.
+                        if (!v.params.empty()) {
+                            auto src_nm = std::string(source_pool.resolve(v.params.back()));
+                            (*name_map)[src_nm] = fresh;
+                        }
+                        g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
+                        g_macro_rest_param_hygiene_incomplete_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_hygiene_violation_in_macro_expand_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+                new_id = target.add_lambda(param_syms, child_ids[0], /*dotted=*/dotted);
+            }
             break;
         case NodeTag::Let:
         case NodeTag::LetRec:

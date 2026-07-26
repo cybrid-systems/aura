@@ -78,9 +78,15 @@ export extern std::atomic<std::uint64_t> g_macro_expansion_total;
 export extern std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total;
 export extern std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total;
 
-// Issue #2018: rest-param gensyms (`__rest_<name>_<n>`) applied in
-// clone_macro_body pre-scan / rename path.
+// Issue #2018 / #2169: rest-param gensyms (`__rest_<name>_<serial>`) applied
+// in clone_macro_body pre-scan / rename path. Process-wide serial for fiber
+// concurrent uniqueness (#2169).
 export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;
+// Issue #2169: rest rename skipped while allow_rest_hygiene is on (incomplete
+// path / depth fallback) — Agent-visible hard signal vs successful total.
+export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_incomplete_total;
+// Process-wide gensym serial (never resets; concurrent expand unique).
+export extern std::atomic<std::uint64_t> g_macro_rest_gensym_serial;
 
 // Issue #2019: post-expand MacroIntroduced generation restamp calls.
 export extern std::atomic<std::uint64_t> g_macro_restamp_after_flat_total;
