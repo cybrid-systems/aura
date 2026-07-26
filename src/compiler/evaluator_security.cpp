@@ -101,7 +101,9 @@ void Evaluator::grant_capability(std::string cap) {
     const auto eff = effect_for_cap_name(granted_capabilities_.back());
     if (eff != Effect::None) {
         const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
-        const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+        // Issue #2151: honor effect_fiber_id_or so tests can stamp fiber A/B
+        // without a real scheduler; production override stays 0.
+        const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
         auto prov = make_grant_provenance(/*mutation_id=*/0, force_bind, /*node_id=*/0, fiber);
         g_capability_registry().grant(capability_tenant_id_, granted_capabilities_.back(), eff,
                                       prov);
@@ -168,7 +170,9 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     EffectProvenance prov;
     prov.node_id = static_cast<std::uint32_t>(target_node);
     prov.mutation_id = provenance_mutation_id;
-    prov.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #2151: effect_fiber_id_or lets tests simulate fiber A vs B;
+    // production leaves override at 0 → live TLS fiber id.
+    prov.fiber_id = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
     // Issue #2149: security provenance uses WorkspaceEpoch Mutation only
     // (same vocabulary as make_grant_provenance / grant_epoch). Bridge is
     // AOT/JIT/closure — never the capability fence key. Pre-#2149 this
@@ -193,6 +197,12 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // When evaluator sandbox is off and effect mode is Off, still record.
     const bool sb_active = sandbox_mode_ || is_strict() || is_sandbox_active();
 
+    // Issue #2151: snapshot hard-deny counter so SecurityEvent can emit
+    // the stable reason "fiber-grant-mismatch" (Agent-recoverable).
+    const auto hard_deny_before =
+        g_capability_effect_metrics().capability_fiber_hard_deny_total.load(
+            std::memory_order_relaxed);
+
     const bool ok = aura::core::capability::check_and_record_effect(
         static_cast<Effect>(required_effect_bits), static_cast<Effect>(actual_effect_bits), prov,
         tenant, op, wildcard, sb_active);
@@ -205,7 +215,8 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                        std::chrono::steady_clock::now().time_since_epoch())
                                        .count());
-    slot.fiber_id = static_cast<std::int64_t>(aura_fiber_current_id());
+    // Prefer effect-check fiber stamp (includes #2151 override) for audit.
+    slot.fiber_id = static_cast<std::int64_t>(prov.fiber_id);
     slot.nodes_changed = 0;
     slot.epoch_delta = 0;
     slot.target_node = static_cast<std::uint32_t>(target_node);
@@ -272,13 +283,21 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
         const auto kind = ok ? SecurityEventKind::EffectAllow : SecurityEventKind::EffectDeny;
         const char* reason_str = "effect-allow";
         if (!ok) {
-            reason_str = "capability-effect-deny";
-            if (required_effect_bits & kEffectMutate)
-                reason_str = "mutate-deny";
-            else if (required_effect_bits & kEffectFfi)
-                reason_str = "ffi-deny";
-            else if (required_effect_bits & kEffectRender)
-                reason_str = "render-deny";
+            // Issue #2151: hard fiber isolation deny is Agent-stable.
+            const auto hard_deny_after =
+                g_capability_effect_metrics().capability_fiber_hard_deny_total.load(
+                    std::memory_order_relaxed);
+            if (hard_deny_after > hard_deny_before) {
+                reason_str = "fiber-grant-mismatch";
+            } else {
+                reason_str = "capability-effect-deny";
+                if (required_effect_bits & kEffectMutate)
+                    reason_str = "mutate-deny";
+                else if (required_effect_bits & kEffectFfi)
+                    reason_str = "ffi-deny";
+                else if (required_effect_bits & kEffectRender)
+                    reason_str = "render-deny";
+            }
         }
         append_security_event(g_security_event_ring(), kind, tenant, mid, prov.epoch,
                               required_effect_bits, op, reason_str, /*denied=*/!ok, slot.fiber_id);
@@ -380,7 +399,8 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // force_mutation_bind when sandbox active (Restricted/Strict or evaluator
     // sandbox_mode_). Always stamps non-zero grant_epoch + fiber_id.
     const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
-    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #2151: stamp grant with effect_fiber_id_or (override for tests).
+    const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
     auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
     g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov);
     // Issue #2136: count Render grants (effect-only path when name empty;

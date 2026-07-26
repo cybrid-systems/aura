@@ -140,10 +140,29 @@ struct CapabilityEffectMetrics {
     // Issue #2149: Mutation vs Bridge diverge on effect-check path
     // (observability only; Bridge is never the security fence key).
     std::atomic<std::uint64_t> capability_mutation_bridge_split_total{0};
+    // Issue #2151: hard-deny on grant_fiber_id mismatch (when policy on).
+    std::atomic<std::uint64_t> capability_fiber_hard_deny_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
 inline constexpr int kEffectEpochUnifyIssue = 2149;
+// Issue #2151: optional hard-deny on grant_fiber_id mismatch.
+inline constexpr int kHardFiberIsolationIssue = 2151;
+
+// Test/production optional override for EffectProvenance fiber stamping.
+// Non-zero → use this id instead of aura_fiber_current_id() (0 = use TLS fiber).
+// Production always leaves at 0; tests simulate fiber A vs B without a scheduler.
+[[nodiscard]] inline std::atomic<std::uint32_t>& g_effect_fiber_id_override() noexcept {
+    static std::atomic<std::uint32_t> o{0};
+    return o;
+}
+inline void set_effect_fiber_id_override(std::uint32_t id) noexcept {
+    g_effect_fiber_id_override().store(id, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t effect_fiber_id_or(std::uint32_t live_fiber_id) noexcept {
+    const auto o = g_effect_fiber_id_override().load(std::memory_order_relaxed);
+    return o != 0 ? o : live_fiber_id;
+}
 
 inline CapabilityEffectMetrics& g_capability_effect_metrics() noexcept {
     static CapabilityEffectMetrics m;
@@ -168,6 +187,9 @@ struct CapabilityRegistry {
     // grant_epoch < grant_min_valid_epoch_ are denied in provenance_ok().
     // 0 = disabled (legacy behavior). Set via set_grant_min_valid_epoch.
     std::atomic<std::uint64_t> grant_min_valid_epoch_{0};
+    // Issue #2151: when true, grant_fiber_id mismatch is a hard deny
+    // (not observability-only). Default false preserves #2055 soft share.
+    std::atomic<bool> hard_fiber_isolation_{false};
 
     // Issue #2074: anti privilege-sticky accessors.
     void set_grant_min_valid_epoch(std::uint64_t epoch) noexcept {
@@ -175,6 +197,14 @@ struct CapabilityRegistry {
     }
     [[nodiscard]] std::uint64_t grant_min_valid_epoch() const noexcept {
         return grant_min_valid_epoch_.load(std::memory_order_acquire);
+    }
+
+    // Issue #2151: hard fiber isolation policy.
+    void set_hard_fiber_isolation(bool on) noexcept {
+        hard_fiber_isolation_.store(on, std::memory_order_release);
+    }
+    [[nodiscard]] bool hard_fiber_isolation() const noexcept {
+        return hard_fiber_isolation_.load(std::memory_order_acquire);
     }
 
     // Grant effects to a tenant (OR into named grant).
@@ -257,13 +287,16 @@ struct CapabilityRegistry {
     // Issue #2074: anti privilege-sticky — if grant has grant_epoch != 0
     // AND the registry's min_valid_epoch is set AND grant_epoch < min_valid_epoch,
     // the grant is expired (issued at a stale mutation epoch) → deny.
-    // Issue #2055: grant_fiber_id is audit/blame metadata (multi-fiber same
-    // tenant still shares grants). Cross-fiber principal isolation is
-    // TenantScope on the Evaluator — not a hard deny here.
+    // Issue #2055 / #2151: grant_fiber_id mismatch:
+    //   hard_fiber_isolation=false (default) → metric only, allow (same-tenant
+    //     multi-fiber share grants; TenantScope remains principal boundary).
+    //   hard_fiber_isolation=true → deny + capability_fiber_hard_deny_total
+    //     (commercial multi-tenant Strict / AURA_HARD_FIBER_ISOLATION=1).
     [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return true; // no grants → not a mismatch (denied separately)
+        const bool hard_fiber = hard_fiber_isolation_.load(std::memory_order_acquire);
         for (const auto& g : it->second) {
             if (g.revoked)
                 continue;
@@ -278,10 +311,15 @@ struct CapabilityRegistry {
                     1, std::memory_order_relaxed);
                 return false;
             }
-            // Observability only: fiber differs from grant issuer (not a deny).
+            // Fiber mismatch: soft (metric) or hard deny (#2151).
             if (g.grant_fiber_id != 0 && prov.fiber_id != 0 && g.grant_fiber_id != prov.fiber_id) {
                 g_capability_effect_metrics().capability_fiber_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
+                if (hard_fiber) {
+                    g_capability_effect_metrics().capability_fiber_hard_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return false;
+                }
             }
         }
         return true;
@@ -377,6 +415,8 @@ struct CapabilityRegistry {
         macro_self_evo_by_tenant.clear();
         sandbox_mode = EffectSandboxMode::Off;
         audit_seq.store(0, std::memory_order_relaxed);
+        grant_min_valid_epoch_.store(0, std::memory_order_relaxed);
+        hard_fiber_isolation_.store(false, std::memory_order_relaxed);
     }
 };
 
@@ -466,6 +506,8 @@ make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutat
 inline void reset_capability_effects_for_test() noexcept {
     g_capability_registry().clear_for_test();
     g_capability_registry().set_grant_min_valid_epoch(0);
+    g_capability_registry().set_hard_fiber_isolation(false);
+    set_effect_fiber_id_override(0);
     auto& m = g_capability_effect_metrics();
     m.capability_effect_enforced_total.store(0, std::memory_order_relaxed);
     m.capability_effect_denied_total.store(0, std::memory_order_relaxed);
@@ -485,6 +527,7 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_fiber_mismatch_total.store(0, std::memory_order_relaxed);
     m.capability_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
     m.capability_mutation_bridge_split_total.store(0, std::memory_order_relaxed);
+    m.capability_fiber_hard_deny_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -512,6 +555,9 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t epoch_fence_hits = 0;
     // Issue #2149
     std::uint64_t mutation_bridge_split = 0;
+    // Issue #2151
+    std::uint64_t fiber_hard_deny = 0;
+    int hard_fiber_isolation = 0;
 };
 
 [[nodiscard]] inline CapabilityEffectStatsSnapshot snapshot_capability_effect_stats() noexcept {
@@ -538,6 +584,8 @@ struct CapabilityEffectStatsSnapshot {
         m.capability_fiber_mismatch_total.load(std::memory_order_relaxed),
         m.capability_epoch_fence_hit_total.load(std::memory_order_relaxed),
         m.capability_mutation_bridge_split_total.load(std::memory_order_relaxed),
+        m.capability_fiber_hard_deny_total.load(std::memory_order_relaxed),
+        g_capability_registry().hard_fiber_isolation() ? 1 : 0,
     };
 }
 

@@ -2430,6 +2430,10 @@ aura_issue_test_link_llvm_jit(test_effect_epoch_mutation_unify_2149)
 aura_add_issue_test(test_audit_wal_force_multi_tenant_2150)
 aura_issue_test_link_llvm_jit(test_audit_wal_force_multi_tenant_2150)
 
+# Issue #2151: optional hard-deny on grant_fiber_id mismatch (TenantScope isolation).
+aura_add_issue_test(test_hard_fiber_isolation_2151)
+aura_issue_test_link_llvm_jit(test_hard_fiber_isolation_2151)
+
 # Issue #2077: unify has_capability string path with Effect matrix
 # (single source of truth). Effect-mapped caps (mutate, ffi, network,
 # exec, render, read, write, macro-self-evo, *) now consult

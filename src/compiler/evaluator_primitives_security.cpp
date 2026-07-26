@@ -417,6 +417,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.mutation_bridge_split));
                 insert_kv("effect-epoch-mutation-wired", 1);
             }
+            // Issue #2151: optional hard-deny on grant_fiber_id mismatch
+            // (fiber-mismatch count already exposed under schema-2055).
+            {
+                using aura::core::capability::kHardFiberIsolationIssue;
+                insert_kv("schema-2151", kHardFiberIsolationIssue);
+                insert_kv("issue-2151", kHardFiberIsolationIssue);
+                insert_kv("hard-fiber-isolation",
+                          static_cast<std::int64_t>(snap.hard_fiber_isolation));
+                insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
+                insert_kv("hard-fiber-isolation-wired", 1);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
