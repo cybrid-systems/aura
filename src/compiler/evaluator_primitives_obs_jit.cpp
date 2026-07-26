@@ -796,6 +796,14 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"soa-cascade-instr-dirty-sync-wired", make_int(1)},
                 {"schema-2034", make_int(2034)},
                 {"issue-2034", make_int(2034)},
+                // Issue #2139: single-entry finish_cascade_soa_dirty_sync_
+                {"soa_dirty_finish_cascade_total",
+                 make_int(L(&CompilerMetrics::soa_dirty_finish_cascade_total))},
+                {"soa-dirty-finish-cascade-total",
+                 make_int(L(&CompilerMetrics::soa_dirty_finish_cascade_total))},
+                {"soa-dirty-finish-wired", make_int(L(&CompilerMetrics::soa_dirty_finish_wired))},
+                {"schema-2139", make_int(2139)},
+                {"issue-2139", make_int(2139)},
                 // Issue #2045: source_to_ir_map rebuild / consistency after re-lower
                 {"source_to_ir_map_rebuild_total",
                  make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},

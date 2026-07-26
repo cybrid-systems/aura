@@ -4124,11 +4124,11 @@ public:
             (void)force_soa_instruction_dirty_sync();
         }
 
-        // Issue #2034: mirror AoS block_dirty_per_func_ into SoA
-        // block_dirty_, then force instruction_dirty_ cascade for
-        // every dirty block. Returns # of instruction bits flipped
-        // 0→1 (for soa_dirty_sync_total accounting). Safe to call
-        // after any cascade path that set AoS bits directly.
+        // Issue #2034 / #2139: mirror AoS block_dirty_per_func_ into SoA
+        // block_dirty_, then force instruction_dirty_ cascade for every
+        // dirty block via IRModuleV2::finish_dirty_sync() (single entry).
+        // Returns # of instruction bits flipped 0→1 (metric accounting).
+        // Safe to call after any cascade path that set AoS bits directly.
         std::size_t force_soa_instruction_dirty_sync() {
             for (std::size_t fi = 0; fi < block_dirty_per_func_.size(); ++fi) {
                 if (fi >= soa_mod.functions.size())
@@ -4140,7 +4140,8 @@ public:
                         soa_fn.mark_block_dirty(bi);
                 }
             }
-            return soa_mod.sync_instruction_dirty_from_block_dirty();
+            // Issue #2139: only production call path into module dirty sync.
+            return soa_mod.finish_dirty_sync();
         }
 
         // Mark a single block dirty. Resizes the bitmask
@@ -4828,15 +4829,22 @@ public:
         rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
     }
 
-    // Issue #2034: force SoA instruction_dirty_ parity after cascade
-    // block marks and bump soa_dirty_sync_total (at least +1 so every
-    // cascade that touches blocks is observable).
-    // Issue #2111: also bump SoA generation fence so silent dirty=false
-    // cannot hide gen advancement.
+    // Issue #2034 / #2139: canonical cascade-exit SoA dirty finish.
+    // All production mark_define_dirty / invalidate / body-only / impact
+    // cascade paths must call this once — no ad-hoc
+    // sync_instruction_dirty_from_block_dirty loops at call sites.
+    //   1. force_soa_instruction_dirty_sync → finish_dirty_sync (block→instr)
+    //   2. bump soa_dirty_sync_total (flipped bits, min +1 for observability)
+    //   3. bump soa_dirty_finish_cascade_total once per finish (#2139)
+    //   4. SoA generation fence (#2111)
+    // Postcondition: entry.soa_mod.instruction_dirty_synced_with_blocks().
     void finish_cascade_soa_dirty_sync_(IRCacheEntry& entry) {
         const auto flipped = entry.force_soa_instruction_dirty_sync();
         const auto n = flipped > 0 ? static_cast<std::uint64_t>(flipped) : 1u;
         metrics_.soa_dirty_sync_total.fetch_add(n, std::memory_order_relaxed);
+        // Issue #2139: once-per-finish counter (distinct from flipped bits).
+        metrics_.soa_dirty_finish_cascade_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.soa_dirty_finish_wired.store(1, std::memory_order_relaxed);
         entry.bump_soa_generation();
         metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
     }
