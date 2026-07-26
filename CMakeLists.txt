@@ -2358,6 +2358,11 @@ add_dependencies(all_test_issue_targets test_source_to_ir_map_consistency_2045)
 # Issue #2046: AOT region versioning aligned with JIT hot-swap / bridge_epoch
 aura_add_issue_test(test_aot_jit_joint_versioning_2046)
 aura_issue_test_link_llvm_jit(test_aot_jit_joint_versioning_2046)
+
+# Issue #2099: HygieneCheckpoint + restore API for violation rollback
+# (Agent what-if / self-evo safety). P1 — paired with #2023 (MacroSelfEvo).
+aura_add_issue_test(test_hygiene_checkpoint_2099)
+aura_issue_test_link_llvm_jit(test_hygiene_checkpoint_2099)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

@@ -5227,6 +5227,49 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return make_bool(true);
     });
 
+    // ── Issue #2099: HygieneCheckpoint save / restore primitives ───
+    // Lightweight Agent-visible primitives for what-if / self-evo
+    // rollback semantics. (mutate:save-hygiene-checkpoint) returns
+    // an opaque int handle; (mutate:restore-hygiene-checkpoint)
+    // takes the handle + returns bool. The handle indirection lets
+    // the Aura script layer thread the checkpoint through boundary
+    // crossings without copying 4 std::pmr::vector columns.
+    //
+    // AC contract: see evaluator_mutation_boundary.cpp where
+    // save_hygiene_checkpoint / restore_hygiene_checkpoint are
+    // implemented. Both primitives route through add_mutate so
+    // they share the workspace_mtx_ + capability + isolation
+    // gating with every other mutate:* op (#2052/#2057).
+    add_mutate("mutate:save-hygiene-checkpoint", [&ev](const auto& a) -> EvalValue {
+        (void)a;
+        // No MutationBoundaryGuard needed — the save itself does
+        // not mutate workspace state; it just snapshots the current
+        // metadata columns. The next mutate call (e.g. an Agent
+        // expand) is what the Guard wraps.
+        return make_int(static_cast<std::int64_t>(ev.save_hygiene_checkpoint_handle()));
+    });
+    add_mutate("mutate:restore-hygiene-checkpoint", [&ev, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0])) {
+            return mev("bad-arg",
+                       "usage: (mutate:restore-hygiene-checkpoint handle) — handle is the int "
+                       "returned by save-hygiene-checkpoint");
+        }
+        const auto handle = static_cast<std::uint64_t>(as_int(a[0]));
+        // Restore DOES mutate (metadata columns are reinstalled),
+        // so wrap in a MutationBoundaryGuard. If the restore fails
+        // (cross-fiber, generation drift, missing handle), the
+        // Guard commits with ok=true (no actual mutation occurred),
+        // and we return #f so the Agent sees the failure.
+        bool ok = true;
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r)
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        auto guard = std::move(*guard_r);
+        const bool restored = ev.restore_hygiene_checkpoint_handle(handle);
+        return make_bool(restored);
+    });
+
     // ── Issue #1436: (mutate :op …) unified dispatcher ─────────────
     // Canonical surface for the 6 core mutate ops. Existing mutate:*
     // names remain registered (thin aliases, PrimMeta.deprecated) and

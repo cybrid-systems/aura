@@ -719,6 +719,83 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
         });
 
+    // Issue #2099: query:hygiene-checkpoint-stats — observability
+    // dashboard for (mutate:save-hygiene-checkpoint) /
+    // (mutate:restore-hygiene-checkpoint) primitives. Returns a
+    // hash with the 4 lifetime counters + pending slot count +
+    // schema/issue markers. Agent uses this to monitor
+    // what-if / self-evo rollback frequency + cross-fiber
+    // rejection rate (the AC4 concurrent stress contract signal).
+    ObservabilityPrims::register_stats_impl(
+        "query:hygiene-checkpoint-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            insert_kv("save_total",
+                      static_cast<std::int64_t>(ev->get_hygiene_checkpoint_save_total()));
+            insert_kv("save-total",
+                      static_cast<std::int64_t>(ev->get_hygiene_checkpoint_save_total()));
+            insert_kv(
+                "restore_success_total",
+                static_cast<std::int64_t>(ev->get_hygiene_checkpoint_restore_success_total()));
+            insert_kv(
+                "restore-success-total",
+                static_cast<std::int64_t>(ev->get_hygiene_checkpoint_restore_success_total()));
+            insert_kv("restore_fail_total",
+                      static_cast<std::int64_t>(ev->get_hygiene_checkpoint_restore_fail_total()));
+            insert_kv("restore-fail-total",
+                      static_cast<std::int64_t>(ev->get_hygiene_checkpoint_restore_fail_total()));
+            insert_kv(
+                "cross_fiber_reject_total",
+                static_cast<std::int64_t>(ev->get_hygiene_checkpoint_cross_fiber_reject_total()));
+            insert_kv(
+                "cross-fiber-reject-total",
+                static_cast<std::int64_t>(ev->get_hygiene_checkpoint_cross_fiber_reject_total()));
+            insert_kv("pending_count",
+                      static_cast<std::int64_t>(ev->hygiene_checkpoint_pending_count()));
+            insert_kv("pending-count",
+                      static_cast<std::int64_t>(ev->hygiene_checkpoint_pending_count()));
+            insert_kv("schema", 2099);
+            insert_kv("issue", 2099);
+            insert_kv("active", 1);
+            insert_kv("lineage-1893", 1893);
+            insert_kv("nested-under-mutation-boundary", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #456 / #1036: query:dirty-subtree root-node-id
     // [reason-mask]. Walks the **subtree** rooted at root-node-id
     // (BFS over children) and returns the number of dirty nodes.
