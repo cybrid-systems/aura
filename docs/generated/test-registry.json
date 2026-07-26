@@ -903,6 +903,12 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_macro_intro_restamp.cpp",
+      "category": "unit",
+      "reason": "Issue #2096 — per-cloned-subtree MacroIntroduced restamp",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_macro_reflect_batch.cpp",
       "category": "unknown",
       "reason": "",

@@ -6850,6 +6850,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_rest_param_hygiene_total{0};
     // Issue #2019: MacroIntroduced restamp after expand → FlatAST.
     std::atomic<std::uint64_t> macro_restamp_after_flat_total{0};
+    // Issue #2096: per-cloned-subtree MacroIntroduced restamp
+    // (subtree-local coherence at expand exit + critical mutate
+    // entry, scoped to the NodeId root rather than the full AST).
+    std::atomic<std::uint64_t> macro_expand_mutate_restamp_total{0};
     // Issue #2021: peak concurrent top-level clone_macro_body + live in-flight.
     std::atomic<std::uint64_t> macro_clone_concurrent_peak{0};
     std::atomic<std::uint64_t> macro_clone_in_flight{0};
