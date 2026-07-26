@@ -6854,6 +6854,12 @@ struct CompilerMetrics {
     // (subtree-local coherence at expand exit + critical mutate
     // entry, scoped to the NodeId root rather than the full AST).
     std::atomic<std::uint64_t> macro_expand_mutate_restamp_total{0};
+    // Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
+    // stamp counter (mirrors g_macro_schema_cache_dirty_stamped_total into
+    // CompilerMetrics so engine:metrics + query primitives see the
+    // stamping rate across rest-param + nested qq + schema_cache copy
+    // paths in clone_macro_body).
+    std::atomic<std::uint64_t> macro_schema_cache_dirty_stamped_total{0};
     // Issue #2021: peak concurrent top-level clone_macro_body + live in-flight.
     std::atomic<std::uint64_t> macro_clone_concurrent_peak{0};
     std::atomic<std::uint64_t> macro_clone_in_flight{0};

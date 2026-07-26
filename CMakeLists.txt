@@ -1787,6 +1787,11 @@ add_dependencies(all_test_issue_targets test_macro_restamp_after_flat)
 aura_add_issue_test(test_macro_intro_restamp)
 aura_issue_test_link_llvm_jit(test_macro_intro_restamp)
 add_dependencies(all_test_issue_targets test_macro_intro_restamp)
+# Issue #2098: clone_macro_body schema_cache + dirty/provenance
+# propagation for rest-param + nested paths (metrics layer + tests).
+aura_add_issue_test(test_macro_schema_dirty_propagate)
+aura_issue_test_link_llvm_jit(test_macro_schema_dirty_propagate)
+add_dependencies(all_test_issue_targets test_macro_schema_dirty_propagate)
 
 # Issue #2020: Agent-visible reflect:hygiene-stats + provenance-blame.
 aura_add_issue_test(test_reflect_hygiene_agent_diagnostics)

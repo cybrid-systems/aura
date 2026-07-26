@@ -56,6 +56,7 @@ extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
 extern "C" std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept;
 // Issue #2021: depth + concurrent peak readers / metrics snapshot.
 extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_in_flight_v_read() noexcept;
@@ -686,6 +687,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             (void)a;
             return make_int(
                 static_cast<std::int64_t>(aura_macro_expand_mutate_restamp_total_v_read()));
+        });
+
+    // Issue #2098: query:macro-schema-cache-dirty-stamp-stats. Surfaces
+    // the per-cloned-subtree schema-cache + dirty/provenance stamp
+    // counter (clone_macro_body walk visibility for rest-param + nested
+    // qq + schema_cache copy paths). Pairs with (query:macro-hygiene-stats)
+    // observability bundle so Agents / dashboards see the stamping rate.
+    ObservabilityPrims::register_stats_impl(
+        "query:macro-schema-cache-dirty-stamp-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(
+                static_cast<std::int64_t>(aura_macro_schema_cache_dirty_stamped_total_v_read()));
         });
 
     // Issue #458: query:hygiene-stats. Returns an integer

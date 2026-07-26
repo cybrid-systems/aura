@@ -337,6 +337,14 @@ std::atomic<std::uint64_t> g_macro_restamp_after_flat_total{0};
 // at expand exit + critical mutate entry). Bumped when NodeId-rooted
 // restamp_macro_introduced_subtree actually repinned ≥1 node.
 std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total{0};
+// Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
+// stamp counter for the MacroIntroduced clone path. Bumped once per
+// MacroIntroduced node that received apply_macro_dirty_bits(cur, kMacroExpansion)
+// + set_provenance() stamp in the iterative walk inside clone_macro_body.
+// Covers rest-param + nested qq + schema_cache copy paths, giving
+// Agents / observability dashboards visibility into the stamping rate
+// (previously silent). Surfaces via (query:macro-schema-cache-dirty-stamp-stats).
+std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total{0};
 
 // Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
 // primitive can read these file-level atomics from another TU without the
@@ -365,6 +373,11 @@ std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept {
 // (subtree-local coherence at expand exit + critical mutate entry).
 std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcept {
     return g_macro_expand_mutate_restamp_total.load(std::memory_order_relaxed);
+}
+// Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
+// stamp counter C-linkage reader (clone_macro_body walk visibility).
+std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept {
+    return g_macro_schema_cache_dirty_stamped_total.load(std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
     return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
@@ -411,6 +424,12 @@ void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
     // (query:macro-mutate-restamp-stats) and (engine:metrics) views).
     m->macro_expand_mutate_restamp_total.store(
         g_macro_expand_mutate_restamp_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    // Issue #2098: mirror per-cloned-subtree schema-cache + dirty/provenance
+    // stamp counter too (used by (query:macro-schema-cache-dirty-stamp-stats)
+    // and (engine:metrics) views for rest-param + nested qq visibility).
+    m->macro_schema_cache_dirty_stamped_total.store(
+        g_macro_schema_cache_dirty_stamped_total.load(std::memory_order_relaxed),
         std::memory_order_relaxed);
 }
 } // extern "C"
@@ -935,6 +954,13 @@ aura::ast::NodeId clone_macro_body(
                 target.apply_macro_dirty_bits(
                     cur, static_cast<std::uint8_t>(
                              aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+                // Issue #2098: bump per-cloned-subtree schema-cache +
+                // dirty/provenance stamp counter — bumped per MacroIntroduced
+                // node that received kMacroExpansion dirty bit in this walk,
+                // giving observability into the stamping rate across rest-param
+                // + nested qq + schema_cache copy paths (the existing iterative
+                // stamp walk was previously silent in metrics).
+                g_macro_schema_cache_dirty_stamped_total.fetch_add(1, std::memory_order_relaxed);
                 if (target.provenance(cur) == 0)
                     target.set_provenance(cur, origin);
                 auto cv = target.get(cur);
