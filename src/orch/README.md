@@ -13,25 +13,46 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 | `(orch:parallel-intend tasks …)` | alias of `(parallel-intend …)` | same as parallel-intend batch hash |
 | `(engine:metrics "query:orch-module-stats")` | stats facade | live `OrchModuleStats` (+ mailbox/parallel mirrors) |
 
-### `parallel-intend` semantics (Issue #2081)
+### `parallel-intend` semantics (Issue #2081 / #2163)
 
-`(parallel-intend tasks ...)` runs tasks on a real fiber pool under `parallel_orch::parallel_intend`,
-but **Evaluator `apply_closure` is serialized** by a shared `std::mutex eval_mu` so AST/mutate
-safety is preserved across fibers. The batch hash therefore carries `eval-serialized=#t` (and
-`schema-2081`) so Agents can introspect the contract:
+`(parallel-intend tasks ...)` runs tasks on a real fiber pool under `parallel_orch::parallel_intend`.
+By default **Evaluator `apply_closure` is serialized** by a shared `std::mutex eval_mu` so
+AST/mutate safety is preserved across fibers. The batch hash carries `eval-serialized=#t`
+(and `schema-2081`) so Agents can introspect the contract.
 
-| Aspect | Behavior |
-|--------|----------|
-| Fibers | concurrent under `:max-concurrency` / FailurePolicy (`#1587`/`#2007`) |
-| `Evaluator::apply_closure` | **serialized** via shared `eval_mu` (mutation safety) |
-| Throughput | ~ sequential `apply_closure` cost + scheduling overhead |
-| Mutating thunks | safe (always go through the lock) |
-| Pure thunks | still serialized today; future `:pure #t` may skip the lock |
+| Aspect | Default (`:pure #f`) | `:pure #t` (Issue #2163) |
+|--------|----------------------|---------------------------|
+| Fibers | concurrent under `:max-concurrency` / FailurePolicy (`#1587`/`#2007`) | same |
+| `Evaluator::apply_closure` | **serialized** via shared `eval_mu` | **unlocked** when pure path taken |
+| Throughput | ~ sequential apply cost + scheduling | concurrent apply for pure thunks |
+| Mutating thunks | safe (always locked) | task error `pure-contract-violated` (+ metric) |
+| Batch hash | `eval-serialized=#t` | `eval-serialized=#f` when any unlocked pure apply; `schema-pure-parallel=2163` |
+| Forced lock | n/a | if mutation boundary already held → lock + `pure_fallback_locked_total` |
 
-For CPU-only pure work that does not need Evaluator mutation, prefer direct
-`serve::parallel_orch::parallel_intend` from C++ with custom `TaskSpec` bodies that don't
-call back into the Evaluator. The Aura-level `parallel-intend` is the orchestration contract;
-the eval-serialization is the safety floor.
+**Pure contract (caller guarantees + best-effort probe):**
+
+```text
+(parallel-intend tasks :pure #t :max-concurrency 4 :timeout-ms 5000)
+;; default pure=#f → eval-serialized=#t (unchanged AC1)
+```
+
+1. **Caller guarantees** each thunk is free of mutate/AST write. Prefer **shallow**
+   pure arithmetic / pure reads — deep concurrent recursion on a shared
+   `Evaluator` can still race internal heaps (pure is not a full reentrant VM).
+2. **Best-effort probe**: after an unlocked apply, if `defuse_version` advanced or a
+   mutation boundary is held, the task fails with error `pure-contract-violated`
+   and `pure_contract_violated_total` advances (AC3). Does not roll back sibling
+   concurrent pure applies — pure is not a transactional isolation level.
+3. **Fallback lock**: if a mutation boundary is already held when a pure task starts,
+   that task takes `eval_mu` and bumps `pure_fallback_locked_total`.
+4. FailurePolicy / timeout / quota (`#2007` / `#1600`) are unchanged under pure (AC4).
+
+Metrics (`query:orch-module-stats`, schema-2163):
+`pure-parallel-batches-total`, `pure-parallel-tasks-total`,
+`pure-contract-violated-total`, `pure-fallback-locked-total`.
+
+For CPU-only pure work that must never touch the Evaluator, prefer direct
+`serve::parallel_orch::parallel_intend` from C++ with custom `TaskSpec` bodies.
 
 MVP scope is single-agent only (`scripts/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
 

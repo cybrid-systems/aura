@@ -142,6 +142,13 @@ struct OrchModuleStats {
     // wait_us includes uncontended lock time (usually ~0) + contention wait.
     std::atomic<std::uint64_t> agent_apply_lock_acquisitions_total{0};
     std::atomic<std::uint64_t> agent_apply_lock_wait_us_total{0};
+    // Issue #2163: parallel-intend :pure #t path (skip eval_mu for pure thunks).
+    std::atomic<std::uint64_t> pure_parallel_batches_total{0};
+    std::atomic<std::uint64_t> pure_parallel_tasks_total{0};
+    // Task applied under pure but mutation observed → pure-contract-violated.
+    std::atomic<std::uint64_t> pure_contract_violated_total{0};
+    // pure=#t requested but this task forced the lock (boundary held / unsafe).
+    std::atomic<std::uint64_t> pure_fallback_locked_total{0};
 };
 
 // Issue #2008: conventional mailbox keepalive payload prefix.

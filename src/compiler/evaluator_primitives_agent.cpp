@@ -2306,7 +2306,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // ── parallel-intend — Issue #1587: Aura surface for parallel_orch (#1586) ──
     //
     // (parallel-intend tasks
-    //    [:max-concurrency n] [:timeout-ms ms] [:fail-fast bool] [:collect-errors bool])
+    //    [:max-concurrency n] [:timeout-ms ms] [:fail-fast bool] [:collect-errors bool]
+    //    [:pure bool] …)   ; Issue #2163 — default pure=#f (eval-serialized=#t)
     //
     // tasks: vector or list of 0-arg closures (thunks).
     // Returns a hash:
@@ -2314,8 +2315,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // where results is a vector of per-task hashes {ok, index, value|error}.
     //
     // Wires to aura::serve::parallel_orch::parallel_intend (Fiber::join +
-    // concurrency gate). Closure evaluation is mutex-serialized for Evaluator
-    // safety; orchestration/join/policy still exercise the C++ parallel path.
+    // concurrency gate). Default: apply_closure serialized via eval_mu.
+    // :pure #t (Issue #2163): skip eval_mu for known-pure thunks; mutating
+    // thunks fail with pure-contract-violated (or force-lock + metric).
     add("parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             // FlatHashTable probes with (cap-1) mask → capacity must be power of 2.
@@ -2420,6 +2422,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
         using aura::serve::parallel_orch::ParallelPolicy;
         ParallelPolicy policy{};
+        // Issue #2163: default pure=#f → eval_mu serialization (AC1).
+        bool pure_mode = false;
         // Keyword / optional positional policy args after tasks.
         for (std::size_t i = 1; i < a.size();) {
             if (i + 1 < a.size() && (types::is_string(a[i]) || types::is_keyword(a[i]))) {
@@ -2439,6 +2443,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "collect-errors" || k == "collect_errors") &&
                            types::is_bool(val)) {
                     policy.collect_errors = types::as_bool(val);
+                } else if (k == "pure" && types::is_bool(val)) {
+                    // Issue #2163 Phase A/B: optional pure path.
+                    pure_mode = types::as_bool(val);
                 } else if ((k == "max-retries" || k == "max_retries") && types::is_int(val)) {
                     // Issue #2007 RetryN
                     policy.max_retries =
@@ -2527,6 +2534,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::mutex eval_mu;
             std::vector<EvalValue> values;
             std::vector<std::string> errors;
+            // Issue #2163: per-batch pure accounting (task bodies bump atomics).
+            std::atomic<std::uint64_t> pure_unlocked_applies{0};
+            std::atomic<std::uint64_t> pure_fallback_locked{0};
+            std::atomic<std::uint64_t> pure_contract_violated{0};
         };
         auto ash = std::make_shared<AuraShared>();
         ash->values.assign(cids.size(), make_void());
@@ -2537,11 +2548,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         for (std::size_t i = 0; i < cids.size(); ++i) {
             const auto cid = cids[i];
             tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-                .body = [&ev, ash, cid, i]() -> aura::serve::parallel_orch::TaskResult {
+                .body = [&ev, ash, cid, i, pure_mode]() -> aura::serve::parallel_orch::TaskResult {
                     aura::serve::parallel_orch::TaskResult tr;
                     tr.task_index = i;
                     try {
-                        std::lock_guard lock(ash->eval_mu);
+                        // Issue #2163: pure path may skip eval_mu. Force lock when
+                        // a mutation boundary is already held (unsafe concurrent
+                        // pure apply) — pure_fallback_locked_total.
+                        const bool force_lock = pure_mode && (ev.mutation_boundary_held() ||
+                                                              ev.mutation_boundary_depth() > 0);
+                        const bool use_lock = !pure_mode || force_lock;
+                        std::unique_lock<std::mutex> lock(ash->eval_mu, std::defer_lock);
+                        if (use_lock) {
+                            lock.lock();
+                            if (force_lock) {
+                                ash->pure_fallback_locked.fetch_add(1, std::memory_order_relaxed);
+                                aura::orch::g_orch_module_stats.pure_fallback_locked_total
+                                    .fetch_add(1, std::memory_order_relaxed);
+                            }
+                        } else {
+                            ash->pure_unlocked_applies.fetch_add(1, std::memory_order_relaxed);
+                            aura::orch::g_orch_module_stats.pure_parallel_tasks_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                         // Issue #1719: refuse apply on freed closure (sibling of intend).
                         if (!agent_cid_live(ev, cid)) {
                             agent_note_closure_freed_call(ev);
@@ -2549,11 +2578,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             tr.error = "closure-freed";
                             ash->errors[i] = tr.error;
                         } else {
+                            // Issue #2163 AC3: snapshot defuse for pure-contract probe.
+                            const auto defuse_before =
+                                pure_mode ? ev.defuse_version() : std::uint64_t{0};
                             auto opt = ev.apply_closure(cid, {});
                             if (!opt) {
                                 tr.ok = false;
                                 tr.error = "apply-failed";
                                 ash->errors[i] = tr.error;
+                            } else if (pure_mode && !force_lock &&
+                                       (ev.defuse_version() != defuse_before ||
+                                        ev.mutation_boundary_held() ||
+                                        ev.mutation_boundary_depth() > 0)) {
+                                // Mutating thunk under :pure #t — fail task (policy).
+                                tr.ok = false;
+                                tr.error = "pure-contract-violated";
+                                ash->errors[i] = tr.error;
+                                ash->pure_contract_violated.fetch_add(1, std::memory_order_relaxed);
+                                aura::orch::g_orch_module_stats.pure_contract_violated_total
+                                    .fetch_add(1, std::memory_order_relaxed);
                             } else {
                                 ash->values[i] = *opt;
                                 if (types::is_error(*opt)) {
@@ -2643,6 +2686,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(status_str);
 
+        // Issue #2163: eval-serialized=#f when pure path engaged for this batch
+        // and at least one task applied unlocked (not all forced-lock fallback).
+        const auto pure_unlocked = ash->pure_unlocked_applies.load(std::memory_order_relaxed);
+        const auto pure_fallback = ash->pure_fallback_locked.load(std::memory_order_relaxed);
+        const auto pure_viol = ash->pure_contract_violated.load(std::memory_order_relaxed);
+        const bool pure_engaged = pure_mode && pure_unlocked > 0;
+        if (pure_mode) {
+            aura::orch::g_orch_module_stats.pure_parallel_batches_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"status", make_string(sidx)},
             {"ok-count", make_int(static_cast<std::int64_t>(batch.ok_count))},
@@ -2653,17 +2707,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"retries-performed", make_int(static_cast<std::int64_t>(batch.retries_performed))},
             {"circuit-opened", make_bool(batch.circuit_opened)},
             {"results", make_vector(rvidx)},
-            // Issue #2081: parallel-intend eval-serialization contract surface.
-            // Evaluator::apply_closure is serialized via shared eval_mu inside
-            // each task body (see ParallelIntendState::eval_mu); fibers run
-            // concurrently under max-concurrency but apply_closure is locked.
-            // This field lets Agents introspect the contract without parsing
-            // source. A future :pure #t path (#2081 Phase B) may set #f.
-            {"eval-serialized", make_bool(true)},
+            // Issue #2081 / #2163: eval-serialization contract surface.
+            // Default: apply_closure serialized via shared eval_mu.
+            // :pure #t with unlocked applies → eval-serialized=#f.
+            {"eval-serialized", make_bool(!pure_engaged)},
+            {"pure", make_bool(pure_mode)},
+            {"pure-unlocked-tasks", make_int(static_cast<std::int64_t>(pure_unlocked))},
+            {"pure-fallback-locked", make_int(static_cast<std::int64_t>(pure_fallback))},
+            {"pure-contract-violations", make_int(static_cast<std::int64_t>(pure_viol))},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
             {"schema-2081", make_int(2081)},
+            {"schema-2163", make_int(2163)},
         };
+        if (pure_engaged) {
+            kv.push_back({"schema-pure-parallel", make_int(2163)});
+        }
         return build_hash(kv);
     });
 
@@ -3218,6 +3277,21 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("orch-agent-soft-boundary-wired", 1);
             insert_kv("schema-2118", 2118);
             insert_kv("issue-2118", 2118);
+            // Issue #2163: parallel-intend :pure #t metrics.
+            insert_kv("pure-parallel-batches-total",
+                      static_cast<std::int64_t>(
+                          os.pure_parallel_batches_total.load(std::memory_order_relaxed)));
+            insert_kv("pure-parallel-tasks-total",
+                      static_cast<std::int64_t>(
+                          os.pure_parallel_tasks_total.load(std::memory_order_relaxed)));
+            insert_kv("pure-contract-violated-total",
+                      static_cast<std::int64_t>(
+                          os.pure_contract_violated_total.load(std::memory_order_relaxed)));
+            insert_kv("pure-fallback-locked-total",
+                      static_cast<std::int64_t>(
+                          os.pure_fallback_locked_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2163", 2163);
+            insert_kv("issue-2163", 2163);
             // Issue #1881: unified orch health (agent + mailbox + parallel mirrors).
             // New query:orch-*-stats names are frozen; fold into this hash instead.
             insert_kv("agents-active",
