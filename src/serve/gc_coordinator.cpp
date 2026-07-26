@@ -356,10 +356,10 @@ GCSweepResult GCCollector::sweep() {
             result.closures_freed = closure_marks_.count_dead();
     }
 
-    // Clear mark state for next cycle
-    string_marks_ = MarkBitVector();
-    pair_marks_ = MarkBitVector();
-    closure_marks_ = MarkBitVector();
+    // Clear mark state for next cycle (move-only MarkBitVector; #2117).
+    string_marks_.reset();
+    pair_marks_.reset();
+    closure_marks_.reset();
 
     return result;
 }

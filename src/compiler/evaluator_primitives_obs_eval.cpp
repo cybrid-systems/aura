@@ -2978,7 +2978,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:gc-mark-size-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
-            auto* ht = FlatHashTable::create(16);
+            // Capacity power-of-two; #2117 adds atomic MarkBitVector keys.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3027,6 +3028,15 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(
                           aura::serve::g_mark_size_provider_wired.load(std::memory_order_relaxed)));
             insert_kv("size-provider-wired", 1);
+            // Issue #2117: atomic MarkBitVector (concurrent multi-fiber mark)
+            insert_kv("mark-bitvector-atomic-wired",
+                      static_cast<std::int64_t>(aura::serve::g_mark_bitvector_atomic_wired.load(
+                          std::memory_order_relaxed)));
+            insert_kv("mark-bitvector-atomic-storage",
+                      aura::serve::MarkBitVector::is_atomic_storage() ? 1 : 0);
+            insert_kv("mark-bitvector-relaxed-order", 1); // STW fence is external
+            insert_kv("schema-2117", 2117);
+            insert_kv("issue-2117", 2117);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
