@@ -33,6 +33,15 @@
 //          enter; never silent about outside paths (always count).
 //
 // MVP scope (#1943): single-workspace; no cross-COW migration.
+// Issue #2178: cross-workspace / cross-COW hot-update is explicitly
+// rejected at the reload + reemit entry points via
+// aura_is_current_workspace_eval(eval_ptr). Foreign eval contexts (or
+// when COW generation diverges) bump the
+// cross_workspace_hot_update_rejected_total on the CompilerMetrics,
+// surfaced on (query:hot-update-registry-stats). The MVP boundary is
+// enforced until a future cross-COW migration design lands — the
+// observable guard means a silent partial success is no longer possible
+// in the multi-agent / multi-tenant host case.
 
 #ifndef AURA_COMPILER_HOT_UPDATE_REGISTRY_HH
 #define AURA_COMPILER_HOT_UPDATE_REGISTRY_HH
