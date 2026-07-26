@@ -13,6 +13,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.error;
+import aura.core.envframe_lifetime; // Issue #2164: hold-pin compact gate
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -1952,6 +1953,19 @@ EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noe
 // a fiber holding shared closures_mtx_ blocks our unique take,
 // avoiding the classic upgrade deadlock).
 std::size_t Evaluator::compact_env_frames() {
+    // Issue #2164: hold-pin gate — defer reclaim while any EnvFrameLifetimeGuard
+    // is live (process-wide depth). Exit scan remains mandatory on Guard
+    // dtor; this closes the post-facto window where compact rewrites env_id
+    // under a concurrent FiberSteal / BoundaryExit hold.
+    if (aura::core::envframe_lifetime::should_block_compact_for_guards()) {
+        const auto n = aura::core::envframe_lifetime::note_blocked_compact_while_guard_held();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->envframe_compact_blocked_while_guard_held_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        }
+        (void)n;
+        return 0; // busy / no reclaim
+    }
     // Issue #1401: acquire the interlock FIRST so we serialize with
     // load_module_file. compact_env_frames rewrites Closure::env_id
     // via remap; without the interlock, a concurrent load_module_file
@@ -2111,6 +2125,10 @@ std::size_t Evaluator::compact_env_frames() {
 
     const std::size_t reclaimed = orig_size - new_env_frames.size();
     env_frames_ = std::move(new_env_frames);
+    // Issue #2164: advance hold-generation stamp so Guard dtor can detect
+    // compact that proceeded under a hold (should be impossible when gate works).
+    if (reclaimed > 0 || !env_id_remap_.empty())
+        aura::core::envframe_lifetime::note_compact_generation_bump();
 
     // Issue #1510 / #1526: atomic dual-epoch pair under interlock —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure

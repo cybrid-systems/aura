@@ -6927,7 +6927,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> lifetime_pin_restamps_total{0};        // #2000 phase 2
     std::atomic<std::uint64_t> envframe_lifetime_guard_runs_total{0}; // #2003
     std::atomic<std::uint64_t> envframe_lifetime_guard_invalidations_total{0}; // #2003
-    std::atomic<std::uint64_t> hot_path_primitives_module{1};                  // #1227
+    // Issue #2164: compact_env_frames deferred while EnvFrameLifetimeGuard held.
+    std::atomic<std::uint64_t> envframe_compact_blocked_while_guard_held_total{0};
+    std::atomic<std::uint64_t> hot_path_primitives_module{1}; // #1227
     // ── Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1229_1240_active{1};
     std::atomic<std::uint64_t> ffi_opaque_tracking_hardened{1};     // #1230

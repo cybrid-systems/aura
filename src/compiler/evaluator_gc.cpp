@@ -730,10 +730,9 @@ void Evaluator::envframe_lifetime_trampoline(
 // envframe_lifetime_trampoline to run_envframe_lifetime_guard.
 static aura::core::envframe_lifetime::EnvFrameLifetimeHost
 make_envframe_lifetime_host(Evaluator& ev) {
-    aura::core::envframe_lifetime::EnvFrameLifetimeHost h{};
-    h.ctx = static_cast<void*>(&ev);
-    h.scan_skip_freed = &Evaluator::envframe_lifetime_trampoline;
-    return h;
+    // Issue #2164: shared host builder wires hold_generation stamp.
+    return aura::core::envframe_lifetime::make_envframe_lifetime_host_with(
+        static_cast<void*>(&ev), &Evaluator::envframe_lifetime_trampoline);
 }
 
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {

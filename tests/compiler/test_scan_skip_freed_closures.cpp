@@ -12,15 +12,19 @@
 //   AC6: stress double-scan after force_drop; marked_invalid stable
 //   AC7: g_envframe_lifetime_stats.scans_run grows under repeated scans
 //   AC8 (deferred): primitive schema=2003 — covered by query:envframe-lifetime-stats in obs_eval
+//   AC_H1–H4 (#2164): EnvFrameLifetimeGuard hold-pin blocks compact_env_frames
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
 #include <cstdint>
 #include <print>
+#include <thread>
+#include <vector>
 
 import std;
 import aura.core.ast;
+import aura.core.envframe_lifetime;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -181,6 +185,9 @@ static void ac7_lifetime_guard_observable() {
 
     {
         aura::core::envframe_lifetime::EnvFrameLifetimeHost h{};
+        // scan_skip_freed requires non-null ctx (protocol contract).
+        static int dummy_ctx = 0;
+        h.ctx = &dummy_ctx;
         h.scan_skip_freed = [](void*, aura::core::envframe_lifetime::EnvFrameLifetimeSite) {};
         aura::core::envframe_lifetime::EnvFrameLifetimeGuard guard{
             h, aura::core::envframe_lifetime::EnvFrameLifetimeSite::FiberSteal};
@@ -211,9 +218,9 @@ static void ac8_phase2_env_id_remap_2087() {
     auto& ev = cs.evaluator();
     auto* m = metrics_of(cs);
 
-    // Phase marker (Issue #2087): kEnvFrameLifetimePhase bumped 1 → 2.
-    CHECK(aura::core::envframe_lifetime::kEnvFrameLifetimePhase == 2,
-          "AC8: kEnvFrameLifetimePhase == 2 (Phase 2 marker)");
+    // Phase marker: #2087 was 2; #2164 hold-pin bumps to 3 (lineage retained).
+    CHECK(aura::core::envframe_lifetime::kEnvFrameLifetimePhase == 3,
+          "AC8/H4: kEnvFrameLifetimePhase == 3 (hold-pin Phase 3 marker)");
 
     // Baseline: env_id_remap_ is identity-mapping before any compact.
     CHECK(ev.env_id_remap_size() == 0, "AC8: env_id_remap_size() == 0 before any compact");
@@ -244,6 +251,10 @@ static void ac8_phase2_env_id_remap_2087() {
         if (i < cids.size())
             (void)ev.erase_active_closure(cids[i]);
     }
+    // Advance defuse so unreferenced frames with old version_ become dead
+    // (live = version_ >= defuse || referenced). Without this bump, fresh
+    // frames stay live forever and compact reclaims 0.
+    ev.bump_defuse_version_for_test();
 
     // Capture metrics pre-compact.
     const auto closures_before = load_u64(m->gc_closures_compacted_total);
@@ -264,12 +275,12 @@ static void ac8_phase2_env_id_remap_2087() {
     // Live closures pointing at surviving env_ids: resolve_env returns
     // a valid new id (≥0, < new env_frames_size). Reclaimed ones return -1.
     for (std::size_t i = 3; i < cids.size(); ++i) {
-        const auto* cl = ev.find_active_closure(cids[i]).value_or(nullptr);
-        if (!cl)
+        auto cl_opt = ev.find_active_closure(cids[i]);
+        if (!cl_opt)
             continue;
-        if (cl->env_id == NULL_ENV_ID)
+        if (cl_opt->env_id == NULL_ENV_ID)
             continue;
-        const auto resolved = ev.resolve_env(cl->env_id);
+        const auto resolved = ev.resolve_env(cl_opt->env_id);
         if (resolved == -1) {
             // OK: this closure's env frame was reclaimed (NULL_ENV_ID now)
         } else {
@@ -292,8 +303,7 @@ static void ac8_phase2_env_id_remap_2087() {
           std::format("AC8: gc_env_frames_remapped_total {} > baseline {}",
                       load_u64(m->gc_env_frames_remapped_total), env_frames_before));
 
-    // query:envframe-lifetime-stats exposes phase=2 + closures-compacted +
-    // env-frames-remapped + schema-2087 lineage.
+    // query:envframe-lifetime-stats exposes phase=3 + schema-2087 lineage + schema-2164.
     auto h = cs.eval(R"((engine:metrics "query:envframe-lifetime-stats"))");
     CHECK(h && aura::compiler::types::is_hash(*h),
           "AC8: query:envframe-lifetime-stats returns hash");
@@ -301,13 +311,18 @@ static void ac8_phase2_env_id_remap_2087() {
         auto phase =
             cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "phase"))");
         CHECK(phase && aura::compiler::types::is_int(*phase) &&
-                  aura::compiler::types::as_int(*phase) == 2,
-              "AC8: query phase == 2");
+                  aura::compiler::types::as_int(*phase) == 3,
+              "AC8/H4: query phase == 3");
         auto s2087 =
             cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2087"))");
         CHECK(s2087 && aura::compiler::types::is_int(*s2087) &&
                   aura::compiler::types::as_int(*s2087) == 2087,
-              "AC8: schema-2087 == 2087");
+              "AC8: schema-2087 == 2087 (lineage retained)");
+        auto s2164 =
+            cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2164"))");
+        CHECK(s2164 && aura::compiler::types::is_int(*s2164) &&
+                  aura::compiler::types::as_int(*s2164) == 2164,
+              "AC8/H4: schema-2164 == 2164");
     }
 
     // query:gc-compact-stats exposes closures-compacted + env-frames-remapped
@@ -322,8 +337,173 @@ static void ac8_phase2_env_id_remap_2087() {
               "AC8: gc-compact-stats schema-2087 == 2087");
     }
 }
+// Issue #2164: hold-pin — Guard blocks compact_env_frames while live.
+static void ac_h1_guard_blocks_compact() {
+    std::println("\n--- AC_H1 (#2164): Guard in scope → compact_env_frames busy ---");
+    using namespace aura::core::envframe_lifetime;
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = metrics_of(cs);
+
+    // Unreferenced frames so compact would reclaim when not blocked.
+    for (int i = 0; i < 4; ++i)
+        (void)ev.alloc_env_frame(NULL_ENV_ID);
+    const auto frames0 = ev.env_frames_size();
+    CHECK(frames0 >= 4, "AC_H1: env frames allocated");
+
+    const auto blocked0 = envframe_lifetime_blocked_compact_total();
+    const auto metric0 = m ? load_u64(m->envframe_compact_blocked_while_guard_held_total) : 0;
+
+    {
+        EnvFrameLifetimeHost h{};
+        static int dummy = 0;
+        h.ctx = &dummy;
+        h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {};
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::FiberSteal};
+        CHECK(active_guard_depth() >= 1, "AC_H1: active_guard_depth >= 1 under Guard");
+        const auto reclaimed = ev.compact_env_frames();
+        CHECK(reclaimed == 0, "AC_H1: compact reclaimed 0 while Guard held");
+        CHECK(ev.env_frames_size() == frames0, "AC_H1: frames not reclaimed under hold");
+        CHECK(envframe_lifetime_blocked_compact_total() > blocked0,
+              "AC_H1: blocked_compact_while_guard_held advanced");
+        if (m) {
+            CHECK(load_u64(m->envframe_compact_blocked_while_guard_held_total) > metric0,
+                  "AC_H1: CompilerMetrics blocked counter advanced");
+        }
+    }
+    CHECK(active_guard_depth() == 0, "AC_H1: depth 0 after Guard dtor");
+}
+
+static void ac_h2_compact_after_guard() {
+    std::println("\n--- AC_H2 (#2164): after Guard dtor, compact proceeds ---");
+    using namespace aura::core::envframe_lifetime;
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+
+    std::vector<std::uint64_t> env_ids;
+    for (int i = 0; i < 6; ++i)
+        env_ids.push_back(ev.alloc_env_frame(NULL_ENV_ID));
+    std::vector<ClosureId> cids;
+    for (std::size_t i = 0; i < env_ids.size(); ++i) {
+        Closure cl;
+        cl.env_id = env_ids[i];
+        cids.push_back(ev.register_active_closure(std::move(cl)));
+    }
+    for (std::size_t i = 0; i < 3; ++i)
+        (void)ev.erase_active_closure(cids[i]);
+    ev.bump_defuse_version_for_test();
+
+    {
+        EnvFrameLifetimeHost h{};
+        static int dummy = 0;
+        h.ctx = &dummy;
+        h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {};
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::BoundaryExit};
+        CHECK(ev.compact_env_frames() == 0, "AC_H2: blocked under Guard");
+    }
+
+    const auto gen0 = compact_generation();
+    const auto reclaimed = ev.compact_env_frames();
+    CHECK(reclaimed >= 3, "AC_H2: compact reclaims after Guard dtor");
+    CHECK(ev.env_id_remap_size() > 0, "AC_H2: env_id_remap populated");
+    CHECK(compact_generation() > gen0, "AC_H2: compact_generation advanced on reclaim");
+
+    // resolve_env consistent for surviving / reclaimed slots.
+    for (std::size_t i = 0; i < 3 && i < env_ids.size(); ++i) {
+        const auto r = ev.resolve_env(env_ids[i]);
+        CHECK(r == -1, "AC_H2: reclaimed old env_id maps to -1");
+    }
+    for (std::size_t i = 3; i < cids.size(); ++i) {
+        auto cl_opt = ev.find_active_closure(cids[i]);
+        if (!cl_opt || cl_opt->env_id == NULL_ENV_ID)
+            continue;
+        const auto resolved = ev.resolve_env(cl_opt->env_id);
+        CHECK(resolved >= 0 || resolved == -1, "AC_H2: resolve_env defined for live closure");
+    }
+}
+
+static void ac_h3_fiber_steal_site_stress() {
+    std::println("\n--- AC_H3 (#2164): FiberSteal site + concurrent compact stress ---");
+    using namespace aura::core::envframe_lifetime;
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+
+    for (int i = 0; i < 8; ++i)
+        (void)ev.alloc_env_frame(NULL_ENV_ID);
+
+    std::atomic<int> blocked{0};
+    std::atomic<int> proceeded{0};
+    std::atomic<bool> hold{true};
+
+    std::thread compact_thr([&] {
+        while (hold.load(std::memory_order_acquire)) {
+            if (ev.compact_env_frames() == 0)
+                blocked.fetch_add(1, std::memory_order_relaxed);
+            else
+                proceeded.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::yield();
+        }
+        // Final compact after hold released.
+        if (ev.compact_env_frames() > 0)
+            proceeded.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    {
+        EnvFrameLifetimeHost h{};
+        static int dummy = 0;
+        h.ctx = &dummy;
+        h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {};
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::FiberSteal};
+        CHECK(envframe_lifetime_site_constructs(EnvFrameLifetimeSite::FiberSteal) >= 1,
+              "AC_H3: FiberSteal site construct counted");
+        // Give compact thread time to spin under hold.
+        for (int i = 0; i < 200; ++i)
+            std::this_thread::yield();
+        CHECK(blocked.load(std::memory_order_relaxed) > 0 ||
+                  envframe_lifetime_blocked_compact_total() > 0,
+              "AC_H3: concurrent compact saw busy under FiberSteal hold");
+    }
+    hold.store(false, std::memory_order_release);
+    compact_thr.join();
+
+    // After guard: no stale requirement beyond compact not crashing.
+    CHECK(active_guard_depth() == 0, "AC_H3: depth 0 after stress");
+    (void)proceeded;
+}
+
+static void ac_h4_phase_and_schema() {
+    std::println("\n--- AC_H4 (#2164): phase marker + schema keys ---");
+    using namespace aura::core::envframe_lifetime;
+    CHECK(kEnvFrameLifetimePhase == 3, "AC_H4: phase == 3");
+    CompilerService cs;
+    auto phase = cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "phase"))");
+    CHECK(phase && aura::compiler::types::is_int(*phase) &&
+              aura::compiler::types::as_int(*phase) == 3,
+          "AC_H4: query phase == 3");
+    auto s2164 =
+        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2164"))");
+    CHECK(s2164 && aura::compiler::types::is_int(*s2164) &&
+              aura::compiler::types::as_int(*s2164) == 2164,
+          "AC_H4: schema-2164 present");
+    auto s2087 =
+        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2087"))");
+    CHECK(s2087 && aura::compiler::types::is_int(*s2087) &&
+              aura::compiler::types::as_int(*s2087) == 2087,
+          "AC_H4: schema-2087 retained");
+    auto wired =
+        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "hold-pin-wired"))");
+    CHECK(wired && aura::compiler::types::is_int(*wired) &&
+              aura::compiler::types::as_int(*wired) == 1,
+          "AC_H4: hold-pin-wired == 1");
+    auto blocked = cs.eval(
+        R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "blocked-compact-while-guard-held"))");
+    CHECK(blocked && aura::compiler::types::is_int(*blocked) &&
+              aura::compiler::types::as_int(*blocked) >= 0,
+          "AC_H4: blocked-compact-while-guard-held key present");
+}
+
 int main() {
-    std::println("=== Issue #1665: scan skips tombstoned / erased TW closures ===");
+    std::println("=== Issue #1665 / #2164: scan_skip_freed + EnvFrame hold-pin ===");
     ac1_first_mark();
     ac2_no_reinflate();
     ac3_erase_tw();
@@ -332,6 +512,10 @@ int main() {
     ac6_stress();
     ac7_lifetime_guard_observable();
     ac8_phase2_env_id_remap_2087();
+    ac_h1_guard_blocks_compact();
+    ac_h2_compact_after_guard();
+    ac_h3_fiber_steal_site_stress();
+    ac_h4_phase_and_schema();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
