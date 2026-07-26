@@ -172,6 +172,23 @@ extern "C" void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n
     }
 }
 
+// Issue #2128: metric bumps from aura_jit_runtime (no CompilerMetrics layout).
+extern "C" void aura_bump_must_deopt_before_next_call_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->must_deopt_before_next_call_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+extern "C" void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->must_deopt_force_deopt_success_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+extern "C" void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->must_deopt_force_deopt_fail_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
 // ── Issue #1443: long-mutation policy knobs ───────────
 //
 // C-linkage setters for `long_mutation_threshold_us` (default 500'000 µs

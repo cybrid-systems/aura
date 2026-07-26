@@ -461,6 +461,37 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     if (cl_found) {
         if (metrics)
             metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2128: MustDeoptBeforeNextCall — force safe path; never
+        // silently eval pre-reemit body after a failed live remount.
+        if (cl_copy.must_deopt_before_next_call) {
+            {
+                std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                auto it = closures_.find(cid);
+                if (it != closures_.end() && it->second.must_deopt_before_next_call) {
+                    it->second.must_deopt_before_next_call = false;
+                    // Poison bridge so dual-path also refuses stale views.
+                    it->second.bridge_epoch = 0;
+                    cl_copy = it->second;
+                    if (metrics)
+                        metrics->must_deopt_force_deopt_success_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                } else if (metrics) {
+                    metrics->must_deopt_force_deopt_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+            if (metrics) {
+                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                metrics->closure_safe_fallback_apply_count_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                             metrics, &cl_copy))
+                return bridged;
+            if (metrics)
+                metrics->must_deopt_force_deopt_fail_total.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
         // Issue #681: epoch + EnvFrame version pre-check before
         // materialize_call_env (live closure across post-mutate inval).
         if (closure_needs_safe_fallback(*this, cl_copy, metrics)) {
