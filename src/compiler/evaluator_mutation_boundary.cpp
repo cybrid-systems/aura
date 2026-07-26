@@ -83,8 +83,12 @@ void Evaluator::enter_mutation_boundary() {
     std::size_t log_size = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
     // Issue #1355: inside render hot path, use lightweight checkpoint —
     // no full children_ snapshot, field mutations go to side log.
+    // Issue #2121: region-mode Guards also force lightweight (no full
+    // children_ snapshot under concurrent region writers).
+    const bool force_lw = force_lightweight_checkpoint_for_next_boundary_;
+    force_lightweight_checkpoint_for_next_boundary_ = false;
     const bool lightweight =
-        aura::core::arena_policy::in_render_hotpath() && workspace_flat_ != nullptr;
+        (aura::core::arena_policy::in_render_hotpath() || force_lw) && workspace_flat_ != nullptr;
     // Issue #221: capture the per-node children_ vector. The
     // PCV's COW semantics make this a cheap copy (each PCV
     // is a shared_ptr to immutable storage; the snapshot
@@ -597,6 +601,36 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 }
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #2121: Region / optimistic workspace write concurrency
+//
+// Problem: all structural mutates serialize on unique_lock(workspace_mtx_).
+// Multi-Agent orchestration on disjoint top-level Defines was throughput-
+// bound by that single writer lock.
+//
+// Strategy (Phase 1 observability + Phase 2 region RW):
+//
+//   GlobalExclusive (default try_acquire / legacy ctor):
+//     unique_lock(workspace_mtx_) for the full Guard body.
+//     Required for: atomic-batch, topology-changing ops (cross-region
+//     insert-child / restore_children), unknown region, policy OFF.
+//
+//   RegionExclusive (try_acquire_for_region when policy ON):
+//     shared_lock(workspace_mtx_)  — concurrent with other region writers;
+//                                    blocked by any GlobalExclusive unique.
+//     unique_lock(workspace_region_mtx_[shard]) — exclusive within region.
+//     Forces lightweight enter checkpoint (no full children_ snapshot).
+//
+//   Optimistic note: defuse_version_ is already atomic; region enter
+//   snapshots it for dirty detection. Full optimistic retry-on-conflict
+//   for arbitrary topology is future work — region path is the primary
+//   scale-out for disjoint Define mutates (AC2 / AC6).
+//
+// Invariants preserved: PCV COW snapshots under lightweight path,
+// StableNodeRef restamp on exit, TypedMutationAudit + linear enforce
+// still run in outermost dtor under the held locks.
+// ═══════════════════════════════════════════════════════════════════════════
+
 // ── try_acquire (#1547 / #1556 / #1590) ──────────────────────────────────
 aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
 Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pending_count,
@@ -619,21 +653,59 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
             aura::core::resource_quota::Dimension::Mutations, pending_count);
     }
     // Construct via private AcquireTag path (quota already checked).
+    // GlobalExclusive — no region_key.
     return std::unique_ptr<MutationBoundaryGuard>(
         new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},
-                                  /*quota_prechecked=*/true));
+                                  /*quota_prechecked=*/true, /*region_key=*/std::nullopt));
+}
+
+// ── try_acquire_for_region (#2121) ───────────────────────────────────────
+aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
+Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uint64_t region_key,
+                                                         std::uint64_t pending_count,
+                                                         bool* success_flag,
+                                                         bool fine_rollback) noexcept {
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+        m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
+    if (auto err = ev.check_mutation_quota(pending_count)) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+            m->manager_enforce_total.fetch_add(1, std::memory_order_relaxed);
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return std::unexpected(std::move(*err));
+    }
+    ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
+    if (ev.resource_quota_mutations_ != 0) {
+        (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
+            aura::core::resource_quota::Dimension::Mutations, pending_count);
+    }
+    // Atomic-batch / topology-sensitive paths must not use region mode.
+    // When atomic_batch is active on the flat, fall back to GlobalExclusive.
+    std::optional<std::uint64_t> key = region_key;
+    if (ev.workspace_flat_ && ev.workspace_flat_->atomic_batch_active()) {
+        key = std::nullopt;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->workspace_region_fallback_global_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (!ev.workspace_region_concurrency_enabled()) {
+        key = std::nullopt;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->workspace_region_fallback_global_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return std::unique_ptr<MutationBoundaryGuard>(
+        new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},
+                                  /*quota_prechecked=*/true, key));
 }
 
 // ── legacy ctor (#1547 / #1556 / #1590) ──────────────────────────────────
 Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
                                                         bool fine_rollback) noexcept
     : MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},
-                            /*quota_prechecked=*/false) {}
+                            /*quota_prechecked=*/false, /*region_key=*/std::nullopt) {}
 
 // ── shared AcquireTag ctor ───────────────────────────────────────────────
-Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
-                                                        bool fine_rollback, AcquireTag,
-                                                        bool quota_prechecked) noexcept
+Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
+    Evaluator& ev, bool* success_flag, bool fine_rollback, AcquireTag, bool quota_prechecked,
+    std::optional<std::uint64_t> region_key) noexcept
     : fine_rollback_(fine_rollback)
     , ev_(&ev)
     , flag_(success_flag)
@@ -657,7 +729,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* suc
     // acquire when depth 0→1, release when 1→0.
     // The depth is shared (static thread_local) so
     // nested guards in the same thread cooperate.
-    lock_(ev.workspace_mtx_, std::defer_lock) {
+    //
+    // Issue #2121: RegionExclusive uses shared_lock_ + region_lock_
+    // instead of lock_ (global unique).
+    lock_(ev.workspace_mtx_, std::defer_lock)
+    , shared_lock_(ev.workspace_mtx_, std::defer_lock) {
     if (!quota_prechecked) {
         // Issue #1590: soft-fail mutation quota on legacy ctor path.
         if (auto err = ev.check_mutation_quota(1)) {
@@ -689,40 +765,88 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(Evaluator& ev, bool* suc
     int prev = ++(*slot);
     bool outermost = (prev == 1);
     is_outermost_ = outermost;
+    // Issue #2121: decide RegionExclusive vs GlobalExclusive.
+    if (outermost && region_key.has_value() && ev_->workspace_region_concurrency_enabled()) {
+        region_mode_ = true;
+        region_shard_ = Evaluator::workspace_region_shard(*region_key);
+    }
     if (outermost) {
         // Issue #1253: start hold-time clock for long-mutation policy.
         enter_ts_ = std::chrono::steady_clock::now();
         // Issue #1523: Workspace level in #1388 order (after Mutate).
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
-        // Issue #2040: try_lock first so uncontended path stays cheap
-        // (one try_lock + acquire counter). Contended path times the
-        // blocking wait and bumps workspace_mtx_contended_total +
-        // wait_ns (p99 proxy via wait_ns_max CAS).
         auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics());
-        if (lock_.try_lock()) {
-            if (m)
-                m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            const auto wait_t0 = std::chrono::steady_clock::now();
-            lock_.lock();
-            const auto wait_ns =
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                               std::chrono::steady_clock::now() - wait_t0)
-                                               .count());
-            if (m) {
-                m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
-                m->workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
-                m->workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
-                auto prev_max = m->workspace_mtx_wait_ns_max.load(std::memory_order_relaxed);
-                while (wait_ns > prev_max && !m->workspace_mtx_wait_ns_max.compare_exchange_weak(
-                                                 prev_max, wait_ns, std::memory_order_relaxed)) {
+        if (region_mode_) {
+            // RegionExclusive: shared workspace + exclusive region shard.
+            // Contended shared_lock wait counts toward workspace_mtx_ stats;
+            // region collision when shard already has a holder.
+            const auto holders_before =
+                ev_->workspace_region_holders_[region_shard_].load(std::memory_order_relaxed);
+            if (holders_before > 0 && m)
+                m->workspace_region_collision_total.fetch_add(1, std::memory_order_relaxed);
+            if (shared_lock_.try_lock()) {
+                if (m)
+                    m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                const auto wait_t0 = std::chrono::steady_clock::now();
+                shared_lock_.lock();
+                const auto wait_ns =
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                   std::chrono::steady_clock::now() - wait_t0)
+                                                   .count());
+                if (m) {
+                    m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
+                    m->workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
+                    m->workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
+                    auto prev_max = m->workspace_mtx_wait_ns_max.load(std::memory_order_relaxed);
+                    while (wait_ns > prev_max &&
+                           !m->workspace_mtx_wait_ns_max.compare_exchange_weak(
+                               prev_max, wait_ns, std::memory_order_relaxed)) {
+                    }
+                    m->workspace_closedloop_shared_mutex_contention_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->workspace_closedloop_shared_mutex_contention_ns_total.fetch_add(
+                        wait_ns, std::memory_order_relaxed);
                 }
-                // Keep #762 closed-loop contention counters in lockstep.
-                m->workspace_closedloop_shared_mutex_contention_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                m->workspace_closedloop_shared_mutex_contention_ns_total.fetch_add(
-                    wait_ns, std::memory_order_relaxed);
             }
+            region_lock_ = std::unique_lock<std::mutex>(ev_->workspace_region_mtx_[region_shard_]);
+            ev_->workspace_region_holders_[region_shard_].fetch_add(1, std::memory_order_relaxed);
+            if (m) {
+                m->workspace_region_acquire_total.fetch_add(1, std::memory_order_relaxed);
+                m->workspace_region_hold_samples.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Lightweight checkpoint under concurrent region writers.
+            ev_->force_lightweight_checkpoint_for_next_boundary_ = true;
+        } else {
+            // GlobalExclusive: unique_lock(workspace_mtx_).
+            // Issue #2040: try_lock first so uncontended path stays cheap.
+            if (lock_.try_lock()) {
+                if (m)
+                    m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                const auto wait_t0 = std::chrono::steady_clock::now();
+                lock_.lock();
+                const auto wait_ns =
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                   std::chrono::steady_clock::now() - wait_t0)
+                                                   .count());
+                if (m) {
+                    m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
+                    m->workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
+                    m->workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
+                    auto prev_max = m->workspace_mtx_wait_ns_max.load(std::memory_order_relaxed);
+                    while (wait_ns > prev_max &&
+                           !m->workspace_mtx_wait_ns_max.compare_exchange_weak(
+                               prev_max, wait_ns, std::memory_order_relaxed)) {
+                    }
+                    m->workspace_closedloop_shared_mutex_contention_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->workspace_closedloop_shared_mutex_contention_ns_total.fetch_add(
+                        wait_ns, std::memory_order_relaxed);
+                }
+            }
+            if (m)
+                m->workspace_global_exclusive_total.fetch_add(1, std::memory_order_relaxed);
         }
         ev_->outermost_mutation_success_flag_ = flag_;
         ev_->bind_yield_hook_evaluator();
@@ -1082,7 +1206,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (slot)
             (*slot)--;
         ev_->mutation_boundary_held_.store(false, std::memory_order_release);
-        lock_.unlock();
+        // Issue #2121: unlock matching acquire mode.
+        if (region_mode_) {
+            if (region_lock_.owns_lock()) {
+                region_lock_.unlock();
+                ev_->workspace_region_holders_[region_shard_].fetch_sub(1,
+                                                                        std::memory_order_relaxed);
+            }
+            if (shared_lock_.owns_lock())
+                shared_lock_.unlock();
+        } else if (lock_.owns_lock()) {
+            lock_.unlock();
+        }
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
         ev_->outermost_mutation_success_flag_ = nullptr;
         ev_->unbind_yield_hook_evaluator();
@@ -1203,6 +1338,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , atomic_batch_active_(o.atomic_batch_active_)
     , suppress_bump_(o.suppress_bump_)
     , is_outermost_(o.is_outermost_)
+    , region_mode_(o.region_mode_)
+    , region_shard_(o.region_shard_)
     , inert_(o.inert_)
     , enter_ts_(std::move(o.enter_ts_))
     , uncaught_at_enter_(o.uncaught_at_enter_)
@@ -1211,12 +1348,16 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , defuse_version_at_enter_(o.defuse_version_at_enter_)
     , ev_(o.ev_)
     , flag_(o.flag_)
-    , lock_(std::move(o.lock_)) {
+    , lock_(std::move(o.lock_))
+    , shared_lock_(std::move(o.shared_lock_))
+    , region_lock_(std::move(o.region_lock_)) {
     o.had_panic_checkpoint_ = false;
     o.fine_rollback_ = false;
     o.atomic_batch_active_ = false;
     o.suppress_bump_ = false;
     o.is_outermost_ = false;
+    o.region_mode_ = false;
+    o.region_shard_ = 0;
     o.inert_ = false;
     o.enter_ts_.reset();
     o.defuse_version_at_enter_ = 0;
@@ -1241,19 +1382,27 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         atomic_batch_active_ = o.atomic_batch_active_;
         suppress_bump_ = o.suppress_bump_;
         is_outermost_ = o.is_outermost_;
+        region_mode_ = o.region_mode_;
+        region_shard_ = o.region_shard_;
         inert_ = o.inert_;
         enter_ts_ = std::move(o.enter_ts_);
         uncaught_at_enter_ = o.uncaught_at_enter_;
+        defuse_version_at_enter_ = o.defuse_version_at_enter_;
         ev_ = o.ev_;
         flag_ = o.flag_;
         lock_ = std::move(o.lock_);
+        shared_lock_ = std::move(o.shared_lock_);
+        region_lock_ = std::move(o.region_lock_);
         o.had_panic_checkpoint_ = false;
         o.fine_rollback_ = false;
         o.atomic_batch_active_ = false;
         o.suppress_bump_ = false;
         o.is_outermost_ = false;
+        o.region_mode_ = false;
+        o.region_shard_ = 0;
         o.inert_ = false;
         o.enter_ts_.reset();
+        o.defuse_version_at_enter_ = 0;
         o.uncaught_at_enter_ = 0;
         o.ev_ = nullptr;
         o.flag_ = nullptr;

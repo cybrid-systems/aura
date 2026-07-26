@@ -6968,6 +6968,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_mtx_contended_total{0}; // #2040
     std::atomic<std::uint64_t> workspace_mtx_wait_ns_total{0};   // #2040
     std::atomic<std::uint64_t> workspace_mtx_wait_ns_max{0};     // #2040
+    // ── Issue #2121: region / optimistic workspace write concurrency ──
+    // workspace_region_acquire_total: RegionExclusive outermost acquires
+    // workspace_global_exclusive_total: GlobalExclusive outermost acquires
+    // workspace_region_collision_total: shard already held when acquiring
+    // workspace_region_fallback_global_total: requested region but fell back
+    // workspace_region_hold_samples: region-mode hold count (for rate)
+    // Exposed via query:mutation-boundary-hold-stats schema-2121 (AC5 equivalent).
+    std::atomic<std::uint64_t> workspace_region_acquire_total{0};         // #2121
+    std::atomic<std::uint64_t> workspace_global_exclusive_total{0};       // #2121
+    std::atomic<std::uint64_t> workspace_region_collision_total{0};       // #2121
+    std::atomic<std::uint64_t> workspace_region_fallback_global_total{0}; // #2121
+    std::atomic<std::uint64_t> workspace_region_hold_samples{0};          // #2121
     // ── Issue #2090: MutationBoundaryGuard outermost reemit pipeline ──
     // Pairs with #2035 cascade path: non-cascade exits (fiber-steal restore,
     // partial recovery, compact-only, exception unwind) drive the same
