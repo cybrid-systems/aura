@@ -1948,6 +1948,11 @@ aura_add_issue_test(test_agent_apply_mutex_2158)
 aura_issue_test_link_llvm_jit(test_agent_apply_mutex_2158)
 add_dependencies(all_test_issue_targets test_agent_apply_mutex_2158)
 
+# Issue #2159: fiber-native keepalive helper (replace detached std::thread).
+aura_add_issue_test(test_fiber_native_keepalive_2159)
+aura_issue_test_link_llvm_jit(test_fiber_native_keepalive_2159)
+add_dependencies(all_test_issue_targets test_fiber_native_keepalive_2159)
+
 # Issue #2083: opt-in AgentScope (feature-flagged via AURA_ENABLE_AGENT_SCOPE).
 # The test file #defines the flag so the AgentScope class body is visible.
 aura_add_issue_test(test_agent_scope_2083)
