@@ -37,7 +37,9 @@ module;
 #include <atomic>
 #include <cstdint>
 #include <vector>
-#include "core/provenance_tracker.hh" // Issue #2024: hygiene stamp + chain recovery
+#include "core/provenance_tracker.hh"      // Issue #2024: hygiene stamp + chain recovery
+#include "core/sandbox.hh"                 // Issue #2147: Strict honesty
+#include "compiler/typed_mutation_audit.h" // Issue #2147: Full vs Sampled walk cap
 
 export module aura.compiler.coercion_map;
 
@@ -50,14 +52,25 @@ namespace aura::compiler {
 // so Agents can recover the site when both predicate and mutation were unset.
 export inline constexpr std::uint32_t kCoercionProvenanceSentinelBase = 0xC0E50000u;
 
+// Issue #2147: parent-walk hop caps (Sampled hot path vs Full/Strict depth).
+export inline constexpr int kCoercionParentWalkCapSampled = 16;
+export inline constexpr int kCoercionParentWalkCapFull = 64;
+
 // Issue #2024: process-wide apply_coercion_map provenance completeness.
 // Complete = both predicate_cond_node and source_mutation_id non-zero after
-// full chain walk. Miss = needed sentinel / weak fallback. Ratio = complete /
-// (complete + miss) as basis points (0–10000).
+// full chain walk, and mutation id is NOT the weak original_child placeholder
+// under Strict/Full (#2147). Miss = needed sentinel / weak fallback.
+// Ratio = complete / (complete + miss) as basis points (0–10000).
 export inline std::atomic<std::uint64_t> g_coercion_provenance_complete_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_sentinel_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_chain_walk_total{0};
+// Issue #2147: caller already stamped both fields → no walk (AC1).
+export inline std::atomic<std::uint64_t> g_coercion_provenance_fast_path_total{0};
+// Issue #2147: weak source_mutation_id == original_child forensic placeholder.
+export inline std::atomic<std::uint64_t> g_coercion_provenance_weak_id_total{0};
+// Issue #2147: Strict/Full refused to count weak id as complete / refused stamp.
+export inline std::atomic<std::uint64_t> g_coercion_provenance_strict_reject_weak_total{0};
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
 export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_total{0};
@@ -72,6 +85,24 @@ export inline std::atomic<std::uint32_t> g_force_audit_on_provenance_miss{1};
 export inline std::atomic<std::uint32_t> g_reject_apply_on_provenance_miss{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_force_audit_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_reject_total{0};
+
+// Issue #2147 Phase A.2: thread-local active mutation context so log scan
+// is O(1) when entry.source_mutation_id is empty (Guard / TypeChecker stamp).
+inline thread_local std::uint64_t s_coercion_active_mutation_id = 0;
+inline thread_local std::uint32_t s_coercion_active_predicate = 0;
+
+export inline void set_coercion_active_mutation_context(std::uint64_t mutation_id,
+                                                        std::uint32_t predicate_cond = 0) noexcept {
+    s_coercion_active_mutation_id = mutation_id;
+    s_coercion_active_predicate = predicate_cond;
+}
+export inline void clear_coercion_active_mutation_context() noexcept {
+    s_coercion_active_mutation_id = 0;
+    s_coercion_active_predicate = 0;
+}
+export [[nodiscard]] inline std::uint64_t coercion_active_mutation_id() noexcept {
+    return s_coercion_active_mutation_id;
+}
 
 // Thread-local: miss recorded during this fiber's apply → consumed on
 // MutationBoundary exit (process-wide counters stay global).
@@ -147,16 +178,56 @@ export struct CoercionEntry {
     std::uint32_t narrow_evidence = 0;
 };
 
-// Issue #2024 / #2102: walk provenance chain to fill missing CoercionEntry
-// fields. Order: child column → parent walk → mutation log → hygiene →
-// sentinel. Returns true if both predicate + mutation were non-zero *before*
-// sentinel/weak stamps (complete). On miss: bumps counters, optional
-// force-audit boundary note, and stamps forensic sentinel when apply is
-// still allowed.
-// Returns true when complete (no sentinel needed).
+// Issue #2147: weak forensic mutation id = original_child placeholder
+// (not a real MutationRecord id). Must never count as complete under
+// Strict sandbox / Full audit strategy.
+[[nodiscard]] inline bool is_weak_coercion_mutation_id(const CoercionEntry& e) noexcept {
+    if (e.source_mutation_id == 0)
+        return false;
+    if (e.original_child != 0 &&
+        e.source_mutation_id == static_cast<std::uint64_t>(e.original_child))
+        return true;
+    // original_child==0 path uses weak id 1 as forensic placeholder.
+    if (e.original_child == 0 && e.source_mutation_id == 1ull)
+        return true;
+    return false;
+}
+
+// Issue #2147: Strict sandbox OR Full TypedMutationAudit → honest provenance
+// (no weak-as-complete; no forensic sentinel pretend under hard gate).
+[[nodiscard]] inline bool coercion_provenance_strict_honest() noexcept {
+    if (aura::core::sandbox::is_strict())
+        return true;
+    return aura::compiler::typed_audit::get_strategy() ==
+           aura::compiler::typed_audit::AuditStrategy::Full;
+}
+
+[[nodiscard]] inline int coercion_parent_walk_cap() noexcept {
+    // Full / Strict: full 64-hop depth. Sampled / Off: shorter hot path.
+    if (coercion_provenance_strict_honest())
+        return kCoercionParentWalkCapFull;
+    return kCoercionParentWalkCapSampled;
+}
+
+// Issue #2024 / #2102 / #2147: walk provenance chain to fill missing
+// CoercionEntry fields. Fast path (#2147 AC1): both fields already set and
+// not weak → no walk, chain_walk_total unchanged.
+// Order (slow path): child column → parent walk (capped) → TLS active
+// mutation context → mutation log → hygiene → sentinel/weak (soft only).
+// Returns true when *truly* complete (non-zero pred + non-weak mutation id).
 [[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatAST& flat,
                                                          CoercionEntry& e) noexcept {
     using aura::ast::NULL_NODE;
+    const bool strict = coercion_provenance_strict_honest();
+
+    // ── Issue #2147 Phase A: fast path — caller-stamped true provenance ──
+    if (e.predicate_cond_node != 0 && e.source_mutation_id != 0 &&
+        !is_weak_coercion_mutation_id(e)) {
+        g_coercion_provenance_fast_path_total.fetch_add(1, std::memory_order_relaxed);
+        g_coercion_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
+        return true; // no chain_walk bump
+    }
+
     g_coercion_provenance_chain_walk_total.fetch_add(1, std::memory_order_relaxed);
 
     // 1. Child provenance column
@@ -169,10 +240,12 @@ export struct CoercionEntry {
 
     // 2. Walk parent chain for first non-zero provenance (cross-delta
     // rewrite often leaves the child blank while an ancestor retains it).
+    // Issue #2147: hop cap Sampled=16 / Full=64.
     if (e.predicate_cond_node == 0 && e.original_child != NULL_NODE &&
         e.original_child < flat.size()) {
         auto cur = static_cast<aura::ast::NodeId>(e.original_child);
-        for (int hops = 0; hops < 64; ++hops) {
+        const int hop_cap = coercion_parent_walk_cap();
+        for (int hops = 0; hops < hop_cap; ++hops) {
             if (cur == NULL_NODE || cur >= flat.size())
                 break;
             const auto p = flat.provenance(cur);
@@ -186,6 +259,12 @@ export struct CoercionEntry {
             cur = par;
         }
     }
+
+    // 2b. Issue #2147: TLS active mutation context (O(1) before log scan).
+    if (e.source_mutation_id == 0 && s_coercion_active_mutation_id != 0)
+        e.source_mutation_id = s_coercion_active_mutation_id;
+    if (e.predicate_cond_node == 0 && s_coercion_active_predicate != 0)
+        e.predicate_cond_node = s_coercion_active_predicate;
 
     // 3. Mutation log: prefer records targeting original_child / parent_id
     // (walk reverse = newest first). Also follow parent_mutation_id once for
@@ -227,12 +306,23 @@ export struct CoercionEntry {
             e.source_mutation_id = hy.source_mutation_id;
     }
 
-    // 5. Completeness vs sentinel forensic recovery
-    const bool complete = e.predicate_cond_node != 0 && e.source_mutation_id != 0;
-    if (complete) {
+    // 5. Completeness: true complete never counts weak original_child mid.
+    if (is_weak_coercion_mutation_id(e)) {
+        g_coercion_provenance_weak_id_total.fetch_add(1, std::memory_order_relaxed);
+        if (strict) {
+            // Issue #2147 AC2: Strict/Full honesty — clear weak mid; not complete.
+            e.source_mutation_id = 0;
+            g_coercion_provenance_strict_reject_weak_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    const bool true_complete =
+        e.predicate_cond_node != 0 && e.source_mutation_id != 0 && !is_weak_coercion_mutation_id(e);
+    if (true_complete) {
         g_coercion_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
+
     g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #2102: escalate to Full/contextual audit on next boundary exit
     // when force_audit policy is on (default).
@@ -242,6 +332,15 @@ export struct CoercionEntry {
     // do not stamp sentinel (Agent re-infers with active_mutation_id).
     if (reject_apply_on_provenance_miss())
         return false;
+
+    // Issue #2147 Phase B: Strict/Full — no forensic sentinel/weak pretend.
+    // Leave incomplete for Agent re-infer; apply may still insert if soft reject.
+    if (strict) {
+        // Do not stamp sentinel or weak mid under hard honesty policy.
+        return false;
+    }
+
+    // Soft path (Off/Sampled): existing sentinel + weak id forensic stamps.
     if (e.predicate_cond_node == 0) {
         // Sentinel: always non-zero; low bits = original_child for recovery.
         const auto low = static_cast<std::uint32_t>(e.original_child & 0xFFFFu);
@@ -250,9 +349,10 @@ export struct CoercionEntry {
     }
     if (e.source_mutation_id == 0) {
         // Weak mutation stamp: original_child (or 1) so deopt/rollback trails
-        // never see a zero mutation id after apply.
+        // never see a zero mutation id after apply (Off/Sampled only).
         e.source_mutation_id =
             e.original_child != 0 ? static_cast<std::uint64_t>(e.original_child) : 1ull;
+        g_coercion_provenance_weak_id_total.fetch_add(1, std::memory_order_relaxed);
     }
     return false;
 }
