@@ -1557,22 +1557,24 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     // soft_gated / invalidates_pins / mode / schema=2004. Optional int arg
     // selects mode: 0 = Soft (default), 1 = Force (bypasses soft-gate).
     //
-    // Issue #2089: schema bump 2004 → 2009 + moved-live-objects field. The
-    // (arena:live-compact) hash now documents the non-moving contract: under
-    // Soft/Force, moved-live-objects is always #f (0). Consumers MUST observe
-    // new-gen / invalidates-pins + LifetimePin::validate() instead of assuming
-    // any raw pointer was rewritten. A future LiveCompactMode::Moving would
-    // set this #t (1); #2089 only adds the field + bumps the schema.
+    // Issue #2089 + #2166: (arena:live-compact [mode]). Soft=0 Force=1 Moving=2.
+    // Soft/Force keep non-moving contract (moved-live-objects #f). Moving is
+    // opt-in densify + object_remap_ (default OFF; Agent flag / env).
     ObservabilityPrims::register_stats_impl(
         "arena:live-compact", [&ev](const auto& args) -> EvalValue {
             aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft;
             if (!args.empty()) {
                 const std::int64_t m = as_int(args[0]);
-                mode =
-                    (m != 0) ? aura::ast::LiveCompactMode::Force : aura::ast::LiveCompactMode::Soft;
+                if (m == 2)
+                    mode = aura::ast::LiveCompactMode::Moving;
+                else if (m != 0)
+                    mode = aura::ast::LiveCompactMode::Force;
+                else
+                    mode = aura::ast::LiveCompactMode::Soft;
             }
             const aura::ast::LiveCompactResult lc = ev.live_compact(mode);
-            auto* ht = FlatHashTable::create(9);
+            // Capacity 32: Soft/Force/Moving result fields + schema-2166 keys.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1605,10 +1607,13 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mode", static_cast<std::int64_t>(static_cast<std::uint8_t>(lc.mode)));
             insert_kv("soft-gated", lc.soft_gated ? 1 : 0);
             insert_kv("invalidates-pins", lc.invalidates_pins ? 1 : 0);
-            // Issue #2089: explicit non-moving contract flag. Always #f (0)
-            // under Soft/Force; reserved for a future Moving mode.
+            // Issue #2089 / #2166: Soft/Force always 0; Moving may set 1.
             insert_kv("moved-live-objects", lc.moved_live_objects ? 1 : 0);
-            insert_kv("schema", 2009);
+            insert_kv("objects-moved", static_cast<std::int64_t>(lc.objects_moved));
+            insert_kv("moving-blocked-precondition", lc.moving_blocked_precondition ? 1 : 0);
+            insert_kv("schema", 2166);
+            insert_kv("schema-2166", static_cast<std::int64_t>(aura::ast::kMovingCompactIssue));
+            insert_kv("issue-2166", static_cast<std::int64_t>(aura::ast::kMovingCompactIssue));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -1620,7 +1625,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:arena-live-compact-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t soft_count = 0, force_count = 0, reclaimed = 0, hits = 0, restamps = 0,
-                          invalidated = 0;
+                          invalidated = 0, moving_count = 0, objects_moved = 0, moving_blocked = 0;
             if (ev.compiler_metrics()) {
                 auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
                 soft_count = m->arena_live_compact_soft_count.load(std::memory_order_relaxed);
@@ -1631,9 +1636,13 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 restamps = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
                 invalidated =
                     m->arena_live_compact_invalidated_pins_total.load(std::memory_order_relaxed);
+                moving_count = m->arena_live_compact_moving_count.load(std::memory_order_relaxed);
+                objects_moved = m->arena_objects_moved_total.load(std::memory_order_relaxed);
+                moving_blocked =
+                    m->arena_moving_blocked_precondition_total.load(std::memory_order_relaxed);
             }
-            // Capacity 32: schema-2004 keys + #2157 Force hard-mutex counters.
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: schema-2004 + #2157 Force + #2166 Moving densify.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1666,7 +1675,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("freelist-hits-total", static_cast<std::int64_t>(hits));
             insert_kv("gen-restamps-total", static_cast<std::int64_t>(restamps));
             insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
-            insert_kv("schema", 2004);
+            insert_kv("schema", 2166);
             // Issue #2157: Force hard-mutex blocked counters (process-wide).
             insert_kv(
                 "force-blocked-by-pin-total",
@@ -1679,6 +1688,29 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2157", aura::ast::kForceCompactHardMutexIssue);
             insert_kv("issue-2157", aura::ast::kForceCompactHardMutexIssue);
             insert_kv("force-hard-mutex-wired", 1);
+            // Issue #2166: Moving densify counters (prefer process-wide totals).
+            insert_kv(
+                "live-compact-moving-count",
+                static_cast<std::int64_t>(
+                    aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed) > 0
+                        ? aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed)
+                        : moving_count));
+            insert_kv("objects-moved-total",
+                      static_cast<std::int64_t>(
+                          aura::ast::g_objects_moved_total.load(std::memory_order_relaxed) > 0
+                              ? aura::ast::g_objects_moved_total.load(std::memory_order_relaxed)
+                              : objects_moved));
+            insert_kv(
+                "moving-blocked-precondition-total",
+                static_cast<std::int64_t>(aura::ast::g_moving_blocked_precondition_total.load(
+                                              std::memory_order_relaxed) > 0
+                                              ? aura::ast::g_moving_blocked_precondition_total.load(
+                                                    std::memory_order_relaxed)
+                                              : moving_blocked));
+            insert_kv("moving-compact-enabled", aura::ast::moving_compact_enabled());
+            insert_kv("schema-2166", aura::ast::kMovingCompactIssue);
+            insert_kv("issue-2166", aura::ast::kMovingCompactIssue);
+            insert_kv("moving-compact-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

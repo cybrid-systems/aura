@@ -2410,6 +2410,10 @@ struct CompilerMetrics {
     // (mirroring arena.ixx::live_compact counters via Evaluator* host ctx).
     std::atomic<std::uint64_t> arena_live_compact_soft_count{0};
     std::atomic<std::uint64_t> arena_live_compact_force_count{0};
+    // Issue #2166: opt-in Moving densify observability.
+    std::atomic<std::uint64_t> arena_live_compact_moving_count{0};
+    std::atomic<std::uint64_t> arena_objects_moved_total{0};
+    std::atomic<std::uint64_t> arena_moving_blocked_precondition_total{0};
     std::atomic<std::uint64_t> arena_live_compact_reclaimed_bytes_total{0};
     std::atomic<std::uint64_t> arena_live_compact_freelist_hits_total{0};
     std::atomic<std::uint64_t> arena_live_compact_gen_restamps_total{0};

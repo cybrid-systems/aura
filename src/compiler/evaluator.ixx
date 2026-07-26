@@ -6782,6 +6782,14 @@ public:
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             if (mode == aura::ast::LiveCompactMode::Soft) {
                 m->arena_live_compact_soft_count.fetch_add(1, std::memory_order_relaxed);
+            } else if (mode == aura::ast::LiveCompactMode::Moving) {
+                // Issue #2166: Moving is distinct from Force for Agent dashboards.
+                m->arena_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
+                m->arena_objects_moved_total.fetch_add(lc.objects_moved, std::memory_order_relaxed);
+                if (lc.moving_blocked_precondition) {
+                    m->arena_moving_blocked_precondition_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
             } else {
                 m->arena_live_compact_force_count.fetch_add(1, std::memory_order_relaxed);
             }

@@ -1,0 +1,262 @@
+// @category: unit
+// @reason: Issue #2166 — opt-in LiveCompactMode::Moving densify + object_remap_.
+//
+//   AC_M1: Moving off → Force still non-moving (address stable, moved_live_objects false).
+//   AC_M2: Moving on + preconditions met → addresses may change; moved_live_objects true;
+//          gen advanced; pins invalidated / remapped.
+//   AC_M3: Moving on + live pin present → blocked; precondition metric bumps.
+//   AC_M4: after Moving, resolve_object_remap / pin fail-closed paths remain valid.
+
+#include "test_harness.hpp"
+
+#include <cstdint>
+#include <fstream>
+#include <print>
+#include <string>
+#include <string_view>
+
+import std;
+import aura.core.arena;
+import aura.core.lifetime_pin;
+import aura.compiler.service;
+import aura.compiler.value;
+
+namespace {
+
+using aura::ast::ASTArena;
+using aura::ast::kMovingCompactIssue;
+using aura::ast::LiveCompactMode;
+using aura::ast::moving_compact_enabled;
+using aura::ast::set_moving_compact_enabled;
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::core::lifetime::LifetimePin;
+using aura::core::lifetime::live_pin_count;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+// Trivial tracked object for create<T> densify (small-pool tier).
+struct Pod16 {
+    std::int32_t a = 0;
+    std::int32_t b = 0;
+    std::int32_t c = 0;
+    std::int32_t d = 0;
+    Pod16() = default;
+    Pod16(std::int32_t a_, std::int32_t b_, std::int32_t c_, std::int32_t d_) noexcept
+        : a(a_)
+        , b(b_)
+        , c(c_)
+        , d(d_) {}
+};
+
+std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", q, key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+struct MovingFlagGuard {
+    int prev = -1;
+    explicit MovingFlagGuard(int enable) {
+        prev = moving_compact_enabled();
+        set_moving_compact_enabled(enable);
+    }
+    ~MovingFlagGuard() { set_moving_compact_enabled(prev); }
+};
+
+} // namespace
+
+int main() {
+    std::println("=== Issue #2166: LiveCompactMode::Moving densify + object_remap ===");
+    CHECK(kMovingCompactIssue == 2166, "issue stamp");
+
+    // Default: feature off for tests (unless env overrides; force pref).
+    set_moving_compact_enabled(0);
+    CHECK(moving_compact_enabled() == 0, "default test pref OFF");
+
+    // ── AC_M1: Moving off → Force non-moving ──
+    {
+        std::println("\n--- AC_M1: Force non-moving while Moving flag off ---");
+        MovingFlagGuard off(0);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        CHECK(p0 && p1 && p2, "AC_M1: create ok");
+        void* a0 = p0;
+        void* a1 = p1;
+        void* a2 = p2;
+
+        // Moving while flag off → blocked precondition.
+        const auto rm = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(rm.moving_blocked_precondition, "AC_M1: Moving blocked when flag off");
+        CHECK(!rm.moved_live_objects, "AC_M1: no move when blocked");
+        CHECK(rm.objects_moved == 0, "AC_M1: objects_moved 0");
+        CHECK(p0 == a0 && p1 == a1 && p2 == a2, "AC_M1: raw create ptrs unchanged after block");
+
+        // Force remains non-moving (addresses of create objects stable).
+        const auto rf = arena.live_compact(LiveCompactMode::Force);
+        CHECK(!rf.moved_live_objects, "AC_M1: Force moved_live_objects false");
+        CHECK(rf.objects_moved == 0, "AC_M1: Force objects_moved 0");
+        CHECK(p0 == a0 && p1 == a1 && p2 == a2, "AC_M1: Force does not rewrite create ptrs");
+        CHECK(p0->a == 1 && p1->a == 5 && p2->a == 9, "AC_M1: payload intact");
+        (void)rf;
+    }
+
+    // ── AC_M2: Moving on + preconditions → densify + remap ──
+    {
+        std::println("\n--- AC_M2: Moving densify when enabled ---");
+        MovingFlagGuard on(1);
+        CHECK(moving_compact_enabled() == 1, "AC_M2: flag on");
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(10, 20, 30, 40);
+        auto* p1 = arena.create<Pod16>(11, 21, 31, 41);
+        auto* p2 = arena.create<Pod16>(12, 22, 32, 42);
+        CHECK(p0 && p1 && p2, "AC_M2: create");
+        void* old0 = p0;
+        void* old1 = p1;
+        void* old2 = p2;
+        const Pod16 v0 = *p0;
+        const Pod16 v1 = *p1;
+        const Pod16 v2 = *p2;
+        const auto gen0 = arena.generation();
+        const auto move0 = aura::ast::g_objects_moved_total.load(std::memory_order_relaxed);
+        const auto moving0 = aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed);
+
+        CHECK(live_pin_count() == 0, "AC_M2: no live pins");
+
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!r.moving_blocked_precondition, "AC_M2: not blocked");
+        CHECK(r.mode == LiveCompactMode::Moving, "AC_M2: mode Moving");
+        // Densify of 3 freelist-recycled objects → LIFO reverse → address change.
+        CHECK(r.objects_moved > 0, "AC_M2: objects_moved > 0");
+        CHECK(r.moved_live_objects, "AC_M2: moved_live_objects true");
+        CHECK(r.invalidates_pins || arena.generation() > gen0, "AC_M2: gen advanced / pins");
+        CHECK(arena.generation() > gen0, "AC_M2: arena gen advanced");
+        CHECK(arena.object_remap_size() >= r.objects_moved, "AC_M2: remap table populated");
+        CHECK(aura::ast::g_live_compact_moving_count.load() > moving0, "AC_M2: moving count");
+        CHECK(aura::ast::g_objects_moved_total.load() >= move0 + r.objects_moved,
+              "AC_M2: objects_moved total");
+
+        void* n0 = arena.resolve_object_remap(old0);
+        void* n1 = arena.resolve_object_remap(old1);
+        void* n2 = arena.resolve_object_remap(old2);
+        CHECK(n0 != nullptr && n1 != nullptr && n2 != nullptr, "AC_M2: all remapped");
+        const int changed = (n0 != old0) + (n1 != old1) + (n2 != old2);
+        CHECK(changed > 0, "AC_M2: at least one address changed");
+        CHECK(static_cast<Pod16*>(n0)->a == v0.a && static_cast<Pod16*>(n0)->b == v0.b,
+              "AC_M2: payload0 via remap");
+        CHECK(static_cast<Pod16*>(n1)->a == v1.a, "AC_M2: payload1 via remap");
+        CHECK(static_cast<Pod16*>(n2)->a == v2.a, "AC_M2: payload2 via remap");
+    }
+
+    // ── AC_M3: live pin blocks Moving ──
+    {
+        std::println("\n--- AC_M3: live pin blocks Moving ---");
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* p = arena.create<Pod16>(1, 2, 3, 4);
+        CHECK(p, "AC_M3: create");
+        const auto gen0 = arena.generation();
+        const auto block0 =
+            aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
+
+        LifetimePin pin;
+        pin.pin(p, gen0, arena.arena_id());
+        CHECK(pin.pinned() && live_pin_count() >= 1, "AC_M3: pin live");
+
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.moving_blocked_precondition, "AC_M3: moving_blocked_precondition");
+        CHECK(r.force_blocked_by_pin, "AC_M3: also force_blocked_by_pin");
+        CHECK(!r.moved_live_objects, "AC_M3: no move");
+        CHECK(arena.generation() == gen0, "AC_M3: gen unchanged");
+        CHECK(pin.ptr() == p, "AC_M3: pin ptr stable");
+        CHECK(pin.validate(gen0, arena.arena_id()), "AC_M3: pin still valid");
+        CHECK(aura::ast::g_moving_blocked_precondition_total.load() > block0,
+              "AC_M3: precondition metric");
+    }
+
+    // ── AC_M4: fail-closed resolve + pin invalidate after Moving ──
+    {
+        std::println("\n--- AC_M4: resolve fail-closed + pin invalidate ---");
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(7, 8, 9, 10);
+        auto* p1 = arena.create<Pod16>(17, 18, 19, 20);
+        CHECK(p0 && p1, "AC_M4: create");
+        void* old0 = p0;
+        const auto gen0 = arena.generation();
+
+        // Scope a pin then drop it so Moving preconditions are free.
+        {
+            LifetimePin hold;
+            hold.pin(old0, gen0, arena.arena_id());
+            CHECK(hold.pinned(), "AC_M4: hold pinned");
+        }
+        CHECK(live_pin_count() == 0, "AC_M4: hold released");
+
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!r.moving_blocked_precondition, "AC_M4: Moving ran");
+        // Unknown pointer → nullptr (fail closed).
+        CHECK(arena.resolve_object_remap(nullptr) == nullptr, "AC_M4: null in → null out");
+        void* garbage = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xDEADBEEF));
+        CHECK(arena.resolve_object_remap(garbage) == nullptr, "AC_M4: unknown → null");
+
+        void* neu = arena.resolve_object_remap(old0);
+        if (r.objects_moved > 0) {
+            CHECK(neu != nullptr, "AC_M4: known old resolves after move");
+            CHECK(static_cast<Pod16*>(neu)->a == 7, "AC_M4: payload via remap");
+        }
+
+        // Gen advanced → pin stamped at gen0 fails validate against current gen.
+        const auto gen1 = arena.generation();
+        if (gen1 > gen0) {
+            LifetimePin pin2;
+            pin2.pin(old0, gen0, arena.arena_id()); // intentionally stale gen stamp
+            CHECK(!pin2.validate(gen1, arena.arena_id()),
+                  "AC_M4: stale gen pin fails validate(current gen)");
+        }
+
+        // Query surface schema-2166.
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+        CHECK(href(cs, "query:arena-live-compact-stats", "schema-2166") == 2166,
+              "AC_M4: schema-2166 on arena-live-compact-stats");
+        CHECK(href(cs, "query:arena-live-compact-stats", "moving-compact-wired") == 1, "wired");
+        CHECK(href(cs, "query:arena-live-compact-stats", "live-compact-moving-count") >= 0,
+              "moving count key");
+        CHECK(href(cs, "query:arena-live-compact-stats", "objects-moved-total") >= 0,
+              "objects-moved key");
+        CHECK(href(cs, "query:arena-live-compact-stats", "moving-blocked-precondition-total") >= 0,
+              "blocked key");
+    }
+
+    // ── Source contract ──
+    {
+        const auto ar = read_file("src/core/arena.ixx");
+        CHECK(ar.find("2166") != std::string::npos, "arena cites 2166");
+        CHECK(ar.find("Moving = 2") != std::string::npos, "Moving enum");
+        CHECK(ar.find("resolve_object_remap") != std::string::npos, "remap API");
+        CHECK(ar.find("relocate_tracked_objects_for_moving_") != std::string::npos, "densify fn");
+        CHECK(ar.find("AURA_ARENA_MOVING_COMPACT") != std::string::npos, "env flag");
+        CHECK(ar.find("moved_live_objects") != std::string::npos, "result flag");
+    }
+
+    set_moving_compact_enabled(0);
+
+    std::println("\n=== #2166 Moving compact: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed == 0 ? 0 : 1;
+}
