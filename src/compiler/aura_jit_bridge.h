@@ -84,6 +84,10 @@ void* aura_get_aot_metrics(void);
 // Production impl in aura_jit_bridge.cpp; weak stub in
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
+// Issue #2128: MustDeoptBeforeNextCall metric bumps (runtime → bridge).
+void aura_bump_must_deopt_before_next_call_total(std::uint64_t n);
+void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n);
+void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n);
 
 // Issue #2094: StormLevel facade accessor (C ABI). Returns the
 // combined bitmask of shape-storm + global-deopt-storm detectors

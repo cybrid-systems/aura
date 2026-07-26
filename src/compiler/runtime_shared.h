@@ -116,17 +116,22 @@ extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name)
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
                                           std::int64_t argc);
-// Issue #2013 / #2092: after successful reemit, retarget live closures
-// whose stable_func_id (NOT display name — name is unstable under
-// redefine / gensym / multi-define) is in the reemit set: rewrite
+// Issue #2013 / #2092 / #2128: after successful reemit, retarget live
+// closures whose stable_func_id (NOT display name — name is unstable
+// under redefine / gensym / multi-define) is in the reemit set: rewrite
 // func_id + restamp bridge_epoch under the closure table write lock.
 // Returns remapped closure count. stable_ids length n; new_bridge_epoch
 // is post-commit table epoch. Legacy name fallback (off by default,
 // gated by aura_set_remap_name_fallback_enabled()) bumps
 // live_closure_remap_name_fallback_total when used.
+// Issue #2128: reemit candidates that cannot be remapped get
+// MustDeoptBeforeNextCall; aura_closure_call force-deopts before native.
 extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch);
+// Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
+extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
+extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
 
 // Issue #2092: legacy name-fallback toggle. Off by default (AC3) —
 // wired hosts opt in only when they want pre-#2092 behavior for

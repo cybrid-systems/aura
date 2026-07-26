@@ -10949,13 +10949,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("aot_evolution_region_skips_total", static_cast<std::int64_t>(evo));
                 insert_kv("aot_region_mask_adapt_clears_total", static_cast<std::int64_t>(clr));
                 insert_kv("aot_region_mask_adapt_restores_total", static_cast<std::int64_t>(rst));
+                // Issue #2128: MustDeoptBeforeNextCall after remap miss.
+                const std::uint64_t must_n =
+                    m ? m->must_deopt_before_next_call_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t force_ok =
+                    m ? m->must_deopt_force_deopt_success_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t force_fail =
+                    m ? m->must_deopt_force_deopt_fail_total.load(std::memory_order_relaxed) : 0;
+                insert_kv("must_deopt_before_next_call_total", static_cast<std::int64_t>(must_n));
+                insert_kv("must-deopt-before-next-call-total", static_cast<std::int64_t>(must_n));
+                insert_kv("must_deopt_force_deopt_success_total",
+                          static_cast<std::int64_t>(force_ok));
+                insert_kv("must_deopt_force_deopt_fail_total",
+                          static_cast<std::int64_t>(force_fail));
+                insert_kv("schema-2128", 2128);
+                insert_kv("issue-2128", 2128);
+                insert_kv("must-deopt-before-next-call-wired", 1);
             }
             insert_kv("stable-func-id-map-wired", 1);
             insert_kv("emit-callback-path-wired", 1);
             insert_kv("return-success-when-emit-wired", 1);
             insert_kv("live-closure-remap-wired", 1);
             insert_kv("adaptive-region-mask-wired", 1);
-            insert_kv("pipeline-phase", 5); // + adaptive mask / default LLVM (#2016)
+            insert_kv("pipeline-phase", 6); // + must-deopt-before-next-call (#2128)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

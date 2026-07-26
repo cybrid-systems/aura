@@ -911,6 +911,10 @@ export struct Closure {
     // freed / explicitly invalidated). Views capture this and must revalidate
     // against a live Closure via is_closure_view_valid(view, cl).
     std::uint64_t lifetime_version = 1;
+    // Issue #2128: reemit matched this closure but live remount failed —
+    // next apply_closure must take safe-fallback / bridge rebuild (no
+    // silent continue on pre-reemit body/flat). Cleared after force path.
+    bool must_deopt_before_next_call = false;
 
     Closure() = default;
     Closure(const Closure&) = default;
@@ -942,8 +946,10 @@ export struct Closure {
         , dotted(o.dotted)
         , owner_arena(o.owner_arena)
         , bridge_epoch(o.bridge_epoch)
-        , lifetime_version(o.lifetime_version) {
+        , lifetime_version(o.lifetime_version)
+        , must_deopt_before_next_call(o.must_deopt_before_next_call) {
         o.tombstone_for_views();
+        o.must_deopt_before_next_call = false;
     }
     Closure& operator=(Closure&& o) noexcept {
         if (this != &o) {
@@ -957,7 +963,9 @@ export struct Closure {
             owner_arena = o.owner_arena;
             bridge_epoch = o.bridge_epoch;
             lifetime_version = o.lifetime_version;
+            must_deopt_before_next_call = o.must_deopt_before_next_call;
             o.tombstone_for_views();
+            o.must_deopt_before_next_call = false;
         }
         return *this;
     }

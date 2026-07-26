@@ -7769,6 +7769,13 @@ struct CompilerMetrics {
     // indicates a host is relying on the legacy behavior; AC3 says
     // strict tests must keep this at 0.
     std::atomic<std::uint64_t> live_closure_remap_name_fallback_total{0}; // #2092
+    // Issue #2128: reemit success + remap miss → MustDeoptBeforeNextCall.
+    // must_deopt_before_next_call_total: flags set on live closures
+    // must_deopt_force_deopt_success_total: apply/call observed flag + forced deopt
+    // must_deopt_force_deopt_fail_total: flag observed but slot freed / unusable
+    std::atomic<std::uint64_t> must_deopt_before_next_call_total{0};    // #2128
+    std::atomic<std::uint64_t> must_deopt_force_deopt_success_total{0}; // #2128
+    std::atomic<std::uint64_t> must_deopt_force_deopt_fail_total{0};    // #2128
 
     // ── Issue #2016: LLVM incremental reemit + adaptive region mask ──
     // aot_incremental_llvm_emit_total: successful default/host LLVM reemits

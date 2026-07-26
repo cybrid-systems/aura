@@ -768,6 +768,10 @@ static std::vector<std::uint64_t> g_closure_defuse_versions;
 // means legacy / never stamped; remap falls back to name match (off by
 // default, gated by aura_set_remap_name_fallback_enabled).
 static std::vector<std::uint32_t> g_closure_stable_func_ids;
+// Issue #2128: MustDeoptBeforeNextCall — set when reemit matched a live
+// closure but remap could not retarget native; cleared on force-deopt.
+// Parallel to func_ids (0 = clear, 1 = must deopt before next native call).
+static std::vector<std::uint8_t> g_closure_must_deopt;
 
 // Issue #2092: process-global toggle for the legacy name-fallback
 // path in aura_remap_live_closures_after_reemit. Off by default
@@ -794,6 +798,29 @@ static std::atomic<std::uint64_t> g_closure_reuse_total{0};
 // aura_set_lock_hooks installs them (stdin / unit tests). Without
 // this mutex, concurrent free/alloc races (double-free).
 static std::shared_mutex g_closure_table_mtx;
+
+// Issue #2128: host/test hooks for MustDeoptBeforeNextCall (after mtx).
+extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v) {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (g_closure_must_deopt.size() <= cid)
+        g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+    g_closure_must_deopt[cid] = v != 0 ? 1 : 0;
+}
+
+extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_must_deopt.size())
+        return 0;
+    return g_closure_must_deopt[cid] != 0 ? 1 : 0;
+}
 
 // Issue #1485 C2: per-closure provenance accessors (extern "C") for
 // JIT emit-side freshness probe infrastructure. Reads under shared lock
@@ -949,7 +976,8 @@ static bool closure_vectors_consistent_unlocked() noexcept {
            g_arena_closure_envs.size() == n && g_closure_names.size() == n &&
            g_closure_freed.size() == n && g_closure_bridge_epochs.size() == n &&
            g_closure_defuse_versions.size() == n &&
-           g_closure_stable_func_ids.size() == n; // Issue #2092
+           g_closure_stable_func_ids.size() == n && // Issue #2092
+           g_closure_must_deopt.size() == n;        // Issue #2128
 }
 
 #ifndef NDEBUG
@@ -991,6 +1019,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
         // define-time stable map).
         if (cid < g_closure_stable_func_ids.size())
             g_closure_stable_func_ids[cid] = 0;
+        if (cid < g_closure_must_deopt.size())
+            g_closure_must_deopt[cid] = 0; // Issue #2128
         stamp_closure_provenance_locked(cid);
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
         g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
@@ -1008,6 +1038,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_closure_defuse_versions.push_back(aura_get_aot_defuse_version());
     g_closure_stable_func_ids.push_back(
         0); // Issue #2092: legacy default; stamped in aura_closure_set_name
+    g_closure_must_deopt.push_back(0); // Issue #2128
     return id;
 }
 
@@ -1066,6 +1097,8 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_bridge_epochs[cid] = 0;
     if (cid < g_closure_defuse_versions.size())
         g_closure_defuse_versions[cid] = 0;
+    if (cid < g_closure_must_deopt.size())
+        g_closure_must_deopt[cid] = 0; // Issue #2128
     if (cid >= g_closure_freed.size())
         g_closure_freed.resize(g_closure_func_ids.size(), 0);
     // Issue #1708 / #1890: push free_list FIRST, then mark freed=1.
@@ -1158,6 +1191,13 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
 // Hold the exclusive table lock so concurrent calls observe either
 // fully-old or fully-new (func_id + epoch) for each slot (AC4 —
 // preserves #2013 torn-write contract).
+//
+// Issue #2128: two-phase candidate handling —
+//   1) Mark MustDeoptBeforeNextCall on every live closure that matches
+//      the reemit set (stable_id or name→id).
+//   2) Remap when possible and clear the flag; leave the flag set when
+//      remap cannot retarget (e.g. name-match with fallback off) so the
+//      next aura_closure_call force-deopts instead of running old native.
 extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch) {
@@ -1180,8 +1220,13 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
 
+    // Ensure must_deopt parallel vector is sized (older snapshots / tests).
+    if (g_closure_must_deopt.size() < g_closure_func_ids.size())
+        g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+
     std::uint64_t remapped = 0;
     std::uint64_t name_fallback_count = 0;
+    std::uint64_t must_deopt_set = 0;
     const std::size_t nslots = g_closure_func_ids.size();
     for (std::size_t cid = 0; cid < nslots; ++cid) {
         if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
@@ -1194,26 +1239,39 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
 
         std::uint32_t match_id = 0;
         bool via_name_fallback = false;
+        bool name_candidate_no_remap = false;
         if (cid_stable_id != 0 && reemit_ids.count(cid_stable_id)) {
             match_id = cid_stable_id;
-        } else if (name_fallback && cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
-            // Legacy fallback: legacy closures (stable_id == 0) whose
-            // name happens to match a reemit name. Off by default; when
-            // enabled, bump live_closure_remap_name_fallback_total so the
-            // Agent dashboard can detect reliance on the legacy path.
-            // NB: lookup uses aura_lookup_stable_func_id, which returns
-            // the LATEST stable id for that name — same caveat as the
-            // pre-#2092 implementation. This path is documented as
-            // legacy-only and not safe under same-name redefine (AC1).
+        } else if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
+            // Name → latest stable id. If that id is in the reemit set,
+            // this closure is a reemit candidate even without a stamp.
             const std::uint32_t looked_up =
                 aura_lookup_stable_func_id(g_closure_names[cid].c_str());
             if (looked_up != 0 && reemit_ids.count(looked_up)) {
-                match_id = looked_up;
-                via_name_fallback = true;
+                if (name_fallback) {
+                    // Legacy fallback: remappable via name (Issue #2092).
+                    match_id = looked_up;
+                    via_name_fallback = true;
+                } else {
+                    // Issue #2128: cannot silently keep old native for a
+                    // define that just reemitted — force deopt on next call.
+                    name_candidate_no_remap = true;
+                }
             }
         }
-        if (match_id == 0)
+
+        if (match_id == 0 && !name_candidate_no_remap)
             continue;
+
+        // Issue #2128 phase 1: candidate always starts with must-deopt
+        // until a successful retarget clears it.
+        if (cid < g_closure_must_deopt.size()) {
+            g_closure_must_deopt[cid] = 1;
+            ++must_deopt_set;
+        }
+
+        if (match_id == 0)
+            continue; // name candidate with fallback off — flag stays set
 
         // Atomic-from-callers' view: all fields under exclusive table lock.
         g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
@@ -1223,6 +1281,8 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             g_closure_defuse_versions.resize(cid + 1, 0);
         g_closure_bridge_epochs[cid] = new_bridge_epoch;
         g_closure_defuse_versions[cid] = host_defuse;
+        if (cid < g_closure_must_deopt.size())
+            g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
         if (via_name_fallback)
@@ -1237,6 +1297,11 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // runtime_shared.h, so we don't touch the struct directly).
         aura_bump_live_closure_remap_name_fallback_total(name_fallback_count);
     }
+    // Issue #2128: only residual flags (remap miss) count — remapped
+    // candidates cleared must_deopt above.
+    const auto still_flagged = must_deopt_set > remapped ? (must_deopt_set - remapped) : 0;
+    if (still_flagged > 0)
+        aura_bump_must_deopt_before_next_call_total(still_flagged);
     return remapped;
 }
 
@@ -1410,7 +1475,45 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     {
         size_t cid = static_cast<size_t>(closure_id);
         if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+            // Issue #2128: flag on a freed slot is a fail path (cannot deopt).
+            if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0)
+                aura_bump_must_deopt_force_deopt_fail_total(1);
             aura_unlock_workspace_read();
+            return 0;
+        }
+    }
+
+    // Issue #2128: MustDeoptBeforeNextCall — hard refuse native if reemit
+    // matched this closure but remap did not retarget. Clear flag under
+    // upgrade to exclusive so concurrent calls see at most one force-deopt.
+    {
+        size_t cid = static_cast<size_t>(closure_id);
+        if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
+            // Drop shared lock, re-take exclusive, clear flag, deopt.
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            {
+                std::unique_lock<std::shared_mutex> wlock(g_closure_table_mtx);
+                aura_lock_workspace_write();
+                if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
+                    g_closure_must_deopt[cid] = 0;
+                    // Poison bridge_epoch so dual-freshness also fails if
+                    // another path re-enters before host rebuild.
+                    if (cid < g_closure_bridge_epochs.size())
+                        g_closure_bridge_epochs[cid] = 0;
+                    invalidate_closure_cache_for(closure_id);
+                    aura_bump_must_deopt_force_deopt_success_total(1);
+                    aura_jit_closure_record_stale_deopt();
+                    aura_jit_closure_record_safe_fallback();
+                    aura_deopt_inc();
+                } else {
+                    // Raced with another force-deopt clearer — still refuse.
+                    aura_bump_must_deopt_force_deopt_success_total(1);
+                    aura_deopt_inc();
+                }
+                aura_unlock_workspace_write();
+            }
+            // Safe fallback: never run pre-reemit native for this entry.
             return 0;
         }
     }

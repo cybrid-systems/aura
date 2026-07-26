@@ -2300,6 +2300,10 @@ aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty_2126)
 aura_add_issue_test(test_workload_adaptive_relower_2127)
 aura_issue_test_link_llvm_jit(test_workload_adaptive_relower_2127)
 
+# Issue #2128: MustDeoptBeforeNextCall after reemit when live remap misses.
+aura_add_issue_test(test_must_deopt_before_next_call_2128)
+aura_issue_test_link_llvm_jit(test_must_deopt_before_next_call_2128)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
