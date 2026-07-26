@@ -136,6 +136,19 @@ inline int fiber_steal_priority(Fiber* fiber) {
             base = 2;
         else
             base = 1;
+        // Issue #2119: when adaptive boundary policy is ON and pressure is
+        // high, prefer non-boundary Explicit/OpBoundary over MB/outermost
+        // (lower MB base by 1, floor 1). Default policy OFF → no change (AC3).
+        auto& s = metrics::adaptive_steal_stats();
+        if (s.adaptive_boundary_policy_enabled.load(std::memory_order_relaxed) != 0) {
+            const auto thr =
+                s.adaptive_boundary_pressure_threshold_bp.load(std::memory_order_relaxed);
+            const auto press = s.steal_starvation_boundary_pressure.load(std::memory_order_relaxed);
+            if (press >= thr && std::strcmp(cls, "MutationBoundary/outermost") == 0) {
+                base = 1; // demote MB/outermost under pressure
+                s.adaptive_prefer_non_boundary_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
     } else if (fiber->last_yield_reason() == YieldReason::MutationBoundary) {
         base = 0; // not steal-safe (inner) — lowest
     }

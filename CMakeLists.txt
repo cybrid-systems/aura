@@ -2160,6 +2160,11 @@ aura_add_issue_test(test_orch_agent_mutation_boundary_2118)
 aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary_2118)
 add_dependencies(all_test_issue_targets test_orch_agent_mutation_boundary_2118)
 
+# Issue #2119: MutationBoundary yield hold + steal starvation metrics + adaptive.
+aura_add_issue_test(test_boundary_yield_steal_metrics_2119)
+aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics_2119)
+add_dependencies(all_test_issue_targets test_boundary_yield_steal_metrics_2119)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

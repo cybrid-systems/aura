@@ -7174,13 +7174,36 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"is-at-safe-mutation-boundary-aliased", make_int(1)},
                 {"schema-2115", make_int(2115)},
                 {"issue-2115", make_int(2115)},
+                // Issue #2119: MB yield hold + starvation pressure + adaptive
+                {"yield-mutation-boundary-total", make_int(load(s.yield_mutation_boundary_total))},
+                {"yield_mutation_boundary_total", make_int(load(s.yield_mutation_boundary_total))},
+                {"yield-mutation-boundary-hold-ns-total",
+                 make_int(load(s.yield_mutation_boundary_hold_ns_total))},
+                {"yield_mutation_boundary_hold_ns_total",
+                 make_int(load(s.yield_mutation_boundary_hold_ns_total))},
+                {"steal-starvation-boundary-pressure",
+                 make_int(load(s.steal_starvation_boundary_pressure))},
+                {"steal_starvation_boundary_pressure",
+                 make_int(load(s.steal_starvation_boundary_pressure))},
+                {"adaptive-prefer-non-boundary-total",
+                 make_int(load(s.adaptive_prefer_non_boundary_total))},
+                {"adaptive-boundary-policy-enabled",
+                 make_int(static_cast<std::int64_t>(
+                     s.adaptive_boundary_policy_enabled.load(std::memory_order_relaxed)))},
+                {"adaptive-boundary-pressure-threshold-bp",
+                 make_int(static_cast<std::int64_t>(
+                     s.adaptive_boundary_pressure_threshold_bp.load(std::memory_order_relaxed)))},
+                {"boundary-yield-hold-wired", make_int(1)},
+                {"adaptive-boundary-policy-default-off", make_int(1)},
+                {"schema-2119", make_int(2119)},
+                {"issue-2119", make_int(2119)},
                 // #1633 mandate wire flags
                 {"inner-defer-mitigation-wired", make_int(1)},
                 {"long-mutation-hook-wired", make_int(1)},
                 {"steal-loop-inner-defer-wired", make_int(1)},
                 {"starvation-mitigation-mandate-active", make_int(1)},
                 {"issue", make_int(1633)},
-                {"schema", make_int(1633)}, // lineage 1492 / 1445; #2115 satellite
+                {"schema", make_int(1633)}, // lineage 1492 / 1445; #2115/#2119 satellites
             };
             return build_hash(kv);
         });
