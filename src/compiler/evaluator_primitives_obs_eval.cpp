@@ -6263,8 +6263,27 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"post-mutate-push-cascade-wired", make_int(1)},
                 {"schema-2038", make_int(2038)},
                 {"issue-2038", make_int(2038)},
+                // Issue #2126: instr-level impact prefer on mark_define_dirty /
+                // quote-lambda cascade (eliminate nested/quote full-relower).
+                {"instr-level-impact-prefer-total",
+                 make_int(m ? load(m->instr_level_impact_prefer_total) : 0)},
+                {"instr-level-impact-prefer-fallback-total",
+                 make_int(m ? load(m->instr_level_impact_prefer_fallback_total) : 0)},
+                {"nested-lambda-full-dirty-avoided-total",
+                 make_int(m ? load(m->nested_lambda_full_dirty_avoided_total) : 0)},
+                {"instr-level-impact-hits",
+                 make_int(m ? load(m->instr_level_impact_hits_total) : 0)},
+                {"instr-level-impact-misses",
+                 make_int(m ? load(m->instr_level_impact_misses_total) : 0)},
+                {"instr-level-dirty-marks",
+                 make_int(m ? load(m->instr_level_dirty_marks_total) : 0)},
+                {"minimal-recompile-clean-funcs-saved",
+                 make_int(m ? load(m->minimal_recompile_clean_funcs_saved) : 0)},
+                {"instr-level-impact-prefer-wired", make_int(1)},
+                {"schema-2126", make_int(2126)},
+                {"issue-2126", make_int(2126)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2038 satellites
+                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2126 satellites
             };
             return build_hash(kv);
         });
