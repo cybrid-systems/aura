@@ -780,15 +780,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
     }
     bool success = flag_ ? *flag_ : true;
-    // exit_mutation_boundary runs under the lock for
-    // the outermost guard; lockless for nested guards
-    // (lock is held by the outer guard).
-    // exit_mutation_boundary runs under the lock for
-    // the outermost guard; lockless for nested guards
-    // (lock is held by the outer guard).
+    // Issue #2120: use ctor-captured is_outermost_ so depth_slot can
+    // stay elevated until unlock (steal/GC must not see depth==0 mid
+    // exit pipeline). Nested guards still use the same member flag.
+    // exit_mutation_boundary runs under the lock for the outermost
+    // guard; lockless for nested guards (outer holds the lock).
+    const bool outermost = is_outermost_;
     int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
-    int prev = (*slot)--;
-    bool outermost = (prev == 1);
     // Issue #1253 / #1373 / #1375 / #1747 / #1931 / #1953: outermost
     // hold-duration telemetry. Issue #1747/#1931/#1953: compute
     // BatchMutationMetrics locally, then publish with ≤6 atomic writes
@@ -912,130 +910,69 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // transaction outcome).
     if (outermost && !success)
         ev_->bump_mutation_boundary_rollback();
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #2120: outermost exit unified order (documented AC5).
+    //
+    // Success path:
+    //   1. exit_mutation_boundary (workspace commit + defuse bump)
+    //   2. linear + dual-path + LifetimePin probes (under lock, depth held)
+    //   3. GC defer release (after panic-checkpoint commit when applicable)
+    //   4. hot-update throttle → reemit → epoch notify (#2090 / #2114)
+    //   5. flush + held clear + depth_slot pop + unlock (LAST)
+    //
+    // Full-rollback (failed + panic_auto_rollback_): probes + restore
+    // checkpoint + GC defer release; skip reemit coalesce.
+    // Partial recovery (failed + !panic_auto_rollback_): probes + reemit
+    // notify (keep panic checkpoint / defer for retry).
+    //
+    // Nested guards: only exit_mutation_boundary + depth_slot-- (outer owns pipeline).
+    // ═══════════════════════════════════════════════════════════════════
     ev_->exit_mutation_boundary(success);
-    // Issue #1486 / #1545 / #1568 / #1634: post-boundary linear closed-loop.
-    // Unified consistency: scan Moved captures + enforce_all +
-    // epoch fence + GC root audit (only_if_moved for Guard exit).
-    // #1634: on failure, force full linear_post_mutate_enforce_all +
-    // probe active closures so rollback cannot leave dangling
-    // linear/JIT state after dual-epoch restore.
+    // Issue #2120: keep per-fiber mutation stack depth visible during
+    // exit pipeline so steal/GC do not observe "depth==0 mid-probes".
+    // exit_mutation_boundary already popped the real checkpoint; push a
+    // lightweight fence that is removed just before unlock.
+    bool exit_fence_pushed = false;
+    if (outermost) {
+        Evaluator::MutationCheckpoint fence{};
+        fence.version = ev_->defuse_version_.load(std::memory_order_relaxed);
+        fence.evaluator_id = static_cast<void*>(ev_);
+        Evaluator::active_mutation_stack_static().push_back(std::move(fence));
+        exit_fence_pushed = true;
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->outermost_exit_phase1_probes_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // ── Phase 1: linear + dual-path + LifetimePin probes ──
+    // Issue #1486 / #1545 / #1568 / #1634 / #2120
     if (outermost) {
         if (!success) {
-            // Issue #1951: 4-step closed-loop pattern
-            // (linear_post_mutate_enforce_all + enforce_linear_boundary_consistency +
-            //  walk_active_closures + guard_failure_linear_enforce_total bump)
-            // consolidated into 1 helper call. See evaluator_gc.cpp impl.
+            // Issue #1951: 4-step closed-loop pattern consolidated helper.
             (void)ev_->enforce_linear_post_failure(Evaluator::kLinearGcRootAuditTypedMutate);
         } else {
             (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
                                                            /*mark_all_linear=*/false);
-            // Issue #2067: post-mutate force-rollback counter bump. The runtime
-            // violation capture happens in ir_executor_impl.cpp via
-            // capture_linear_runtime_violation; this hook just observes the
-            // post-enforce state and bumps the per-CompilerMetrics counter so
-            // Agents can correlate linear violations with mutation boundaries.
-            // Full-strategy gating is handled by the typed_mutation_audit
-            // pass (existing full_strategy_force_rollback_total path); we bump
-            // unconditionally here so the linear-specific counter is observable.
+            // Issue #2067: post-mutate force-rollback observability bump.
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
                 m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
-    }
-    // Issue #2090: outermost dtor unified hot-update recovery sequence.
-    // Pairs with #2035 cascade-only path so non-cascade exits
-    // (fiber-steal restore / partial recovery / compact-only / exception
-    // unwind) also drive: throttle → reemit → epoch_notify → batch_deopt
-    // for the complement of the remap set. Runs AFTER linear closed-loop
-    // (workspace consistent) and BEFORE lock drop (JIT + dirty set still
-    // reachable). Dirty detection uses defuse_version_at_enter_ snapshot
-    // (catches paths that skip mark_define_dirty) plus workspace
-    // mark_dirty_upward_call_count() (catches type / capture / defines
-    // that go through the type system instead of cascade).
-    //
-    // Exit kinds documented per #2090 AC2:
-    //   - Ok (success): full pipeline — throttle → optional reemit →
-    //     epoch_notify → batch_deopt for unmatched names.
-    //   - Full-rollback (failed + panic_auto_rollback_): skip pipeline —
-    //     state was restored to pre-mutation, no dirty work to coalesce.
-    //   - Partial recovery (failed + !panic_auto_rollback_): reemit +
-    //     epoch_notify so the live dirty set is observed by the next
-    //     retry's cascade. batch_deopt skipped to avoid double-storm on
-    //     the next cascade pass.
-    if (outermost) {
-        const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
-        const bool dirty_defines_this_boundary = (cur_defuse != defuse_version_at_enter_);
-        const std::size_t dirty_calls =
-            ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
-        const bool dirty_marks_this_boundary = (dirty_calls > 0);
-        const bool dirty_or_env_restamp = dirty_defines_this_boundary || dirty_marks_this_boundary;
-        // Issue #2114: drain reemit deferred while outside a boundary
-        // (policy=Defer) under the real Guard held window.
-        const bool deferred_reemit = aura_hot_update_has_deferred_reemit() != 0;
-        const bool full_rollback_skip = (!success && ev_->panic_auto_rollback_);
-        if ((!dirty_or_env_restamp && !deferred_reemit) || full_rollback_skip) {
-            // No pipeline work needed (no dirty state OR full-rollback
-            // restored pre-mutation snapshot — nothing to coalesce).
-            // Deferred without dirty still runs below when deferred_reemit.
-        } else if (!aura_hot_update_reemit_provider_wired()) {
-            // Dirty + no reemit provider wired: still bump epoch so the
-            // JIT observes the new gen (align with #2017 compact-env
-            // notify discipline). No reemit / batch_deopt to drive.
-            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-        } else if (aura_hot_update_should_throttle_reemit()) {
-            // Throttle skip: bump counter + on_throttled signal; no
-            // reemit pipeline call (Issue #2014 deopt-storm throttle).
-            aura_hot_update_on_reemit_throttled();
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                m->boundary_reemit_throttled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            // Still notify epoch bump so the JIT sees the new gen.
-            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-        } else {
-            // Full pipeline: reemit + epoch_notify (+ batch_deopt for
-            // unmatched names on success path).
-            const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
-                                                           std::memory_order_relaxed);
-            }
-            // Always notify epoch bump so the JIT sees the new gen
-            // (align with #2017 + #2035 cascade discipline).
-            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-            // Issue #2090 AC3: batch_deopt for the complement of the
-            // remap set on the success path. The actual unmatched walk
-            // is driven by the JIT pipeline (aura_jit_batch_deopt_for
-            // with current_epoch on each live closure not in the remap
-            // set); this counter records the boundary-level "this
-            // boundary requested batch_deopt for unmatched names"
-            // signal. The precise count is reflected by the JIT
-            // pipeline's existing aura_jit_batch_deopt_for_total
-            // metric — see aura_jit_bridge.cpp:1174. For #2090 we
-            // bump by 1 per success boundary where reemit produced
-            // a non-empty remap set; partial-recovery skips to avoid
-            // double-storm on the next cascade pass.
-            if (success && n_reemit > 0) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    m->boundary_batch_deopt_unmatched_total.fetch_add(1, std::memory_order_relaxed);
-                }
+        // Issue #2120 / #2116: dual-path consistency probe at boundary exit
+        // (no half-consistent EnvFrame left live after probes).
+        {
+            std::shared_lock<std::shared_mutex> rlock(ev_->env_frames_lock());
+            const auto n = ev_->env_frames_size();
+            for (EnvId id = 0; id < n; ++id) {
+                if (!ev_->is_valid_env_id(id))
+                    continue;
+                const auto& fr = ev_->env_frame(id);
+                if (fr.version_ == INVALID_VERSION)
+                    continue;
+                (void)ev_->ensure_envframe_dual_path_consistency(fr);
             }
         }
-    }
-    // Issue #1500: after restamp_all_node_generations inside
-    // exit_mutation_boundary, pinned StableNodeRefs still hold
-    // the pre-boundary gen — batch refresh them under the
-    // still-held outermost write lock so Agent long-held pins
-    // remain usable across the Guard boundary.
-    if (outermost) {
+        // Issue #1500 / #2085: LifetimePin + StableNodeRef restamp under lock
+        // (BEFORE reemit so hot-update sees consistent pins — #2120 order).
         (void)ev_->restamp_pinned_stable_refs();
-        // Issue #2085: restamp surviving pinned FFI buffers at boundary
-        // exit so pins that outlived the boundary track the **current**
-        // arena generation (not the keep-current `0` sentinel). Pins
-        // constructed pre-boundary carry the old gen and would silently
-        // disagree with `validate(arena.generation(), arena_id)` after
-        // a Force live_compact that bumped the generation counter. Now
-        // the boundary dtor explicitly publishes the live arena gen so
-        // post-boundary FFI consumers see a single source of truth.
         const std::uint64_t boundary_gen =
             ev_->workspace_flat() != nullptr ? ev_->workspace_flat()->generation() : 0;
         const auto n_pins = aura::core::lifetime::restamp_all_pins_for_arena(0, boundary_gen);
@@ -1044,12 +981,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(n_pins),
                                                          std::memory_order_relaxed);
         }
-        // Issue #2003: EnvFrame explicit lifetime protocol — guard runs
-        // scan_skip_freed_closures + bumps site-tagged counter on dtor
-        // (boundary exit). Instantiated here (only when outermost since
-        // nested guards don't own their own boundary) so the scan runs
-        // after restamp completes + before we drop the write lock below.
-        if (outermost) {
+        // Issue #2003: EnvFrame lifetime scan at boundary exit.
+        {
             aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
                 aura::core::envframe_lifetime::make_envframe_lifetime_host_with(
                     const_cast<void*>(static_cast<const void*>(ev_)),
@@ -1058,59 +991,118 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             (void)envframe_guard.site();
         }
     }
-    // Issue #285: explicit flush at the boundary exit so any
-    // pending mutation stack state is visible to other fibers
-    // BEFORE we drop the write lock. The flush runs
-    // lockless (no shared_mutex acquire) and is cheap.
-    // Only the outermost guard runs the flush; nested guards
-    // don't need it (the outer guard handles visibility).
+    // ── Phase 2–3: panic checkpoint + GC defer (before reemit) ──
+    // Issue #241 / #2120: commit/restore under lock so dual-epoch observers
+    // never see a pending panic window after probes.
+    //
+    // commit_panic_checkpoint / restore_panic_checkpoint (ok path) already
+    // call release_gc_defer_for_pending_panic once — do NOT double-release
+    // (process-wide depth would underflow other evaluators' arms).
+    // Partial recovery (failed + !auto_rollback) keeps checkpoint + defer.
+    // Success AC1: drain any residual panic-defer still attributed to this
+    // evaluator after commit (steal-orphan / multi-arm edge cases).
+    bool panic_handled = false;
+    if (outermost && had_panic_checkpoint_) {
+        if (success) {
+            ev_->commit_panic_checkpoint(); // includes release_gc_defer once
+            panic_handled = true;
+        } else if (ev_->panic_auto_rollback_) {
+            (void)ev_->restore_panic_checkpoint(); // releases on successful restore
+            panic_handled = true;
+        }
+        // else partial recovery: leave checkpoint + defer armed
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // AC1: outermost success → no residual panic-defer for this evaluator.
+    // Use clear_gc_defer_for_evaluator (not release_gc_defer_for_pending_panic):
+    // commit/restore already cleared the Evaluator arm flag, so the flag-gated
+    // release would no-op while table depth from steal-orphan / external arm
+    // could remain — a while(release) loop would spin forever.
+    if (outermost && success) {
+        if (aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_)))
+            (void)aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
+        if (!had_panic_checkpoint_) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // ── Phase 4: hot-update throttle → reemit → epoch notify (#2090 / #2114) ──
+    // Issue #2090: outermost dtor unified hot-update recovery sequence.
+    // Pairs with #2035 cascade-only path so non-cascade exits also drive
+    // throttle → reemit → epoch_notify → batch_deopt under the held lock.
+    if (outermost) {
+        const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
+        const bool dirty_defines_this_boundary = (cur_defuse != defuse_version_at_enter_);
+        const std::size_t dirty_calls =
+            ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
+        const bool dirty_marks_this_boundary = (dirty_calls > 0);
+        const bool dirty_or_env_restamp = dirty_defines_this_boundary || dirty_marks_this_boundary;
+        const bool deferred_reemit = aura_hot_update_has_deferred_reemit() != 0;
+        const bool full_rollback_skip = (!success && ev_->panic_auto_rollback_);
+        if ((!dirty_or_env_restamp && !deferred_reemit) || full_rollback_skip) {
+            // No pipeline work (clean exit or full-rollback restored snapshot).
+        } else if (!aura_hot_update_reemit_provider_wired()) {
+            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        } else if (aura_hot_update_should_throttle_reemit()) {
+            aura_hot_update_on_reemit_throttled();
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->boundary_reemit_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+        } else {
+            const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
+                                                           std::memory_order_relaxed);
+            }
+            aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+            if (success && n_reemit > 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->boundary_batch_deopt_unmatched_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // ── Phase 5: flush + depth/unlock LAST (#2120) ──
     if (outermost) {
         ev_->flush_mutation_boundary();
-        // Issue #2021: publish macro hygiene depth + concurrent peak
-        // observed during the mutation (including any expand under Guard).
         if (ev_->compiler_metrics())
             aura_macro_hygiene_snapshot_metrics(ev_->compiler_metrics());
-    }
-    if (outermost) {
-        // Issue #354: clear the flag that
-        // Fiber::yield reads to detect "yield
-        // while holding a mutation boundary".
-        // We clear BEFORE releasing the write
-        // lock so any concurrent Fiber::yield
-        // observes the cleared flag (acquire
-        // ordering on the flag load is
-        // synchronized with the release
-        // ordering on this store).
+        // Pop exit fence before depth_slot-- so steal sees consistent zero.
+        if (exit_fence_pushed) {
+            auto& st = Evaluator::active_mutation_stack_static();
+            if (!st.empty())
+                st.pop_back();
+            exit_fence_pushed = false;
+        }
+        // depth_slot last (paired with ctor ++; was early-decrement pre-#2120).
+        if (slot)
+            (*slot)--;
         ev_->mutation_boundary_held_.store(false, std::memory_order_release);
         lock_.unlock();
-        // Issue #1523: pair Workspace acquire in ctor.
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
         ev_->outermost_mutation_success_flag_ = nullptr;
         ev_->unbind_yield_hook_evaluator();
-    }
-    // Issue #241: panic-checkpoint commit / restore.
-    // Only the outermost guard owns the checkpoint;
-    // nested guards (which can't fail independently
-    // of their outer) don't touch it.
-    if (outermost && had_panic_checkpoint_) {
-        if (success) {
-            // Mutation succeeded — checkpoint is no
-            // longer needed; clear so the next
-            // mutation starts fresh.
-            ev_->commit_panic_checkpoint();
-        } else if (ev_->panic_auto_rollback_) {
-            // Mutation failed + auto-rollback enabled —
-            // restore the saved source via (set-code).
-            ev_->restore_panic_checkpoint();
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+            m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
+            m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
         }
-        // else: failed + !auto-rollback — leave the
-        // checkpoint alive so a subsequent retry can
-        // roll back to it. (Pre-#241 behavior on
-        // failure was to leave the checkpoint.)
+    } else {
+        // Nested: depth_slot-- (outermost deferred this to phase 5).
+        if (slot)
+            (*slot)--;
+    }
+    // Issue #241 residual: partial-recovery panic path still needs handling
+    // if we did not commit/restore above (failed + !auto_rollback).
+    if (outermost && had_panic_checkpoint_ && !panic_handled) {
+        // Leave checkpoint alive for retry (pre-#241 / #2120 partial recovery).
+        (void)0;
     }
     // Issue #417 / #1766: verify stack/depth-slot consistency
     // after boundary exit (cross-TU drift detection).
-    // Depth was already decremented above (prev = (*slot)--).
     // ensure_mutation_invariants / ensure_hygiene_violation_detection
     // / probe_arena_auto_policy_on_boundary_exit are all noexcept
     // (Issue #1766) — they cannot throw past remaining dtor work

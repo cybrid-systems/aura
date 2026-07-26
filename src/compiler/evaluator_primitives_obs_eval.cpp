@@ -5567,6 +5567,21 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                                      CompilerMetrics::kMutationBoundaryHoldHistBuckets))},
                 {"schema", make_int(2040)}, // #2040 extended (was 1375)
                 {"issue", make_int(2040)},
+                // Issue #2120: outermost exit order phase counters + schema.
+                // Pipeline: probes → GC defer drain → reemit → unlock last.
+                {"outermost-exit-phase1-probes-total",
+                 make_int(m ? load(m->outermost_exit_phase1_probes_total) : 0)},
+                {"outermost-exit-phase3-gc-defer-total",
+                 make_int(m ? load(m->outermost_exit_phase3_gc_defer_total) : 0)},
+                {"outermost-exit-phase4-reemit-total",
+                 make_int(m ? load(m->outermost_exit_phase4_reemit_total) : 0)},
+                {"outermost-exit-phase5-unlock-total",
+                 make_int(m ? load(m->outermost_exit_phase5_unlock_total) : 0)},
+                {"outermost-exit-order-complete-total",
+                 make_int(m ? load(m->outermost_exit_order_complete_total) : 0)},
+                {"outermost-exit-order-wired", make_int(1)},
+                {"schema-2120", make_int(2120)},
+                {"issue-2120", make_int(2120)},
             };
             return build_hash(kv);
         });

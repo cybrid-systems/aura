@@ -2165,6 +2165,11 @@ aura_add_issue_test(test_boundary_yield_steal_metrics_2119)
 aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics_2119)
 add_dependencies(all_test_issue_targets test_boundary_yield_steal_metrics_2119)
 
+# Issue #2120: outermost MutationBoundaryGuard exit order (probes → GC → reemit → unlock).
+aura_add_issue_test(test_outermost_exit_order_2120)
+aura_issue_test_link_llvm_jit(test_outermost_exit_order_2120)
+add_dependencies(all_test_issue_targets test_outermost_exit_order_2120)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

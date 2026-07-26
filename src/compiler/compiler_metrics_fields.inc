@@ -1277,6 +1277,13 @@ AURA_COMPILER_METRICS_FIELD(reemit_outside_boundary_total)
 AURA_COMPILER_METRICS_FIELD(reemit_soft_boundary_entered_total)
 AURA_COMPILER_METRICS_FIELD(reemit_deferred_for_boundary_total)
 AURA_COMPILER_METRICS_FIELD(boundary_batch_deopt_unmatched_total)
+// Issue #2120: outermost MutationBoundaryGuard exit order phase counters
+// (probes → GC defer → reemit → unlock last). See observability_metrics.h.
+AURA_COMPILER_METRICS_FIELD(outermost_exit_phase1_probes_total)
+AURA_COMPILER_METRICS_FIELD(outermost_exit_phase3_gc_defer_total)
+AURA_COMPILER_METRICS_FIELD(outermost_exit_phase4_reemit_total)
+AURA_COMPILER_METRICS_FIELD(outermost_exit_phase5_unlock_total)
+AURA_COMPILER_METRICS_FIELD(outermost_exit_order_complete_total)
 // Issue #2040: workspace_mtx_ unique-acquire contention + wait latency.
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_acquire_total)
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_contended_total)
