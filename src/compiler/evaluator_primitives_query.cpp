@@ -7167,6 +7167,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("schema", 2020); // Agent surface #2020; concurrent peak keys #2021 / #2101
         insert_kv("issue", 2020);
         insert_kv("depth-concurrent-obs-issue", 2021);
+        // Issue #2167: Agent hygiene-diagnostic + provenance-chain surface.
+        insert_kv("schema-2167", 2167);
+        insert_kv("issue-2167", 2167);
+        insert_kv("hygiene-diagnostic-wired", 1);
+        insert_kv("macro-provenance-chain-wired", 1);
 
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
@@ -7234,6 +7239,357 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("flat-generation", static_cast<std::int64_t>(ws->generation()));
         insert_kv("schema", 2020);
         insert_kv("issue", 2020);
+        // Issue #2167: diagnostic / chain surface lineage stamp.
+        insert_kv("schema-2167", 2167);
+        insert_kv("issue-2167", 2167);
+        insert_kv("hygiene-diagnostic-wired", 1);
+
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #2167: (query:hygiene-diagnostic node-id [:depth n] [:include-chain? #t])
+    // Agent-visible structured hygiene + provenance blame for a single node
+    // (MacroIntroduced or user). Lazy: zero hot-path cost until queried.
+    // Returns void for bad args / no workspace; hash otherwise (schema 2167).
+    //
+    // Fields: marker, provenance-id, macro-def-id, expansion-id, mutation-id,
+    // fiber-id, violation-flags, depth-at-clone, restamp-count, + optional chain.
+    add("query:hygiene-diagnostic", [&ev, &string_heap](const auto& a) -> EvalValue {
+        using aura::compiler::macro_exp::g_hygiene_tracer_depth_max;
+        using aura::compiler::macro_exp::g_hygiene_violation_in_macro_expand_total;
+        using aura::compiler::macro_exp::g_macro_origin_provenance_errors;
+        using aura::compiler::macro_exp::g_macro_restamp_after_flat_total;
+
+        if (a.empty() || !is_int(a[0]))
+            return make_void();
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_void();
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (nid == aura::ast::NULL_NODE || nid >= ws->size() || !ws->is_live_node(nid))
+            return make_void();
+
+        // Optional kwargs: :depth n (chain walk budget), :include-chain? #t|#f
+        std::int64_t depth_budget = 8;
+        bool include_chain = true;
+        const auto& kt = ev.keyword_table();
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            if (!is_keyword(a[i]))
+                continue;
+            const auto kidx = as_keyword_idx(a[i]);
+            if (kidx >= kt.size())
+                continue;
+            const auto& kw = kt[kidx];
+            if (kw == ":depth" || kw == "depth") {
+                if (i + 1 < a.size() && is_int(a[i + 1])) {
+                    depth_budget = as_int(a[i + 1]);
+                    ++i;
+                }
+            } else if (kw == ":include-chain?" || kw == ":include-chain" ||
+                       kw == "include-chain?" || kw == "include-chain") {
+                include_chain = true;
+                if (i + 1 < a.size() && (is_bool(a[i + 1]) || is_int(a[i + 1]))) {
+                    if (is_bool(a[i + 1]))
+                        include_chain = as_bool(a[i + 1]);
+                    else
+                        include_chain = as_int(a[i + 1]) != 0;
+                    ++i;
+                }
+            }
+        }
+        if (depth_budget < 0)
+            depth_budget = 0;
+        if (depth_budget > 64)
+            depth_budget = 64;
+
+        constexpr auto kExpansion =
+            static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
+        constexpr auto kSelfModify =
+            static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroSelfModify);
+
+        const bool is_mi = ws->is_macro_introduced(nid);
+        const auto marker = ws->marker(nid);
+        const auto prov_id = static_cast<std::int64_t>(ws->provenance(nid));
+        const auto dirty = static_cast<std::uint8_t>(ws->macro_dirty(nid));
+        // Weak provenance stamp: origin body id (macro expansion clone path).
+        // macro-def-id / expansion-id both surface the origin; Agents correlate.
+        const std::int64_t macro_def_id = prov_id;
+        const std::int64_t expansion_id = prov_id;
+
+        // Last mutation that targeted this node (scan log reverse — lazy).
+        std::int64_t last_mut_id = 0;
+        {
+            const auto view = ws->mutation_log_view();
+            for (auto it = view.rbegin(); it != view.rend(); ++it) {
+                if (it->target_node == nid) {
+                    last_mut_id = static_cast<std::int64_t>(it->mutation_id);
+                    break;
+                }
+            }
+        }
+        const std::int64_t fiber_id = static_cast<std::int64_t>(aura_fiber_current_id());
+
+        // violation-flags bitfield (Agent-readable):
+        //   bit0 = process expand violation > 0
+        //   bit1 = provenance origin error total > 0
+        //   bit2 = this node macro-expansion dirty
+        //   bit3 = this node self-modify dirty
+        //   bit4 = gen invalid / stale
+        //   bit5 = MacroIntroduced without provenance stamp
+        std::int64_t viol_flags = 0;
+        const auto proc_viol =
+            g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed) +
+            static_cast<std::uint64_t>(ev.get_hygiene_violation_count());
+        const auto prov_err = g_macro_origin_provenance_errors.load(std::memory_order_relaxed);
+        if (proc_viol > 0)
+            viol_flags |= 0x01;
+        if (prov_err > 0)
+            viol_flags |= 0x02;
+        if ((dirty & kExpansion) != 0)
+            viol_flags |= 0x04;
+        if ((dirty & kSelfModify) != 0)
+            viol_flags |= 0x08;
+        if (!ws->is_valid(nid))
+            viol_flags |= 0x10;
+        if (is_mi && prov_id == 0)
+            viol_flags |= 0x20;
+
+        // depth-at-clone: walk parent chain until non-MI / root (capped).
+        std::int64_t depth_at_clone = 0;
+        {
+            auto cur = nid;
+            for (int d = 0; d < 64; ++d) {
+                const auto p = ws->parent_of(cur);
+                if (p == aura::ast::NULL_NODE || p >= ws->size())
+                    break;
+                ++depth_at_clone;
+                if (!ws->is_macro_introduced(p))
+                    break;
+                cur = p;
+            }
+        }
+        // Prefer tracer max as secondary signal when node depth is 0.
+        const std::int64_t tracer_depth =
+            static_cast<std::int64_t>(g_hygiene_tracer_depth_max.load(std::memory_order_relaxed));
+        const std::int64_t restamp = static_cast<std::int64_t>(
+            g_macro_restamp_after_flat_total.load(std::memory_order_relaxed));
+
+        // Optional provenance chain: follow provenance_ column (origin stamps).
+        std::vector<std::int64_t> chain;
+        chain.push_back(static_cast<std::int64_t>(nid));
+        if (include_chain && depth_budget > 0) {
+            std::uint32_t cur_prov = ws->provenance(nid);
+            for (std::int64_t step = 0; step < depth_budget && cur_prov != 0; ++step) {
+                const auto origin = static_cast<aura::ast::NodeId>(cur_prov);
+                if (origin == nid || origin >= ws->size())
+                    break;
+                // Avoid cycles.
+                bool seen = false;
+                for (auto x : chain) {
+                    if (x == static_cast<std::int64_t>(origin)) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (seen)
+                    break;
+                chain.push_back(static_cast<std::int64_t>(origin));
+                // Next hop: origin's own provenance (side-table walk).
+                if (!ws->is_live_node(origin))
+                    break;
+                const auto next = ws->provenance(origin);
+                if (next == 0 || next == cur_prov)
+                    break;
+                cur_prov = next;
+            }
+        }
+
+        auto* ht = FlatHashTable::create(64);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+
+        insert_kv("node-id", static_cast<std::int64_t>(nid));
+        insert_kv("node", static_cast<std::int64_t>(nid));
+        insert_kv("marker", static_cast<std::int64_t>(static_cast<std::uint8_t>(marker)));
+        insert_kv("macro-introduced", is_mi ? 1 : 0);
+        insert_kv("provenance-id", prov_id);
+        insert_kv("provenance", prov_id);
+        insert_kv("macro-def-id", macro_def_id);
+        insert_kv("expansion-id", expansion_id);
+        insert_kv("mutation-id", last_mut_id);
+        insert_kv("fiber-id", fiber_id);
+        insert_kv("violation-flags", viol_flags);
+        insert_kv("depth-at-clone", depth_at_clone);
+        insert_kv("tracer-depth-max", tracer_depth);
+        insert_kv("restamp-count", restamp);
+        insert_kv("macro-dirty", static_cast<std::int64_t>(dirty));
+        insert_kv("macro-expansion-dirty", (dirty & kExpansion) != 0 ? 1 : 0);
+        insert_kv("gen-valid", ws->is_valid(nid) ? 1 : 0);
+        insert_kv("flat-generation", static_cast<std::int64_t>(ws->generation()));
+        insert_kv("process-violation-total", static_cast<std::int64_t>(proc_viol));
+        insert_kv("process-provenance-errors", static_cast<std::int64_t>(prov_err));
+        insert_kv("include-chain", include_chain ? 1 : 0);
+        insert_kv("depth-budget", depth_budget);
+        insert_kv("chain-length", static_cast<std::int64_t>(chain.size()));
+        // First few chain hops as fixed keys (Agent scripts; no list alloc).
+        if (!chain.empty())
+            insert_kv("chain-0", chain[0]);
+        if (chain.size() > 1)
+            insert_kv("chain-1", chain[1]);
+        if (chain.size() > 2)
+            insert_kv("chain-2", chain[2]);
+        if (chain.size() > 3)
+            insert_kv("chain-3", chain[3]);
+        insert_kv("schema", 2167);
+        insert_kv("issue", 2167);
+        insert_kv("schema-2167", 2167);
+        insert_kv("active", 1);
+        insert_kv("lazy", 1); // zero overhead when not queried
+
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #2167: (query:macro-provenance-chain node-id [:depth n])
+    // Lightweight side-table walk of provenance_ origins. Returns hash with
+    // chain-length + chain-0..chain-N + terminal flags (schema 2167).
+    add("query:macro-provenance-chain", [&ev, &string_heap](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_void();
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_void();
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (nid == aura::ast::NULL_NODE || nid >= ws->size() || !ws->is_live_node(nid))
+            return make_void();
+
+        std::int64_t depth_budget = 16;
+        const auto& kt = ev.keyword_table();
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            if (!is_keyword(a[i]))
+                continue;
+            const auto kidx = as_keyword_idx(a[i]);
+            if (kidx >= kt.size())
+                continue;
+            if ((kt[kidx] == ":depth" || kt[kidx] == "depth") && i + 1 < a.size() &&
+                is_int(a[i + 1])) {
+                depth_budget = as_int(a[i + 1]);
+                ++i;
+            }
+        }
+        if (depth_budget < 1)
+            depth_budget = 1;
+        if (depth_budget > 64)
+            depth_budget = 64;
+
+        std::vector<std::int64_t> chain;
+        chain.reserve(static_cast<std::size_t>(depth_budget) + 1);
+        chain.push_back(static_cast<std::int64_t>(nid));
+        std::uint32_t cur_prov = ws->provenance(nid);
+        std::int64_t hops = 0;
+        bool cycle = false;
+        bool dead = false;
+        while (hops < depth_budget && cur_prov != 0) {
+            const auto origin = static_cast<aura::ast::NodeId>(cur_prov);
+            if (origin >= ws->size()) {
+                dead = true;
+                break;
+            }
+            for (auto x : chain) {
+                if (x == static_cast<std::int64_t>(origin)) {
+                    cycle = true;
+                    break;
+                }
+            }
+            if (cycle)
+                break;
+            chain.push_back(static_cast<std::int64_t>(origin));
+            ++hops;
+            if (!ws->is_live_node(origin)) {
+                dead = true;
+                break;
+            }
+            const auto next = ws->provenance(origin);
+            if (next == 0 || next == cur_prov)
+                break;
+            cur_prov = next;
+        }
+
+        auto* ht = FlatHashTable::create(48);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+
+        insert_kv("node-id", static_cast<std::int64_t>(nid));
+        insert_kv("macro-introduced", ws->is_macro_introduced(nid) ? 1 : 0);
+        insert_kv("provenance-id", static_cast<std::int64_t>(ws->provenance(nid)));
+        insert_kv("chain-length", static_cast<std::int64_t>(chain.size()));
+        insert_kv("hops", hops);
+        insert_kv("depth-budget", depth_budget);
+        insert_kv("cycle", cycle ? 1 : 0);
+        insert_kv("dead-end", dead ? 1 : 0);
+        insert_kv("terminal", chain.empty() ? -1 : chain.back());
+        // Emit up to 8 hops as chain-i keys (fixed schema for Agents).
+        static constexpr const char* kChainKeys[] = {
+            "chain-0", "chain-1", "chain-2", "chain-3", "chain-4", "chain-5", "chain-6", "chain-7",
+        };
+        for (std::size_t i = 0; i < chain.size() && i < 8; ++i)
+            insert_kv(kChainKeys[i], chain[i]);
+        insert_kv("schema", 2167);
+        insert_kv("issue", 2167);
+        insert_kv("schema-2167", 2167);
+        insert_kv("active", 1);
+        insert_kv("lazy", 1);
 
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
@@ -7406,6 +7762,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                   static_cast<std::int64_t>(aura_2177_aot_macro_marker_stripped_total()));
         insert_kv("schema-2177", 2177);
         insert_kv("issue-2177", 2177);
+        // Issue #2167: Agent hygiene-diagnostic / provenance-chain surface.
+        insert_kv("schema-2167", 2167);
+        insert_kv("issue-2167", 2167);
+        insert_kv("hygiene-diagnostic-wired", 1);
+        insert_kv("macro-provenance-chain-wired", 1);
         insert_kv("issue", 2022);
         insert_kv("schema", 2022); // lineage 2100 / 2022 / 1891 / 1610
         auto hidx = g_hash_tables.size();
