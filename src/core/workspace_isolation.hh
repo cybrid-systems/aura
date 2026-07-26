@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/provenance_tracker.hh" // #2125: set_isolation_capture_tenant
+
 namespace aura::core::workspace_isolation {
 
 inline constexpr int kWorkspaceIsolationPhase = 2; // #1566 enforcement
@@ -107,6 +109,9 @@ struct WorkspaceIsolationPolicy {
             current.name = {};
         }
         isolation_enabled = (id != 0);
+        // Issue #2125: hot-path capture principal for FlatAST make_ref family.
+        // Zero when isolation off so raw make_ref stays unstamped (AC5 / #2056).
+        ::aura::core::provenance::set_isolation_capture_tenant(id);
     }
 
     void set_allow_cross_tenant(bool v) noexcept {
@@ -256,6 +261,7 @@ struct WorkspaceIsolationPolicy {
         isolation_enabled = false;
         strict_sandbox_linked = false;
         audit_seq.store(0, std::memory_order_relaxed);
+        ::aura::core::provenance::set_isolation_capture_tenant(0);
     }
 };
 

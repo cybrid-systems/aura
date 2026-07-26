@@ -26,6 +26,10 @@ inline constexpr int kProvenanceTrackerPhase = 3; // #1630 mandate full provenan
 inline constexpr int kProvenanceTrackerIssue = 1630;
 // Issue #2056: mandate tenant_id + provenance stamp on StableNodeRef create/rebind.
 inline constexpr int kStableRefTenantMandateIssue = 2056;
+// Issue #2125: stamp isolation principal on all FlatAST capture factories
+// (make_ref / make_safe_ref / capture_for_fiber / make_ref_in_layer /
+// make_ref_from_gen) so non-batch paths carry tenant provenance.
+inline constexpr int kStableRefTenantCaptureIssue = 2125;
 
 // Policy for ensure_valid_or_refresh (AC).
 enum class AutoRefreshPolicy : std::uint8_t {
@@ -57,6 +61,12 @@ struct ProvenanceEnforcementMetrics {
     std::atomic<std::uint64_t> stable_ref_tenant_stamp_total{0};
     std::atomic<std::uint64_t> stable_ref_cross_tenant_deny_total{0};
     std::atomic<std::uint64_t> stable_ref_tenant_preserved_on_refresh_total{0};
+    // Issue #2125: stamps applied by FlatAST capture factories under an
+    // active isolation principal (make_ref family / children_stable).
+    std::atomic<std::uint64_t> stable_ref_tenant_stamp_capture_total{0};
+    // Optional: isolation enabled + principal set but ref.tenant_id still 0
+    // at a use-site check (soft counter; no default deny — AC5 permissive).
+    std::atomic<std::uint64_t> stable_ref_tenant_stamp_zero_rejected_total{0};
     // Issue #2026: linear ownership × provenance consistency closed-loop.
     std::atomic<std::uint64_t> linear_provenance_checks_total{0};
     std::atomic<std::uint64_t> linear_provenance_ok_total{0};
@@ -130,6 +140,29 @@ inline void record_stable_ref_cross_tenant_deny(std::uint64_t n = 1) noexcept {
 inline void record_stable_ref_tenant_preserved_on_refresh(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().stable_ref_tenant_preserved_on_refresh_total.fetch_add(
         n, std::memory_order_relaxed);
+}
+inline void record_stable_ref_tenant_stamp_capture(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_tenant_stamp_capture_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline void record_stable_ref_tenant_stamp_zero_rejected(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_tenant_stamp_zero_rejected_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+
+// Issue #2125: process-wide isolation capture principal for FlatAST
+// make_ref family. Written by WorkspaceIsolationPolicy::set_current_tenant
+// (and clear_for_test). Zero = isolation off / unset principal → capture
+// leaves tenant_id 0 (permissive). Hot-path atomic; no mutex.
+inline std::atomic<std::uint64_t>& g_isolation_capture_tenant() noexcept {
+    static std::atomic<std::uint64_t> t{0};
+    return t;
+}
+inline void set_isolation_capture_tenant(std::uint64_t tid) noexcept {
+    g_isolation_capture_tenant().store(tid, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t isolation_capture_tenant() noexcept {
+    return g_isolation_capture_tenant().load(std::memory_order_relaxed);
 }
 
 // Issue #2037: process-wide mutate hotpath hygiene restamp / fail counters
@@ -327,6 +360,22 @@ inline void stamp_stable_ref_fields(StableRefT& ref, std::uint64_t tenant_id,
     record_stable_ref_tenant_stamp();
 }
 
+// Issue #2125: stamp from isolation capture principal when active.
+// No-op when principal is 0 (isolation off / unset) so raw make_ref
+// stays unstamped for single-tenant and #2056 "capability-only" paths.
+// Shares stamp_stable_ref_fields with Evaluator::stamp_stable_ref /
+// pin_node_for_atomic_batch (defense-in-depth on the batch path).
+template <typename StableRefT>
+inline bool maybe_stamp_stable_ref_isolation_tenant(StableRefT& ref,
+                                                    std::uint32_t fiber_id = 0) noexcept {
+    const auto tid = isolation_capture_tenant();
+    if (tid == 0)
+        return false;
+    stamp_stable_ref_fields(ref, tid, fiber_id);
+    record_stable_ref_tenant_stamp_capture();
+    return true;
+}
+
 // Forward decl so reset can clear last_hygiene on the process-wide tracker.
 struct ProvenanceTracker;
 inline ProvenanceTracker& g_provenance_tracker() noexcept;
@@ -349,6 +398,9 @@ struct ProvenanceStatsSnapshot {
     std::uint64_t tenant_stamps = 0;
     std::uint64_t cross_tenant_denies = 0;
     std::uint64_t tenant_preserved_on_refresh = 0;
+    // Issue #2125
+    std::uint64_t tenant_stamp_capture = 0;
+    std::uint64_t tenant_stamp_zero_rejected = 0;
     int phase = kProvenanceTrackerPhase;
     int issue = kProvenanceTrackerIssue;
 };
@@ -372,6 +424,8 @@ struct ProvenanceStatsSnapshot {
         m.stable_ref_tenant_stamp_total.load(std::memory_order_relaxed),
         m.stable_ref_cross_tenant_deny_total.load(std::memory_order_relaxed),
         m.stable_ref_tenant_preserved_on_refresh_total.load(std::memory_order_relaxed),
+        m.stable_ref_tenant_stamp_capture_total.load(std::memory_order_relaxed),
+        m.stable_ref_tenant_stamp_zero_rejected_total.load(std::memory_order_relaxed),
         kProvenanceTrackerPhase,
         kProvenanceTrackerIssue,
     };
@@ -458,6 +512,9 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.stable_ref_tenant_stamp_total.store(0, std::memory_order_relaxed);
     m.stable_ref_cross_tenant_deny_total.store(0, std::memory_order_relaxed);
     m.stable_ref_tenant_preserved_on_refresh_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_tenant_stamp_capture_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_tenant_stamp_zero_rejected_total.store(0, std::memory_order_relaxed);
+    set_isolation_capture_tenant(0);
     m.linear_provenance_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_ok_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_mismatch_total.store(0, std::memory_order_relaxed);

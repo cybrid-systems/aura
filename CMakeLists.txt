@@ -2285,6 +2285,11 @@ aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
 aura_add_issue_test(test_workspace_isolation_wire_2073)
 aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
 
+# Issue #2125: stamp isolation principal on all StableNodeRef capture
+# paths (make_ref / children_stable / non-batch) — extends #2073 / #2056.
+aura_add_issue_test(test_stable_ref_tenant_capture_2125)
+aura_issue_test_link_llvm_jit(test_stable_ref_tenant_capture_2125)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

@@ -9586,6 +9586,17 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(snap.tenant_preserved_on_refresh));
             insert_kv("tenant-stamp-wired", 1);
             insert_kv("principal-tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
+            // Issue #2125: all-capture-path stamp (make_ref family) — SlimSurface fold-in.
+            insert_kv("schema-2125", aura::core::provenance::kStableRefTenantCaptureIssue);
+            insert_kv("issue-2125", aura::core::provenance::kStableRefTenantCaptureIssue);
+            insert_kv("ref-tenant-stamp-total", static_cast<std::int64_t>(snap.tenant_stamps));
+            insert_kv("ref-tenant-stamp-capture-total",
+                      static_cast<std::int64_t>(snap.tenant_stamp_capture));
+            insert_kv("ref-tenant-stamp-zero-rejected-total",
+                      static_cast<std::int64_t>(snap.tenant_stamp_zero_rejected));
+            insert_kv(
+                "isolation-capture-tenant",
+                static_cast<std::int64_t>(aura::core::provenance::isolation_capture_tenant()));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
