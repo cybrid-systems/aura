@@ -38,6 +38,8 @@ inline constexpr HotPrimDescriptor kHotPrimTable[] = {
     {HotPrimKind::RenderDraw, "render-draw-batch", true, true},
     {HotPrimKind::TerminalPresent, "terminal-present-batch", true, true},
     {HotPrimKind::TuiPresent, "tui:present", false, true},
+    // Issue #2134: Agent batch TermBuf draw/present (render-tier).
+    // Kinds reuse RenderDraw/TerminalPresent semantic tier; names are distinct.
 };
 
 struct HotPathPrimStats {

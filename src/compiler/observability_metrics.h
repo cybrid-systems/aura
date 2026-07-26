@@ -7565,6 +7565,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> tui_present_total{0};
     std::atomic<std::uint64_t> tui_cell_writes{0};
     std::atomic<std::uint64_t> tui_diff_cells_emitted{0};
+    // Issue #2134: Agent batch draw + dirty AABB present over TermBuf.
+    //   - tui_draw_batch_total / cells_written: draw-batch calls + cells
+    //   - tui_fill_rect_total / cells_written: fill-rect calls + cells
+    //   - tui_present_batch_*: present-batch path (skip clean / dirty cells / µs)
+    std::atomic<std::uint64_t> tui_draw_batch_total{0};
+    std::atomic<std::uint64_t> tui_draw_batch_cells_written{0};
+    std::atomic<std::uint64_t> tui_fill_rect_total{0};
+    std::atomic<std::uint64_t> tui_fill_rect_cells_written{0};
+    std::atomic<std::uint64_t> tui_present_batch_total{0};
+    std::atomic<std::uint64_t> tui_present_batch_skip_clean{0};
+    std::atomic<std::uint64_t> tui_present_batch_dirty_cells{0};
+    std::atomic<std::uint64_t> tui_present_batch_us_total{0};
     // #1333 primitives
     std::atomic<std::uint64_t> tui_primitives_active{1};
     // #1334–#1335 stdlib

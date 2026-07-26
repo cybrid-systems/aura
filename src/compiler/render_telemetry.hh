@@ -169,6 +169,9 @@ inline constexpr const char* kTrackedRenderPrims[] = {
     "terminal-diff-update",
     "tui:cell",
     "tui:present",
+    "tui:draw-batch",    // #2134
+    "tui:fill-rect",     // #2134
+    "tui:present-batch", // #2134
     "tui:read-event",
     "+",
     "-",
