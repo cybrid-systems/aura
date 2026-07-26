@@ -1,9 +1,10 @@
-// agent_scope.h — Issue #2083: opt-in scoped multi-agent coordination.
+// agent_scope.h — Issue #2083 / #2161: opt-in scoped multi-agent coordination.
 //
 // STATUS: Advanced / Experimental (Issue #2083, feature-flagged).
 // Lives behind AURA_ENABLE_AGENT_SCOPE so the MVP linter
 // (scripts/check_orch_mvp_scope.py --strict) stays green by default.
 // Commercial multi-agent builds define this flag to opt in.
+// Issue #2161: scope-level watch_all (batch liveness + optional stall cancel).
 //
 // Distinct from evaluator-local OrchAgentNameTable (#2078) and
 // serve::parallel_orch::parallel_intend (#1587):
@@ -28,6 +29,7 @@
 #include "orch/agent_spawn.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
@@ -36,13 +38,30 @@
 
 namespace aura::orch {
 
+// Issue #2161: stall response for scope-level watch_all.
+// Restart is out of scope (needs re-spawn + name-table rules).
+enum class StallPolicy : std::uint8_t {
+    ReportOnly = 0, // aggregate counts only; no cancel
+    Cancel = 1,     // cancel_on_stall for Stalled agents only
+};
+
+// Issue #2161: aggregated liveness snapshot for one watch_all pass.
+// Counts map 1:1 to KeepaliveWatchStatus (+ cancelled when stall cancel fired).
+struct ScopeWatchResult {
+    std::size_t alive = 0;
+    std::size_t stalled = 0;
+    std::size_t done = 0;
+    std::size_t closed = 0;
+    std::size_t cancelled = 0; // subset of stalled that got request_cancel
+};
+
 // Scoped multi-agent supervision root. Owns its handles via std::vector
 // (no global registry). Destructor cancels + best-effort drains + releases
 // reservations (#2082 cancel-before-release contract).
 //
-// Thread-safety: spawn / join_all / cancel_all / handles are NOT safe to
-// call concurrently from multiple threads. The owner must serialize access
-// (matches the underlying Scheduler single-owner model).
+// Thread-safety: spawn / join_all / cancel_all / watch_all / handles are NOT
+// safe to call concurrently from multiple threads. The owner must serialize
+// access (matches the underlying Scheduler single-owner model).
 class AgentScope {
 public:
     explicit AgentScope(serve::Scheduler& sched) noexcept
@@ -92,12 +111,53 @@ public:
         }
     }
 
+    // Issue #2161: batch liveness watch over scope handles.
+    // For each handle: watch_agent_liveness (same Closed rules when
+    // keepalive_interval_ms==0). No process-global registry.
+    // StallPolicy::Cancel cancels only Stalled fibers (Done/Alive untouched).
+    [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms = 0,
+                                             StallPolicy policy = StallPolicy::Cancel) {
+        ScopeWatchResult r;
+        const bool cancel_on_stall = (policy == StallPolicy::Cancel);
+        for (auto& h : handles_) {
+            auto wr = watch_agent_liveness(h, stall_timeout_ms, cancel_on_stall);
+            switch (wr.status) {
+                case KeepaliveWatchStatus::Alive:
+                    ++r.alive;
+                    break;
+                case KeepaliveWatchStatus::Stalled:
+                    ++r.stalled;
+                    if (wr.cancelled)
+                        ++r.cancelled;
+                    break;
+                case KeepaliveWatchStatus::Done:
+                    ++r.done;
+                    break;
+                case KeepaliveWatchStatus::Closed:
+                    ++r.closed;
+                    break;
+            }
+        }
+        return r;
+    }
+
+    // Convenience overload: bool cancel_on_stall maps to StallPolicy.
+    [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms, bool cancel_on_stall) {
+        return watch_all(stall_timeout_ms,
+                         cancel_on_stall ? StallPolicy::Cancel : StallPolicy::ReportOnly);
+    }
+
     [[nodiscard]] std::size_t size() const noexcept { return handles_.size(); }
     [[nodiscard]] bool empty() const noexcept { return handles_.empty(); }
 
     // Read-only access (for advanced supervisor logic + tests).
     [[nodiscard]] std::span<const AgentHandle> handles() const noexcept {
         return std::span<const AgentHandle>(handles_);
+    }
+
+    // Mutable access for tests / advanced supervisors (watch_agent_liveness).
+    [[nodiscard]] std::span<AgentHandle> handles_mut() noexcept {
+        return std::span<AgentHandle>(handles_);
     }
 
     // Supervision root: cancel + best-effort drain + release before

@@ -1,4 +1,4 @@
-// test_agent_scope_2083.cpp — Issue #2083 AgentScope opt-in.
+// test_agent_scope_2083.cpp — Issue #2083 AgentScope opt-in + #2161 watch_all.
 //
 // Defines AURA_ENABLE_AGENT_SCOPE so the AgentScope class is visible in
 // this TU. Default builds (no flag) compile this file as empty work —
@@ -13,8 +13,9 @@
 //        (verified by the pre-push gate + a source-cite test below).
 //   AC5: Stress: cancel mid-run + quota reject inside scope.
 //   AC6: Design note in src/orch/README.md (flag + semantics).
+//   #2161 AC1–AC5: watch_all batch liveness + stall cancel (feature-flagged).
 
-#define AURA_ENABLE_AGENT_SCOPE // opt-in for this TU (#2083)
+#define AURA_ENABLE_AGENT_SCOPE // opt-in for this TU (#2083 / #2161)
 
 #include "test_harness.hpp"
 
@@ -47,6 +48,11 @@ using aura::orch::AgentHandle;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
+using aura::orch::KeepaliveWatchStatus;
+using aura::orch::note_agent_progress;
+using aura::orch::ScopeWatchResult;
+using aura::orch::StallPolicy;
+using aura::orch::watch_agent_liveness;
 using aura::serve::Fiber;
 using aura::serve::JoinStatus;
 using aura::serve::Scheduler;
@@ -87,6 +93,13 @@ static void ac4_linter_and_source() {
     CHECK(header_src.find("AURA_ENABLE_AGENT_SCOPE") != std::string::npos,
           "agent_scope.h references the feature flag");
     CHECK(header_src.find("class AgentScope") != std::string::npos, "AgentScope class declared");
+    // Issue #2161: watch_all still behind the same flag (no global registry).
+    CHECK(header_src.find("watch_all") != std::string::npos, "#2161: watch_all API");
+    CHECK(header_src.find("ScopeWatchResult") != std::string::npos, "#2161: ScopeWatchResult");
+    CHECK(header_src.find("2161") != std::string::npos, "agent_scope.h cites #2161");
+    CHECK(header_src.find("AgentRegistry") == std::string::npos, "AC5: no AgentRegistry");
+    CHECK(header_src.find("global_agent_registry") == std::string::npos,
+          "AC5: no global_agent_registry");
 }
 
 // ── AC1: spawn N + join_all / cancel_all under timeout ────────────────
@@ -234,18 +247,146 @@ static void ac6_readme_section() {
     CHECK(readme.find("AgentScope") != std::string::npos, "README mentions AgentScope");
     CHECK(readme.find("AURA_ENABLE_AGENT_SCOPE") != std::string::npos,
           "README documents the feature flag");
+    CHECK(readme.find("watch_all") != std::string::npos || readme.find("2161") != std::string::npos,
+          "README documents watch_all / #2161");
+}
+
+// ── #2161 AC2–AC4: watch_all aggregates + cancel only stalled ──────────
+static void ac2161_watch_all_batch() {
+    std::println("\n--- #2161: watch_all batch liveness ---");
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    std::atomic<bool> hold{true};
+    AgentScope scope(sched);
+
+    // Reserve so spawn refs stay valid across subsequent emplace (vector growth).
+    // (handles are moved into a fixed-capacity vector after all spawns via index.)
+    AgentHandle* pc_self = nullptr;
+    std::atomic<bool> touch{true};
+
+    // (a) keepalive disabled → Closed (AC4).
+    scope.spawn({.name = "no-ka", .body = [&] {
+                     while (hold.load(std::memory_order_relaxed)) {
+                         if (aura::serve::g_current_fiber &&
+                             aura::serve::g_current_fiber->is_cancel_requested())
+                             break;
+                         Fiber::yield(YieldReason::Explicit);
+                     }
+                 }});
+
+    // (b) ProgressClock agent (interval > 0, no mailbox) — starts Alive.
+    AgentSpec pc_spec;
+    pc_spec.name = "pc";
+    pc_spec.attach_mailbox = false;
+    pc_spec.keepalive_interval_ms = 30;
+    pc_spec.body = [&] {
+        while (hold.load(std::memory_order_relaxed)) {
+            if (touch.load(std::memory_order_relaxed) && pc_self)
+                note_agent_progress(*pc_self);
+            if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+                break;
+            Fiber::yield(YieldReason::Explicit);
+        }
+    };
+    scope.spawn(std::move(pc_spec));
+
+    // (c) Done agent: short body that exits immediately.
+    scope.spawn({.name = "done-soon", .body = [] {
+                     for (int i = 0; i < 2; ++i)
+                         Fiber::yield(YieldReason::Explicit);
+                 }});
+
+    // Resolve ProgressClock handle by name after all spawns (stable index).
+    AgentHandle* pc = nullptr;
+    for (auto& h : scope.handles_mut()) {
+        if (h.name == "pc") {
+            pc = &h;
+            break;
+        }
+    }
+    CHECK(pc != nullptr, "ProgressClock handle found");
+    pc_self = pc;
+    CHECK(pc->ok, "ProgressClock spawn ok");
+    CHECK(pc->keepalive_interval_ms == 30, "ProgressClock interval recorded");
+    CHECK(pc->liveness != nullptr, "ProgressClock has liveness");
+    CHECK(pc->mailbox == nullptr, "ProgressClock no mailbox");
+
+    // Wait for ProgressClock baseline + done agent to finish.
+    for (int i = 0; i < 100 && pc->liveness && pc->liveness->last_keepalive_us.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    for (int i = 0; i < 100; ++i) {
+        bool all_done_short = true;
+        for (const auto& h : scope.handles()) {
+            if (h.name == "done-soon" && h.fiber && !h.fiber->is_done())
+                all_done_short = false;
+        }
+        if (all_done_short)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    // ReportOnly while ProgressClock is still fresh → Alive / Closed / Done.
+    auto wr0 = scope.watch_all(/*stall_timeout_ms=*/80, StallPolicy::ReportOnly);
+    CHECK(wr0.closed >= 1, "AC4: interval=0 counts Closed");
+    CHECK(wr0.alive + wr0.done + wr0.closed + wr0.stalled == scope.size(),
+          "AC2: aggregate covers all handles");
+    CHECK(wr0.cancelled == 0, "ReportOnly: no cancels");
+    CHECK(wr0.alive >= 1 || wr0.stalled >= 1, "ProgressClock counted Alive or Stalled");
+
+    // Stall ProgressClock: stop touches first (avoid race with note_agent_progress),
+    // then age the shared clock so watch sees a stale pulse.
+    touch.store(false, std::memory_order_relaxed);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(pc->liveness != nullptr, "liveness still live");
+    pc->liveness->last_keepalive_us.store(1, std::memory_order_release);
+
+    const auto cancel0 =
+        g_orch_module_stats.keepalive_cancels_total.load(std::memory_order_relaxed);
+    auto single = watch_agent_liveness(*pc, /*stall_timeout_ms=*/15, /*cancel_on_stall=*/false);
+    CHECK(single.status == KeepaliveWatchStatus::Stalled,
+          "single-handle ProgressClock stall (baseline)");
+    pc->liveness->last_keepalive_us.store(1, std::memory_order_release);
+    auto wr1 = scope.watch_all(/*stall_timeout_ms=*/15, /*cancel_on_stall=*/true);
+    CHECK(wr1.stalled >= 1, "AC2: ProgressClock stall counted");
+    CHECK(wr1.cancelled >= 1, "AC3: cancel_on_stall cancelled stalled");
+    CHECK(pc->fiber && pc->fiber->is_cancel_requested(), "AC3: stalled fiber cancel requested");
+    for (const auto& h : scope.handles()) {
+        if (h.name == "done-soon" && h.fiber)
+            CHECK(h.fiber->is_done(), "AC3: done agent remains Done");
+    }
+    CHECK(g_orch_module_stats.keepalive_cancels_total.load() > cancel0,
+          "keepalive_cancels advanced");
+
+    hold.store(false, std::memory_order_relaxed);
+    (void)scope.join_all(std::optional<std::uint64_t>{3000});
+}
+
+// ── #2161 AC1: still feature-flagged; AC5 no global registry ───────────
+static void ac2161_flag_and_linter_surface() {
+    std::println("\n--- #2161 AC1/AC5: flag + no global registry ---");
+    auto header_src = read_file("src/orch/agent_scope.h");
+    // watch_all lives inside #ifdef AURA_ENABLE_AGENT_SCOPE (same as class).
+    CHECK(header_src.find("#ifdef AURA_ENABLE_AGENT_SCOPE") != std::string::npos,
+          "AC1: still behind AURA_ENABLE_AGENT_SCOPE");
+    CHECK(header_src.find("StallPolicy") != std::string::npos, "StallPolicy present");
+    // No process-static multi-agent registry symbols.
+    CHECK(header_src.find("static Agent") == std::string::npos ||
+              header_src.find("static AgentRegistry") == std::string::npos,
+          "AC5: no static AgentRegistry");
 }
 
 } // namespace
 
 int main() {
-    std::println("=== Issue #2083: AgentScope opt-in ===");
+    std::println("=== Issue #2083 / #2161: AgentScope + watch_all ===");
     ac4_linter_and_source();
+    ac2161_flag_and_linter_surface();
     ac1_spawn_join_cancel();
     ac2_destructor_releases();
     ac3_two_scopes_isolated();
     ac5_stress_cancel_quota();
     ac6_readme_section();
-    std::println("\n=== #2083: passed={} failed={} ===", g_passed, g_failed);
+    ac2161_watch_all_batch();
+    std::println("\n=== #2083/#2161: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
