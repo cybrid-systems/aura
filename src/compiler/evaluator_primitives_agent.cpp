@@ -3325,6 +3325,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           os.keepalive_helpers_spawned.load(std::memory_order_relaxed)));
             insert_kv("schema-2008", 2008);
             insert_kv("keepalive-wired", 1);
+            // Issue #2159: fiber-native keepalive helper (no detached host thread).
+            insert_kv("keepalive-helpers-joined-total",
+                      static_cast<std::int64_t>(
+                          os.keepalive_helpers_joined_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2159", aura::orch::kFiberNativeKeepaliveIssue);
+            insert_kv("issue-2159", aura::orch::kFiberNativeKeepaliveIssue);
+            insert_kv("fiber-native-keepalive-wired", 1);
             // Issue #2153: secondary drain residual / wait after non-Ok cancel.
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(

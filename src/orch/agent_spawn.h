@@ -61,8 +61,12 @@ inline constexpr int kJoinDrainTimeoutIssue = 2153;
 inline constexpr int kAgentApplyPerEvalMutexIssue = 2158;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
+// Issue #2159: fiber-native keepalive helper (replace detached std::thread).
+inline constexpr int kFiberNativeKeepaliveIssue = 2159;
 // Default secondary drain window after request_cancel (#2082 preserved).
 inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
+// Short drain for keepalive helper fiber after body join (#2159).
+inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
 
 // Issue #2153: primary join timeout + secondary cancel-drain policy.
 // primary_ms nullopt = wait forever; drain_ms=0 = cancel only (no wait).
@@ -132,6 +136,8 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> keepalive_cancels_total{0};
     std::atomic<std::uint64_t> keepalive_helpers_spawned{0};
     std::atomic<std::uint64_t> keepalive_helper_spawn_fail{0};
+    // Issue #2159: helpers that completed join (Done) after body join/scope.
+    std::atomic<std::uint64_t> keepalive_helpers_joined_total{0};
     // Issue #2158: per-Evaluator agent_apply_mu_ acquire accounting.
     // wait_us includes uncontended lock time (usually ~0) + contention wait.
     std::atomic<std::uint64_t> agent_apply_lock_acquisitions_total{0};
@@ -167,16 +173,32 @@ struct AgentLiveness {
 }
 
 // Cooperative sleep for keepalive cadence (steal-friendly yield loop).
+// Issue #2159: when running on a fiber, yield in coarser wall-clock slices
+// (check clock every N yields) to avoid multi-worker yield-spin thrash that
+// races with mailbox notify + body join. Host-thread callers still sleep.
 inline void fiber_sleep_ms(std::uint32_t ms) noexcept {
+    if (!serve::g_current_fiber) {
+        if (ms == 0)
+            return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return;
+    }
     if (ms == 0) {
         serve::Fiber::yield(serve::YieldReason::Explicit);
         return;
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    // Coarser cadence: ~1 yield per ~100µs wall budget is enough for cancel
+    // responsiveness without saturating the scheduler.
+    constexpr int kYieldsPerClockCheck = 8;
     while (std::chrono::steady_clock::now() < deadline) {
-        if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
+        if (serve::g_current_fiber->is_cancel_requested())
             return;
-        serve::Fiber::yield(serve::YieldReason::Explicit);
+        for (int i = 0; i < kYieldsPerClockCheck; ++i) {
+            if (serve::g_current_fiber->is_cancel_requested())
+                return;
+            serve::Fiber::yield(serve::YieldReason::Explicit);
+        }
     }
 }
 
@@ -249,11 +271,14 @@ struct AgentHandle {
     std::uint64_t retry_after_ms = 0; // suggested backoff (0 if unknown)
     // Issue #1880: memory reserved at spawn (released on join / scope exit).
     std::uint64_t reserved_memory_bytes = 0;
-    // Issue #2008: keepalive / liveness (null / 0 when disabled — zero cost).
+    // Issue #2008 / #2159: keepalive / liveness (null / 0 when disabled — zero cost).
     std::uint32_t keepalive_interval_ms = 0;
     std::shared_ptr<AgentLiveness> liveness; // shared body ↔ helper ↔ supervisor
-    // True when a detached host keepalive thread was started for this agent.
+    // True when a Scheduler-owned keepalive helper fiber was started (#2159).
     bool keepalive_active = false;
+    // Issue #2159: fiber-native helper (null when disabled / spawn failed).
+    // Joined by join_agent after body; cancelled on stop / dtor (no host thread).
+    serve::Fiber* keepalive_helper = nullptr;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -274,7 +299,8 @@ struct AgentHandle {
         , reserved_memory_bytes(o.reserved_memory_bytes)
         , keepalive_interval_ms(o.keepalive_interval_ms)
         , liveness(std::move(o.liveness))
-        , keepalive_active(o.keepalive_active) {
+        , keepalive_active(o.keepalive_active)
+        , keepalive_helper(o.keepalive_helper) {
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -286,6 +312,7 @@ struct AgentHandle {
         o.reserved_memory_bytes = 0; // prevent double-release
         o.keepalive_interval_ms = 0;
         o.keepalive_active = false;
+        o.keepalive_helper = nullptr;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -309,6 +336,7 @@ struct AgentHandle {
             keepalive_interval_ms = o.keepalive_interval_ms;
             liveness = std::move(o.liveness);
             keepalive_active = o.keepalive_active;
+            keepalive_helper = o.keepalive_helper;
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -320,16 +348,20 @@ struct AgentHandle {
             o.reserved_memory_bytes = 0;
             o.keepalive_interval_ms = 0;
             o.keepalive_active = false;
+            o.keepalive_helper = nullptr;
         }
         return *this;
     }
 
     ~AgentHandle() {
-        // Best-effort stop of keepalive helper; body_done not set here so a
-        // still-running body is not misreported as Done by watch_agent_liveness.
+        // Best-effort cooperative stop of keepalive helper; body_done not set
+        // here so a still-running body is not misreported as Done by
+        // watch_agent_liveness. No join in dtor (same as body fiber) —
+        // join_agent / scope joins helper. Prefer helper_stop over cancel.
         if (liveness)
             liveness->helper_stop.store(true, std::memory_order_release);
         keepalive_active = false;
+        keepalive_helper = nullptr;
         release_reservation_if_any();
     }
 
@@ -348,8 +380,9 @@ struct AgentSpec {
     std::function<void()> body; // required for spawn
     bool attach_mailbox = true;
     std::size_t mailbox_high_water = 256;
-    // Issue #2008: 0 = disabled (default, zero-cost). When > 0 and mailbox
-    // attached, a helper fiber emits "keepalive:<us>" at this cadence.
+    // Issue #2008 / #2159: 0 = disabled (default, zero-cost). When > 0 and
+    // mailbox attached, a Scheduler-owned helper fiber emits keepalive
+    // pulses at this cadence (no detached host thread).
     std::uint32_t keepalive_interval_ms = 0;
     // Issue #2118: when true (default), agent fiber body soft-registers
     // MutationBoundary depth on the per-fiber stack so steal (#2115) and
@@ -426,15 +459,17 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
 
     auto& pq = aura::core::resource_quota::process_resource_quota();
 
-    // Issue #2008 / #2080: keepalive uses a host thread (not an extra fiber)
-    // when attach_mailbox is set; otherwise (attach_mailbox=#f + interval > 0)
-    // we run a zero-host-thread ProgressClock mode that the body entry
-    // initializes and `orch:agent-touch` keeps fresh.
+    // Issue #2008 / #2080 / #2159: mailbox keepalive uses a Scheduler-owned
+    // helper fiber when attach_mailbox is set; otherwise (attach_mailbox=#f
+    // + interval > 0) ProgressClock mode (body `orch:agent-touch` only —
+    // no helper fiber).
     const bool want_keepalive = spec.keepalive_interval_ms > 0 && spec.attach_mailbox;
     const bool want_progress_clock = spec.keepalive_interval_ms > 0 && !spec.attach_mailbox;
 
-    // Issue #1880: fiber capacity preflight (check only; Scheduler::spawn also consumes).
-    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/1)) {
+    // Issue #1880 / #2159: fiber capacity preflight (check only; Scheduler::spawn
+    // also consumes). Mailbox keepalive needs body + helper fiber (#2159).
+    const std::uint64_t fiber_preflight = want_keepalive ? 2u : 1u;
+    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
@@ -497,7 +532,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
         // entry so watch_agent_liveness has a baseline even if the body
         // never calls `orch:agent-touch`. MailboxKeepalive mode seeds the
-        // same clock from emit_keepalive (#2008 host helper).
+        // same clock from emit_keepalive (#2008 / #2159 helper fiber).
         if (live && progress_clock) {
             const auto t0 = orch_now_us();
             live->last_keepalive_us.store(t0, std::memory_order_release);
@@ -564,44 +599,56 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
     g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
 
-    // Issue #2008: optional host-side keepalive thread (mailbox-native pulses).
-    // Uses a std::thread rather than a second fiber so multi-worker steal cannot
-    // UAF the helper against MultiFiberMailbox; default path still zero-cost.
+    // Issue #2008 / #2159: optional Scheduler-owned keepalive helper fiber
+    // (mailbox-native pulses). Fiber-native so cancel/GC/steal share the agent
+    // lifecycle; shared_ptr keeps MultiFiberMailbox + AgentLiveness alive across
+    // steals. Helper must not assume g_current_fiber is the agent body — emit
+    // uses mailbox only (no attach, no Evaluator apply). Default path zero-cost.
     if (want_keepalive && mb && live) {
         const auto agent_id = h.id;
         const auto interval = ka_interval;
-        auto mb_keep = mb; // shared ownership with handle
+        auto mb_keep = mb; // shared ownership with handle + helper
         auto live_keep = live;
-        try {
-            // Detached host thread: holds shared_ptr copies of mb + live so it
-            // remains valid until the thread observes stop and exits.
-            std::thread([mb_keep, live_keep, agent_id, interval]() {
-                if (!mb_keep || !live_keep)
-                    return;
-                auto should_stop = [&]() noexcept {
-                    return live_keep->body_done.load(std::memory_order_acquire) ||
-                           live_keep->helper_stop.load(std::memory_order_acquire);
-                };
-                // Immediate first pulse.
+        serve::Fiber* helper = sched.spawn([mb_keep, live_keep, agent_id, interval]() {
+            if (!mb_keep || !live_keep)
+                return;
+            // Immediate first pulse (same as host-thread path #2008).
+            (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
+            // Stay alive until body_done (or cancel). helper_stop only
+            // suppresses further emits so supervisors can age the clock for
+            // stall detection without the helper fiber completing while the
+            // body is still running (Done trampoline under multi-worker steal
+            // races mailbox attachers on the body).
+            auto next_emit = std::chrono::steady_clock::now() +
+                             std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+            while (!live_keep->body_done.load(std::memory_order_acquire)) {
+                if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
+                    break;
+                fiber_sleep_ms(1);
+                if (live_keep->body_done.load(std::memory_order_acquire))
+                    break;
+                if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
+                    break;
+                // helper_stop: park without emit (stall-sim / join signal).
+                if (live_keep->helper_stop.load(std::memory_order_acquire))
+                    continue;
+                const auto now = std::chrono::steady_clock::now();
+                if (now < next_emit)
+                    continue;
                 (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
-                while (!should_stop()) {
-                    const auto slice = std::max<std::uint32_t>(1, interval);
-                    for (std::uint32_t slept = 0; slept < slice && !should_stop();) {
-                        const auto step = std::min<std::uint32_t>(5, slice - slept);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(step));
-                        slept += step;
-                    }
-                    if (should_stop())
-                        break;
-                    (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
-                }
-            }).detach();
+                next_emit = now + std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+            }
+        });
+        if (helper) {
+            h.keepalive_helper = helper;
             h.keepalive_active = true;
             g_orch_module_stats.keepalive_helpers_spawned.fetch_add(1, std::memory_order_relaxed);
-        } catch (...) {
+        } else {
+            // Body still runs; keepalive disabled for this agent.
             g_orch_module_stats.keepalive_helper_spawn_fail.fetch_add(1, std::memory_order_relaxed);
             h.keepalive_interval_ms = 0;
             h.keepalive_active = false;
+            h.keepalive_helper = nullptr;
         }
     }
 
@@ -615,13 +662,37 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
     h.release_reservation_if_any();
 }
 
-// Stop keepalive helper (if any). Detached host thread observes this and exits;
-// shared_ptr captures keep mailbox/liveness alive until the thread ends.
-// Does not mark body_done — reserved for body exit so supervisors can
-// distinguish Done vs Stalled.
+// Stop keepalive helper (if any). Sets helper_stop so the fiber-native helper
+// exits its 1ms poll loop (#2159). Does not request_cancel by default — cancel
+// mid yield-spin races the trampoline under multi-worker steal. join_keepalive
+// may cancel as a last resort after a drain window. Does not mark body_done.
+// Does not join (see join_keepalive_helper).
 inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     if (h.liveness)
         h.liveness->helper_stop.store(true, std::memory_order_release);
+    h.keepalive_active = false;
+}
+
+// Issue #2159: join fiber-native keepalive helper after body (short drain).
+// Idempotent: null helper or already-Done is a no-op. Clears keepalive_helper.
+inline void
+join_keepalive_helper(AgentHandle& h,
+                      std::uint64_t drain_ms = kDefaultKeepaliveHelperDrainMs) noexcept {
+    if (!h.keepalive_helper)
+        return;
+    stop_keepalive_helper(h); // cooperative helper_stop first
+    if (h.keepalive_helper && !h.keepalive_helper->is_done()) {
+        auto jr = serve::Fiber::join(h.keepalive_helper, std::optional<std::uint64_t>{drain_ms});
+        // Last-resort cancel only if cooperative stop did not finish.
+        if (jr.status != serve::JoinStatus::Ok && h.keepalive_helper &&
+            !h.keepalive_helper->is_done()) {
+            h.keepalive_helper->request_cancel();
+            (void)serve::Fiber::join(h.keepalive_helper, std::optional<std::uint64_t>{drain_ms});
+        }
+    }
+    if (h.keepalive_helper && h.keepalive_helper->is_done())
+        g_orch_module_stats.keepalive_helpers_joined_total.fetch_add(1, std::memory_order_relaxed);
+    h.keepalive_helper = nullptr;
     h.keepalive_active = false;
 }
 
@@ -683,7 +754,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
 }
 
 // Join a single agent (Fiber::join) + Issue #1879 post-join provenance.
-// Issue #2008: signals the detached keepalive host thread to exit.
+// Issue #2008 / #2159: stop helper → join body (primary) → join helper (short drain).
 // Issue #2153: JoinPolicy controls primary timeout + secondary drain_ms.
 [[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h, JoinPolicy policy) {
     if (!h.ok || !h.fiber) {
@@ -691,7 +762,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         r.status = serve::JoinStatus::Invalid;
         return r;
     }
-    // Issue #2008: stop host keepalive first (non-blocking signal).
+    // Issue #2008 / #2159: stop keepalive helper first (signal + cancel fiber).
     stop_keepalive_helper(h);
     if (h.liveness)
         h.liveness->body_done.store(true, std::memory_order_release);
@@ -710,6 +781,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // non-yielding loop). Reservation release remains idempotent (#2009).
     if (jr.status != serve::JoinStatus::Ok)
         cancel_and_drain_fiber(h.fiber, policy.drain_ms);
+    // Issue #2159: join helper after body (short drain; no host-thread leak).
+    {
+        const auto helper_drain = policy.drain_ms == 0
+                                      ? kDefaultKeepaliveHelperDrainMs
+                                      : std::min(policy.drain_ms, kDefaultKeepaliveHelperDrainMs);
+        join_keepalive_helper(h, helper_drain);
+    }
     // agents_active: best-effort (never go below 0).
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
@@ -739,7 +817,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
 }
 
 // Join many agents + Issue #1879 post-join provenance per fiber.
-// Issue #2008: stop keepalive helpers, then join bodies.
+// Issue #2008 / #2159: stop helpers → join bodies → join helpers (short drain).
 // Issue #2153: JoinPolicy for primary + secondary drain.
 [[nodiscard]] inline serve::JoinResult join_agents(std::span<AgentHandle> agents,
                                                    JoinPolicy policy) {
@@ -770,6 +848,14 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // Issue #2082 / #2153: On non-Ok batch join, cancel + drain before release.
     if (jr.status != serve::JoinStatus::Ok)
         cancel_and_drain_fibers(std::span<serve::Fiber* const>(fibers), policy.drain_ms);
+    // Issue #2159: join keepalive helpers after bodies.
+    {
+        const auto helper_drain = policy.drain_ms == 0
+                                      ? kDefaultKeepaliveHelperDrainMs
+                                      : std::min(policy.drain_ms, kDefaultKeepaliveHelperDrainMs);
+        for (auto& a : agents)
+            join_keepalive_helper(a, helper_drain);
+    }
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
         const auto n = static_cast<std::uint64_t>(fibers.size());
@@ -952,7 +1038,7 @@ struct KeepaliveWatchResult {
 // Agents in ProgressClock mode (attach_mailbox=#f + interval > 0) call this
 // from the body to update the shared last_keepalive_us clock so
 // watch_agent_liveness can distinguish Alive vs Stalled. MailboxKeepalive
-// mode is unchanged — the host helper thread owns the clock.
+// mode is unchanged — the fiber-native helper owns the clock (#2159).
 inline void note_agent_progress(AgentHandle& h) noexcept {
     if (h.liveness && h.mailbox == nullptr && h.keepalive_interval_ms > 0) {
         const auto t = orch_now_us();

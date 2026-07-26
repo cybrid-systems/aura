@@ -1148,7 +1148,7 @@ namespace {
                         }});
             CHECK(h.ok, "default spawn ok");
             CHECK(h.keepalive_interval_ms == 0, "default interval 0");
-            CHECK(!h.keepalive_active, "default no helper thread");
+            CHECK(!h.keepalive_active, "default no helper fiber");
             CHECK(h.liveness == nullptr, "default no liveness state");
             (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
             CHECK(g_orch_module_stats.keepalive_emitted_total.load() == ka0,
@@ -1180,7 +1180,8 @@ namespace {
                         .keepalive_interval_ms = 15});
             CHECK(h.ok, "keepalive spawn ok");
             CHECK(h.keepalive_interval_ms == 15, "interval recorded");
-            CHECK(h.keepalive_active, "helper thread present");
+            CHECK(h.keepalive_active, "helper fiber present");
+            CHECK(h.keepalive_helper != nullptr, "keepalive_helper Fiber* set");
             CHECK(h.liveness != nullptr, "liveness shared state");
 
             // Poll shared emit counter (avoid long blocking host recv races).
