@@ -660,6 +660,73 @@ Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
     return ref;
 }
 
+// Issue #2224: sole public outbound helper — every StableNodeRef handed to
+// Agent / user code MUST go through export_ref / export_ref_safe so the
+// tenant + fiber stamp is guaranteed. Parity with #2152 dispatch
+// required_effects: side effects are non-bypassable; isolation should match.
+// Underlying call still routes through make_stamped_* so semantics are
+// identical; export_ref just locks the Agent-facing surface.
+ast::FlatAST::StableNodeRef Evaluator::export_ref(ast::NodeId id) const noexcept {
+    return make_stamped_ref(id);
+}
+
+ast::FlatAST::StableNodeRef Evaluator::export_ref_safe(ast::NodeId id, std::uint32_t workspace_id,
+                                                       std::uint32_t fiber_id) const noexcept {
+    return make_stamped_safe_ref(id, workspace_id, fiber_id);
+}
+
+// Issue #2224: shared resolve entry — query / mutate / ast-walk paths
+// must call resolve_stamped before touching the slot. Order of checks:
+//   1. workspace_flat_ present? (no → nullopt)
+//   2. isolation check: ref.tenant_id against current principal; under
+//      Strict / Restricted + cross-tenant ref → deny (last_mutate_error_
+//      populated with "isolation-deny: ref-tenant=N"; metrics:
+//      tenant_boundary_violation_prevented_total /
+//      cross_tenant_provenance_deny_total bumped inside
+//      check_workspace_isolation).
+//   3. FlatAST validity: get_safe(ref) (gen + COW epoch check inside
+//      FlatAST) — stale / free-slot / cross-tenant ref → nullopt with
+//      reason "resolve-stamped: stale-ref" so callers can tell apart
+//      isolation deny from gen-mismatch.
+//   4. optional required_effects flow (per #2152 dispatch parity: when
+//      ref carries tenant we still allow req_effects=0 for pure reads,
+//      but query:mutate-style paths pass nonzero to ensure capability
+//      gate is consulted — out of scope for #2224 AC2-AC4, wired
+//      here for the next audit's coverage).
+std::optional<ast::NodeView> Evaluator::resolve_stamped(const ast::FlatAST::StableNodeRef& ref,
+                                                        std::uint16_t required_effects,
+                                                        std::string_view op) noexcept {
+    if (!workspace_flat_) {
+        last_mutate_error_ = std::string(op) + ": no workspace";
+        return std::nullopt;
+    }
+    // Stage 1: isolation. ref.tenant_id == 0 (legacy / unstamped) is
+    // allowed only when isolation is off OR principal is unset (tenant
+    // 0 + sandbox off → legacy permissive, see AC4 / #2056). Under
+    // Strict / Restricted with isolation on, tenant 0 is denied.
+    if (!check_workspace_isolation(/*target=*/ref.tenant_id, /*ref_tenant=*/ref.tenant_id,
+                                   required_effects, op)) {
+        // last_mutate_error_ already set by check_workspace_isolation.
+        // Augment with ref context for Agent-readable trail.
+        if (last_mutate_error_.empty()) {
+            last_mutate_error_ =
+                std::string(op) + ": isolation-deny: ref-tenant=" + std::to_string(ref.tenant_id);
+        }
+        return std::nullopt;
+    }
+    // Stage 2: FlatAST validity (gen + COW + workspace_id match).
+    // get_safe already returns nullopt for stale / out-of-bounds / free
+    // slots; distinguish from isolation deny with a clear reason.
+    auto opt = workspace_flat_->get_safe(ref);
+    if (!opt.has_value()) {
+        last_mutate_error_ = std::string(op) + ": stale-ref id=" + std::to_string(ref.id) +
+                             " gen=" + std::to_string(ref.gen);
+        return std::nullopt;
+    }
+    last_mutate_error_.clear();
+    return opt;
+}
+
 } // namespace aura::compiler
 
 // apply_aura_sandbox_env / apply_production_security_defaults:

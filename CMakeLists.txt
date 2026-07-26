@@ -2558,6 +2558,13 @@ aura_issue_test_link_llvm_jit(test_hygiene_checkpoint_2099)
 # validate all read from instead of each picking a different "current".
 aura_add_issue_test(test_layout_stamp_2170)
 aura_issue_test_link_llvm_jit(test_layout_stamp_2170)
+
+# Issue #2224: mandate StableNodeRef tenant stamp on export (Phase A
+# export_ref / export_ref_safe) + resolve-time isolation gate (Phase B
+# resolve_stamped) + tenant-isolation-stats primitive (Phase C surface).
+aura_add_issue_test(test_isolation_stamp_resolve_2224)
+aura_issue_test_link_llvm_jit(test_isolation_stamp_resolve_2224)
+add_dependencies(all_test_issue_targets test_isolation_stamp_resolve_2224)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

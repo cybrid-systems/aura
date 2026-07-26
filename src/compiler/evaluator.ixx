@@ -5486,6 +5486,23 @@ public:
     [[nodiscard]] ast::FlatAST::StableNodeRef
     make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id = 0,
                           std::uint32_t fiber_id = 0) const noexcept;
+    // Issue #2224: sole public outbound helper — every StableNodeRef handed
+    // to Agent / user code must go through export_ref / export_ref_safe so
+    // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
+    // required_effects: side effects non-bypassable; isolation should match).
+    [[nodiscard]] ast::FlatAST::StableNodeRef export_ref(ast::NodeId id) const noexcept;
+    [[nodiscard]] ast::FlatAST::StableNodeRef
+    export_ref_safe(ast::NodeId id, std::uint32_t workspace_id = 0,
+                    std::uint32_t fiber_id = 0) const noexcept;
+    // Issue #2224: shared resolve entry used by query / mutate / ast walk.
+    // Runs isolation check on the ref's tenant_id, then FlatAST validity
+    // (gen / COW epoch), then returns NodeView via get_safe. On deny:
+    // sets last_mutate_error_ with "isolation-deny: ref-tenant=N" reason
+    // (Agent-readable) and returns std::nullopt. Callers must use this
+    // gate instead of touching workspace_flat_->get_safe(ref) directly.
+    [[nodiscard]] std::optional<ast::NodeView>
+    resolve_stamped(const ast::FlatAST::StableNodeRef& ref, std::uint16_t required_effects = 0,
+                    std::string_view op = "resolve-stamped") noexcept;
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with

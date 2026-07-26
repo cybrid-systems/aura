@@ -1,0 +1,14 @@
+# stamp-resolve-coverage allowlist — Issue #2224
+#
+# Prim names listed here are explicitly allowed to call
+# workspace_flat_->make_ref( / ->make_ref( / ->make_safe_ref(
+# directly (i.e. without going through ev.export_ref /
+# ev.make_stamped_*) inside their Agent-facing add("…") lambda.
+#
+# Each entry MUST cite why a direct make_ref is acceptable.
+# Keep this list short — empty is the default, and entries
+# here are an audit smell.
+
+# (no entries — Phase A ships with empty allowlist; all Agent-facing
+#  prims route through export_ref after the #2224 sweep of
+#  ast:stable-ref + query:as-stable-ref)
