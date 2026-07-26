@@ -2150,6 +2150,11 @@ aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
 aura_issue_test_link_llvm_jit(test_dual_path_desync_hard_fail_2116)
 add_dependencies(all_test_issue_targets test_dual_path_desync_hard_fail_2116)
 
+# Issue #2117: atomic MarkBitVector for concurrent multi-fiber mark.
+aura_add_issue_test(test_atomic_mark_bitvector_2117)
+aura_issue_test_link_llvm_jit(test_atomic_mark_bitvector_2117)
+add_dependencies(all_test_issue_targets test_atomic_mark_bitvector_2117)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

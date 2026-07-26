@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 402 | Preferred destination suites |
-| **Total scanned** | **402** | |
+| `tests/core/test_*.cpp` | 403 | Preferred destination suites |
+| **Total scanned** | **403** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 22 | 22 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 42 | 42 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 18 | 18 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 95 | 95 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 96 | 96 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -182,6 +182,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_atomic_batch_rollback_closed_loop.cpp`
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp`
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp`
+- `tests/serve/test_atomic_mark_bitvector_2117.cpp`
 - `tests/stdlib/test_atomic_swap_stdlib.cpp`
 - `tests/compiler/test_aura_result_error_policy.cpp`
 - `tests/compiler/test_aura_sandbox_env_2076.cpp`
@@ -928,17 +929,18 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (95)
+### `observability` — Observability / metrics / query:*-stats (96)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (95)
+#### domain/ (96)
 
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_ops_stats_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1729/#1851/#1852 (#1978 renamed): issue# moved from filename to header.
+- `tests/serve/test_atomic_mark_bitvector_2117.cpp` (#2117) [domain_suite, theme_serve] — AC1: multi-thread concurrent set same/adjacent bits → all set (no lost update)
 - `tests/compiler/test_auto_evolve_closure_live.cpp` (—) [domain_suite, theme_compiler] — Issue #1713 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_bidirectional_stats.cpp` (—) [domain_suite, theme_core] — tests/test_bidirectional_stats.cpp — Issue #1420 AC3:
 - `tests/compiler/test_blame_stamp_on_degrade.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2064 — blame / provenance stamping on Dynamic degrade + CoercionMap

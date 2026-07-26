@@ -6,12 +6,14 @@
 
 #include "fiber.h" // GCPhase, WorkerGCState
 #include <atomic>
+#include <bit> // std::popcount
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
-#include <vector>
-#include <chrono>
 #include <unordered_map>
+#include <vector>
 
 namespace aura::serve {
 
@@ -128,40 +130,108 @@ struct GCSweepBuffers {
 };
 using GCSweepFn = std::function<GCSweepResult(const GCSweepBuffers&)>;
 
-// ── MarkBitVector — concurrent mark bits for vector heaps (Phase 3) ─
+// ── MarkBitVector — concurrent mark bits for vector heaps (Phase 3 / #2117) ─
 // One bit per index in a heap vector. Set by parallel marking workers.
-// Uses std::vector<bool> internally which is bit-packed.
-// Thread-safe: concurrent set_bit is safe (atomic byte writes).
+// Issue #2117: storage is std::atomic<uint64_t> words (not vector<bool>).
+// Concurrent set of the same / adjacent bits cannot lost-update.
+// Memory order: relaxed is enough — mark does not require happens-before
+// beyond the safepoint / STW fence that brackets the mark phase. Under
+// pure STW single-thread mark the atomic ops have no extra observable
+// latency vs non-atomic (AC3); multi-fiber concurrent root set is correct.
+// Move-only (atomic array is not copyable).
 class MarkBitVector {
 public:
-    explicit MarkBitVector(size_t size = 0)
-        : bits_(size, false) {}
+    explicit MarkBitVector(size_t size = 0) { resize(size); }
 
-    void resize(size_t n) { bits_.resize(n, false); }
-    void clear_all() { std::fill(bits_.begin(), bits_.end(), false); }
-    size_t size() const { return bits_.size(); }
+    MarkBitVector(const MarkBitVector&) = delete;
+    MarkBitVector& operator=(const MarkBitVector&) = delete;
 
-    // Mark an index as live. Thread-safe for concurrent marking.
+    MarkBitVector(MarkBitVector&& o) noexcept
+        : words_(std::move(o.words_))
+        , bit_count_(o.bit_count_)
+        , word_count_(o.word_count_) {
+        o.bit_count_ = 0;
+        o.word_count_ = 0;
+    }
+
+    MarkBitVector& operator=(MarkBitVector&& o) noexcept {
+        if (this != &o) {
+            words_ = std::move(o.words_);
+            bit_count_ = o.bit_count_;
+            word_count_ = o.word_count_;
+            o.bit_count_ = 0;
+            o.word_count_ = 0;
+        }
+        return *this;
+    }
+
+    void resize(size_t n) {
+        bit_count_ = n;
+        word_count_ = (n + 63) / 64;
+        if (word_count_ == 0) {
+            words_.reset();
+            return;
+        }
+        words_ = std::make_unique<std::atomic<std::uint64_t>[]>(word_count_);
+        for (size_t i = 0; i < word_count_; ++i)
+            words_[i].store(0, std::memory_order_relaxed);
+    }
+
+    void clear_all() {
+        for (size_t i = 0; i < word_count_; ++i)
+            words_[i].store(0, std::memory_order_relaxed);
+    }
+
+    // Drop storage (used after sweep). Equivalent to default-constructed state.
+    void reset() noexcept {
+        words_.reset();
+        bit_count_ = 0;
+        word_count_ = 0;
+    }
+
+    [[nodiscard]] size_t size() const noexcept { return bit_count_; }
+
+    // Mark an index as live. Thread-safe concurrent set via fetch_or.
     void set(size_t idx) {
-        if (idx < bits_.size())
-            bits_[idx] = true;
+        if (idx >= bit_count_ || !words_)
+            return;
+        const size_t w = idx >> 6;
+        const std::uint64_t mask = 1ull << (idx & 63);
+        words_[w].fetch_or(mask, std::memory_order_relaxed);
     }
 
-    // Check if an index is live.
-    bool test(size_t idx) const { return idx < bits_.size() && bits_[idx]; }
-
-    // Return count of unmarked (dead) entries
-    size_t count_dead() const {
-        size_t dead = 0;
-        for (size_t i = 0; i < bits_.size(); ++i)
-            if (!bits_[i])
-                ++dead;
-        return dead;
+    // Check if an index is live (relaxed load).
+    [[nodiscard]] bool test(size_t idx) const {
+        if (idx >= bit_count_ || !words_)
+            return false;
+        const size_t w = idx >> 6;
+        const auto word = words_[w].load(std::memory_order_relaxed);
+        return ((word >> (idx & 63)) & 1ull) != 0;
     }
+
+    // Return count of unmarked (dead) entries among [0, bit_count_).
+    [[nodiscard]] size_t count_dead() const {
+        if (bit_count_ == 0 || !words_)
+            return 0;
+        size_t live = 0;
+        for (size_t i = 0; i < word_count_; ++i)
+            live += static_cast<size_t>(std::popcount(words_[i].load(std::memory_order_relaxed)));
+        // Unused high bits in the last word stay 0 (never set) so popcount
+        // over full words equals live bits in [0, bit_count_).
+        return bit_count_ - live;
+    }
+
+    // Issue #2117: true when storage uses atomic words (observability).
+    [[nodiscard]] static constexpr bool is_atomic_storage() noexcept { return true; }
 
 private:
-    std::vector<bool> bits_;
+    std::unique_ptr<std::atomic<std::uint64_t>[]> words_;
+    size_t bit_count_ = 0;
+    size_t word_count_ = 0;
 };
+
+// Issue #2117: process-wide "atomic mark wired" sentinel for query surface.
+inline std::atomic<std::int64_t> g_mark_bitvector_atomic_wired{1};
 
 
 class GCCollector {
