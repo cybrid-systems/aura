@@ -854,40 +854,76 @@ TypeId TypeRegistry::substitute(TypeId ty, const std::unordered_map<std::uint32_
 TypeId TypeRegistry::meet(TypeId a, TypeId b) const {
     // Issue #1431: lock TypeRegistry for mutator `meet`
     std::lock_guard<std::recursive_mutex> lock(type_registry_mutex_);
-    // Issue #338: meet (greatest lower bound) for
-    // Occurrence Typing and/or precision. Returns
-    // the most specific type that is a subtype of
-    // both a and b.
-    if (!a.valid() || a.index == 0)
+    // Issue #338 / #2148: meet (GLB) for occurrence and/or.
+    // Finite predicate lattice — see type.ixx.
+    if (!a.valid())
         return b;
-    if (!b.valid() || b.index == 0)
+    if (!b.valid())
         return a;
     if (a == b)
         return a;
-    // Tag mismatch: fall back to dynamic (the
-    // bottom of Aura's shallow type lattice —
-    // there are no real intersection types in the
-    // registry today, so we can't narrow further).
-    return dynamic_type();
+
+    const TypeId dyn = dynamic_type();
+    // Dynamic (Any) is lattice top: T ∩ Any = T.
+    // Pre-#2148 treated index==0 as "pass through" which
+    // matched this for Dynamic; keep the semantics explicit.
+    TypeId result = dyn;
+    if (a == dyn) {
+        result = b;
+    } else if (b == dyn) {
+        result = a;
+    } else if (is_subtype(a, b)) {
+        // a <: b → GLB is a (more specific)
+        result = a;
+    } else if (is_subtype(b, a)) {
+        result = b;
+    } else if (type_equals(a, b)) {
+        result = a;
+    } else if (tag_of(a) == TypeTag::VARIANT && tag_of(b) == TypeTag::VARIANT &&
+               name_of(a) == name_of(b)) {
+        // Same ADT tag name (nominal): keep the first TypeId.
+        result = a;
+    }
+    // else: Int ∩ String, Int ∩ Float, etc. → Dynamic
+
+    // Issue #2148: precise meet when inputs differ and we
+    // still got a non-Dynamic answer (e.g. Int ∩ Any = Int).
+    if (a != b && result != dyn && result.valid()) {
+        meet_precision_hit_total_.fetch_add(1, std::memory_order_relaxed);
+        if (meet_precision_hit_counter_)
+            meet_precision_hit_counter_->fetch_add(1, std::memory_order_relaxed);
+    }
+    return result;
 }
 
 TypeId TypeRegistry::join(TypeId a, TypeId b) const {
     // Issue #1431: lock TypeRegistry for mutator `join`
     std::lock_guard<std::recursive_mutex> lock(type_registry_mutex_);
-    // Issue #338: join (least upper bound) for
-    // Occurrence Typing and/or precision. Returns
-    // the least specific type that is a supertype
-    // of both a and b.
-    if (!a.valid() || a.index == 0)
+    // Issue #338 / #2148: join (LUB) for occurrence and/or.
+    if (!a.valid())
         return b;
-    if (!b.valid() || b.index == 0)
+    if (!b.valid())
         return a;
     if (a == b)
         return a;
-    // Tag mismatch: fall back to dynamic (the
-    // top of Aura's shallow type lattice —
-    // Any — conservative widening).
-    return dynamic_type();
+
+    const TypeId dyn = dynamic_type();
+    // Dynamic is lattice top: T ∪ Any = Any.
+    // Pre-#2148 wrongly treated index==0 as pass-through
+    // (join(Any, Int) → Int); fix to Any.
+    if (a == dyn || b == dyn)
+        return dyn;
+    if (is_subtype(a, b))
+        return b; // a <: b → LUB is b
+    if (is_subtype(b, a))
+        return a;
+    if (type_equals(a, b))
+        return a;
+    if (tag_of(a) == TypeTag::VARIANT && tag_of(b) == TypeTag::VARIANT && name_of(a) == name_of(b))
+        return a;
+    // Int ∪ Float → Dynamic (no Number supertype registered).
+    // String ∪ Int → Dynamic. No false precision.
+    return dyn;
 }
 
 std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {

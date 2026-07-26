@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 437 | Preferred destination suites |
-| **Total scanned** | **437** | |
+| `tests/core/test_*.cpp` | 438 | Preferred destination suites |
+| **Total scanned** | **438** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 24 | 24 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 20 | 20 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 103 | 103 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 104 | 104 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -436,6 +436,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_pixel_framebuffer.cpp`
 - `tests/compiler/test_post_mutate_push_cascade.cpp`
 - `tests/serve/test_post_steal_closed_loop.cpp`
+- `tests/compiler/test_predicate_meet_join_lattice_2148.cpp`
 - `tests/compiler/test_predicate_memo_boundary_selective_2104.cpp`
 - `tests/core/test_prim_call_count_clamp.cpp`
 - `tests/compiler/test_primitive_meta_self_describing_closed_loop.cpp`
@@ -991,13 +992,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (103)
+### `observability` — Observability / metrics / query:*-stats (104)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (103)
+#### domain/ (104)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
@@ -1054,6 +1055,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_pass_contracts_hotpath_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #381/#406/#506/#571 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_pattern_structural_index_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #211/#421/#423/#547/#554 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_post_steal_closed_loop.cpp` (—) [domain_suite, theme_serve] — Issue #1592 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_predicate_meet_join_lattice_2148.cpp` (#2148) [domain_suite, theme_compiler] — AC1: (and (number? x) (integer? x)) refines to Int, not Dynamic
 - `tests/compiler/test_primitive_meta_self_describing_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #478/#480/#560/#583 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_primitive_resource_quota_stats.cpp` (—) [domain_suite, theme_core] — AC1: primitive returns hash with 5 integer fields (incl. schema)
 - `tests/compiler/test_primitives_capture_contract.cpp` (—) [domain_suite, theme_compiler] — test_primitives_capture_contract.cpp — Issue #751:
