@@ -5232,6 +5232,10 @@ public:
         return marked;
     }
 
+    // Issue #2137: drain deferred non-render cascades after present / budget exit.
+    // Body in service_dirty.cpp.
+    void flush_frame_budget_deferred_();
+
     // Issue #2035: after mark_define_dirty / invalidate_function cascade,
     // fan-out HotUpdateRegistry dirty listeners, derive emit region mask
     // from block_dirty_ / SoA columns, and (when reemit provider is wired)
@@ -10426,6 +10430,8 @@ public:
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
     // Issue #1514: test/Agent seam for dirty cascade without full invalidate.
     void public_mark_define_dirty(const std::string& name) { mark_define_dirty(name); }
+    // Issue #2137: test/Agent entry to drain deferred non-render cascades.
+    void public_flush_frame_budget_deferred() { flush_frame_budget_deferred_(); }
     // Issue #1495: test/agent entry for partial re-lower of dirty defines.
     std::size_t public_relower_dirty_defines_from_workspace() {
         return relower_dirty_defines_from_workspace();
