@@ -25,11 +25,12 @@ bool GCCollector::request() {
     // PanicCheckpoint recovery window is open. Avoids marking
     // gc_in_progress only to abort in collect().
     if (aura::gc_hooks::should_defer_destructive_gc()) {
-        // Issue #2088: unified predicate — defers on ANY reason
-        // (panic + ffi pin + future render-pin). Legacy per-reason
-        // counters (panic / ffi_pin) bump inside arm_defer/release_defer.
+        // Issue #2088 / #2160: unified predicate — defers on ANY reason
+        // (panic + ffi pin + render-pin). Per-reason counters for Agents.
         if (aura::gc_hooks::gc_deferred_for_pending_panic())
             aura::gc_hooks::note_gc_request_deferred_pending_panic();
+        if (aura::gc_hooks::render_pin_defer_active())
+            aura::gc_hooks::note_gc_request_deferred_render();
         return false;
     }
 
@@ -46,6 +47,8 @@ bool GCCollector::request() {
     if (aura::gc_hooks::should_defer_destructive_gc()) {
         if (aura::gc_hooks::gc_deferred_for_pending_panic())
             aura::gc_hooks::note_gc_request_deferred_pending_panic();
+        if (aura::gc_hooks::render_pin_defer_active())
+            aura::gc_hooks::note_gc_request_deferred_render();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
     }
@@ -96,6 +99,8 @@ bool GCCollector::collect() {
     if (aura::gc_hooks::should_defer_destructive_gc()) {
         if (aura::gc_hooks::gc_deferred_for_pending_panic())
             aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+        if (aura::gc_hooks::render_pin_defer_active())
+            aura::gc_hooks::note_gc_sweep_skipped_render();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
     }
@@ -123,6 +128,8 @@ bool GCCollector::collect() {
     if (aura::gc_hooks::should_defer_destructive_gc()) {
         if (aura::gc_hooks::gc_deferred_for_pending_panic())
             aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+        if (aura::gc_hooks::render_pin_defer_active())
+            aura::gc_hooks::note_gc_sweep_skipped_render();
         scheduler_->resume_from_gc();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;

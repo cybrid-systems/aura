@@ -1041,6 +1041,15 @@ public:
             }
             ++stats_.live_compact_soft_count;
         } else {
+            // Issue #2160: Force observes the same unified GC-defer predicate
+            // (panic / FfiPin / RenderPin) as GCCollector + compact_sweep — no
+            // gen bump while render-critical present holds RenderPin.
+            if (aura::gc_hooks::should_defer_destructive_gc()) {
+                result.soft_gated = true;
+                if (aura::gc_hooks::render_pin_defer_active())
+                    aura::gc_hooks::note_gc_sweep_skipped_render();
+                return result;
+            }
             // Issue #2157: Force hard-mutex — busy/soft-gated style result,
             // no gen bump, no pin invalidate while holds are live.
             if (aura::core::lifetime::live_pin_count() > 0) {

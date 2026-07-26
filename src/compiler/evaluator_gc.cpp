@@ -887,6 +887,7 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         const bool ffi_active = aura::gc_hooks::ffi_pin_defer_active();
         const bool panic_active =
             aura::gc_hooks::gc_deferred_for_pending_panic() || has_panic_checkpoint();
+        const bool render_active = aura::gc_hooks::render_pin_defer_active();
         if (ffi_active) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
                 m->ffi_defer_because_pin_total.fetch_add(1, std::memory_order_relaxed);
@@ -897,6 +898,10 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
                 m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);
             bump_gc_blocked_by_pending_panic();
         }
+        // Issue #2160: frame-level RenderPin (present / hotpath) is a first-class
+        // sweep skip reason — same surface as panic/ffi for Agents.
+        if (render_active)
+            aura::gc_hooks::note_gc_sweep_skipped_render();
         return result; // all zeros — reclaim skipped
     }
 
