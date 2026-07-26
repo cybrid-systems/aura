@@ -27,7 +27,8 @@ module;
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
 #include "compiler/ffi_hot_path.hh"
-#include "compiler/frame_budget.hh" // #2137
+#include "compiler/frame_budget.hh"    // #2137
+#include "renderer/render_strategy.hh" // #2138
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_ffi.hh"
 #include "renderer/render_frame_arena.hh"
@@ -1170,14 +1171,15 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::unique_lock<std::shared_mutex> buf(b.rwlock); // exclusive: clear dirty
                 rows = b.h;
                 aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
-                n = aura::renderer::present_batch(fb, b.dirty, fd);
+                // Issue #2138: consult evolvable RenderStrategy (kernel stays stable).
+                n = aura::renderer::strategy::present_batch_with_strategy(fb, b.dirty, fd);
             }
             const auto ns =
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                std::chrono::steady_clock::now() - t0)
                                                .count());
             const bool skipped =
-                aura::renderer::render_engine_counters().present_skips > skips_before;
+                aura::renderer::render_engine_counters().present_skips > skips_before || n == 0;
             // Issue #1674: wire term_render / hotpath / zero-copy / soa bumps (were dead).
             ev.bump_term_render_present();
             if (ns > 0)
@@ -1416,6 +1418,73 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         RENDER_PRIMITIVE_META(0, "Probe render-critical deopt throttle (#1563).",
                               "([string]) -> int"));
 
+    // Issue #2138: Agent-hot-replaceable present strategy (policy only; kernel fixed).
+    // (render:set-strategy mode) mode: 0 dirty-aabb | 1 full | 2 skip | 3 auto
+    //   or string "dirty-aabb"|"full"|"skip"|"auto"
+    // Optional 2nd arg: full-dirty-ratio basis points for Auto (0..10000).
+    add_render(
+        "render:set-strategy",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            using aura::renderer::strategy::mode_from_int;
+            using aura::renderer::strategy::mode_from_name;
+            using aura::renderer::strategy::set_auto_full_ratio_bp;
+            using aura::renderer::strategy::set_strategy;
+            using aura::renderer::strategy::strategy_epoch;
+            if (a.empty())
+                return make_int(-1);
+            if (is_int(a[0])) {
+                set_strategy(mode_from_int(as_int(a[0])));
+            } else if (is_string(a[0])) {
+                const auto sidx = as_string_idx(a[0]);
+                if (sidx >= ev.string_heap_.size())
+                    return make_int(-1);
+                set_strategy(mode_from_name(ev.string_heap_[sidx]), ev.string_heap_[sidx]);
+            } else {
+                return make_int(-1);
+            }
+            if (a.size() >= 2 && is_int(a[1])) {
+                auto bp = as_int(a[1]);
+                if (bp < 0)
+                    bp = 0;
+                if (bp > 10000)
+                    bp = 10000;
+                set_auto_full_ratio_bp(static_cast<std::uint32_t>(bp));
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->render_strategy_set_total.fetch_add(1, std::memory_order_relaxed);
+                m->render_strategy_epoch.store(strategy_epoch(), std::memory_order_relaxed);
+                m->render_strategy_wired.store(1, std::memory_order_relaxed);
+            }
+            return make_int(static_cast<std::int64_t>(strategy_epoch()));
+        },
+        RENDER_PRIMITIVE_META(1,
+                              "Set present strategy mode (dirty-aabb|full|skip|auto) + optional "
+                              "Auto ratio bp (#2138).",
+                              "(int|string [int]) -> int"));
+
+    // (render:get-strategy) → mode int (0..3)
+    add_render(
+        "render:get-strategy",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            (void)ev;
+            const auto cfg = aura::renderer::strategy::current_config();
+            return make_int(static_cast<std::int64_t>(cfg.mode));
+        },
+        RENDER_PRIMITIVE_META(
+            0, "Current present strategy mode 0=dirty-aabb 1=full 2=skip 3=auto (#2138).",
+            "() -> int"));
+
+    // (render:strategy-epoch) → epoch
+    add_render(
+        "render:strategy-epoch",
+        [&ev](std::span<const EvalValue>) -> EvalValue {
+            (void)ev;
+            return make_int(static_cast<std::int64_t>(aura::renderer::strategy::strategy_epoch()));
+        },
+        RENDER_PRIMITIVE_META(
+            0, "Present strategy epoch (bumps on set-strategy / hot-replace) (#2138).",
+            "() -> int"));
+
     // Issue #1673: production render closed-loop stats (create/diff/present/zero-copy).
     // Facade-only via (stats:get "query:render-stats") — no public add() growth.
     ObservabilityPrims::register_stats_impl(
@@ -1561,6 +1630,28 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("frame-budget-wired", 1);
                 insert_kv("schema-2137", 2137);
                 insert_kv("issue-2137", 2137);
+            }
+            // Issue #2138: evolvable present strategy vs fixed kernel
+            {
+                const auto rs = aura::renderer::strategy::snapshot();
+                insert_kv("strategy-epoch", static_cast<std::int64_t>(rs.epoch));
+                insert_kv("strategy-mode", static_cast<std::int64_t>(rs.mode));
+                insert_kv("strategy-resolve-total", static_cast<std::int64_t>(rs.resolve_total));
+                insert_kv("strategy-mode-dirty-aabb",
+                          static_cast<std::int64_t>(rs.mode_dirty_aabb_total));
+                insert_kv("strategy-mode-full", static_cast<std::int64_t>(rs.mode_full_total));
+                insert_kv("strategy-mode-skip", static_cast<std::int64_t>(rs.mode_skip_total));
+                insert_kv("strategy-mode-auto", static_cast<std::int64_t>(rs.mode_auto_total));
+                insert_kv("strategy-auto-to-full",
+                          static_cast<std::int64_t>(rs.auto_to_full_total));
+                insert_kv("strategy-auto-to-skip",
+                          static_cast<std::int64_t>(rs.auto_to_skip_total));
+                insert_kv("strategy-set-total", static_cast<std::int64_t>(rs.set_strategy_total));
+                insert_kv("strategy-full-dirty-ratio-bp",
+                          static_cast<std::int64_t>(rs.full_dirty_ratio_bp));
+                insert_kv("strategy-wired", 1);
+                insert_kv("schema-2138", 2138);
+                insert_kv("issue-2138", 2138);
             }
             insert_kv("term-render-clear", m ? load(m->term_render_clear_total) : 0);
             insert_kv("term-buf-diff", m ? load(m->term_buf_diff_total) : 0);

@@ -7474,6 +7474,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_hotpath_hold_ns{0};
     std::atomic<std::uint64_t> frame_budget_pending{0};
     std::atomic<std::uint64_t> frame_budget_wired{1};
+    // Issue #2138: evolvable present strategy (Agent-hot-replaceable policy).
+    std::atomic<std::uint64_t> render_strategy_set_total{0};
+    std::atomic<std::uint64_t> render_strategy_epoch{1};
+    std::atomic<std::uint64_t> render_strategy_wired{1};
     // Issue #2051: Agent closed-loop — render-related mutate cost + loop rounds.
     //   - render_mutate_cost_ns_total / samples / last_ns: soft-dirty cost for
     //     render-critical defines (Agents: "was this mutate cheap enough?")

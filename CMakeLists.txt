@@ -2345,6 +2345,10 @@ aura_issue_test_link_llvm_jit(test_render_effect_gate_2136)
 aura_add_issue_test(test_frame_budget_cascade_isolation_2137)
 aura_issue_test_link_llvm_jit(test_frame_budget_cascade_isolation_2137)
 
+# Issue #2138: evolvable RenderStrategy layer vs fixed native kernel.
+aura_add_issue_test(test_render_strategy_layer_2138)
+aura_issue_test_link_llvm_jit(test_render_strategy_layer_2138)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
