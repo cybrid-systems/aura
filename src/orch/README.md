@@ -53,7 +53,8 @@ auto& h1 = scope.spawn({.name = "a", .body = [] { /* ... */ }});
 auto& h2 = scope.spawn({.name = "b", .body = [] { /* ... */ }});
 
 scope.cancel_all();                       // best-effort request_cancel
-auto jr = scope.join_all(/*timeout_ms=*/5000); // mirror #2082 cancel+drain
+auto jr = scope.join_all(/*timeout_ms=*/5000); // mirror #2082 cancel+drain (default 2s)
+// Issue #2153: JoinPolicy{.primary_ms, .drain_ms} for SLA-tuned cancel→release.
 // ~AgentScope: cancel + best-effort drain + reservation release.
 ```
 

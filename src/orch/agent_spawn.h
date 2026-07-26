@@ -55,6 +55,17 @@ namespace aura::orch {
 
 inline constexpr int kOrchModulePhase = 4; // #1881 orch health observability
 inline constexpr int kOrchModuleIssue = 1881;
+// Issue #2153: configurable secondary drain after non-Ok join cancel.
+inline constexpr int kJoinDrainTimeoutIssue = 2153;
+// Default secondary drain window after request_cancel (#2082 preserved).
+inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
+
+// Issue #2153: primary join timeout + secondary cancel-drain policy.
+// primary_ms nullopt = wait forever; drain_ms=0 = cancel only (no wait).
+struct JoinPolicy {
+    std::optional<std::uint64_t> primary_ms{};
+    std::uint64_t drain_ms = kDefaultJoinDrainMs;
+};
 
 // Estimated per-agent arena footprint + mailbox high-water bytes (#1880).
 inline constexpr std::uint64_t kOrchAgentArenaBytes = 4096;
@@ -99,6 +110,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> join_wait_us_total{0};
     std::atomic<std::uint64_t> join_ok_total{0};
     std::atomic<std::uint64_t> join_fail_total{0};
+    // Issue #2153: secondary drain after cancel on non-Ok join.
+    // residual = fiber still !is_done() after drain window (cancelled-leaked).
+    std::atomic<std::uint64_t> join_drain_residual_total{0};
+    std::atomic<std::uint64_t> join_drain_us_total{0};
     // Issue #2008: keepalive / liveness.
     std::atomic<std::uint64_t> keepalive_emitted_total{0};
     std::atomic<std::uint64_t> stalled_agents_total{0};
@@ -568,10 +583,67 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     h.keepalive_active = false;
 }
 
+// Issue #2153: request_cancel + optional secondary join; bump residual if
+// the body is still live after the drain window (cooperative cancel only).
+// drain_ms=0 → cancel only (no secondary wait). Never runs on Ok path.
+inline void cancel_and_drain_fiber(serve::Fiber* f, std::uint64_t drain_ms) noexcept {
+    if (!f || f->is_done())
+        return;
+    f->request_cancel();
+    if (drain_ms > 0) {
+        const auto t0 = std::chrono::steady_clock::now();
+        (void)serve::Fiber::join(f, std::optional<std::uint64_t>{drain_ms});
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        g_orch_module_stats.join_drain_us_total.fetch_add(us, std::memory_order_relaxed);
+    }
+    if (!f->is_done())
+        g_orch_module_stats.join_drain_residual_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Batch cancel+drain for not-yet-Done fibers (join_agents / AgentScope).
+inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
+                                    std::uint64_t drain_ms) noexcept {
+    if (fibers.empty())
+        return;
+    for (auto* f : fibers) {
+        if (f && !f->is_done())
+            f->request_cancel();
+    }
+    std::vector<serve::Fiber*> not_done;
+    not_done.reserve(fibers.size());
+    for (auto* f : fibers) {
+        if (f && !f->is_done())
+            not_done.push_back(f);
+    }
+    if (not_done.empty())
+        return;
+    if (drain_ms > 0) {
+        const auto t0 = std::chrono::steady_clock::now();
+        (void)serve::Fiber::join(std::span<serve::Fiber* const>(not_done),
+                                 std::optional<std::uint64_t>{drain_ms});
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        g_orch_module_stats.join_drain_us_total.fetch_add(us, std::memory_order_relaxed);
+    }
+    std::uint64_t residual = 0;
+    for (auto* f : not_done) {
+        if (f && !f->is_done())
+            ++residual;
+    }
+    if (residual > 0)
+        g_orch_module_stats.join_drain_residual_total.fetch_add(residual,
+                                                                std::memory_order_relaxed);
+}
+
 // Join a single agent (Fiber::join) + Issue #1879 post-join provenance.
 // Issue #2008: signals the detached keepalive host thread to exit.
-[[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h,
-                                                  std::optional<std::uint64_t> timeout_ms = {}) {
+// Issue #2153: JoinPolicy controls primary timeout + secondary drain_ms.
+[[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h, JoinPolicy policy) {
     if (!h.ok || !h.fiber) {
         serve::JoinResult r;
         r.status = serve::JoinStatus::Invalid;
@@ -582,26 +654,20 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     if (h.liveness)
         h.liveness->body_done.store(true, std::memory_order_release);
 
-    auto jr = serve::Fiber::join(h.fiber, timeout_ms);
+    auto jr = serve::Fiber::join(h.fiber, policy.primary_ms);
     g_orch_module_stats.agents_joined.fetch_add(1, std::memory_order_relaxed);
     g_orch_module_stats.join_wait_us_total.fetch_add(jr.wait_us, std::memory_order_relaxed);
     if (jr.status == serve::JoinStatus::Ok)
         g_orch_module_stats.join_ok_total.fetch_add(1, std::memory_order_relaxed);
     else
         g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #2082: On non-Ok join (Timeout / Cancelled / Invalid), the body
-    // fiber may still be running and allocating. Releasing the arena
-    // reservation now would under-account live work. Mirror the
-    // parallel_orch::parallel_run discipline: request_cancel + best-effort
-    // short secondary join before releasing. Secondary join is bounded
-    // (~2s); if the body is in a tight non-yielding loop, cancellation may
-    // not be observed. The fiber is leaked-but-cancelled; the reservation
-    // release below is still safe because release_agent_memory_reservation
-    // is idempotent and only zeros reserved_memory_bytes on first call.
-    if (jr.status != serve::JoinStatus::Ok && h.fiber && !h.fiber->is_done()) {
-        h.fiber->request_cancel();
-        (void)serve::Fiber::join(h.fiber, std::optional<std::uint64_t>{2000});
-    }
+    // Issue #2082 / #2153: On non-Ok join (Timeout / Cancelled / Invalid), the
+    // body fiber may still be running and allocating. Releasing the arena
+    // reservation now would under-account live work. request_cancel + policy
+    // drain window (default 2s); residual metric if body still live (tight
+    // non-yielding loop). Reservation release remains idempotent (#2009).
+    if (jr.status != serve::JoinStatus::Ok)
+        cancel_and_drain_fiber(h.fiber, policy.drain_ms);
     // agents_active: best-effort (never go below 0).
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
@@ -614,6 +680,7 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     }
     // Issue #1879: mandate join-path StableNodeRef / linear enforcement
     // even when Fiber::join skipped host refresh (nested fiber join).
+    // Provenance only on Ok (AC4) — never after cancel/drain path.
     if (jr.status == serve::JoinStatus::Ok)
         orch_post_join_provenance(h.fiber);
     // Issue #1880 / #2082: free arena/mailbox reservation only after
@@ -623,10 +690,17 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     return jr;
 }
 
+// Backward-compatible: primary timeout only, default drain_ms=2000 (#2082).
+[[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h,
+                                                  std::optional<std::uint64_t> timeout_ms = {}) {
+    return join_agent(h, JoinPolicy{.primary_ms = timeout_ms, .drain_ms = kDefaultJoinDrainMs});
+}
+
 // Join many agents + Issue #1879 post-join provenance per fiber.
 // Issue #2008: stop keepalive helpers, then join bodies.
+// Issue #2153: JoinPolicy for primary + secondary drain.
 [[nodiscard]] inline serve::JoinResult join_agents(std::span<AgentHandle> agents,
-                                                   std::optional<std::uint64_t> timeout_ms = {}) {
+                                                   JoinPolicy policy) {
     for (auto& a : agents) {
         stop_keepalive_helper(a);
         if (a.liveness)
@@ -644,33 +718,16 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
         r.status = serve::JoinStatus::Invalid;
         return r;
     }
-    auto jr = serve::Fiber::join(std::span<serve::Fiber* const>(fibers), timeout_ms);
+    auto jr = serve::Fiber::join(std::span<serve::Fiber* const>(fibers), policy.primary_ms);
     g_orch_module_stats.agents_joined.fetch_add(fibers.size(), std::memory_order_relaxed);
     g_orch_module_stats.join_wait_us_total.fetch_add(jr.wait_us, std::memory_order_relaxed);
     if (jr.status == serve::JoinStatus::Ok)
         g_orch_module_stats.join_ok_total.fetch_add(fibers.size(), std::memory_order_relaxed);
     else
         g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #2082: On non-Ok batch join, request_cancel any not-yet-Done
-    // fiber before releasing per-handle reservations. Best-effort batch
-    // secondary join (~2s) to drain; same idempotent-release contract as
-    // join_agent above. Mirrors parallel_orch::parallel_run discipline.
-    if (jr.status != serve::JoinStatus::Ok) {
-        for (auto& a : agents) {
-            if (a.fiber && !a.fiber->is_done())
-                a.fiber->request_cancel();
-        }
-        std::vector<serve::Fiber*> not_done;
-        not_done.reserve(agents.size());
-        for (auto& a : agents) {
-            if (a.fiber && !a.fiber->is_done())
-                not_done.push_back(a.fiber);
-        }
-        if (!not_done.empty()) {
-            (void)serve::Fiber::join(std::span<serve::Fiber* const>(not_done),
-                                     std::optional<std::uint64_t>{2000});
-        }
-    }
+    // Issue #2082 / #2153: On non-Ok batch join, cancel + drain before release.
+    if (jr.status != serve::JoinStatus::Ok)
+        cancel_and_drain_fibers(std::span<serve::Fiber* const>(fibers), policy.drain_ms);
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
         const auto n = static_cast<std::uint64_t>(fibers.size());
@@ -691,6 +748,12 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
     for (auto& a : agents)
         release_agent_memory_reservation(a);
     return jr;
+}
+
+[[nodiscard]] inline serve::JoinResult join_agents(std::span<AgentHandle> agents,
+                                                   std::optional<std::uint64_t> timeout_ms = {}) {
+    return join_agents(agents,
+                       JoinPolicy{.primary_ms = timeout_ms, .drain_ms = kDefaultJoinDrainMs});
 }
 
 // Send a message to an agent's mailbox (if any).

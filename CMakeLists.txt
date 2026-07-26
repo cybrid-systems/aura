@@ -2190,6 +2190,11 @@ aura_add_issue_test(test_orch_agent_mutation_boundary_2118)
 aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary_2118)
 add_dependencies(all_test_issue_targets test_orch_agent_mutation_boundary_2118)
 
+# Issue #2153: configurable secondary drain timeout on non-Ok join.
+aura_add_issue_test(test_join_drain_timeout_2153)
+aura_issue_test_link_llvm_jit(test_join_drain_timeout_2153)
+add_dependencies(all_test_issue_targets test_join_drain_timeout_2153)
+
 # Issue #2119: MutationBoundary yield hold + steal starvation metrics + adaptive.
 aura_add_issue_test(test_boundary_yield_steal_metrics_2119)
 aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics_2119)

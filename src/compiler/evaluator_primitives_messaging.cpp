@@ -315,7 +315,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                           retries = 0, circuit = 0;
             snapshot_global_ext(batches, spawned, joined, ok, err, ff, to, mb, qr, inv, bok, bpart,
                                 jwait, elapsed, &retries, &circuit);
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 48: pre-#2153 keys + join-drain residual/us/schema (#2153).
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -366,6 +367,17 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-1881", 1881);
             insert_kv("schema-2007", 2007);
             insert_kv("health-wired", 1);
+            // Issue #2153: Timeout path secondary drain residual / wait.
+            insert_kv(
+                "join-drain-residual-total",
+                static_cast<std::int64_t>(g_parallel_orch_stats.join_drain_residual_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("join-drain-us-total",
+                      static_cast<std::int64_t>(g_parallel_orch_stats.join_drain_us_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-2153", 2153);
+            insert_kv("issue-2153", 2153);
+            insert_kv("join-drain-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
