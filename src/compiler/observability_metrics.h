@@ -7862,6 +7862,13 @@ struct CompilerMetrics {
     // can distinguish "legacy closures remapped cleanly" (backfill > 0)
     // from "legacy closures relying on name fallback" (fallback > 0).
     std::atomic<std::uint64_t> live_closure_stable_id_backfill_total{0}; // #2175
+    // Issue #2177: AOT-side MacroIntroduced marker observability (refine
+    // #2100 which was JIT-only). Process-wide AOT stats for Agent dashboards:
+    // propagated = AOT lowering successfully stamped IRFunction.marker from
+    // FlatAST; stripped = guard metric for silent marker loss (a future
+    // pass observed MacroIntroduced but didn't propagate).
+    std::atomic<std::uint64_t> aot_macro_marker_propagated_total{0}; // #2177
+    std::atomic<std::uint64_t> aot_macro_marker_stripped_total{0};   // #2177
     // Issue #2128: reemit success + remap miss → MustDeoptBeforeNextCall.
     // must_deopt_before_next_call_total: flags set on live closures
     // must_deopt_force_deopt_success_total: apply/call observed flag + forced deopt
