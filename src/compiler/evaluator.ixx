@@ -915,6 +915,10 @@ export struct Closure {
     // next apply_closure must take safe-fallback / bridge rebuild (no
     // silent continue on pre-reemit body/flat). Cleared after force path.
     bool must_deopt_before_next_call = false;
+    // Issue #2129: aggregate max linear ownership of captured EnvFrame
+    // (0=Untracked). Stamped at construction via stamp_closure_bridge_epoch;
+    // apply / materialize dual-check against host fingerprint + frame version.
+    std::uint8_t linear_state = 0;
 
     Closure() = default;
     Closure(const Closure&) = default;
@@ -947,9 +951,11 @@ export struct Closure {
         , owner_arena(o.owner_arena)
         , bridge_epoch(o.bridge_epoch)
         , lifetime_version(o.lifetime_version)
-        , must_deopt_before_next_call(o.must_deopt_before_next_call) {
+        , must_deopt_before_next_call(o.must_deopt_before_next_call)
+        , linear_state(o.linear_state) {
         o.tombstone_for_views();
         o.must_deopt_before_next_call = false;
+        o.linear_state = 0;
     }
     Closure& operator=(Closure&& o) noexcept {
         if (this != &o) {
@@ -964,8 +970,10 @@ export struct Closure {
             bridge_epoch = o.bridge_epoch;
             lifetime_version = o.lifetime_version;
             must_deopt_before_next_call = o.must_deopt_before_next_call;
+            linear_state = o.linear_state;
             o.tombstone_for_views();
             o.must_deopt_before_next_call = false;
+            o.linear_state = 0;
         }
         return *this;
     }
@@ -2267,10 +2275,10 @@ public:
         return frame_version < current_defuse_version;
     }
 
-    // Issue #1365: stamp construction-site epoch (call on every new Closure).
-    void stamp_closure_bridge_epoch(Closure& cl) const noexcept {
-        cl.bridge_epoch = current_bridge_epoch();
-    }
+    // Issue #1365 / #2129: stamp construction-site epoch + aggregate
+    // linear_state (max binding state of captured EnvFrame, else host
+    // fingerprint when env is null). Call on every new Closure.
+    void stamp_closure_bridge_epoch(Closure& cl) const noexcept;
 
     // Issue #1660: single source-of-truth for apply_closure dual paths
     // (map + bridge), materialize_call_env, and JIT deopt gates.

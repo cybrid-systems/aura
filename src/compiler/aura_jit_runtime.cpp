@@ -772,6 +772,9 @@ static std::vector<std::uint32_t> g_closure_stable_func_ids;
 // closure but remap could not retarget native; cleared on force-deopt.
 // Parallel to func_ids (0 = clear, 1 = must deopt before next native call).
 static std::vector<std::uint8_t> g_closure_must_deopt;
+// Issue #2129: per-closure linear_ownership aggregate (0=Untracked).
+// Stamped at alloc from host fingerprint; dual-checked on call.
+static std::vector<std::uint8_t> g_closure_linear_state;
 
 // Issue #2092: process-global toggle for the legacy name-fallback
 // path in aura_remap_live_closures_after_reemit. Off by default
@@ -977,7 +980,8 @@ static bool closure_vectors_consistent_unlocked() noexcept {
            g_closure_freed.size() == n && g_closure_bridge_epochs.size() == n &&
            g_closure_defuse_versions.size() == n &&
            g_closure_stable_func_ids.size() == n && // Issue #2092
-           g_closure_must_deopt.size() == n;        // Issue #2128
+           g_closure_must_deopt.size() == n &&      // Issue #2128
+           g_closure_linear_state.size() == n;      // Issue #2129
 }
 
 #ifndef NDEBUG
@@ -1021,6 +1025,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
             g_closure_stable_func_ids[cid] = 0;
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0; // Issue #2128
+        if (cid < g_closure_linear_state.size())
+            g_closure_linear_state[cid] = aura_get_aot_live_linear_state_fingerprint(); // #2129
         stamp_closure_provenance_locked(cid);
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
         g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
@@ -1038,7 +1044,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_closure_defuse_versions.push_back(aura_get_aot_defuse_version());
     g_closure_stable_func_ids.push_back(
         0); // Issue #2092: legacy default; stamped in aura_closure_set_name
-    g_closure_must_deopt.push_back(0); // Issue #2128
+    g_closure_must_deopt.push_back(0);                                              // Issue #2128
+    g_closure_linear_state.push_back(aura_get_aot_live_linear_state_fingerprint()); // Issue #2129
     return id;
 }
 
@@ -1099,6 +1106,8 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_defuse_versions[cid] = 0;
     if (cid < g_closure_must_deopt.size())
         g_closure_must_deopt[cid] = 0; // Issue #2128
+    if (cid < g_closure_linear_state.size())
+        g_closure_linear_state[cid] = 0; // Issue #2129
     if (cid >= g_closure_freed.size())
         g_closure_freed.resize(g_closure_func_ids.size(), 0);
     // Issue #1708 / #1890: push free_list FIRST, then mark freed=1.
@@ -1538,6 +1547,21 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             // Safe fallback: refuse native JIT call (interpreter path
             // re-enters via host after deopt; never run stale env).
             return 0;
+        }
+        // Issue #2129: linear ownership dual-check when stamp is non-zero.
+        // Host tracks linear ⇒ refuse native on epoch/frame drift (#2043).
+        const std::uint8_t lin =
+            cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
+        if (lin != 0) {
+            const char* cname = (cid < g_closure_names.size() && !g_closure_names[cid].empty())
+                                    ? g_closure_names[cid].c_str()
+                                    : nullptr;
+            if (aura_jit_linear_epoch_safety_check(cname, lin, /*opcode=*/0) != 0) {
+                aura_deopt_inc();
+                invalidate_closure_cache_for(closure_id);
+                aura_unlock_workspace_read();
+                return 0;
+            }
         }
     }
 

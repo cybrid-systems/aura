@@ -73,6 +73,31 @@ void Evaluator::publish_live_env_linear_to_bridge() const noexcept {
     }
     aura_set_aot_live_linear_state_fingerprint(max_lin);
 }
+
+// Issue #1365 / #2129: stamp bridge_epoch + aggregate linear_state.
+void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept {
+    cl.bridge_epoch = current_bridge_epoch();
+    // Aggregate max linear ownership from captured EnvFrame bindings.
+    std::uint8_t max_lin = 0;
+    if (cl.env_id != NULL_ENV_ID) {
+        std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+        if (cl.env_id < env_frames_.size()) {
+            const auto& fr = env_frames_[cl.env_id];
+            for (auto v : fr.bindings_linear_ownership_state_) {
+                if (v > max_lin)
+                    max_lin = v;
+            }
+        }
+    }
+    // Host-tracked fingerprint when frame has no linear yet but host does.
+    if (max_lin == 0)
+        max_lin = aura_get_aot_live_linear_state_fingerprint();
+    cl.linear_state = max_lin;
+    if (max_lin != 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->linear_closure_state_stamp_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
 using types::make_hash;
 using types::make_int;
 using types::make_pair;
@@ -1046,22 +1071,32 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // materialize_call_env) is reading.
     std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
     const EnvFrame& fr = env_frame(cl.env_id);
-    // Issue #683: linear-capturing closure materialize gate — bridge_epoch
-    // tracked closures participate in linear ownership + EnvFrame version_.
+    // Issue #683 / #2129: linear-capturing closure materialize gate —
+    // use stamped cl.linear_state (not a hardcoded 1) when host tracks
+    // linear; untracked (0) still runs bridge/version half of the check
+    // when bridge_epoch is set (legacy #1755 path uses state=1 as probe).
     if (cl.bridge_epoch != 0 && compiler_metrics_) {
         const auto cur_ver = defuse_version_.load(std::memory_order_acquire);
         auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+        const std::uint8_t lin =
+            cl.linear_state != 0 ? cl.linear_state : static_cast<std::uint8_t>(1);
         // Issue #1755: pass drift counter so bridge mismatch is observed.
         const auto ok = validate_linear_ownership_state(
-            1, fr.version_, cur_ver, cl.bridge_epoch, current_bridge_epoch(),
+            lin, fr.version_, cur_ver, cl.bridge_epoch, current_bridge_epoch(),
             &m->linear_validate_bridge_epoch_drift_total);
         m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+        m->linear_apply_dual_check_total.fetch_add(1, std::memory_order_relaxed);
         if (!ok) {
             m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
             m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             m->linear_gc_safepoint_violations.fetch_add(1, std::memory_order_relaxed);
             m->linear_postmutate_escape_violations_prevented_total.fetch_add(
                 1, std::memory_order_relaxed);
+            m->linear_apply_dual_check_reject_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2129 / #2067: first-class runtime violation when
+            // stamped linear_state is non-zero (host tracks linear).
+            if (cl.linear_state != 0)
+                m->linear_runtime_violation_total.fetch_add(1, std::memory_order_relaxed);
         } else {
             m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
             m->linear_postmutate_guard_boundary_linear_safe_total.fetch_add(

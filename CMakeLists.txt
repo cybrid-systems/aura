@@ -2304,6 +2304,10 @@ aura_issue_test_link_llvm_jit(test_workload_adaptive_relower_2127)
 aura_add_issue_test(test_must_deopt_before_next_call_2128)
 aura_issue_test_link_llvm_jit(test_must_deopt_before_next_call_2128)
 
+# Issue #2129: stamp + validate linear_state on Closure/IRClosure/AOT/apply.
+aura_add_issue_test(test_linear_state_stamp_apply_2129)
+aura_issue_test_link_llvm_jit(test_linear_state_stamp_apply_2129)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
