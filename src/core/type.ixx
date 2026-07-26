@@ -247,6 +247,23 @@ public:
         poly_instantiate_counter_ = inst;
     }
 
+    // Issue #2148: optional external counter for meet precision
+    // hits (result ≠ Dynamic and a ≠ b). Plumbed from
+    // CompilerMetrics::meet_precision_hit_total via
+    // set_meet_precision_counter. Null by default for unit tests
+    // that only read meet_precision_hit_total().
+    std::atomic<std::uint64_t>* meet_precision_hit_counter_ = nullptr;
+    void set_meet_precision_counter(std::atomic<std::uint64_t>* c) {
+        meet_precision_hit_counter_ = c;
+    }
+    // Lifetime total of precise meets (also mirrors into the
+    // external counter when set). Unit tests may call meet()
+    // directly and read this without CompilerService.
+    mutable std::atomic<std::uint64_t> meet_precision_hit_total_{0};
+    std::uint64_t meet_precision_hit_total() const noexcept {
+        return meet_precision_hit_total_.load(std::memory_order_relaxed);
+    }
+
     // Bump the generation counter and clear all non-predefined entries.
     // After compact() returns, any TypeId with generation less than
     // generation() (i.e. type_id.generation < next_generation_) is
@@ -289,33 +306,35 @@ public:
     // Collect all type variables in a type (for let-polymorphism)
     std::vector<TypeId> free_vars(TypeId id) const;
 
-    // Issue #338: meet (greatest lower bound / intersection)
-    // and join (least upper bound / union) helpers for
-    // Occurrence Typing and/or precision.
+    // Issue #338 / #2148: meet (greatest lower bound /
+    // intersection) and join (least upper bound / union)
+    // for Occurrence Typing and/or precision.
     //
-    // meet(a, b): returns the most specific type that is
-    // a subtype of BOTH a and b. For Aura's shallow type
-    // lattice:
-    //   - a == b  → a
-    //   - either invalid (index 0)  → the other
-    //   - else  → reg.dynamic_type() (the bottom of the
-    //     lattice, can't narrow further)
+    // Finite predicate lattice (Phase A of #2148) — not full
+    // structural subtyping expansion; complements is_subtype:
+    //   meet(a, b) — most specific type that is a subtype of both:
+    //     - a == b                    → a
+    //     - either invalid            → the other
+    //     - Dynamic (Any) as top      → T ∩ Any = T
+    //     - a <: b / b <: a           → the more specific
+    //     - type_equals / same VARIANT name → a
+    //     - Int ∩ Number-ish (Dyn)    → Int
+    //     - Int ∩ String / Int ∩ Float → Dynamic
+    //     - else                      → Dynamic
+    //   join(a, b) — least specific supertype of both:
+    //     - a == b                    → a
+    //     - either invalid            → the other
+    //     - Dynamic as top            → T ∪ Any = Any
+    //     - a <: b / b <: a           → the more general
+    //     - Int ∪ Float               → Dynamic (no Number
+    //                                   supertype registered)
+    //     - String ∪ Int              → Dynamic
+    //     - else                      → Dynamic
     //
-    // join(a, b): returns the least specific type that is
-    // a supertype of BOTH a and b:
-    //   - a == b  → a
-    //   - either invalid (index 0)  → the other
-    //   - else  → reg.dynamic_type() (the top of the
-    //     lattice — Any — conservative widening)
-    //
-    // Used by analyze_predicate_flat in the `and` and
-    // `or` branches to replace the old "fall back to
-    // dynamic on mismatch" conservative behavior. The
-    // meet/join helpers let the engine report
-    // narrower refined types when the conjunction or
-    // disjunction is well-typed (e.g. (and (number? x)
-    // (positive? x)) stays at Number; (or (string? x)
-    // (number? x)) widens to Any).
+    // Does NOT change gradual Dynamic↔X rules in
+    // consistent_unify. Used by analyze_predicate_flat and/or.
+    // Precise meets (result ≠ Dynamic, a ≠ b) bump
+    // meet_precision_hit_total.
     TypeId meet(TypeId a, TypeId b) const;
     TypeId join(TypeId a, TypeId b) const;
 

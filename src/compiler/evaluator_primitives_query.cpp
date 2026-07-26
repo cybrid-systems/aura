@@ -5812,6 +5812,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-provenance-fast-path-wired", 1);
             insert_kv("schema-2147", 2147);
             insert_kv("issue-2147", 2147);
+            // Issue #2148: precision meet/join lattice observability.
+            const std::int64_t meet_prec =
+                m ? static_cast<std::int64_t>(
+                        m->meet_precision_hit_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t meet_uses =
+                m ? static_cast<std::int64_t>(
+                        m->and_or_meet_uses_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t join_uses =
+                m ? static_cast<std::int64_t>(
+                        m->and_or_join_uses_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("meet-precision-hit-total", meet_prec);
+            insert_kv("meet_precision_hit_total", meet_prec);
+            insert_kv("and-or-meet-uses-total", meet_uses);
+            insert_kv("and-or-join-uses-total", join_uses);
+            insert_kv("meet-precision-lattice-wired", 1);
+            insert_kv("schema-2148", 2148);
+            insert_kv("issue-2148", 2148);
             // Issue #2102: provenance miss → force Full/contextual audit or reject.
             const std::int64_t miss_force_audit = static_cast<std::int64_t>(
                 aura::compiler::g_coercion_provenance_miss_force_audit_total.load(

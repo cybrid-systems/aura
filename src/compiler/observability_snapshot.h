@@ -246,6 +246,8 @@ struct CompilerSnapshot {
     // precision-improved paths).
     std::uint64_t and_or_meet_uses_total = 0;
     std::uint64_t and_or_join_uses_total = 0;
+    // Issue #2148: precise meet hits (result ≠ Dynamic, a ≠ b).
+    std::uint64_t meet_precision_hit_total = 0;
     // Issue #434: per-node occurrence dirty
     // recovery (lifetime total). Mirrors the
     // narrowing_dirty_recovery_total counter in

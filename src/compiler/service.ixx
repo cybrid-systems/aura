@@ -669,6 +669,9 @@ public:
         // Issue #494: yield between pass-pipeline stages when running on a fiber.
         aura::compiler::set_pipeline_yield_hook(&CompilerService::pipeline_yield_trampoline);
         evaluator_.set_type_registry(&type_registry_);
+        // Issue #2148: precise meet lattice hits → CompilerMetrics
+        // (also re-wired on each typecheck path with poly metrics).
+        type_registry_.set_meet_precision_counter(&metrics_.meet_precision_hit_total);
         // Issue #252: wire the shared CompilerMetrics to the
         // Evaluator. apply_closure increments the closure_*
         // counters on this struct (also incremented by the
@@ -3547,6 +3550,8 @@ public:
         type_registry_.set_poly_metrics(&metrics_.poly_register_total,
                                         &metrics_.poly_dedup_hits_total,
                                         &metrics_.poly_instantiate_total);
+        // Issue #2148: precise meet lattice hits → CompilerMetrics.
+        type_registry_.set_meet_precision_counter(&metrics_.meet_precision_hit_total);
 
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
@@ -7505,6 +7510,10 @@ public:
         // counters.
         s.and_or_meet_uses_total = metrics_.and_or_meet_uses_total.load(std::memory_order_relaxed);
         s.and_or_join_uses_total = metrics_.and_or_join_uses_total.load(std::memory_order_relaxed);
+        // Issue #2148: mirror precise meet hits (TypeRegistry bumps
+        // the same atomic via set_meet_precision_counter).
+        s.meet_precision_hit_total =
+            metrics_.meet_precision_hit_total.load(std::memory_order_relaxed);
         // Issue #434: per-node occurrence dirty recovery.
         s.narrowing_dirty_recovery_total =
             metrics_.narrowing_dirty_recovery_total.load(std::memory_order_relaxed);
