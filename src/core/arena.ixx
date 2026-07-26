@@ -21,6 +21,7 @@ export module aura.core.arena;
 import std;
 import aura.core.error;
 import aura.core.lifetime_pin;
+import aura.core.envframe_lifetime;
 
 // Issue #1390: one-shot stderr warning when request_defrag() is
 // called with no GC safepoint registered. Exported as free
@@ -144,6 +145,9 @@ export struct ArenaStats {
     std::size_t live_compact_freelist_hits_total = 0;
     std::size_t live_compact_gen_restamps_total = 0;
     std::size_t live_compact_invalidated_pins_total = 0;
+    // Issue #2157: Force blocked by live pin / EnvFrameLifetimeGuard hold.
+    std::size_t force_compact_blocked_by_pin = 0;
+    std::size_t force_compact_blocked_by_envframe_guard = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
@@ -196,6 +200,8 @@ export struct ArenaStats {
         live_compact_freelist_hits_total += other.live_compact_freelist_hits_total;
         live_compact_gen_restamps_total += other.live_compact_gen_restamps_total;
         live_compact_invalidated_pins_total += other.live_compact_invalidated_pins_total;
+        force_compact_blocked_by_pin += other.force_compact_blocked_by_pin;
+        force_compact_blocked_by_envframe_guard += other.force_compact_blocked_by_envframe_guard;
         if (other.frag_post_compact_bp > 0)
             frag_post_compact_bp = other.frag_post_compact_bp;
         if (other.defrag_attempted_count > 0)
@@ -440,11 +446,23 @@ private:
 // code, and StableNodeRef-style consumers MUST observe either the generation
 // stamp (gen() before/after) or LifetimePin::validate() — they MUST NOT
 // assume any raw pointer was rewritten.
+//
+// Issue #2157: Force hard-mutex with live LifetimePin + EnvFrameLifetimeGuard.
+// Soft already gates on MutationBoundary / render hotpath. Force must NOT
+// bump generation_ or invalidate pins while live_pin_count()>0 or
+// envframe_lifetime::active_guard_depth()>0 — post-facto restamp is not a
+// hold-time guarantee under fiber-steal + concurrent Force.
 export enum class LiveCompactMode : std::uint8_t {
     Soft = 0,  // Soft-gates under render hotpath / MutationBoundary (existing auto path)
     Force = 1, // Force path — STW-friendly, used by explicit Agent calls
     // Moving = 2, // reserved — explicit pointer remap; not implemented (#2089).
 };
+
+export inline constexpr int kForceCompactHardMutexIssue = 2157;
+
+// Process-wide Force-block metrics (Agents query via arena-live-compact-stats).
+export inline std::atomic<std::uint64_t> g_force_compact_blocked_by_pin_total{0};
+export inline std::atomic<std::uint64_t> g_force_compact_blocked_by_envframe_guard_total{0};
 
 export struct LiveCompactResult {
     std::size_t bytes_reclaimed = 0; // bytes saved by defrag_impl (buffer resize)
@@ -458,9 +476,16 @@ export struct LiveCompactResult {
     // future LiveCompactMode::Moving. Consumers MUST observe generation
     // stamps or LifetimePin::validate() instead of assuming pointer rewrite.
     bool moved_live_objects = false;
+    // Issue #2157: Force hard-mutex outcomes (no gen bump when true).
+    bool force_blocked_by_pin = false;
+    bool force_blocked_by_envframe_guard = false;
 
     [[nodiscard]] bool empty() const noexcept {
-        return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated;
+        return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
+               !force_blocked_by_pin && !force_blocked_by_envframe_guard;
+    }
+    [[nodiscard]] bool force_blocked() const noexcept {
+        return force_blocked_by_pin || force_blocked_by_envframe_guard;
     }
 };
 
@@ -987,11 +1012,11 @@ public:
         return live_compact(LiveCompactMode::Force).slots_recycled;
     }
 
-    // Issue #1518 + #2004: live_compact — explicit controllable API with
-    // LiveCompactMode (Soft / Force) + LiveCompactResult struct. Returns
-    // bytes_reclaimed / slots_recycled / new_gen / soft_gated /
-    // invalidates_pins so Agents, MutationBoundary probe, and compact_sweep
-    // body can observe the full outcome. Force mode bypasses the soft-gate.
+    // Issue #1518 + #2004 + #2157: live_compact — explicit controllable API
+    // with LiveCompactMode (Soft / Force) + LiveCompactResult. Soft gates on
+    // render / MutationBoundary. Force (#2157) hard-mutexes on live
+    // LifetimePin or active EnvFrameLifetimeGuard — no gen bump / pin invalidate
+    // while holds are live (hold-time guarantee under fiber-steal).
     [[nodiscard]] LiveCompactResult
     live_compact(LiveCompactMode mode = LiveCompactMode::Soft) noexcept {
         aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
@@ -1000,7 +1025,7 @@ public:
         result.new_gen = generation_.load(std::memory_order_acquire);
 
         // Soft-gate the auto path during render / active MutationBoundary
-        // so fiber yield / Guard pins stay coherent. Force bypasses both.
+        // so fiber yield / Guard pins stay coherent.
         if (mode == LiveCompactMode::Soft) {
             if (aura::core::arena_policy::in_render_hotpath()) {
                 aura::core::arena_policy::record_compact_soft_gated_render();
@@ -1016,6 +1041,23 @@ public:
             }
             ++stats_.live_compact_soft_count;
         } else {
+            // Issue #2157: Force hard-mutex — busy/soft-gated style result,
+            // no gen bump, no pin invalidate while holds are live.
+            if (aura::core::lifetime::live_pin_count() > 0) {
+                result.force_blocked_by_pin = true;
+                result.soft_gated = true; // Agent-visible "did not run" marker
+                ++stats_.force_compact_blocked_by_pin;
+                g_force_compact_blocked_by_pin_total.fetch_add(1, std::memory_order_relaxed);
+                return result;
+            }
+            if (aura::core::envframe_lifetime::active_guard_depth() > 0) {
+                result.force_blocked_by_envframe_guard = true;
+                result.soft_gated = true;
+                ++stats_.force_compact_blocked_by_envframe_guard;
+                g_force_compact_blocked_by_envframe_guard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                return result;
+            }
             ++stats_.live_compact_force_count;
         }
 
@@ -1724,6 +1766,10 @@ public:
             // false under Soft/Force; OR semantics future-proofs a Moving
             // mode where some arenas move while others don't.
             agg.moved_live_objects = agg.moved_live_objects || r.moved_live_objects;
+            // Issue #2157: OR Force hard-mutex flags across arenas.
+            agg.force_blocked_by_pin = agg.force_blocked_by_pin || r.force_blocked_by_pin;
+            agg.force_blocked_by_envframe_guard =
+                agg.force_blocked_by_envframe_guard || r.force_blocked_by_envframe_guard;
         }
         return agg;
     }

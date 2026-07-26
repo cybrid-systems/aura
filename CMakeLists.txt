@@ -1379,6 +1379,10 @@ aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
 # firing). Lives in tests/core/ per #81934/#81967.
 aura_add_issue_test(test_arena_auto_compact_intelligent)
 aura_issue_test_link_llvm_jit(test_arena_auto_compact_intelligent)
+
+# Issue #2157: Force live_compact hard-mutex with LifetimePin + EnvFrameLifetimeGuard.
+aura_add_issue_test(test_force_compact_hard_mutex_2157)
+aura_issue_test_link_llvm_jit(test_force_compact_hard_mutex_2157)
 # Issue #1990: (gc-temp)/(gc-stats) closures_ iteration protected by closures_mtx_ (B-009).
 aura_add_issue_test(test_issue_1990)
 aura_issue_test_link_llvm_jit(test_issue_1990)
