@@ -10,6 +10,14 @@
 //  primitives agree on which nodes match, regardless of
 //  `:nested-arity` mode.
 //
+//  Issue #2123 — default MacroIntroduced hygiene policy (production):
+//    QueryMatcher constructed with skip_macro_introduced=true (the
+//    query:pattern default) hard-skips SyntaxMarker::MacroIntroduced
+//    at every recursive match_subtree step. Agents must opt in via
+//    :include-macro-introduced / :allow-macro-introduced #t (or
+//    :exclude-macro-introduced #f) to inspect expansion residue.
+//    This prevents silent wrong-edit of macro bodies under self-evo.
+//
 //  Module interface unit. Both call sites import this:
 //    import aura.compiler.matcher;
 // ──────────────────────────────────────────────────────────────────

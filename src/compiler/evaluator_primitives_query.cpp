@@ -2403,12 +2403,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #547 / #1501 / #1609 / #1636 / #1892: query:pattern-hygiene-stats —
+    // Issue #547 / #1501 / #1609 / #1636 / #1892 / #2123: query:pattern-hygiene-stats —
     // authoritative MacroIntroduced hygiene dashboard for query:pattern.
-    // Schema **1636** (lineage 1609/1501/547). Defense-in-depth:
+    // Schema **2123** (lineage 1892/1636/1609/1501/547). Defense-in-depth:
     // root/full-walk skip + recursive matcher + user-only
     // tag_arity_index_user_ (marker dimension via parallel index — not
     // packing marker into TagArityKey; same hot-path win).
+    // #2123: default-exclude is production contract; opt-in counters exposed.
     ObservabilityPrims::register_stats_impl(
         "query:pattern-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -2416,7 +2417,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             // Capacity must be power-of-two (open-address mask hcap-1).
-            auto* ht = FlatHashTable::create(32);
+            // #2123 added several keys — 64 slots for open addressing.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2481,18 +2483,37 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("pattern-hygiene-mandate-active", 1);
             insert_kv("typed-mutation-audit-skip-wired", 1); // #1892
             insert_kv("self-evo-query-hygiene-mandate", 1);  // #1892
-            insert_kv("issue", 1892);
-            insert_kv("schema", 1892); // lineage 1636 / 1609 / 1501 / 547 / 1047
-            // Issue #1914 AC metric aliases on pattern-hygiene surface.
+            insert_kv("issue", 2123);  // #2123 production default-filter contract
+            insert_kv("schema", 2123); // lineage 1892 / 1636 / 1609 / 1501 / 547
+            insert_kv("schema-2123", 2123);
+            insert_kv("issue-2123", 2123);
+            insert_kv("default-hygiene-filter-wired", 1); // #2123 AC1 sentinel
+            // Issue #1914 / #2123 AC metric aliases on pattern-hygiene surface.
             if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                 insert_kv("pattern_hygiene_filter_hits",
                           static_cast<std::int64_t>(
                               m->pattern_hygiene_filter_hits.load(std::memory_order_relaxed)));
+                insert_kv("pattern_hygiene_filtered_total",
+                          static_cast<std::int64_t>(
+                              m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed)));
+                insert_kv("pattern-hygiene-filtered-total",
+                          static_cast<std::int64_t>(
+                              m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed)));
+                insert_kv("pattern_include_macro_opt_in_total",
+                          static_cast<std::int64_t>(m->pattern_include_macro_opt_in_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("pattern-include-macro-opt-in-total",
+                          static_cast<std::int64_t>(m->pattern_include_macro_opt_in_total.load(
+                              std::memory_order_relaxed)));
                 insert_kv("macro_introduced_in_pattern_violations",
                           static_cast<std::int64_t>(m->macro_introduced_in_pattern_violations.load(
                               std::memory_order_relaxed)));
             } else {
                 insert_kv("pattern_hygiene_filter_hits", pattern_skips);
+                insert_kv("pattern_hygiene_filtered_total", pattern_skips);
+                insert_kv("pattern-hygiene-filtered-total", pattern_skips);
+                insert_kv("pattern_include_macro_opt_in_total", 0);
+                insert_kv("pattern-include-macro-opt-in-total", 0);
                 insert_kv("macro_introduced_in_pattern_violations",
                           static_cast<std::int64_t>(ev->get_pattern_macro_filter_violations()));
             }

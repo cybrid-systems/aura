@@ -1649,13 +1649,21 @@ void register_workspace_query_primitives(
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
     //
-    // Optional keywords (Issue #267 / #486 / #922):
+    // Optional keywords (Issue #267 / #486 / #922 / #2123):
     //   :include-macro-introduced [#t|#f]
     //   :allow-macro-introduced [#t|#f]  — discoverable alias (#486)
     //   :exclude-macro-introduced [#t|#f] — Issue #922 explicit hygiene
     //     predicate (default #t = safe self-evolution; opposite of include)
-    // When absent or include=#f, macro-introduced root positions are skipped
-    // (Issue #140 hygiene default). When include=#t, they are included.
+    //
+    // Issue #2123 production default hygiene policy:
+    //   When include is absent or #f, MacroIntroduced roots AND recursive
+    //   subtrees are skipped (QueryMatcher skip_macro_introduced=true +
+    //   tag_arity user-only bucket). Agents that must inspect expansion
+    //   residue pass :include-macro-introduced #t / :allow-macro-introduced
+    //   #t (or :exclude-macro-introduced #f). This is the "code as memory"
+    //   contract: structural self-modify must not match macro residue by
+    //   default. Metrics: pattern_hygiene_filtered_total +
+    //   pattern_include_macro_opt_in_total (query:pattern-hygiene-stats).
     add("query:pattern", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty())
@@ -1805,6 +1813,12 @@ void register_workspace_query_primitives(
         // Same matcher used by mutate:replace-pattern, so the two
         // primitives agree on which nodes match a pattern regardless
         // of :nested-arity mode.
+        // Issue #2123: default skip MacroIntroduced (!include); opt-in
+        // bumps pattern_include_macro_opt_in_total for dashboards.
+        if (include_macro_introduced) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->pattern_include_macro_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+        }
         aura::compiler::QueryMatcher matcher(ws.workspace_flat, ws.workspace_pool, pat_flat,
                                              pat_pool, wildcard_sym, nested_arity,
                                              !include_macro_introduced);
@@ -2087,13 +2101,20 @@ void register_workspace_query_primitives(
             }
         }
 
-        // Issue #421 / #1892: sync recursive hygiene skips + verify
+        // Issue #421 / #1892 / #2123: sync recursive hygiene skips + verify
         // default-hygiene results never surface MacroIntroduced
         // node ids (post query-split contract).
         if (matcher.recursive_macro_skipped() > 0) {
             ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
             // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
             ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
+            // Issue #2123: recursive skips count toward filtered total.
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->pattern_hygiene_filtered_total.fetch_add(matcher.recursive_macro_skipped(),
+                                                            std::memory_order_relaxed);
+                m->pattern_hygiene_filter_hits.fetch_add(matcher.recursive_macro_skipped(),
+                                                         std::memory_order_relaxed);
+            }
             macro_skips_this_query += matcher.recursive_macro_skipped();
         }
         if (matcher.macro_intro_filtered_strict() > 0) {

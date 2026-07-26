@@ -1075,6 +1075,13 @@ struct CompilerMetrics {
     // provenance_query_total: query:node-provenance + last-mutation-provenance hits.
     // macro_introduced_in_pattern_violations: result-leakage after verify hygiene.
     std::atomic<std::uint64_t> pattern_hygiene_filter_hits{0};
+    // Issue #2123: AC metric aliases for default MacroIntroduced filter.
+    // pattern_hygiene_filtered_total: nodes skipped by default hygiene
+    //   (root + recursive; mirrors pattern_hygiene_filter_hits lineage)
+    // pattern_include_macro_opt_in_total: query:pattern calls that opted
+    //   into :include-macro-introduced / :allow-macro-introduced #t
+    std::atomic<std::uint64_t> pattern_hygiene_filtered_total{0};     // #2123
+    std::atomic<std::uint64_t> pattern_include_macro_opt_in_total{0}; // #2123
     std::atomic<std::uint64_t> provenance_query_total{0};
     std::atomic<std::uint64_t> macro_introduced_in_pattern_violations{0};
     std::atomic<std::uint64_t> by_marker_where_filter_hits{0};

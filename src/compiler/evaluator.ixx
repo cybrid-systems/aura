@@ -6409,10 +6409,13 @@ public:
         // Issue #593: correlate query:pattern hygiene skips with
         // the AST→IR closed-loop observability surface.
         // Issue #1914: also bump pattern_hygiene_filter_hits AC metric.
+        // Issue #2123: pattern_hygiene_filtered_total is the production
+        // AC name for the same default MacroIntroduced filter.
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->pattern_ir_capture_prevented_total.fetch_add(1, std::memory_order_relaxed);
             m->pattern_hygiene_filter_hits.fetch_add(1, std::memory_order_relaxed);
+            m->pattern_hygiene_filtered_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     // Issue #593: tag_arity delta hits during hygiene-filtered query.

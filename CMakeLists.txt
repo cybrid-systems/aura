@@ -2185,6 +2185,11 @@ aura_add_issue_test(test_workspace_region_concurrency_2121)
 aura_issue_test_link_llvm_jit(test_workspace_region_concurrency_2121)
 add_dependencies(all_test_issue_targets test_workspace_region_concurrency_2121)
 
+# Issue #2123: default MacroIntroduced hygiene filter for query:pattern.
+aura_add_issue_test(test_query_pattern_default_hygiene_2123)
+aura_issue_test_link_llvm_jit(test_query_pattern_default_hygiene_2123)
+add_dependencies(all_test_issue_targets test_query_pattern_default_hygiene_2123)
+
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)

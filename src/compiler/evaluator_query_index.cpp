@@ -422,9 +422,17 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
             const auto excluded = static_cast<std::uint64_t>(full_n - user_n);
             // Credit index-level exclusions into the same counter as the
             // defense-in-depth loop (bump_macro_introduced_skipped_in_query).
-            // compiler_metrics_ correlation lives in that non-const bump;
-            // keep this const path free of CompilerMetrics (#1892).
             macro_introduced_skipped_in_query_.fetch_add(excluded, std::memory_order_relaxed);
+            // Issue #2123: also credit CompilerMetrics AC counters so
+            // pattern_hygiene_filtered_total moves when the user-only
+            // tag_arity index does the filtering (loop never sees those ids).
+            if (compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                m->pattern_hygiene_filtered_total.fetch_add(excluded, std::memory_order_relaxed);
+                m->pattern_hygiene_filter_hits.fetch_add(excluded, std::memory_order_relaxed);
+                m->pattern_ir_capture_prevented_total.fetch_add(excluded,
+                                                                std::memory_order_relaxed);
+            }
         }
     }
     auto it = map.find(key);
