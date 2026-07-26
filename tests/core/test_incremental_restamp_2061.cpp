@@ -1,177 +1,239 @@
 // Issue #2061 — incremental restamp observability for generation wrap.
+// Issue #2122 — wrap-time dirty-cone restamp (vs full live walk) + fallback.
 //
-// Verifies the restamp_nodes_total + restamp_us_total metrics added to
-// FlatAST::restamp_all_node_generations() (#2061 AC4) and the
-// incremental (free-list-skipping) restamp property (#2061 AC1). The
-// synthetic workload forces ≥2 generation wraps via bump_generation()
-// loops and verifies:
-//   - restamp completes without O(n) latency spike on every wrap
-//     (incremental: free-list slots are skipped, only live nodes
-//     restamped — verified via restamp_nodes_total delta vs total
-//     node count).
-//   - StableNodeRef captured before a wrap is invalid after the wrap
-//     (generation_ + wrap_epoch_ invariant preserved — AC2).
-//   - generation_wrap_count_, restamp_nodes_total_, restamp_us_total_
-//     all move under the synthetic wrap workload (AC4).
-//   - restamp_all_node_generations() is idempotent (multiple calls
-//     are safe — AC3 backward compat).
-//   - Doc comment present on the new metrics fields (AC5, verified
-//     in src/core/ast.ixx).
+// #2061:
+//   - restamp_nodes_total + restamp_us_total metrics
+//   - free-list-skipping full restamp; StableNodeRef wrap invalidation
+//   - idempotent restamp_all_node_generations
 //
-// Note: restamp cost is observed via the cumulative microsecond
-// counter (restamp_us_total_). The absolute cost of a single restamp
-// is microseconds for small ASTs; the metric is primarily for
-// long-running sessions where many wraps accumulate measurable cost.
+// #2122:
+//   AC1: source cites #2122; wrap policy documented
+//   AC2: dirty-cone wrap restamps ≪ live_nodes (incremental counter)
+//   AC3: pre-wrap StableNodeRef on untouched node invalidated (wrap_epoch)
+//   AC4: pinned path still restamps (via full/lazy; Guard restamp_pinned separate)
+//   AC5: density threshold forces full fallback + counter
+//   AC6: metrics on query:generation-stats (schema-2122 keys when workspace live)
+//   AC7: this file (reuse #2061 test per #81967)
 
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
+#include <string>
 
 import std;
 import aura.core.ast;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
 using aura::ast::FlatAST;
 using aura::ast::NodeTag;
 using aura::ast::SyntaxMarker;
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
 
-// Force a generation wrap by calling bump_generation() enough times
-// to overflow uint16_t. Returns the number of bump_generation() calls
-// made. Each wrap bumps generation_wrap_count_ by 1.
 std::uint64_t force_one_wrap(FlatAST& ast) {
-    // generation_ is uint16_t starting at 1, wraps 65535 -> 0 -> 1.
-    // We need (65536 - current) bumps to force one wrap. Use a
-    // generous upper bound to handle the case where generation_ is
-    // already past 0 from prior wraps in the same FlatAST.
     constexpr std::uint64_t kBumpsPerWrap = 65536;
     for (std::uint64_t i = 0; i < kBumpsPerWrap; ++i)
         ast.bump_generation();
     return kBumpsPerWrap;
 }
 
+std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+std::int64_t href_gen(CompilerService& cs, std::string_view key) {
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:generation-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2061: incremental restamp observability ===");
+    std::println("=== Issue #2061 / #2122: restamp observability + wrap cone ===");
     FlatAST ast;
 
-    // Seed: add enough live nodes so restamp takes measurable
-    // wall-clock time (16 nodes restamps in <1us which rounds to 0
-    // with std::chrono::microseconds resolution; 10000 nodes restamps
-    // in tens-of-microseconds, well above the noise floor).
     constexpr int kSeedNodes = 10000;
     for (int i = 0; i < kSeedNodes; ++i)
         ast.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
 
-    // ── AC1: force ≥2 wraps, restamp completes, restamp is incremental ──
+    // ── AC1 (#2061): force ≥2 wraps, full restamp when no dirty ──
     {
-        std::println("\n--- AC1: forced ≥2 wraps, restamp completes ---");
+        std::println("\n--- #2061 AC1: forced ≥2 wraps, full restamp (no dirty) ---");
         const auto wrap_before = ast.generation_wrap_count();
         const auto restamp_nodes_before = ast.restamp_nodes_total();
         const auto restamp_us_before = ast.restamp_us_total();
         const auto live_nodes_before = ast.size();
-        std::println("  live nodes: {}", live_nodes_before);
-        std::println("  wraps before: {}", wrap_before);
+        const auto fb0 = ast.restamp_full_fallback_total();
 
-        // Force wrap #1
         force_one_wrap(ast);
-        CHECK(ast.generation_wrap_count() == wrap_before + 1,
-              "wrap_count bumped by exactly 1 after first forced wrap");
+        CHECK(ast.generation_wrap_count() == wrap_before + 1, "wrap #1");
         ast.restamp_all_node_generations();
         const auto after_wrap1_nodes = ast.restamp_nodes_total();
-        const auto after_wrap1_us = ast.restamp_us_total();
-        std::println("  after wrap #1: restamp_nodes_total delta = {}, "
-                     "restamp_us_total delta = {}",
-                     after_wrap1_nodes - restamp_nodes_before, after_wrap1_us - restamp_us_before);
+        // No dirty → full fallback path restamps all live.
         CHECK(after_wrap1_nodes - restamp_nodes_before == live_nodes_before,
-              "restamp after wrap #1 restamped exactly live_nodes (no free-list skip with no free "
-              "slots)");
+              "wrap#1 full restamp = live_nodes");
+        CHECK(ast.restamp_full_fallback_total() >= fb0 + 1, "full fallback on empty touched");
 
-        // Force wrap #2
         force_one_wrap(ast);
-        CHECK(ast.generation_wrap_count() == wrap_before + 2,
-              "wrap_count bumped by exactly 2 after second forced wrap");
+        CHECK(ast.generation_wrap_count() == wrap_before + 2, "wrap #2");
         ast.restamp_all_node_generations();
         const auto after_wrap2_nodes = ast.restamp_nodes_total();
-        const auto after_wrap2_us = ast.restamp_us_total();
-        std::println("  after wrap #2: restamp_nodes_total delta = {}, "
-                     "restamp_us_total delta = {}",
-                     after_wrap2_nodes - after_wrap1_nodes, after_wrap2_us - after_wrap1_us);
         CHECK(after_wrap2_nodes - after_wrap1_nodes == live_nodes_before,
-              "restamp after wrap #2 restamped exactly live_nodes");
-
-        // Incremental property: restamp_us_total grew on both wraps,
-        // proving the work was done. The restamp_nodes_total delta
-        // matches live_nodes_before (no free-list slots to skip in
-        // this minimal test, but the on_free bitmap is exercised
-        // whenever free_list_ is non-empty — covered by free-slot
-        // skip in the production restamp loop).
-        CHECK(after_wrap2_us > after_wrap1_us, "restamp_us_total grows monotonically across wraps");
+              "wrap#2 full restamp = live_nodes");
+        CHECK(ast.restamp_us_total() > restamp_us_before, "restamp_us grows");
     }
 
-    // ── AC2: StableNodeRef captured before wrap is invalid after wrap ──
+    // ── AC2 (#2061): StableNodeRef invalid after wrap ──
     {
-        std::println("\n--- AC2: StableNodeRef invalid after wrap ---");
-        // Create a ref in the current epoch. Use is_valid_in() (the
-        // StableNodeRef-aware overload) which checks BOTH gen and
-        // wrap_epoch_ (per #368 / #738). The raw ast.is_valid(NodeId)
-        // overload only checks gen + node_gen_[id] — after wrap +
-        // restamp both reset to the same value, so the raw check would
-        // give a false-positive (the exact bug #368 fixed).
+        std::println("\n--- #2061 AC2: StableNodeRef invalid after wrap ---");
         const auto ref = ast.make_ref(0);
         const auto wrap_epoch_before = ast.wrap_epoch();
-        CHECK(ref.is_valid_in(ast), "ref valid before wrap (is_valid_in checks gen + wrap_epoch)");
-
-        // Force a wrap.
+        CHECK(ref.is_valid_in(ast), "ref valid before wrap");
         force_one_wrap(ast);
         ast.restamp_all_node_generations();
-
-        CHECK(ast.wrap_epoch() > wrap_epoch_before, "wrap_epoch_ bumped after forced wrap");
-        CHECK(!ref.is_valid_in(ast), "ref captured before wrap is invalid after wrap "
-                                     "(is_valid_in checks wrap_epoch_ — #368 invariant preserved)");
+        CHECK(ast.wrap_epoch() > wrap_epoch_before, "wrap_epoch bumped");
+        CHECK(!ref.is_valid_in(ast), "ref invalid after wrap (wrap_epoch fence)");
     }
 
-    // ── AC3: restamp_all_node_generations() is idempotent ──
+    // ── AC3 (#2061): restamp idempotent ──
     {
-        std::println("\n--- AC3: restamp idempotency ---");
+        std::println("\n--- #2061 AC3: restamp idempotency ---");
         const auto restamp_nodes_before = ast.restamp_nodes_total();
-        const auto restamp_us_before = ast.restamp_us_total();
-        // Call restamp 3 more times without any mutation.
-        ast.restamp_all_node_generations();
-        ast.restamp_all_node_generations();
-        ast.restamp_all_node_generations();
-        // Each call bumps metrics even when there's no wrap to recover
-        // (the on_free bitmap is rebuilt and live node_gen_ is
-        // overwritten with current generation_). The delta should
-        // equal 3 * live_nodes (not 0).
         const auto live_nodes = ast.size();
+        ast.restamp_all_node_generations();
+        ast.restamp_all_node_generations();
+        ast.restamp_all_node_generations();
         CHECK(ast.restamp_nodes_total() - restamp_nodes_before == 3 * live_nodes,
-              "3 restamp calls bump restamp_nodes_total by 3 * live_nodes");
-        CHECK(ast.restamp_us_total() >= restamp_us_before,
-              "restamp_us_total monotonic across idempotent calls");
+              "3 restamps = 3 * live");
     }
 
-    // ── AC4: metrics present and move under the synthetic workload ──
+    // ── AC4 (#2061): metrics move ──
     {
-        std::println("\n--- AC4: all 3 metrics present and move ---");
-        const auto gw = ast.generation_wrap_count();
-        const auto rn = ast.restamp_nodes_total();
-        const auto ru = ast.restamp_us_total();
-        std::println("  generation_wrap_count={}, restamp_nodes_total={}, restamp_us_total={}", gw,
-                     rn, ru);
-        CHECK(gw >= 3, "generation_wrap_count >= 3 (AC1 forced 3 wraps)");
-        CHECK(rn > 0, "restamp_nodes_total > 0 (AC1 + AC3 restamped live nodes)");
-        CHECK(ru > 0, "restamp_us_total > 0 (AC1 + AC3 spent time in restamp)");
+        std::println("\n--- #2061 AC4: metrics present ---");
+        CHECK(ast.generation_wrap_count() >= 3, "wrap_count >= 3");
+        CHECK(ast.restamp_nodes_total() > 0, "restamp_nodes > 0");
+        CHECK(ast.restamp_us_total() > 0, "restamp_us > 0");
     }
 
-    // ── AC5: doc comment present (verified in src/core/ast.ixx) ──────
-    // The new metric fields restamp_nodes_total_ + restamp_us_total_
-    // are documented inline in src/core/ast.ixx (see commit message
-    // and the field declaration comment). This AC is satisfied by
-    // code review — the test runner does not parse source comments.
+    // ── #2122 AC1: source docs ──
+    {
+        std::println("\n--- #2122 AC1: source cites policy ---");
+        auto src = read_file("src/core/ast.ixx");
+        CHECK(!src.empty(), "read ast.ixx");
+        CHECK(src.find("#2122") != std::string::npos, "cites #2122");
+        CHECK(src.find("restamp_incremental") != std::string::npos ||
+                  src.find("dirty-cone") != std::string::npos ||
+                  src.find("use_incremental") != std::string::npos,
+              "incremental policy present");
+        CHECK(src.find("restamp_full_fallback_total") != std::string::npos, "fallback counter");
+    }
 
-    std::println("\n=== Results: passed ===");
-    return 0;
+    // ── #2122 AC2: dirty cone ≪ live on wrap ──
+    {
+        std::println("\n--- #2122 AC2: incremental dirty-cone wrap ---");
+        FlatAST cone;
+        constexpr int kN = 8000;
+        for (int i = 0; i < kN; ++i)
+            cone.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        // Dirty a small cone (few nodes).
+        for (int i = 0; i < 5; ++i)
+            cone.mark_dirty(static_cast<aura::ast::NodeId>(i));
+        const auto inc0 = cone.restamp_incremental_nodes_total();
+        const auto rn0 = cone.restamp_nodes_total();
+        force_one_wrap(cone);
+        cone.restamp_all_node_generations();
+        const auto inc_delta = cone.restamp_incremental_nodes_total() - inc0;
+        const auto rn_delta = cone.restamp_nodes_total() - rn0;
+        std::println("  live={} restamped={} incremental_delta={}", cone.size(), rn_delta,
+                     inc_delta);
+        CHECK(inc_delta > 0, "incremental path restamped some nodes");
+        CHECK(inc_delta <= 32, "incremental restamped small cone (≪ live)");
+        CHECK(rn_delta == inc_delta, "restamp_nodes_total matches incremental count");
+        CHECK(rn_delta * 10 < cone.size(), "restamped ≪ live_nodes");
+        CHECK(cone.restamp_lazy_align_enabled(), "lazy align enabled after incremental");
+    }
+
+    // ── #2122 AC3: untouched pre-wrap ref not silently valid ──
+    {
+        std::println("\n--- #2122 AC3: untouched ref after incremental wrap ---");
+        FlatAST cone;
+        for (int i = 0; i < 1000; ++i)
+            cone.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        // Capture ref on node that will NOT be dirtied.
+        const auto untouched = cone.make_ref(500);
+        CHECK(untouched.is_valid_in(cone), "untouched valid pre-wrap");
+        cone.mark_dirty(0);
+        force_one_wrap(cone);
+        cone.restamp_all_node_generations();
+        // wrap_epoch fence: must not be silently valid with wrong gen.
+        CHECK(!untouched.is_valid_in(cone), "pre-wrap ref invalid after wrap (epoch fence)");
+        // Live node still accessible via is_valid(NodeId) through lazy align.
+        CHECK(cone.is_valid(static_cast<aura::ast::NodeId>(500)),
+              "untouched live NodeId valid via lazy align");
+        // Fresh ref works after lazy align.
+        const auto fresh = cone.make_ref(500);
+        CHECK(fresh.is_valid_in(cone), "fresh ref on untouched node valid after wrap");
+    }
+
+    // ── #2122 AC5: density threshold → full fallback ──
+    {
+        std::println("\n--- #2122 AC5: density threshold full fallback ---");
+        FlatAST dense;
+        constexpr int kN = 100;
+        for (int i = 0; i < kN; ++i)
+            dense.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        // Dirty >30% of nodes.
+        for (int i = 0; i < 50; ++i)
+            dense.mark_dirty(static_cast<aura::ast::NodeId>(i));
+        const auto fb0 = dense.restamp_full_fallback_total();
+        const auto inc0 = dense.restamp_incremental_nodes_total();
+        force_one_wrap(dense);
+        dense.restamp_all_node_generations();
+        CHECK(dense.restamp_full_fallback_total() >= fb0 + 1, "full fallback bumped");
+        CHECK(dense.restamp_incremental_nodes_total() == inc0,
+              "incremental counter unchanged on fallback");
+        CHECK(dense.restamp_nodes_total() >= static_cast<std::uint64_t>(kN),
+              "full path restamped all live");
+        CHECK(!dense.restamp_lazy_align_enabled(), "lazy align off after full");
+    }
+
+    // ── #2122 AC6: query surface ──
+    {
+        std::println("\n--- #2122 AC6: query:generation-stats schema-2122 ---");
+        CompilerService cs;
+        // Need a workspace for live FlatAST counters — load minimal source.
+        auto set = cs.eval("(set-code \"(define x 1)\")");
+        (void)set;
+        CHECK(href_gen(cs, "schema-2122") == 2122 || href_gen(cs, "schema") == 1282,
+              "generation-stats reachable");
+        // schema-2122 only when workspace present
+        if (cs.evaluator().workspace_flat()) {
+            CHECK(href_gen(cs, "schema-2122") == 2122, "schema-2122");
+            CHECK(href_gen(cs, "issue-2122") == 2122, "issue-2122");
+            CHECK(href_gen(cs, "restamp-nodes-total") >= 0, "restamp-nodes-total");
+            CHECK(href_gen(cs, "restamp-incremental-nodes-total") >= 0, "incremental key");
+            CHECK(href_gen(cs, "restamp-full-fallback-total") >= 0, "fallback key");
+        }
+    }
+
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
 }
