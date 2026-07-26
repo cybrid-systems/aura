@@ -333,6 +333,10 @@ std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0};
 std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total{0};
 // Issue #2019: post-expand MacroIntroduced generation restamp calls.
 std::atomic<std::uint64_t> g_macro_restamp_after_flat_total{0};
+// Issue #2096: per-cloned-subtree restamp counter (subtree-local coherence
+// at expand exit + critical mutate entry). Bumped when NodeId-rooted
+// restamp_macro_introduced_subtree actually repinned ≥1 node.
+std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total{0};
 
 // Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
 // primitive can read these file-level atomics from another TU without the
@@ -356,6 +360,11 @@ std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept {
 }
 std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept {
     return g_macro_restamp_after_flat_total.load(std::memory_order_relaxed);
+}
+// Issue #2096: per-cloned-subtree MacroIntroduced restamp counter
+// (subtree-local coherence at expand exit + critical mutate entry).
+std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcept {
+    return g_macro_expand_mutate_restamp_total.load(std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
     return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
@@ -398,15 +407,33 @@ void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
     m->macro_restamp_after_flat_total.store(
         g_macro_restamp_after_flat_total.load(std::memory_order_relaxed),
         std::memory_order_relaxed);
+    // Issue #2096: mirror per-cloned-subtree restamp too (used by
+    // (query:macro-mutate-restamp-stats) and (engine:metrics) views).
+    m->macro_expand_mutate_restamp_total.store(
+        g_macro_expand_mutate_restamp_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
 }
 } // extern "C"
 
 // Issue #2019: restamp MacroIntroduced gens after a successful expand
 // pass so FlatAST consumers (mutate / query / JIT) never see stale gen.
-static void restamp_after_expand(aura::ast::FlatAST& flat) {
+// Issue #2096: when `new_root` is provided, also run the NodeId-rooted
+// restamp_macro_introduced_subtree on the cloned/expanded subtree so
+// the immediately-introduced MacroIntroduced closure gets a per-subtree
+// generation+parent+dirty repair without the AST-wide scan cost.
+// `new_root` defaults NULL_NODE for backward compat with callers that
+// don't track the just-cloned root.
+static void restamp_after_expand(aura::ast::FlatAST& flat,
+                                 aura::ast::NodeId new_root = aura::ast::NULL_NODE) {
     const auto n = flat.restamp_macro_introduced_generations();
     if (n > 0)
         g_macro_restamp_after_flat_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2096: per-cloned-subtree restamp (subtree-local coherence).
+    if (new_root != aura::ast::NULL_NODE) {
+        const auto m = flat.restamp_macro_introduced_subtree(new_root);
+        if (m > 0)
+            g_macro_expand_mutate_restamp_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 aura::ast::NodeId clone_macro_body(
@@ -1071,13 +1098,16 @@ aura::ast::NodeId expand_inner_macros(
                                 // Issue #2019: set_child bumps generation_;
                                 // restamp MacroIntroduced so cloned body
                                 // matches surrounding AST gen.
-                                restamp_after_expand(*flat);
+                                // Issue #2096: also run per-cloned-subtree
+                                // restamp on the freshly introduced subtree.
+                                restamp_after_expand(*flat, cloned);
                                 break;
                             }
                         }
                     } else {
                         // Root-level expand: still restamp MacroIntroduced.
-                        restamp_after_expand(*flat);
+                        // Issue #2096: also restamp the cloned subtree root.
+                        restamp_after_expand(*flat, cloned);
                     }
                     return cloned;
                 }

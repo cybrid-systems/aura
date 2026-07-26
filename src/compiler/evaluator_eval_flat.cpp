@@ -3297,6 +3297,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // structural splice + MacroIntroduced-only parent/dirty fix.
                                 f->restamp_all_node_generations();
                                 (void)f->restamp_macro_introduced_generations();
+                                // Issue #2096: per-cloned-subtree restamp on the
+                                // expanded body so the freshly introduced MacroIntroduced
+                                // closure gets a subtree-local gen+parent+dirty repair
+                                // (no AST-wide scan, pairs with the zero-arg sweep).
+                                if (expanded != aura::ast::NULL_NODE)
+                                    (void)f->restamp_macro_introduced_subtree(expanded);
                                 // Evaluate the cloned + inner-expanded
                                 // body. eval_flat returns a runtime
                                 // value (a list for cons-chain qq
@@ -5114,6 +5120,10 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
 
     // Walk the affected set, find Call nodes whose callee is
     // a registered macro, and re-expand them.
+    // Issue #2096: track last successfully re-expanded root so the
+    // post-loop per-cloned-subtree restamp (NodeId-rooted helper) has
+    // a visible NodeId to anchor on. NULL when no re-expand succeeded.
+    aura::ast::NodeId last_expanded = aura::ast::NULL_NODE;
     for (auto id : affected) {
         if (id == NULL_NODE || id >= flat.size())
             continue;
@@ -5193,13 +5203,23 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
 
+        // Issue #2096: remember the last successfully expanded root
+        // so the post-loop helper call can anchor on it.
+        last_expanded = expanded;
+
         ++re_expanded;
     }
 
     // Issue #2019: after post-mutate re-expand, restamp MacroIntroduced
     // gens so subsequent mutate/query/JIT see stable markers.
-    if (re_expanded > 0)
+    if (re_expanded > 0) {
         (void)flat.restamp_macro_introduced_generations();
+        // Issue #2096: per-cloned-subtree restamp on the last expanded
+        // root inside the post-mutate re-expand pass (subtree-local
+        // coherence, scoped to the just-re-expanded subtree root).
+        if (last_expanded != aura::ast::NULL_NODE)
+            (void)flat.restamp_macro_introduced_subtree(last_expanded);
+    }
 
     return re_expanded;
 }

@@ -1782,6 +1782,11 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
 aura_add_issue_test(test_macro_restamp_after_flat)
 aura_issue_test_link_llvm_jit(test_macro_restamp_after_flat)
 add_dependencies(all_test_issue_targets test_macro_restamp_after_flat)
+# Issue #2096: per-cloned-subtree MacroIntroduced restamp stability
+# after expand in mutate paths (NodeId-rooted helper + counter + query surface).
+aura_add_issue_test(test_macro_intro_restamp)
+aura_issue_test_link_llvm_jit(test_macro_intro_restamp)
+add_dependencies(all_test_issue_targets test_macro_intro_restamp)
 
 # Issue #2020: Agent-visible reflect:hygiene-stats + provenance-blame.
 aura_add_issue_test(test_reflect_hygiene_agent_diagnostics)

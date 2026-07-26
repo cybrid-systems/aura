@@ -84,6 +84,9 @@ export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;
 
 // Issue #2019: post-expand MacroIntroduced generation restamp calls.
 export extern std::atomic<std::uint64_t> g_macro_restamp_after_flat_total;
+// Issue #2096: per-cloned-subtree MacroIntroduced restamp counter
+// (subtree-local coherence at expand exit + critical mutate entry).
+export extern std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total;
 
 // Issue #2023: MacroSelfEvo capability gate observability.
 export extern std::atomic<std::uint64_t> g_macro_self_evo_denied_total;

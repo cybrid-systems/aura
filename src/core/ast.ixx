@@ -1832,6 +1832,11 @@ public:
     // Issue #2019: times restamp_macro_introduced_generations ran
     // after expand → FlatAST (Agent / self-evo generation consistency).
     mutable std::atomic<std::uint64_t> macro_restamp_after_flat_total_{0};
+    // Issue #2096: times restamp_macro_introduced_subtree(NodeId) ran
+    // at expand exit + critical mutate entry points (parent/child + gen
+    // + dirty bit repair on the immediately introduced subtree, scoped
+    // to the NodeId root rather than the full AST).
+    mutable std::atomic<std::uint64_t> macro_expand_mutate_restamp_total_{0};
 
 public:
     // Issue #437 / #1840: per-reason verify-dirty stat accessors.
@@ -7109,6 +7114,62 @@ public:
 
     [[nodiscard]] std::uint64_t macro_restamp_after_flat_total() const noexcept {
         return macro_restamp_after_flat_total_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #2096: restamp only MacroIntroduced descendants of the
+    // given subtree root (parent/child + node_gen_ + kMacroExpansion
+    // dirty bit, all scoped to the root's reachable closure). Pair
+    // with the AST-wide restamp_macro_introduced_generations(): the
+    // AST-wide one is the rare "consistency sweep" call; this is
+    // the cheap "subtree just got introduced into mutate" call.
+    // Walks MacroIntroduced descendants only — non-MacroIntroduced
+    // descendants are surfaced as paths but not restamped themselves.
+    // No-op when root is NULL/out-of-bounds or no MacroIntroduced
+    // descendants found. Returns count of restamped nodes.
+    std::size_t restamp_macro_introduced_subtree(NodeId root) {
+        if (root == NULL_NODE || root >= size())
+            return 0;
+        constexpr auto kExpansion = static_cast<std::uint8_t>(MacroDirtyReason::kMacroExpansion);
+        std::size_t restamped = 0;
+        std::vector<NodeId> stack;
+        std::vector<std::uint8_t> seen(size(), 0);
+        seen[root] = 1;
+        stack.push_back(root);
+        while (!stack.empty()) {
+            auto id = stack.back();
+            stack.pop_back();
+            if (id == NULL_NODE || id >= size() || seen[id] == 0)
+                continue;
+            seen[id] = 1;
+            if (is_macro_introduced(id)) {
+                if (id < node_gen_.size())
+                    node_gen_[id] = generation_;
+                // Parent/child consistency: MacroIntroduced node owns its children.
+                if (id < children_.size()) {
+                    for (NodeId cid : children_[id]) {
+                        if (cid != NULL_NODE && cid < parent_.size())
+                            parent_[cid] = id;
+                    }
+                }
+                // kMacroExpansion dirty bit — idempotent OR.
+                if (id < macro_dirty_.size() && (macro_dirty_[id] & kExpansion) == 0)
+                    apply_macro_dirty_bits(id, kExpansion);
+                ++restamped;
+            }
+            // Descend into children (MacroIntroduced + User + ...).
+            for (NodeId cid : children(id)) {
+                if (cid != NULL_NODE && cid < size() && seen[cid] == 0) {
+                    stack.push_back(cid);
+                }
+            }
+        }
+        if (restamped > 0)
+            macro_expand_mutate_restamp_total_.fetch_add(1, std::memory_order_relaxed);
+        return restamped;
+    }
+
+    [[nodiscard]] std::uint64_t macro_expand_mutate_restamp_total() const noexcept {
+        return macro_expand_mutate_restamp_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #1282: if a generation wrap marked auto_restamp_pending_,

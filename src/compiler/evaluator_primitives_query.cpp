@@ -55,6 +55,7 @@ extern "C" std::uint64_t aura_jit_macro_introduced_lost_total();
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
 extern "C" std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcept;
 // Issue #2021: depth + concurrent peak readers / metrics snapshot.
 extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_in_flight_v_read() noexcept;
@@ -673,6 +674,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
+        });
+
+    // Issue #2096: query:macro-mutate-restamp-stats. Surfaces the
+    // per-cloned-subtree MacroIntroduced restamp counter (subtree-local
+    // coherence at expand exit + critical mutate entry). Paired with
+    // (query:macro-hygiene-stats) key `macro-restamp-after-flat` which
+    // surfaces the AST-wide sweep count.
+    ObservabilityPrims::register_stats_impl(
+        "query:macro-mutate-restamp-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(
+                static_cast<std::int64_t>(aura_macro_expand_mutate_restamp_total_v_read()));
         });
 
     // Issue #458: query:hygiene-stats. Returns an integer
