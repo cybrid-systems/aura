@@ -26,6 +26,7 @@ module;
 #include <vector>
 #include "core/persistent_child_vector.hh"
 #include "core/cpp26_contract_stats.h"
+#include "core/provenance_tracker.hh" // #2125: maybe_stamp_stable_ref_isolation_tenant
 #include <contracts>
 #include <shared_mutex>
 
@@ -6780,15 +6781,19 @@ public:
             const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
             restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
         }
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             0,
-                             0,
-                             0,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
+        // Issue #2125: stamp isolation principal when active so all
+        // capture paths (including children_stable) carry tenant provenance.
+        StableNodeRef ref{id,
+                          generation_,
+                          next_mutation_id_,
+                          0,
+                          0,
+                          0,
+                          wrap_epoch_.load(std::memory_order_relaxed),
+                          subtree_generation(id),
+                          workspace_cow_epoch_};
+        ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
+        return ref;
     }
 
     // Issue #291: make_ref variant that also tags the ref
@@ -6801,15 +6806,18 @@ public:
         // Backward-compat: fiber_id and last_validated_generation
         // both default to 0 (no fiber context, no validation
         // history). Same convention as make_ref().
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             workspace_id,
-                             0,
-                             0,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
+        // Issue #2125: isolation tenant stamp (shared with make_ref).
+        StableNodeRef ref{id,
+                          generation_,
+                          next_mutation_id_,
+                          workspace_id,
+                          0,
+                          0,
+                          wrap_epoch_.load(std::memory_order_relaxed),
+                          subtree_generation(id),
+                          workspace_cow_epoch_};
+        ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
+        return ref;
     }
 
     // Issue #303: make_safe_ref records full provenance
@@ -6822,15 +6830,18 @@ public:
     [[nodiscard]] StableNodeRef make_safe_ref(NodeId id, std::uint32_t workspace_id = 0,
                                               std::uint32_t fiber_id = 0) const noexcept {
         // Issue #392: capture subtree_gen_at_capture too.
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             workspace_id,
-                             fiber_id,
-                             generation_,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
+        // Issue #2125: isolation tenant stamp (shared helper with make_ref).
+        StableNodeRef ref{id,
+                          generation_,
+                          next_mutation_id_,
+                          workspace_id,
+                          fiber_id,
+                          generation_,
+                          wrap_epoch_.load(std::memory_order_relaxed),
+                          subtree_generation(id),
+                          workspace_cow_epoch_};
+        ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref, fiber_id);
+        return ref;
     }
 
     // Issue #303: capture_for_fiber is a shorthand for
@@ -6858,15 +6869,18 @@ public:
     // already knows the generation (e.g. a checkpoint file
     // from a prior session, or a cross-workspace handoff).
     [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id, std::uint16_t gen) const noexcept {
-        return StableNodeRef{id,
-                             gen,
-                             next_mutation_id_,
-                             0,
-                             0,
-                             gen,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
+        // Issue #2125: isolation tenant stamp (shared with make_ref).
+        StableNodeRef ref{id,
+                          gen,
+                          next_mutation_id_,
+                          0,
+                          0,
+                          gen,
+                          wrap_epoch_.load(std::memory_order_relaxed),
+                          subtree_generation(id),
+                          workspace_cow_epoch_};
+        ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
+        return ref;
     }
 
     // Issue #393: flat-style validity check for callers that
