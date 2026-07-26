@@ -38,12 +38,14 @@
 //  Header-only, no std::pmr dependency. Uses std::shared_ptr
 //  (atomic refcount — safe to share across fibers / threads).
 //
-//  Issue #2058: unique-ownership hot path. When the PCV is the sole
-//  holder of storage (use_count()==1) — the common FlatAST pattern of
-//  "mutate then drop old view" after a move out of children_[id] —
-//  cow_* / ensure_unique + in-place writes avoid a new allocation and
-//  the second atomic refcount trip. Snapshot / SafePCVSpan holders keep
-//  use_count()>1 so with_* / cow_* still allocate (COW correctness).
+//  Issue #2058 / #2140: unique-ownership hot path. When the PCV is the
+//  sole holder of storage (use_count()==1) — the common FlatAST pattern
+//  of "mutate then drop old view" after a move out of children_[id] —
+//  cow_* / with_set exclusive + ensure_unique + in-place writes avoid a
+//  new allocation and the second atomic refcount trip. Snapshot /
+//  SafePCVSpan holders keep use_count()>1 so with_* still allocate
+//  (COW correctness). Issue #2140 extends exclusive in-place to const
+//  with_set (AI multi-round local replace-one-child).
 //
 // Test plan (test_issue_221.cpp):
 //   1. Basic: construct, size, operator[], iterators
@@ -91,6 +93,9 @@ struct PcvHotpathMetrics {
     std::atomic<std::uint64_t> cow_insert_total{0};
     std::atomic<std::uint64_t> cow_erase_total{0};
     std::atomic<std::uint64_t> cow_push_total{0};
+    // Issue #2140: with_set exclusive vs shared paths.
+    std::atomic<std::uint64_t> with_set_exclusive_total{0};
+    std::atomic<std::uint64_t> with_set_cow_total{0};
 };
 inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
     static PcvHotpathMetrics m;
@@ -105,9 +110,13 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
     m.cow_insert_total.store(0, std::memory_order_relaxed);
     m.cow_erase_total.store(0, std::memory_order_relaxed);
     m.cow_push_total.store(0, std::memory_order_relaxed);
+    m.with_set_exclusive_total.store(0, std::memory_order_relaxed);
+    m.with_set_cow_total.store(0, std::memory_order_relaxed);
 }
 
 inline constexpr int kPcvHotpathIssue = 2058;
+// Issue #2140: exclusive with_set (refcount==1) in-place, no alloc.
+inline constexpr int kPcvExclusiveSetIssue = 2140;
 
 template <typename T> class PersistentChildVector {
 public:
@@ -343,9 +352,24 @@ public:
         return result;
     }
 
+    // Issue #2140: when this handle is the sole storage owner
+    // (use_count()==1), write in place and return *this without allocating.
+    // Shared storage (snapshot / SafePCVSpan / multi-holder) always COWs so
+    // observers keep pre-mutation data. Empty / OOB is a no-op.
     PersistentChildVector with_set(size_type i, const T& v) const {
         if (i >= size_)
             return *this; // no-op
+        // Exclusive path: sole owner may mutate the element buffer in place.
+        // unique_ptr<T[]>::get() yields T* even through const Storage — same
+        // discipline as cow_set (#2058). Never write when use_count()>1.
+        if (data_ && data_.use_count() == 1) {
+            data_->data.get()[i] = v;
+            g_pcv_hotpath_metrics().unique_inplace_total.fetch_add(1, std::memory_order_relaxed);
+            g_pcv_hotpath_metrics().with_set_exclusive_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            return *this; // same storage identity, updated element
+        }
+        // Shared / null: classic COW allocate + copy.
         auto out = make_storage_owned(size_);
         const T* src = src_data();
         if (src)
@@ -354,6 +378,7 @@ public:
         auto result = from_storage(out, size_);
         contract_assert(result.size() == size_);
         g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        g_pcv_hotpath_metrics().with_set_cow_total.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
 
