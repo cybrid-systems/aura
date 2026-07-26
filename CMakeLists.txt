@@ -2388,6 +2388,10 @@ aura_issue_test_link_llvm_jit(test_hard_gate_full_strict_2145)
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)
 
+# Issue #2147: CoercionMap provenance fast path + Strict reject weak mutation id.
+aura_add_issue_test(test_coercion_provenance_fast_strict_2147)
+aura_issue_test_link_llvm_jit(test_coercion_provenance_fast_strict_2147)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

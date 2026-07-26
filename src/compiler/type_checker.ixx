@@ -344,7 +344,11 @@ public:
     // Issue #690 / #1924: link cross-delta conflicts to the active mutation
     // for blame-chain completeness metrics. typed_mutate / infer_flat_partial
     // must set this before any add_delta / add_deferred_coercion.
-    void set_active_mutation_id(std::uint64_t id) noexcept { active_mutation_id_ = id; }
+    void set_active_mutation_id(std::uint64_t id) noexcept {
+        active_mutation_id_ = id;
+        // Issue #2147: O(1) coercion provenance context for apply_coercion_map.
+        aura::compiler::set_coercion_active_mutation_context(id, active_predicate_cond_node_);
+    }
     [[nodiscard]] std::uint64_t active_mutation_id() const noexcept { return active_mutation_id_; }
     // Issue #1529: stamp occurrence predicate + primary affected node
     // onto subsequent add_delta constraints (and blame chain dump).
@@ -352,6 +356,9 @@ public:
                                   std::uint32_t affected_node = 0) noexcept {
         active_predicate_cond_node_ = predicate_cond_node;
         active_affected_node_ = affected_node;
+        // Issue #2147: keep TLS coercion context in sync with blame stamps.
+        aura::compiler::set_coercion_active_mutation_context(active_mutation_id_,
+                                                             predicate_cond_node);
     }
     [[nodiscard]] std::uint32_t active_predicate_cond_node() const noexcept {
         return active_predicate_cond_node_;

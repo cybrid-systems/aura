@@ -5586,7 +5586,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->blame_propagation_narrow_stamped_total.load(std::memory_order_relaxed))
                   : 0;
-            // Issue #2024: apply_coercion_map provenance chain completeness.
+            // Issue #2024 / #2147: apply_coercion_map provenance chain completeness.
             const std::int64_t coercion_prov_complete =
                 static_cast<std::int64_t>(aura::compiler::g_coercion_provenance_complete_total.load(
                     std::memory_order_relaxed));
@@ -5597,6 +5597,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     std::memory_order_relaxed));
             const std::int64_t coercion_prov_walks = static_cast<std::int64_t>(
                 aura::compiler::g_coercion_provenance_chain_walk_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t coercion_prov_fast = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_provenance_fast_path_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t coercion_prov_weak =
+                static_cast<std::int64_t>(aura::compiler::g_coercion_provenance_weak_id_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t coercion_prov_strict_weak = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_provenance_strict_reject_weak_total.load(
                     std::memory_order_relaxed));
             const std::int64_t coercion_completeness_bp =
                 static_cast<std::int64_t>(aura::compiler::coercion_provenance_completeness_bp());
@@ -5788,6 +5797,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence-provenance-chain-wired", 1);
             insert_kv("schema-2024", 2024);
             insert_kv("issue-2024", 2024);
+            // Issue #2147: fast path + weak id honesty under Strict/Full
+            insert_kv("coercion-provenance-fast-path-total", coercion_prov_fast);
+            insert_kv("coercion_provenance_fast_path_total", coercion_prov_fast);
+            insert_kv("coercion-provenance-weak-id-total", coercion_prov_weak);
+            insert_kv("coercion_provenance_weak_id_total", coercion_prov_weak);
+            insert_kv("coercion-provenance-strict-reject-weak-total", coercion_prov_strict_weak);
+            insert_kv("coercion-parent-walk-cap-sampled", 16);
+            insert_kv("coercion-parent-walk-cap-full", 64);
+            insert_kv("coercion-provenance-fast-path-wired", 1);
+            insert_kv("schema-2147", 2147);
+            insert_kv("issue-2147", 2147);
             // Issue #2102: provenance miss → force Full/contextual audit or reject.
             const std::int64_t miss_force_audit = static_cast<std::int64_t>(
                 aura::compiler::g_coercion_provenance_miss_force_audit_total.load(
