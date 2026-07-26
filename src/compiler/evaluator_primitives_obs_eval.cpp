@@ -6282,18 +6282,38 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"instr-level-impact-prefer-wired", make_int(1)},
                 {"schema-2126", make_int(2126)},
                 {"issue-2126", make_int(2126)},
+                // Issue #2127: workload / deopt / density adaptive thr.
+                {"effective-partial-relower-threshold",
+                 make_int(static_cast<std::int64_t>(get_effective_partial_relower_threshold()))},
+                {"adaptive-relower-reason-bits",
+                 make_int(static_cast<std::int64_t>(get_last_adaptive_relower_reason()))},
+                {"adaptive-partial-decision-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_partial_decision_total_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-full-decision-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_full_decision_total_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-deopt-adjust-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_deopt_adjust_total_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-density-adjust-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_density_adjust_total_atomic().load(std::memory_order_relaxed)))},
+                {"workload-adaptive-relower-wired", make_int(1)},
+                {"schema-2127", make_int(2127)},
+                {"issue-2127", make_int(2127)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2126 satellites
+                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2127 satellites
             };
             return build_hash(kv);
         });
 
-    // Issue #2112: (query:incremental-relower-policy-stats) — adaptive
+    // Issue #2112 / #2127: (query:incremental-relower-policy-stats) — adaptive
     // partial/full threshold policy (register_stats_impl only; SlimSurface).
     ObservabilityPrims::register_stats_impl(
         "query:incremental-relower-policy-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6303,6 +6323,8 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
             const std::pair<std::string, EvalValue> fields[] = {
                 {"partial-relower-threshold",
                  make_int(static_cast<std::int64_t>(get_partial_relower_threshold()))},
+                {"effective-partial-relower-threshold",
+                 make_int(static_cast<std::int64_t>(get_effective_partial_relower_threshold()))},
                 {"threshold-forced", make_int(partial_relower_threshold_is_forced() ? 1 : 0)},
                 {"avg-partial-relower-cost-ns",
                  make_int(static_cast<std::int64_t>(avg_partial_relower_cost_ns()))},
@@ -6327,7 +6349,25 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"adaptive-partial-relower-wired", make_int(1)},
                 {"schema-2112", make_int(2112)},
                 {"issue-2112", make_int(2112)},
-                {"schema", make_int(2112)},
+                // Issue #2127: deopt / density reason surface
+                {"adaptive-relower-reason-bits",
+                 make_int(static_cast<std::int64_t>(get_last_adaptive_relower_reason()))},
+                {"adaptive-partial-decision-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_partial_decision_total_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-full-decision-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_full_decision_total_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-deopt-adjust-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_deopt_adjust_total_atomic().load(std::memory_order_relaxed)))},
+                {"adaptive-density-adjust-total",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_density_adjust_total_atomic().load(std::memory_order_relaxed)))},
+                {"workload-adaptive-relower-wired", make_int(1)},
+                {"schema-2127", make_int(2127)},
+                {"issue-2127", make_int(2127)},
+                {"schema", make_int(2127)}, // latest policy schema
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;

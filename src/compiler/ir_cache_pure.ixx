@@ -522,6 +522,33 @@ inline std::atomic<std::uint64_t>& full_relower_cost_samples_atomic() noexcept {
     return s;
 }
 
+// Issue #2127: last workload-adaptive decision snapshot (declared early
+// so reset_partial_relower_threshold_for_test can clear them).
+inline std::atomic<std::size_t>& adaptive_effective_threshold_atomic() noexcept {
+    static std::atomic<std::size_t> t{kDefaultPartialRelowerThreshold};
+    return t;
+}
+inline std::atomic<std::uint32_t>& adaptive_last_reason_atomic() noexcept {
+    static std::atomic<std::uint32_t> r{0};
+    return r;
+}
+inline std::atomic<std::uint64_t>& adaptive_partial_decision_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+inline std::atomic<std::uint64_t>& adaptive_full_decision_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+inline std::atomic<std::uint64_t>& adaptive_deopt_adjust_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+inline std::atomic<std::uint64_t>& adaptive_density_adjust_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+
 [[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
     return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
 }
@@ -632,6 +659,14 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
     full_relower_cost_samples_atomic().store(0, std::memory_order_relaxed);
     partial_relower_threshold_atomic().store(kDefaultPartialRelowerThreshold,
                                              std::memory_order_relaxed);
+    // Issue #2127: clear workload-adaptive decision snapshot.
+    adaptive_effective_threshold_atomic().store(kDefaultPartialRelowerThreshold,
+                                                std::memory_order_relaxed);
+    adaptive_last_reason_atomic().store(0, std::memory_order_relaxed);
+    adaptive_partial_decision_total_atomic().store(0, std::memory_order_relaxed);
+    adaptive_full_decision_total_atomic().store(0, std::memory_order_relaxed);
+    adaptive_deopt_adjust_total_atomic().store(0, std::memory_order_relaxed);
+    adaptive_density_adjust_total_atomic().store(0, std::memory_order_relaxed);
 }
 
 // Issue #426 / #2032: estimate the re-lower cost of a dirty
@@ -714,6 +749,9 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
 //   - pass_manager.ixx::run_incremental_pipeline
 //
 // Consistent with estimate_relower_blocks bucketing.
+// Issue #2127: production cascade sites prefer
+// decide_workload_adaptive_partial_relower (deopt + density). This
+// overload remains the #2032 / #2112 base (reads process thr only).
 [[nodiscard]] inline bool should_partial_relower(std::size_t dirty_count) noexcept {
     if (dirty_count == 0)
         return false;
@@ -732,6 +770,135 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     if (dirty_count >= threshold)
         return false;
     return true;
+}
+
+// ── Issue #2127: workload / deopt / density adaptive threshold ──
+// Builds on #2112 cost history (base thr) + HotUpdateRegistry deopt
+// storm + dirty density so micro-edits prefer partial and bulk /
+// storm windows prefer full sooner (avoid partial-fail→full double cost).
+
+// Reason bitmask for Agent dashboards (query:incremental-relower-stats).
+inline constexpr std::uint32_t kAdaptiveReasonBase = 1u << 0;
+inline constexpr std::uint32_t kAdaptiveReasonDeoptStorm = 1u << 1;  // thr ↓
+inline constexpr std::uint32_t kAdaptiveReasonHighDensity = 1u << 2; // thr ↓
+inline constexpr std::uint32_t kAdaptiveReasonLowDeopt = 1u << 3;    // thr ↑
+inline constexpr std::uint32_t kAdaptiveReasonLowDensity = 1u << 4;  // thr ↑
+inline constexpr std::uint32_t kAdaptiveReasonForced = 1u << 5;
+inline constexpr std::uint32_t kAdaptiveReasonPartial = 1u << 6;
+inline constexpr std::uint32_t kAdaptiveReasonFull = 1u << 7;
+inline constexpr std::uint32_t kAdaptiveReasonSkipClean = 1u << 8;
+
+struct AdaptiveRelowerPolicy {
+    std::size_t base = kDefaultPartialRelowerThreshold;
+
+    // deopt_window_count: deopts in current sliding window.
+    // deopt_storm_threshold: storm trip point (0 = deopt signal disabled).
+    // deopt_storm_active: throttle / shape storm already tripped.
+    // dirty_density_bp: 10000 * dirty / total_blocks (0 if unknown).
+    // When forced, base is used as-is (no deopt/density delta).
+    [[nodiscard]] std::size_t effective(std::uint64_t deopt_window_count,
+                                        std::uint64_t deopt_storm_threshold,
+                                        bool deopt_storm_active, std::uint32_t dirty_density_bp,
+                                        bool forced,
+                                        std::uint32_t* out_reason = nullptr) const noexcept {
+        std::uint32_t reason = kAdaptiveReasonBase;
+        auto thr = base == 0 ? kDefaultPartialRelowerThreshold : base;
+        if (forced) {
+            reason |= kAdaptiveReasonForced;
+            if (out_reason)
+                *out_reason = reason;
+            return thr; // Agent override: no further adaptation
+        }
+        // Density: high (≥50%) → prefer full sooner (↓ thr by 2).
+        // Low (<15%) with some dirt → prefer partial longer (↑ thr by 1).
+        if (dirty_density_bp >= 5000) {
+            thr = thr > kAdaptivePartialRelowerMin + 1 ? thr - 2 : kAdaptivePartialRelowerMin;
+            reason |= kAdaptiveReasonHighDensity;
+        } else if (dirty_density_bp > 0 && dirty_density_bp < 1500) {
+            thr = thr + 1;
+            reason |= kAdaptiveReasonLowDensity;
+        }
+        // Deopt storm: active or window ≥ half threshold → prefer full (↓ thr).
+        // Quiet window (0 or <10% of thr) → prefer partial (↑ thr).
+        if (deopt_storm_active ||
+            (deopt_storm_threshold > 0 && deopt_window_count * 2 >= deopt_storm_threshold)) {
+            thr = thr > kAdaptivePartialRelowerMin + 1 ? thr - 2 : kAdaptivePartialRelowerMin;
+            reason |= kAdaptiveReasonDeoptStorm;
+        } else if (deopt_storm_threshold == 0 || deopt_window_count == 0 ||
+                   (deopt_storm_threshold > 0 && deopt_window_count * 10 < deopt_storm_threshold)) {
+            thr = thr + 1;
+            reason |= kAdaptiveReasonLowDeopt;
+        }
+        thr = clamp_partial_relower_threshold(thr);
+        if (out_reason)
+            *out_reason = reason;
+        return thr;
+    }
+};
+
+struct AdaptiveRelowerDecision {
+    std::size_t effective_threshold = kDefaultPartialRelowerThreshold;
+    bool want_partial = false;
+    std::uint32_t reason_bits = 0;
+    std::uint32_t dirty_density_bp = 0;
+};
+
+[[nodiscard]] inline std::size_t get_effective_partial_relower_threshold() noexcept {
+    return adaptive_effective_threshold_atomic().load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t get_last_adaptive_relower_reason() noexcept {
+    return adaptive_last_reason_atomic().load(std::memory_order_relaxed);
+}
+
+// Issue #2127: workload-aware partial/full decision.
+// total_blocks=0 → density unknown (0 bp); base thr from #2032/#2112.
+// Pure aside from process-wide last-decision atomics (metrics).
+[[nodiscard]] inline AdaptiveRelowerDecision decide_workload_adaptive_partial_relower(
+    std::size_t dirty_count, std::size_t total_blocks, std::uint64_t deopt_window_count = 0,
+    std::uint64_t deopt_storm_threshold = 0, bool deopt_storm_active = false) noexcept {
+    AdaptiveRelowerDecision d;
+    if (total_blocks > 0 && dirty_count > 0) {
+        d.dirty_density_bp =
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(dirty_count) * 10000ull) /
+                                       static_cast<std::uint64_t>(total_blocks));
+        if (d.dirty_density_bp > 10000)
+            d.dirty_density_bp = 10000;
+    }
+    AdaptiveRelowerPolicy pol;
+    pol.base = get_partial_relower_threshold();
+    const bool forced = partial_relower_threshold_is_forced();
+    std::uint32_t reason = 0;
+    d.effective_threshold = pol.effective(deopt_window_count, deopt_storm_threshold,
+                                          deopt_storm_active, d.dirty_density_bp, forced, &reason);
+    if (dirty_count == 0) {
+        d.want_partial = false;
+        reason |= kAdaptiveReasonSkipClean;
+    } else if (dirty_count < d.effective_threshold) {
+        d.want_partial = true;
+        reason |= kAdaptiveReasonPartial;
+        adaptive_partial_decision_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    } else {
+        d.want_partial = false;
+        reason |= kAdaptiveReasonFull;
+        adaptive_full_decision_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    }
+    if (reason & kAdaptiveReasonDeoptStorm)
+        adaptive_deopt_adjust_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    if ((reason & kAdaptiveReasonHighDensity) || (reason & kAdaptiveReasonLowDensity))
+        adaptive_density_adjust_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    d.reason_bits = reason;
+    adaptive_effective_threshold_atomic().store(d.effective_threshold, std::memory_order_relaxed);
+    adaptive_last_reason_atomic().store(reason, std::memory_order_relaxed);
+    return d;
+}
+
+// Convenience: same signals as decide_*, for drop-in should_partial sites.
+[[nodiscard]] inline bool should_partial_relower_workload(
+    std::size_t dirty_count, std::size_t total_blocks = 0, std::uint64_t deopt_window_count = 0,
+    std::uint64_t deopt_storm_threshold = 0, bool deopt_storm_active = false) noexcept {
+    return decide_workload_adaptive_partial_relower(dirty_count, total_blocks, deopt_window_count,
+                                                    deopt_storm_threshold, deopt_storm_active)
+        .want_partial;
 }
 
 // ── Issue #2113: incremental soundness oracle (partial ≡ full) ──

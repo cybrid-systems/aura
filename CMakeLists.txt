@@ -2295,6 +2295,11 @@ aura_issue_test_link_llvm_jit(test_stable_ref_tenant_capture_2125)
 aura_add_issue_test(test_instr_impact_minimal_dirty_2126)
 aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty_2126)
 
+# Issue #2127: workload/deopt/density adaptive partial-relower threshold
+# (extends #2112 cost adaptive + #2032 base=8).
+aura_add_issue_test(test_workload_adaptive_relower_2127)
+aura_issue_test_link_llvm_jit(test_workload_adaptive_relower_2127)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
