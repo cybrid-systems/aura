@@ -53,6 +53,9 @@ struct ParallelPolicy {
     std::uint32_t max_retries = 0;            // RetryN: extra attempts after first try
     std::uint32_t consecutive_fail_limit = 3; // CircuitBreaker open threshold
     std::uint32_t retry_backoff_ms = 0;       // RetryN: yield-spin between attempts
+    // Issue #2153: secondary drain after cancel on overall Timeout (ms).
+    // Default 2000 preserves #2082; 0 = cancel only (no secondary wait).
+    std::uint64_t drain_ms = 2000;
 };
 
 // Resolve effective policy: fail_fast flag wins for binary compatibility.
@@ -123,6 +126,9 @@ struct ParallelOrchStats {
     // Issue #2007: FailurePolicy counters.
     std::atomic<std::uint64_t> retries_performed{0};
     std::atomic<std::uint64_t> circuit_opened_total{0};
+    // Issue #2153: secondary drain after Timeout cancel.
+    std::atomic<std::uint64_t> join_drain_residual_total{0};
+    std::atomic<std::uint64_t> join_drain_us_total{0};
 };
 
 inline ParallelOrchStats g_parallel_orch_stats{};
@@ -474,16 +480,42 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
     // Issue #1881: always accumulate join wait (was missing → dead join latency).
     g_parallel_orch_stats.join_wait_us_total.fetch_add(jr.wait_us, std::memory_order_relaxed);
 
-    // On overall timeout: stop admitting + request cancel, then best-effort drain.
+    // On overall timeout: stop admitting + request cancel, then best-effort
+    // drain (Issue #2153: ParallelPolicy.drain_ms, default 2000).
     // Task bodies should check Fiber::is_cancel_requested() / not spin forever.
     if (jr.status == JoinStatus::Timeout) {
         g_parallel_orch_stats.timeouts.fetch_add(1, std::memory_order_relaxed);
         sh->abort_admit.store(true, std::memory_order_release);
         for (auto* f : fibers) {
-            if (f)
+            if (f && !f->is_done())
                 f->request_cancel();
         }
-        (void)Fiber::join(std::span<Fiber* const>(fibers), std::optional<std::uint64_t>{2000});
+        std::vector<Fiber*> not_done;
+        not_done.reserve(fibers.size());
+        for (auto* f : fibers) {
+            if (f && !f->is_done())
+                not_done.push_back(f);
+        }
+        if (!not_done.empty()) {
+            if (policy.drain_ms > 0) {
+                const auto t0_drain = std::chrono::steady_clock::now();
+                (void)Fiber::join(std::span<Fiber* const>(not_done),
+                                  std::optional<std::uint64_t>{policy.drain_ms});
+                const auto us = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0_drain)
+                        .count());
+                g_parallel_orch_stats.join_drain_us_total.fetch_add(us, std::memory_order_relaxed);
+            }
+            std::uint64_t residual = 0;
+            for (auto* f : not_done) {
+                if (f && !f->is_done())
+                    ++residual;
+            }
+            if (residual > 0)
+                g_parallel_orch_stats.join_drain_residual_total.fetch_add(
+                    residual, std::memory_order_relaxed);
+        }
     }
 
     // Mutex-protected snapshot; shared_ptr keeps storage alive for any late fiber.

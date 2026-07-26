@@ -2893,6 +2893,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
+    // (orch:agent-join name [:timeout-ms n] [:drain-ms n])
+    // Issue #2153: :drain-ms secondary cancel-drain window (default 2000).
     add("orch:agent-join",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
@@ -2900,11 +2902,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             "orch:agent-join: need name",
                                             ev.primitive_error_counter_ptr());
             }
-            std::optional<std::uint64_t> timeout_ms;
+            aura::orch::JoinPolicy policy{};
+            policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
-                    timeout_ms = static_cast<std::uint64_t>(
+                    policy.primary_ms = static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(a[i + 1]))
+                    policy.drain_ms = static_cast<std::uint64_t>(
                         std::max<std::int64_t>(0, types::as_int(a[i + 1])));
             }
 
@@ -2926,11 +2932,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"wait-us", make_int(0)},
                     {"schema", make_int(1588)},
                     {"schema-2011", make_int(2011)},
+                    {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+                    {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
                 };
                 return build_orch_hash(kv);
             }
 
-            auto jr = aura::orch::join_agent(*hp, timeout_ms);
+            auto jr = aura::orch::join_agent(*hp, policy);
             const char* st = "ok";
             switch (jr.status) {
                 case aura::serve::JoinStatus::Ok:
@@ -2954,6 +2962,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
                 {"schema", make_int(1588)},
                 {"schema-2011", make_int(2011)},
+                {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+                {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
             };
             return build_orch_hash(kv);
         });
@@ -3280,6 +3290,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           os.keepalive_helpers_spawned.load(std::memory_order_relaxed)));
             insert_kv("schema-2008", 2008);
             insert_kv("keepalive-wired", 1);
+            // Issue #2153: secondary drain residual / wait after non-Ok cancel.
+            insert_kv("join-drain-residual-total",
+                      static_cast<std::int64_t>(
+                          os.join_drain_residual_total.load(std::memory_order_relaxed)));
+            insert_kv("join-drain-us-total", static_cast<std::int64_t>(os.join_drain_us_total.load(
+                                                 std::memory_order_relaxed)));
+            insert_kv("join-drain-default-ms",
+                      static_cast<std::int64_t>(aura::orch::kDefaultJoinDrainMs));
+            insert_kv("schema-2153", aura::orch::kJoinDrainTimeoutIssue);
+            insert_kv("issue-2153", aura::orch::kJoinDrainTimeoutIssue);
+            insert_kv("join-drain-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

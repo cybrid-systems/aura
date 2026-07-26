@@ -60,11 +60,9 @@ public:
         return handles_.back();
     }
 
-    // Join all live handles. Mirrors join_agents (#2082): on non-Ok, the
-    // call internally requests cancel + best-effort short secondary drain
-    // (2s) before per-handle reservation release. The reservation release
-    // path is idempotent (#2009) so concurrent ~AgentHandle + join_all is
-    // safe (no double-free).
+    // Join all live handles. Mirrors join_agents (#2082/#2153): on non-Ok,
+    // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
+    // per-handle reservation release. Release is idempotent (#2009).
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
         if (handles_.empty()) {
             serve::JoinResult r;
@@ -72,6 +70,16 @@ public:
             return r;
         }
         return join_agents(std::span<AgentHandle>(handles_), timeout_ms);
+    }
+
+    // Issue #2153: full JoinPolicy (primary + drain_ms).
+    [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy) {
+        if (handles_.empty()) {
+            serve::JoinResult r;
+            r.status = serve::JoinStatus::Invalid;
+            return r;
+        }
+        return join_agents(std::span<AgentHandle>(handles_), policy);
     }
 
     // Best-effort cancel request on all live fibers. Bounded cost; does
@@ -100,7 +108,10 @@ public:
         if (handles_.empty())
             return;
         cancel_all();
-        (void)join_agents(std::span<AgentHandle>(handles_), std::optional<std::uint64_t>{2000});
+        // Issue #2153: destructor uses default drain_ms (kDefaultJoinDrainMs).
+        (void)join_agents(
+            std::span<AgentHandle>(handles_),
+            JoinPolicy{.primary_ms = kDefaultJoinDrainMs, .drain_ms = kDefaultJoinDrainMs});
     }
 
 private:
