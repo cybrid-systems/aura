@@ -6346,6 +6346,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_fail_linear_total{0};  // #2093
     std::atomic<std::uint64_t> aot_reload_fail_staging_total{0}; // #2093
     std::atomic<std::uint64_t> aot_reload_fail_other_total{0};   // #2093
+    // Issue #2165: safe auto recovery (reemit + one retry) for Version/Env/Linear/Defuse.
+    std::atomic<std::uint64_t> aot_reload_auto_retry_total{0};
+    std::atomic<std::uint64_t> aot_reload_auto_retry_success_total{0};
+    std::atomic<std::uint64_t> aot_reload_auto_retry_exhausted_total{0};
     // Issue #2179: cross-function instruction-level impact scope
     // counters (refine #2109). Increments when compute_impact_scope
     // discovers call-site instructions in callers via node_dep_graph_

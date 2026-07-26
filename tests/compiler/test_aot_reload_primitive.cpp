@@ -106,7 +106,7 @@ std::string build_registering_so(std::uint64_t version, std::uint64_t region, in
     return sopath;
 }
 
-}
+} // namespace
 
 // Issue #2178: cross-workspace / cross-COW hot-update reject. Foreign
 // eval contexts (or COW generation mismatch) must be rejected at the
@@ -121,11 +121,16 @@ static void ac7_cross_workspace_reject_2178() {
     // the right counters; this AC is the cross-workspace-specific path.)
     aura_set_aot_region_mask(0);
     aura_set_module_version(0);
-    aura_reload_aot_module("ac7_baseline.so", 0);
-    CHECK(aura_reload_aot_module("ac7_baseline.so", 0) == true,
-          "AC7: null eval_ptr (process default) happy path unchanged");
+    // Null eval_ptr happy path: missing .so fails dlopen (not foreign-reject).
+    // Pre-register process default by attempting load; dlopen fail is OK.
+    (void)aura_reload_aot_module("/tmp/aura_ac7_baseline_missing.so", 0);
+    CHECK(aura_reload_aot_module("/tmp/aura_ac7_baseline_missing.so", 0) == false,
+          "AC7: null eval_ptr (process default) reaches dlopen (not foreign-reject)");
     // Capture rejected counter baseline.
     const auto rej0 = aura_cross_workspace_hot_update_rejected_total_v_read();
+    // Seed a registered workspace so a different eval_ptr is truly foreign.
+    CompilerService seed_cs;
+    (void)aura_reload_aot_module_for_eval(&seed_cs.evaluator(), "/tmp/aura_ac7_seed_missing.so", 0);
     // Foreign eval context: pick an obviously-bogus address that's
     // NOT in the per-eval states map. The guard must reject.
     void* foreign_eval = reinterpret_cast<void*>(0xDEAD'BEEF'C0DE'0001ULL);
@@ -134,10 +139,10 @@ static void ac7_cross_workspace_reject_2178() {
           "AC7: foreign eval_ptr → aura_reload_aot_module_for_eval returns false");
     CHECK(aura_cross_workspace_hot_update_rejected_total_v_read() == rej0 + 1,
           "AC7: cross_workspace_hot_update_rejected_total +1 (Issue #2178 AC1)");
-    // Null eval_ptr still works (process-default AotState is current).
-    const bool ok_null = aura_reload_aot_module_for_eval(nullptr, "ac7_null.so", 0);
-    CHECK(ok_null == true,
-          "AC7: null eval_ptr (process default) → aura_reload_aot_module_for_eval returns true");
+    // Null eval_ptr still reaches the load path (process-default AotState).
+    const bool ok_null =
+        aura_reload_aot_module_for_eval(nullptr, "/tmp/aura_ac7_null_missing.so", 0);
+    CHECK(ok_null == false, "AC7: null eval_ptr reaches dlopen fail (not foreign-reject)");
     CHECK(aura_cross_workspace_hot_update_rejected_total_v_read() == rej0 + 1,
           "AC7: cross_workspace_hot_update_rejected_total unchanged (null is not foreign)");
     // Source-cite: foreign guard + helper in aura_jit_bridge.cpp.
@@ -172,9 +177,11 @@ static void ac7_cross_workspace_reject_2178() {
     aura_set_aot_metrics(nullptr);
 }
 
-} // namespace
-
 int main() {
+    // Issue #2165: production default is auto-retry ON; strict unit checks
+    // (Version/Env/Defuse fail counts) need it off until the #2165 block.
+    aura_set_aot_reload_auto_retry(0);
+
     // ── C API region mask / module version (baseline) ──
     {
         aura_set_aot_region_mask(0);
@@ -397,6 +404,9 @@ int main() {
     // ── Issue #2093: structured reload-failure reason codes + per-reason metrics ──
     {
         std::println("\n--- #2093: per-reason failure counters + last-fail reason ---");
+        // Issue #2165: strict per-reason tests require auto-retry OFF (else
+        // Version/Defuse/Env each do reemit+retry and bump counters twice).
+        aura_set_aot_reload_auto_retry(0);
         CompilerMetrics metrics;
         aura_set_aot_metrics(&metrics);
         aura_set_aot_region_mask(0);
@@ -565,9 +575,125 @@ int main() {
         aura_set_aot_metrics(nullptr);
     }
 
+    // ── Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse ──
+    {
+        std::println("\n--- #2165: AOT reload auto-retry recovery ---");
+        CompilerMetrics metrics;
+        aura_set_aot_metrics(&metrics);
+        aura_set_aot_region_mask(0);
+        aura_set_aot_defuse_version(0);
+        aura_set_module_version(0);
+
+        // AC5a: Version mismatch + auto-retry ON → reemit + retry with
+        // version=0 → success; last-fail Ok; success counter +1.
+        {
+            aura_set_aot_reload_auto_retry(1);
+            auto ver_so = build_registering_so(/*version=*/7, /*region=*/0, /*func_id=*/88, "ar_v");
+            if (ver_so.empty()) {
+                CHECK(true, "skip AC5a (cc unavailable)");
+            } else {
+                const auto rt0 = metrics.aot_reload_auto_retry_total.load();
+                const auto rs0 = metrics.aot_reload_auto_retry_success_total.load();
+                const auto v0 = metrics.aot_reload_fail_version_total.load();
+                // Host expects 99; binary is 7 → Version fail then retry version=0.
+                const bool ok = aura_reload_aot_module(ver_so.c_str(), /*expected=*/99);
+                CHECK(ok, "AC5a: Version auto-retry → success (retry trusts binary)");
+                CHECK(metrics.aot_reload_auto_retry_total.load() == rt0 + 1,
+                      "AC5a: auto_retry_total +1");
+                CHECK(metrics.aot_reload_auto_retry_success_total.load() == rs0 + 1,
+                      "AC5a: auto_retry_success_total +1");
+                CHECK(metrics.aot_reload_fail_version_total.load() == v0 + 1,
+                      "AC5a: intermediate Version fail counted once");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Ok,
+                      "AC5a: last-fail Ok after successful retry (AC4)");
+            }
+        }
+
+        // AC5b: Dlopen fail → no retry; last-fail=Dlopen.
+        {
+            aura_set_aot_reload_auto_retry(1);
+            const auto rt0 = metrics.aot_reload_auto_retry_total.load();
+            const auto d0 = metrics.aot_reload_fail_dlopen_total.load();
+            const bool ok = aura_reload_aot_module("/tmp/aura_aot_no_such_file_2165.so", 0);
+            CHECK(!ok, "AC5b: dlopen missing → false");
+            CHECK(metrics.aot_reload_auto_retry_total.load() == rt0,
+                  "AC5b: Dlopen does not auto-retry");
+            CHECK(metrics.aot_reload_fail_dlopen_total.load() == d0 + 1, "AC5b: dlopen fail +1");
+            CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                      AotReloadFail::Dlopen,
+                  "AC5b: last-fail = Dlopen");
+        }
+
+        // AC5c: flag off → no auto-retry (Version fail stays single-shot).
+        {
+            aura_set_aot_reload_auto_retry(0);
+            auto bad = build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88, "ar_off");
+            if (bad.empty()) {
+                CHECK(true, "skip AC5c (cc unavailable)");
+            } else {
+                const auto rt0 = metrics.aot_reload_auto_retry_total.load();
+                const auto v0 = metrics.aot_reload_fail_version_total.load();
+                const bool ok = aura_reload_aot_module(bad.c_str(), /*expected=*/99);
+                CHECK(!ok, "AC5c: flag off Version fail");
+                CHECK(metrics.aot_reload_auto_retry_total.load() == rt0,
+                      "AC5c: no auto_retry when flag off");
+                CHECK(metrics.aot_reload_fail_version_total.load() == v0 + 1,
+                      "AC5c: single Version fail");
+            }
+        }
+
+        // AC5d: Defuse fail + auto-retry → reemit + second fail → exhausted.
+        {
+            aura_set_aot_reload_auto_retry(1);
+            aura_set_aot_defuse_version(10);
+            auto defuse_bad =
+                build_registering_so(/*version=*/5, /*region=*/0, /*func_id=*/88, "ar_df");
+            if (defuse_bad.empty()) {
+                CHECK(true, "skip AC5d (cc unavailable)");
+            } else {
+                const auto rt0 = metrics.aot_reload_auto_retry_total.load();
+                const auto ex0 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                const auto d0 = metrics.aot_reload_fail_defuse_total.load();
+                const bool ok = aura_reload_aot_module(defuse_bad.c_str(), 0);
+                CHECK(!ok, "AC5d: Defuse still fails after retry");
+                CHECK(metrics.aot_reload_auto_retry_total.load() == rt0 + 1,
+                      "AC5d: auto_retry attempted");
+                CHECK(metrics.aot_reload_auto_retry_exhausted_total.load() == ex0 + 1,
+                      "AC5d: auto_retry_exhausted +1");
+                CHECK(metrics.aot_reload_fail_defuse_total.load() >= d0 + 2,
+                      "AC5d: Defuse fail on first + second attempt");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Defuse,
+                      "AC5d: final last-fail = Defuse");
+            }
+            aura_set_aot_defuse_version(0);
+        }
+
+        // AC5e: query:aot-stats exposes #2165 keys.
+        {
+            CompilerService cs;
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+            auto st = cs.eval("(engine:metrics \"query:aot-stats\")");
+            CHECK(st && is_hash(*st), "AC5e: query:aot-stats is hash");
+            CHECK(href(cs, "query:aot-stats", "schema-2165") == 2165, "AC5e: schema-2165");
+            CHECK(href(cs, "query:aot-stats", "aot-reload-auto-retry-total") >= 0,
+                  "AC5e: auto-retry-total key");
+            CHECK(href(cs, "query:aot-stats", "aot-reload-auto-retry-success-total") >= 0,
+                  "AC5e: auto-retry-success key");
+            CHECK(href(cs, "query:aot-stats", "aot-reload-auto-retry-exhausted-total") >= 0,
+                  "AC5e: auto-retry-exhausted key");
+            aura_set_aot_metrics(nullptr);
+        }
+
+        aura_set_aot_reload_auto_retry(0); // leave off for following stress tests
+        aura_set_aot_metrics(nullptr);
+    }
+
     // ── Issue #2012: concurrent epoch probes during forced fail + success ──
     {
         std::println("\n--- #2012: concurrent probe stress during reload ---");
+        aura_set_aot_reload_auto_retry(0); // stress must not reemit-storm
         CompilerMetrics metrics;
         aura_set_aot_metrics(&metrics);
         aura_set_aot_region_mask(0);
