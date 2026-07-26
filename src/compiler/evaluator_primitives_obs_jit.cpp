@@ -10558,8 +10558,31 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
             const std::uint64_t ffi_pin_depth =
                 aura::gc_hooks::g_ffi_pin_defer_depth.load(std::memory_order_acquire);
-            // ~12 keys — create(16) headroom.
-            auto* ht = FlatHashTable::create(16);
+            // Issue #2173: configurable max-armed cap + overflow policy +
+            // rejected-arm counter. Read live (env-derived cached value
+            // plus per-process override for tests). Policy name is the
+            // string form so dashboards can display it directly.
+            const std::size_t max_armed = aura::gc_hooks::gc_defer_max_armed();
+            const auto policy = aura::gc_hooks::gc_defer_overflow_policy();
+            const char* policy_name = "ProcessWide";
+            switch (policy) {
+                case aura::gc_hooks::GcDeferOverflowPolicy::HardFail:
+                    policy_name = "HardFail";
+                    break;
+                case aura::gc_hooks::GcDeferOverflowPolicy::Expand:
+                    policy_name = "Expand";
+                    break;
+                default:
+                    break;
+            }
+            const std::uint64_t arm_rejected_overflow_total =
+                aura::gc_hooks::g_gc_defer_arm_rejected_overflow_total.load(
+                    std::memory_order_relaxed);
+            // ~20 keys — create(32) headroom (Issue #2173 added 7 keys:
+            // schema-2173, issue-2173, max-armed-effective, overflow-policy,
+            // overflow-policy-name, arm-rejected-overflow-total,
+            // table-overflow-total).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10609,6 +10632,30 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
             insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
             insert_kv("unified-defer-wired", 1);
+            // Issue #2173: configurable max-armed cap + overflow policy +
+            // rejected-arm counter (operator dashboards can size the
+            // defer table + choose fail-closed vs legacy process-wide
+            // fallback). ProcessWide path bumps table-overflow-total;
+            // HardFail path bumps arm-rejected-overflow-total without
+            // touching process-wide depth (see gc_hooks.h).
+            insert_kv("schema-2173", 2173);
+            insert_kv("issue-2173", 2173);
+            insert_kv("max-armed-effective", static_cast<std::int64_t>(max_armed));
+            insert_kv("overflow-policy",
+                      static_cast<std::int64_t>(static_cast<std::uint8_t>(policy)));
+            insert_kv("overflow-policy-name",
+                      *policy_name == 'H' ? 1 : (*policy_name == 'E' ? 2 : 0));
+            // Encode the policy name as a small int the agent can map to
+            // its display layer (ProcessWide=0, HardFail=1, Expand=2).
+            // The numeric "overflow-policy" key above already encodes
+            // the same value as raw uint8_t; this second key is for
+            // dashboards that prefer a stable integer id.
+            insert_kv("arm-rejected-overflow-total",
+                      static_cast<std::int64_t>(arm_rejected_overflow_total));
+            insert_kv(
+                "table-overflow-total",
+                static_cast<std::int64_t>(aura::gc_hooks::g_gc_defer_table_overflow_total.load(
+                    std::memory_order_relaxed)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
