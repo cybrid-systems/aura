@@ -2328,6 +2328,11 @@ aura_issue_test_link_llvm_jit(test_region_priority_deopt_throttle_2132)
 aura_add_issue_test(test_instr_level_relower_pass_2133)
 aura_issue_test_link_llvm_jit(test_instr_level_relower_pass_2133)
 
+# Issue #2134: tui:draw-batch / fill-rect / present-batch over TermBuf
+# DirtyRegion (Agent batch draw + dirty AABB present).
+aura_add_issue_test(test_tui_batch_draw_present_2134)
+aura_issue_test_link_llvm_jit(test_tui_batch_draw_present_2134)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

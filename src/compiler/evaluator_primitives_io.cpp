@@ -1485,6 +1485,21 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("term-render-present-ns", m ? load(m->term_render_present_ns_total) : 0);
             insert_kv("term-render-draw-batch", m ? load(m->term_render_draw_batch_total) : 0);
             insert_kv("term-render-dirty-region", m ? load(m->term_render_dirty_region_total) : 0);
+            // Issue #2134: Agent tui:draw-batch / fill-rect / present-batch
+            insert_kv("tui-draw-batch-total", m ? load(m->tui_draw_batch_total) : 0);
+            insert_kv("tui-draw-batch-cells-written",
+                      m ? load(m->tui_draw_batch_cells_written) : 0);
+            insert_kv("tui-fill-rect-total", m ? load(m->tui_fill_rect_total) : 0);
+            insert_kv("tui-fill-rect-cells-written", m ? load(m->tui_fill_rect_cells_written) : 0);
+            insert_kv("tui-present-batch-total", m ? load(m->tui_present_batch_total) : 0);
+            insert_kv("tui-present-batch-skip-clean",
+                      m ? load(m->tui_present_batch_skip_clean) : 0);
+            insert_kv("tui-present-batch-dirty-cells",
+                      m ? load(m->tui_present_batch_dirty_cells) : 0);
+            insert_kv("tui-present-batch-us-total", m ? load(m->tui_present_batch_us_total) : 0);
+            insert_kv("tui-batch-draw-wired", 1);
+            insert_kv("schema-2134", 2134);
+            insert_kv("issue-2134", 2134);
             insert_kv("term-render-clear", m ? load(m->term_render_clear_total) : 0);
             insert_kv("term-buf-diff", m ? load(m->term_buf_diff_total) : 0);
             insert_kv("term-buf-diff-hits", m ? load(m->term_buf_diff_hits_total) : 0);

@@ -2,16 +2,16 @@
 
 # Primitives (generated)
 
-**531** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**534** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 98 primitives (18%)
-- **core**: 379 primitives (71%)
+- **core**: 382 primitives (72%)
 - **internal-observable**: 46 primitives (9%)
-- **convenience**: 8 primitives (2%)
+- **convenience**: 8 primitives (1%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
@@ -646,11 +646,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Tui: (21)
+## Tui: (24)
 
 - `tui:cell` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:clear` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:draw-batch` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:enable-mouse` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:fill-rect` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:frame-ansi` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:get-cell` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:hide-cursor` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
@@ -661,6 +663,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `tui:mouse` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:pixel` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:present` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:present-batch` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:raw-mode-off` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:raw-mode-on` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:read-event` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
@@ -787,7 +790,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (379)
+### Core builtins (must remain primitive) (382)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1121,7 +1124,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `tui:cell` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:clear` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:draw-batch` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:enable-mouse` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:fill-rect` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:frame-ansi` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:get-cell` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:hide-cursor` — `src/compiler/evaluator_primitives_tui.cpp`
@@ -1132,6 +1137,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `tui:mouse` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:pixel` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:present` — `src/compiler/evaluator_primitives_tui.cpp`
+- `tui:present-batch` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:raw-mode-off` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:raw-mode-on` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:read-event` — `src/compiler/evaluator_primitives_tui.cpp`

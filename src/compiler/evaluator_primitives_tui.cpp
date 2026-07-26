@@ -13,11 +13,16 @@ module;
 #include "primitives_detail.h"
 #include "render_prim_template.hh"
 #include "security_capabilities.h"
+#include "terminal_buffer_registry.hh" // Issue #2134: TermBuf + DirtyRegion
+#include "renderer/render_primitives.hh"
 #include "tui/tui_input.hh"
 #include "tui/tui_runtime.hh"
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <shared_mutex>
 #include <string>
+#include <vector>
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_TUI
@@ -37,9 +42,11 @@ using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using types::as_bool;
 using types::as_int;
 using types::as_string_idx;
+using types::as_vector_idx;
 using types::is_bool;
 using types::is_int;
 using types::is_string;
+using types::is_vector;
 using types::make_bool;
 using types::make_int;
 using types::make_pair;
@@ -444,6 +451,216 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
         "tui:frame-ansi",
         RENDER_PRIMITIVE_META(0, "Last TUI frame as ANSI string (#1676 render-tier).",
                               "() -> string"));
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #2134: Agent batch draw + dirty AABB present over TermBuf.
+    // Preferred full-frame path vs O(cells) tui:cell loops. Uses the same
+    // registry as make-terminal-buffer / terminal-present-batch.
+    // ═══════════════════════════════════════════════════════════════════
+    using term_registry::s_term_bufs;
+    using term_registry::s_term_registry_mtx;
+    using TermCell = aura::renderer::TermCell;
+
+    // Use add("…") so SlimSurface inventory counts these (not add_render).
+    // Meta applied via set_meta_for_name below (same pattern as tui:cell).
+
+    // (tui:draw-batch buf-id x y ch [fg [bg]]) → cells-written
+    // (tui:draw-batch buf-id packed-vector) → cells-written
+    //   packed-vector flat ints: x y ch fg bg  (stride 5, fg/bg optional as 0)
+    add("tui:draw-batch", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        AURA_RENDER_HOT_ENTRY(ev);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(-1);
+        const auto id = as_int(a[0]);
+
+        std::vector<aura::renderer::DrawOp> ops;
+        ops.reserve(8);
+        auto push_op = [&](std::int64_t x, std::int64_t y, std::int64_t ch, std::int64_t fg,
+                           std::int64_t bg) {
+            if (x < 0 || y < 0)
+                return;
+            aura::renderer::DrawOp op;
+            op.x = static_cast<std::uint32_t>(x);
+            op.y = static_cast<std::uint32_t>(y);
+            op.cell.ch = static_cast<std::uint32_t>(ch > 0x10FFFF ? ' ' : ch);
+            op.cell.fg_r = static_cast<std::uint8_t>(fg & 0xFF);
+            op.cell.bg_r = static_cast<std::uint8_t>(bg & 0xFF);
+            op.cell.mode = 0;
+            ops.push_back(op);
+        };
+
+        if (a.size() >= 2 && is_vector(a[1])) {
+            // Packed vector path: [x y ch fg bg]*
+            auto vidx = as_vector_idx(a[1]);
+            if (vidx >= ev.vector_heap_.size())
+                return make_int(-1);
+            const auto& vec = ev.vector_heap_[vidx];
+            for (std::size_t i = 0; i + 2 < vec.size();) {
+                if (!is_int(vec[i]) || !is_int(vec[i + 1]) || !is_int(vec[i + 2]))
+                    break;
+                std::int64_t fg = 7, bg = 0;
+                if (i + 3 < vec.size() && is_int(vec[i + 3]))
+                    fg = as_int(vec[i + 3]);
+                if (i + 4 < vec.size() && is_int(vec[i + 4]))
+                    bg = as_int(vec[i + 4]);
+                push_op(as_int(vec[i]), as_int(vec[i + 1]), as_int(vec[i + 2]), fg, bg);
+                // stride 5 when colors present, else 3
+                if (i + 4 < vec.size() && is_int(vec[i + 3]) && is_int(vec[i + 4]))
+                    i += 5;
+                else
+                    i += 3;
+            }
+        } else if (a.size() >= 4 && is_int(a[1]) && is_int(a[2]) && is_int(a[3])) {
+            // Single-cell: (buf x y ch [fg [bg]])
+            const auto fg = a.size() >= 5 && is_int(a[4]) ? as_int(a[4]) : 7;
+            const auto bg = a.size() >= 6 && is_int(a[5]) ? as_int(a[5]) : 0;
+            push_op(as_int(a[1]), as_int(a[2]), as_int(a[3]), fg, bg);
+        } else {
+            return make_int(-1);
+        }
+
+        std::int64_t written = -1;
+        {
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
+                return make_int(-1);
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
+            aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
+            written = aura::renderer::draw_batch(fb, b.dirty, ops);
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->tui_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
+            if (written > 0)
+                m->tui_draw_batch_cells_written.fetch_add(static_cast<std::uint64_t>(written),
+                                                          std::memory_order_relaxed);
+            m->term_render_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        bump_tui_metrics(ev);
+        return make_int(written);
+    });
+
+    // (tui:fill-rect buf-id x y w h ch [fg [bg]]) → cells-written
+    add("tui:fill-rect", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        AURA_RENDER_HOT_ENTRY(ev);
+        if (a.size() < 6 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]) ||
+            !is_int(a[4]) || !is_int(a[5]))
+            return make_int(-1);
+        const auto id = as_int(a[0]);
+        const auto x0 = as_int(a[1]);
+        const auto y0 = as_int(a[2]);
+        const auto ww = as_int(a[3]);
+        const auto hh = as_int(a[4]);
+        auto ch = as_int(a[5]);
+        if (ch < 0 || ch > 0x10FFFF)
+            ch = ' ';
+        const auto fg = a.size() >= 7 && is_int(a[6]) ? as_int(a[6]) : 7;
+        const auto bg = a.size() >= 8 && is_int(a[7]) ? as_int(a[7]) : 0;
+        if (ww <= 0 || hh <= 0)
+            return make_int(0);
+
+        TermCell cell = TermCell::space_palette();
+        cell.ch = static_cast<std::uint32_t>(ch);
+        cell.fg_r = static_cast<std::uint8_t>(fg & 0xFF);
+        cell.bg_r = static_cast<std::uint8_t>(bg & 0xFF);
+
+        std::int64_t written = 0;
+        {
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
+                return make_int(-1);
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
+            for (std::int64_t dy = 0; dy < hh; ++dy) {
+                const auto y = y0 + dy;
+                if (y < 0 || y >= b.h)
+                    continue;
+                for (std::int64_t dx = 0; dx < ww; ++dx) {
+                    const auto x = x0 + dx;
+                    if (x < 0 || x >= b.w)
+                        continue;
+                    b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
+                    b.dirty.mark_dirty(static_cast<std::uint32_t>(x),
+                                       static_cast<std::uint32_t>(y));
+                    ++written;
+                }
+            }
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->tui_fill_rect_total.fetch_add(1, std::memory_order_relaxed);
+            if (written > 0)
+                m->tui_fill_rect_cells_written.fetch_add(static_cast<std::uint64_t>(written),
+                                                         std::memory_order_relaxed);
+        }
+        bump_tui_metrics(ev);
+        return make_int(written);
+    });
+
+    // (tui:present-batch buf-id [fd]) → bytes-written (0 = clean skip)
+    // Dirty AABB only via present_batch → build_terminal_frame_ansi_dirty.
+    add("tui:present-batch", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        AURA_RENDER_HOT_ENTRY(ev);
+        if (a.empty() || !is_int(a[0]))
+            return make_int(-1);
+        const auto id = as_int(a[0]);
+        int fd = 1;
+        if (a.size() >= 2 && is_int(a[1]))
+            fd = static_cast<int>(as_int(a[1]));
+
+        std::int64_t n = -1;
+        std::uint64_t dirty_cells = 0;
+        std::uint64_t skips_before = aura::renderer::render_engine_counters().present_skips;
+        const auto t0 = std::chrono::steady_clock::now();
+        {
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
+                return make_int(-1);
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
+            dirty_cells = b.dirty.cell_count();
+            aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
+            n = aura::renderer::present_batch(fb, b.dirty, fd);
+        }
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        const bool skipped = aura::renderer::render_engine_counters().present_skips > skips_before;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->tui_present_batch_total.fetch_add(1, std::memory_order_relaxed);
+            m->tui_present_batch_us_total.fetch_add(us, std::memory_order_relaxed);
+            m->terminal_present_batch_total.fetch_add(1, std::memory_order_relaxed);
+            if (skipped) {
+                m->tui_present_batch_skip_clean.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                m->tui_present_batch_dirty_cells.fetch_add(dirty_cells, std::memory_order_relaxed);
+                if (n > 0)
+                    m->terminal_present_bytes_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                              std::memory_order_relaxed);
+            }
+            m->tui_present_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        bump_tui_metrics(ev);
+        return make_int(n);
+    });
+
+    // Issue #2134: promote batch draw/present into render-critical hot tier.
+    ev.primitives().set_meta_for_name(
+        "tui:draw-batch",
+        RENDER_PRIMITIVE_META(2, "Batch write TermBuf cells + expand DirtyRegion (#2134).",
+                              "(int int int int [int [int]]) | (int vector) -> int"));
+    ev.primitives().set_meta_for_name(
+        "tui:fill-rect",
+        RENDER_PRIMITIVE_META(6, "Fill rectangle in TermBuf + expand DirtyRegion (#2134).",
+                              "(int int int int int int [int [int]]) -> int"));
+    ev.primitives().set_meta_for_name(
+        "tui:present-batch",
+        RENDER_PRIMITIVE_META(1,
+                              "Present TermBuf dirty AABB only (#2134); clean short-circuits to 0.",
+                              "(int [int]) -> int"));
 #endif // AURA_ENABLE_TUI
 }
 
