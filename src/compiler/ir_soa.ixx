@@ -522,13 +522,15 @@ export struct IRModuleV2 {
         func.instruction_dirty_[idx] = 1;
     }
 
-    // Issue #1657 / #2034: explicit block→instruction dirty propagation
-    // helper. Walks every dirty block on every function and ensures
-    // all of its instructions are also marked dirty. Returns the
-    // number of instruction bits flipped 0→1 (for metric accounting).
-    // Called from cascade_block_to_instructions callers + from
-    // IRCacheEntry::force_soa_instruction_dirty_sync (#2034) + from
-    // lowering consistency-mismatch fallback in lowering_impl.cpp.
+    // Issue #1657 / #2034: explicit block→instruction dirty propagation.
+    // Walks every dirty block on every function and ensures all of its
+    // instructions are also marked dirty. Returns instruction bits
+    // flipped 0→1 (for metric accounting).
+    //
+    // Issue #2139: production cascade sites MUST call finish_dirty_sync()
+    // (or CompilerService::finish_cascade_soa_dirty_sync_) rather than this
+    // method directly. Tests may still call sync_… to construct desync
+    // fixtures and verify the repair path.
     std::size_t sync_instruction_dirty_from_block_dirty() {
         std::size_t flipped = 0;
         for (auto& func : functions) {
@@ -549,6 +551,19 @@ export struct IRModuleV2 {
                 }
             }
         }
+        return flipped;
+    }
+
+    // Issue #2139: single production entry for block→instr dirty sync.
+    // Always leaves instruction_dirty_synced_with_blocks() == true.
+    // Cascade / invalidate / dual-emit repair paths call this (not bare
+    // sync_instruction_dirty_from_block_dirty).
+    std::size_t finish_dirty_sync() {
+        const auto flipped = sync_instruction_dirty_from_block_dirty();
+        // Postcondition: every dirty block has all instructions dirty.
+        // If this fires, a new cascade path omitted proper block/instr
+        // bookkeeping — fix the caller rather than relaxing the assert.
+        contract_assert(instruction_dirty_synced_with_blocks());
         return flipped;
     }
 

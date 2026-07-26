@@ -1793,14 +1793,15 @@ static IRModule lower_to_ir_impl(
                     fn.mark_all_blocks_dirty();
             }
         }
-        // Issue #2034: remaining block↔instruction dirty desync is a
-        // hard consistency_mismatch. Sync repairs the column; dual-
-        // emit consumers then see every dirty block fully dirty.
+        // Issue #2034 / #2139: remaining block↔instruction dirty desync is a
+        // hard consistency_mismatch. Repair via finish_dirty_sync (single
+        // production entry); dual-emit consumers then see every dirty block
+        // fully dirty.
         const auto desync = g_last_soa_snapshot.module.count_block_instr_dirty_desync();
         if (desync > 0) {
             ++g_last_soa_snapshot.consistency_mismatches;
             g_last_soa_snapshot.consistency_ok = false;
-            (void)g_last_soa_snapshot.module.sync_instruction_dirty_from_block_dirty();
+            (void)g_last_soa_snapshot.module.finish_dirty_sync();
         }
     }
     return state.module;

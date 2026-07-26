@@ -125,9 +125,11 @@ struct CompilerMetrics {
     //     reference (caller-side fallback to coarse full dirty)
     //   - soa_dirty_sync_total: Issue #1657 / #2034 — cumulative
     //     flipped instruction bits (or +1 per cascade) from
-    //     force_soa_instruction_dirty_sync /
-    //     sync_instruction_dirty_from_block_dirty after every
-    //     cascade / invalidate block dirty mark
+    //     force_soa_instruction_dirty_sync / finish_dirty_sync after
+    //     every cascade / invalidate block dirty mark
+    //   - soa_dirty_finish_cascade_total: Issue #2139 — once per
+    //     finish_cascade_soa_dirty_sync_ call (mandatory cascade exit)
+    //   - soa_dirty_finish_wired: constant 1 for Agent discovery
     //   - soa_consistency_partial_dirty_total: count of
     //     consistency-mismatch handlers that correctly dirty only
     //     affected functions instead of mark_all_blocks_dirty() on
@@ -135,6 +137,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> relower_instruction_level_hits{0};
     std::atomic<std::uint64_t> dep_graph_edge_miss_count{0};
     std::atomic<std::uint64_t> soa_dirty_sync_total{0};
+    std::atomic<std::uint64_t> soa_dirty_finish_cascade_total{0};
+    std::atomic<std::uint64_t> soa_dirty_finish_wired{1};
     std::atomic<std::uint64_t> soa_consistency_partial_dirty_total{0};
     // Issue #2111: unified SoA generation fence (silent-stale under self-evo).
     //   - soa_generation_bump_total: mark_dirty / cascade / restamp bumps
