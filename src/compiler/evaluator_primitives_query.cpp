@@ -5703,6 +5703,55 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         : 1);
             insert_kv("schema-2144", 2144);
             insert_kv("issue-2144", 2144);
+            // Issue #2146: adaptive reverify limit + truncation Agent surface.
+            const std::int64_t reverify_limit_used =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_reverify_limit_used.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t reverify_trunc_2146 =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_reverify_truncated_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t pending_full =
+                m ? static_cast<std::int64_t>(m->solve_delta_pending_full_solve_roots_last.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t pending_enq =
+                m ? static_cast<std::int64_t>(m->solve_delta_pending_full_solve_enqueued_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t trunc_flag =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_truncated_reverify_last.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t unscanned_last =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_unscanned_last.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t adaptive_adj =
+                m ? static_cast<std::int64_t>(
+                        m->reverify_adaptive_adjustments_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("solve-delta-reverify-limit-used", reverify_limit_used);
+            insert_kv("solve_delta_reverify_limit_used", reverify_limit_used);
+            insert_kv("solve-delta-reverify-truncated-total", reverify_trunc_2146);
+            insert_kv("solve_delta_reverify_truncated_total", reverify_trunc_2146);
+            insert_kv("solve-delta-pending-full-solve-roots", pending_full);
+            insert_kv("pending-full-solve-roots", pending_full);
+            insert_kv("solve-delta-pending-full-solve-enqueued", pending_enq);
+            insert_kv("truncated-reverify", trunc_flag);
+            insert_kv("truncated", trunc_flag); // AC3 alias
+            insert_kv("unscanned-constraint-count", unscanned_last);
+            insert_kv("unscanned", unscanned_last);
+            insert_kv("reverify-adaptive-adjustments", adaptive_adj);
+            insert_kv("reverify-adaptive-wired",
+                      m ? static_cast<std::int64_t>(
+                              m->reverify_adaptive_wired.load(std::memory_order_relaxed))
+                        : 1);
+            insert_kv("reverify-base-limit", 256);
+            insert_kv("reverify-max-limit", 4096);
+            insert_kv("schema-2146", 2146);
+            insert_kv("issue-2146", 2146);
             // Issue #1924: DeltaBlameChain / typed_mutate blame propagation
             insert_kv("blame-chain-complete-total", blame_complete);
             insert_kv("blame_chain_complete_total", blame_complete);

@@ -4305,6 +4305,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_unresolved_last_count{0};
     std::atomic<std::uint64_t> solve_delta_unscanned_last{0};
     std::atomic<std::uint64_t> solve_delta_truncated_reverify_last{0};
+    // Issue #2146: adaptive reverify limit + truncation drain to pending full-solve.
+    //   - solve_delta_reverify_truncated_total: lifetime reverify caps hit
+    //   - solve_delta_reverify_limit_used: last effective_reverify_limit()
+    //   - solve_delta_pending_full_solve_roots_last: pending_full_solve size after reverify
+    //   - solve_delta_pending_full_solve_enqueued_total: roots enqueued from unscanned
+    std::atomic<std::uint64_t> solve_delta_reverify_truncated_total{0};
+    std::atomic<std::uint64_t> solve_delta_reverify_limit_used{0};
+    std::atomic<std::uint64_t> solve_delta_pending_full_solve_roots_last{0};
+    std::atomic<std::uint64_t> solve_delta_pending_full_solve_enqueued_total{0};
+    std::atomic<std::uint64_t> reverify_adaptive_wired{1};
     std::atomic<std::uint64_t> solve_delta_unresolved_affected_sample_len{0};
     std::atomic<std::uint64_t> solve_delta_unresolved_affected_0{0};
     std::atomic<std::uint64_t> solve_delta_unresolved_affected_1{0};

@@ -294,13 +294,16 @@ void ConstraintSystem::mark_let_poly_dirty(TypeId var) {
 }
 
 std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
-    // Issue #1617: Let-Poly roots inflate the budget so
-    // generalization/instantiation sites are less likely to be
-    // dropped by bounded reverify under high-churn mutate.
-    // Issue #1871: pending full-solve backlog + adaptive scale also
-    // inflate the cap so high-frequency mutate does not starve
-    // clean-constraint reverify (reverify_adaptive_adjustments_total
-    // is bumped by the caller when the returned limit exceeds base).
+    // Issue #2146: test-only pin for truncation drain ACs.
+    if (force_reverify_limit_ > 0)
+        return std::min(force_reverify_limit_, kReverifyCleanScanMax);
+    // Issue #1617 / #1871 / #2146: adaptive clean-reverify budget.
+    //   effective = clamp(base_256 + k1*dirty + k2*occ + k3*let_poly
+    //                            + k4*pending + k5*touched,
+    //                     256, kReverifyCleanScanMax=4096)
+    // Occurrence / let-poly inflate first so priority scan order stays hot.
+    // reverify_adaptive_adjustments_total is bumped by the caller when
+    // the returned limit exceeds base.
     const std::size_t impact =
         dirty_count_ * 8 + touched_roots_.size() * 4 + occurrence_priority_roots_.size() * 16 +
         let_poly_dirty_roots_.size() * 12 + pending_full_solve_roots_.size() * 8;
@@ -596,18 +599,16 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     to_check.reserve(
         (touched_roots_.size() + occurrence_priority_roots_.size() + let_poly_dirty_roots_.size()) *
         2);
+    // Issue #2146: clean reverify must NOT share processed_roots_this_epoch_
+    // with the dirty worklist collector. Dirty collect already marked those
+    // roots "processed" earlier in the same solve_delta; skipping them here
+    // would silently drop clean-constraint reverify (and break truncation /
+    // pending_full_solve drain). Use a local visited set for this pass only.
+    // Epoch skip for dirty seeding remains in solve_delta_impl (#2065).
+    std::unordered_set<std::uint32_t> reverify_roots_seen;
     auto collect_clean_for_root = [&](std::uint32_t root) {
-        // Issue #2065: epoch skip — same semantics as the
-        // solve_delta_impl::collect_for_root above. Skips roots
-        // already processed in the current epoch.
-        if (processed_roots_this_epoch_.count(root) > 0) {
-            if (metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->solve_delta_epoch_skip_total.fetch_add(1, std::memory_order_relaxed);
-            }
+        if (!reverify_roots_seen.insert(root).second)
             return;
-        }
-        processed_roots_this_epoch_.insert(root);
         auto it = var_to_constraints_.find(root);
         if (it == var_to_constraints_.end())
             return;
@@ -631,6 +632,7 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         collect_clean_for_root(root);
 
     const auto scan_limit = effective_reverify_limit();
+    last_reverify_limit_used_ = scan_limit; // Issue #2146 Agent surface
     const bool truncated = to_check.size() > scan_limit;
     // Issue #1873: surface truncation to blame dump even before conflict.
     if (truncated) {
@@ -641,6 +643,9 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_conflict_reverify_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2146: last limit + lifetime truncate counters for Agents.
+        m->solve_delta_reverify_limit_used.store(static_cast<std::uint64_t>(scan_limit),
+                                                 std::memory_order_relaxed);
         // Issue #1871: count adaptive budget growth above the base
         // kReverifyCleanScanLimit (dirty/touched/pending-driven).
         if (scan_limit > kReverifyCleanScanLimit) {
@@ -648,6 +653,7 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         }
         if (truncated) {
             m->reverify_truncated_total.fetch_add(1, std::memory_order_relaxed);
+            m->solve_delta_reverify_truncated_total.fetch_add(1, std::memory_order_relaxed);
             if (aura_evaluator_mutation_boundary_depth() > 0) {
                 m->type_incremental_reverify_truncated_under_guard_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -741,6 +747,45 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                 delta_record_mode_ = saved_record;
                 return false;
             }
+            scanned_set.insert(idx); // Issue #2146: avoid double-queue as pending
+        }
+    }
+
+    // Issue #2146 Phase B: on truncation, merge unscanned clean candidates'
+    // Union-Find roots into pending_full_solve_roots_ so the next solve_delta
+    // drains residual (no silent drop / starvation). Do not wholesale-clear.
+    if (truncated) {
+        std::size_t pending_added = 0;
+        auto note_pending_from_constraint = [&](const Constraint& c) {
+            auto note = [&](TypeId id) {
+                if (!id.valid() || !reg_.is_var(id))
+                    return;
+                const auto rep = union_find_rep_index(id);
+                if (rep != UINT32_MAX && pending_full_solve_roots_.insert(rep).second)
+                    ++pending_added;
+            };
+            note(c.lhs);
+            note(c.rhs);
+        };
+        for (const auto& [pri, idx] : ordered) {
+            (void)pri;
+            if (scanned_set.count(idx) > 0)
+                continue;
+            if (idx < constraints_.size())
+                note_pending_from_constraint(constraints_[idx]);
+        }
+        // Refresh unscanned count after priority fallback may have scanned more.
+        last_reverify_unscanned_ =
+            ordered.size() > scanned_set.size() ? ordered.size() - scanned_set.size() : 0;
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->solve_delta_pending_full_solve_roots_last.store(
+                static_cast<std::uint64_t>(pending_full_solve_roots_.size()),
+                std::memory_order_relaxed);
+            if (pending_added > 0) {
+                m->solve_delta_pending_full_solve_enqueued_total.fetch_add(
+                    pending_added, std::memory_order_relaxed);
+            }
         }
     }
 
@@ -748,7 +793,19 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     // leaves a partial blame trail (scanned vs unscanned) so AI
     // self-repair can observe the cap rather than a silent success.
     if (truncated) {
-        record_truncated_partial_blame(scanned, to_check.size());
+        record_truncated_partial_blame(scanned_set.size(), to_check.size());
+    }
+
+    // Issue #2146: always publish last pending size for Agent query.
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->solve_delta_pending_full_solve_roots_last.store(
+            static_cast<std::uint64_t>(pending_full_solve_roots_.size()),
+            std::memory_order_relaxed);
+        m->solve_delta_truncated_reverify_last.store(last_reverify_truncated_ ? 1 : 0,
+                                                     std::memory_order_relaxed);
+        m->solve_delta_unscanned_last.store(static_cast<std::uint64_t>(last_reverify_unscanned_),
+                                            std::memory_order_relaxed);
     }
 
     delta_record_mode_ = saved_record;
