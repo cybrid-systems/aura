@@ -1260,6 +1260,21 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 kv.emplace_back(
                     "children-topology-restore",
                     make_int(static_cast<std::int64_t>(ws->children_topology_restore_count())));
+                // Issue #2061 / #2122: restamp observability.
+                kv.emplace_back("restamp-nodes-total",
+                                make_int(static_cast<std::int64_t>(ws->restamp_nodes_total())));
+                kv.emplace_back("restamp-us-total",
+                                make_int(static_cast<std::int64_t>(ws->restamp_us_total())));
+                kv.emplace_back(
+                    "restamp-incremental-nodes-total",
+                    make_int(static_cast<std::int64_t>(ws->restamp_incremental_nodes_total())));
+                kv.emplace_back(
+                    "restamp-full-fallback-total",
+                    make_int(static_cast<std::int64_t>(ws->restamp_full_fallback_total())));
+                kv.emplace_back("restamp-lazy-align-total", make_int(static_cast<std::int64_t>(
+                                                                ws->restamp_lazy_align_total())));
+                kv.emplace_back("schema-2122", make_int(2122));
+                kv.emplace_back("issue-2122", make_int(2122));
             }
             return build_kv_hash(ev, kv);
         });

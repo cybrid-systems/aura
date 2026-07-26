@@ -1636,6 +1636,23 @@ public:
     // wrap_epoch_ / generation_ / node_gen_ triad is preserved.
     mutable std::atomic<std::uint64_t> restamp_nodes_total_{0};
     mutable std::atomic<std::uint64_t> restamp_us_total_{0};
+    // Issue #2122: wrap-time dirty-cone restamp (vs full live walk).
+    // restamp_incremental_nodes_total: nodes restamped on incremental path
+    // restamp_full_fallback_total: wrap recoveries that took full walk
+    //   (empty touched, density > threshold, or force-full)
+    // restamp_lazy_align_total: is_valid/make_ref lazy gen-align after
+    //   incremental wrap for untouched live nodes
+    mutable std::atomic<std::uint64_t> restamp_incremental_nodes_total_{0};
+    mutable std::atomic<std::uint64_t> restamp_full_fallback_total_{0};
+    mutable std::atomic<std::uint64_t> restamp_lazy_align_total_{0};
+    // Touched set for wrap-window restamp (mark_dirty / structural).
+    // Parallel to live slots; resized lazily with size().
+    std::vector<std::uint8_t> restamp_touched_;
+    // After incremental wrap restamp, enable lazy gen-align on access.
+    mutable bool restamp_lazy_align_enabled_{false};
+    // Density threshold: if touched/live > this (basis points), full restamp.
+    // Default 3000 = 30%. Configurable for tests.
+    std::uint32_t restamp_incremental_density_threshold_bp_{3000};
     // Issue #1281: children topology restore via PCV snapshot count.
     mutable std::atomic<std::uint64_t> children_topology_restore_count_{0};
     // Issue #1502: parent_ column restored (snapshot or rebuild-from-children)
@@ -5440,6 +5457,8 @@ public:
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
+        // Issue #2122: seed wrap-window touched set for incremental restamp.
+        note_restamp_touched(id);
         // Issue #1519: post — requested reason bits are set after stamp.
         contract_assert(reasons == 0 || (dirty_[id] & reasons) == reasons);
         aura::core::cpp26::record_hotpath_invariant_hit();
@@ -6492,6 +6511,9 @@ public:
     }
 
     // Check if a NodeId is valid (in-bounds and from the current generation).
+    // Issue #2122: after incremental wrap restamp, untouched live nodes may
+    // still carry a pre-wrap node_gen_; lazy-align them here so eval stays
+    // correct without an O(N) full restamp on the wrap path.
     bool is_valid(const NodeId id) const
         post(r : r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
                        node_gen_[id] == generation_)) {
@@ -6509,6 +6531,16 @@ public:
             return false;
         }
         if (node_gen_[id] != generation_) {
+            // Issue #2122: lazy gen-align after incremental wrap for live
+            // (non-free) slots. Free slots keep node_gen_==0 and stay invalid
+            // when generation_ != 0 (the common post-wrap case).
+            if (restamp_lazy_align_enabled_ && node_gen_[id] != 0 && !is_free_slot(id)) {
+                // node_gen_ is not declared mutable; cast is intentional for
+                // lazy-align after wrap (const is_valid is the hot path).
+                const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
+                restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
             // Issue #457: stale access (gen mismatch) —
             // same path as out-of-range. The caller
             // should have used a StableNodeRef which
@@ -6741,6 +6773,13 @@ public:
         // last_validated_generation == 0 means "no validation
         // history" — make_ref() captures don't imply validation.
         // Callers that want provenance should use make_safe_ref().
+        // Issue #2122: lazy-align node_gen_ after incremental wrap so
+        // ref.gen == node_gen_[id] == generation_ for live slots.
+        if (restamp_lazy_align_enabled_ && id != NULL_NODE && id < node_gen_.size() &&
+            node_gen_[id] != 0 && node_gen_[id] != generation_ && !is_free_slot(id)) {
+            const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
+            restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
+        }
         return StableNodeRef{id,
                              generation_,
                              next_mutation_id_,
@@ -7000,6 +7039,25 @@ public:
     [[nodiscard]] std::uint64_t restamp_us_total() const noexcept {
         return restamp_us_total_.load(std::memory_order_relaxed);
     }
+    // Issue #2122: wrap-time incremental restamp metrics.
+    [[nodiscard]] std::uint64_t restamp_incremental_nodes_total() const noexcept {
+        return restamp_incremental_nodes_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t restamp_full_fallback_total() const noexcept {
+        return restamp_full_fallback_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t restamp_lazy_align_total() const noexcept {
+        return restamp_lazy_align_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool restamp_lazy_align_enabled() const noexcept {
+        return restamp_lazy_align_enabled_;
+    }
+    void set_restamp_incremental_density_threshold_bp(std::uint32_t bp) noexcept {
+        restamp_incremental_density_threshold_bp_ = bp > 10000 ? 10000 : bp;
+    }
+    [[nodiscard]] std::uint32_t restamp_incremental_density_threshold_bp() const noexcept {
+        return restamp_incremental_density_threshold_bp_;
+    }
     [[nodiscard]] bool auto_restamp_pending() const noexcept {
         return auto_restamp_pending_.load(std::memory_order_relaxed);
     }
@@ -7032,29 +7090,74 @@ public:
     // workspace. Also exposed publicly for the mutation
     // primitives to call after a non-SoA-mutating structural
     // change (e.g., a workspace-level COW swap).
-    // Issue #273: refresh node_gen_ after a generation bump that does
-    // not invalidate the whole FlatAST (e.g. hygienic macro rewrite).
+    // Issue #273 / #2061 / #2122: refresh node_gen_ after a generation bump.
+    //
+    // Issue #2122 wrap-recovery policy (when auto_restamp_pending_):
+    //   1. Build touched set (mark_dirty cone + mutation_log targets).
+    //   2. If touched empty OR density > threshold (default 30% live):
+    //      full live-node restamp (fallback) — same as pre-#2122.
+    //   3. Else: restamp only touched live nodes (incremental path);
+    //      enable lazy gen-align on is_valid/make_ref for untouched live
+    //      nodes so eval stays correct without O(N) pause on wrap.
+    // Non-wrap calls (idempotent restamp / macro paths) always full-restamp
+    // live nodes (free-list skipped) — preserves #2061 AC3.
     void restamp_all_node_generations() {
-        // Issue #2061: restamp is incremental in the sense that free-list
-        // slots (on_free[id] == 1) are skipped — only live nodes are
-        // restamped. restamp_nodes_total_ tracks how many live nodes were
-        // actually restamped; restamp_us_total_ tracks wall-clock time in
-        // microseconds. The cost is O(live_nodes) per call, not O(all_nodes).
-        // node_gen_==0 marks free-list slots, but live nodes at
-        // generation_==0 also carry 0 — do not use is_free_slot here.
         const auto t0 = std::chrono::steady_clock::now();
+        const bool wrap_recovery = auto_restamp_pending_.load(std::memory_order_relaxed);
         std::uint64_t restamped = 0;
         std::vector<std::uint8_t> on_free(size(), 0);
         for (NodeId fid : free_list_) {
             if (fid < on_free.size())
                 on_free[fid] = 1;
         }
-        for (NodeId id = 0; id < size(); ++id) {
-            if (!on_free[id] && id < node_gen_.size()) {
-                node_gen_[id] = generation_;
-                ++restamped;
+        // Seed touched from mutation log targets (structural + field records).
+        if (wrap_recovery) {
+            for (const auto& rec : mutation_log_) {
+                note_restamp_touched(rec.target_node);
+                note_restamp_touched(rec.parent_id);
             }
         }
+        std::uint64_t live = 0;
+        std::uint64_t touched_live = 0;
+        for (NodeId id = 0; id < size(); ++id) {
+            if (on_free[id] || id >= node_gen_.size())
+                continue;
+            ++live;
+            if (id < restamp_touched_.size() && restamp_touched_[id])
+                ++touched_live;
+        }
+        bool use_incremental = false;
+        if (wrap_recovery && live > 0 && touched_live > 0) {
+            const auto dens_bp = static_cast<std::uint64_t>(touched_live * 10000ull / live);
+            use_incremental = dens_bp <= restamp_incremental_density_threshold_bp_;
+        }
+        if (use_incremental) {
+            // Issue #2122 AC1: restamp only dirty/touched cone.
+            for (NodeId id = 0; id < size(); ++id) {
+                if (on_free[id] || id >= node_gen_.size())
+                    continue;
+                if (id < restamp_touched_.size() && restamp_touched_[id]) {
+                    node_gen_[id] = generation_;
+                    ++restamped;
+                }
+            }
+            restamp_incremental_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
+            restamp_lazy_align_enabled_ = true;
+        } else {
+            // Full live restamp (default / fallback / non-wrap).
+            if (wrap_recovery)
+                restamp_full_fallback_total_.fetch_add(1, std::memory_order_relaxed);
+            for (NodeId id = 0; id < size(); ++id) {
+                if (!on_free[id] && id < node_gen_.size()) {
+                    node_gen_[id] = generation_;
+                    ++restamped;
+                }
+            }
+            restamp_lazy_align_enabled_ = false;
+        }
+        // Clear touched window after wrap recovery consume.
+        if (wrap_recovery && !restamp_touched_.empty())
+            std::fill(restamp_touched_.begin(), restamp_touched_.end(), 0);
         const auto t1 = std::chrono::steady_clock::now();
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
         restamp_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
@@ -7065,6 +7168,16 @@ public:
         if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed)) {
             auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    // Issue #2122: mark a node for wrap-window incremental restamp.
+    void note_restamp_touched(NodeId id) noexcept {
+        if (id == NULL_NODE || id >= size())
+            return;
+        if (restamp_touched_.size() < size())
+            restamp_touched_.resize(size(), 0);
+        if (id < restamp_touched_.size())
+            restamp_touched_[id] = 1;
     }
 
     // Issue #2019: restamp only MacroIntroduced live nodes so expand →
