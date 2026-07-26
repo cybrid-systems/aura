@@ -2410,6 +2410,13 @@ aura_issue_test_link_llvm_jit(test_aot_jit_joint_versioning_2046)
 # (Agent what-if / self-evo safety). P1 — paired with #2023 (MacroSelfEvo).
 aura_add_issue_test(test_hygiene_checkpoint_2099)
 aura_issue_test_link_llvm_jit(test_hygiene_checkpoint_2099)
+
+# Issue #2170: Unified LayoutStamp / generation truth-source API for
+# cross-subsystem epoch coherence (P1 MemorySafety-Review / Epoch).
+# Single source-of-truth that boundary + compact + AOT emit + FFI
+# validate all read from instead of each picking a different "current".
+aura_add_issue_test(test_layout_stamp_2170)
+aura_issue_test_link_llvm_jit(test_layout_stamp_2170)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

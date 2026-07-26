@@ -11,6 +11,8 @@ module;
 // Issue #221: PCV header in GMF (same as evaluator.ixx) so enter_mutation_boundary
 // can name PersistentChildVector in the checkpoint snapshot type.
 #include "../core/persistent_child_vector.hh"
+#include "../core/layout_stamp.hh"    // Issue #2170: LayoutStamp capture + publisher
+#include "../core/workspace_epoch.hh" // Issue #2170: current_mutation_epoch() for capture
 #include "observability_metrics.h"
 #include "lock_order_audit.h"
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
@@ -1232,6 +1234,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
         ev_->outermost_mutation_success_flag_ = nullptr;
         ev_->unbind_yield_hook_evaluator();
+        // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).
+        // Captures the post-mutation stamp (env_generation_ + defuse_version_
+        // already bumped by exit_mutation_boundary; arena_gen + flat_gen
+        // reflect the latest compact state). Companion publisher lives
+        // at live_compact success path (compact_env_frames is a follow-up
+        // — #2170 Phase 2 — wired through the same publish_layout_stamp()
+        // helper so the last-stamp fields stay consistent regardless of
+        // which path bumps the underlying generations).
+        ev_->publish_layout_stamp();
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
             m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
             m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
@@ -1625,6 +1636,72 @@ std::uint64_t Evaluator::get_hygiene_checkpoint_restore_fail_total() const noexc
 std::uint64_t Evaluator::get_hygiene_checkpoint_cross_fiber_reject_total() const noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     return m ? m->hygiene_checkpoint_cross_fiber_reject_total.load(std::memory_order_relaxed) : 0;
+}
+
+// ── Issue #2170: LayoutStamp / unified generation truth-source API ────
+//
+// Single source of truth for all cross-subsystem epoch fields. Each
+// field keeps its existing storage; current_layout_stamp() composes
+// a snapshot, publish_layout_stamp() bumps the publisher counter +
+// writes the last-stamp fields, and the result is read back via
+// (query:stable-ref-stats-hash) layout-stamp-* keys.
+//
+// Memory ordering: env_generation_ + defuse_version_ use acquire
+// (matches their existing load semantics in ensure_mutation_invariants
+// + exit_mutation_boundary). ArenaGroup::primary_arena_id_and_gen
+// uses a shared_lock internally (the existing per-arena atomics are
+// acq_rel on bump). The captured mutation_epoch is acquire from the
+// process-global atomic — matches current_mutation_epoch().
+
+aura::core::LayoutStamp Evaluator::current_layout_stamp() const noexcept {
+    std::uint64_t arena_id = 0;
+    std::uint64_t arena_gen = 0;
+    if (arena_group_)
+        arena_group_->primary_arena_id_and_gen(arena_id, arena_gen);
+    const auto flat_gen =
+        workspace_flat_ ? static_cast<std::uint16_t>(workspace_flat_->generation()) : 0;
+    // env_generation_ is a plain uint64_t (not atomic) — bumps happen
+    // under workspace_mtx_ so plain reads are race-free (Issue #759
+    // SOAK contract).
+    const auto env_gen = env_generation_;
+    const auto dver = defuse_version_.load(std::memory_order_acquire);
+    // Direct ctor (not LayoutStamp::capture) — capture() was moved out
+    // of layout_stamp.hh to avoid workspace_epoch.hh include chain
+    // redefinition in other TUs (see layout_stamp.hh preamble note).
+    // mutation_epoch is filled here via the directly-included
+    // workspace_epoch.hh acquire-load.
+    return aura::core::LayoutStamp(arena_id, arena_gen, flat_gen,
+                                   aura::core::current_mutation_epoch(), env_gen, dver);
+}
+
+aura::core::LayoutStamp Evaluator::publish_layout_stamp() noexcept {
+    const auto stamp = current_layout_stamp();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->layout_stamp_publish_total.fetch_add(1, std::memory_order_relaxed);
+        m->layout_stamp_last_arena_gen.store(stamp.arena_gen, std::memory_order_relaxed);
+        m->layout_stamp_last_flat_gen.store(static_cast<std::uint64_t>(stamp.flat_gen),
+                                            std::memory_order_relaxed);
+    }
+    return stamp;
+}
+
+void Evaluator::bump_layout_stamp_publish_total() const noexcept {
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->layout_stamp_publish_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+std::uint64_t Evaluator::get_layout_stamp_last_arena_gen() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->layout_stamp_last_arena_gen.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_layout_stamp_last_flat_gen() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->layout_stamp_last_flat_gen.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_layout_stamp_publish_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->layout_stamp_publish_total.load(std::memory_order_relaxed) : 0;
 }
 
 } // namespace aura::compiler

@@ -1161,6 +1161,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
             insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
             insert_kv("recommendation", rec_int);
+            // Issue #2170: LayoutStamp keys (schema bump — fold into the
+            // existing stable-ref-stats-hash per #2170 AC contract,
+            // "no new public prim if constrained"). The stamp captures
+            // all 6 cross-subsystem epoch fields from a single helper
+            // (current_layout_stamp()) so Agents / FFI / AOT emit can
+            // read a coherent view instead of each picking a different
+            // "current" value. bumpers / getters back these keys.
+            const auto stamp = ev.current_layout_stamp();
+            insert_kv("layout-stamp-arena-id", static_cast<std::int64_t>(stamp.arena_id));
+            insert_kv("layout-stamp-arena-gen", static_cast<std::int64_t>(stamp.arena_gen));
+            insert_kv("layout-stamp-flat-gen", static_cast<std::int64_t>(stamp.flat_gen));
+            insert_kv("layout-stamp-mutation-epoch",
+                      static_cast<std::int64_t>(stamp.mutation_epoch));
+            insert_kv("layout-stamp-env-gen", static_cast<std::int64_t>(stamp.env_gen));
+            insert_kv("layout-stamp-defuse-version",
+                      static_cast<std::int64_t>(stamp.defuse_version));
+            insert_kv("layout-stamp-publish-total",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_publish_total()));
+            insert_kv("layout-stamp-last-arena-gen",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_last_arena_gen()));
+            insert_kv("layout-stamp-last-flat-gen",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_last_flat_gen()));
+            insert_kv("layout-stamp-schema", static_cast<std::int64_t>(2170));
+            insert_kv("layout-stamp-issue", 2170);
+            insert_kv("layout-stamp-active", 1);
             // Issue #738: cross-COW + boundary pinning observability.
             insert_kv("cross-cow-invalidations",
                       static_cast<std::int64_t>(ev.get_cross_cow_invalidations()));

@@ -2644,6 +2644,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
 
+    // Issue #2170: LayoutStamp publish + last-stamp fields (P1
+    // MemorySafety-Review / Epoch). Backs the extended
+    // (query:stable-ref-stats-hash) keys layout-stamp-*.
+    //   - layout_stamp_publish_total: every successful
+    //                                   current_layout_stamp() capture
+    //                                   at boundary exit + compact path
+    //   - layout_stamp_last_arena_gen: last published LayoutStamp.arena_gen
+    //                                   (relaxed for stats-only)
+    //   - layout_stamp_last_flat_gen:  last published LayoutStamp.flat_gen
+    //                                   (relaxed for stats-only)
+    std::atomic<std::uint64_t> layout_stamp_publish_total{0};  // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0}; // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};  // #2170
+
     // Issue #2099: HygieneCheckpoint save/restore counters for Agent
     // what-if / self-evo rollback semantics.
     //   - hygiene_checkpoint_save_total: every successful save_hygiene_checkpoint()
