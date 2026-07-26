@@ -2810,8 +2810,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (!cid)
                     return;
                 try {
-                    static std::mutex orch_eval_mu;
-                    std::lock_guard lock(orch_eval_mu);
+                    // Issue #2158: per-Evaluator apply gate — not process-static.
+                    // try_acquire reject path never reaches this body (agent_spawn.h
+                    // wraps body after aura_orch_agent_body_try_acquire_ex succeeds),
+                    // so we never hold agent_apply_mu_ on quota-reject (AC5).
+                    const auto t0 = std::chrono::steady_clock::now();
+                    std::lock_guard lock(ev.agent_apply_mu_);
+                    const auto wait_us = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count());
+                    aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
+                        wait_us, std::memory_order_relaxed);
                     // Issue #1719: refuse apply on freed thunk closure.
                     if (!agent_cid_live(ev, *cid)) {
                         agent_note_closure_freed_call(ev);
@@ -3324,6 +3336,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2153", aura::orch::kJoinDrainTimeoutIssue);
             insert_kv("issue-2153", aura::orch::kJoinDrainTimeoutIssue);
             insert_kv("join-drain-wired", 1);
+            // Issue #2158: per-Evaluator agent apply mutex (no process-static orch_eval_mu).
+            insert_kv("agent-apply-lock-acquisitions-total",
+                      static_cast<std::int64_t>(
+                          os.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-apply-lock-wait-us-total",
+                      static_cast<std::int64_t>(
+                          os.agent_apply_lock_wait_us_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2158", aura::orch::kAgentApplyPerEvalMutexIssue);
+            insert_kv("issue-2158", aura::orch::kAgentApplyPerEvalMutexIssue);
+            insert_kv("agent-apply-per-eval-mutex-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

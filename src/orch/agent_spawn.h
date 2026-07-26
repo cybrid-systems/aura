@@ -57,6 +57,8 @@ inline constexpr int kOrchModulePhase = 4; // #1881 orch health observability
 inline constexpr int kOrchModuleIssue = 1881;
 // Issue #2153: configurable secondary drain after non-Ok join cancel.
 inline constexpr int kJoinDrainTimeoutIssue = 2153;
+// Issue #2158: per-Evaluator agent apply mutex (replace process-static orch_eval_mu).
+inline constexpr int kAgentApplyPerEvalMutexIssue = 2158;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Default secondary drain window after request_cancel (#2082 preserved).
@@ -130,6 +132,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> keepalive_cancels_total{0};
     std::atomic<std::uint64_t> keepalive_helpers_spawned{0};
     std::atomic<std::uint64_t> keepalive_helper_spawn_fail{0};
+    // Issue #2158: per-Evaluator agent_apply_mu_ acquire accounting.
+    // wait_us includes uncontended lock time (usually ~0) + contention wait.
+    std::atomic<std::uint64_t> agent_apply_lock_acquisitions_total{0};
+    std::atomic<std::uint64_t> agent_apply_lock_wait_us_total{0};
 };
 
 // Issue #2008: conventional mailbox keepalive payload prefix.
