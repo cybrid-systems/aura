@@ -140,6 +140,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> soa_dirty_finish_cascade_total{0};
     std::atomic<std::uint64_t> soa_dirty_finish_wired{1};
     std::atomic<std::uint64_t> soa_consistency_partial_dirty_total{0};
+    // Issue #2181: hard gate on partial-relower entry — block↔instr desync
+    // must not silently peel. detected = pre-sync desync count; synced_bits =
+    // flipped 0→1; force_full = partial aborted → full re-lower for define.
+    std::atomic<std::uint64_t> soa_dirty_desync_detected_total{0};
+    std::atomic<std::uint64_t> soa_dirty_desync_force_full_total{0};
+    std::atomic<std::uint64_t> soa_dirty_desync_synced_bits_total{0};
+    std::atomic<std::uint64_t> soa_dirty_desync_gate_wired{1};
     // Issue #2111: unified SoA generation fence (silent-stale under self-evo).
     //   - soa_generation_bump_total: mark_dirty / cascade / restamp bumps
     //   - soa_generation_stale_prevented_total: should_relower forced by

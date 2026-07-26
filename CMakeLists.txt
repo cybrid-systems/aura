@@ -1905,6 +1905,11 @@ aura_add_issue_test(test_soa_cascade_instr_dirty_sync)
 aura_issue_test_link_llvm_jit(test_soa_cascade_instr_dirty_sync)
 add_dependencies(all_test_issue_targets test_soa_cascade_instr_dirty_sync)
 
+# Issue #2181: hard gate SoA desync on partial relower entry → force full.
+aura_add_issue_test(test_soa_partial_desync_gate_2181)
+aura_issue_test_link_llvm_jit(test_soa_partial_desync_gate_2181)
+add_dependencies(all_test_issue_targets test_soa_partial_desync_gate_2181)
+
 # Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit from cascade.
 aura_add_issue_test(test_hot_update_cascade_dirty_reemit)
 aura_issue_test_link_llvm_jit(test_hot_update_cascade_dirty_reemit)

@@ -4856,6 +4856,53 @@ public:
         metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #2181: hard-require SoA block↔instr dirty sync before any
+    // partial peel (relower_only_dirty_blocks / instr-level / DirtyAware entry
+    // via this path). Returns true if partial is safe (desync==0 after sync
+    // and no pre-existing desync). Returns false → caller MUST take full
+    // re-lower for this define (no under-invalidate).
+    //
+    //   1. count desync; if >0 bump soa_dirty_desync_detected_total
+    //   2. force_soa_instruction_dirty_sync (AoS→SoA + finish_dirty_sync)
+    //   3. if still desync OR had pre-sync desync → force_full metric, false
+    //   4. else true (happy path already synced: O(dirty) scan only)
+    [[nodiscard]] bool gate_partial_soa_dirty_sync_(IRCacheEntry& entry) {
+        metrics_.soa_dirty_desync_gate_wired.store(1, std::memory_order_relaxed);
+        const auto desync0 = entry.soa_mod.count_block_instr_dirty_desync();
+        if (desync0 > 0) {
+            metrics_.soa_dirty_desync_detected_total.fetch_add(static_cast<std::uint64_t>(desync0),
+                                                               std::memory_order_relaxed);
+        }
+        // Always sync at partial entry (AC1) — O(dirty blocks).
+        const auto flipped = entry.force_soa_instruction_dirty_sync();
+        if (flipped > 0) {
+            metrics_.soa_dirty_desync_synced_bits_total.fetch_add(
+                static_cast<std::uint64_t>(flipped), std::memory_order_relaxed);
+            metrics_.soa_dirty_sync_total.fetch_add(static_cast<std::uint64_t>(flipped),
+                                                    std::memory_order_relaxed);
+        } else if (desync0 > 0) {
+            // Sync was a no-op but desync was reported — still account.
+            metrics_.soa_dirty_sync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (desync0 > 0) {
+            metrics_.soa_dirty_finish_cascade_total.fetch_add(1, std::memory_order_relaxed);
+            entry.bump_soa_generation();
+            metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        const auto desync1 = entry.soa_mod.count_block_instr_dirty_desync();
+        // Residual desync after sync → hard force full.
+        // Pre-sync desync → also force full (AC4: no partial peel under
+        // uncertain bookkeeping; sync still ran so bits are repaired for
+        // the subsequent full path).
+        if (desync1 > 0 || desync0 > 0) {
+            metrics_.soa_dirty_desync_force_full_total.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        // AC2: successful partial gate — desync must be 0.
+        contract_assert(entry.soa_mod.instruction_dirty_synced_with_blocks());
+        return true;
+    }
+
     // Issue #2127: consult deopt-storm + dirty density + base thr (#2112)
     // for partial/full decision. Records effective thr on CompilerMetrics.
     AdaptiveRelowerDecision
@@ -5411,11 +5458,15 @@ public:
             // No entry → caller needs to do a full first-time lower.
             return false;
         }
+        // Issue #2181: hard-require SoA dirty sync before any partial peel.
+        // On desync (pre or residual post-sync) skip instr/per-fn partial and
+        // fall through to full re-lower below — no under-invalidate.
+        const bool allow_partial_peel = gate_partial_soa_dirty_sync_(it->second);
         // Issue #2133: when precise instruction dirty is present and under
         // partial threshold, consume ImpactScope-style instr path (pass peel
         // only; no full AST re-lower). Falls through to block/fn paths if
         // over threshold or no instr precision.
-        {
+        if (allow_partial_peel) {
             std::size_t dirty_instr_n = 0;
             ImpactScope synthetic;
             for (std::size_t fi = 0; fi < it->second.irs.size(); ++fi) {
@@ -5442,10 +5493,17 @@ public:
                     it->second.source = std::string(source);
                     it->second.source_hash = fnv1a_64(it->second.source);
                 }
-                (void)flat;
-                (void)pool;
-                (void)expanded_root;
-                return true;
+                // Issue #2181 AC2: desync must be 0 after successful peel.
+                if (it->second.soa_mod.count_block_instr_dirty_desync() != 0) {
+                    metrics_.soa_dirty_desync_force_full_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    // fall through to full
+                } else {
+                    (void)flat;
+                    (void)pool;
+                    (void)expanded_root;
+                    return true;
+                }
             }
         }
         const std::size_t dirty_blocks = it->second.dirty_block_count();
@@ -5508,7 +5566,8 @@ public:
         // the common post-store_define_v2 shape that drops __top__).
         // Previously required irs.size()>=2 which forced full re-lower
         // for every set-body on a real-lowered define.
-        if (!it->second.irs.empty()) {
+        // Issue #2181: only when gate_partial_soa_dirty_sync_ allowed peel.
+        if (allow_partial_peel && !it->second.irs.empty()) {
             std::size_t dirty_func_idx = static_cast<std::size_t>(-1);
             std::size_t dirty_func_count = 0;
             for (std::size_t fi = 0; fi < it->second.block_dirty_per_func_.size(); ++fi) {
@@ -5613,19 +5672,27 @@ public:
                         it->second.source_hash = fnv1a_64(it->second.source);
                     }
                     it->second.dirty = false;
-                    // Issue #1514: sync JIT — evict native code for this
-                    // define so next exec recompiles only the dirty fn.
-                    (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(), dirty_ids.size());
-                    metrics_.jit_partial_recompile_requests_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    return true;
+                    // Issue #2181 AC2: after successful partial, desync must be 0.
+                    if (it->second.soa_mod.count_block_instr_dirty_desync() != 0) {
+                        metrics_.soa_dirty_desync_force_full_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // Residual desync after peel → fall through to full.
+                    } else {
+                        // Issue #1514: sync JIT — evict native code for this
+                        // define so next exec recompiles only the dirty fn.
+                        (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
+                                                     dirty_ids.size());
+                        metrics_.jit_partial_recompile_requests_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        return true;
+                    }
                 }
                 // If per-function failed, fall through to
                 // full re-lower below.
             }
         }
         // Bitmask says at least one block is dirty (or
-        // per-function dispatch didn't apply) → do a
+        // per-function dispatch didn't apply / #2181 force full) → do a
         // full re-lower. The future per-block re-lower
         // (cycle 4+) will route only the dirty blocks
         // through lowering; today we still re-lower the
@@ -6268,6 +6335,76 @@ public:
         if (it == ir_cache_v2_.end())
             return nullptr;
         return &it->second;
+    }
+
+    // Issue #2181 test helper: mark block 0 dirty and clear instruction
+    // dirty bits on the cached SoA module so partial entry sees desync.
+    // Returns true if a desync was successfully injected.
+    // When dual-emit left soa_mod empty, synthesizes a minimal SoA skeleton
+    // from AoS irs so the desync gate remains hard-testable.
+    bool inject_soa_dirty_desync_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        auto& entry = it->second;
+        if (entry.soa_mod.functions.empty()) {
+            if (entry.irs.empty())
+                return false;
+            // Synthesize skeleton: one SoA fn/block range per AoS block so
+            // block↔instr desync is well-defined without dual-emit.
+            for (const auto& aos_fn : entry.irs) {
+                const auto fi = entry.soa_mod.add_function(aos_fn.name, aos_fn.local_count);
+                for (const auto& blk : aos_fn.blocks) {
+                    const auto bi = entry.soa_mod.add_block(fi);
+                    const auto n = static_cast<std::uint32_t>(
+                        blk.instructions.empty() ? 1 : blk.instructions.size());
+                    for (std::uint32_t k = 0; k < n; ++k)
+                        (void)entry.soa_mod.add_instruction(fi, aura::ir::IROpcode::ConstI64);
+                    entry.soa_mod.seal_block(fi, bi);
+                    auto& soa_fn = entry.soa_mod.functions[fi];
+                    if (soa_fn.block_dirty_.size() <= bi)
+                        soa_fn.block_dirty_.resize(bi + 1, 0);
+                }
+                auto& soa_fn = entry.soa_mod.functions[fi];
+                if (soa_fn.blocks_.empty()) {
+                    const auto bi = entry.soa_mod.add_block(fi);
+                    (void)entry.soa_mod.add_instruction(fi, aura::ir::IROpcode::ConstI64);
+                    entry.soa_mod.seal_block(fi, bi);
+                    soa_fn.block_dirty_.assign(1, 0);
+                }
+            }
+        }
+        if (entry.soa_mod.functions.empty())
+            return false;
+        auto& fn = entry.soa_mod.functions[0];
+        if (fn.blocks_.empty())
+            return false;
+        // Ensure block 0 has a non-empty instruction range so clearing
+        // instruction_dirty_ produces a real desync.
+        if (fn.blocks_[0].start_idx >= fn.blocks_[0].end_idx) {
+            (void)entry.soa_mod.add_instruction(0, aura::ir::IROpcode::ConstI64);
+            fn.blocks_[0].end_idx = static_cast<std::uint32_t>(fn.size());
+        }
+        fn.mark_block_dirty(0);
+        // Also keep AoS bit set so force_soa mirrors the dirty story.
+        if (entry.block_dirty_per_func_.empty())
+            entry.block_dirty_per_func_.resize(1);
+        if (entry.block_dirty_per_func_[0].empty())
+            entry.block_dirty_per_func_[0].resize(fn.blocks_.size(), 0);
+        if (!entry.block_dirty_per_func_[0].empty())
+            entry.block_dirty_per_func_[0][0] = 1;
+        for (auto& b : fn.instruction_dirty_)
+            b = 0;
+        return entry.soa_mod.count_block_instr_dirty_desync() > 0;
+    }
+
+    // Issue #2181 test: run partial gate on a define; returns gate result.
+    // true = partial allowed; false = force full.
+    [[nodiscard]] bool gate_partial_soa_dirty_sync_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return true;
+        return gate_partial_soa_dirty_sync_(it->second);
     }
 
     // Get all cached defines' names (for the (eval-current) full-lower fallback).
