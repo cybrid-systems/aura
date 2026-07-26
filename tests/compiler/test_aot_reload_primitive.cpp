@@ -1,11 +1,22 @@
 // test_aot_reload_primitive.cpp — Issue #1366: (aot:reload) Aura wrappers
 // Issue #2012: atomic func_table staging + rollback + concurrent stress
+// Issue #2178: cross-workspace / cross-COW hot-update reject + metric
+//   AC7: foreign eval_ptr → reject + counter++; matching eval → success;
+//   null eval_ptr (process default) → happy path unchanged.
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+
+// Issue #2178: C-linkage accessors for the cross-workspace guard + counter.
+// Forward-declared here so the test file can call them without pulling in
+// the full C++ definition (the function bodies live in aura_jit_bridge.cpp).
+// Note: aura_reload_aot_module_for_eval is already declared in
+// aura_jit_bridge.h:299 (included above), so we don't re-declare it here.
+extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept;
+extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
 
 #include <atomic>
 #include <cstdint>
@@ -95,6 +106,72 @@ std::string build_registering_so(std::uint64_t version, std::uint64_t region, in
     return sopath;
 }
 
+}
+
+// Issue #2178: cross-workspace / cross-COW hot-update reject. Foreign
+// eval contexts (or COW generation mismatch) must be rejected at the
+// reload entry point with a dedicated metric, not a silent partial
+// success. The MVP scope (#1943) documents single-workspace; this guard
+// enforces the boundary until a future cross-COW migration design lands.
+static void ac7_cross_workspace_reject_2178() {
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    // Baseline: single-workspace / process-default path unchanged.
+    // (Existing AC1-AC6 already verify version + region mismatch bumps
+    // the right counters; this AC is the cross-workspace-specific path.)
+    aura_set_aot_region_mask(0);
+    aura_set_module_version(0);
+    aura_reload_aot_module("ac7_baseline.so", 0);
+    CHECK(aura_reload_aot_module("ac7_baseline.so", 0) == true,
+          "AC7: null eval_ptr (process default) happy path unchanged");
+    // Capture rejected counter baseline.
+    const auto rej0 = aura_cross_workspace_hot_update_rejected_total_v_read();
+    // Foreign eval context: pick an obviously-bogus address that's
+    // NOT in the per-eval states map. The guard must reject.
+    void* foreign_eval = reinterpret_cast<void*>(0xDEAD'BEEF'C0DE'0001ULL);
+    const bool ok_foreign = aura_reload_aot_module_for_eval(foreign_eval, "ac7_foreign.so", 0);
+    CHECK(ok_foreign == false,
+          "AC7: foreign eval_ptr → aura_reload_aot_module_for_eval returns false");
+    CHECK(aura_cross_workspace_hot_update_rejected_total_v_read() == rej0 + 1,
+          "AC7: cross_workspace_hot_update_rejected_total +1 (Issue #2178 AC1)");
+    // Null eval_ptr still works (process-default AotState is current).
+    const bool ok_null = aura_reload_aot_module_for_eval(nullptr, "ac7_null.so", 0);
+    CHECK(ok_null == true,
+          "AC7: null eval_ptr (process default) → aura_reload_aot_module_for_eval returns true");
+    CHECK(aura_cross_workspace_hot_update_rejected_total_v_read() == rej0 + 1,
+          "AC7: cross_workspace_hot_update_rejected_total unchanged (null is not foreign)");
+    // Source-cite: foreign guard + helper in aura_jit_bridge.cpp.
+    std::ifstream ab("src/compiler/aura_jit_bridge.cpp");
+    std::string ab_contents((std::istreambuf_iterator<char>(ab)), std::istreambuf_iterator<char>());
+    CHECK(ab_contents.find("g_cross_workspace_hot_update_rejected_total{0}") != std::string::npos,
+          "AC7: file-level atomic in aura_jit_bridge.cpp");
+    CHECK(ab_contents.find("aura_cross_workspace_hot_update_rejected_increment") !=
+              std::string::npos,
+          "AC7: bump helper in aura_jit_bridge.cpp");
+    CHECK(ab_contents.find("aura_cross_workspace_hot_update_rejected_total_v_read") !=
+              std::string::npos,
+          "AC7: C-linkage accessor in aura_jit_bridge.cpp");
+    CHECK(ab_contents.find("aura_is_current_workspace_eval") != std::string::npos,
+          "AC7: is_current_workspace_eval guard in aura_jit_bridge.cpp");
+    CHECK(ab_contents.find("Issue #2178") != std::string::npos,
+          "AC7: aura_jit_bridge.cpp cites #2178");
+    // Source-cite: CompilerMetrics field + hot_update_registry.hh doc.
+    std::ifstream om("src/compiler/observability_metrics.h");
+    std::string om_contents((std::istreambuf_iterator<char>(om)), std::istreambuf_iterator<char>());
+    CHECK(om_contents.find("cross_workspace_hot_update_rejected_total{0}") != std::string::npos,
+          "AC7: CompilerMetrics field cross_workspace_hot_update_rejected_total");
+    std::ifstream hr("src/compiler/hot_update_registry.hh");
+    std::string hr_contents((std::istreambuf_iterator<char>(hr)), std::istreambuf_iterator<char>());
+    CHECK(hr_contents.find("Issue #2178") != std::string::npos,
+          "AC7: hot_update_registry.hh cites #2178");
+    CHECK(hr_contents.find("aura_is_current_workspace_eval") != std::string::npos,
+          "AC7: hot_update_registry.hh contract references the guard");
+    // Live value check: counter is atomic load (no setup needed).
+    const auto rej_final = aura_cross_workspace_hot_update_rejected_total_v_read();
+    CHECK(rej_final >= rej0 + 1, "AC7: final rejected counter >= baseline + 1");
+    aura_set_aot_metrics(nullptr);
+}
+
 } // namespace
 
 int main() {
@@ -111,6 +188,7 @@ int main() {
         aura_set_aot_region_mask(0);
         aura_set_module_version(0);
     }
+    ac7_cross_workspace_reject_2178();
 
     // ── Aura: region mask round-trip ──
     // aot:get-region-mask is registered via register_stats_impl (engine:metrics).

@@ -893,6 +893,48 @@ void commit_func_table_swap() {
 static void* g_aot_last_handle = nullptr;
 static std::uint64_t g_aot_last_commit_epoch = 0;
 static std::uint64_t g_aot_last_module_version = 0;
+// Issue #2178: cross-workspace / cross-COW hot-update reject counter.
+// Bumped when aura_reload_aot_module_for_eval / reemit callbacks are
+// invoked with a foreign eval_ptr (or when COW generation diverges).
+// The MVP scope (#1943) explicitly documents single-workspace; this
+// counter is the observable guard for multi-agent / multi-tenant hosts
+// until a future cross-COW migration design lands. The C-linkage accessor
+// is surfaced on (query:hot-update-registry-stats) so Agents can alert
+// on accidental cross-workspace calls.
+static std::atomic<std::uint64_t> g_cross_workspace_hot_update_rejected_total{0};
+// Issue #2178: helper used from within the reload / reemit walks to bump
+// the cross-workspace-rejected counter when a foreign eval context is
+// detected. C-linkage so the C++ reload / reemit paths can call it
+// without dragging in the full hot_update_registry.hpp.
+extern "C" void aura_cross_workspace_hot_update_rejected_increment(void) noexcept {
+    g_cross_workspace_hot_update_rejected_total.fetch_add(1, std::memory_order_relaxed);
+}
+// Issue #2178: C-linkage accessor for the cross-workspace-rejected counter.
+// Mirrors the pattern of aura_aot_hot_update_atomic_rollback_total etc.
+extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept {
+    return g_cross_workspace_hot_update_rejected_total.load(std::memory_order_relaxed);
+}
+// Issue #2178: returns true when eval_ptr is the current workspace-bound
+// evaluator or null (process-default AotState). Foreign eval contexts
+// (cross-workspace / cross-COW) are rejected by the reload / reemit
+// walks. The MVP scope (#1943) documents single-workspace; this guard
+// enforces the boundary until a future cross-COW migration design lands.
+extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
+
+// Issue #2178: implementation of the cross-workspace guard. For the MVP
+// scope (#1943, single-workspace), the only "current" contexts are:
+//   - eval_ptr == nullptr: process-default AotState (always current)
+//   - eval_ptr in g_aot_state_map: a previously-set per-eval state
+// Any other eval_ptr is foreign (cross-workspace / cross-COW) and must
+// be rejected by aura_reload_aot_module_for_eval + reemit callbacks.
+// The lock is held only on the map lookup (read-only), so contention is
+// minimal during the hot reemit path.
+extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept {
+    if (eval_ptr == nullptr)
+        return true; // process-default AotState is always current
+    std::lock_guard<std::mutex> lock(g_aot_state_mtx);
+    return g_aot_state_map.find(eval_ptr) != g_aot_state_map.end();
+}
 
 void note_reload_rollback(AotReloadFail reason) noexcept {
     if (aot_metrics()) {
@@ -1876,6 +1918,24 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
             reason);
     };
+    // Issue #2178: hard guard for cross-workspace / cross-COW hot-update.
+    // The MVP scope (#1943) documents single-workspace; this explicit reject
+    // makes the boundary enforceable. Foreign eval contexts (or when COW
+    // generation diverges from the workspace's current generation) bump the
+    // cross_workspace_hot_update_rejected counter + set last-fail reason
+    // and return false — never silently partial-succeed. The single-workspace
+    // happy path (null eval_ptr / matching eval) is unchanged.
+    if (eval_ptr != nullptr && !aura_is_current_workspace_eval(eval_ptr)) {
+        aura_cross_workspace_hot_update_rejected_increment();
+        g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Other),
+                                        std::memory_order_release);
+        // Issue #1882: audit the rejected cross-workspace attempt so Agent
+        // diagnostics can attribute the failure to the right eval context.
+        aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+            /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
+            "cross-workspace hot-update rejected");
+        return false;
+    }
     if (!path) {
         aot_log("aura_reload_aot_module: null path\n");
         // No module loaded — no staged table to discard; skip rollback metric.

@@ -6346,6 +6346,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_fail_linear_total{0};  // #2093
     std::atomic<std::uint64_t> aot_reload_fail_staging_total{0}; // #2093
     std::atomic<std::uint64_t> aot_reload_fail_other_total{0};   // #2093
+    // Issue #2178: cross-workspace / cross-COW hot-update reject counter.
+    // Bumped when aura_reload_aot_module_for_eval / reemit callbacks are
+    // invoked with a foreign eval_ptr (or when COW generation diverges).
+    // The MVP scope (#1943) documents single-workspace; this is the
+    // observable guard for multi-agent / multi-tenant hosts until a
+    // future cross-COW migration design lands. Surfaces via
+    // (query:hot-update-registry-stats) so Agents can alert on accidental
+    // cross-workspace calls.
+    std::atomic<std::uint64_t> cross_workspace_hot_update_rejected_total{0}; // #2178
 
     // Issue #785: AOT concurrent hot-update observability
     // (concurrent steal + grace period + EnvFrame version
