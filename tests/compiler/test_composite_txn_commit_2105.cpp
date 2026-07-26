@@ -99,7 +99,8 @@ static void ac1_commit_order() {
     auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
     auto pos_fn = tc.find("Evaluator::composite_txn_commit");
     CHECK(pos_fn != std::string::npos, "composite_txn_commit defined");
-    auto body = pos_fn != std::string::npos ? tc.substr(pos_fn, 2500) : std::string{};
+    // Window covers #2180 CS-reuse expansion of the commit body.
+    auto body = pos_fn != std::string::npos ? tc.substr(pos_fn, 8000) : std::string{};
     auto pos_solve = body.find("solve_delta_occurrence");
     auto pos_lin = body.find("linear_post_mutate_enforce_all");
     auto pos_audit = body.find("run_typed_mutation_invariant_audit");

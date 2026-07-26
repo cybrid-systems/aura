@@ -3108,15 +3108,23 @@ public:
                                        std::uint32_t target_node, std::uint64_t before_epoch,
                                        std::uint64_t after_epoch, bool composite_mode = false,
                                        void* out_result = nullptr) noexcept;
-    // Issue #2105: ordered composite / nested / atomic_batch commit barrier.
-    // Sequence: solve_delta_occurrence → linear revalidate → invariant audit
-    // → (Full) partial recovery or reject. Clears txn-dirty on success.
+    // Issue #2105 / #2180: ordered composite / nested / atomic_batch commit
+    // barrier. Sequence: solve_delta_occurrence (reuses stashed partial CS) →
+    // linear revalidate → invariant audit → (Full) partial recovery or reject.
+    // Clears txn-dirty on success.
     // out_commit: optional typed_audit::CompositeTxnCommitResult*.
     [[nodiscard]] bool composite_txn_commit(std::uint64_t mutation_id, std::string_view op_name,
                                             std::uint32_t target_node, std::uint64_t before_epoch,
                                             std::uint64_t after_epoch, bool nested = false,
                                             bool batch_active = false,
                                             void* out_commit = nullptr) noexcept;
+    // Issue #2180: stash post-infer_flat_partial ConstraintSystem + occurrence
+    // vars for composite_txn_commit (opaque TypeChecker* from typecheck path).
+    void stash_partial_constraint_state(void* type_checker_opaque) noexcept;
+    // Issue #2180: test/Agent — inject EQUAL conflict into commit CS so
+    // round-2 composite commit must solve-fail (not empty greenfield).
+    void inject_commit_cs_type_conflict_for_test() noexcept;
+    [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
     // Issue #2105: Agent-visible flag — composite/nested txn still open
     // (half-typed views must not be treated as committed).
     [[nodiscard]] bool txn_dirty() const noexcept {
@@ -13206,6 +13214,14 @@ private:
     void* guard_infer_diag_opaque_ = nullptr;
     std::uint64_t guard_infer_registry_gen_ = 0;
     void destroy_guard_infer_engine() noexcept;
+    // Issue #2180: long-lived TypeChecker* holding commit CS + occurrence vars
+    // imported from the last infer_flat_partial (opaque; typecheck TU only).
+    void* commit_type_checker_opaque_ = nullptr;
+    std::uint64_t commit_tc_registry_gen_ = 0;
+    bool commit_cs_live_ = false;
+    // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
+    void* commit_occurrence_vars_opaque_ = nullptr;
+    void destroy_commit_type_checker() noexcept;
 };
 
 

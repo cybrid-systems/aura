@@ -2168,6 +2168,11 @@ aura_add_issue_test(test_composite_txn_commit_2105)
 aura_issue_test_link_llvm_jit(test_composite_txn_commit_2105)
 add_dependencies(all_test_issue_targets test_composite_txn_commit_2105)
 
+# Issue #2180: composite_txn_commit reuses stashed partial CS + occurrence vars.
+aura_add_issue_test(test_composite_commit_cs_reuse_2180)
+aura_issue_test_link_llvm_jit(test_composite_commit_cs_reuse_2180)
+add_dependencies(all_test_issue_targets test_composite_commit_cs_reuse_2180)
+
 # Issue #2106: cascade_skip_subtree → CompilerMetrics + DeadCoercion synergy.
 aura_add_issue_test(test_cascade_skip_metrics_2106)
 aura_issue_test_link_llvm_jit(test_cascade_skip_metrics_2106)
