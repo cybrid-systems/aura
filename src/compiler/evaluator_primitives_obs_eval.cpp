@@ -3074,7 +3074,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t invalidations_total =
                 m ? m->envframe_lifetime_guard_invalidations_total.load(std::memory_order_relaxed)
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            // Capacity 32: schema-2003/2087 keys + #2164 hold-pin counters.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3113,10 +3114,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                           aura::core::envframe_lifetime::envframe_lifetime_scans_run()));
             insert_kv("guard-runs-total", static_cast<std::int64_t>(guard_runs_total));
             insert_kv("invalidations-total", static_cast<std::int64_t>(invalidations_total));
-            // Issue #2087: EnvFrame Phase 2 lineage — phase marker
-            // (kEnvFrameLifetimePhase bumped 1 → 2) + env_id_remap
-            // counters. Phase=2 means closures write-lock
-            // env_id rewrite + env_id_remap_ table are live.
+            // Issue #2087 / #2164: phase marker (3 = hold-pin) + env_id_remap
+            // counters. schema-2087 lineage retained; schema-2164 adds hold-pin.
             insert_kv("phase", static_cast<std::int64_t>(
                                    aura::core::envframe_lifetime::kEnvFrameLifetimePhase));
             const std::uint64_t closures_compacted_e =
@@ -3126,6 +3125,42 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("closures-compacted", static_cast<std::int64_t>(closures_compacted_e));
             insert_kv("env-frames-remapped", static_cast<std::int64_t>(env_frames_remapped_e));
             insert_kv("schema-2087", 2087);
+            // Issue #2164: hold-pin depth + blocked compact + gen mismatch.
+            insert_kv(
+                "active-guard-depth",
+                static_cast<std::int64_t>(aura::core::envframe_lifetime::active_guard_depth()));
+            insert_kv(
+                "blocked-compact-while-guard-held",
+                static_cast<std::int64_t>(
+                    aura::core::envframe_lifetime::envframe_lifetime_blocked_compact_total()));
+            const std::uint64_t blocked_m =
+                m ? m->envframe_compact_blocked_while_guard_held_total.load(
+                        std::memory_order_relaxed)
+                  : 0;
+            insert_kv("blocked-compact-while-guard-held-metrics",
+                      static_cast<std::int64_t>(blocked_m));
+            insert_kv(
+                "hold-gen-mismatch-total",
+                static_cast<std::int64_t>(
+                    aura::core::envframe_lifetime::envframe_lifetime_hold_gen_mismatch_total()));
+            insert_kv(
+                "compact-generation",
+                static_cast<std::int64_t>(aura::core::envframe_lifetime::compact_generation()));
+            using Site = aura::core::envframe_lifetime::EnvFrameLifetimeSite;
+            insert_kv("site-boundary-exit-constructs",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::envframe_lifetime_site_constructs(
+                              Site::BoundaryExit)));
+            insert_kv("site-fiber-steal-constructs",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::envframe_lifetime_site_constructs(
+                              Site::FiberSteal)));
+            insert_kv("site-compact-sweep-constructs",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::envframe_lifetime_site_constructs(
+                              Site::CompactSweep)));
+            insert_kv("schema-2164", 2164);
+            insert_kv("hold-pin-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

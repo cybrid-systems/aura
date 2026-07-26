@@ -1957,6 +1957,12 @@ aura_add_issue_test(test_parallel_intend_pure_2163)
 aura_issue_test_link_llvm_jit(test_parallel_intend_pure_2163)
 add_dependencies(all_test_issue_targets test_parallel_intend_pure_2163)
 
+# Issue #1665 / #2164: scan_skip_freed + EnvFrameLifetimeGuard hold-pin.
+# Source: tests/compiler/test_scan_skip_freed_closures.cpp (resolved by name).
+aura_add_issue_test(test_scan_skip_freed_closures)
+aura_issue_test_link_llvm_jit(test_scan_skip_freed_closures)
+add_dependencies(all_test_issue_targets test_scan_skip_freed_closures)
+
 # Issue #2159: fiber-native keepalive helper (replace detached std::thread).
 aura_add_issue_test(test_fiber_native_keepalive_2159)
 aura_issue_test_link_llvm_jit(test_fiber_native_keepalive_2159)
