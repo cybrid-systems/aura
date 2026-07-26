@@ -2372,6 +2372,10 @@ aura_issue_test_link_llvm_jit(test_soa_single_entry_dirty_sync_2139)
 aura_add_issue_test(test_hot_contract_unify_2142)
 aura_issue_test_link_llvm_jit(test_hot_contract_unify_2142)
 
+# Issue #2143: SoaDirtyAwarePass + run_dirty_pipeline fold on IRModuleV2.
+aura_add_issue_test(test_soa_dirty_aware_pipeline_2143)
+aura_issue_test_link_llvm_jit(test_soa_dirty_aware_pipeline_2143)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.

@@ -661,6 +661,19 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2;
             else if (passes_skipped_due_to_dirty > 0 || wrap_delegation > 0)
                 recommendation = 1;
+            // Issue #2143: IRModuleV2 run_dirty fold pipeline metrics.
+            const std::uint64_t dirty_pipe_inv =
+                aura::compiler::run_dirty_pipeline_invocations_total.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t dirty_pipe_passes =
+                aura::compiler::run_dirty_pipeline_pass_runs_total.load(std::memory_order_relaxed);
+            const std::uint64_t dirty_pipe_skips =
+                aura::compiler::run_dirty_pipeline_clean_skips_total.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t dirty_pipe_runs =
+                aura::compiler::run_dirty_pipeline_dirty_runs_total.load(std::memory_order_relaxed);
+            const std::uint64_t soa_dirty_wired =
+                aura::compiler::soa_dirty_aware_pass_wired.load(std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"pass-pipeline-runs", make_int(static_cast<std::int64_t>(pipeline_runs))},
                 {"pipeline-yield-count", make_int(static_cast<std::int64_t>(pipeline_yield))},
@@ -679,6 +692,18 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
                 {"task4-review-schema", make_int(572)},
                 {"pass-pipeline-dirtyaware-total", make_int(static_cast<std::int64_t>(total))},
                 {"pass-pipeline-dirtyaware-recommendation", make_int(recommendation)},
+                // Issue #2143: SoaDirtyAwarePass + run_dirty_pipeline surface
+                {"run-dirty-pipeline-invocations",
+                 make_int(static_cast<std::int64_t>(dirty_pipe_inv))},
+                {"run-dirty-pipeline-pass-runs",
+                 make_int(static_cast<std::int64_t>(dirty_pipe_passes))},
+                {"run-dirty-pipeline-clean-skips",
+                 make_int(static_cast<std::int64_t>(dirty_pipe_skips))},
+                {"run-dirty-pipeline-dirty-runs",
+                 make_int(static_cast<std::int64_t>(dirty_pipe_runs))},
+                {"soa-dirty-aware-pass-wired",
+                 make_int(static_cast<std::int64_t>(soa_dirty_wired))},
+                {"schema-2143", make_int(2143)},
             };
             return build_hash(kv);
         });

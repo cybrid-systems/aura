@@ -129,6 +129,12 @@ concept IncrementalPass =
 // (or whole pass when DefineDirtyMaskView::any() is false).
 //
 // Issue #381: load-bearing property for incremental hot paths.
+//
+// Issue #2143: IRModuleV2 dirty-only fold uses a separate concept
+// `SoaDirtyAwarePass` (void run_dirty(IRModuleV2&)) in pass_manager.ixx
+// so this block-level hook stays ABI-stable. Production DirtyAware kinds
+// should grow run_dirty + for_each_block(dirty_only) and migrate off
+// hot-path to_aos_view (see run_dirty_pipeline / SoAtoAoSBridgePass note).
 template <typename P>
 concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id) {
     { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;

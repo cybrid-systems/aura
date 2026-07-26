@@ -8,6 +8,7 @@ export module aura.compiler.optimization_passes;
 
 import std;
 import aura.compiler.ir;
+import aura.compiler.ir_soa;          // Issue #2143: IRModuleV2 for run_dirty
 import aura.core.type;                // Issue #2025: TypeRegistry for DeadCoercion
 import aura.core.concept_constraints; // #1577: Pass / DirtyAware / …
 import aura.compiler.pass_manager;
@@ -477,6 +478,22 @@ public:
         last_narrow_hits_ += pass.narrow_evidence_hits();
     }
 
+    // Issue #2143: SoaDirtyAwarePass — dirty-only SoA fold (for_each_block).
+    // Dual-run companion to AoS run(IRModule&); default pipeline keeps AoS.
+    void run_dirty(aura::compiler::IRModuleV2& m) {
+        aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
+        pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
+        pass.run_dirty(m);
+        last_eliminated_ = pass.eliminated_count();
+        last_narrow_hits_ = pass.narrow_evidence_hits();
+        if (last_eliminated_ > 0) {
+            dead_coercion_ir_elided_total.fetch_add(last_eliminated_, std::memory_order_relaxed);
+            dead_coercion_ir_narrow_evidence_hits.fetch_add(last_narrow_hits_,
+                                                            std::memory_order_relaxed);
+        }
+        error_ = pass.has_error();
+    }
+
     [[nodiscard]] bool has_error() const { return error_; }
     [[nodiscard]] std::string_view name() const { return "dead-coercion-elim"; }
     [[nodiscard]] std::size_t eliminated_count() const noexcept { return last_eliminated_; }
@@ -499,6 +516,8 @@ static_assert(aura::compiler::IncrementalPass<DeadCoercionPass>,
               "DeadCoercionPass must be Incremental (#2025)");
 static_assert(aura::compiler::InstructionDirtyAwarePass<DeadCoercionPass>,
               "DeadCoercionPass must be InstructionDirtyAware (#2133)");
+static_assert(aura::compiler::SoaDirtyAwarePass<DeadCoercionPass>,
+              "DeadCoercionPass provides run_dirty(IRModuleV2&) (#2143)");
 
 static_assert(aura::compiler::Pass<ComputeKindPass>, "ComputeKindPass must satisfy Pass (#1576)");
 static_assert(aura::compiler::DirtyAwarePass<ComputeKindPass>,

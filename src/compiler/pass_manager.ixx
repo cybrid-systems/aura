@@ -192,6 +192,13 @@ export inline std::atomic<std::uint64_t> dirty_only_blocks_run_total{0};
 export inline std::atomic<std::uint64_t> dirty_only_blocks_skipped_total{0};
 export inline std::atomic<std::uint64_t> run_one_dirty_calls_total{0};
 export inline std::atomic<std::uint64_t> hot_pass_dirty_soa_wired{1};
+// Issue #2143: IRModuleV2 run_dirty fold pipeline observability
+// (clean_skips / dirty_runs aggregate from for_each_block).
+export inline std::atomic<std::uint64_t> run_dirty_pipeline_invocations_total{0};
+export inline std::atomic<std::uint64_t> run_dirty_pipeline_pass_runs_total{0};
+export inline std::atomic<std::uint64_t> run_dirty_pipeline_clean_skips_total{0};
+export inline std::atomic<std::uint64_t> run_dirty_pipeline_dirty_runs_total{0};
+export inline std::atomic<std::uint64_t> soa_dirty_aware_pass_wired{1};
 
 inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexcept {
     const auto dirty = view.dirty_block_count();
@@ -625,6 +632,67 @@ bool run_one_dirty(aura::ir::IRModule& mod, P& pass,
     return run_incremental_dirty_pipeline(mod, pass, define_cache);
 }
 
+// ── Issue #2143: SoaDirtyAwarePass + run_dirty_pipeline (IRModuleV2) ──
+//
+// Historical DirtyAwarePass (concept_constraints) is the AoS block-dirty
+// hook: bool is_block_dirty(block_id). Issue #2143 binds the SoA module
+// surface sketched as "DirtyAwarePass + run_dirty(IRModuleV2&)" under a
+// distinct name so existing DirtyAwarePass static_asserts stay green.
+//
+// Requirements (SoaDirtyAwarePass):
+//   - void run_dirty(IRModuleV2&)  — dirty-only walk of SoA columns
+//
+// Preferred implementation:
+//   for_each_block(..., dirty_only=true) / walk_soa_function_hotpath
+// Migration off to_aos_view:
+//   DirtyAware kinds should grow run_dirty and leave SoAtoAoSBridgePass
+//   as a transitional bridge for legacy AoS-only stages (Phase 2 drops
+//   hot-path to_aos for these kinds).
+export template <typename P>
+concept SoaDirtyAwarePass = requires(P& p, IRModuleV2& m) {
+    { p.run_dirty(m) } -> std::same_as<void>;
+};
+
+// Fold-expression pure pipeline over SoaDirtyAwarePass stages.
+// Short-circuits on has_error() when the pass exposes it.
+// Metrics: run_dirty_pipeline_*_total (invocations / pass runs /
+// clean_skips / dirty_runs from for_each_block helpers inside passes).
+export template <typename... Passes>
+    requires(SoaDirtyAwarePass<std::remove_cvref_t<Passes>> && ...)
+bool run_dirty_pipeline(IRModuleV2& mod, Passes&... passes) {
+    run_dirty_pipeline_invocations_total.fetch_add(1, std::memory_order_relaxed);
+    bool ok = true;
+    auto run_one_soa = [&](auto& pass) {
+        if (!ok)
+            return;
+        // Capture ir_soa_migration dirty counters around the pass so
+        // pipeline-level clean_skips / dirty_runs stay in sync even when
+        // the pass records via record_dirty_block_skip/run.
+        const auto mig_skips0 =
+            ir_soa_migration::dirty_block_driven_skips.load(std::memory_order_relaxed);
+        const auto mig_runs0 =
+            ir_soa_migration::dirty_block_driven_runs.load(std::memory_order_relaxed);
+        pass.run_dirty(mod);
+        run_dirty_pipeline_pass_runs_total.fetch_add(1, std::memory_order_relaxed);
+        const auto mig_skips1 =
+            ir_soa_migration::dirty_block_driven_skips.load(std::memory_order_relaxed);
+        const auto mig_runs1 =
+            ir_soa_migration::dirty_block_driven_runs.load(std::memory_order_relaxed);
+        if (mig_skips1 > mig_skips0)
+            run_dirty_pipeline_clean_skips_total.fetch_add(mig_skips1 - mig_skips0,
+                                                           std::memory_order_relaxed);
+        if (mig_runs1 > mig_runs0)
+            run_dirty_pipeline_dirty_runs_total.fetch_add(mig_runs1 - mig_runs0,
+                                                          std::memory_order_relaxed);
+        if constexpr (requires { pass.has_error(); }) {
+            if (pass.has_error())
+                ok = false;
+        }
+    };
+    (run_one_soa(passes), ...);
+    return ok;
+}
+
 // ── Issue #381: static_asserts documenting the new concepts ────
 //
 // These are documentation-as-tests: the static_asserts would
@@ -969,39 +1037,43 @@ public:
         }
     }
 
-    // Issue #1920 Phase 2: SoA const-fold over dirty blocks (columnar walk).
+    // Issue #1920 / #2143: SoA const-fold over dirty blocks via for_each_block.
     // Folded count approximates elidable Const* ops in dirty ranges.
+    // Prefer run_dirty() for SoaDirtyAwarePass fold pipelines.
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
         folded_ = 0;
         for (auto& func : mod.functions) {
-            for (auto& block : func.blocks_) {
-                if (dirty_blocks_only && !func.is_block_dirty(block.block_id)) {
-                    aura::compiler::ir_soa_migration::record_dirty_block_skip();
-                    continue;
-                }
-                if (dirty_blocks_only)
-                    aura::compiler::ir_soa_migration::record_dirty_block_run();
-                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                    if (i >= func.opcodes_.size())
-                        break;
-                    using aura::ir::IROpcode;
-                    switch (func.opcodes_[i]) {
-                        case IROpcode::ConstI64:
-                        case IROpcode::ConstF64:
-                        case IROpcode::ConstBool:
-                        case IROpcode::ConstString:
-                            ++folded_;
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                        if (i >= func.opcodes_.size())
                             break;
-                        default:
-                            break;
+                        using aura::ir::IROpcode;
+                        switch (func.opcodes_[i]) {
+                            case IROpcode::ConstI64:
+                            case IROpcode::ConstF64:
+                            case IROpcode::ConstBool:
+                            case IROpcode::ConstString:
+                                ++folded_;
+                                break;
+                            default:
+                                break;
+                        }
+                        if (i < func.shape_ids_.size())
+                            aura::compiler::ir_soa_migration::record_shape_column_consult();
                     }
-                    if (i < func.shape_ids_.size())
-                        aura::compiler::ir_soa_migration::record_shape_column_consult();
-                }
-            }
+                },
+                /*dirty_only=*/dirty_blocks_only);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
         }
     }
+
+    // Issue #2143: SoaDirtyAwarePass entry — dirty-only columnar fold.
+    void run_dirty(IRModuleV2& mod) { run(mod, /*dirty_blocks_only=*/true); }
 
     // Per-function fold — accumulates the per-function count
     // into the wrap's total. Returns the per-function delta,
@@ -1088,6 +1160,8 @@ private:
 
 static_assert(DirtyAwarePass<ConstantFoldingWrap>,
               "ConstantFoldingWrap exposes is_block_dirty for IRSoA wiring");
+static_assert(SoaDirtyAwarePass<ConstantFoldingWrap>,
+              "ConstantFoldingWrap provides run_dirty(IRModuleV2&) (#2143)");
 static_assert(ShapeStableAwarePass<ConstantFoldingWrap>,
               "ConstantFoldingWrap is ShapeStableAwarePass via DirtyAware");
 static_assert(JITFriendlyPass<ConstantFoldingWrap>,
@@ -1958,55 +2032,65 @@ public:
         return any_change;
     }
 
-    // Issue #538 / #1920: SoA IR incremental DCE. Processes only dirty
-    // blocks when dirty_blocks_only is true (default). Marks
-    // blocks dirty when elisions occur so downstream JIT can
-    // invalidate specialized code. Phase 2 consumer: DirtyAware + SoA.
+    // Issue #538 / #1920 / #2143: SoA IR incremental DCE via
+    // for_each_block(dirty_only). Prefer run_dirty() for the concept
+    // entry; this overload remains for dual-run / full-module peels.
+    // Marks blocks dirty when elisions occur so downstream JIT can
+    // invalidate specialized code. Phase 2: avoid hot-path to_aos_view
+    // for DeadCoercion kinds — this path peels only dirty SoA ranges.
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         if (keep_for_debug_)
             return;
         aura::compiler::ir_soa_migration::record_consumer_pass();
         auto t0 = std::chrono::steady_clock::now();
         for (auto& func : mod.functions) {
-            for (auto& block : func.blocks_) {
-                if (dirty_blocks_only && !func.is_block_dirty(block.block_id)) {
-                    aura::compiler::ir_soa_migration::record_dirty_block_skip();
-                    continue;
-                }
-                if (dirty_blocks_only)
-                    aura::compiler::ir_soa_migration::record_dirty_block_run();
-                aura::ir::BasicBlock aos_block;
-                aos_block.id = block.block_id;
-                aos_block.instructions.reserve(block.end_idx - block.start_idx);
-                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                    aos_block.instructions.push_back(aura::ir::IRInstruction{
-                        .opcode = func.opcodes_[i],
-                        .operands = {func.operand0_[i], func.operand1_[i], func.operand2_[i],
-                                     func.operand3_[i]},
-                        .type_id = func.type_ids_[i],
-                        .narrow_evidence = func.narrow_evidence_[i],
-                    });
-                }
-                if (!run_on_block(aos_block))
-                    continue;
-                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                    const auto local_i = i - block.start_idx;
-                    const auto& instr = aos_block.instructions[local_i];
-                    func.opcodes_[i] = instr.opcode;
-                    func.operand0_[i] = instr.operands[0];
-                    func.operand1_[i] = instr.operands[1];
-                    func.operand2_[i] = instr.operands[2];
-                    func.operand3_[i] = instr.operands[3];
-                    func.type_ids_[i] = instr.type_id;
-                    func.narrow_evidence_[i] = instr.narrow_evidence;
-                }
-                func.mark_block_dirty(block.block_id);
-            }
+            // Issue #2143: single dirty-aware entry uses for_each_block
+            // (clean_skips / dirty_runs metrics via record_dirty_block_*).
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                    aura::ir::BasicBlock aos_block;
+                    aos_block.id = block.block_id;
+                    aos_block.instructions.reserve(block.end_idx - block.start_idx);
+                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                        aos_block.instructions.push_back(aura::ir::IRInstruction{
+                            .opcode = func.opcodes_[i],
+                            .operands = {func.operand0_[i], func.operand1_[i], func.operand2_[i],
+                                         func.operand3_[i]},
+                            .type_id = func.type_ids_[i],
+                            .narrow_evidence = func.narrow_evidence_[i],
+                        });
+                    }
+                    if (!run_on_block(aos_block))
+                        return;
+                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                        const auto local_i = i - block.start_idx;
+                        const auto& instr = aos_block.instructions[local_i];
+                        func.opcodes_[i] = instr.opcode;
+                        func.operand0_[i] = instr.operands[0];
+                        func.operand1_[i] = instr.operands[1];
+                        func.operand2_[i] = instr.operands[2];
+                        func.operand3_[i] = instr.operands[3];
+                        func.type_ids_[i] = instr.type_id;
+                        func.narrow_evidence_[i] = instr.narrow_evidence;
+                    }
+                    func.mark_block_dirty(block.block_id);
+                },
+                /*dirty_only=*/dirty_blocks_only);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
         }
         auto t1 = std::chrono::steady_clock::now();
         elapsed_us_ += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
     }
+
+    // Issue #2143: SoaDirtyAwarePass entry — always dirty-only fold.
+    // Production callers prefer run_dirty_pipeline over to_aos_view for
+    // DeadCoercion kinds (AoS default pipeline retained until dual-emit
+    // retires; see SoAtoAoSBridgePass migration note).
+    void run_dirty(IRModuleV2& mod) { run(mod, /*dirty_blocks_only=*/true); }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "dead-coercion"; }
@@ -2051,6 +2135,8 @@ private:
 
 static_assert(JITFriendlyPass<DeadCoercionEliminationPass>,
               "DeadCoercionEliminationPass exposes pipeline_epoch_hint");
+static_assert(SoaDirtyAwarePass<DeadCoercionEliminationPass>,
+              "DeadCoercionEliminationPass provides run_dirty(IRModuleV2&) (#2143)");
 
 // Issue #160: Dead Code Elimination (DCE) Pass.
 //
@@ -2812,38 +2898,42 @@ public:
     // Issue #2060: DirtySoAEntryPass — only dirty blocks (same peel as run(func)).
     void run_on_dirty_blocks_only(aura::ir::IRFunction& func) { run(func); }
 
-    // Issue #1920 Phase 2: SoA type propagation over dirty blocks only.
+    // Issue #1920 / #2143: SoA type propagation via for_each_block(dirty_only).
     // Walks type_id / narrow_evidence columns without full AoS conversion.
+    // Prefer run_dirty() for SoaDirtyAwarePass fold pipelines.
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
         for (auto& func : mod.functions) {
-            for (auto& block : func.blocks_) {
-                if (dirty_blocks_only && !func.is_block_dirty(block.block_id)) {
-                    aura::compiler::ir_soa_migration::record_dirty_block_skip();
-                    continue;
-                }
-                if (dirty_blocks_only)
-                    aura::compiler::ir_soa_migration::record_dirty_block_run();
-                // Columnar consult: shape + linear for each instruction in block.
-                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                    if (i < func.shape_ids_.size()) {
-                        (void)func.shape_ids_[i];
-                        aura::compiler::ir_soa_migration::record_shape_column_consult();
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                    // Columnar consult: shape + linear for each instruction in block.
+                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                        if (i < func.shape_ids_.size()) {
+                            (void)func.shape_ids_[i];
+                            aura::compiler::ir_soa_migration::record_shape_column_consult();
+                        }
+                        if (i < func.type_ids_.size() && func.type_ids_[i] != 0) {
+                            ++propagated_count_;
+                            aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
+                        }
+                        if (i < func.narrow_evidence_.size() && func.narrow_evidence_[i] != 0)
+                            ++narrow_propagated_;
+                        if (i < func.linear_ownership_states_.size()) {
+                            (void)func.linear_ownership_states_[i];
+                            aura::compiler::ir_soa_migration::record_linear_column_consult();
+                        }
                     }
-                    if (i < func.type_ids_.size() && func.type_ids_[i] != 0) {
-                        ++propagated_count_;
-                        aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
-                    }
-                    if (i < func.narrow_evidence_.size() && func.narrow_evidence_[i] != 0)
-                        ++narrow_propagated_;
-                    if (i < func.linear_ownership_states_.size()) {
-                        (void)func.linear_ownership_states_[i];
-                        aura::compiler::ir_soa_migration::record_linear_column_consult();
-                    }
-                }
-            }
+                },
+                /*dirty_only=*/dirty_blocks_only);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
         }
     }
+
+    // Issue #2143: SoaDirtyAwarePass entry — dirty-only type-id walk.
+    void run_dirty(IRModuleV2& mod) { run(mod, /*dirty_blocks_only=*/true); }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "type-propagation"; }
@@ -3195,6 +3285,8 @@ static_assert(JITFriendlyPass<TypePropagationPass>,
               "TypePropagationPass exposes pipeline_epoch_hint");
 static_assert(DirtyAwarePass<TypePropagationPass>,
               "TypePropagationPass is DirtyAware for define-mask wiring (#1574)");
+static_assert(SoaDirtyAwarePass<TypePropagationPass>,
+              "TypePropagationPass provides run_dirty(IRModuleV2&) (#2143)");
 static_assert(SoAViewAwarePass<TypePropagationPass>, "TypePropagationPass is SoAViewAware (#1619)");
 static_assert(SoAViewAwarePass<DeadCoercionEliminationPass>,
               "DeadCoercionEliminationPass is SoAViewAware (#1619)");
@@ -4857,6 +4949,13 @@ private:
 // Phase 2 SoA→AoS migration; subsequent cycles replace
 // the AoS side with a SoA-aware overload of the same Pass
 // (e.g. ConstantFoldingWrap::run_soa).
+//
+// Issue #2143 migration (DirtyAware kinds → run_dirty):
+// Prefer SoaDirtyAwarePass::run_dirty(IRModuleV2&) +
+// run_dirty_pipeline fold (for_each_block dirty_only) over
+// hot-path to_aos_view for DeadCoercion / TypePropagation /
+// ConstantFolding. Keep this bridge only for legacy AoS-only
+// stages until dual-emit retires.
 export template <typename P> class SoAtoAoSBridgePass {
 public:
     // Issue #1517: bridge is SoAView-aware (columnar source of truth).
