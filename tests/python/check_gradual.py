@@ -49,10 +49,19 @@ SCENARIOS = [
 ]
 
 
+def _test_env():
+    # Issue #2213 / #2053: main() applies production Forbidden tree-walker;
+    # harness defaults Soft unless caller set AURA_SANDBOX explicitly.
+    env = os.environ.copy()
+    if not str(env.get("AURA_SANDBOX", "")).strip():
+        env["AURA_SANDBOX"] = "off"
+    return env
+
+
 def run(code):
     cmd = [str(AURA)]
     try:
-        r = subprocess.run(cmd, input=code.encode(), capture_output=True, timeout=5)
+        r = subprocess.run(cmd, input=code.encode(), capture_output=True, timeout=5, env=_test_env())
         return r.stdout.decode().strip(), r.returncode
     except subprocess.TimeoutExpired:
         return "<TIMEOUT>", -1
