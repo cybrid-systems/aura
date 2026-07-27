@@ -962,6 +962,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         // flag is cleared by the Guard dtor
         // (the outermost one only).
         ev_->mutation_boundary_held_.store(true, std::memory_order_release);
+        // Issue #2204: arm GcDeferReason::MutationHold on outermost enter
+        // (after lock + held_). Nested guards do NOT arm (depth already
+        // covers concurrent outer holds via process-wide depth). Soft
+        // #1493 hold-µs GC frequency tune remains; this is the hard
+        // should_defer_destructive_gc gate for STW.
+        aura::gc_hooks::arm_mutation_hold_defer();
         // Issue #2184: publish fiber-local MutationSafetySnapshot mirrors
         // (held=true) so steal path never samples torn depth/held.
         if (aura::serve::g_current_fiber) {
@@ -1330,6 +1336,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (slot)
             (*slot)--;
         ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+        // Issue #2204: release MutationHold when logical hold ends (paired
+        // with held_ clear, after exit probes / reemit / flush). Abort
+        // (strict force-fail) still reaches here via dtor — bit always
+        // released. Nested guards never armed so never release here.
+        aura::gc_hooks::release_mutation_hold_defer();
         // Issue #2184: clear fiber-local held mirror after outermost exit.
         if (aura::serve::g_current_fiber) {
             const auto depth = Evaluator::active_mutation_stack_static().size();

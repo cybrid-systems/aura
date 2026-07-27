@@ -199,6 +199,12 @@ struct ImpactScope {
     std::size_t unmapped_ast_nodes = 0;
     // Issue #2031: how many mapped locs had a precise instr index.
     std::size_t instr_level_hits = 0;
+    // Issue #2246: indirect / higher-order (Apply) call sites resolved
+    // to the mutated define (cross-fn impact beyond direct Call).
+    std::size_t cross_fn_indirect_hits = 0;
+    // Issue #2246: unresolved callish sites that forced block-level
+    // over-approx dirty (no silent under-invalidate).
+    std::size_t unresolved_callee_hits = 0;
 
     // Issue #2133: true when affected_instrs carries precise work.
     [[nodiscard]] bool has_instr_precision() const noexcept { return !affected_instrs.empty(); }
@@ -268,6 +274,10 @@ ImpactScope compute_impact_scope(
     (void)ir_cache_index; // reserved for cross-function cascade
     return result;
 }
+
+// Issue #2246: forward declaration — used by the cross-fn overload below.
+[[nodiscard]] inline bool
+is_unresolved_callish_for_2246(const aura::ir::IRInstruction& ins) noexcept;
 
 // Issue #2179: cross-function instruction-level impact scope
 // (refine #2109). When the mutated root's define has callers in

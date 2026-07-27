@@ -10081,15 +10081,19 @@ private:
         // (default) is soft — rebuild optional, no force. AC3: happy
         // path zero extra cost when consistent.
         metrics_.dual_dep_graph_parity_check_total.fetch_add(1, std::memory_order_relaxed);
-        g_dual_dep_graph_parity_check_total_atomic().fetch_add(1, std::memory_order_relaxed);
-        if (!graphs_consistent(dep_graph_, node_dep_graph_, dep_name_to_slot_)) {
+        aura::compiler::dirty::g_dual_dep_graph_parity_check_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        if (!aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                      dep_name_to_slot_)) {
             metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
-            g_dual_dep_graph_parity_fail_total_atomic().fetch_add(1, std::memory_order_relaxed);
+            aura::compiler::dirty::g_dual_dep_graph_parity_fail_total_atomic().fetch_add(
+                1, std::memory_order_relaxed);
             // AC2: Off mode is soft — rebuild + no force.
-            rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_, dep_name_to_slot_);
+            aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
+                                                                      dep_name_to_slot_);
             // Strict mode (AC1): force all callers dirty so next cascade
             // picks up the freshly-mirrored edges.
-            if (dual_dep_graph_strict_enabled()) {
+            if (aura::compiler::dirty::dual_dep_graph_strict_enabled()) {
                 // Strict: force all callers dirty so next cascade
                 // picks up the freshly-mirrored edges (AC1).
                 auto str_it = dep_graph_.find(callee);

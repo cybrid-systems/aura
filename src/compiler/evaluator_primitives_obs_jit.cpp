@@ -10638,6 +10638,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 aura::gc_hooks::g_gc_defer_arm_ffi_pin_total.load(std::memory_order_relaxed);
             const std::uint64_t arm_render_pin =
                 aura::gc_hooks::g_gc_defer_arm_render_pin_total.load(std::memory_order_relaxed);
+            const std::uint64_t arm_mutation_hold =
+                aura::gc_hooks::g_gc_defer_arm_mutation_hold_total.load(std::memory_order_relaxed);
             const std::uint64_t any_total =
                 aura::gc_hooks::g_gc_defer_any_total.load(std::memory_order_relaxed);
             // Per-reason depth atomics (still maintained alongside the
@@ -10673,8 +10675,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t arm_rejected_overflow_total =
                 aura::gc_hooks::g_gc_defer_arm_rejected_overflow_total.load(
                     std::memory_order_relaxed);
-            // Capacity 64: #2088 + #2173 + #2160 RenderPin keys (FNV headroom).
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: #2088 + #2160 + #2173 + #2203 + #2204 MutationHold.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10717,9 +10719,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(static_cast<bool>(
                           reasons &
                           static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::RenderPin))));
+            insert_kv("mutation-hold-bit",
+                      static_cast<std::int64_t>(static_cast<bool>(
+                          reasons & static_cast<std::uint32_t>(
+                                        aura::gc_hooks::GcDeferReason::MutationHold))));
             insert_kv("arm-panic-total", static_cast<std::int64_t>(arm_panic));
             insert_kv("arm-ffi-pin-total", static_cast<std::int64_t>(arm_ffi_pin));
             insert_kv("arm-render-pin-total", static_cast<std::int64_t>(arm_render_pin));
+            insert_kv("arm-mutation-hold-total", static_cast<std::int64_t>(arm_mutation_hold));
             insert_kv("any-total", static_cast<std::int64_t>(any_total));
             insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
             insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
@@ -10732,6 +10739,20 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-2160", 2160);
             insert_kv("render-pin-wired", 1);
             insert_kv("unified-defer-wired", 1);
+            // Issue #2204: MutationHold (outermost Guard) hard GC gate.
+            insert_kv("schema-2204", 2204);
+            insert_kv("issue-2204", 2204);
+            insert_kv("mutation-hold-wired", 1);
+            insert_kv("mutation-hold-depth",
+                      static_cast<std::int64_t>(aura::gc_hooks::mutation_hold_defer_depth()));
+            insert_kv("request-deferred-mutation-hold-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::g_gc_request_deferred_mutation_hold_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "defer-because-mutation-hold",
+                static_cast<std::int64_t>(aura::gc_hooks::g_defer_because_mutation_hold_total.load(
+                    std::memory_order_relaxed)));
             // Issue #2173: configurable max-armed cap + overflow policy +
             // rejected-arm counter (operator dashboards can size the
             // defer table + choose fail-closed vs legacy process-wide

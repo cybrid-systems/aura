@@ -7391,10 +7391,11 @@ struct CompilerMetrics {
     // combined "any reason armed" cycles. Bumped by arm_defer when a
     // reason bit transitions 0 → set. Per-reason semantics preserved
     // for Agent dashboards (panic + ffi pin + future render pin).
-    std::atomic<std::uint64_t> gc_defer_arm_panic_total{0};      // #2088
-    std::atomic<std::uint64_t> gc_defer_arm_ffi_pin_total{0};    // #2088
-    std::atomic<std::uint64_t> gc_defer_arm_render_pin_total{0}; // #2088
-    std::atomic<std::uint64_t> gc_defer_any_total{0};            // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_panic_total{0};         // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_ffi_pin_total{0};       // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_render_pin_total{0};    // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_mutation_hold_total{0}; // #2204
+    std::atomic<std::uint64_t> gc_defer_any_total{0};               // #2088
     // Issue #1446: nested boundary + steal + GC compact re-pin telemetry.
     // panic_transfer_nested_success: successful panic-checkpoint transfer
     //   across nested Guard boundaries (depth > 1) after steal/GC compact.
