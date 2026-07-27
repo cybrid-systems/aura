@@ -72,6 +72,11 @@ extern "C" std::uint64_t aura_rollback_macro_introduced_total_v_read() noexcept;
 extern "C" std::uint64_t aura_rollback_strict_audited_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept;
+// Issue #2178 / #2240: cross-workspace hot-update reject (aura_jit_bridge.cpp).
+// File-scope: block-scope extern "C" is not reliable under -fmodules-ts.
+extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept;
+extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept;
+extern "C" const char* aura_cross_workspace_reject_reason_string(std::uint8_t v) noexcept;
 // Issue #2021: depth + concurrent peak readers / metrics snapshot.
 extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_in_flight_v_read() noexcept;
@@ -11612,62 +11617,72 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                           stale_deopt));
             }
 
-            // Hash mode (#2240 refine #2178): forward-declared
-            // C-linkage readers for cross-workspace atomic (file-scope
-            // in aura_jit_bridge.cpp). Mirrors pattern used in
-            // query:closure-stats for #2238 anonymous-AOT policy keys.
-            extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(
-                void) noexcept;
-            extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept;
-            extern "C" const char* aura_cross_workspace_reject_reason_string(
-                std::uint8_t v) noexcept;
+            // Hash mode (#2240 refine #2178): file-scope C readers.
+            // Uses register_query_primitives `string_heap` ref (not private
+            // Evaluator::string_heap_).
             const std::uint64_t cw_reject_total =
                 aura_cross_workspace_hot_update_rejected_total_v_read();
             const std::uint8_t cw_last_reason_u8 = aura_last_cross_workspace_reject_reason_v_read();
             const char* cw_last_reason_symbol =
                 aura_cross_workspace_reject_reason_string(cw_last_reason_u8);
+            const std::string reason_str =
+                cw_last_reason_symbol ? std::string(cw_last_reason_symbol) : std::string("unknown");
+            const auto reason_kidx = string_heap.size();
+            string_heap.push_back(reason_str);
 
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"aot-live-closure-refresh-on-mutation-total",
-                 make_int(static_cast<std::int64_t>(refresh_mut))},
-                {"aot-live-closure-refresh-on-steal-total",
-                 make_int(static_cast<std::int64_t>(refresh_steal))},
-                {"aot-bridge-epoch-bump-on-mutation-total",
-                 make_int(static_cast<std::int64_t>(bridge_mut))},
-                {"aot-bridge-epoch-bump-on-steal-total",
-                 make_int(static_cast<std::int64_t>(bridge_steal))},
-                {"aot-region-mismatch-on-resume-total",
-                 make_int(static_cast<std::int64_t>(region_mismatch))},
-                {"aot-stale-deopt-on-steal-total",
-                 make_int(static_cast<std::int64_t>(stale_deopt))},
-                // Issue #2178 cross-workspace reject counter
-                // (additive — agent dashboards branch on this).
-                {"cross-workspace-hot-update-rejected-total",
-                 make_int(static_cast<std::int64_t>(cw_reject_total))},
-                // Issue #2240: stable last reject reason code
-                // (refine #2178). Numeric (CrossWorkspaceReject as
-                // uint8: 0=None, 1=ForeignEval, 2=CowGenMismatch,
-                // 3=Unknown) + symbol string for human/agent logs.
-                // Default 0 = None; bumped by aura_reload_aot_module_for_eval
-                // foreign-eval guard before counter increment.
-                {"cross-workspace-last-reject-reason",
-                 make_int(static_cast<std::int64_t>(cw_last_reason_u8))},
-                {"cross-workspace-last-reject-reason-symbol",
-                 make_string(cw_last_reason_symbol ? cw_last_reason_symbol : "unknown")},
-                // Signal key (mirrors `region-priority-throttle-wired=1`
-                // #2132 + `capture-remount-wired=1` #2234 +
-                // `storm-isolation-wired=1` #2236 + `rollback-wired=1`
-                // #2237 + `require-stable-id-wired=1` #2238).
-                {"cross-workspace-reject-wired", make_int(1)},
-                // Lineage keys (per #2093 MUST-stay-in-lockstep
-                // pattern). #2178 ship carried the guard + counter;
-                // #2240 refines with stable reason code.
-                {"schema-2178", make_int(2178)},
-                {"issue-2178", make_int(2178)},
-                {"schema-2240", make_int(2240)},
-                {"issue-2240", make_int(2240)},
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, EvalValue v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        return;
+                    }
+                }
             };
-            return build_hash(kv);
+            insert_kv("aot-live-closure-refresh-on-mutation-total",
+                      make_int(static_cast<std::int64_t>(refresh_mut)));
+            insert_kv("aot-live-closure-refresh-on-steal-total",
+                      make_int(static_cast<std::int64_t>(refresh_steal)));
+            insert_kv("aot-bridge-epoch-bump-on-mutation-total",
+                      make_int(static_cast<std::int64_t>(bridge_mut)));
+            insert_kv("aot-bridge-epoch-bump-on-steal-total",
+                      make_int(static_cast<std::int64_t>(bridge_steal)));
+            insert_kv("aot-region-mismatch-on-resume-total",
+                      make_int(static_cast<std::int64_t>(region_mismatch)));
+            insert_kv("aot-stale-deopt-on-steal-total",
+                      make_int(static_cast<std::int64_t>(stale_deopt)));
+            insert_kv("cross-workspace-hot-update-rejected-total",
+                      make_int(static_cast<std::int64_t>(cw_reject_total)));
+            insert_kv("cross-workspace-last-reject-reason",
+                      make_int(static_cast<std::int64_t>(cw_last_reason_u8)));
+            insert_kv("cross-workspace-last-reject-reason-symbol",
+                      make_string(static_cast<std::uint64_t>(reason_kidx)));
+            insert_kv("cross-workspace-reject-wired", make_int(1));
+            insert_kv("schema-2178", make_int(2178));
+            insert_kv("issue-2178", make_int(2178));
+            insert_kv("schema-2240", make_int(2240));
+            insert_kv("issue-2240", make_int(2240));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #1952 / #1930: query:aot-incremental-reemit-stats.

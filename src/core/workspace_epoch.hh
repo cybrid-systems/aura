@@ -28,6 +28,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib> // std::getenv — AURA_QUERY_EPOCH_STRICT (#2192)
 
 namespace aura::core {
 
@@ -190,6 +191,156 @@ inline void bump_mutation_and_bridge_epochs(std::uint64_t delta = 1) noexcept {
     const auto prev = fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
     store_workspace_epoch(WorkspaceEpochKind::Bridge, prev + delta);
     notify_mutation_epoch_bump(prev + delta);
+}
+
+// ── Issue #2192: QueryEpoch snapshot contract ─────────────────
+// Agents bind a query result to a consistent workspace view:
+//   mutation_epoch + FlatAST generation (+ optional bridge / workspace_id).
+// Capture under shared workspace_mtx_ (after fence); finish re-checks
+// before returning. Strict mode → stale when the workspace advanced.
+//
+// Interaction with MutationBoundary / atomic-batch:
+//   - Outermost Guard takes exclusive workspace_mtx_ → queries block
+//     (shared_lock) for the full mutate; no torn topology mid-query.
+//   - Nested Guards / txn-dirty do not release the exclusive lock;
+//     epoch bumps under exclusive stay invisible to concurrent queries
+//     until the outermost Guard unlocks.
+//   - query:last-epoch / query:query-epoch-stats expose the last capture
+//     so Agents correlate "this query" with a later mutate decision.
+//
+// Agent contract (when is my query consistent with my last mutate?):
+//   1. After mutate commits, note mutation_epoch / generation (or read
+//      engine:metrics "query:query-epoch-stats" after a follow-up query).
+//   2. Run query under normal shared lock (blocks while Guard is open).
+//   3. Compare last-mutation-epoch / last-generation to post-mutate
+//      values; equal ⇒ result matches that commit.
+//   4. Optional strict: set_query_epoch_strict(true) or
+//      AURA_QUERY_EPOCH_STRICT=1 — if epoch advances during the query
+//      body, the primitive returns query-epoch-stale error.
+
+struct QueryEpoch {
+    std::uint64_t mutation_epoch = kWorkspaceEpochUnset;
+    std::uint64_t generation = kWorkspaceEpochUnset; // FlatAST::generation()
+    std::uint64_t bridge_epoch = kWorkspaceEpochUnset;
+    std::uint32_t workspace_id = 0;
+
+    [[nodiscard]] constexpr bool is_unset() const noexcept {
+        // Both zero only means "never captured" when capture_total is 0;
+        // after capture, mutation_epoch==0 is a real counter value.
+        return mutation_epoch == kWorkspaceEpochUnset && generation == kWorkspaceEpochUnset;
+    }
+
+    // Fresh when both fields still equal the live counters.
+    // Note: do NOT treat mutation_epoch==0 as legacy-unset here —
+    // process-global mutation starts at 0 and 0 is a valid capture.
+    [[nodiscard]] bool is_fresh(std::uint64_t cur_mutation,
+                                std::uint64_t cur_generation) const noexcept {
+        return mutation_epoch == cur_mutation && generation == cur_generation;
+    }
+};
+
+// Process-global last-capture + strict + metrics (multi-fiber readable).
+inline std::atomic<std::uint64_t>& g_last_query_mutation_epoch() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_last_query_generation() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_last_query_bridge_epoch() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint32_t>& g_last_query_workspace_id() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+inline std::atomic<bool>& g_query_epoch_strict() noexcept {
+    static std::atomic<bool> v{false};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_epoch_capture_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_epoch_mismatch_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_epoch_stale_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+inline void set_query_epoch_strict(bool on) noexcept {
+    g_query_epoch_strict().store(on, std::memory_order_release);
+}
+
+[[nodiscard]] inline bool query_epoch_strict() noexcept {
+    return g_query_epoch_strict().load(std::memory_order_acquire);
+}
+
+// One-shot env bootstrap (AURA_QUERY_EPOCH_STRICT=1|true|yes).
+inline void maybe_init_query_epoch_strict_from_env() noexcept {
+    static std::atomic<bool> done{false};
+    if (done.exchange(true, std::memory_order_acq_rel))
+        return;
+    if (const char* e = std::getenv("AURA_QUERY_EPOCH_STRICT")) {
+        if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+            set_query_epoch_strict(true);
+    }
+}
+
+// Capture snapshot (call under shared workspace_mtx_ or equivalent fence).
+[[nodiscard]] inline QueryEpoch capture_query_epoch(std::uint64_t flat_generation,
+                                                    std::uint32_t workspace_id = 0) noexcept {
+    maybe_init_query_epoch_strict_from_env();
+    QueryEpoch e;
+    e.mutation_epoch = current_mutation_epoch();
+    e.generation = flat_generation;
+    e.bridge_epoch = current_bridge_epoch();
+    e.workspace_id = workspace_id;
+    g_last_query_mutation_epoch().store(e.mutation_epoch, std::memory_order_relaxed);
+    g_last_query_generation().store(e.generation, std::memory_order_relaxed);
+    g_last_query_bridge_epoch().store(e.bridge_epoch, std::memory_order_relaxed);
+    g_last_query_workspace_id().store(e.workspace_id, std::memory_order_relaxed);
+    g_query_epoch_capture_total().fetch_add(1, std::memory_order_relaxed);
+    return e;
+}
+
+// End-of-query check. Returns false only when strict mode is on AND
+// mutation_epoch or generation advanced since capture (stale).
+// Always bumps mismatch when inconsistent (even non-strict) for Agents.
+[[nodiscard]] inline bool finish_query_epoch(const QueryEpoch& start,
+                                             std::uint64_t flat_generation) noexcept {
+    const auto cur_mut = current_mutation_epoch();
+    if (start.is_fresh(cur_mut, flat_generation))
+        return true;
+    g_query_epoch_mismatch_total().fetch_add(1, std::memory_order_relaxed);
+    if (query_epoch_strict()) {
+        g_query_epoch_stale_total().fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true; // non-strict: result still returned; metric records mismatch
+}
+
+// Last captured epoch (for query:last-epoch / stats surfaces).
+[[nodiscard]] inline QueryEpoch last_query_epoch() noexcept {
+    QueryEpoch e;
+    e.mutation_epoch = g_last_query_mutation_epoch().load(std::memory_order_relaxed);
+    e.generation = g_last_query_generation().load(std::memory_order_relaxed);
+    e.bridge_epoch = g_last_query_bridge_epoch().load(std::memory_order_relaxed);
+    e.workspace_id = g_last_query_workspace_id().load(std::memory_order_relaxed);
+    return e;
+}
+
+// Test hook: reset metrics (not last snapshot).
+inline void reset_query_epoch_metrics_for_test() noexcept {
+    g_query_epoch_capture_total().store(0, std::memory_order_relaxed);
+    g_query_epoch_mismatch_total().store(0, std::memory_order_relaxed);
+    g_query_epoch_stale_total().store(0, std::memory_order_relaxed);
+    set_query_epoch_strict(false);
 }
 
 } // namespace aura::core

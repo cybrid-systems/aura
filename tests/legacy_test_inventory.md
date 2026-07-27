@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 476 | Preferred destination suites |
-| **Total scanned** | **476** | |
+| `tests/core/test_*.cpp` | 477 | Preferred destination suites |
+| **Total scanned** | **477** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 50 | 50 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 51 | 51 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 135 | 135 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 48 | 48 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
@@ -492,6 +492,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp`
 - `tests/compiler/test_provenance_blame_hygiene.cpp`
 - `tests/compiler/test_query_dispatch.cpp`
+- `tests/compiler/test_query_epoch_contract_2192.cpp`
 - `tests/compiler/test_query_mutate_consistency.cpp`
 - `tests/compiler/test_query_namespace_audit.cpp`
 - `tests/compiler/test_query_pattern_batch.cpp`
@@ -661,13 +662,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (50)
+### `arena_compaction` — Arena / compaction / GC (51)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (50)
+#### domain/ (51)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -707,6 +708,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_moving_compact_2166.cpp` (#2166) [domain_suite, theme_core] — AC_M1: Moving off → Force still non-moving (address stable, moved_live_objects false).
 - `tests/compiler/test_outermost_exit_order_2120.cpp` (#2120) [domain_suite, theme_compiler] — Documented success exit order (AC5):
 - `tests/compiler/test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp — Issue #740:
+- `tests/compiler/test_query_epoch_contract_2192.cpp` (#2192) [domain_suite, theme_compiler] — AC1: QueryEpoch defined; stamped on primary workspace queries
 - `tests/compiler/test_quota_edge_cases.cpp` (—) [domain_suite, theme_compiler] — AC1: boundary 0→1 transition (unlimited → bounded reject)
 - `tests/renderer/test_render_batch.cpp` (—) [batch_driver, domain_suite, theme_renderer] — test_render_batch.cpp — Merged #1675 + #1559 (Anqi 2026-07-21).
 - `tests/renderer/test_render_frame_arena_2049.cpp` (#2049) [domain_suite, theme_renderer] — AC1: source cites #2049; RenderFrameArena double-buffer; LinearCellGrid
