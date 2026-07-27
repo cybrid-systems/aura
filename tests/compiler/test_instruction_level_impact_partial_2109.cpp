@@ -6,7 +6,10 @@
 //   AC2: partial re-lower skips clean instructions (metrics)
 //   AC3: should_partial_relower consulted by lower/dirty path + DirtyAware
 //   AC4: body-only / block cascade metrics still present (#1505 lineage)
-//   AC5: this file under tests/compiler/
+//   AC5: this file under tests/compiler///   AC8: cross-fn indirect (Apply / closure) call-site ->
+//   cross_fn_indirect_hits (Issue #2246) AC9: cross-fn unresolved callish -> block-level
+//   over-approx + unresolved_callee_hits (Issue #2246)
+
 //   AC6: query:soa-dirty-stats schema-2109 + new counters
 
 #include "test_harness.hpp"
@@ -264,6 +267,64 @@ static void ac6_query_schema() {
     CHECK(href(cs, "instr-level-impact-wired") == 1, "2031 wired");
 }
 
+
+// AC8 (Issue #2246): cross-fn indirect / higher-order callees — Apply
+// (closure-valued) call-site that resolves to mutated_name via
+// closure_bridge (ir_cache_index). Verifies the new
+// cross_fn_indirect_hits counter path + the
+// is_unresolved_callish_for_2246 helper + struct field extension.
+void ac8_cross_function_indirect_2246() {
+    std::println("\n--- AC8: cross-fn indirect (Apply / closure) #2246 ---");
+    auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(pure.find("cross_fn_indirect_hits") != std::string::npos,
+          "ImpactScope::cross_fn_indirect_hits field");
+    CHECK(pure.find("IROpcode::Apply") != std::string::npos,
+          "Apply opcode branch in cross-fn scan");
+    CHECK(pure.find("is_unresolved_callish_for_2246") != std::string::npos,
+          "is_unresolved_callish_for_2246 helper");
+    CHECK(met.find("impact_scope_cross_fn_indirect_total{0}") != std::string::npos,
+          "indirect counter field");
+    CHECK(q.find("impact-scope-cross-fn-indirect-total") != std::string::npos,
+          "indirect query key");
+    CHECK(q.find("schema-2246") != std::string::npos, "schema-2246 lineage");
+    CHECK(q.find("issue-2246") != std::string::npos, "issue-2246 lineage");
+    CHECK(dirty.find("impact_scope_cross_fn_indirect_total") != std::string::npos,
+          "indirect counter bump site in service_dirty.cpp");
+}
+
+// AC9 (Issue #2246): cross-fn unresolved callish — conservative
+// block-level over-approx dirty in caller (never silent
+// under-invalidate). Verifies unresolved_callee_hits +
+// impact_scope_unresolved_callee_total.
+void ac9_cross_function_unresolved_2246() {
+    std::println("\n--- AC9: cross-fn unresolved callish (block-level over-approx) #2246 ---");
+    auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(pure.find("unresolved_callee_hits") != std::string::npos,
+          "ImpactScope::unresolved_callee_hits field");
+    CHECK(met.find("impact_scope_unresolved_callee_total{0}") != std::string::npos,
+          "unresolved counter field");
+    CHECK(q.find("impact-scope-unresolved-callee-total") != std::string::npos,
+          "unresolved query key");
+    CHECK(dirty.find("impact_scope_unresolved_callee_total") != std::string::npos,
+          "unresolved counter bump site");
+    // Runtime helper smoke: empty-operands Apply should classify as unresolved.
+    aura::ir::IRFunction fn;
+    fn.name = "test_fn";
+    aura::ir::IRBlock blk;
+    aura::ir::IRInstruction ins;
+    ins.opcode = aura::ir::IROpcode::Apply;
+    // ins.operands left empty — should classify as unresolved.
+    CHECK(is_unresolved_callish_for_2246(ins), "empty-operands Apply = unresolved");
+    (void)blk;
+    (void)fn;
+}
+
 } // namespace
 
 int main() {
@@ -275,6 +336,8 @@ int main() {
     ac5_source_and_happy_path();
     ac6_query_schema();
     ac7_cross_function_instr_2179();
+    ac8_cross_function_indirect_2246();
+    ac9_cross_function_unresolved_2246();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

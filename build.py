@@ -1734,6 +1734,31 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_cross_function_impact_scope_coverage():
+    """Issue #2179 + #2246: cross-function impact scope (direct + indirect + unresolved).
+
+    Validates the contract from #2179 (direct Call cross-fn) + #2246 (refine:
+    indirect / higher-order Apply callees + unresolved callish block-level
+    over-approx). Self-test + --strict on real files. Script extended in
+    #2246 to cover 2 new counters + 2 new query keys + schema-2246 lineage +
+    AC8/AC9 in test_instruction_level_impact_partial_2109.cpp.
+    """
+    print(f"{B}═══ cross-fn impact scope coverage (#2179 / #2246) ═══{N}")
+    script = ROOT / "scripts" / "check_cross_function_impact_scope_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("cross-fn impact scope coverage contract rows failed")
+        return 1
+    ok("cross-fn impact scope coverage clean")
+    return 0
+
+
 def cmd_source_to_ir_strict():
     """Issue #2244: source_to_ir_map Strict-mode hard-fail + rebuild coverage.
 
@@ -1812,6 +1837,7 @@ def cmd_gate():
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
+        or cmd_cross_function_impact_scope_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2469,6 +2495,7 @@ def main():
         "aot-env-linear-stamp": cmd_aot_env_linear_stamp,
         "legacy-test-inventory": cmd_legacy_test_inventory,
         "source-to-ir-strict": cmd_source_to_ir_strict,
+        "cross-fn-impact-scope": cmd_cross_function_impact_scope_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
