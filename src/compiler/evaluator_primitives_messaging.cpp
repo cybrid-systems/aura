@@ -252,11 +252,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             using namespace aura::serve::mf_mailbox;
             // Issue #1881: full health fields (priority / waits / linear).
             // Issue #2010: fanout-backpressure-rejects.
+            // Issue #2188: recv-rejected-in-mutation-boundary.
             std::uint64_t pushes = 0, pops = 0, broadcasts = 0, bp = 0, attaches = 0, ph = 0,
-                          waits = 0, tmo = 0, lchk = 0, lviol = 0, fbp = 0;
+                          waits = 0, tmo = 0, lchk = 0, lviol = 0, fbp = 0, rej_bound = 0;
             MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
-                                                    waits, tmo, lchk, lviol, &fbp);
-            auto* ht = FlatHashTable::create(32);
+                                                    waits, tmo, lchk, lviol, &fbp, &rej_bound);
+            // Capacity 32→48: #2188 keys fit without silent drop.
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -298,6 +300,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 1585);
             insert_kv("schema-1881", 1881);
             insert_kv("schema-2010", 2010);
+            // Issue #2188: forbid blocking recv under live MutationBoundary.
+            insert_kv("recv-rejected-in-mutation-boundary", static_cast<std::int64_t>(rej_bound));
+            insert_kv("recv-rejected-in-mutation-boundary-total",
+                      static_cast<std::int64_t>(rej_bound));
+            insert_kv("schema-2188", 2188);
+            insert_kv("issue-2188", 2188);
+            insert_kv("recv-boundary-gate-wired", 1);
             insert_kv("health-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

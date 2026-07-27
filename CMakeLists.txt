@@ -2645,6 +2645,11 @@ aura_add_issue_test(test_mailbox_bp_admit_2228)
 aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_2228)
 add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 
+# Issue #2188: forbid blocking mailbox recv under live MutationBoundary.
+aura_add_issue_test(test_mailbox_recv_mutation_boundary_2188)
+aura_issue_test_link_llvm_jit(test_mailbox_recv_mutation_boundary_2188)
+add_dependencies(all_test_issue_targets test_mailbox_recv_mutation_boundary_2188)
+
 # Issue #2229: lift FailurePolicy / RestartPolicy onto AgentScope
 # supervision. AgentFailureAction (ReportOnly / Cancel / RestartN)
 # + AgentFailurePolicy + RestartN path in AgentScope::watch_all

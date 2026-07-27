@@ -49,6 +49,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -471,19 +472,20 @@ private:
     // window per the issue AC2 note. The mutex protects map resizes +
     // counter reads; per-window atomics are lock-free on the hot feed
     // / throttle paths.
-    std::atomic<std::uint8_t> storm_isolation_mode_{0}; // StormIsolation enum
-    mutable std::mutex region_windows_mtx_;
-    std::unordered_map<std::uint64_t, RegionWindow> region_windows_;
-    std::atomic<std::uint64_t> deopt_storm_region_detected_total_{0};
-    std::atomic<std::uint64_t> deopt_storm_region_last_id_{0};
-
-    // Per-region sliding window (Issue #2236).
+    // Per-region sliding window (Issue #2236) — must be declared before map.
     struct RegionWindow {
         std::atomic<std::uint64_t> window_start_ms_{0};
         std::atomic<std::uint64_t> window_count_{0};
         std::atomic<bool> soft_throttled_{false};
         std::atomic<bool> hard_throttled_{false};
     };
+    std::atomic<std::uint8_t> storm_isolation_mode_{0}; // StormIsolation enum
+    mutable std::mutex region_windows_mtx_;
+    // unique_ptr: RegionWindow holds atomics (non-copyable/movable).
+    std::unordered_map<std::uint64_t, std::unique_ptr<RegionWindow>> region_windows_;
+    std::atomic<std::uint64_t> deopt_storm_region_detected_total_{0};
+    std::atomic<std::uint64_t> deopt_storm_region_last_id_{0};
+
     // Helper: feed `n` deopts into region_windows_[region], with the
     // same threshold-check + trip semantics as on_stale_deopt. Bumps
     // deopt_observed_total_ by `n` (not per-region) for parity with
