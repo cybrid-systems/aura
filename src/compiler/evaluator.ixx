@@ -3180,6 +3180,9 @@ public:
     // Issue #2180: test/Agent — inject EQUAL conflict into commit CS so
     // round-2 composite commit must solve-fail (not empty greenfield).
     void inject_commit_cs_type_conflict_for_test() noexcept;
+    // Issue #2221: seed commit CS last_blame_chain for require-complete gate.
+    void inject_commit_cs_incomplete_blame_for_test() noexcept;
+    void inject_commit_cs_complete_blame_for_test() noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
     // Issue #2105: Agent-visible flag — composite/nested txn still open
     // (half-typed views must not be treated as committed).

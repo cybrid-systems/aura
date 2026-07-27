@@ -4,10 +4,11 @@
 module;
 
 #include "observability_metrics.h"
-#include "typed_mutation_audit.h"  // Issue #1614 / #2145 invariant audit + hard-gate
-#include "security_capabilities.h" // aura_fiber_current_id
-#include "mutate_type_gate.hh"     // Issue #2219 Soft/Hard post-mutate type gate
-#include "core/sandbox.hh"         // Issue #2145 Strict sandbox hard-gate
+#include "typed_mutation_audit.h"        // Issue #1614 / #2145 invariant audit + hard-gate
+#include "security_capabilities.h"       // aura_fiber_current_id
+#include "mutate_type_gate.hh"           // Issue #2219 Soft/Hard post-mutate type gate
+#include "coercion_provenance_policy.hh" // Issue #2221 require_blame_complete_on_commit
+#include "core/sandbox.hh"               // Issue #2145 Strict sandbox hard-gate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
 
@@ -660,6 +661,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
     // rely on a greenfield empty TypeChecker for production composite commit.
     cr.solve_ok = true;
+    cr.blame_ok = true;
+    bool sdo_provenance_continuity = true;
+    bool sdo_blame_complete = true;
+    bool sdo_blame_nonvacuous = false;
     if (type_registry_ || commit_type_checker_opaque_) {
         try {
             ConstraintSystem* cs_ptr = nullptr;
@@ -697,6 +702,39 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     // Keep unresolved visible for Agent repair (#2107).
                     (void)sdo.unresolved_affected_nodes;
                     (void)unresolved;
+                }
+                // Issue #2221: blame-complete surface after solve_delta_occurrence.
+                // Vacuous empty greenfield (no frames, no roots) is exempt so
+                // test/no-typecheck commits stay green; non-vacuous incomplete
+                // chains are observe-counted and hard-reject under require-on.
+                const auto& blame = cs_ptr->last_blame_chain();
+                sdo_provenance_continuity = sdo.provenance_continuity;
+                sdo_blame_complete = blame.is_complete();
+                sdo_blame_nonvacuous = reuse || !blame.frames.empty() || blame.complete ||
+                                       blame.partial || sdo.touched_roots > 0 ||
+                                       sdo.occurrence_priority_roots > 0 || sdo.let_poly_roots > 0;
+                if (sdo_blame_nonvacuous) {
+                    c.blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
+                    g_blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
+                    if (!sdo_blame_complete) {
+                        c.blame_commit_incomplete_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_blame_commit_incomplete_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (require_blame_complete_on_commit()) {
+                            cr.blame_ok = false;
+                            c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                            g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                                m->blame_commit_reject_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        }
+                    } else if (!sdo_provenance_continuity && require_blame_complete_on_commit()) {
+                        // Continuity miss with complete-looking chain still fails hard.
+                        cr.blame_ok = false;
+                        c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                        g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    }
                 }
             }
             delete scratch_tc;
@@ -741,10 +779,15 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         audit.cross_batch_linear_escape = true;
         audit.linear_ok = false;
     }
+    // Issue #2221: incomplete blame under require-on forces provenance fail
+    // so Agents never ship unattributable composite commits.
+    if (!cr.blame_ok)
+        audit.provenance_ok = false;
     cr.audit = audit;
     record_composite_invariant_audit(nested, batch_active, audit);
 
-    const bool first_ok = cr.solve_ok && cr.linear_ok && audit.all_ok() && cr.audit_ok;
+    const bool first_ok =
+        cr.solve_ok && cr.linear_ok && cr.blame_ok && audit.all_ok() && cr.audit_ok;
     if (first_ok) {
         c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
         clear_txn_dirty();
@@ -817,7 +860,12 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 m->linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
         }
         // Issue #2180: require solve_ok after re-solve — type CONFLICT must reject.
-        if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape && cr.solve_ok) {
+        // Issue #2221: incomplete blame under require-on must not ship via recovery
+        // (restamp does not synthesize a complete DeltaBlameChain).
+        if (!cr.blame_ok)
+            after.provenance_ok = false;
+        if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape && cr.solve_ok &&
+            cr.blame_ok) {
             c.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_partial_recover_success_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
@@ -1267,6 +1315,55 @@ void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
         (void)cs.solve_delta();
         // Second delta conflicts — remains dirty for next solve_delta_occurrence.
         cs.add_delta({Constraint::EQUAL, t, reg->string_type()});
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+// Issue #2221: seed commit CS with incomplete / complete last_blame_chain.
+void Evaluator::inject_commit_cs_incomplete_blame_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        tc->force_last_blame_incomplete_for_test(/*mutation_id=*/2221, /*node=*/1);
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+void Evaluator::inject_commit_cs_complete_blame_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        tc->force_last_blame_complete_for_test(/*mutation_id=*/2221, /*pred=*/7, /*node=*/3);
         commit_cs_live_ = true;
     } catch (...) {
         // [SILENCE-PRIM] test helper

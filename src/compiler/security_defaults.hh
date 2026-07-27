@@ -87,11 +87,14 @@ inline void grant_render_kernel_principal() noexcept {
 //        - Soft only via set_linear_enforce_mode(Soft), AURA_LINEAR_ENFORCE=soft,
 //          or AURA_SANDBOX=off (unit Soft-path ergonomics)
 //        - AURA_LINEAR_ENFORCE=soft|strict always wins when set (canary)
-//   9. Coercion provenance miss (#2185 / refine #2102):
+//   9. Coercion provenance miss (#2185 / refine #2102) + blame commit
+//      hard-require (#2221):
 //        - production → reject_apply_on_provenance_miss (no CoercionNode)
-//        - AURA_SANDBOX=off → soft apply + sentinel (dev ergonomics)
+//        - production → require_blame_complete_on_commit (composite gate)
+//        - AURA_SANDBOX=off → soft apply + sentinel + observe-only commit
 //        - force_audit_on_provenance_miss always true
 //        - AURA_COERCION_PROVENANCE_REJECT=reject|soft canary override
+//        - AURA_BLAME_COMMIT_REQUIRE=on|off canary override
 //  10. Pipeline strict / tree-walker fallback (#2213):
 //        - production → Forbidden (hard-fail; never silent tree-walker)
 //        - AURA_SANDBOX=off → Allow (unit Soft ergonomics)
@@ -101,8 +104,8 @@ inline void grant_render_kernel_principal() noexcept {
 //        - AURA_SANDBOX=off → Soft (unit Soft-path ergonomics)
 //        - AURA_MUTATE_TYPE_GATE=soft|hard always wins when set
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft
-// fiber + Soft linear enforce + soft coercion apply + tree-walker Allow +
-// Soft mutate type gate.
+// fiber + Soft linear enforce + soft coercion apply + observe-only blame
+// commit + tree-walker Allow + Soft mutate type gate.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -304,16 +307,20 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
-    // 9) Issue #2185: production refuse CoercionNode insert on incomplete
-    //    provenance chain (forensic completeness under Restricted/Strict).
-    //    Dev sandbox=off keeps soft apply so iterative typecheck remains
-    //    ergonomic (#2102 AC soft path). force_audit stays true always.
-    //    AURA_COERCION_PROVENANCE_REJECT always wins when set.
+    // 9) Issue #2185 / #2221: production refuse CoercionNode insert on
+    //    incomplete provenance chain + require complete DeltaBlameChain on
+    //    composite_txn_commit (forensic completeness under Restricted/Strict).
+    //    Dev sandbox=off keeps soft apply + observe-only commit so iterative
+    //    typecheck remains ergonomic (#2102 AC soft path). force_audit stays
+    //    true always. AURA_COERCION_PROVENANCE_REJECT and
+    //    AURA_BLAME_COMMIT_REQUIRE always win when set.
     {
+        using aura::compiler::apply_blame_commit_require_env_override;
         using aura::compiler::apply_coercion_provenance_reject_env_override;
         using aura::compiler::apply_production_coercion_provenance_defaults;
         apply_production_coercion_provenance_defaults(/*dev_sandbox_off=*/dev_off);
         (void)apply_coercion_provenance_reject_env_override();
+        (void)apply_blame_commit_require_env_override();
     }
 
     // 10) Issue #2213: production forbids silent tree-walker fallback that

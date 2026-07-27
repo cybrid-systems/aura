@@ -49,22 +49,31 @@ import aura.core.ast;
 namespace aura::compiler {
 
 // Re-export policy symbols for module importers (atomics live in the
-// shared header so security_defaults can flip production reject-on-miss).
+// shared header so security_defaults can flip production reject-on-miss
+// and #2221 blame-complete commit require).
 export using ::aura::compiler::g_force_audit_on_provenance_miss;
 export using ::aura::compiler::g_reject_apply_on_provenance_miss;
 export using ::aura::compiler::g_coercion_provenance_miss_force_audit_total;
 export using ::aura::compiler::g_coercion_provenance_miss_reject_total;
+export using ::aura::compiler::g_require_blame_complete_on_commit;
+export using ::aura::compiler::g_blame_commit_reject_total;
+export using ::aura::compiler::g_blame_commit_incomplete_observe_total;
+export using ::aura::compiler::g_blame_commit_check_total;
 export using ::aura::compiler::kCoercionProvenanceRejectProductionIssue;
+export using ::aura::compiler::kBlameCommitRequireIssue;
 export using ::aura::compiler::set_force_audit_on_provenance_miss;
 export using ::aura::compiler::set_reject_apply_on_provenance_miss;
+export using ::aura::compiler::set_require_blame_complete_on_commit;
 export using ::aura::compiler::force_audit_on_provenance_miss;
 export using ::aura::compiler::reject_apply_on_provenance_miss;
+export using ::aura::compiler::require_blame_complete_on_commit;
 export using ::aura::compiler::note_provenance_miss_for_boundary;
 export using ::aura::compiler::provenance_miss_pending_for_boundary;
 export using ::aura::compiler::consume_provenance_miss_for_boundary;
 export using ::aura::compiler::reset_coercion_provenance_miss_policy_for_test;
 export using ::aura::compiler::apply_production_coercion_provenance_defaults;
 export using ::aura::compiler::apply_coercion_provenance_reject_env_override;
+export using ::aura::compiler::apply_blame_commit_require_env_override;
 
 // Issue #2024: forensic sentinel base for incomplete occurrence-narrowing
 // provenance (high nibble C0E5 = "coercion"). Low 16 bits carry original_child

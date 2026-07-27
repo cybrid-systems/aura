@@ -6254,6 +6254,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-provenance-reject-production-wired", 1);
             insert_kv("schema-2185", 2185);
             insert_kv("issue-2185", 2185);
+            // Issue #2221: blame-complete optional hard gate on composite commit
+            {
+                const std::int64_t blame_rej = static_cast<std::int64_t>(
+                    aura::compiler::g_blame_commit_reject_total.load(std::memory_order_relaxed));
+                const std::int64_t blame_obs = static_cast<std::int64_t>(
+                    aura::compiler::g_blame_commit_incomplete_observe_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t blame_chk = static_cast<std::int64_t>(
+                    aura::compiler::g_blame_commit_check_total.load(std::memory_order_relaxed));
+                const std::int64_t m_blame_rej =
+                    m ? static_cast<std::int64_t>(
+                            m->blame_commit_reject_total.load(std::memory_order_relaxed))
+                      : blame_rej;
+                insert_kv("require-blame-complete-on-commit",
+                          aura::compiler::require_blame_complete_on_commit() ? 1 : 0);
+                insert_kv("blame-commit-reject-total", blame_rej);
+                insert_kv("blame_commit_reject_total", m_blame_rej);
+                insert_kv("blame-commit-incomplete-observe-total", blame_obs);
+                insert_kv("blame-commit-check-total", blame_chk);
+                insert_kv("blame-commit-require-wired", 1);
+                insert_kv("schema-2221", 2221);
+                insert_kv("issue-2221", 2221);
+            }
             // Issue #2028: stable constraint solver surface metrics
             const std::int64_t sdo_total =
                 m ? static_cast<std::int64_t>(

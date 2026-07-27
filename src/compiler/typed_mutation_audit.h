@@ -159,6 +159,10 @@ struct TypedMutationAuditCounters {
     // Issue #2180: commit reuses stashed partial CS vs empty greenfield.
     std::atomic<std::uint64_t> composite_commit_solve_reuse_hit_total{0};
     std::atomic<std::uint64_t> composite_commit_solve_empty_cs_total{0};
+    // Issue #2221: composite commit blame-complete hard gate.
+    std::atomic<std::uint64_t> blame_commit_check_total{0};
+    std::atomic<std::uint64_t> blame_commit_reject_total{0};
+    std::atomic<std::uint64_t> blame_commit_incomplete_observe_total{0};
     // Issue #2029: Full-strategy per-category partial recovery (all boundaries,
     // not only composite). Prefer type/linear/provenance recover before
     // structural rollback; soundness: re-audit must all_ok before continue.
@@ -514,6 +518,9 @@ struct CompositeTxnCommitResult {
     bool audit_ok = true;
     bool partial_recovered = false;
     bool rejected = false;
+    // Issue #2221: blame-complete gate result (true when not checked,
+    // vacuous empty CS, or last_blame_chain.is_complete()).
+    bool blame_ok = true;
     InvariantAuditResult audit{};
 };
 
@@ -801,6 +808,11 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_solve_reuse_hit_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_solve_empty_cs_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2221
+    g_typed_mutation_audit_counters.blame_commit_check_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_commit_reject_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_commit_incomplete_observe_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_cross_batch_linear_escape_total.store(
         0, std::memory_order_relaxed);
