@@ -762,7 +762,21 @@ bool EnvFrame::set_linear_ownership_state_by_name(const std::string& n, std::uin
 // lookup_by_symid_chain (and legacy Env paths) using the
 // owning Evaluator's central cells_ pmr::vector. This
 // makes frames fully index-driven and reallocation-safe.
-std::optional<types::EvalValue> EnvFrame::lookup_local(const std::string& n) const {
+std::optional<types::EvalValue> EnvFrame::lookup_local(
+    const std::string& n) const { // Issue #2251: env_gen fence at walk entry. Foreign-generation
+    // frames are skipped (no silent use of stale bindings). Each
+    // skipped frame bumps env_gen_fence_reject_total so dashboards
+    // can observe the rate.
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        const auto cur_gen = env_generation_.load(std::memory_order_acquire);
+        for (std::size_t i = 0; i < env_frames_.size(); ++i) {
+            const auto& fr = env_frames_[i];
+            if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != cur_gen) {
+                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
         if (it->first == n) {
             return it
@@ -817,6 +831,11 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // stamped" sentinel and would be wrongly classified as stale
     // by is_env_frame_stale once defuse_version_ > 0).
     EnvFrame fr(parent_id, primitives, defuse_version_.load(std::memory_order_acquire));
+    // Issue #2251: stamp env_gen at allocation so the fence has a
+    // baseline (matches current_layout_stamp().env_gen). Without
+    // this the legacy 0 sentinel would either always match (cold
+    // start) or always mismatch (after first env_generation_ bump).
+    fr.env_gen_stamp_ = env_generation_.load(std::memory_order_acquire);
     env_frames_.push_back(std::move(fr));
     const EnvId id = static_cast<EnvId>(env_frames_.size() - 1);
     // Issue #1903: set the owner_ back-pointer so the frame's
@@ -943,6 +962,26 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // already the correct recovery shape — the gate is observability,
     // not control flow.
     (void)ensure_env_frame_dual_path_consistent(cl.env_id, "materialize_call_env");
+    // Issue #2251: env_gen fence. If the frame has a non-zero
+    // stamp that does NOT match current env_gen, treat as
+    // foreign-generation (sibling region parent restamped mid-walk).
+    // Empty-Env safe fallback (same shape as bridge-stale path)
+    // + bump env_gen_fence_reject_total so dashboards can observe.
+    if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
+        const auto& fr = env_frames_[cl.env_id];
+        if (fr.env_gen_stamp_ != 0 &&
+            fr.env_gen_stamp_ != env_generation_.load(std::memory_order_acquire)) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            // Empty-Env fallback (preserves downstream type-safety
+            // by keeping the closure body valid but with empty
+            // bindings; caller can refresh / re-materialize).
+            Env empty_ne;
+            empty_ne.set_owner(this);
+            empty_ne.set_parent_id(NULL_ENV_ID);
+            return empty_ne;
+        }
+    }
     // P0 complete: legacy cl.env path removed. All closures have
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.
@@ -2234,8 +2273,24 @@ std::size_t Evaluator::compact_env_frames() {
 // cells_ pointer; frames are pure data + indices. This is
 // the canonical path for new SoA code. Legacy Env paths
 // (still using Env::cells_ pointer) remain for transition.
-std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(EnvId start,
-                                                                 aura::ast::SymId s) const {
+std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
+    EnvId start,
+    aura::ast::SymId s) const { // Issue #2251: env_gen fence on parent walks. If the start
+    // frame has a non-zero stamp that does NOT match current
+    // env_gen, treat as foreign-generation (sibling region parent
+    // restamped mid-walk). Empty-Env safe fallback: return
+    // std::nullopt (caller treats as unbound). No silent use of
+    // foreign-generation bindings.
+    if (start != NULL_ENV_ID && start < env_frames_.size()) {
+        const auto& fr = env_frames_[start];
+        if (fr.env_gen_stamp_ != 0 &&
+            fr.env_gen_stamp_ != env_generation_.load(std::memory_order_acquire)) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
+    }
+
     std::optional<types::EvalValue> result;
     const auto version_snap = defuse_version_.load(std::memory_order_acquire);
     // Hold the shared lock across the walk so frame refs stay

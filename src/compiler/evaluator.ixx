@@ -771,6 +771,21 @@ export struct EnvFrame {
     // intentional — old frames should be re-validated.
     std::uint64_t version_ = 0;
 
+    // Issue #2251: env_gen_stamp captures the LayoutStamp.env_gen
+    // at allocation time (and refreshes on publish_layout_stamp()).
+    // Under RegionExclusive concurrency on different shards, two
+    // writers may share a parent capture or live top_; this stamp
+    // is the fence that catches generation drift between writers
+    // (parent restamped mid-walk by a sibling region) without
+    // requiring full bind multi-writer locking (hot path). 0 means
+    // "never stamped" — legacy frames are treated as fresh when
+    // current env_gen == 0 (cold start before any env_generation_
+    // bump); after the first bump, legacy frames are flagged
+    // (bump env_gen_fence_reject_total) so the caller can
+    // refresh / rebuild rather than silently use foreign-gen
+    // bindings.
+    std::uint64_t env_gen_stamp_ = 0;
+
     // Issue #1903: back-pointer to owning Evaluator. Used by
     // EnvFrame::ensure_dual_path_consistent() to bump the
     // dual-path consistency observability counters. Nullable
