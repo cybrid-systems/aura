@@ -2389,6 +2389,11 @@ aura_add_issue_test(test_render_fast_exit_2215)
 aura_issue_test_link_llvm_jit(test_render_fast_exit_2215)
 add_dependencies(all_test_issue_targets test_render_fast_exit_2215)
 
+# Issue #2216: FFI CellGrid ABI (TermCell* + DirtyRegion* handoff).
+aura_add_issue_test(test_ffi_cellgrid_abi_2216)
+aura_issue_test_link_llvm_jit(test_ffi_cellgrid_abi_2216)
+add_dependencies(all_test_issue_targets test_ffi_cellgrid_abi_2216)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

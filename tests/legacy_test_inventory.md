@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 500 | Preferred destination suites |
-| **Total scanned** | **500** | |
+| `tests/core/test_*.cpp` | 501 | Preferred destination suites |
+| **Total scanned** | **501** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 55 | 55 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 110 | 110 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 29 | 29 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 30 | 30 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -279,6 +279,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_epoch_apply_batch.cpp`
 - `tests/reflect/test_error_merr.cpp`
 - `tests/compiler/test_eval_relower_hotpath.cpp`
+- `tests/renderer/test_ffi_cellgrid_abi_2216.cpp`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp`
 - `tests/serve/test_fiber_integration_batch.cpp`
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp`
@@ -1228,13 +1229,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
-### `uncategorized` — Uncategorized / mixed (29)
+### `uncategorized` — Uncategorized / mixed (30)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (29)
+#### domain/ (30)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1245,6 +1246,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_compile02_no_dup_imports.cpp` (—) [domain_suite, theme_compiler] — Issue #1857 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_composite_commit_cs_reuse_2180.cpp` (#2180) [domain_suite, theme_compiler] — AC1: inject type conflict into commit CS → solve_fail + reject
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
+- `tests/renderer/test_ffi_cellgrid_abi_2216.cpp` (#2216) [domain_suite, theme_renderer] — AC1: abi_from_signature recognizes cellgrid / TermCell* / DirtyRegion
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_prefix_dead_heap.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1693 (#1978 renamed): issue# moved from filename to header.
