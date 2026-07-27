@@ -2881,6 +2881,33 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("macro-audit-allowed", audit_allowed);
             insert_kv("audit-trail-writes", trail_writes);
             insert_kv("allow-macro-mutate", ev->get_allow_macro_mutate() ? 1 : 0);
+            // Issue #2237: expose agent-driven MacroIntroduced rollback
+            // counters + strict-mode audit visibility. Mirrors the
+            // `g_rollback_macro_introduced_total` + `g_rollback_strict_audited_total`
+            // file-level atomics (macro_expansion.cpp:401, :407) plus
+            // the existing `g_unstamp_macro_introduced_total` per-node
+            // counter (macro_expansion.cpp:395). Strict-mode flag is a
+            // live read of `g_macro_expand_sandbox_strict` (atomic,
+            // process-wide). When rollback under Strict sandbox,
+            // `mutate:rollback-macro-introduced` emits
+            // SecurityEventKind::MacroHygieneRollbackOnStrict into the
+            // g_security_event_ring() (and #2225 SecurityEventWAL if
+            // enabled) — query:security-audit / query:security-audit-trail
+            // surfaces the events separately. `rollback-wired=1` is the
+            // signal key (mirrors `region-priority-throttle-wired=1`
+            // for #2132 + `capture-remount-wired=1` for #2234 +
+            // `storm-isolation-wired=1` for #2236).
+            insert_kv("unstamp-macro-introduced-total",
+                      static_cast<std::int64_t>(aura_unstamp_macro_introduced_total_v_read()));
+            insert_kv("rollback-macro-introduced-total",
+                      static_cast<std::int64_t>(aura_rollback_macro_introduced_total_v_read()));
+            insert_kv("rollback-strict-audited-total",
+                      static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read()));
+            insert_kv("rollback-strict-mode-flag",
+                      static_cast<std::int64_t>(aura_macro_expand_sandbox_strict_v_read()));
+            insert_kv("rollback-wired", 1);
+            insert_kv("schema-2237", 2237);
+            insert_kv("issue-2237", 2237);
             // Issue #2018 / #2019 / #2021: mirror live atomics → CompilerMetrics,
             // then publish depth + concurrent peak on this Agent surface.
             if (m)

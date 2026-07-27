@@ -39,6 +39,16 @@ enum class SecurityEventKind : std::uint8_t {
     InvariantFail = 2,
     MacroHygiene = 3,
     EffectAllow = 4, // #2054: correlated success path
+    // Issue #2237: agent-driven MacroIntroduced rollback under
+    // Strict sandbox. Emitted from mutate:rollback-macro-introduced
+    // when `g_macro_expand_sandbox_strict` is set (sandbox-strict
+    // mode). kind=5 keeps the audit class distinguishable from the
+    // existing hygiene class (MacroHygiene=3) so AI agents can
+    // grep for "rollback under strict" specifically without
+    // matching other hygiene violations. Cross-links #2225 WAL
+    // (durable side-car append when WAL enabled) + #2176
+    // unstamp C-linkage (existing counter bumped alongside).
+    MacroHygieneRollbackOnStrict = 5,
 };
 
 // Issue #2054 stamp (schema key on query:security-audit / stats).

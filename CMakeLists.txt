@@ -1826,6 +1826,19 @@ add_dependencies(all_test_issue_targets test_macro_intro_restamp)
 aura_add_issue_test(test_storm_isolation_2236)
 aura_issue_test_link_llvm_jit(test_storm_isolation_2236)
 add_dependencies(all_test_issue_targets test_storm_isolation_2236)
+# Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
+# primitives as first-class Agent-visible surface (build on existing
+# #2176 unstamp C-linkage + #1914 by-marker query). Verifies:
+#   - AC1: existing primitives registered + reachable
+#   - AC2: unstamp + rollback + strict-audit counters visible via
+#          query:macro-hygiene-stats (7 new keys)
+#   - AC3: per-op counter monotonic
+#   - AC4: Strict sandbox → MacroHygieneRollbackOnStrict audit emit
+#   - AC5: back-compat of existing #1914 query surface
+#   - AC6: source-cite
+aura_add_issue_test(test_rollback_by_marker_2237)
+aura_issue_test_link_llvm_jit(test_rollback_by_marker_2237)
+add_dependencies(all_test_issue_targets test_rollback_by_marker_2237)
 # Issue #2098: clone_macro_body schema_cache + dirty/provenance
 # propagation for rest-param + nested paths (metrics layer + tests).
 aura_add_issue_test(test_macro_schema_dirty_propagate)
