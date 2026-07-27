@@ -5406,6 +5406,16 @@ public:
     bool enable_mutation_audit_wal(std::string_view persist_dir) noexcept;
     void disable_mutation_audit_wal() noexcept;
     [[nodiscard]] bool mutation_audit_wal_enabled() const noexcept;
+    // Issue #2225: durable side-car WAL for the unified SecurityEvent
+    // surface. Auto-paired with enable_mutation_audit_wal under
+    // production defaults (multi-tenant / Strict / #2150) so the
+    // #2156 isolation-deny + #2054 effect allow/deny path is
+    // forensically durable after restart. Replay restores
+    // g_security_event_ring() (reset + repopulate from disk, seq
+    // monotonic). Independent of mutation_audit_wal file format.
+    bool enable_security_event_wal(std::string_view persist_dir) noexcept;
+    void disable_security_event_wal() noexcept;
+    [[nodiscard]] bool security_event_wal_enabled() const noexcept;
     // Issue #1565: capability effect check + audit (returns true if allowed).
     // Integrates sandbox Strict/Restricted + grant matrix + provenance.
     [[nodiscard]] bool check_and_record_effect(std::uint16_t required_effect_bits,

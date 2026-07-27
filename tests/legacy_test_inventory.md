@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 457 | Preferred destination suites |
-| **Total scanned** | **457** | |
+| `tests/core/test_*.cpp` | 458 | Preferred destination suites |
+| **Total scanned** | **458** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 49 | 49 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 50 | 50 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 128 | 128 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 43 | 43 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
@@ -525,6 +525,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp`
 - `tests/compiler/test_security_audit_trail_2075.cpp`
 - `tests/compiler/test_security_audit_unify_2054.cpp`
+- `tests/compiler/test_security_event_wal_replay_2225.cpp`
 - `tests/compiler/test_self_evo_stats.cpp`
 - `tests/serve/test_self_evolution_chaos_stable.cpp`
 - `tests/compiler/test_self_evolution_loop_stats.cpp`
@@ -642,13 +643,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (49)
+### `arena_compaction` — Arena / compaction / GC (50)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (49)
+#### domain/ (50)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -693,6 +694,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_frame_arena_2049.cpp` (#2049) [domain_suite, theme_renderer] — AC1: source cites #2049; RenderFrameArena double-buffer; LinearCellGrid
 - `tests/core/test_resource_quota_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_resource_quota_batch.cpp
 - `tests/core/test_root_epoch_gc_safety_post_invalidate.cpp` (—) [domain_suite, theme_core] — test_compiler_root_epoch_gc_safety_post_invalidate.cpp — Issue #599:
+- `tests/compiler/test_security_event_wal_replay_2225.cpp` (#2225) [domain_suite, theme_compiler] — AC1: ring ≥ 1024; ring-wrap-total increments when N>1024 denies
 - `tests/core/test_set_arena_atomic_owner.cpp` (—) [domain_suite, theme_core] — test_set_arena_atomic_owner.cpp — Issue #1663
 - `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
 - `tests/serve/test_spawn_quota_no_leak_2155.cpp` (#2155) [domain_suite, theme_serve] — AC1: Quota reject never calls agent_names_->put (C++ + Aura)

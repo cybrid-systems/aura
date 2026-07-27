@@ -2570,6 +2570,14 @@ aura_issue_test_link_llvm_jit(test_layout_stamp_2170)
 aura_add_issue_test(test_isolation_stamp_resolve_2224)
 aura_issue_test_link_llvm_jit(test_isolation_stamp_resolve_2224)
 add_dependencies(all_test_issue_targets test_isolation_stamp_resolve_2224)
+
+# Issue #2225: durable side-car SecurityEvent WAL + expand ring to
+# 1024 + wrap counter, for forensic replay after process restart.
+# Phase A ring capacity + Phase B side-car WAL + Phase C replay +
+# Phase D query:security-posture primitive.
+aura_add_issue_test(test_security_event_wal_replay_2225)
+aura_issue_test_link_llvm_jit(test_security_event_wal_replay_2225)
+add_dependencies(all_test_issue_targets test_security_event_wal_replay_2225)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

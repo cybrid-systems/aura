@@ -67,12 +67,26 @@ struct SecurityEvent {
 // Issue #2075: ring size for the unified trail. Same as the existing
 // mutation ring (64) so the shared surface doesn't blow up memory.
 // Replay path uses the existing mutation_audit_wal for persistence.
-constexpr std::size_t kSecurityEventRingSize = 64;
+//
+// Issue #2225: ring expanded from 64 to 1024 so a deny storm under
+// multi-tenant / Strict can't wrap mid-history. Memory cost:
+// 1024 * sizeof(SecurityEvent) ≈ 1024 * (1+8*6+2+1+40+64 padded)
+// ≈ 144 KiB process-wide. Within the audit surface budget.
+// AURA_SECURITY_EVENT_RING overrides the default (must be power-of-2
+// for fast seq%size mask; rejected silently if not).
+constexpr std::size_t kSecurityEventRingSize = 1024;
 
 struct SecurityEventRing {
     std::array<SecurityEvent, kSecurityEventRingSize> ring{};
     std::atomic<std::uint64_t> seq{0};
     std::atomic<std::uint64_t> total{0};
+    // Issue #2225: monotonic wrap counter — bumps every time the
+    // ring overwrites an un-replayed slot. Agents can compute "how
+    // many events got lost since ring start" via total - ring.size.
+    // Paired with the durable SecurityEventWAL (#2225 Phase B) so
+    // forensic replay can recover events that wrapped out of the
+    // in-memory window.
+    std::atomic<std::uint64_t> ring_wrap_total{0};
 };
 
 // Issue #2075 / #2054: thread-safe append. Deny paths set denied=true;
@@ -85,6 +99,14 @@ inline void append_security_event(SecurityEventRing& ring, SecurityEventKind kin
                                   std::int64_t fiber_id = 0) noexcept {
     const auto s = ring.seq.fetch_add(1, std::memory_order_relaxed);
     auto& slot = ring.ring[s % kSecurityEventRingSize];
+    // Issue #2225: bump wrap counter if this seq overwrites a slot
+    // that hasn't been replayed into the durable WAL. Cheap O(1)
+    // increment, no I/O — the ring_wrap_total counter drives
+    // observability and lets Agents reason about forensic loss
+    // when WAL is disabled.
+    if (s >= kSecurityEventRingSize) {
+        ring.ring_wrap_total.fetch_add(1, std::memory_order_relaxed);
+    }
     slot.kind = kind;
     slot.seq = s;
     slot.tenant_id = tenant_id;
@@ -123,6 +145,7 @@ inline void reset_security_event_ring_for_test() noexcept {
     auto& ring = g_security_event_ring();
     ring.seq.store(0, std::memory_order_relaxed);
     ring.total.store(0, std::memory_order_relaxed);
+    ring.ring_wrap_total.store(0, std::memory_order_relaxed);
     for (auto& e : ring.ring)
         e = SecurityEvent{};
 }
