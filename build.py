@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_soa_single_source_of_truth_coverage():
+    """Issue #2254: SoA single source of truth (refine #1629 #1920 #1377).
+
+    Validates the 5-AC contract from issue body:
+      AC1: AURA_IR_SOA_ONLY default ON; lowering_impl gates dual-emit
+      AC2: IRInstructionView <= 16 B POD view
+      AC3: finish_dirty_sync single authority
+      AC4: soa_only_path_total + residual_aos_bridge_total metrics
+      AC5: test surface covers #2254
+    """
+    print(f"{B}=== SoA single source of truth coverage (#2254) ==={N}")
+    script = ROOT / "scripts" / "check_soa_single_source_of_truth_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("SoA single source of truth coverage contract rows failed")
+        return 1
+    ok("SoA single source of truth coverage clean")
+    return 0
+
+
 def cmd_hold_aware_steal_scoring_coverage():
     """Issue #2253: hold-aware work-steal scoring (depth + hold_us + priority boost).
 
@@ -2030,6 +2056,7 @@ def cmd_gate():
         or cmd_env_gen_fence_coverage()
         or cmd_aot_stale_probe_hard_reject_coverage()
         or cmd_hold_aware_steal_scoring_coverage()
+        or cmd_soa_single_source_of_truth_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2695,6 +2722,7 @@ def main():
         "env-gen-fence": cmd_env_gen_fence_coverage,
         "aot-stale-probe-hard-reject": cmd_aot_stale_probe_hard_reject_coverage,
         "hold-aware-steal-scoring": cmd_hold_aware_steal_scoring_coverage,
+        "soa-single-source-of-truth": cmd_soa_single_source_of_truth_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,

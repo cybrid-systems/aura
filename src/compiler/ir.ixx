@@ -620,6 +620,14 @@ export struct ClosureBridgeData {
 };
 
 export struct IRModule {
+
+    // Issue #2254: residual AoS dual-emit/dual-read paths are gated
+    // behind AURA_IR_SOA_ONLY (default ON in production per
+    // ir_soa.ixx). Pass + evaluator hot paths should take
+    // IRFunctionSoA / IRInstructionView (zero ownership) instead.
+    // Dual-emit bridges are a residual cost; production must never
+    // bump the residual_aos_bridge_total counter.
+
     std::vector<IRFunction> functions;
     std::vector<ClosureBridgeData> closure_bridge; // indexed by func_id
     std::uint32_t entry_function_id = 0;
