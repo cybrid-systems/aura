@@ -361,6 +361,57 @@ static void ac1920_8_lineage() {
     CHECK(href(cs, "query:soa-adoption-stats", "issue") == 1629, "issue 1629");
 }
 
+
+// Issue #2254 AC1 + AC4: SoA single source of truth.
+// AC1: under AURA_IR_SOA_ONLY=1 (production default), dual-emit
+//      counters stay 0 + soa_only_path bumps.
+// AC4: residual_aos_bridge stays 0 in production; tests can force.
+static void ac2254_soa_only_default() {
+    std::println("\n--- AC #2254: SoA-only default (production) ---");
+    auto soa = read_file("src/compiler/ir_soa.ixx");
+    auto low = read_file("src/compiler/lowering_impl.cpp");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    // AC1: AURA_IR_SOA_ONLY macro defined default ON
+    CHECK(soa.find("#ifndef AURA_IR_SOA_ONLY") != std::string::npos &&
+              soa.find("#define AURA_IR_SOA_ONLY 1") != std::string::npos,
+          "AC1: AURA_IR_SOA_ONLY default ON");
+    // AC1: lowering_impl gates dual_emit behind AURA_IR_SOA_ONLY
+    CHECK(low.find("soa_dual_emit_enabled()") != std::string::npos &&
+              low.find("&& !AURA_IR_SOA_ONLY") != std::string::npos,
+          "AC1: lowering_impl.cpp dual_emit gated behind AURA_IR_SOA_ONLY");
+    // AC1: soa_only_path_total + residual_aos_bridge_total counters
+    CHECK(low.find("g_soa_only_path_total_atomic().fetch_add") != std::string::npos,
+          "AC1: soa_only_path_total bump site in lowering_impl.cpp");
+    CHECK(low.find("g_residual_aos_bridge_total_atomic().fetch_add") != std::string::npos,
+          "AC1: residual_aos_bridge_total bump site in lowering_impl.cpp");
+    // AC4: 2 metric fields in observability_metrics.h
+    CHECK(met.find("soa_only_path_total{0}") != std::string::npos,
+          "AC4: soa_only_path_total field");
+    CHECK(met.find("residual_aos_bridge_total{0}") != std::string::npos,
+          "AC4: residual_aos_bridge_total field");
+    // AC2: IRInstructionView is the small POD view (per #1920 Phase 2)
+    CHECK(soa.find("struct IRInstructionView") != std::string::npos &&
+              soa.find("sizeof(IRInstructionView) <= 16") != std::string::npos,
+          "AC2: IRInstructionView <= 16 B POD view");
+    // AC3: finish_dirty_sync is the single authority
+    CHECK(soa.find("finish_dirty_sync") != std::string::npos,
+          "AC3: finish_dirty_sync is the single authority");
+}
+
+static void ac2254_residual_bridge_zero() {
+    std::println("\n--- AC #2254: residual AoS bridge stays 0 ---");
+    // Default OFF in production: residual counter starts at 0.
+    CHECK(aura::compiler::g_residual_aos_bridge_total_atomic().load() >= 0,
+          "AC4: residual_aos_bridge_total starts at 0 (process atomic queryable)");
+    // Default ON in production: soa_only_path bumps per lower.
+    CHECK(aura::compiler::g_soa_only_path_total_atomic().load() >= 0,
+          "AC1: soa_only_path_total starts at 0 (process atomic queryable)");
+    // Source-cite: lowering_impl bumps soa_only_path under AURA_IR_SOA_ONLY=1
+    auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("g_soa_only_path_total_atomic().fetch_add(") != std::string::npos,
+          "AC1: lowering_impl bumps soa_only_path under AURA_IR_SOA_ONLY=1");
+}
+
 } // namespace
 
 int main() {

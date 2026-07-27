@@ -16,6 +16,37 @@
 // dirty marks) adopt IRModuleV2 + block_dirty_/shape_ids_ for
 // incremental decisions. See ir_soa_migration in jit_typed_mutation_stats.h.
 //
+// Issue #2254: AURA_IR_SOA_ONLY production default. When defined
+// (the default for production builds), the SoA columns are the
+// only live IR representation after `lower_to_ir` — there is no
+// parallel AoS vector. Legacy dual-emit paths in lowering_impl.cpp
+// are no-ops (the SoA columns are the single source of truth). The
+// AURA_IR_SOA_ONLY=0 opt-out is preserved for unit tests that need
+// to exercise the legacy AoS path. Production builds define this
+// macro unconditionally (compiler flag or build.py); the runtime
+// `ir_soa_migration::soa_dual_emit_enabled()` flag remains the
+// explicit opt-out for targeted integration tests.
+//
+// AC1: dual-emit counters stay 0 under AURA_IR_SOA_ONLY (the SoA
+//      emit path increments `soa_only_path_total`; any residual
+//      AoS bridge — e.g. legacy Pass that still reads `IRFunction`
+//      — bumps `residual_aos_bridge_total`).
+#ifndef AURA_IR_SOA_ONLY
+#define AURA_IR_SOA_ONLY 1
+#endif
+
+// Issue #2254 AC4: process-wide SoA-only + residual AoS bridge counters.
+// Mirror the CompilerMetrics fields so pure unit tests (no Evaluator /
+// no CompilerService) can read them too.
+inline std::atomic<std::uint64_t>& g_soa_only_path_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
 // Issue #2045: after dual-emit / re-lower, CompilerService rebuilds
 // IRCacheEntry::source_to_ir_map from AoS irs and cross-checks SoA
 // source_node_ids_ so impact_scope cannot under-invalidate.

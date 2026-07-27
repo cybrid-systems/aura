@@ -1669,16 +1669,28 @@ static IRModule lower_to_ir_impl(
     // time with no production consumer (SoA only fed metrics + convert-back).
     // Opt-in via ir_soa_migration::set_soa_dual_emit_enabled(true) /
     // CompilerService::set_soa_dual_emit(true).
-    if (aura::compiler::ir_soa_migration::soa_dual_emit_enabled()) {
+    // Issue #2254 AC1: under production AURA_IR_SOA_ONLY=1, SoA is the
+    // single source of truth after lower_to_ir. Dual-emit is reserved
+    // for tests that explicitly opt in via soa_dual_emit_enabled() +
+    // AURA_IR_SOA_ONLY=0. Production runtime should leave SoA as the
+    // sole live representation; the soa_dual_emit_enabled() runtime
+    // flag is the explicit per-test override.
+    if (aura::compiler::ir_soa_migration::soa_dual_emit_enabled() && !AURA_IR_SOA_ONLY) {
         // Issue #1920: lowering is a Phase 2 SoA consumer when dual-emit on.
         aura::compiler::ir_soa_migration::record_consumer_lowering();
         state.enable_soa_dual_emit();
         aura::compiler::ir_soa_migration::record_dual_emit_bridge();
+        // Issue #2254 AC4: any dual-emit under production is a residual
+        // AoS bridge — bump the metric so dashboards see it.
+        aura::compiler::g_residual_aos_bridge_total_atomic().fetch_add(1,
+                                                                       std::memory_order_relaxed);
     } else {
         aura::compiler::ir_soa_migration::record_dual_emit_skipped();
         // Clear thread-local snapshot so absorb_lower_soa_snapshot does
         // not re-absorb a previous opt-in lower's SoA columns.
         g_last_soa_snapshot = {};
+        // Issue #2254 AC1: SoA-only path is the production default.
+        aura::compiler::g_soa_only_path_total_atomic().fetch_add(1, std::memory_order_relaxed);
     }
     state.instruction_reserve_hint = flat.size();
     state.value_cells = value_cells;
