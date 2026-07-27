@@ -2168,6 +2168,11 @@ aura_add_issue_test(test_coercion_reject_production_defaults_2185)
 aura_issue_test_link_llvm_jit(test_coercion_reject_production_defaults_2185)
 add_dependencies(all_test_issue_targets test_coercion_reject_production_defaults_2185)
 
+# Issue #2186: EDSL force StableNodeRef consumption via validate_or_refresh.
+aura_add_issue_test(test_edsl_validate_or_refresh_2186)
+aura_issue_test_link_llvm_jit(test_edsl_validate_or_refresh_2186)
+add_dependencies(all_test_issue_targets test_edsl_validate_or_refresh_2186)
+
 # Issue #2103: LinearEnforceMode Soft/Strict for validate_linear_provenance.
 aura_add_issue_test(test_linear_enforce_strict_2103)
 aura_issue_test_link_llvm_jit(test_linear_enforce_strict_2103)

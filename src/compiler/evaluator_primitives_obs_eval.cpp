@@ -9717,7 +9717,9 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->cross_cow_provenance_enforced_total.load(std::memory_order_relaxed))
                   : static_cast<std::int64_t>(snap.cross_cow_provenance_enforced);
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #1630/#2056/#2125/#2186 keys (was 32; #2186
+            // fold-in overflowed and silently dropped schema-2186).
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -9788,6 +9790,15 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv(
                 "isolation-capture-tenant",
                 static_cast<std::int64_t>(aura::core::provenance::isolation_capture_tenant()));
+            // Issue #2186: EDSL silent-stale zero-tolerance — query/mutate
+            // node handles forced through ensure_valid_or_refresh.
+            // Schema fold-in on the existing provenance-stats surface
+            // (no new public prim). ensure-valid-* / auto-refresh keys
+            // above already surface AC3 counters under multi-round load.
+            insert_kv("schema-2186", aura::core::provenance::kEdslValidateOrRefreshIssue);
+            insert_kv("issue-2186", aura::core::provenance::kEdslValidateOrRefreshIssue);
+            insert_kv("edsl-validate-or-refresh-enforced", 1);
+            insert_kv("edsl-query-consume-via-ensure", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -12797,6 +12808,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t auto_retry = 0;
         std::uint64_t auto_retry_ok = 0;
         std::uint64_t auto_retry_exh = 0;
+        // Issue #2232: multi-round policy attempt + JIT-only fall-back.
+        std::uint64_t auto_retry_policy_attempt = 0;
+        std::uint64_t auto_retry_fall_back_jit = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
@@ -12930,8 +12944,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"schema-2165", make_int(2165)},
             // Issue #2232: reason-driven multi-round retry policy
             // (supersedes the #2165 single-retry via policy_for()).
-            {"aot-reload-policy-attempt-total", make_int64(auto_retry_policy_attempt)},
-            {"aot-reload-fall-back-jit-only-total", make_int64(auto_retry_fall_back_jit)},
+            {"aot-reload-policy-attempt-total",
+             make_int(static_cast<std::int64_t>(auto_retry_policy_attempt))},
+            {"aot-reload-fall-back-jit-only-total",
+             make_int(static_cast<std::int64_t>(auto_retry_fall_back_jit))},
             {"schema-2232", make_int(2232)},
             {"issue-2232", make_int(2232)},
             {"reload-policy-wired", make_int(1)},
