@@ -3,6 +3,8 @@
 
 module;
 
+#include "core/transparent_string_hash.hh" // #2247 dual-graph string maps
+
 export module aura.compiler.dirty_propagation;
 
 import std;
@@ -568,8 +570,6 @@ inline void push_to_block_dirty_matrix(const DirtySet& src,
     }
 }
 
-} // namespace aura::compiler::dirty
-
 
 // Issue #2247: pure parity primitives. Both helpers are pure — no
 // metrics bump, no side effects beyond the graphs passed in.
@@ -583,8 +583,19 @@ inline void push_to_block_dirty_matrix(const DirtySet& src,
 // name_to_slot maps string names → fn slots (CompilerService maintains
 // this via dep_name_to_slot_; passed in here as a const ref so we
 // don't need a back-pointer into CompilerService).
+//
+// FunctionDepEntry mirrors CompilerService::DepEntry for pure helpers
+// (called_by is the reverse edge used by cascade / parity). Template
+// helpers below accept any Entry with a called_by vector so service
+// DepEntry and this test-side type both work.
+struct FunctionDepEntry {
+    std::vector<std::string> calls;
+    std::vector<std::string> called_by;
+};
+
+template <typename Entry>
 [[nodiscard]] inline bool graphs_consistent(
-    const std::unordered_map<std::string, FunctionDepEntry, aura::core::TransparentStringHash,
+    const std::unordered_map<std::string, Entry, aura::core::TransparentStringHash,
                              std::equal_to<>>& string_dep,
     const DepGraph& node_dep,
     const std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
@@ -622,9 +633,10 @@ inline void push_to_block_dirty_matrix(const DirtySet& src,
 // re-populates from string-graph via encode_fn_node mapping. Pure
 // (no metrics). Caller bumps the dual_dep_graph_parity_fail_total
 // metric after this returns (so tests can verify the metric path).
+template <typename Entry>
 inline void rebuild_node_dep_graph_from_string(
     DepGraph& node_dep,
-    const std::unordered_map<std::string, FunctionDepEntry, aura::core::TransparentStringHash,
+    const std::unordered_map<std::string, Entry, aura::core::TransparentStringHash,
                              std::equal_to<>>& string_dep,
     const std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
                              std::equal_to<>>& name_to_slot) noexcept {
@@ -674,18 +686,22 @@ inline bool dual_dep_graph_strict_enabled() noexcept {
     return g_dual_dep_graph_strict_atomic().load(std::memory_order_relaxed) != 0;
 }
 
+} // namespace aura::compiler::dirty
+
 extern "C" std::uint64_t aura_dual_dep_graph_parity_check_v_read() noexcept {
-    return g_dual_dep_graph_parity_check_total_atomic().load(std::memory_order_relaxed);
+    return aura::compiler::dirty::g_dual_dep_graph_parity_check_total_atomic().load(
+        std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_dual_dep_graph_parity_fail_v_read() noexcept {
-    return g_dual_dep_graph_parity_fail_total_atomic().load(std::memory_order_relaxed);
+    return aura::compiler::dirty::g_dual_dep_graph_parity_fail_total_atomic().load(
+        std::memory_order_relaxed);
 }
 
 extern "C" void aura_set_dual_dep_graph_strict(int strict_mode) noexcept {
-    set_dual_dep_graph_strict(strict_mode);
+    aura::compiler::dirty::set_dual_dep_graph_strict(strict_mode);
 }
 
 extern "C" void aura_test_set_dual_dep_graph_strict(int v) noexcept {
-    set_dual_dep_graph_strict(v);
+    aura::compiler::dirty::set_dual_dep_graph_strict(v);
 }

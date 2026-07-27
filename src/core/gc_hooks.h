@@ -296,7 +296,8 @@ enum class GcDeferReason : std::uint32_t {
     None = 0,
     Panic = 1u << 0,
     FfiPin = 1u << 1,
-    RenderPin = 1u << 2, // Issue #2160: frame-level render-critical present defer
+    RenderPin = 1u << 2,    // Issue #2160: frame-level render-critical present defer
+    MutationHold = 1u << 3, // Issue #2204: outermost MutationBoundaryGuard hold
 };
 inline constexpr std::uint32_t kGcDeferReasonNone = 0;
 // Issue #2088: process-wide defer-reason bitmask. Atomic bitmask
@@ -387,6 +388,7 @@ inline std::atomic<std::uint64_t> g_gc_defer_orphan_cleared_on_steal_total{0}; /
 inline std::atomic<std::uint64_t> g_gc_defer_arm_panic_total{0};
 inline std::atomic<std::uint64_t> g_gc_defer_arm_ffi_pin_total{0};
 inline std::atomic<std::uint64_t> g_gc_defer_arm_render_pin_total{0};
+inline std::atomic<std::uint64_t> g_gc_defer_arm_mutation_hold_total{0}; // #2204
 inline std::atomic<std::uint64_t> g_gc_defer_any_total{0};
 
 // Note first arm of a reason (bit was clear). Updates process-wide arm
@@ -405,6 +407,8 @@ inline void note_defer_reason_armed(GcDeferReason r, std::uint32_t prev_mask) no
         g_gc_defer_arm_ffi_pin_total.fetch_add(1, std::memory_order_relaxed);
     else if (r == GcDeferReason::RenderPin)
         g_gc_defer_arm_render_pin_total.fetch_add(1, std::memory_order_relaxed);
+    else if (r == GcDeferReason::MutationHold)
+        g_gc_defer_arm_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 inline void arm_gc_defer_pending_panic() noexcept {
@@ -621,6 +625,51 @@ inline void note_gc_request_deferred_render() noexcept {
 inline void note_gc_sweep_skipped_render() noexcept {
     g_gc_sweep_skipped_render_total.fetch_add(1, std::memory_order_relaxed);
     g_defer_because_render_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2204: outermost MutationBoundaryGuard MutationHold defer.
+// Process-wide depth so concurrent outermost Guards on distinct
+// Evaluators keep the bit set until the last outer release. Nested
+// guards must NOT call arm (outer already holds the bit / depth).
+// Wired from MutationBoundaryGuard AcquireTag ctor / dtor only —
+// not per-eval (steal clear leaves process bit alone; #2086).
+inline std::atomic<std::uint32_t> g_mutation_hold_defer_depth{0};
+inline std::atomic<std::uint64_t> g_gc_request_deferred_mutation_hold_total{0};
+inline std::atomic<std::uint64_t> g_gc_sweep_skipped_mutation_hold_total{0};
+inline std::atomic<std::uint64_t> g_defer_because_mutation_hold_total{0};
+
+inline void arm_mutation_hold_defer() noexcept {
+    g_mutation_hold_defer_depth.fetch_add(1, std::memory_order_acq_rel);
+    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    (void)arm_defer(GcDeferReason::MutationHold);
+    note_defer_reason_armed(GcDeferReason::MutationHold, prev);
+}
+inline void release_mutation_hold_defer() noexcept {
+    auto prev = g_mutation_hold_defer_depth.load(std::memory_order_relaxed);
+    while (prev > 0) {
+        const auto next = prev - 1;
+        if (g_mutation_hold_defer_depth.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
+                                                              std::memory_order_relaxed)) {
+            if (next == 0)
+                (void)release_defer(GcDeferReason::MutationHold);
+            return;
+        }
+    }
+    (void)release_defer(GcDeferReason::MutationHold);
+}
+[[nodiscard]] inline bool mutation_hold_defer_active() noexcept {
+    return g_mutation_hold_defer_depth.load(std::memory_order_acquire) > 0;
+}
+[[nodiscard]] inline std::uint32_t mutation_hold_defer_depth() noexcept {
+    return g_mutation_hold_defer_depth.load(std::memory_order_acquire);
+}
+inline void note_gc_request_deferred_mutation_hold() noexcept {
+    g_gc_request_deferred_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
+    g_defer_because_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_gc_sweep_skipped_mutation_hold() noexcept {
+    g_gc_sweep_skipped_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
+    g_defer_because_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2002: per-evaluator release. Decrements the entry's depth;

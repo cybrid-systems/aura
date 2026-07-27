@@ -25,12 +25,15 @@ bool GCCollector::request() {
     // PanicCheckpoint recovery window is open. Avoids marking
     // gc_in_progress only to abort in collect().
     if (aura::gc_hooks::should_defer_destructive_gc()) {
-        // Issue #2088 / #2160: unified predicate — defers on ANY reason
-        // (panic + ffi pin + render-pin). Per-reason counters for Agents.
+        // Issue #2088 / #2160 / #2204: unified predicate — defers on ANY
+        // reason (panic + ffi pin + render-pin + mutation-hold).
+        // Per-reason counters for Agents.
         if (aura::gc_hooks::gc_deferred_for_pending_panic())
             aura::gc_hooks::note_gc_request_deferred_pending_panic();
         if (aura::gc_hooks::render_pin_defer_active())
             aura::gc_hooks::note_gc_request_deferred_render();
+        if (aura::gc_hooks::mutation_hold_defer_active())
+            aura::gc_hooks::note_gc_request_deferred_mutation_hold();
         return false;
     }
 
@@ -49,6 +52,8 @@ bool GCCollector::request() {
             aura::gc_hooks::note_gc_request_deferred_pending_panic();
         if (aura::gc_hooks::render_pin_defer_active())
             aura::gc_hooks::note_gc_request_deferred_render();
+        if (aura::gc_hooks::mutation_hold_defer_active())
+            aura::gc_hooks::note_gc_request_deferred_mutation_hold();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
     }
@@ -101,6 +106,8 @@ bool GCCollector::collect() {
             aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
         if (aura::gc_hooks::render_pin_defer_active())
             aura::gc_hooks::note_gc_sweep_skipped_render();
+        if (aura::gc_hooks::mutation_hold_defer_active())
+            aura::gc_hooks::note_gc_sweep_skipped_mutation_hold();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
     }
@@ -130,6 +137,8 @@ bool GCCollector::collect() {
             aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
         if (aura::gc_hooks::render_pin_defer_active())
             aura::gc_hooks::note_gc_sweep_skipped_render();
+        if (aura::gc_hooks::mutation_hold_defer_active())
+            aura::gc_hooks::note_gc_sweep_skipped_mutation_hold();
         scheduler_->resume_from_gc();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
