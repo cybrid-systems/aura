@@ -20,10 +20,18 @@ inline constexpr int kStdlibRenderFfiIssue = 1560;
 // Re-export logical binding names for Agent discovery.
 using aura::renderer::ffi::FfiRenderHotpathGuard;
 using aura::renderer::ffi::kBindAnsiEmit;
+using aura::renderer::ffi::kBindCellGridPresent;
 using aura::renderer::ffi::kBindDraw;
 using aura::renderer::ffi::kBindPresentBatch;
 using aura::renderer::ffi::render_ffi_registry;
 using aura::renderer::ffi::RenderFfiRegistry;
+
+// Issue #2216: re-export CellGrid registration + dispatch helpers.
+using aura::compiler::ffi_hot::CellGridPresentFn;
+using aura::compiler::ffi_hot::clear_cellgrid_present_backend;
+using aura::compiler::ffi_hot::kCellGridSignature;
+using aura::compiler::ffi_hot::register_cellgrid_present_backend;
+using aura::compiler::ffi_hot::try_cellgrid_present;
 
 // Register a render backend binding (name → c symbol + signature + optional ptr).
 // Returns 0 on success.
@@ -84,6 +92,16 @@ inline std::int64_t dispatch_c_present_batch(std::span<const std::int64_t> args)
 }
 inline std::int64_t dispatch_c_ansi_emit(std::span<const std::int64_t> args) {
     return dispatch_batch_c_render(kBindAnsiEmit, args);
+}
+
+// Issue #2216: register CellGrid present backend (also binds into render_ffi registry).
+inline int register_cellgrid_present(CellGridPresentFn fn,
+                                     std::string_view c_name = "cellgrid_present") {
+    if (!fn)
+        return -1;
+    register_cellgrid_present_backend(fn);
+    return register_binding(kBindCellGridPresent, c_name, kCellGridSignature,
+                            reinterpret_cast<void*>(fn));
 }
 
 } // namespace aura::stdlib::render_ffi

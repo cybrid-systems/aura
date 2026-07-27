@@ -3,6 +3,7 @@
 
 #include "renderer/render_primitives.hh"
 
+#include "compiler/ffi_hot_path.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include "core/lifetime_pin.hh"
@@ -192,6 +193,32 @@ namespace {
             if (out_opt)
                 out_opt->clear();
             return 0;
+        }
+
+        // Issue #2216: prefer registered CellGrid native backend over ANSI
+        // build when available (zero-copy TermCell* + DirtyRegion* handoff).
+        // LifetimePin covers the grid for the duration of the C call (#2048).
+        if (aura::compiler::ffi_hot::cellgrid_present_backend() != nullptr) {
+            const std::size_t nbytes = fb.cell_count() * sizeof(TermCell);
+            FfiPresentPinGuard handoff_pin(const_cast<TermCell*>(fb.cells_c()), nbytes);
+            (void)handoff_pin.valid();
+            std::int64_t cg_ret = 0;
+            if (aura::compiler::ffi_hot::try_cellgrid_present(fb.cells_c(), fb.width, fb.height,
+                                                              &dirty, &cg_ret,
+                                                              /*render_effect_ok=*/true)) {
+                dirty.clear();
+                g_render_hot_path_stats.present_bytes_total +=
+                    static_cast<std::uint64_t>(cg_ret > 0 ? cg_ret : 0);
+                g_engine_counters.present_bytes +=
+                    static_cast<std::uint64_t>(cg_ret > 0 ? cg_ret : 0);
+                aura::core::arena_policy::render_present_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                if (out_opt)
+                    out_opt->clear(); // native path — no ANSI string
+                (void)fd;
+                (void)arena_opt;
+                return cg_ret;
+            }
         }
 
         // Issue #2049: sample wall-time for frame-time histogram / p99 proxy.

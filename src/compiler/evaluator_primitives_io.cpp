@@ -1591,6 +1591,19 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("present-dirty-wired", 1);
             insert_kv("schema-2214", 2214);
             insert_kv("issue-2214", 2214);
+            // Issue #2216: CellGrid FFI present (fold into render-stats lineage)
+            {
+                const auto hot = aura::compiler::ffi_hot::snapshot_ffi_hot_path();
+                insert_kv("cellgrid-invoke-total",
+                          static_cast<std::int64_t>(hot.cellgrid_invoke_total));
+                insert_kv("cellgrid-dispatch-total",
+                          static_cast<std::int64_t>(hot.cellgrid_dispatch_total));
+                insert_kv("cellgrid-backend-registered",
+                          aura::compiler::ffi_hot::cellgrid_present_backend() != nullptr ? 1 : 0);
+                insert_kv("cellgrid-abi-wired", 1);
+                insert_kv("schema-2216", 2216);
+                insert_kv("issue-2216", 2216);
+            }
             // Issue #2135: default zero-copy / direct-arena present path
             {
                 auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
@@ -2103,7 +2116,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->render_ffi_bind_success.store(reg.bind_success.load(std::memory_order_relaxed),
                                                  std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(48) /* #1141 */;
+            auto* ht = FlatHashTable::create(64) /* #1141 + #2216 cellgrid keys */;
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
@@ -2111,6 +2124,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                                                    make_string, make_int);
             };
             // schema 1560 supersedes 1354 (same query name; fields are additive).
+            // schema-2216 adds CellGrid ABI keys (#2216).
             insert_kv("schema", 1560);
             insert_kv("active", 1);
             insert_kv("phase", static_cast<std::int64_t>(aura::renderer::ffi::kRenderFfiPhase));
@@ -2133,6 +2147,17 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("batch-dispatch-total", static_cast<std::int64_t>(hot.batch_dispatch_total));
             insert_kv("invoke-total", static_cast<std::int64_t>(hot.invoke_total));
             insert_kv("ffi-hot-path-phase", static_cast<std::int64_t>(hot.phase));
+            // Issue #2216: CellGrid ABI counters + schema lineage
+            insert_kv("cellgrid-invoke-total",
+                      static_cast<std::int64_t>(hot.cellgrid_invoke_total));
+            insert_kv("cellgrid-dispatch-total",
+                      static_cast<std::int64_t>(hot.cellgrid_dispatch_total));
+            insert_kv("cellgrid-backend-registered",
+                      aura::compiler::ffi_hot::cellgrid_present_backend() != nullptr ? 1 : 0);
+            insert_kv("cellgrid-abi-wired", 1);
+            insert_kv("schema-2216", 2216);
+            insert_kv("issue-2216", 2216);
+            insert_kv("ffi-hot-path-issue", static_cast<std::int64_t>(hot.issue));
             // Per-binding call totals (sum of call_count)
             std::int64_t calls = 0;
             for (const auto& snap : reg.snapshot())

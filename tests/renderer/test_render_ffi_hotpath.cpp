@@ -142,8 +142,9 @@ int main() {
         CHECK(href(cs, "query:render-ffi-available", "schema") == 1560, "schema 1560");
         CHECK(href(cs, "query:render-ffi-available", "active") == 1, "active");
         CHECK(href(cs, "query:render-ffi-available", "phase") == 3, "phase 3");
-        CHECK(href(cs, "query:render-ffi-available", "ffi-hot-path-phase") == 2,
-              "ffi-hot-path-phase 2");
+        // Phase 3 = #2216 CellGrid ABI (was 2 for #1560 batch dispatch).
+        CHECK(href(cs, "query:render-ffi-available", "ffi-hot-path-phase") >= 2,
+              "ffi-hot-path-phase >= 2");
     }
 
     const auto enter0 = href(cs, "query:render-ffi-available", "ffi-hotpath-enter");

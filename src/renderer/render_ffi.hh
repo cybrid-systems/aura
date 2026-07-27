@@ -23,6 +23,8 @@ inline constexpr int kRenderFfiPhase = 3; // #1560: batch hot-path dispatch
 inline constexpr std::string_view kBindDraw = "c-render-draw";
 inline constexpr std::string_view kBindPresentBatch = "c-present-batch";
 inline constexpr std::string_view kBindAnsiEmit = "c-ansi-emit";
+// Issue #2216: typed TermCell grid + DirtyRegion present backend.
+inline constexpr std::string_view kBindCellGridPresent = "c-present-cellgrid";
 
 struct RenderFfiDescriptor {
     std::string name;   // logical binding name
