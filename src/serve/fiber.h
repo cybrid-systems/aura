@@ -581,13 +581,15 @@ public:
     // dual-check (must not execute generation-behind AOT native code).
     void set_resume_layout_stamp(std::uint64_t arena_id, std::uint64_t arena_gen,
                                  std::uint64_t flat_gen, std::uint64_t mutation_epoch,
-                                 std::uint64_t env_gen, std::uint64_t defuse) noexcept {
+                                 std::uint64_t env_gen, std::uint64_t defuse,
+                                 std::uint64_t shape_version) noexcept {
         resume_arena_id_ = arena_id;
         resume_arena_gen_ = arena_gen;
         resume_flat_gen_ = flat_gen;
         resume_mutation_epoch_ = mutation_epoch;
         resume_env_gen_ = env_gen;
         resume_defuse_ = defuse;
+        resume_shape_version_ = shape_version;
         resume_layout_stamp_set_ = 1;
     }
     [[nodiscard]] std::uint64_t resume_arena_id() const noexcept { return resume_arena_id_; }
@@ -598,6 +600,9 @@ public:
     }
     [[nodiscard]] std::uint64_t resume_env_gen() const noexcept { return resume_env_gen_; }
     [[nodiscard]] std::uint64_t resume_defuse() const noexcept { return resume_defuse_; }
+    [[nodiscard]] std::uint64_t resume_shape_version() const noexcept {
+        return resume_shape_version_;
+    }
     [[nodiscard]] bool has_resume_layout_stamp() const noexcept {
         return resume_layout_stamp_set_ != 0;
     }
@@ -608,6 +613,7 @@ public:
         resume_mutation_epoch_ = 0;
         resume_env_gen_ = 0;
         resume_defuse_ = 0;
+        resume_shape_version_ = 0;
         resume_layout_stamp_set_ = 0;
     }
 
@@ -717,6 +723,12 @@ private:
     std::uint64_t resume_mutation_epoch_ = 0;
     std::uint64_t resume_env_gen_ = 0;
     std::uint64_t resume_defuse_ = 0;
+    // Issue #2255: ShapeProfiler monotonic generation captured at
+    // outermost Guard Phase 5 exit (before unlock). Read at resume
+    // / refresh_stale_frames_after_steal; mismatch on top 6 fields
+    // OR this field forces scan_live_closures_for_linear_captures +
+    // bumps shape_version_fence_reject_total.
+    std::uint64_t resume_shape_version_ = 0;
     std::uint32_t resume_layout_stamp_set_ = 0;
     // Issue #1584: cooperative cancel flag.
     std::atomic<bool> cancel_requested_{false};

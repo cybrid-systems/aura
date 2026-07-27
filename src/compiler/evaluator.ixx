@@ -12048,6 +12048,9 @@ public:
     [[nodiscard]] std::uint64_t get_layout_stamp_publish_total() const noexcept;
     // Issue #2250: LayoutStamp fence on Fiber resume/steal.
     [[nodiscard]] std::uint64_t get_layout_stamp_resume_mismatch_total() const noexcept;
+    // Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
+    // field) hard-fence counter accessor for query primitive.
+    [[nodiscard]] std::uint64_t get_shape_version_fence_reject_total() const noexcept;
     // Bumpers backing the (query:hygiene-checkpoint-stats) primitive
     // (schema = 2099). Cross-fiber reject is a *subset* of restore_fail
     // (also bumped) for easy dashboard drill-down.
