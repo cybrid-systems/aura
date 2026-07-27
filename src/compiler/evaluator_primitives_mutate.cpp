@@ -697,8 +697,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                " >= flat size " + std::to_string(flat.size()));
             }
             // Issue #2056: stamp tenant/fiber when promoting raw NodeId → ref.
+            // Issue #2186: force ensure_valid_or_refresh on bare NodeId path
+            // (was: is_valid_in + get_safe only — silent-stale gap after
+            // multi-round restamp when Agents unpack (id . gen) to int).
             auto ref = ev.make_stamped_ref(node);
-            if (!ref.is_valid_in(flat) || !flat.get_safe(ref)) {
+            if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value()) {
                 *ok = false;
                 const auto policy = ev.get_stale_ref_policy();
                 if (policy == Evaluator::StaleRefPolicy::Strict) {
@@ -717,7 +720,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
             }
             ev.bump_stable_ref_provenance_enforced();
-            out_node = node;
+            out_node = ref.id;
             return make_void();
         }
         *ok = false;

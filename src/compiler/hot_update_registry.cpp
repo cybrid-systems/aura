@@ -113,6 +113,16 @@ void HotUpdateRegistry::on_reload_rollback() noexcept {
     aot_reload_fail_other_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
+    // Issue #2232: visible Agent-facing callback when reload policy
+    // exhausts multi-round reemit and falls back to JIT-only. Slot
+    // invalidation is deferred; counters make the decision observable.
+    force_jit_for_reason_total_.fetch_add(1, std::memory_order_relaxed);
+    last_force_jit_reason_.store(static_cast<std::uint8_t>(reason), std::memory_order_release);
+    last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(reason),
+                                       std::memory_order_release);
+}
+
 void HotUpdateRegistry::on_live_closure_remap(std::uint64_t count) noexcept {
     if (count == 0)
         return;

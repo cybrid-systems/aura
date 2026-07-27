@@ -11620,7 +11620,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(must_deopt_kept));
             insert_kv("schema-2233", 2233);
             insert_kv("issue-2233", 2233);
-            insert_kv("post-reemit-stamp-wired", make_int(1));
+            // insert_kv takes int64_t (not EvalValue) — bare 1, not make_int(1).
+            insert_kv("post-reemit-stamp-wired", 1);
             // Issue #2234: post-reemit / post-compact env_frame + linear
             // capture remount metrics. Bumped from
             // aura_remount_closure_captures (aura_jit_runtime.cpp)
@@ -11634,7 +11635,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(capture_remount_fail));
             insert_kv("schema-2234", 2234);
             insert_kv("issue-2234", 2234);
-            insert_kv("capture-remount-wired", make_int(1));
+            insert_kv("capture-remount-wired", 1);
             insert_kv("schema-2013", 2013);
             insert_kv("active", 1);
             insert_kv("aot_incremental_reemit_count", static_cast<std::int64_t>(total));

@@ -112,6 +112,12 @@ public:
     // for callers that don't have a reason.
     void on_reload_rollback(AotReloadFail reason) noexcept;
     void on_reload_rollback() noexcept;
+    // Issue #2232: policy fall_back_jit_only after multi-round reload
+    // exhaustion. Records the final fail reason so Agents can observe
+    // JIT-only fall-back without a silent partial success. Slot-level
+    // AOT invalidation is a future follow-up; this is the visible
+    // registry callback + counter contract for #2232.
+    void on_force_jit_for_reason(AotReloadFail reason) noexcept;
     // Issue #2013: live closures remapped after reemit (count of slots).
     void on_live_closure_remap(std::uint64_t count) noexcept;
     // Issue #2016: adaptive region-mask bit clear/restore.
@@ -358,6 +364,9 @@ private:
     std::atomic<std::uint64_t> aot_reload_fail_staging_{0};    // #2093
     std::atomic<std::uint64_t> aot_reload_fail_other_{0};      // #2093
     std::atomic<std::uint8_t> last_aot_reload_fail_reason_{0}; // #2093 (AotReloadFail enum)
+    // Issue #2232: multi-round reload exhausted → fall_back_jit_only.
+    std::atomic<std::uint64_t> force_jit_for_reason_total_{0};
+    std::atomic<std::uint8_t> last_force_jit_reason_{0};
 
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};

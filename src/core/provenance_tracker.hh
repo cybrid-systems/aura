@@ -30,6 +30,10 @@ inline constexpr int kStableRefTenantMandateIssue = 2056;
 // (make_ref / make_safe_ref / capture_for_fiber / make_ref_in_layer /
 // make_ref_from_gen) so non-batch paths carry tenant provenance.
 inline constexpr int kStableRefTenantCaptureIssue = 2125;
+// Issue #2186: force all EDSL StableNodeRef / node-handle consumption
+// through validate_or_refresh / ensure_valid_or_refresh (silent-stale
+// zero-tolerance on query/mutate hot paths).
+inline constexpr int kEdslValidateOrRefreshIssue = 2186;
 
 // Policy for ensure_valid_or_refresh (AC).
 enum class AutoRefreshPolicy : std::uint8_t {
