@@ -924,6 +924,18 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"dirty-only-blocks-skipped",
                  make_int(static_cast<std::int64_t>(aura::compiler::dirty_only_blocks_skipped_total
                                                         .load(std::memory_order_relaxed)))},
+                // Issue #2258: HotPass mandatory + pure Wrap
+                {"schema-2258", make_int(2258)},
+                {"issue-2258", make_int(2258)},
+                {"hot-pass-dod-mandatory-wired", make_int(1)},
+                {"pure-wrap-enforcement-wired", make_int(1)},
+                {"pass-pipeline-pure-wrap-total",
+                 make_int(static_cast<std::int64_t>(aura::compiler::pass_pipeline_pure_wrap_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"pass-pipeline-concept-rejection-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pass_pipeline_concept_rejection_total.load(
+                         std::memory_order_relaxed)))},
                 // Issue #1919: intelligent auto-compact policy surface
                 {"schema-1919", make_int(1919)},
                 {"issue-1919", make_int(1919)},

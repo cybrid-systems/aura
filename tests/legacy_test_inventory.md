@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 508 | Preferred destination suites |
-| **Total scanned** | **508** | |
+| `tests/core/test_*.cpp` | 509 | Preferred destination suites |
+| **Total scanned** | **509** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 51 | 51 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 150 | 150 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 151 | 151 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
@@ -323,6 +323,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_highperf_full_hotpath_matrix.cpp`
 - `tests/compiler/test_hot_contract_unify_2142.cpp`
 - `tests/compiler/test_hot_pass_dirty_soa_2060.cpp`
+- `tests/compiler/test_hot_pass_pure_wrap_2258.cpp`
 - `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp`
 - `tests/core/test_hotpath_matrix_batch.cpp`
 - `tests/compiler/test_hygiene_checkpoint_2099.cpp`
@@ -753,13 +754,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (150)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (151)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (150)
+#### domain/ (151)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -814,6 +815,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_guard_exit_occurrence_refresh_2144.cpp` (#2144) [domain_suite, theme_compiler] — AC1: multi-round mutate on if-predicate binding → selective invalidate
 - `tests/compiler/test_hard_gate_full_strict_2145.cpp` (#2145) [domain_suite, theme_compiler] — AC1: Full + injected use-after-move / Moved → rollback; mutation not visible
 - `tests/compiler/test_hot_pass_dirty_soa_2060.cpp` (#2060) [domain_suite, theme_compiler] — AC1: DirtySoAEntryPass + kRequireDirtySoAEntry on production wraps
+- `tests/compiler/test_hot_pass_pure_wrap_2258.cpp` (#2258) [domain_suite, theme_compiler] — AC1: Pipeline registration rejects non-HotPassDodCompliant dirty/inc packs
 - `tests/core/test_hotpath_matrix_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_hotpath_matrix_batch.cpp — Domain suite batch: behavioral gates.
 - `tests/compiler/test_hygiene_checkpoint_2099.cpp` (#2099) [domain_suite, theme_compiler] — AC1: save → mutate (introduce new MacroIntroduced node) → restore → pre-save
 - `tests/compiler/test_hygiene_mutate_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2037; enforce_macro_hygiene_mutate_hotpath +

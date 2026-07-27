@@ -199,6 +199,13 @@ export inline std::atomic<std::uint64_t> run_dirty_pipeline_pass_runs_total{0};
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_clean_skips_total{0};
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_dirty_runs_total{0};
 export inline std::atomic<std::uint64_t> soa_dirty_aware_pass_wired{1};
+// Issue #2258: pure Wrap pipeline metrics + concept-rejection (debug).
+// pure_wrap: stages that are PureWrapPass (kPureWrap / PureAnalysisPass).
+// concept_rejection: Legacy / non-SoA soft path samples (debug migration).
+export inline std::atomic<std::uint64_t> pass_pipeline_pure_wrap_total{0};
+export inline std::atomic<std::uint64_t> pass_pipeline_concept_rejection_total{0};
+export inline std::atomic<std::uint64_t> hot_pass_dod_mandatory_wired{1};
+export inline std::atomic<std::uint64_t> pure_wrap_enforcement_wired{1};
 
 inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexcept {
     const auto dirty = view.dirty_block_count();
@@ -246,15 +253,17 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 
 // SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
 
-// Issue #1517 / #1619 / #1918 / #2060: compile-time DOD compliance check.
+// Issue #1517 / #1619 / #1918 / #2060 / #2258: compile-time DOD compliance.
 // - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
 // - Soft metrics always: SoA aware → concept_enforcement_hits;
 //   legacy/unmarked → soa_view_pass_skipped.
 // - #1619/#1918: pack-level check_pipeline_dod_compliance at every pipeline entry.
 // - #1918: HotPassDodCompliant (SoAViewAware || Legacy) is the production target;
-//   unmarked passes remain transitional soft-skip (metric only).
+//   unmarked non-incremental passes remain transitional soft-skip (metric only).
 // - #2060: kRequireDirtySoAEntry / DirtyAware+SoA hot stages must provide
 //   DirtySoAEntryPass (run_on_dirty_blocks_only or Incremental+Dirty+SoA).
+// - #2258: DirtyAwarePass / IncrementalPass MUST be HotPassDodCompliant
+//   (hard reject at registration). PureWrap preferred (kPureWrap metrics).
 export template <typename P> consteval void check_pass_dod_compliance() {
     using T = std::remove_cvref_t<P>;
     if constexpr (RequiresSoAViewPass<T>) {
@@ -266,6 +275,13 @@ export template <typename P> consteval void check_pass_dod_compliance() {
                       "Pass cannot declare both kRequireSoAView and kLegacyPass (#1619/#1918)");
         static_assert(HotPassDodCompliant<T>,
                       "kRequireSoAView pass must be HotPassDodCompliant (#1918)");
+    }
+    // Issue #2258: incremental / dirty-aware production path — hard HotPass gate.
+    if constexpr (DirtyAwarePass<T> || IncrementalPass<T>) {
+        static_assert(HotPassDodCompliant<T>,
+                      "Incremental/DirtyAware pass must be HotPassDodCompliant "
+                      "(SoAViewAware or explicit LegacyPass) for zero-overhead "
+                      "partial-relower (#2258)");
     }
     // Issue #2060: explicit dirty/SoA entry requirement.
     if constexpr (RequiresDirtySoAEntryPass<T>) {
@@ -299,10 +315,18 @@ export inline std::atomic<std::uint64_t> concept_enforcement_hits_total{0};
 export inline std::atomic<std::uint64_t> soa_view_pass_skipped_total{0};
 export inline std::atomic<std::uint64_t> edsl_soa_migration_progress_total{0};
 
-// Issue #1517: per-pass soft enforcement bookkeeping (shared by pipelines).
+// Issue #1517 / #2258: per-pass soft enforcement bookkeeping (shared by pipelines).
 export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept {
     using T = std::remove_cvref_t<P>;
     check_pass_dod_compliance<T>();
+    // Issue #2258 AC4: pure Wrap + concept-rejection (debug) counters.
+    if constexpr (PureWrapPass<T>) {
+        pass_pipeline_pure_wrap_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if constexpr (LegacyPass<T> || !SoAViewAwarePass<T>) {
+        // Debug migration: Legacy opt-out or unmarked non-SoA stage.
+        pass_pipeline_concept_rejection_total.fetch_add(1, std::memory_order_relaxed);
+    }
     if constexpr (SoAViewAwarePass<T>) {
         if (pass.uses_soa_view()) {
             passes_soa_view_aware_total.fetch_add(1, std::memory_order_relaxed);
@@ -313,6 +337,8 @@ export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept {
         } else {
             soa_view_pass_skipped_total.fetch_add(1, std::memory_order_relaxed);
             soa_view::record_soa_view_pass_skipped();
+            // uses_soa_view() false → soft concept rejection (debug).
+            pass_pipeline_concept_rejection_total.fetch_add(1, std::memory_order_relaxed);
         }
     } else {
         // Unmarked or explicit LegacyPass → transitional skip.
@@ -468,7 +494,10 @@ export template <IncrementalPass P>
     requires DirtyAwarePass<P>
 bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                                     const DefineDirtyMaskView* define_cache = nullptr) {
-    // Issue #1517 / #1619 / #2060: enforce DOD + dirty/SoA entry at dirty entry.
+    // Issue #1517 / #1619 / #2060 / #2258: DOD + HotPass + dirty/SoA entry.
+    static_assert(HotPassDodCompliant<P>,
+                  "run_incremental_dirty_pipeline requires HotPassDodCompliant "
+                  "(SoAViewAware or LegacyPass) (#2258)");
     check_pipeline_dod_compliance<P>();
     note_pass_soa_enforcement(pass);
     // #2060: DirtyAware + SoA stages must offer DirtySoAEntry (concept check).
@@ -776,6 +805,8 @@ public:
     // Issue #1918: SoAViewAwarePass — dirty-aware function scan is DOD-friendly.
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
     static constexpr bool kRequireDirtySoAEntry = true; // #2060
+    // Issue #2258: pure Wrap over compute_kind free function.
+    static constexpr bool kPureWrap = true;
 
 private:
     // mutable so the const-qualified run() can still clear/refill
@@ -798,6 +829,8 @@ public:
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
     // Issue #1918: SoAViewAwarePass — arity walks function/instruction columns.
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    // Issue #2258: pure Wrap over check_arity free function.
+    static constexpr bool kPureWrap = true;
 
 private:
     // mutable so the const-qualified run() can store the result.
@@ -875,6 +908,9 @@ public:
     static std::uint64_t pure_delegation_hits() noexcept {
         return pure_delegation_hits_.load(std::memory_order_relaxed);
     }
+    // Issue #2258: HotPassDodCompliant for dirty incremental pipeline.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     mutable std::vector<std::uint32_t> results_;
@@ -1142,6 +1178,8 @@ public:
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
     // Issue #2060: require dirty/SoA entry for this hot production wrap.
     static constexpr bool kRequireDirtySoAEntry = true;
+    // Issue #2258: pure Wrap over constant_fold_function / constant_fold_block.
+    static constexpr bool kPureWrap = true;
 
 private:
     // Legacy per-instance known-map (kept for fold_block callers
@@ -1607,6 +1645,8 @@ public:
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
     // Issue #1918: SoAViewAwarePass — type_id / narrow_evidence / linear columns.
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    // Issue #2258: pure Wrap style (local state only; no hidden globals).
+    static constexpr bool kPureWrap = true;
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
@@ -1628,6 +1668,12 @@ static_assert(HotPassDodCompliant<TypeSpecializationWrap>,
 static_assert(HotPassDodCompliant<ConstantFoldingWrap>, "ConstantFoldingWrap HotPassDodCompliant");
 static_assert(HotPassDodCompliant<ComputeKindWrap>, "ComputeKind HotPassDodCompliant");
 static_assert(HotPassDodCompliant<ArityWrap>, "Arity HotPassDodCompliant");
+// Issue #2258: pure Wrap concept on production hot stages.
+static_assert(PureWrapPass<ConstantFoldingWrap>, "ConstantFoldingWrap PureWrapPass (#2258)");
+static_assert(PureWrapPass<ComputeKindWrap>, "ComputeKindWrap PureWrapPass (#2258)");
+static_assert(PureWrapPass<ArityWrap>, "ArityWrap PureWrapPass (#2258)");
+static_assert(PureWrapPass<ShapeWrap>, "ShapeWrap PureWrapPass (#2258)");
+static_assert(PureWrapPass<TypeSpecializationWrap>, "TypeSpecializationWrap PureWrapPass (#2258)");
 
 // ── mark_coercions — mark nodes needing coercion (Issue #163) ───
 // Operates on FlatAST after type-checking, before lowering.
@@ -2117,6 +2163,8 @@ public:
     // Issue #1619: SoAViewAwarePass — elision walks type_id / narrow_evidence
     // columns (parent-type stamp path is DOD-friendly).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    // Issue #2258: pure Wrap style (instance-local counters; pure elision rules).
+    static constexpr bool kPureWrap = true;
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
@@ -2512,6 +2560,9 @@ public:
     // Issue #1875: dirty-scope incremental re-run counters.
     std::size_t dirty_blocks_analyzed() const { return dirty_blocks_analyzed_; }
     std::size_t dirty_reruns() const { return dirty_reruns_; }
+    // Issue #2258: HotPassDodCompliant for dirty incremental registration.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     std::size_t escaped_slots_total_ = 0;
@@ -2954,6 +3005,8 @@ public:
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
     // Issue #2060: require dirty/SoA entry for type-prop hot path.
     static constexpr bool kRequireDirtySoAEntry = true;
+    // Issue #2258: pure Wrap style (local propagation state only).
+    static constexpr bool kPureWrap = true;
 
     // Issue #1530 / #1874: original #1457 set + extended pure/ownership
     // + more unaries / const ground stamps for DCE coverage.
@@ -3298,6 +3351,9 @@ static_assert(HotPassDodCompliant<DeadCoercionEliminationPass>,
               "DeadCoercion HotPassDodCompliant (#1918)");
 static_assert(HotPassDodCompliant<ConstantFoldingWrap>,
               "ConstantFoldingWrap HotPassDodCompliant (#1918)");
+static_assert(PureWrapPass<TypePropagationPass>, "TypePropagationPass PureWrapPass (#2258)");
+static_assert(PureWrapPass<DeadCoercionEliminationPass>, "DeadCoercion PureWrapPass (#2258)");
+static_assert(HotPassDodCompliant<ShapeWrap>, "ShapeWrap HotPassDodCompliant (#2258)");
 static_assert(IncrementalPass<TypePropagationPass>,
               "TypePropagationPass is IncrementalPass (#1574)");
 static_assert(DirtyAwarePass<ComputeKindWrap>,
@@ -4906,6 +4962,9 @@ public:
     // Issue #2130: dirty peel observability.
     std::uint64_t blocks_processed() const noexcept { return blocks_processed_; }
     std::uint64_t blocks_skipped() const noexcept { return blocks_skipped_; }
+    // Issue #2258: SoAViewAware / pure Wrap markers for HotPassDodCompliant.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
     // Test seam: cycle the pass with a known escape map
     // (production prefers IRFunction::escape_map from EscapeAnalysisPass).

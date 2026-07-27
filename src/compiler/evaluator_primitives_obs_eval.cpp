@@ -13957,8 +13957,24 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                      aura::compiler::pipeline_dirty_short_circuit_total.load(
                          std::memory_order_relaxed)))},
                 {"dirty-soa-entry-contract-wired", make_int(1)},
+                // Issue #2258: HotPass mandatory + pure Wrap metrics
+                {"schema-2258", make_int(2258)},
+                {"issue-2258", make_int(2258)},
+                {"hot-pass-dod-mandatory-wired",
+                 make_int(static_cast<std::int64_t>(aura::compiler::hot_pass_dod_mandatory_wired
+                                                        .load(std::memory_order_relaxed)))},
+                {"pure-wrap-enforcement-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pure_wrap_enforcement_wired.load(std::memory_order_relaxed)))},
+                {"pass-pipeline-pure-wrap-total",
+                 make_int(static_cast<std::int64_t>(aura::compiler::pass_pipeline_pure_wrap_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"pass-pipeline-concept-rejection-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pass_pipeline_concept_rejection_total.load(
+                         std::memory_order_relaxed)))},
                 {"issue", make_int(1619)},
-                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060
+                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258
             };
             return build_hash(kv);
         });

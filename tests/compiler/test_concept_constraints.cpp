@@ -54,7 +54,7 @@ struct NotAPass {
 static void ac1_inventory() {
     std::println("\n--- AC1: concept inventory ---");
     CHECK(aura::compiler::pass_concepts::kConceptConstraintsPhase >= 1, "phase >= 1");
-    CHECK(aura::compiler::pass_concepts::kPassConceptCount == 12, "12 pass concepts (#2060)");
+    CHECK(aura::compiler::pass_concepts::kPassConceptCount == 13, "13 pass concepts (#2258)");
     aura::compiler::pass_concepts::note_concept_constraints_import();
     CHECK(aura::compiler::pass_concepts::concept_constraints_import_hits.load() >= 1,
           "import hits");

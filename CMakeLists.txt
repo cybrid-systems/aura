@@ -2429,6 +2429,11 @@ aura_add_issue_test(test_adt_exhaustiveness_audit_2223)
 aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit_2223)
 add_dependencies(all_test_issue_targets test_adt_exhaustiveness_audit_2223)
 
+# Issue #2258: HotPassDodCompliant + pure Wrap for incremental/dirty passes.
+aura_add_issue_test(test_hot_pass_pure_wrap_2258)
+aura_issue_test_link_llvm_jit(test_hot_pass_pure_wrap_2258)
+add_dependencies(all_test_issue_targets test_hot_pass_pure_wrap_2258)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
