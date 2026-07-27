@@ -1385,6 +1385,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                stamp.mutation_epoch, stamp.env_gen,
                                                stamp.defuse_version, stamp.shape_version);
         }
+        // Issue #2256: trigger Moving compaction after outermost
+        // Guard exit (post-publish). Honors the pin-or-remap hard
+        // contract: verify_pins_under_moving_compact() bumps
+        // pin_hits + remap_us accumulators + records compact_count.
+        if (aura::core::moving_compact_enabled()) {
+            const auto reclaimed = arena_group_ ? arena_group_->adaptive_compact_all() : 0;
+            if (reclaimed > 0 && auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_))
+                mm->arena_compact_deopt_triggered_total.fetch_add(
+                    static_cast<std::uint64_t>(reclaimed), std::memory_order_relaxed);
+            aura::core::verify_pins_under_moving_compact();
+        }
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
             m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
             m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
