@@ -1029,6 +1029,66 @@ int main() {
         aura_set_aot_metrics(nullptr);
     }
 
+    // — Issue #2249 AC1-AC6: Region | Staging auto-retry conservative
+    // path (extend #2232). Pure policy_for check + wire-up source-cite +
+    // metric/atomic fields present.
+    {
+        std::println("\n--- AC #2249: Region | Staging auto-retry ---");
+        auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
+        auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+        auto met = read_file("src/compiler/observability_metrics.h");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        // AC1/AC2: policy_for Region/Staging -> {2, 15, true}
+        const auto p_region = aura::compiler::policy_for(AotReloadFail::Region);
+        const auto p_staging = aura::compiler::policy_for(AotReloadFail::Staging);
+        CHECK(p_region.max_reemit == 2, "AC1: Region max_reemit == 2");
+        CHECK(p_region.backoff_ms == 15, "AC1: Region backoff_ms == 15");
+        CHECK(p_region.fall_back_jit_only == true, "AC1: Region fall_back_jit_only == true");
+        CHECK(p_staging.max_reemit == 2, "AC2: Staging max_reemit == 2");
+        CHECK(p_staging.backoff_ms == 15, "AC2: Staging backoff_ms == 15");
+        CHECK(p_staging.fall_back_jit_only == true, "AC2: Staging fall_back_jit_only == true");
+        // AC3: Dlopen / Other still never retry (regression vs #2232)
+        const auto p_dlopen = aura::compiler::policy_for(AotReloadFail::Dlopen);
+        const auto p_other = aura::compiler::policy_for(AotReloadFail::Other);
+        CHECK(p_dlopen.max_reemit == 0, "AC3: Dlopen max_reemit == 0");
+        CHECK(p_dlopen.fall_back_jit_only == false, "AC3: Dlopen fall_back_jit_only == false");
+        CHECK(p_other.max_reemit == 0, "AC3: Other max_reemit == 0");
+        CHECK(p_other.fall_back_jit_only == false, "AC3: Other fall_back_jit_only == false");
+        // Source-cite: storm_skip helper + aot_reload_fail_is_auto_retryable
+        CHECK(bridge_h.find("aot_reload_storm_skip_retry_for_2249") != std::string::npos,
+              "storm_skip helper declared");
+        CHECK(bridge_cpp.find("aot_reload_storm_skip_retry_for_2249") != std::string::npos,
+              "storm_skip helper invoked at retry loop");
+        CHECK(bridge_cpp.find("AotReloadFail::Region") != std::string::npos &&
+                  bridge_cpp.find("AotReloadFail::Staging") != std::string::npos,
+              "auto_retryable covers Region + Staging");
+        CHECK(bridge_cpp.find("aot_reload_region_staging_retry_total") != std::string::npos,
+              "retry counter bump site");
+        CHECK(bridge_cpp.find("aot_reload_region_staging_exhausted_total") != std::string::npos,
+              "exhausted counter bump site");
+        // AC4: 2 metric fields + 2 query keys + schema-2249
+        CHECK(met.find("aot_reload_region_staging_retry_total{0}") != std::string::npos,
+              "retry counter field");
+        CHECK(met.find("aot_reload_region_staging_exhausted_total{0}") != std::string::npos,
+              "exhausted counter field");
+        CHECK(q.find("aot-reload-region-staging-retry-total") != std::string::npos,
+              "retry query key");
+        CHECK(q.find("aot-reload-region-staging-exhausted-total") != std::string::npos,
+              "exhausted query key");
+        CHECK(q.find("aot-reload-region-staging-policy-wired") != std::string::npos,
+              "wired sentinel");
+        CHECK(q.find("schema-2249") != std::string::npos, "schema-2249 lineage");
+        CHECK(q.find("issue-2249") != std::string::npos, "issue-2249 lineage");
+        // AC5: env override AURA_AOT_RELOAD_AUTO_RETRY=0 still disables all
+        const int saved = aura_aot_reload_auto_retry_enabled();
+        aura_set_aot_reload_auto_retry(0);
+        CHECK(aura_aot_reload_auto_retry_enabled() == 0, "AC5: env override disables");
+        aura_set_aot_reload_auto_retry(saved);
+        // AC6: success on 2nd Region attempt -> success counter, no exhausted
+        CHECK(p_region.max_reemit >= 2, "AC6: Region policy supports up to 2 retries");
+        CHECK(p_staging.max_reemit >= 2, "AC6: Staging policy supports up to 2 retries");
+    }
+
     if (::aura::test::g_failed)
         return 1;
     std::println("aot reload primitive #1366/#2012: OK ({} passed)", ::aura::test::g_passed);

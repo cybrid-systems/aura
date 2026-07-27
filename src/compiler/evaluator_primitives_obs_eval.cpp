@@ -13062,6 +13062,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 m->aot_reload_policy_attempt_total.load(std::memory_order_relaxed);
             auto_retry_fall_back_jit =
                 m->aot_reload_fall_back_jit_only_total.load(std::memory_order_relaxed);
+            // Issue #2249: Region | Staging retry + exhausted counters
+            region_staging_retry =
+                m->aot_reload_region_staging_retry_total.load(std::memory_order_relaxed);
+            region_staging_exhausted =
+                m->aot_reload_region_staging_exhausted_total.load(std::memory_order_relaxed);
         }
         // Issue #2094: read the unified StormLevel facade OUTSIDE the
         // metrics if-block since aura_hot_update_current_storm_level() is
@@ -13174,6 +13179,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(auto_retry_policy_attempt))},
             {"aot-reload-fall-back-jit-only-total",
              make_int(static_cast<std::int64_t>(auto_retry_fall_back_jit))},
+            // Issue #2249: Region | Staging auto-retry conservative
+            // path (extend #2232). 2 new keys + schema-2249 lineage.
+            {"aot-reload-region-staging-retry-total",
+             make_int(static_cast<std::int64_t>(region_staging_retry))},
+            {"aot-reload-region-staging-exhausted-total",
+             make_int(static_cast<std::int64_t>(region_staging_exhausted))},
+            {"aot-reload-region-staging-policy-wired", make_int(1)},
+            {"schema-2249", make_int(2249)},
+            {"issue-2249", make_int(2249)},
             {"schema-2232", make_int(2232)},
             {"issue-2232", make_int(2232)},
             {"reload-policy-wired", make_int(1)},
