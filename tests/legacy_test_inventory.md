@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 463 | Preferred destination suites |
-| **Total scanned** | **463** | |
+| `tests/core/test_*.cpp` | 464 | Preferred destination suites |
+| **Total scanned** | **464** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 50 | 50 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 129 | 129 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 130 | 130 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 45 | 45 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 26 | 26 | P1 — domain hygiene suite exists |
@@ -443,6 +443,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_panic_checkpoint_batch.cpp`
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp`
 - `tests/orch/test_parallel_intend_pure_2163.cpp`
+- `tests/orch/test_parallel_intend_pure_contract_2230.cpp`
 - `tests/compiler/test_partial_relower_cascade_2041.cpp`
 - `tests/compiler/test_pass_contracts_hotpath_closed_loop.cpp`
 - `tests/compiler/test_pattern_structural_index_closed_loop.cpp`
@@ -707,13 +708,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (129)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (130)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (129)
+#### domain/ (130)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -803,6 +804,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_recovery.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_typing_blame_post_mutate_recovery.cpp — restored standalone (AC drift under batch
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_task2.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_typing_blame_post_mutate_task2.cpp — restored standalone (AC drift under batch
 - `tests/orch/test_parallel_intend_pure_2163.cpp` (#2163) [domain_suite, theme_orch] — thunks; mutating thunks fail pure-contract; FailurePolicy still works.
+- `tests/orch/test_parallel_intend_pure_contract_2230.cpp` (#2230) [domain_suite, theme_orch] — (pure_unlocked_applies / pure_fallback_locked / pure_contract_violated)
 - `tests/core/test_pcv_exclusive_with_set_2140.cpp` (#2140) [domain_suite, theme_core] — AC1: with_set exclusive → no alloc (same storage, with_set_exclusive metric)
 - `tests/compiler/test_per_symbol_dirty_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1786 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_per_symbol_dirty_pool_lock.cpp` (—) [domain_suite, theme_core] — Issue #1785 (#1978 renamed): issue# moved from filename to header.
