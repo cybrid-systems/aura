@@ -2613,6 +2613,17 @@ add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 aura_add_issue_test(test_agent_failure_policy_2229)
 aura_issue_test_link_llvm_jit(test_agent_failure_policy_2229)
 add_dependencies(all_test_issue_targets test_agent_failure_policy_2229)
+
+# Issue #2230: harden pure-parallel contract tests + document
+# isolation boundaries. Locks the three metric paths
+# (pure_unlocked_applies / pure_fallback_locked /
+# pure_contract_violated) with explicit ACs in
+# tests/orch/test_parallel_intend_pure_contract_2230.cpp and adds a
+# "Pitfalls" sub-section to the README pure contract warning
+# Agents that pure is best-effort, NOT isolation.
+aura_add_issue_test(test_parallel_intend_pure_contract_2230)
+aura_issue_test_link_llvm_jit(test_parallel_intend_pure_contract_2230)
+add_dependencies(all_test_issue_targets test_parallel_intend_pure_contract_2230)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

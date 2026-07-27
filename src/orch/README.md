@@ -54,6 +54,43 @@ Metrics (`query:orch-module-stats`, schema-2163):
 For CPU-only pure work that must never touch the Evaluator, prefer direct
 `serve::parallel_orch::parallel_intend` from C++ with custom `TaskSpec` bodies.
 
+**Pitfalls (Issue #2230 — pure is best-effort, NOT isolation):**
+
+The `:pure #t` contract is a *best-effort probe*, not a transactional isolation
+level. Production Agents must NOT treat pure parallel as a full reentrant VM.
+Documented footguns (locked by `tests/orch/test_parallel_intend_pure_contract_2230`):
+
+1. **Sibling concurrent pure applies are NOT rolled back.** If a pure task
+   fails with `pure-contract-violated` mid-batch, the other pure tasks may
+   have already partially executed (no atomicity). The batch hash reports
+   per-task errors via `CollectAll` / `FailFast` — Agents that need
+   all-or-nothing must use the default `:pure #f` (serialized) or
+   `serve::parallel_orch::parallel_intend` from C++ with manual barriers.
+2. **Deep concurrent recursion on a shared `Evaluator` can race internal
+   heaps.** The best-effort probe (defuse_version / mutation boundary
+   check) catches *most* AST writes but does NOT cover indirect mutation
+   paths (e.g. `engine:metrics` writers, side-channel caches). For deep
+   recursion, prefer `serve::parallel_orch::parallel_intend` from C++ with
+   `TaskSpec` bodies that never touch the Evaluator.
+3. **Three metric paths are independent, not coupled.** `pure_unlocked_applies`
+   counts unlocked fast-path thunks; `pure_fallback_locked` counts
+   forced-lock thunks (boundary already held); `pure_contract_violated`
+   counts thunks that wrote AST post-apply. A healthy batch shows
+   `unlocked > 0`, `fallback = 0`, `violated = 0`; non-zero values in any
+   slot indicate the corresponding class of risk. The test suite
+   (`tests/orch/test_parallel_intend_pure_contract_2230`) locks all three
+   paths with explicit ACs.
+4. **Probe is NOT a transaction.** There is a small window between the
+   `apply_closure` call and the post-apply `defuse_version` check where
+   a runaway task could mutate state undetected. For Agent / host-thread
+   orchestration that needs hard isolation, use the default `:pure #f`
+   serialized path or the C++ `parallel_intend` with explicit locks.
+
+Do not advertise `:pure #t` as a transactional isolation level in any
+Agent-facing schema text. The issue's Phase C probe hardening (sampling
+`total_mutations_` / workspace generation) is a follow-up if the probe
+window proves too loose in production.
+
 MVP scope is single-agent only (`scripts/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
 
 ### `AgentScope` (Issue #2083, default multi-agent supervision root)
