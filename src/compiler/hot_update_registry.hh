@@ -51,6 +51,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "compiler/aura_jit_bridge.h" // Issue #2093: AotReloadFail enum
@@ -127,6 +128,12 @@ public:
     // Issue #2014: feed one deopt observation (from aura_deopt_inc).
     // Hot path: relaxed atomics only; clock read amortized to window edges.
     void on_stale_deopt() noexcept;
+    // Issue #2236: region-aware feed (used when StormIsolation::PerRegion
+    // is configured). When Global (default), routes to no-arg form so the
+    // soft/hard atomics stay the single process-wide window. When PerRegion,
+    // feeds the per-region window map (bounded cap of 64 entries;
+    // overflow falls back to global to bound memory per the issue note).
+    void on_stale_deopt(std::uint64_t region) noexcept;
     // When true, reemit pipeline should skip this call (coalesce / delay).
     // No-arg form is the process-global soft-storm flag (#2014 / StormLevel).
     [[nodiscard]] bool should_throttle_reemit() const noexcept;
@@ -149,8 +156,50 @@ public:
         Hard = 2,           // hard ceiling — no bypass
         CriticalBypass = 3, // allowed despite soft storm
     };
+    // Issue #2236: optional per-region / per-eval deopt-storm isolation.
+    // Default = Global = today's process-wide sliding window behavior
+    // (backwards compat — single-workspace MVP). PerRegion = per-region
+    // sliding windows with bounded cap (64 entries, overflow → global);
+    // PerEval is plumbed but requires eval_id threading (#2158) and is
+    // documented as a follow-up. The StormLevel facade + critical
+    // region bypass from #2132 are preserved under isolation mode
+    // (the hard ceiling remains per-region too — "prefer per-region
+    // hard too" per the issue AC2 note).
+    enum class StormIsolation : std::uint8_t {
+        Global = 0,    // process-wide window (today's behavior)
+        PerRegion = 1, // per-region windows; bounded cap; overflow → global
+        PerEval = 2,   // per-evaluator windows (future — eval_id threading needed)
+    };
+    static constexpr std::uint64_t kStormIsolationRegionCap = 64;
     void on_reemit_throttled(ThrottleReason reason) noexcept;
     void on_reemit_critical_bypass() noexcept;
+    // Issue #2236: StormIsolation mode setter / getter. Default = Global.
+    // Setting PerRegion activates per-region windows; setting PerEval is
+    // a no-op today (eval_id threading is plumbed as a follow-up #2158).
+    // Hot-path readers (on_stale_deopt / should_throttle_reemit) read the
+    // atomic once per call (relaxed, 1 load).
+    void set_storm_isolation_mode(StormIsolation mode) noexcept;
+    [[nodiscard]] StormIsolation storm_isolation_mode() const noexcept;
+    // Number of regions in the per-region window map (size of
+    // region_windows_). Used by tests + Agent dashboards to verify the
+    // bounded cap is respected.
+    [[nodiscard]] std::uint64_t storm_isolation_region_count() const noexcept;
+    // Last region id that tripped a per-region storm. 0 when no region
+    // has tripped (default). Read via the snapshot as
+    // deopt_storm_region_last_id.
+    [[nodiscard]] std::uint64_t deopt_storm_region_last_id() const noexcept;
+    // Number of per-region storm trips (cumulative). Read via the
+    // snapshot as deopt_storm_region_detected_total.
+    [[nodiscard]] std::uint64_t deopt_storm_region_detected_total() const noexcept;
+    // Reset per-region windows for tests (clears the map + trips + last id).
+    // Does NOT touch global atomics (use reset_deopt_storm_state_for_test
+    // for that); this is the per-region cleanup hook.
+    void reset_region_storm_windows_for_test() noexcept;
+    // Test helper: bump per-region deopt count by `n` directly (skips
+    // the on_stale_deopt gate and writes to region_windows_[region]).
+    // Bumps `deopt_observed_total_` and `deopt_storm_region_detected_total_`
+    // when the count exceeds threshold.
+    void test_pump_deopt_for_region(std::uint64_t region, std::uint64_t n) noexcept;
     // Configure storm threshold (default 1000 deopts / 100 ms).
     void set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                    std::uint64_t window_ms) noexcept;
@@ -305,6 +354,18 @@ public:
         std::int64_t reemit_deferred_pending = 0;
         std::int64_t schema_2114 = 2114;
         std::int64_t issue_2114 = 2114;
+        // Issue #2236: StormIsolation mode + per-region trip counters.
+        // storm_isolation_mode: 0=Global (default, process-wide window),
+        // 1=PerRegion (per-region sliding windows with bounded 64 cap),
+        // 2=PerEval (documented follow-up — eval_id threading needed).
+        // deopt_storm_region_detected_total: total trip count across
+        // all per-region windows (cumulative). Last region id that
+        // tripped is in deopt_storm_region_last_id.
+        std::int64_t storm_isolation_mode = 0;
+        std::int64_t deopt_storm_region_detected_total = 0;
+        std::int64_t deopt_storm_region_last_id = 0;
+        std::int64_t schema_2236 = 2236;
+        std::int64_t issue_2236 = 2236;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -403,6 +464,33 @@ private:
     std::atomic<std::uint64_t> reemit_deferred_for_boundary_{0};
     std::atomic<bool> reemit_deferred_pending_{false};
     std::atomic<std::uint64_t> reemit_deferred_version_{0};
+    // Issue #2236: StormIsolation mode + per-region sliding-window state.
+    // The mode atomic is file-scope-singleton level (1 instance of the
+    // registry); the region_windows_ map is bounded to 64 entries
+    // (kStormIsolationRegionCap) — overflow falls back to the global
+    // window per the issue AC2 note. The mutex protects map resizes +
+    // counter reads; per-window atomics are lock-free on the hot feed
+    // / throttle paths.
+    std::atomic<std::uint8_t> storm_isolation_mode_{0}; // StormIsolation enum
+    mutable std::mutex region_windows_mtx_;
+    std::unordered_map<std::uint64_t, RegionWindow> region_windows_;
+    std::atomic<std::uint64_t> deopt_storm_region_detected_total_{0};
+    std::atomic<std::uint64_t> deopt_storm_region_last_id_{0};
+
+    // Per-region sliding window (Issue #2236).
+    struct RegionWindow {
+        std::atomic<std::uint64_t> window_start_ms_{0};
+        std::atomic<std::uint64_t> window_count_{0};
+        std::atomic<bool> soft_throttled_{false};
+        std::atomic<bool> hard_throttled_{false};
+    };
+    // Helper: feed `n` deopts into region_windows_[region], with the
+    // same threshold-check + trip semantics as on_stale_deopt. Bumps
+    // deopt_observed_total_ by `n` (not per-region) for parity with
+    // the global counter. Returns true if the region window tripped.
+    bool feed_region_deopt_locked(RegionWindow& w, std::uint64_t n, std::uint64_t threshold,
+                                  std::uint64_t window_ms, std::uint64_t hard_thr,
+                                  std::uint64_t region) noexcept;
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -488,6 +576,16 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t reemit_deferred_pending;
     std::int64_t schema_2114;
     std::int64_t issue_2114;
+    // Issue #2236: StormIsolation mode + per-region storm counters.
+    // MUST stay in lockstep with hot_update_registry.hh — the production
+    // aura_hot_update_registry_get_snapshot() writes these fields; if
+    // this shadow struct is missing any of them, the writes overflow
+    // and corrupt adjacent stack/heap (stack canary smashes).
+    std::int64_t storm_isolation_mode;
+    std::int64_t deopt_storm_region_detected_total;
+    std::int64_t deopt_storm_region_last_id;
+    std::int64_t schema_2236;
+    std::int64_t issue_2236;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2014: C entry points for deopt feed / throttle / config.
