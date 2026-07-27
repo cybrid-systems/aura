@@ -696,10 +696,17 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 auto sdo = aura::compiler::solve_delta_occurrence(*cs_ptr, occ_span, &unresolved,
                                                                   compiler_metrics_);
                 using aura::compiler::SolveResult;
-                cr.solve_ok = (sdo.status == SolveResult::SOLVED);
+                // Issue #2260: SOLVED alone is insufficient when reverify was
+                // truncated — partial type-proof must not commit under hard-gate.
+                c.boundary_solve_hard_gate_total.fetch_add(1, std::memory_order_relaxed);
+                if (sdo.truncated_reverify) {
+                    c.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                cr.solve_ok = (sdo.status == SolveResult::SOLVED) && !sdo.truncated_reverify;
                 if (!cr.solve_ok) {
                     c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
-                    // Keep unresolved visible for Agent repair (#2107).
+                    c.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+                    // Keep unresolved visible for Agent repair (#2107 / #2260 AC4).
                     (void)sdo.unresolved_affected_nodes;
                     (void)unresolved;
                 }
@@ -830,7 +837,11 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     auto sdo2 = aura::compiler::solve_delta_occurrence(cs, occ_span, nullptr,
                                                                        compiler_metrics_);
                     using aura::compiler::SolveResult;
-                    cr.solve_ok = (sdo2.status == SolveResult::SOLVED);
+                    // Issue #2260: reject truncated reverify on recovery re-solve.
+                    if (sdo2.truncated_reverify)
+                        c.boundary_solve_truncated_seen_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    cr.solve_ok = (sdo2.status == SolveResult::SOLVED) && !sdo2.truncated_reverify;
                     if (!cr.solve_ok)
                         c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
                 } catch (...) {
@@ -1047,6 +1058,129 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     return r.all_ok();
 }
 
+// ── Issue #2260: MutationBoundary type-proof (SOLVED / !truncated) ───────
+//
+// Extends composite commit's SOLVED requirement (#2180) to every hard-gate
+// boundary exit. Soft/Sampled small dirty may continue with truncated_seen
+// metrics only — never leave Full/Strict with partial type-proof live.
+
+bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_present,
+                                          std::uint64_t nodes_changed, bool* out_truncated,
+                                          bool* out_force_fail) noexcept {
+    using namespace aura::compiler::typed_audit;
+    using aura::compiler::SolveResult;
+    auto& ac = g_typed_mutation_audit_counters;
+    if (out_truncated)
+        *out_truncated = false;
+    if (out_force_fail)
+        *out_force_fail = false;
+
+    if (hard_gate)
+        ac.boundary_solve_hard_gate_total.fetch_add(1, std::memory_order_relaxed);
+
+    // No type system / no workspace → proof N/A (treat as ok).
+    if (!workspace_flat_ || !type_registry_)
+        return true;
+
+    auto run_sdo =
+        [&](ConstraintSystem& cs,
+            std::span<const aura::core::TypeId> occ) -> aura::compiler::SolveDeltaOccurrenceResult {
+        try {
+            return aura::compiler::solve_delta_occurrence(cs, occ, nullptr, compiler_metrics_);
+        } catch (...) {
+            // [SILENCE-PRIM] solve failure → TIMEOUT-shaped fail.
+            aura::compiler::SolveDeltaOccurrenceResult bad{};
+            bad.status = SolveResult::TIMEOUT;
+            bad.truncated_reverify = true;
+            return bad;
+        }
+    };
+
+    ConstraintSystem* cs_ptr = nullptr;
+    std::span<const aura::core::TypeId> occ_span{};
+    if (commit_type_checker_opaque_ && commit_cs_live_) {
+        auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        cs_ptr = &ctc->constraint_system();
+        if (commit_occurrence_vars_opaque_) {
+            auto* occ =
+                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+            occ_span = *occ;
+        }
+    }
+
+    bool solved = true;
+    bool truncated = false;
+    bool has_unresolved_nodes = false;
+
+    if (cs_ptr) {
+        auto sdo = run_sdo(*cs_ptr, occ_span);
+        solved = (sdo.status == SolveResult::SOLVED);
+        truncated = sdo.truncated_reverify;
+        has_unresolved_nodes = !sdo.unresolved_affected_nodes.empty() || !sdo.unresolved.empty();
+        if (truncated) {
+            ac.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+            if (out_truncated)
+                *out_truncated = true;
+        }
+        // Soft/Sampled: observe truncation, allow continue (AC2).
+        if (!hard_gate)
+            return true;
+        if (solved && !truncated)
+            return true;
+        // AC4: TIMEOUT / partial should expose affected nodes when hard-gate fires.
+        (void)has_unresolved_nodes;
+    } else {
+        // No stashed CS: soft continues; hard-gate will full-resync below.
+        if (!hard_gate)
+            return true;
+        solved = false;
+        truncated = false;
+    }
+
+    // Hard-gate: prefer full resync when type-only / cheap dirty; else force-fail.
+    const auto force_n =
+        production_defaults_active() ? kAuditForceNodesChangedProduction : kAuditForceNodesChanged;
+    const bool prefer_rollback = linear_ops_present || nodes_changed >= force_n;
+
+    if (!prefer_rollback) {
+        ac.boundary_solve_full_resync_total.fetch_add(1, std::memory_order_relaxed);
+        // Full re-infer (selective empty log → full path inside helper).
+        const bool resync_ok = run_post_mutate_typecheck_no_lock();
+        // Re-solve on stashed CS after resync when available.
+        if (commit_type_checker_opaque_ && commit_cs_live_) {
+            auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+            auto& cs2 = ctc->constraint_system();
+            std::span<const aura::core::TypeId> occ2{};
+            if (commit_occurrence_vars_opaque_) {
+                auto* occ =
+                    static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+                occ2 = *occ;
+            }
+            auto sdo2 = run_sdo(cs2, occ2);
+            if (sdo2.truncated_reverify) {
+                ac.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+                if (out_truncated)
+                    *out_truncated = true;
+            }
+            if (sdo2.status == SolveResult::SOLVED && !sdo2.truncated_reverify)
+                return true;
+            // Full resync cleared diags but reverify still truncated → still fail hard.
+            if (resync_ok && sdo2.status == SolveResult::SOLVED && !sdo2.truncated_reverify)
+                return true;
+            (void)resync_ok;
+        } else if (resync_ok) {
+            // No CS after resync: empty-diag full infer is the proof.
+            return true;
+        }
+    }
+
+    // Force-fail path (AC1: never silent continue under hard-gate).
+    ac.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    if (out_force_fail)
+        *out_force_fail = true;
+    return false;
+}
+
 // ── Issue #2145: Full/Strict hard-gate before mutate commit ───────────
 
 bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear_ops_present,
@@ -1075,9 +1209,36 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     }
     if (!requires_invariant_hard_gate(nodes_changed, linear_ops_present, strict, match_sites)) {
         ac.hard_gate_sampled_skip_total.fetch_add(1, std::memory_order_relaxed);
+        // Soft path still observes truncated reverify when CS is live (AC2).
+        (void)boundary_solve_proof_gate(/*hard_gate=*/false, linear_ops_present, nodes_changed);
         return true;
     }
     ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2260: type-proof hard gate before invariant suite.
+    bool proof_truncated = false;
+    bool proof_force = false;
+    const bool proof_ok = boundary_solve_proof_gate(
+        /*hard_gate=*/true, linear_ops_present, nodes_changed, &proof_truncated, &proof_force);
+    if (!proof_ok || proof_force) {
+        last_mutate_error_ = format_invariant_deny_reason("type-proof", capability_tenant_id(), op);
+        ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        ac.full_strategy_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        ac.typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->typed_mutation_full_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (strict) {
+            strict_mutate_hold_.store(1, std::memory_order_relaxed);
+            ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        const std::uint64_t mid0 = total_mutations_.load(std::memory_order_relaxed);
+        const std::uint64_t epoch0 = defuse_version_.load(std::memory_order_relaxed);
+        capture_audit_event_forced(mid0, op, classify_kind(op), epoch0, epoch0, AuditOutcome::Error,
+                                   0, static_cast<std::uint32_t>(nodes_changed),
+                                   static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+        return false;
+    }
     const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
     const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
     InvariantAuditResult r{};
@@ -1403,6 +1564,57 @@ void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
         // Second delta conflicts — remains dirty for next solve_delta_occurrence.
         cs.add_delta({Constraint::EQUAL, t, reg->string_type()});
         commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+// Issue #2260: force truncated_reverify on next solve_delta_occurrence.
+// Mirrors test_adaptive_reverify_limit_2146 AC2 setup (low limit + clean fan-out).
+void Evaluator::inject_commit_cs_truncated_reverify_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        // Pin reverify limit low so clean fan-out truncates.
+        cs.force_reverify_limit_for_test(8);
+        auto shared = cs.fresh_var();
+        cs.mark_touched_on_delta(shared, /*occurrence_narrow=*/false);
+        for (int i = 0; i < 40; ++i) {
+            auto o = cs.fresh_var();
+            Constraint c;
+            c.kind = Constraint::EQUAL;
+            c.lhs = shared;
+            c.rhs = o;
+            cs.add(c);
+        }
+        // Dirty delta so solve_delta / occurrence runs reverify.
+        Constraint d2;
+        d2.kind = Constraint::EQUAL;
+        d2.lhs = cs.fresh_var();
+        d2.rhs = cs.fresh_var();
+        d2.source_mutation_id = 2260;
+        cs.add_delta(d2);
+        cs.mark_touched_on_delta(d2.lhs, false);
+        commit_cs_live_ = true;
+        if (!commit_occurrence_vars_opaque_)
+            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
+        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+        occ->clear();
+        occ->push_back(shared);
     } catch (...) {
         // [SILENCE-PRIM] test helper
     }

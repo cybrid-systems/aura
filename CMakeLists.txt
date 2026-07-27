@@ -2439,6 +2439,11 @@ aura_add_issue_test(test_value_tag_hot_path_2259)
 aura_issue_test_link_llvm_jit(test_value_tag_hot_path_2259)
 add_dependencies(all_test_issue_targets test_value_tag_hot_path_2259)
 
+# Issue #2260: MutationBoundary type-proof hard-gate (SOLVED / full resync).
+aura_add_issue_test(test_boundary_solve_hard_gate_2260)
+aura_issue_test_link_llvm_jit(test_boundary_solve_hard_gate_2260)
+add_dependencies(all_test_issue_targets test_boundary_solve_hard_gate_2260)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

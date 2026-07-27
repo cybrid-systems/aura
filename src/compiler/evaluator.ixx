@@ -3180,6 +3180,9 @@ public:
     // Issue #2180: test/Agent — inject EQUAL conflict into commit CS so
     // round-2 composite commit must solve-fail (not empty greenfield).
     void inject_commit_cs_type_conflict_for_test() noexcept;
+    // Issue #2260: pin low reverify limit + clean fan-out so next
+    // solve_delta_occurrence reports truncated_reverify (hard-gate tests).
+    void inject_commit_cs_truncated_reverify_for_test() noexcept;
     // Issue #2221: seed commit CS last_blame_chain for require-complete gate.
     void inject_commit_cs_incomplete_blame_for_test() noexcept;
     void inject_commit_cs_complete_blame_for_test() noexcept;
@@ -3208,6 +3211,15 @@ public:
     [[nodiscard]] bool finish_mutate_hard_gate(std::uint64_t nodes_changed = 0,
                                                bool linear_ops_present = false,
                                                std::string_view op = "mutate") noexcept;
+    // Issue #2260: MutationBoundary type-proof hard gate.
+    // Under hard_gate: solve_delta_occurrence must be SOLVED && !truncated_reverify,
+    // else full resync (type-only cheap dirty) or force-fail (linear / large dirty).
+    // Soft/Sampled: may continue; still bumps truncated_seen when reverify truncated.
+    // Returns true when type proof is acceptable for commit.
+    [[nodiscard]] bool boundary_solve_proof_gate(bool hard_gate, bool linear_ops_present,
+                                                 std::uint64_t nodes_changed,
+                                                 bool* out_truncated = nullptr,
+                                                 bool* out_force_fail = nullptr) noexcept;
     // Strict sandbox: after hard-gate fail, further mutate is denied until clear.
     [[nodiscard]] bool strict_mutate_hold() const noexcept {
         return strict_mutate_hold_.load(std::memory_order_relaxed) != 0;
