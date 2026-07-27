@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_aot_stale_probe_hard_reject_coverage():
+    """Issue #2252: hard-reject native execution when AOT slot table_generation != live epoch.
+
+    Validates the 5-AC contract from issue body:
+      AC1: aura_aot_probe_fn_ptr bumps hard-reject counter on gen != cur + returns 0
+      AC2: defense-in-depth via Fiber resume LayoutStamp.defuse compare
+      AC3: happy path zero extra atomics beyond existing probe loads
+      AC4: metric + query + schema-2252 lineage
+      AC5: concurrent mutate+apply -> hard-reject count > 0 + zero native hits
+    """
+    print(f"{B}=== AOT stale probe hard-reject coverage (#2252) ==={N}")
+    script = ROOT / "scripts" / "check_aot_stale_probe_hard_reject_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("AOT stale probe hard-reject coverage contract rows failed")
+        return 1
+    ok("AOT stale probe hard-reject coverage clean")
+    return 0
+
+
 def cmd_env_gen_fence_coverage():
     """Issue #2251: RegionExclusive env_gen fence for EnvFrame dual-path / shared parent walks.
 
@@ -1974,6 +2000,7 @@ def cmd_gate():
         or cmd_aot_reload_policy_coverage()
         or cmd_layout_stamp_fence_coverage()
         or cmd_env_gen_fence_coverage()
+        or cmd_aot_stale_probe_hard_reject_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2637,6 +2664,7 @@ def main():
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,
+        "aot-stale-probe-hard-reject": cmd_aot_stale_probe_hard_reject_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
