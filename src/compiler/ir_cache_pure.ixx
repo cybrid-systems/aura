@@ -1,137 +1,3 @@
-
-
-// Issue #2245: production sampling of incremental soundness
-// (partial ≡ full) under AI mutate. Refine #2113: keeps the
-// debug-gated oracle as the source of truth, adds a sampled
-// production path (default ~1%) so release builds prove partial
-// ≡ full under sustained self-mod, not just debug runs.
-//
-// Sample policy:
-//   - soundness_sample_bp(): basis points (100 = 1%, 10000 = always)
-//     Default 100. Settable via AURA_INCREMENTAL_SOUNDNESS_SAMPLE_BP
-//     env or aura_set_soundness_sample_bp() runtime hook (test).
-//   - incremental_soundness_mode_allows_prod(): true when mode != 2
-//     (debug-gated mode 2 = off still disables prod sampling; mode 0
-//     = auto, mode 1 = force on both allow prod sampling).
-//   - storm_level_elevates_sample_bp(): 10x multiplier when storm
-//     active (read from hot_update_registry or storm at the prod
-//     site — default StormLevel::None for unit tests).
-//   - recent_full_fallback_rate_high(): true when last 100 relowers
-//     had fallback rate > 30% (heuristic via metrics process atomic).
-//   - should_sample_soundness_prod(): combined policy. sample_bp > 0
-//     AND mode allows prod AND dirty_count < full threshold (don't
-//     double-sample when full path already ran).
-inline std::atomic<int>& soundness_sample_bp_atomic() noexcept {
-    static std::atomic<int> bp{100}; // default 1%
-    return bp;
-}
-
-inline int soundness_sample_bp() noexcept {
-    int v = soundness_sample_bp_atomic().load(std::memory_order_relaxed);
-    if (v < 0)
-        return 0;
-    if (v > 10000)
-        return 10000;
-    return v;
-}
-
-inline void set_soundness_sample_bp(int bp) noexcept {
-    soundness_sample_bp_atomic().store(bp, std::memory_order_relaxed);
-}
-
-[[nodiscard]] inline bool incremental_soundness_mode_allows_prod() noexcept {
-    // Mode 2 = force off disables prod sampling (debug path still runs).
-    return get_incremental_soundness_mode() != 2;
-}
-
-enum class StormLevel : std::uint8_t { None = 0, Elevated = 1, Storm = 2 };
-
-[[nodiscard]] inline int storm_level_elevates_sample_bp(int base_bp, StormLevel level) noexcept {
-    if (level == StormLevel::Storm) {
-        // 10x elevate, capped at 10000 (always).
-        const long long elevated = static_cast<long long>(base_bp) * 10;
-        return elevated > 10000 ? 10000 : static_cast<int>(elevated);
-    }
-    if (level == StormLevel::Elevated) {
-        const long long elevated = static_cast<long long>(base_bp) * 3;
-        return elevated > 10000 ? 10000 : static_cast<int>(elevated);
-    }
-    return base_bp;
-}
-
-// Heuristic: read recent_full_fallback_rate from CompilerMetrics or
-// process atomic. Returns true when last-N relowers had fallback rate
-// > 30% (i.e., partial path is failing often — worth sampling more).
-inline std::atomic<std::uint32_t>& g_recent_partial_fallback_pct() noexcept {
-    static std::atomic<std::uint32_t> pct{0}; // 0-100
-    return pct;
-}
-
-inline void note_recent_partial_fallback_pct_for_test(std::uint32_t pct) noexcept {
-    if (pct > 100)
-        pct = 100;
-    g_recent_partial_fallback_pct().store(pct, std::memory_order_relaxed);
-}
-
-// Issue #2245: test-only flag — force the next prod sample
-// to report mismatch + bump mismatch_prod_total + force full
-// relower (AC5). One-shot: returns true once then auto-clears.
-inline std::atomic<int>& g_test_soundness_force_mismatch() noexcept {
-    static std::atomic<int> flag{0};
-    return flag;
-}
-
-inline void aura_test_set_soundness_force_mismatch(int v) noexcept {
-    g_test_soundness_force_mismatch().store(v != 0 ? 1 : 0, std::memory_order_relaxed);
-}
-
-[[nodiscard]] inline bool test_soundness_force_mismatch_for_next_partial() noexcept {
-    int expected = 1;
-    return g_test_soundness_force_mismatch().compare_exchange_strong(
-        expected, 0, std::memory_order_acq_rel, std::memory_order_relaxed);
-}
-
-
-[[nodiscard]] inline bool recent_full_fallback_rate_high() noexcept {
-    return g_recent_partial_fallback_pct().load(std::memory_order_relaxed) > 30;
-}
-
-// Combined policy. Returns effective sample_bp (0 = skip) given the
-// storm level + fallback rate. dirty_count ≥ full_threshold is
-// signaled via the dirty_count arg (caller passes n dirty blocks;
-// if n >= threshold the full path already ran — caller should
-// skip the sample entirely, not even call this).
-[[nodiscard]] inline int
-should_sample_soundness_prod(StormLevel level = StormLevel::None) noexcept {
-    if (!incremental_soundness_mode_allows_prod())
-        return 0;
-    const int base = soundness_sample_bp();
-    if (base == 0)
-        return 0;
-    int effective = storm_level_elevates_sample_bp(base, level);
-    if (recent_full_fallback_rate_high() && effective < 1000) {
-        // Fallback-rate-driven elevation: bump to at least 1000 bp (10%).
-        effective = 1000;
-    }
-    return effective;
-}
-
-// C-linkage setters / readers (test surface + primitive query access).
-extern "C" int aura_soundness_sample_bp_v_read() noexcept {
-    return soundness_sample_bp();
-}
-
-extern "C" void aura_set_soundness_sample_bp(int bp) noexcept {
-    set_soundness_sample_bp(bp);
-}
-
-extern "C" void aura_test_set_soundness_sample_bp(int bp) noexcept {
-    set_soundness_sample_bp(bp);
-}
-
-extern "C" int aura_soundness_mode_allows_prod_v_read() noexcept {
-    return incremental_soundness_mode_allows_prod() ? 1 : 0;
-}
 // ir_cache_pure.ixx — Pure free functions extracted from
 // CompilerService and Evaluator (Issue #126).
 //
@@ -1440,4 +1306,149 @@ inline void reset_incremental_soundness_for_test() noexcept {
     incremental_soundness_mismatch_atomic().store(0, std::memory_order_relaxed);
 }
 
+
+// ── Issue #2245: production sampling of incremental soundness ──
+// (partial ≡ full) under AI mutate. Refine #2113: keeps the
+// debug-gated oracle as the source of truth, adds a sampled
+// production path (default ~1%) so release builds prove partial
+// ≡ full under sustained self-mod, not just debug runs.
+//
+// Sample policy:
+//   - soundness_sample_bp(): basis points (100 = 1%, 10000 = always)
+//     Default 100. Settable via AURA_INCREMENTAL_SOUNDNESS_SAMPLE_BP
+//     env or aura_set_soundness_sample_bp() runtime hook (test).
+//   - incremental_soundness_mode_allows_prod(): true when mode != 2
+//     (debug-gated mode 2 = off still disables prod sampling; mode 0
+//     = auto, mode 1 = force on both allow prod sampling).
+//   - storm_level_elevates_sample_bp(): 10x multiplier when storm
+//     active (read from hot_update_registry or storm at the prod
+//     site — default StormLevel::None for unit tests).
+//   - recent_full_fallback_rate_high(): true when last 100 relowers
+//     had fallback rate > 30% (heuristic via metrics process atomic).
+//   - should_sample_soundness_prod(): combined policy. sample_bp > 0
+//     AND mode allows prod AND dirty_count < full threshold (don't
+//     double-sample when full path already ran).
+
+inline std::atomic<int>& soundness_sample_bp_atomic() noexcept {
+    static std::atomic<int> bp{100}; // default 1%
+    return bp;
+}
+
+inline int soundness_sample_bp() noexcept {
+    int v = soundness_sample_bp_atomic().load(std::memory_order_relaxed);
+    if (v < 0)
+        return 0;
+    if (v > 10000)
+        return 10000;
+    return v;
+}
+
+inline void set_soundness_sample_bp(int bp) noexcept {
+    soundness_sample_bp_atomic().store(bp, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool incremental_soundness_mode_allows_prod() noexcept {
+    // Mode 2 = force off disables prod sampling (debug path still runs).
+    return get_incremental_soundness_mode() != 2;
+}
+
+// Sampling storm elevation levels (distinct from HotUpdateRegistry::StormLevel).
+enum class StormLevel : std::uint8_t { None = 0, Elevated = 1, Storm = 2 };
+
+[[nodiscard]] inline int storm_level_elevates_sample_bp(int base_bp, StormLevel level) noexcept {
+    if (level == StormLevel::Storm) {
+        // 10x elevate, capped at 10000 (always).
+        const long long elevated = static_cast<long long>(base_bp) * 10;
+        return elevated > 10000 ? 10000 : static_cast<int>(elevated);
+    }
+    if (level == StormLevel::Elevated) {
+        const long long elevated = static_cast<long long>(base_bp) * 3;
+        return elevated > 10000 ? 10000 : static_cast<int>(elevated);
+    }
+    return base_bp;
+}
+
+// Heuristic: read recent_full_fallback_rate from CompilerMetrics or
+// process atomic. Returns true when last-N relowers had fallback rate
+// > 30% (i.e., partial path is failing often — worth sampling more).
+inline std::atomic<std::uint32_t>& g_recent_partial_fallback_pct() noexcept {
+    static std::atomic<std::uint32_t> pct{0}; // 0-100
+    return pct;
+}
+
+inline void note_recent_partial_fallback_pct_for_test(std::uint32_t pct) noexcept {
+    if (pct > 100)
+        pct = 100;
+    g_recent_partial_fallback_pct().store(pct, std::memory_order_relaxed);
+}
+
+// Issue #2245: test-only flag — force the next prod sample
+// to report mismatch + bump mismatch_prod_total + force full
+// relower (AC5). One-shot: returns true once then auto-clears.
+inline std::atomic<int>& g_test_soundness_force_mismatch() noexcept {
+    static std::atomic<int> flag{0};
+    return flag;
+}
+
+inline void set_soundness_force_mismatch_for_test(int v) noexcept {
+    g_test_soundness_force_mismatch().store(v != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool test_soundness_force_mismatch_for_next_partial() noexcept {
+    int expected = 1;
+    return g_test_soundness_force_mismatch().compare_exchange_strong(
+        expected, 0, std::memory_order_acq_rel, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool recent_full_fallback_rate_high() noexcept {
+    return g_recent_partial_fallback_pct().load(std::memory_order_relaxed) > 30;
+}
+
+// Combined policy. Returns effective sample_bp (0 = skip) given the
+// storm level + fallback rate. dirty_count ≥ full_threshold is
+// signaled via the dirty_count arg (caller passes n dirty blocks;
+// if n >= threshold the full path already ran — caller should
+// skip the sample entirely, not even call this).
+[[nodiscard]] inline int
+should_sample_soundness_prod(StormLevel level = StormLevel::None) noexcept {
+    if (!incremental_soundness_mode_allows_prod())
+        return 0;
+    const int base = soundness_sample_bp();
+    if (base == 0)
+        return 0;
+    int effective = storm_level_elevates_sample_bp(base, level);
+    if (recent_full_fallback_rate_high() && effective < 1000) {
+        // Fallback-rate-driven elevation: bump to at least 1000 bp (10%).
+        effective = 1000;
+    }
+    return effective;
+}
+
+// C-linkage setters / readers (test surface + primitive query access).
+// Defined inside export namespace so callers that import the module can
+// also use the C names via linkage when linked from non-module TUs.
 } // namespace aura::compiler
+
+// Issue #2245: C-linkage surface for tests + agent-visible query paths.
+// Exported so importers of this module can call the C names directly.
+export {
+    extern "C" int aura_soundness_sample_bp_v_read() noexcept {
+        return aura::compiler::soundness_sample_bp();
+    }
+
+    extern "C" void aura_set_soundness_sample_bp(int bp) noexcept {
+        aura::compiler::set_soundness_sample_bp(bp);
+    }
+
+    extern "C" void aura_test_set_soundness_sample_bp(int bp) noexcept {
+        aura::compiler::set_soundness_sample_bp(bp);
+    }
+
+    extern "C" int aura_soundness_mode_allows_prod_v_read() noexcept {
+        return aura::compiler::incremental_soundness_mode_allows_prod() ? 1 : 0;
+    }
+
+    extern "C" void aura_test_set_soundness_force_mismatch(int v) noexcept {
+        aura::compiler::set_soundness_force_mismatch_for_test(v);
+    }
+} // export C-linkage surface
