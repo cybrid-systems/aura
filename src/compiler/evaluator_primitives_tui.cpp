@@ -13,14 +13,18 @@ module;
 #include "primitives_detail.h"
 #include "render_prim_template.hh"
 #include "security_capabilities.h"
-#include "terminal_buffer_registry.hh" // Issue #2134: TermBuf + DirtyRegion
+#include "terminal_buffer_registry.hh"    // Issue #2134: TermBuf + DirtyRegion
+#include "renderer/render_frame_arena.hh" // Issue #2214: LinearCellGrid active
 #include "renderer/render_primitives.hh"
+#include "renderer/batch_terminal.hh"
 #include "renderer/render_strategy.hh" // #2138
 #include "tui/tui_input.hh"
 #include "tui/tui_runtime.hh"
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -665,6 +669,205 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
         RENDER_PRIMITIVE_META(1,
                               "Present TermBuf dirty AABB only (#2134); clean short-circuits to 0.",
                               "(int [int]) -> int"));
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #2214: (tui:present-dirty) / (tui:present-dirty x0 y0 x1 y1)
+    // Differential zero-copy present — Agent-facing default hot path for
+    // sparse mutation (5–20% cells). Uses LinearCellGrid.dirty when active,
+    // else TUIRuntime per-cell dirty AABB, else optional TermBuf id.
+    // Clean dirty region short-circuits (parity #2047). Full-frame remains
+    // via tui:present. Prefer present-dirty after soft dirty / set-body on
+    // evolution-named defines (see render_prim_template.hh #2051/#2214).
+    // ═══════════════════════════════════════════════════════════════════
+    // Signatures:
+    //   (tui:present-dirty)                    → use current dirty AABB
+    //   (tui:present-dirty x0 y0 x1 y1)        → explicit inclusive AABB
+    //   (tui:present-dirty buf-id [fd])        → TermBuf dirty (batch)
+    //   (tui:present-dirty buf-id x0 y0 x1 y1) → TermBuf + explicit AABB
+    // Returns bytes written (0 = short-circuit, -1 = error).
+    add("tui:present-dirty", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        AURA_RENDER_HOT_ENTRY(ev);
+
+        auto note_metrics = [&](std::int64_t n, bool skipped, std::uint64_t cells, bool partial) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->tui_present_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                m->tui_present_total.fetch_add(1, std::memory_order_relaxed);
+                if (skipped) {
+                    m->tui_present_dirty_short_circuit.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    if (partial)
+                        m->tui_present_dirty_partial_total.fetch_add(1, std::memory_order_relaxed);
+                    m->tui_present_dirty_cells_emitted.fetch_add(cells, std::memory_order_relaxed);
+                    if (n > 0)
+                        m->tui_present_dirty_bytes_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                                   std::memory_order_relaxed);
+                }
+            }
+            bump_tui_metrics(ev);
+        };
+
+        // Parse optional TermBuf id / AABB / fd.
+        std::optional<std::int64_t> buf_id;
+        std::optional<std::array<std::uint32_t, 4>> explicit_aabb;
+        int fd = -1; // default: to-string / headless (no TTY write)
+
+        auto as_u32 = [](const EvalValue& v) -> std::uint32_t {
+            return static_cast<std::uint32_t>(std::max<std::int64_t>(0, as_int(v)));
+        };
+
+        if (a.size() == 1 && is_int(a[0])) {
+            // TermBuf id only — default fd=-1 (build ANSI, no TTY write; headless-safe).
+            buf_id = as_int(a[0]);
+            fd = -1;
+        } else if (a.size() == 2 && is_int(a[0]) && is_int(a[1])) {
+            buf_id = as_int(a[0]);
+            fd = static_cast<int>(as_int(a[1]));
+        } else if (a.size() == 4 && is_int(a[0]) && is_int(a[1]) && is_int(a[2]) && is_int(a[3])) {
+            explicit_aabb = std::array<std::uint32_t, 4>{as_u32(a[0]), as_u32(a[1]), as_u32(a[2]),
+                                                         as_u32(a[3])};
+        } else if (a.size() == 5 && is_int(a[0]) && is_int(a[1]) && is_int(a[2]) && is_int(a[3]) &&
+                   is_int(a[4])) {
+            // buf-id + AABB, no fd → headless build
+            buf_id = as_int(a[0]);
+            explicit_aabb = std::array<std::uint32_t, 4>{as_u32(a[1]), as_u32(a[2]), as_u32(a[3]),
+                                                         as_u32(a[4])};
+            fd = -1;
+        } else if (!a.empty()) {
+            return make_int(-1);
+        }
+
+        // ── Path 1: TermBuf by id ──
+        if (buf_id) {
+            const auto id = *buf_id;
+            std::int64_t n = -1;
+            std::uint64_t dirty_cells = 0;
+            bool partial = false;
+            std::uint64_t skips_before = aura::renderer::render_engine_counters().present_skips;
+            {
+                std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+                if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                    !s_term_bufs[static_cast<std::size_t>(id)])
+                    return make_int(-1);
+                auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+                std::unique_lock<std::shared_mutex> buf(b.rwlock);
+                if (explicit_aabb) {
+                    b.dirty.clean = false;
+                    b.dirty.empty_aabb = false;
+                    b.dirty.x0 = (*explicit_aabb)[0];
+                    b.dirty.y0 = (*explicit_aabb)[1];
+                    b.dirty.x1 = (*explicit_aabb)[2];
+                    b.dirty.y1 = (*explicit_aabb)[3];
+                    (void)b.dirty.clamp_to(static_cast<std::uint32_t>(b.w),
+                                           static_cast<std::uint32_t>(b.h));
+                }
+                dirty_cells = b.dirty.cell_count();
+                partial = b.dirty.is_dirty() && dirty_cells < static_cast<std::uint64_t>(b.w) *
+                                                                  static_cast<std::uint64_t>(b.h);
+                aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
+                n = aura::renderer::present_batch(fb, b.dirty, fd);
+            }
+            const bool skipped =
+                aura::renderer::render_engine_counters().present_skips > skips_before || n == 0;
+            note_metrics(n, skipped, dirty_cells, partial && !skipped);
+            return make_int(n);
+        }
+
+        // ── Path 2: active LinearCellGrid (#2214 AC3) ──
+        if (auto* grid = aura::renderer::active_linear_cell_grid(); grid && grid->valid()) {
+            if (explicit_aabb) {
+                grid->dirty.clean = false;
+                grid->dirty.empty_aabb = false;
+                grid->dirty.x0 = (*explicit_aabb)[0];
+                grid->dirty.y0 = (*explicit_aabb)[1];
+                grid->dirty.x1 = (*explicit_aabb)[2];
+                grid->dirty.y1 = (*explicit_aabb)[3];
+                (void)grid->dirty.clamp_to(static_cast<std::uint32_t>(grid->width),
+                                           static_cast<std::uint32_t>(grid->height));
+            }
+            const auto dirty_cells = grid->dirty.cell_count();
+            const bool partial = grid->dirty.is_dirty() &&
+                                 dirty_cells < static_cast<std::uint64_t>(grid->width) *
+                                                   static_cast<std::uint64_t>(grid->height);
+            std::uint64_t skips_before = aura::renderer::render_engine_counters().present_skips;
+            auto fb = grid->view();
+            // fd=-1: present_batch still builds ANSI + notes metrics; no TTY write.
+            const auto n = aura::renderer::present_batch(fb, grid->dirty, /*fd=*/-1);
+            // present_batch clears dirty on success (including short-circuit).
+            const bool skipped =
+                aura::renderer::render_engine_counters().present_skips > skips_before || n == 0;
+            note_metrics(n, skipped, dirty_cells, partial && !skipped);
+            return make_int(n);
+        }
+
+        // ── Path 3: TUIRuntime front buffer (per-cell dirty → AABB) ──
+        auto& tui = aura::tui::global_tui();
+        if (!tui.is_initialized()) {
+            note_metrics(0, /*skipped=*/true, 0, false);
+            return make_int(0);
+        }
+        const int w = tui.cols();
+        const int h = tui.rows();
+        if (w <= 0 || h <= 0)
+            return make_int(-1);
+
+        // Convert TUI cells → TermCell + DirtyRegion.
+        thread_local std::vector<aura::renderer::TermCell> term_cells;
+        term_cells.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+        aura::renderer::DirtyRegion dirty{};
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const auto c = tui.get_cell(x, y);
+                auto& tc = term_cells[static_cast<std::size_t>(y * w + x)];
+                tc.ch = c.ch;
+                tc.mode = 1; // RGB
+                tc.fg_r = static_cast<std::uint8_t>((c.fg >> 16) & 0xFF);
+                tc.fg_g = static_cast<std::uint8_t>((c.fg >> 8) & 0xFF);
+                tc.fg_b = static_cast<std::uint8_t>(c.fg & 0xFF);
+                tc.bg_r = static_cast<std::uint8_t>((c.bg >> 16) & 0xFF);
+                tc.bg_g = static_cast<std::uint8_t>((c.bg >> 8) & 0xFF);
+                tc.bg_b = static_cast<std::uint8_t>(c.bg & 0xFF);
+                if (c.dirty)
+                    dirty.mark_dirty(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+            }
+        }
+        if (explicit_aabb) {
+            dirty.clean = false;
+            dirty.empty_aabb = false;
+            dirty.x0 = (*explicit_aabb)[0];
+            dirty.y0 = (*explicit_aabb)[1];
+            dirty.x1 = (*explicit_aabb)[2];
+            dirty.y1 = (*explicit_aabb)[3];
+            (void)dirty.clamp_to(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
+        }
+
+        if (dirty.is_clean()) {
+            aura::renderer::note_batch_terminal_short_circuit();
+            note_metrics(0, /*skipped=*/true, 0, false);
+            return make_int(0);
+        }
+
+        const auto dirty_cells = dirty.cell_count();
+        const bool partial =
+            dirty_cells < static_cast<std::uint64_t>(w) * static_cast<std::uint64_t>(h);
+        aura::renderer::FramebufferSoA fb{w, h, term_cells.data()};
+        std::string ansi_out;
+        const auto n = aura::renderer::present_batch_to_string(fb, dirty, ansi_out);
+        // Clear TUI per-cell dirty after successful emit (dirty consumed).
+        if (n >= 0)
+            tui.clear_dirty_flags();
+        const bool skipped = n == 0;
+        note_metrics(n, skipped, dirty_cells, partial && !skipped);
+        (void)ansi_out;
+        return make_int(n);
+    });
+
+    ev.primitives().set_meta_for_name(
+        "tui:present-dirty",
+        RENDER_PRIMITIVE_META(
+            0,
+            "Differential dirty AABB present (#2214); clean short-circuits. Prefer after "
+            "sparse cell/draw mutations. LinearCellGrid / TermBuf / TUIRuntime.",
+            "() | (int int int int) | (int [int]) | (int int int int int) -> int"));
 #endif // AURA_ENABLE_TUI
 }
 
