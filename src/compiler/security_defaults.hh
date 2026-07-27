@@ -10,6 +10,7 @@
 #include "typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
+#include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_isolation.hh"
 
@@ -59,7 +60,7 @@ inline void grant_render_kernel_principal() noexcept {
     g_capability_registry().grant(/*tenant=*/0, "render", Effect::Render, prov);
 }
 
-// Issue #2053 / #2150 / #2151: production multi-tenant AI security defaults.
+// Issue #2053 / #2150 / #2151 / #2182: production multi-tenant AI security defaults.
 // Applies (in order):
 //   1. AURA_SANDBOX → Restricted (default) | off | strict  (#2076)
 //   2. AURA_MULTI_TENANT=1|true|yes → escalate to Strict
@@ -77,7 +78,12 @@ inline void grant_render_kernel_principal() noexcept {
 //        - multi-tenant / Strict default K=64 (last 64 Mutation epochs)
 //        - AURA_GRANT_EPOCH_RETAIN=<N> overrides (0 disables auto fence)
 //        - AURA_SANDBOX=off forces K=0 (unit tests must not auto-fence)
-// Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft fiber.
+//   8. LinearEnforceMode (#2182 / refine #2103):
+//        - production → Strict (incomplete linear×provenance hard-fails)
+//        - AURA_SANDBOX=off → Soft (metric-only incomplete trail)
+//        - AURA_LINEAR_ENFORCE=soft|strict always wins when set (canary)
+// Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft
+// fiber + Soft linear enforce.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -228,6 +234,38 @@ inline void apply_production_security_defaults() noexcept {
             } else {
                 g_capability_registry().set_grant_epoch_retain_window(0);
             }
+        }
+    }
+
+    // 8) Issue #2182: LinearEnforceMode production Strict (align with Full
+    //    audit). Soft under AURA_SANDBOX=off so unit tests keep #2103 Soft
+    //    metric-only incomplete trails. AURA_LINEAR_ENFORCE=soft|strict
+    //    always wins when set (canary rollouts / intentional Soft prod).
+    //    IR hot path + enforce_linear_boundary_consistency both read
+    //    linear_enforce_require_complete() → same mode.
+    {
+        using aura::core::provenance::LinearEnforceMode;
+        using aura::core::provenance::set_linear_enforce_mode;
+        const char* le = std::getenv("AURA_LINEAR_ENFORCE");
+        if (le && *le) {
+            std::string_view lv(le);
+            const bool want_strict =
+                (lv == "strict" || lv == "1" || lv == "true" || lv == "yes" || lv == "on");
+            const bool want_soft =
+                (lv == "soft" || lv == "0" || lv == "false" || lv == "no" || lv == "off");
+            if (want_strict)
+                set_linear_enforce_mode(LinearEnforceMode::Strict);
+            else if (want_soft)
+                set_linear_enforce_mode(LinearEnforceMode::Soft);
+            else
+                // Unknown value → production Strict / dev Soft (parity with
+                // the no-env branch) so typos do not silently soft-fail prod.
+                set_linear_enforce_mode(dev_off ? LinearEnforceMode::Soft
+                                                : LinearEnforceMode::Strict);
+        } else if (dev_off) {
+            set_linear_enforce_mode(LinearEnforceMode::Soft);
+        } else {
+            set_linear_enforce_mode(LinearEnforceMode::Strict);
         }
     }
 }

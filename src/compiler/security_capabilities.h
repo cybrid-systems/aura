@@ -110,6 +110,10 @@ void apply_production_security_defaults() noexcept;
 // Issue #2053 stamp for query surfaces / Agent discovery.
 inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 
+// Issue #2182: production LinearEnforceMode::Strict under
+// apply_production_security_defaults (Soft when AURA_SANDBOX=off).
+inline constexpr int kLinearEnforceProductionDefaultsIssue = 2182;
+
 // Issue #2057: side-effect primitives inherit capability enforcement by
 // construction. See security_side_effect.hh + scripts/check_side_effect_security.py.
 // Rule: new mutate/ffi/render/exec/file-write prims MUST use add_mutate,

@@ -2163,6 +2163,11 @@ aura_add_issue_test(test_linear_enforce_strict_2103)
 aura_issue_test_link_llvm_jit(test_linear_enforce_strict_2103)
 add_dependencies(all_test_issue_targets test_linear_enforce_strict_2103)
 
+# Issue #2182: production defaults force LinearEnforceMode::Strict.
+aura_add_issue_test(test_linear_enforce_production_defaults_2182)
+aura_issue_test_link_llvm_jit(test_linear_enforce_production_defaults_2182)
+add_dependencies(all_test_issue_targets test_linear_enforce_production_defaults_2182)
+
 # Issue #2104: predicate-memo selective invalidate wire (#2068 Phase 2).
 aura_add_issue_test(test_predicate_memo_boundary_selective_2104)
 aura_issue_test_link_llvm_jit(test_predicate_memo_boundary_selective_2104)
