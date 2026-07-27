@@ -235,94 +235,123 @@ FlatAST::StableNodeRef::Provenance FlatAST::StableNodeRef::get_provenance() cons
 
 // ── StableNodeRef serialization (moved from ast.ixx) ────────
 //
-// Issue #291: pack a StableNodeRef into a 24-byte buffer.
-// Returns the number of bytes written (= kStableRefSerializedSize).
+// Issue #291 / #392 / #2198: pack a StableNodeRef into the
+// current wire format (v2, 56 bytes). Returns bytes written.
 //
-// Format (little-endian, 24 bytes total):
-//   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad]
-//   [u32 mutation_id_low][u16 subtree_gen_at_capture][u16 reserved]
-//   [u32 workspace_id]
-//   = 4+4+2+2+4+2+2+4 = 24 bytes
+// v1 (24 bytes) is still accepted on deserialize with safe
+// defaults for tenant/fiber/pin/cow/wrap (AC2). v2 round-trips
+// the full provenance surface required for cross-session Agent
+// memory and multi-tenant restore (AC1 / #2056).
 //
-// Issue #392 repurposes the previously-"reserved" bytes 16..19.
-// The pre-#392 writer zeroed bytes 16..19 AFTER memcpy'ing
-// mutation_id_at_capture (8 bytes) into bytes 12..19, which
-// silently clobbered mutation_id's upper 4 bytes (no test
-// exercised them). #392 stores subtree_gen_at_capture in
-// bytes 16..17 and keeps bytes 18..19 reserved for future
-// fields. mutation_id_at_capture round-trips only its lower
-// 32 bits — same pre-existing limitation, just no longer
-// hiding under a "reserved" comment.
+// Layout documented on FlatAST::kStableRefSerializedSize* in
+// ast.ixx — keep that comment in sync when changing the blob.
 std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
                                           std::uint8_t* out) const noexcept {
-    // First 4 bytes: magic (high 16 bits = 0x2901, low 16
-    // bits = 0xA17A). Reader checks this to distinguish
-    // #291+ serialized refs from raw (id, gen) binary.
+    // Zero the full v2 record so reserved/trailing bytes are
+    // deterministic (and v1 readers that only look at 24 bytes
+    // still see a valid header if they ignore trailing data).
+    std::memset(out, 0, kStableRefSerializedSizeV2);
+
+    // [0..3] magic
     out[0] = static_cast<std::uint8_t>(kStableRefMagic & 0xFF);
     out[1] = static_cast<std::uint8_t>((kStableRefMagic >> 8) & 0xFF);
     out[2] = static_cast<std::uint8_t>((kStableRefMagic >> 16) & 0xFF);
     out[3] = static_cast<std::uint8_t>((kStableRefMagic >> 24) & 0xFF);
-    // Next 4 bytes: id (NodeId)
+    // [4..7] id
     std::memcpy(out + 4, &ref.id, sizeof(ref.id));
-    // Next 2 bytes: gen
+    // [8..9] gen
     std::memcpy(out + 8, &ref.gen, sizeof(ref.gen));
-    // 2 bytes padding
-    out[10] = 0;
-    out[11] = 0;
-    // Issue #392: mutation_id_at_capture only round-trips its
-    // lower 32 bits (same trade-off as the pre-existing #291
-    // serializer — upper bits were already lost in practice
-    // because of the byte-range overlap with the "reserved"
-    // slot). The writer is explicit about it now.
-    std::uint32_t mid_lo = static_cast<std::uint32_t>(ref.mutation_id_at_capture & 0xFFFFFFFFu);
+    // [10] version = 2  [11] flags
+    out[10] = kStableRefWireVersionV2;
+    out[11] = ref.boundary_pinned ? kStableRefFlagBoundaryPinned : static_cast<std::uint8_t>(0);
+    // [12..15] mutation_id low 32 (v1-compatible slot)
+    const std::uint32_t mid_lo =
+        static_cast<std::uint32_t>(ref.mutation_id_at_capture & 0xFFFFFFFFu);
     std::memcpy(out + 12, &mid_lo, sizeof(mid_lo));
-    // Issue #392: subtree_gen_at_capture round-trips through
-    // bytes 16..17 (the previously-reserved slot). Pre-#392
-    // buffers contain zeros in this range, which matches the
-    // field's default-0 contract — old refs are still
-    // accepted by is_valid_subtree() because subtree_gen_
-    // starts at 0 in fresh FlatASTs.
+    // [16..17] subtree_gen_at_capture
     std::memcpy(out + 16, &ref.subtree_gen_at_capture, sizeof(ref.subtree_gen_at_capture));
-    // Bytes 18..19 still reserved for future fields (fiber_id,
-    // last_validated_generation, etc.). #291/#303 deliberately
-    // left those fields out of the wire format — they're
-    // in-memory observability only.
-    out[18] = 0;
-    out[19] = 0;
-    // 4 bytes: workspace_id
+    // [18..19] last_validated_generation (v2 header; v1 had reserved zeros)
+    std::memcpy(out + 18, &ref.last_validated_generation, sizeof(ref.last_validated_generation));
+    // [20..23] workspace_id
     std::memcpy(out + 20, &ref.workspace_id, sizeof(ref.workspace_id));
-    return kStableRefSerializedSize;
+
+    // ── v2 extension ───────────────────────────────────────
+    // [24..27] mutation_id high 32 — full mid without silent truncation
+    const std::uint32_t mid_hi =
+        static_cast<std::uint32_t>((ref.mutation_id_at_capture >> 32) & 0xFFFFFFFFu);
+    std::memcpy(out + 24, &mid_hi, sizeof(mid_hi));
+    // [28..31] fiber_id
+    std::memcpy(out + 28, &ref.fiber_id, sizeof(ref.fiber_id));
+    // [32..39] tenant_id — never silently dropped (AC1 / #2056)
+    std::memcpy(out + 32, &ref.tenant_id, sizeof(ref.tenant_id));
+    // [40..43] wrap_epoch
+    std::memcpy(out + 40, &ref.wrap_epoch, sizeof(ref.wrap_epoch));
+    // [44..51] cow_epoch_at_capture
+    std::memcpy(out + 44, &ref.cow_epoch_at_capture, sizeof(ref.cow_epoch_at_capture));
+    // [52..55] reserved (already zeroed)
+
+    return kStableRefSerializedSizeV2;
 }
 
-// Issue #291: deserialize a 24-byte buffer back to a
-// StableNodeRef. Returns false if the magic doesn't match
-// or buffer is too small. The caller is responsible for
-// checking is_valid() AFTER deserializing to confirm the
-// ref still points to a live node in the current flat.
+// Issue #291 / #2198: deserialize v1 (24) or v2 (56+) StableNodeRef.
 //
-// Issue #392: subtree_gen_at_capture round-trips through the
-// repurposed byte range (16..17). mutation_id_at_capture is
-// reconstructed from its lower 32 bits only (upper 32 zero-
-// filled on deserialize).
+// AC2: old 24-byte buffers still accepted; missing fields default
+// safely (tenant=0, pin=false, fiber=0, wrap=0, cow=0, mid high=0).
+// AC1: v2 restores tenant_id / fiber_id / boundary_pinned /
+// cow_epoch_at_capture / wrap_epoch / full mutation_id.
 bool FlatAST::deserialize_stable_ref(std::span<const std::uint8_t> buf,
                                      StableNodeRef& out) const noexcept {
-    if (buf.size() < kStableRefSerializedSize)
+    // Minimum is always the v1 header (24 bytes). Larger buffers
+    // may be v2; smaller than v1 is hard reject.
+    if (buf.size() < kStableRefSerializedSizeV1)
         return false;
     std::uint32_t magic = 0;
     std::memcpy(&magic, buf.data(), 4);
     if (magic != kStableRefMagic)
         return false;
+
     StableNodeRef r{};
     std::memcpy(&r.id, buf.data() + 4, sizeof(r.id));
     std::memcpy(&r.gen, buf.data() + 8, sizeof(r.gen));
-    // Issue #392: mutation_id_at_capture only round-trips its
-    // lower 32 bits (same trade-off as the serializer).
+
+    const std::uint8_t version = buf[10];
+    const std::uint8_t flags = buf[11];
+
     std::uint32_t mid_lo = 0;
     std::memcpy(&mid_lo, buf.data() + 12, sizeof(mid_lo));
     r.mutation_id_at_capture = static_cast<std::uint64_t>(mid_lo);
-    // Subtree-gen-at-capture round-trips through bytes 16..17.
+
     std::memcpy(&r.subtree_gen_at_capture, buf.data() + 16, sizeof(r.subtree_gen_at_capture));
+    // v1: bytes 18..19 were reserved (0). v2: last_validated_generation.
+    // Reading them on v1 just yields 0 — safe default.
+    std::memcpy(&r.last_validated_generation, buf.data() + 18, sizeof(r.last_validated_generation));
     std::memcpy(&r.workspace_id, buf.data() + 20, sizeof(r.workspace_id));
+
+    const bool is_v2 =
+        (version == kStableRefWireVersionV2) && (buf.size() >= kStableRefSerializedSizeV2);
+    if (is_v2) {
+        // Flags: boundary_pinned
+        r.boundary_pinned = (flags & kStableRefFlagBoundaryPinned) != 0;
+        std::uint32_t mid_hi = 0;
+        std::memcpy(&mid_hi, buf.data() + 24, sizeof(mid_hi));
+        r.mutation_id_at_capture |= (static_cast<std::uint64_t>(mid_hi) << 32);
+        std::memcpy(&r.fiber_id, buf.data() + 28, sizeof(r.fiber_id));
+        std::memcpy(&r.tenant_id, buf.data() + 32, sizeof(r.tenant_id));
+        std::memcpy(&r.wrap_epoch, buf.data() + 40, sizeof(r.wrap_epoch));
+        std::memcpy(&r.cow_epoch_at_capture, buf.data() + 44, sizeof(r.cow_epoch_at_capture));
+    } else {
+        // v1 path: safe defaults for fields not on the wire.
+        // tenant_id / fiber_id / boundary_pinned / wrap_epoch /
+        // cow_epoch_at_capture remain 0 / false (AC2).
+        r.boundary_pinned = false;
+        r.fiber_id = 0;
+        r.tenant_id = 0;
+        r.wrap_epoch = 0;
+        r.cow_epoch_at_capture = 0;
+        // last_validated may be non-zero if reserved was non-zero on
+        // corrupt input; leave as read (usually 0 for true v1).
+    }
+
     out = r;
     return true;
 }

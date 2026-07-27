@@ -1821,6 +1821,12 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_stable_ref_wire_v2_2198.cpp",
+      "category": "unit",
+      "reason": "Issue #2198 — complete StableNodeRef wire format v2",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_stale_closure_fallback.cpp",
       "category": "integration",
       "reason": "Issue #1604 — force bridge_epoch + defuse dual-check on",

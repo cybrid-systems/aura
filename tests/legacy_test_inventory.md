@@ -584,6 +584,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp`
 - `tests/core/test_stable_ref_tenant_capture_2125.cpp`
 - `tests/compiler/test_stable_ref_tenant_mandate_2056.cpp`
+- `tests/compiler/test_stable_ref_wire_v2_2198.cpp`
 - `tests/compiler/test_stale_closure_fallback.cpp`
 - `tests/core/test_stale_ref_string_heap.cpp`
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp`
@@ -860,6 +861,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp` (—) [domain_suite, theme_serve] — test_stable_ref_provenance_fiber_cow.cpp — Merged #457/#497/#527/#540/#549 + #551/#552 (#1978).
 - `tests/core/test_stable_ref_tenant_capture_2125.cpp` (#2125) [domain_suite, theme_core] — AC1: Source cites #2125; make_ref stamps when isolation principal active
 - `tests/compiler/test_stable_ref_tenant_mandate_2056.cpp` (#2056) [domain_suite, theme_compiler] — AC1: make_stamped_ref / stamp_stable_ref set tenant_id from principal
+- `tests/compiler/test_stable_ref_wire_v2_2198.cpp` (#2198) [domain_suite, theme_compiler] — AC1: v2 round-trips tenant_id, fiber_id, boundary_pinned,
 - `tests/core/test_stale_ref_string_heap.cpp` (—) [domain_suite, theme_core] — Issue #1681 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp` (#2191) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
