@@ -33,6 +33,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh" // #2224: tenant-isolation-stats primitive
+#include "core/security_event_wal.hh"  // #2225: security-posture primitive
 #include "core/zero_copy_output.hh"
 
 module aura.compiler.evaluator;
@@ -9873,6 +9874,107 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             // Agent / CI / docs to verify the mandate + gate are active.
             insert_kv("export-ref-mandate", 1);
             insert_kv("resolve-stamped-gate", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2225: query:security-posture — Agent-discoverable
+    // unified SecurityEvent surface dashboard (durable side-car WAL
+    // + expanded ring + wrap counter). Pairs with
+    // query:security-audit-trail / query:security-audit (per-event
+    // filter) and query:security-audit-stats (#2054 lineage). Mirrors
+    // the audit-wal-stats shape (#2150) so Agent can read
+    // persisted/replay/rotate counters alongside the new side-car.
+    //
+    // Fields (process-wide snapshot via
+    // aura::core::security_event_wal::snapshot_security_event_wal_stats()
+    // + SecurityEventRing stats from g_security_event_ring()):
+    //   - schema-2225 / issue-2225   phase / issue stamp
+    //   - active                    wired (= 1)
+    //   - ring-size                 kSecurityEventRingSize (1024 post-#2225)
+    //   - ring-seq                  live ring seq counter
+    //   - ring-total                live ring total appends
+    //   - ring-wrap-total           monotonic wrap counter (Phase A)
+    //   - wal-enabled               side-car is_enabled()
+    //   - wal-directory             g_security_event_wal().directory()
+    //                                (empty when not enabled)
+    //   - wal-persisted-total       side-car append success count
+    //   - wal-replay-count          side-car enable() replay invocations
+    //   - wal-crash-recovery-success
+    //                                side-car non-empty replay recoveries
+    //   - wal-append-fail-total     side-car fwrite failures
+    //   - wal-rotate-total          side-car segment rotations
+    //   - wal-bytes-written         side-car bytes written
+    //   - wal-segments              side-car active segment count
+    //   - mutation-wal-paired       1 if both mutation_audit_wal +
+    //                                security_event_wal are enabled
+    //                                (production #2150 default state)
+    //   - mutation-wal-enabled      g_mutation_audit_wal().is_enabled()
+    ObservabilityPrims::register_stats_impl(
+        "query:security-posture", [&ev](const auto&) -> EvalValue {
+            using ::aura::core::security_event::g_security_event_ring;
+            using ::aura::core::security_event::kSecurityEventRingSize;
+            using ::aura::core::security_event_wal::g_security_event_wal;
+            using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
+            const auto wal_snap = snapshot_security_event_wal_stats();
+            const auto& ring = g_security_event_ring();
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema-2225", 2225);
+            insert_kv("issue-2225", 2225);
+            insert_kv("phase", static_cast<std::int64_t>(wal_snap.phase));
+            insert_kv("active", 1);
+            insert_kv("ring-size", static_cast<std::int64_t>(kSecurityEventRingSize));
+            insert_kv("ring-seq",
+                      static_cast<std::int64_t>(ring.seq.load(std::memory_order_relaxed)));
+            insert_kv("ring-total",
+                      static_cast<std::int64_t>(ring.total.load(std::memory_order_relaxed)));
+            insert_kv("ring-wrap-total", static_cast<std::int64_t>(
+                                             ring.ring_wrap_total.load(std::memory_order_relaxed)));
+            insert_kv("wal-enabled", static_cast<std::int64_t>(wal_snap.enabled));
+            insert_kv("wal-persisted-total", static_cast<std::int64_t>(wal_snap.persisted));
+            insert_kv("wal-replay-count", static_cast<std::int64_t>(wal_snap.replay_count));
+            insert_kv("wal-crash-recovery-success",
+                      static_cast<std::int64_t>(wal_snap.crash_recovery_success));
+            insert_kv("wal-append-fail-total", static_cast<std::int64_t>(wal_snap.append_fail));
+            insert_kv("wal-rotate-total", static_cast<std::int64_t>(wal_snap.rotate_total));
+            insert_kv("wal-bytes-written", static_cast<std::int64_t>(wal_snap.bytes_written));
+            insert_kv("wal-segments", static_cast<std::int64_t>(wal_snap.segments));
+            insert_kv("mutation-wal-enabled",
+                      static_cast<std::int64_t>(
+                          ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ? 1 : 0));
+            insert_kv("mutation-wal-paired",
+                      static_cast<std::int64_t>(
+                          (wal_snap.enabled != 0 &&
+                           ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+                              ? 1
+                              : 0));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

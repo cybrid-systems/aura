@@ -16,7 +16,8 @@ module;
 #include "core/workspace_isolation.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
-#include "core/security_event.hh" // #2075: shared SecurityEvent surface
+#include "core/security_event.hh"     // #2075: shared SecurityEvent surface
+#include "core/security_event_wal.hh" // #2225: durable SecurityEvent side-car WAL
 #include "observability_metrics.h"
 
 module aura.compiler.evaluator;
@@ -302,6 +303,13 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
         }
         append_security_event(g_security_event_ring(), kind, tenant, mid, prov.epoch,
                               required_effect_bits, op, reason_str, /*denied=*/!ok, slot.fiber_id);
+        // #2225: durable mirror — short-circuits when WAL off (~1 ns).
+        ::aura::core::security_event_wal::persist_security_event(
+            kind, tenant, mid, prov.epoch, required_effect_bits, op, reason_str,
+            /*denied=*/!ok, slot.fiber_id,
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::system_clock::now().time_since_epoch())
+                                           .count()));
         // #2054: always-on TypedMutationAudit correlation (bypasses Sampled).
         typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/!ok,
                                                        static_cast<std::uint32_t>(target_node),
@@ -381,15 +389,78 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
                                   denied, rec.fiber_id);
         }
     }
+    // Issue #2225: auto-pair with the side-car SecurityEventWAL so
+    // production defaults under multi-tenant / Strict / #2150 cover
+    // both durable paths. The side-car has full SecurityEvent fidelity
+    // (all 5 kinds: EffectDeny/Allow + IsolationDeny + InvariantFail +
+    // MacroHygiene); the mutation-derived rebuild above is the fallback
+    // for old WAL files that pre-date the side-car. Side-car enable
+    // failure is non-fatal: the mutation WAL stays enabled, hot-path
+    // persist_security_event short-circuits when the side-car is off.
+    (void)enable_security_event_wal(persist_dir);
     return true;
 }
 
 void Evaluator::disable_mutation_audit_wal() noexcept {
     aura::core::audit_wal::g_mutation_audit_wal().disable();
+    // #2225: also disable the side-car WAL so disable_mutation_audit_wal
+    // remains a single switch for the production audit surface.
+    aura::core::security_event_wal::g_security_event_wal().disable();
 }
 
 bool Evaluator::mutation_audit_wal_enabled() const noexcept {
     return aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+}
+
+// Issue #2225: enable the durable side-car WAL for the unified
+// SecurityEvent surface. Independent of mutation_audit_wal (file
+// format, segment rotation, replay path are all separate), but
+// enable_mutation_audit_wal auto-pairs this so production defaults
+// under multi-tenant / Strict / #2150 cover both.
+//
+// Replay: when the side-car has records, reset the live ring and
+// repopulate in disk-seq order. ring.seq is set to max+1 so
+// subsequent appends do not collide with the replayed range —
+// monotonic seq across restart is preserved. When the side-car is
+// empty (fresh dir or old-format-only WAL), the existing mutation-
+// derived rebuild (if mutation_audit_wal was also enabled) stays in
+// the ring as the source of truth (backward-compat fallback).
+bool Evaluator::enable_security_event_wal(std::string_view persist_dir) noexcept {
+    using namespace ::aura::core::security_event_wal;
+    std::vector<SecurityEventWalRecord> replayed;
+    if (!g_security_event_wal().enable(persist_dir, &replayed, kSecurityEventRingSize))
+        return false;
+    if (replayed.empty())
+        return true; // no durable records; live ring stays as caller left it
+    using ::aura::core::security_event::append_security_event;
+    using ::aura::core::security_event::g_security_event_ring;
+    using ::aura::core::security_event::reset_security_event_ring_for_test;
+    using ::aura::core::security_event::SecurityEvent;
+    using ::aura::core::security_event::SecurityEventKind;
+    reset_security_event_ring_for_test();
+    std::uint64_t max_seq = 0;
+    for (const auto& rec : replayed) {
+        const auto kind = static_cast<SecurityEventKind>(rec.kind);
+        const bool denied = rec.denied != 0;
+        const std::string_view op_sv(rec.op, strnlen(rec.op, sizeof(rec.op)));
+        const std::string_view reason_sv(rec.reason, strnlen(rec.reason, sizeof(rec.reason)));
+        append_security_event(g_security_event_ring(), kind, rec.tenant_id, rec.mutation_id,
+                              rec.epoch, rec.effect_bits, op_sv, reason_sv, denied, rec.fiber_id);
+        if (rec.seq + 1 > max_seq)
+            max_seq = rec.seq + 1;
+    }
+    if (max_seq == 0)
+        max_seq = 1;
+    g_security_event_ring().seq.store(max_seq, std::memory_order_relaxed);
+    return true;
+}
+
+void Evaluator::disable_security_event_wal() noexcept {
+    aura::core::security_event_wal::g_security_event_wal().disable();
+}
+
+bool Evaluator::security_event_wal_enabled() const noexcept {
+    return aura::core::security_event_wal::g_security_event_wal().is_enabled();
 }
 
 void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
@@ -614,6 +685,16 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
                               mid, epoch != 0 ? epoch : mid,
                               static_cast<std::uint16_t>(required_effects), op, reason_str,
                               /*denied=*/true, fiber);
+        // #2225: durable mirror of the isolation-deny — #2156 mid
+        // (epoch, never tenant) is what the WAL persists so replay
+        // restores the Agent's joinable mutation_id.
+        ::aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::IsolationDeny, target, mid, epoch != 0 ? epoch : mid,
+            static_cast<std::uint16_t>(required_effects), op, reason_str,
+            /*denied=*/true, fiber,
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::system_clock::now().time_since_epoch())
+                                           .count()));
         // #2054 / #2156: correlate isolation deny into TypedMutation trail
         // with the same mid as SecurityEvent (never tenant id).
         typed_audit::capture_security_correlated_audit(mid, op, epoch != 0 ? epoch : mid,
