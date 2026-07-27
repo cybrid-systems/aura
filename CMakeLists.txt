@@ -2136,6 +2136,11 @@ aura_add_issue_test(test_stable_ref_tenant_mandate_2056)
 aura_issue_test_link_llvm_jit(test_stable_ref_tenant_mandate_2056)
 add_dependencies(all_test_issue_targets test_stable_ref_tenant_mandate_2056)
 
+# Issue #2189: Agent-visible StableNodeRef pin lifecycle RAII.
+aura_add_issue_test(test_stable_ref_pin_lifecycle_2189)
+aura_issue_test_link_llvm_jit(test_stable_ref_pin_lifecycle_2189)
+add_dependencies(all_test_issue_targets test_stable_ref_pin_lifecycle_2189)
+
 # Issue #2057: side-effect prims inherit capability enforcement by construction.
 aura_add_issue_test(test_side_effect_inherit_2057)
 aura_issue_test_link_llvm_jit(test_side_effect_inherit_2057)

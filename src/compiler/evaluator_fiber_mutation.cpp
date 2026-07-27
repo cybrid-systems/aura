@@ -18,6 +18,7 @@ module;
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"                 // #2056: is_strict for cross-tenant ensure
 #include "compiler/hot_update_registry.hh" // Issue #2162: aura_hot_update_has_deferred_reemit
+#include <algorithm>                       // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
 #include <memory> // Issue #1880: unique_ptr for orch agent body guard
@@ -530,8 +531,29 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
         restamp_one(ref);
     {
         std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
-        for (auto& ref : cow_boundary_pinned_refs_)
+        // Issue #2189: restamp Agent pin table; drop free/OOR so steal/Guard
+        // never leaves dangling pins across hosts (invalidate-on-fail).
+        for (auto& ref : cow_boundary_pinned_refs_) {
+            const auto before = refreshed;
             restamp_one(ref);
+            if (refreshed > before)
+                agent_pin_restamp_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+        auto it = std::remove_if(cow_boundary_pinned_refs_.begin(), cow_boundary_pinned_refs_.end(),
+                                 [ws](const aura::ast::FlatAST::StableNodeRef& r) {
+                                     if (r.id == aura::ast::NULL_NODE || r.id >= ws->size())
+                                         return true;
+                                     if (ws->is_free_slot(r.id) || !ws->is_live_node(r.id))
+                                         return true;
+                                     return false;
+                                 });
+        if (it != cow_boundary_pinned_refs_.end()) {
+            const auto erased =
+                static_cast<std::size_t>(std::distance(it, cow_boundary_pinned_refs_.end()));
+            cow_boundary_pinned_refs_.erase(it, cow_boundary_pinned_refs_.end());
+            if (erased > 0)
+                agent_pin_invalidate_total_.fetch_add(erased, std::memory_order_relaxed);
+        }
     }
     // Issue #1912: Guard / steal auto-refresh surfaces batch metrics.
     {
