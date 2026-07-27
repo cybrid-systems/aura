@@ -2591,6 +2591,14 @@ add_dependencies(all_test_issue_targets test_security_event_wal_replay_2225)
 aura_add_issue_test(test_join_drain_reclaim_2227)
 aura_issue_test_link_llvm_jit(test_join_drain_reclaim_2227)
 add_dependencies(all_test_issue_targets test_join_drain_reclaim_2227)
+
+# Issue #2228: backpressure-driven spawn admission control
+# (soft-reject when process-wide mailbox BP rate is at/above the
+# configured threshold). closes the producer/consumer feedback loop
+# for commercial agent message storms.
+aura_add_issue_test(test_mailbox_bp_admit_2228)
+aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_2228)
+add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

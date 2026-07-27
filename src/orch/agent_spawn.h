@@ -74,6 +74,29 @@ inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
 // reaping prematurely, short enough that production cancel
 // storms converge within a minute.
 inline constexpr std::uint64_t kJoinDrainResidualHardMsDefault = 30000;
+// Issue #2228: mailbox-backpressure admit threshold default.
+// spawn_agent_with_mailbox soft-rejects new agents (with attach_mailbox)
+// when the process-wide mailbox_bp_recent_total is >= this threshold.
+// Default = 0 means "reject on any recent BP event" (conservative;
+// matches the issue's "BP observable but not admission-coupled" gap).
+// Env override: AURA_ORCH_BP_ADMIT_THRESHOLD=N (0 disables admission).
+inline constexpr std::uint64_t kMailboxBpAdmitThresholdDefault = 0;
+
+// Issue #2228: env resolution for the BP admit threshold. Returns
+// the configured threshold (0 = reject on any BP). Parses
+// AURA_ORCH_BP_ADMIT_THRESHOLD as a uint64; invalid input falls
+// back to kMailboxBpAdmitThresholdDefault.
+inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
+    const char* env = std::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    if (!env || !*env)
+        return kMailboxBpAdmitThresholdDefault;
+    try {
+        const auto v = static_cast<std::uint64_t>(std::stoull(env));
+        return v;
+    } catch (...) {
+        return kMailboxBpAdmitThresholdDefault;
+    }
+}
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
 
@@ -129,6 +152,20 @@ struct OrchModuleStats {
     // Issue #1881: observability — hot-path counters (no dead bumps).
     std::atomic<std::uint64_t> agents_active{0}; // spawn - joined (approx live)
     std::atomic<std::uint64_t> send_backpressure_total{0};
+    // Issue #2228: process-wide mailbox backpressure event counter
+    // (mirrors send_backpressure_total but separated so the spawn
+    // admission preflight can read it without conflating with the
+    // cumulative send BP count). Bumped in the 2 strong-def push /
+    // broadcast_fanout BP sites (line 449 / 966). Reset-for-test
+    // helper (reset_orch_module_stats_for_test) clears both
+    // mailbox_bp_recent_total and spawn_bp_admit_reject_total together.
+    std::atomic<std::uint64_t> mailbox_bp_recent_total{0};
+    // Issue #2228: spawn admission-reject counter — bumped every
+    // time spawn_agent_with_mailbox soft-rejects a new agent
+    // because the process-wide BP condition is at/above the
+    // configured admit threshold. Reserved memory stays 0 (no
+    // leak per #2155 / #2227 sibling contract).
+    std::atomic<std::uint64_t> spawn_bp_admit_reject_total{0};
     std::atomic<std::uint64_t> send_closed_total{0};
     std::atomic<std::uint64_t> recv_empty_total{0};
     std::atomic<std::uint64_t> join_wait_us_total{0};
@@ -447,6 +484,10 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
     } else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
         g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2228: process-wide BP event for spawn admission
+        // preflight. Same strong-def site as the cumulative
+        // send_backpressure_total; separated for the admit gate.
+        g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
     } else {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -531,6 +572,43 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         return h;
     }
     h.reserved_memory_bytes = mem_cost;
+
+    // Issue #2228: mailbox-backpressure admission preflight. When
+    // attach_mailbox is requested AND the process-wide BP event count
+    // is at/above the configured admit threshold, soft-reject the
+    // spawn with the same no-leak contract as #2155 (reserved=0).
+    // Preflight runs AFTER the fiber + arena preflights so quota
+    // rejects still get the fiber/memory structured fields
+    // (quota_dimension = "fibers" / "memory"); BP is a separate
+    // admission dimension so Agent frameworks can branch on it.
+    if (spec.attach_mailbox) {
+        const auto bp_recent =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto threshold = resolve_mailbox_bp_admit_threshold();
+        if (threshold > 0 && bp_recent >= threshold) {
+            g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+            g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(1, std::memory_order_relaxed);
+            h.quota_exceeded = true;
+            h.quota_dimension = "mailbox-bp";
+            h.quota_used = bp_recent;
+            h.quota_limit = threshold;
+            h.retry_after_ms = 50;
+            h.error =
+                "AdmissionRejected: mailbox backpressure (bp_recent=" + std::to_string(bp_recent) +
+                " >= threshold=" + std::to_string(threshold) + ")";
+            // #2155 parity: reserved never set on BP reject
+            // (h.reserved_memory_bytes still holds the planned
+            // mem_cost, but finalize_spawn_quota_reject is no-leak
+            // for the !ok path: it only releases if reserved != 0,
+            // and BP reject happens before the arena reservation is
+            // actually committed via the Scheduler; we explicitly
+            // zero reserved here so no future code path can release
+            // a phantom allocation).
+            h.reserved_memory_bytes = 0;
+            finalize_spawn_quota_reject(h);
+            return h;
+        }
+    }
 
     auto mb = spec.attach_mailbox
                   ? std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(spec.mailbox_high_water)
@@ -960,9 +1038,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     auto st = h.mailbox->push(std::move(msg));
     if (st == serve::mf_mailbox::PushStatus::Ok)
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
-    else if (st == serve::mf_mailbox::PushStatus::Backpressure)
+    else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
         g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
-    else
+        // Issue #2228: process-wide BP event for spawn admission
+        // preflight (broadcast_fanout strong-def site; mirrors
+        // the push strong-def site above).
+        g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
+    } else
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     return st;
 }
