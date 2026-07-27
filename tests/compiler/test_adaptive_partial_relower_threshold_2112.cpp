@@ -219,8 +219,8 @@ void ac2248_agent_driven_adaptive_thr() {
     // AC2: clean window decay.
     const auto peak_thr = raised_thr;
     for (int i = 0; i < 30; ++i) {
-        aura::compiler::note_relower_fallback_for_adaptive(
-            aura::compiler::RelowerFallbackReason::Ok);
+        // Ok=0 per RelowerFallbackReason ABI (avoid observability_metrics.h dep).
+        aura::compiler::note_relower_fallback_for_adaptive(/*Ok*/ 0);
     }
     const auto decayed_thr = aura::compiler::current_adaptive_partial_thr();
     CHECK(decayed_thr < peak_thr, "AC2: decayed_thr < peak after clean window");

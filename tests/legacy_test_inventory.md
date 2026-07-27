@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 493 | Preferred destination suites |
-| **Total scanned** | **493** | |
+| `tests/core/test_*.cpp` | 494 | Preferred destination suites |
+| **Total scanned** | **494** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 52 | 52 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 53 | 53 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 108 | 108 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 29 | 29 | P3 — review case-by-case |
@@ -152,6 +152,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Domain suites (do not regress; extend these)
 
+- `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp`
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp`
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp`
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp`
@@ -1006,14 +1007,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (52)
+### `jit_incremental` — JIT / AOT / incremental relower (53)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (52)
+#### domain/ (53)
 
+- `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp` (#2238) [domain_suite, theme_compiler] — AC1: anonymous + aura_closure_check_aot_stable_id_policy under
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952/#2013 (#1978 renamed): issue# moved from filename to header.

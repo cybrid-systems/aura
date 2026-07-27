@@ -952,26 +952,71 @@ inline void set_partial_relower_threshold(std::size_t t) noexcept {
     return (af * 10000ull) / ap;
 }
 
-// Issue #2112: recompute threshold from cost history when not forced.
-// Cold-start (insufficient samples) leaves threshold at default 8.
+// Issue #2209: last cascade depth avg (milli, i.e. depth*1000) and dirty_rate
+// (basis points 0–10000) used by the most recent adapt decision — query surface.
+// dirty_rate is process-wide: service / tests note via note_adaptive_dirty_rate_bp.
+inline std::atomic<std::uint64_t>& adaptive_last_cascade_depth_avg_milli_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint32_t>& adaptive_dirty_rate_bp_atomic() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& adaptive_cascade_signal_raise_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+
+// Service / Agent: record dirty_rate = functions_with_dirty / functions_total
+// as basis points (e.g. 0.25 → 2500). Clamped to [0, 10000].
+inline void note_adaptive_dirty_rate_bp(std::uint32_t bp) noexcept {
+    if (bp > 10000u)
+        bp = 10000u;
+    adaptive_dirty_rate_bp_atomic().store(bp, std::memory_order_relaxed);
+}
+
+// Issue #2112 / #2209: recompute threshold from cost history + cascade
+// depth / dirty_rate when not forced. Cold-start (insufficient samples)
+// leaves threshold at default 8 (AC5).
+//
+// #2209: high cascade_depth_avg (>4) or dirty_rate (>0.25) raises thr by
+// +2 so deep DepGraph fan-out stays partial longer. Cost-based lower only
+// applies when cascade/dirty signals are calm (AC1/AC2).
 inline void maybe_adapt_partial_relower_threshold() noexcept {
     if (partial_relower_threshold_forced_atomic().load(std::memory_order_relaxed))
         return;
     const auto ps = partial_relower_cost_samples_atomic().load(std::memory_order_relaxed);
     const auto fs = full_relower_cost_samples_atomic().load(std::memory_order_relaxed);
     if (ps < kAdaptiveRelowerMinSamples || fs < kAdaptiveRelowerMinSamples)
-        return; // AC1: no cold-start cliff — stay at default until enough data
+        return; // AC5 / #2112 AC1: no cold-start cliff — stay at default
     const auto ap = avg_partial_relower_cost_ns();
     const auto af = avg_full_relower_cost_ns();
     if (ap == 0)
         return;
     auto thr = get_partial_relower_threshold();
-    // If full is much more expensive than partial → prefer partial longer (↑ thr).
-    // If full is cheaper relative to partial → prefer full sooner (↓ thr).
-    if (af > ap * 3)
+
+    // Snapshot cascade / dirty_rate signals for this decision (query:policy).
+    const double depth_avg = aura::compiler::dirty::dirty_cascade_depth_avg();
+    const auto dirty_rate_bp = adaptive_dirty_rate_bp_atomic().load(std::memory_order_relaxed);
+    adaptive_last_cascade_depth_avg_milli_atomic().store(
+        static_cast<std::uint64_t>(depth_avg * 1000.0 + 0.5), std::memory_order_relaxed);
+
+    // High fan-out / deep cascade → prefer partial longer (↑ thr by 2).
+    constexpr double kCascadeDepthPreferPartial = 4.0;
+    constexpr std::uint32_t kDirtyRatePreferPartialBp = 2500; // 0.25
+    const bool high_cascade =
+        depth_avg > kCascadeDepthPreferPartial || dirty_rate_bp > kDirtyRatePreferPartialBp;
+    if (high_cascade) {
+        thr = thr + 2;
+        adaptive_cascade_signal_raise_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    } else if (af > ap * 3) {
+        // Full much more expensive → prefer partial longer (↑ thr).
         thr = thr + 1;
-    else if (af < ap * 2 && thr > kAdaptivePartialRelowerMin)
+    } else if (af < ap * 2 && thr > kAdaptivePartialRelowerMin) {
+        // Low depth / low dirty_rate + full cheaper → prefer full sooner (↓ thr).
         thr = thr - 1;
+    }
     thr = clamp_partial_relower_threshold(thr);
     partial_relower_threshold_atomic().store(thr, std::memory_order_relaxed);
 }
@@ -1001,6 +1046,18 @@ inline void inject_adaptive_relower_cost_samples_for_test(std::uint64_t partial_
     }
 }
 
+// Issue #2209 test hook: set cascade depth samples + dirty_rate (bp) then
+// re-run adapt after enough cost samples. depth_sum/n → dirty_cascade_depth_avg.
+inline void inject_adaptive_cascade_signals_for_test(std::uint64_t depth_sum, std::uint64_t n,
+                                                     std::uint32_t dirty_rate_bp) noexcept {
+    if (n == 0)
+        n = 1;
+    aura::compiler::dirty::dirty_cascade_depth_sum.store(depth_sum, std::memory_order_relaxed);
+    aura::compiler::dirty::dirty_cascade_depth_samples.store(n, std::memory_order_relaxed);
+    note_adaptive_dirty_rate_bp(dirty_rate_bp);
+    maybe_adapt_partial_relower_threshold();
+}
+
 inline void reset_partial_relower_threshold_for_test() noexcept {
     partial_relower_threshold_forced_atomic().store(false, std::memory_order_relaxed);
     partial_relower_cost_ns_sum_atomic().store(0, std::memory_order_relaxed);
@@ -1020,6 +1077,12 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
     // Issue #2190: clear StormLevel partial-gate metrics.
     partial_relower_storm_gate_consult_total_atomic().store(0, std::memory_order_relaxed);
     partial_relower_storm_forced_full_total_atomic().store(0, std::memory_order_relaxed);
+    // Issue #2209: clear cascade depth / dirty_rate adapt signals.
+    adaptive_last_cascade_depth_avg_milli_atomic().store(0, std::memory_order_relaxed);
+    adaptive_dirty_rate_bp_atomic().store(0, std::memory_order_relaxed);
+    adaptive_cascade_signal_raise_total_atomic().store(0, std::memory_order_relaxed);
+    aura::compiler::dirty::dirty_cascade_depth_sum.store(0, std::memory_order_relaxed);
+    aura::compiler::dirty::dirty_cascade_depth_samples.store(0, std::memory_order_relaxed);
 }
 
 // Issue #426 / #2032: estimate the re-lower cost of a dirty
