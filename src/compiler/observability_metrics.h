@@ -6478,6 +6478,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_auto_retry_total{0};
     std::atomic<std::uint64_t> aot_reload_auto_retry_success_total{0};
     std::atomic<std::uint64_t> aot_reload_auto_retry_exhausted_total{0};
+    // Issue #2249: Region | Staging auto-retry conservative path
+    // (extend #2232). Both bumped by aura_jit_bridge.cpp when
+    // aot_reload_fail_is_auto_retryable returns true for
+    // AotReloadFail::Region | ::Staging.
+    //   - aot_reload_region_staging_retry_total: each retry attempt
+    //     for Region / Staging (AC1, AC2)
+    //   - aot_reload_region_staging_exhausted_total: Region /
+    //     Staging exhausted (or storm-skipped) — same fall-back to
+    //     JIT-only path as exhausted Version/Env/Linear
+    std::atomic<std::uint64_t> aot_reload_region_staging_retry_total{0};
+    std::atomic<std::uint64_t> aot_reload_region_staging_exhausted_total{0};
     // Issue #2232: reason-driven multi-round reload recovery policy
     // metrics. `aot_reload_policy_attempt_total` counts every retry
     // attempt (one per loop iteration in

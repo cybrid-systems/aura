@@ -1734,6 +1734,33 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_aot_reload_policy_coverage():
+    """Issue #2249: Region | Staging auto-retry conservative path (extend #2232).
+
+    Validates the 6-AC contract from issue body:
+      AC1: Region fail -> up to 2 reemit attempts @ 15ms backoff
+      AC2: Staging identical behaviour
+      AC3: Dlopen / Other still zero auto attempts (regression vs #2232)
+      AC4: 2 metric fields + 2 query keys + schema-2249 lineage
+      AC5: AURA_AOT_RELOAD_AUTO_RETRY=0 still disables all auto recovery
+      AC6: success on 2nd Region attempt -> success counter
+    """
+    print(f"{B}=== AOT reload Region|Staging policy coverage (#2249) ==={N}")
+    script = ROOT / "scripts" / "check_aot_reload_policy_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("AOT reload Region|Staging policy coverage contract rows failed")
+        return 1
+    ok("AOT reload Region|Staging policy coverage clean")
+    return 0
+
+
 def cmd_adaptive_thr_coverage():
     """Issue #2248: Agent-driven adaptive relower threshold from fallback-reason telemetry.
 
@@ -1892,6 +1919,7 @@ def cmd_gate():
         or cmd_cross_function_impact_scope_coverage()
         or cmd_dual_dep_graph_parity_coverage()
         or cmd_adaptive_thr_coverage()
+        or cmd_aot_reload_policy_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2552,6 +2580,7 @@ def main():
         "cross-fn-impact-scope": cmd_cross_function_impact_scope_coverage,
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
         "adaptive-thr": cmd_adaptive_thr_coverage,
+        "aot-reload-policy": cmd_aot_reload_policy_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,

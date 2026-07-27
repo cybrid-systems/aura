@@ -2019,10 +2019,14 @@ extern "C" int aura_aot_reload_auto_retry_enabled(void) {
 
 static bool aot_reload_fail_is_auto_retryable(AotReloadFail reason) noexcept {
     switch (reason) {
+        // Issue #2249: Region | Staging auto-retryable (conservative,
+        // storm-skip handled separately). Dlopen | Other remain never.
         case AotReloadFail::Version:
         case AotReloadFail::Env:
         case AotReloadFail::Linear:
         case AotReloadFail::Defuse:
+        case AotReloadFail::Region:
+        case AotReloadFail::Staging:
             return true;
         default:
             return false;
@@ -2285,9 +2289,28 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     if (policy.max_reemit == 0)
         return false;
 
+    // Issue #2249: storm-skip for Region/Staging under hard storm.
+    // Suppress auto-retry into a storming region mask / staging
+    // handshake — the next reemit / boundary tick won't help if the
+    // whole region is contended.
+    if (aot_reload_storm_skip_retry_for_2249(reason)) {
+        if (aot_metrics()) {
+            aot_metrics()->aot_reload_region_staging_exhausted_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (policy.fall_back_jit_only)
+                aot_metrics()->aot_reload_fall_back_jit_only_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+        return false;
+    }
+
     ++t_auto_retry_depth;
     if (aot_metrics())
         aot_metrics()->aot_reload_auto_retry_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2249: Region/Staging retry counter (AC4).
+    if (aot_metrics() && (reason == AotReloadFail::Region || reason == AotReloadFail::Staging))
+        aot_metrics()->aot_reload_region_staging_retry_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
 
     // Iterative loop, not recursive. Each attempt: incremental
     // reemit (best-effort, may be a no-op if no host emit is
@@ -2327,6 +2350,10 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             aot_metrics()->aot_reload_fall_back_jit_only_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
     }
+    // Issue #2249: Region/Staging exhausted counter (AC4).
+    if (aot_metrics() && (reason == AotReloadFail::Region || reason == AotReloadFail::Staging))
+        aot_metrics()->aot_reload_region_staging_exhausted_total.fetch_add(
+            1, std::memory_order_relaxed);
     if (aot_metrics())
         aot_metrics()->aot_reload_auto_retry_exhausted_total.fetch_add(1,
                                                                        std::memory_order_relaxed);

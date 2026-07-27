@@ -263,14 +263,36 @@ inline ReloadPolicy policy_for(AotReloadFail r) noexcept {
         case AotReloadFail::Env:
         case AotReloadFail::Linear:
             return ReloadPolicy{/*max_reemit=*/2, /*backoff_ms=*/10, /*fall_back_jit_only=*/true};
-        case AotReloadFail::Dlopen:
+        // Issue #2249: conservative multi-round retry for Region /
+        // Staging (extends #2232). Smaller max (2) + longer backoff
+        // (15ms) than Env/Linear since region-mask races + staging
+        // handshakes typically need a boundary tick to recover. Still
+        // falls back to JIT-only on exhausted (same safety net as
+        // Version/Env/Linear). Dlopen / Other / Ok remain never-retry.
         case AotReloadFail::Region:
         case AotReloadFail::Staging:
+            return ReloadPolicy{/*max_reemit=*/2, /*backoff_ms=*/15, /*fall_back_jit_only=*/true};
+        case AotReloadFail::Dlopen:
         case AotReloadFail::Other:
         case AotReloadFail::Ok:
         default:
             return ReloadPolicy{/*max_reemit=*/0, /*backoff_ms=*/0, /*fall_back_jit_only=*/false};
     }
+}
+
+// Issue #2249: storm-skip helper. Under HotUpdateRegistry hard storm
+// (StormLevel::Storm), suppress Region/Staging auto-retry so we don't
+// retry into a storming region mask / staging handshake. Caller
+// (aura_jit_bridge.cpp) consults this in the iterative retry loop
+// and short-circuits to exhausted + JIT-only when true.
+inline bool aot_reload_storm_skip_retry_for_2249(AotReloadFail r) noexcept {
+    if (r != AotReloadFail::Region && r != AotReloadFail::Staging)
+        return false; // only suppress the new auto-retry classes
+    // Consult HotUpdateRegistry::current_storm_level() via the existing
+    // aura_hot_update_storm_level_v_read accessor (C-linkage, no
+    // module dependency). Default 0 = None. Anything >= 2 = Storm.
+    const std::uint64_t lvl = aura_hot_update_storm_level_v_read();
+    return lvl >= 2;
 }
 
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
