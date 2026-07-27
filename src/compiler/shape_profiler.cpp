@@ -18,6 +18,19 @@
 #include <unordered_set>
 #include "hash_meta.h" // FNV constants (#901)
 
+// Issue #2256 / #2239 cross-fix: shape_profiler.cpp intentionally
+// avoids C++ modules (see top-of-file comment), but #2256 added
+// references to lifetime_pin.ixx module-level inline atomics
+// (g_moving_compact_count_total + g_moving_compact_remap_us_total).
+// Forward-declare them in their actual namespace + use fully-qualified
+// names at the call site so the unqualified references at lines 664-665
+// resolve correctly without module import. The definitions live in
+// src/core/lifetime_pin.ixx (#2256).
+namespace aura::core::lifetime {
+extern std::atomic<std::uint64_t> g_moving_compact_count_total;
+extern std::atomic<std::uint64_t> g_moving_compact_remap_us_total;
+} // namespace aura::core::lifetime
+
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).
 // The actual EvalValue struct and tag helpers are inline in value.ixx.
@@ -674,9 +687,9 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     // instances — pin-or-remap honor + remap cost.
     const auto t1 = std::chrono::steady_clock::now();
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
-    g_moving_compact_remap_us_total.fetch_add(static_cast<std::uint64_t>(us),
-                                              std::memory_order_relaxed);
+    aura::core::lifetime::g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+    aura::core::lifetime::g_moving_compact_remap_us_total.fetch_add(static_cast<std::uint64_t>(us),
+                                                                    std::memory_order_relaxed);
     return touched;
 }
 

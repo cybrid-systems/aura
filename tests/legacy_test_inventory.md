@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 511 | Preferred destination suites |
-| **Total scanned** | **511** | |
+| `tests/core/test_*.cpp` | 512 | Preferred destination suites |
+| **Total scanned** | **512** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 152 | 152 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 29 | 29 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 55 | 55 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 22 | 22 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 111 | 111 | P2 — often thin schema probes; collapse into obs matrix |
@@ -552,6 +552,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_resource_quota_batch.cpp`
 - `tests/compiler/test_rest_param_hygiene_2169.cpp`
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp`
+- `tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp`
 - `tests/compiler/test_rollback_by_marker_2237.cpp`
 - `tests/core/test_root_epoch_gc_safety_post_invalidate.cpp`
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp`
@@ -996,13 +997,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (28)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (29)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (28)
+#### domain/ (29)
 
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
@@ -1030,6 +1031,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_rest_param_hygiene_2169.cpp` (#2169) [domain_suite, theme_compiler] — AC1: source cites #2169; always gensym rest; process serial
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
+- `tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp` (#2239) [domain_suite, theme_compiler] — AC1: source cites #2239; counters + v_read accessors + helper +
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 

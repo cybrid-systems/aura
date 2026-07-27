@@ -722,17 +722,76 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>(aura_unstamp_macro_introduced_total_v_read()));
         });
 
-    // Issue #2098: query:macro-schema-cache-dirty-stamp-stats. Surfaces
-    // the per-cloned-subtree schema-cache + dirty/provenance stamp
-    // counter (clone_macro_body walk visibility for rest-param + nested
-    // qq + schema_cache copy paths). Pairs with (query:macro-hygiene-stats)
-    // observability bundle so Agents / dashboards see the stamping rate.
+    // Issue #2098 / #2239: query:macro-schema-cache-dirty-stamp-stats.
+    // Surfaces the per-cloned-subtree schema-cache + dirty/provenance
+    // stamp counter (clone_macro_body walk visibility for rest-param +
+    // nested qq + schema_cache copy paths). #2239 expands the surface
+    // from a single int to a hash so Agents can see the per-rest-param
+    // + per-nested-qq breakdown under the same primitive name
+    // (backward-compat: schema-cache-dirty-stamped-total key still
+    // reads the existing #2098 counter). Pairs with
+    // (query:macro-hygiene-stats) observability bundle so Agents /
+    // dashboards see the stamping rate.
     ObservabilityPrims::register_stats_impl(
         "query:macro-schema-cache-dirty-stamp-stats",
-        [](std::span<const EvalValue> a) -> EvalValue {
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            return make_int(
-                static_cast<std::int64_t>(aura_macro_schema_cache_dirty_stamped_total_v_read()));
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            // #2098: existing clone_macro_body per-node stamp counter.
+            // Aliases (schema-cache-dirty-stamped / total) preserved so
+            // existing read paths keep working.
+            const std::int64_t stamped =
+                static_cast<std::int64_t>(aura_macro_schema_cache_dirty_stamped_total_v_read());
+            insert_kv("schema-cache-dirty-stamped-total", stamped);
+            insert_kv("schema-cache-dirty-stamped", stamped);
+            insert_kv("schema-cache-dirty-stamped-total-2098", stamped);
+            // #2239: per-rest-param + nested-qq breakdown.
+            insert_kv(
+                "rest-param-nested-qq-hits-total",
+                static_cast<std::int64_t>(aura_macro_rest_param_nested_qq_hits_total_v_read()));
+            insert_kv(
+                "rest-param-nested-qq-hits",
+                static_cast<std::int64_t>(aura_macro_rest_param_nested_qq_hits_total_v_read()));
+            insert_kv(
+                "schema-cache-rest-stamped-total",
+                static_cast<std::int64_t>(aura_macro_schema_cache_rest_stamped_total_v_read()));
+            insert_kv(
+                "schema-cache-rest-stamped",
+                static_cast<std::int64_t>(aura_macro_schema_cache_rest_stamped_total_v_read()));
+            insert_kv("schema", 2239);
+            insert_kv("issue", 2239);
+            insert_kv("active", 1);
+            insert_kv("rest-param-qq-wired", 1);
+            insert_kv("schema-cache-rest-stamp-wired", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #458: query:hygiene-stats. Returns an integer
