@@ -9438,7 +9438,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("linear-provenance-wired", 1);
                 insert_kv("schema-2026", 2026);
                 insert_kv("issue-2026", 2026);
-                // Issue #2103: Soft/Strict linear enforce mode + hard-fail totals.
+                // Issue #2103 / #2182: Soft/Strict linear enforce mode + hard-fail
+                // totals. Production defaults force Strict (#2182).
                 using aura::core::provenance::g_linear_soft_incomplete_continue_total;
                 using aura::core::provenance::g_linear_strict_hard_fail_total;
                 using aura::core::provenance::linear_enforce_mode;
@@ -9456,6 +9457,13 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("linear-enforce-mode-wired", 1);
                 insert_kv("schema-2103", 2103);
                 insert_kv("issue-2103", 2103);
+                // Issue #2182: production defaults surface (Strict under
+                // apply_production_security_defaults; Soft when AURA_SANDBOX=off).
+                insert_kv("production-defaults-linear-strict",
+                          mode == LinearEnforceMode::Strict ? 1 : 0);
+                insert_kv("linear-enforce-production-defaults-wired", 1);
+                insert_kv("schema-2182", 2182);
+                insert_kv("issue-2182", 2182);
             }
             insert_kv("issue", 1631);
             insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 / #2103)
@@ -9865,11 +9873,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             // Per-Evaluator mirror: the atomic-batch deny counter is on
             // CompilerMetrics; surface it here so Agents can join
             // isolation-stats with mutate epoch for AC2 / #2156 lineage.
-            insert_kv(
-                "atomic-batch-tenant-isolation-denials",
-                m ? static_cast<std::int64_t>(m->atomic_batch_tenant_isolation_denials_total.load(
-                        std::memory_order_relaxed))
-                  : 0);
+            insert_kv("atomic-batch-tenant-isolation-denials",
+                      m ? static_cast<std::int64_t>(m->atomic_batch_tenant_isolation_denials.load(
+                              std::memory_order_relaxed))
+                        : 0);
             // Phase A / Phase B wired signal — primitive surface flag for
             // Agent / CI / docs to verify the mandate + gate are active.
             insert_kv("export-ref-mandate", 1);
