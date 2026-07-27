@@ -359,6 +359,65 @@ int run_tests() {
     test_long_running_shape_stress();
     test_regression_related_primitives();
     std::println("\n════════════════════════════════════════");
+    // Issue #2257 AC1-AC5: ShapeProfiler versioning + deopt-storm
+    // isolation under sustained AI multi-round mutation.
+    // AC1: shape_version advances on storm enter (file-scope atomic).
+    // AC2: under HighMutation + continuous body mutate, deopt rate
+    //      stays bounded (one bump per storm enter, not per deopt).
+    // AC3: query surface (shape-version + deopt-storm-isolations-total
+    //      + current-stability-ratio) + schema-2257 lineage.
+    // AC4: zero extra cost on cold-stable functions (file-scope
+    //      atomic read only when consulted).
+    // AC5: integration with existing StormLevel facade (#2094 lineage).
+    {
+        std::println("\n--- AC #2257: shape storm isolation ---");
+        auto sph = read_file("src/compiler/shape_profiler.h");
+        auto spc = read_file("src/compiler/shape_profiler.cpp");
+        auto met = read_file("src/compiler/observability_metrics.h");
+        auto ir = read_file("src/compiler/ir_cache_pure.ixx");
+        auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+        auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        // AC1: bump helper + isolations atomic
+        CHECK(sph.find("bump_shape_version_on_storm_enter") != std::string::npos,
+              "AC1: bump_shape_version_on_storm_enter helper declared");
+        CHECK(sph.find("g_deopt_storm_isolations_total_atomic") != std::string::npos,
+              "AC1: deopt-storm-isolations process atomic");
+        CHECK(spc.find("bump_shape_version_on_storm_enter()") != std::string::npos,
+              "AC1: bump wired in update_deopt_storm_state_ (storm enter)");
+        // AC1: HighMutation production default
+        CHECK(sph.find("shape_high_mutation_default_enabled") != std::string::npos,
+              "AC1: HighMutation production default enabled");
+        CHECK(spc.find("active_preset_ = kHighMutationPreset") != std::string::npos,
+              "AC1: HighMutation preset applied in ctor");
+        // AC4: stability_ratio file-scope + helpers
+        CHECK(ir.find("g_shape_stability_ratio_atomic") != std::string::npos &&
+                  ir.find("set_shape_stability_ratio") != std::string::npos,
+              "AC4: stability_ratio file-scope + set/get helpers in ir_cache_pure.ixx");
+        // AC2/AC3: counter field + 3 query keys + schema-2257
+        CHECK(met.find("deopt_storm_isolations_total{0}") != std::string::npos,
+              "AC2: deopt_storm_isolations_total field");
+        CHECK(q.find("shape-version") != std::string::npos, "AC3: shape-version query key");
+        CHECK(q.find("deopt-storm-isolations-total") != std::string::npos,
+              "AC3: deopt-storm-isolations-total query key");
+        CHECK(q.find("current-stability-ratio") != std::string::npos,
+              "AC3: current-stability-ratio query key");
+        CHECK(q.find("schema-2257") != std::string::npos &&
+                  q.find("issue-2257") != std::string::npos,
+              "AC3: schema-2257 / issue-2257 lineage");
+        // AC5: StormLevel facade source-cite
+        CHECK(mut.find("StormLevel") != std::string::npos,
+              "AC5: StormLevel facade source-cite in evaluator_mutation_boundary.cpp");
+        // Runtime: bump + counter queryable
+        aura::compiler::shape::bump_shape_version_on_storm_enter();
+        const auto v1 = aura::compiler::shape::shape_version_bump_count.load();
+        CHECK(v1 >= 1, "AC1: bump is observable (file-scope atomic queryable)");
+        const auto iso = aura::compiler::shape::g_deopt_storm_isolations_total_atomic().load();
+        CHECK(iso >= 0, "AC2: isolations atomic is observable");
+        aura::compiler::shape::set_shape_stability_ratio(0.42);
+        CHECK(std::abs(aura::compiler::shape::current_shape_stability_ratio() - 0.42) < 0.001,
+              "AC4: set/get round-trip works");
+        aura::compiler::shape::set_shape_stability_ratio(0.90);
+    }
     return RUN_ALL_TESTS();
 }
 

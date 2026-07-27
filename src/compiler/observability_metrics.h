@@ -2553,6 +2553,14 @@ struct CompilerMetrics {
     // Issue #1521: ShapeProfiler versioning + Arena compact synergy.
     std::atomic<std::uint64_t> shape_inval_on_compact_triggered_total{0};
     std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};
+    // Issue #2257: deopt-storm isolations counter. Bumped by
+    // ShapeProfiler::update_deopt_storm_state_ when the deopt ring
+    // crosses the threshold AND transitions from inactive to
+    // active (one bump per storm enter). Mirrors the file-scope
+    // g_deopt_storm_isolations_total_atomic for pure unit tests.
+    // AC2: under HighMutation + continuous body mutate, stays
+    // bounded (one bump per storm cycle, not per deopt event).
+    std::atomic<std::uint64_t> deopt_storm_isolations_total{0};
     std::atomic<std::uint64_t> shape_stability_post_compact_preserved_total{0};
     std::atomic<std::uint64_t> deopt_storm_compact_suppressed_total{0};
     // Issue #643: DEFINE_PRIMITIVE macro/template + AI-native

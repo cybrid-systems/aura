@@ -272,7 +272,18 @@ std::string format_shape_id(ShapeID id) {
 // ShapeProfiler implementation
 // ═══════════════════════════════════════════════════════════════
 
-ShapeProfiler::ShapeProfiler() = default;
+ShapeProfiler::ShapeProfiler() {
+    // Issue #2257: production-default HighMutation preset. Soft
+    // path remains available via AURA_SHAPE_HIGH_MUTATION=0
+    // (unit tests / sandbox). Adaptive partial-relower threshold
+    // (#2112) feeds on stability_ratio which HighMutation widens
+    // (window_size=2000 vs default 1000; deopt_storm_window=512
+    // vs default 256; deopt_storm_threshold=6 vs default 4) so
+    // long-running Agent sessions stay more permissive while
+    // still isolating storms when they hit the threshold.
+    if (shape_high_mutation_default_enabled())
+        active_preset_ = kHighMutationPreset;
+}
 
 // ── Issue #2141: lock helpers ─────────────────────────────────
 std::unique_lock<std::shared_mutex> ShapeProfiler::unique_lock_() const {
@@ -704,6 +715,12 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
     if (recent >= deopt_storm_threshold_ && !deopt_storm_active_.load(std::memory_order_acquire)) {
         deopt_storm_active_.store(true, std::memory_order_release);
         deopt_storm_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2257: on storm enter, bump shape_version (file-scope
+        // atomic) so any speculative opt from the previous version is
+        // invalidated on the next observation cycle. Mirrors the
+        // per-CompilerMetrics deopt_storm_isolations_total field.
+        g_deopt_storm_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        bump_shape_version_on_storm_enter();
     }
 }
 

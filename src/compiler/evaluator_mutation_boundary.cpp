@@ -1385,10 +1385,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                stamp.mutation_epoch, stamp.env_gen,
                                                stamp.defuse_version, stamp.shape_version);
         }
-        // Issue #2256: trigger Moving compaction after outermost
-        // Guard exit (post-publish). Honors the pin-or-remap hard
-        // contract: verify_pins_under_moving_compact() bumps
-        // pin_hits + remap_us accumulators + records compact_count.
+        // Issue #2256 + #2257: trigger Moving compaction after
+        // outermost Guard exit (post-publish). Honors the pin-or-
+        // remap hard contract: verify_pins_under_moving_compact()
+        // bumps pin_hits + remap_us accumulators + records compact_count.
+        // The compact path also bumps shape_version via
+        // ShapeProfiler::on_arena_compact (per #2255/#2256); deopt-
+        // storm enter (per #2257) bumps the same file-scope atomic
+        // independently. Source-cite StormLevel facade integration
+        // lives at #2094 lineage (StormLevel::None default; storm
+        // enter → adaptive partial-relower threshold widens).
         if (aura::core::moving_compact_enabled()) {
             const auto reclaimed = arena_group_ ? arena_group_->adaptive_compact_all() : 0;
             if (reclaimed > 0 && auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_))

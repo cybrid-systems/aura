@@ -57,6 +57,37 @@ inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
     return shape_version_bump_count.load(std::memory_order_acquire);
 }
 
+// Issue #2257: bump the file-scope shape_version on deopt-storm
+// enter. AC1: shape_version advances on storm enter (and on compact
+// per #2256). AC2: high-frequency mutation + storm enter keeps
+// deopt rate bounded because every storm enter isolates the
+// speculative opt (next observation cycle must re-profile under
+// the new version).
+inline void bump_shape_version_on_storm_enter() noexcept {
+    extern std::atomic<std::uint64_t> shape_version_bump_count;
+    shape_version_bump_count.fetch_add(1, std::memory_order_acq_rel);
+}
+
+// Issue #2257: process-atomic deopt-storm-isolations counter
+// (mirrors the per-CompilerMetrics field for pure unit tests).
+inline std::atomic<std::uint64_t>& g_deopt_storm_isolations_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Issue #2257: production-default HighMutation preset. Off for
+// unit tests via AURA_SHAPE_HIGH_MUTATION=0 env override (test
+// harness sets this in main()).
+inline int shape_high_mutation_default_enabled() noexcept {
+    if (const char* e = std::getenv("AURA_SHAPE_HIGH_MUTATION")) {
+        if (e[0] == '0')
+            return 0;
+        if (e[0] == '1')
+            return 1;
+    }
+    return 1; // production default ON
+}
+
 class ShapeProfiler {
 public:
     ShapeProfiler();

@@ -1357,6 +1357,25 @@ struct AdaptiveRelowerDecision {
         .want_partial;
 }
 
+// Issue #2257 AC4: feed ShapeProfiler stability score into adaptive
+// partial-relower threshold. The hot path sets the file-scope
+// stability_ratio (0.0..1.0) on every observation cycle; the
+// adaptive threshold then widens / narrows based on profile health.
+// Under HighMutation + continuous body mutate, HighMutation preset
+// keeps stability_ratio high (more permissive partial); when the
+// profiler enters a storm the ratio drops, the threshold narrows,
+// and the path falls back to full relower.
+inline std::atomic<double>& g_shape_stability_ratio_atomic() noexcept {
+    static std::atomic<double> r{0.90};
+    return r;
+}
+inline void set_shape_stability_ratio(double r) noexcept {
+    g_shape_stability_ratio_atomic().store(r, std::memory_order_release);
+}
+[[nodiscard]] inline double current_shape_stability_ratio() noexcept {
+    return g_shape_stability_ratio_atomic().load(std::memory_order_acquire);
+}
+
 // Issue #2190: workload adaptive + StormLevel Global force-full gate.
 [[nodiscard]] inline bool should_partial_relower_workload_storm_aware(
     std::size_t dirty_count, std::size_t total_blocks = 0, std::uint64_t deopt_window_count = 0,

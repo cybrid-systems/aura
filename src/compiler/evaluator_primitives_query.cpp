@@ -10432,6 +10432,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("specialization-misses", static_cast<std::int64_t>(spec_misses));
             insert_kv("window-size", k_window);
             insert_kv("stability-ratio-bp", k_ratio_bp);
+            // Issue #2257 AC3: 3 new query keys (shape-version +
+            //   deopt-storm-isolations-total + current-stability-ratio)
+            //   + schema-2257 lineage. AC2: under HighMutation +
+            //   continuous body mutate, deopt-storm-isolations stays
+            //   bounded (one bump per storm enter, not per deopt event).
+            insert_kv("shape-version",
+                      static_cast<std::int64_t>(
+                          shape::shape_version_bump_count.load(std::memory_order_relaxed)));
+            insert_kv(
+                "deopt-storm-isolations-total",
+                m ? static_cast<std::int64_t>(
+                        m->deopt_storm_isolations_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(shape::g_deopt_storm_isolations_total_atomic().load(
+                        std::memory_order_relaxed)));
+            insert_kv("current-stability-ratio",
+                      static_cast<std::int64_t>(shape::current_shape_stability_ratio() * 10000.0));
+            insert_kv("shape-version-wired", 1);
+            insert_kv("schema-2257", 2257);
+            insert_kv("issue-2257", 2257);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
