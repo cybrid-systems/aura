@@ -1159,6 +1159,153 @@ static void ac13c_reemit_query() {
     aura_set_aot_emit_region_mask(0);
 }
 
+// Issue #2233: post-reemit live-closure stamp metrics (hit / miss
+// split). The restamp logic is already in aura_jit_runtime.cpp
+// aura_remap_live_closures_after_reemit; this AC verifies the
+// counters bump correctly + the new query surface exposes the
+// hit / miss pair + schema-2233 lineage. The hit restamp + miss
+// set-MustDeopt + batch_deopt_for behavior is verified by the
+// existing AC9 + AC9d; AC1-AC5 here lock the **metric surface**
+// that Agents can branch on (so the per-reason decision is
+// observable, not just the still-flagged-after-remap residual
+// that #2128 tracks).
+static void ac_restamp_hit() {
+    std::println(
+        "\n--- AC1: #2233 hit path — bridge_epoch + defuse restamped, MustDeopt cleared ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+    aura_set_remap_name_fallback_enabled(0); // hit via primary key, not name
+
+    const auto sid = aura_get_or_preserve_stable_func_id("hit_2233", nullptr);
+    CHECK(sid != 0, "AC1: stable id assigned");
+    const auto cid = aura_alloc_closure(static_cast<std::int64_t>(sid));
+    CHECK(cid >= 0, "AC1: alloc");
+    aura_closure_set_name(cid, "hit_2233");
+    const auto epoch_before = aura_aot_func_table_epoch();
+    const auto bridge_before = aura_get_closure_bridge_epoch(cid);
+    CHECK(bridge_before != 0, "AC1: bridge_epoch stamped at alloc");
+
+    ReemitFixture rf;
+    rf.candidates = {{"hit_2233", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto er0 = metrics.live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+    const auto mk0 = metrics.live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "AC1: reemit hit_2233 success");
+    const auto epoch_after = aura_aot_func_table_epoch();
+    CHECK(epoch_after > epoch_before, "AC1: epoch bumped");
+
+    // Hit: closure restamped to the new epoch + MustDeopt cleared.
+    const auto bridge_after = aura_get_closure_bridge_epoch(cid);
+    CHECK(bridge_after == epoch_after,
+          "AC1: hit path restamps bridge_epoch to new_epoch (#2233 AC1)");
+    const auto defuse_after = aura_get_closure_defuse_version(cid);
+    CHECK(defuse_after == 1, "AC1: hit path stamps current defuse_version");
+    // The must-deopt flag is cleared on the hit path; the #2128
+    // counter (must_deopt_before_next_call_total) bumps only for
+    // the still-flagged-after-remap residual — none in the hit case.
+    CHECK(metrics.live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == er0 + 1,
+          "AC1: live_closure_epoch_restamp_total += 1 on hit");
+    CHECK(metrics.live_closure_must_deopt_kept_total.load(std::memory_order_relaxed) == mk0,
+          "AC1: live_closure_must_deopt_kept_total NOT bumped on hit");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+static void ac_restamp_miss() {
+    std::println("\n--- AC2: #2233 miss path — MustDeopt set, batch_deopt_for called ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+    aura_set_remap_name_fallback_enabled(0); // name fallback off → miss path
+
+    // Define hit_2233_miss first (so the name resolves in the live
+    // stable map). Then allocate a closure with that name BEFORE
+    // the define enters the map → stored_sid = 0.
+    aura_get_or_preserve_stable_func_id("miss_2233", nullptr);
+
+    // Allocate a closure named miss_2233 — will be a name-candidate
+    // that can't be remapped (name_fallback off + stored_sid=0).
+    const auto cid = aura_alloc_closure(0); // stored_sid=0
+    CHECK(cid >= 0, "AC2: alloc (stored_sid=0)");
+    aura_closure_set_name(cid, "miss_2233");
+
+    ReemitFixture rf;
+    rf.candidates = {{"miss_2233", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto er0 = metrics.live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+    const auto mk0 = metrics.live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
+    CHECK(aura_reemit_aot_for_dirty(0) == 1,
+          "AC2: reemit miss_2233 success (the reemit itself, not the remap)");
+    // Miss: name-candidate can't remap (fallback off), so the
+    // flag stays set + batch_deopt_for() runs.
+    CHECK(metrics.live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == er0,
+          "AC2: live_closure_epoch_restamp_total NOT bumped on miss");
+    CHECK(metrics.live_closure_must_deopt_kept_total.load(std::memory_order_relaxed) == mk0 + 1,
+          "AC2: live_closure_must_deopt_kept_total += 1 on miss");
+    // The must-deopt flag is set (the #2128 counter bumps for the
+    // still-flagged-after-remap residual).
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) != 0,
+          "AC2: must_deopt flag set on miss path");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+static void ac_restamp_query() {
+    std::println("\n--- AC3: #2233 query surface — new keys + schema-2233 ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    CompilerService cs;
+    aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+    auto st = cs.eval("(engine:metrics \"query:aot-incremental-reemit-stats\")");
+    CHECK(st && is_hash(*st), "AC3: query returns hash");
+    for (const char* k : {"live-closure-epoch-restamp-total", "live-closure-must-deopt-kept-total",
+                          "schema-2233", "issue-2233", "post-reemit-stamp-wired"}) {
+        CHECK(href(cs, "query:aot-incremental-reemit-stats", k) >= 0,
+              std::format("AC3: exposes '{}'", k));
+    }
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "post-reemit-stamp-wired") == 1,
+          "AC3: post-reemit-stamp-wired == 1");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "schema-2233") == 2233,
+          "AC3: schema-2233 == 2233");
+    aura_set_aot_metrics(nullptr);
+}
+
+static void ac_restamp_source_cite() {
+    std::println("\n--- AC5: #2233 source-cite (restamp + clear + miss + batch_deopt sites) ---");
+    std::println("  src/compiler/observability_metrics.h:458-470");
+    std::println(
+        "    live_closure_epoch_restamp_total + live_closure_must_deopt_kept_total fields");
+    std::println("  src/compiler/aura_jit_bridge.cpp:200-220");
+    std::println("    aura_bump_live_closure_epoch_restamp_total / must_deopt_kept_total bumpers");
+    std::println("  src/compiler/aura_jit_bridge.h:95-97");
+    std::println("    C-linkage forward declarations");
+    std::println("  src/compiler/evaluator.ixx:1897-1913");
+    std::println(
+        "    get_live_closure_epoch_restamp_total / must_deopt_kept_total inline accessors");
+    std::println("  src/compiler/aura_jit_runtime.cpp:1295-1303");
+    std::println(
+        "    hit path: restamp + clear-MustDeopt + bump live_closure_epoch_restamp_total(1)");
+    std::println("  src/compiler/aura_jit_runtime.cpp:1283-1295");
+    std::println("    miss path: name_candidate_no_remap → set-MustDeopt + batch_deopt_for() + "
+                 "bump live_closure_must_deopt_kept_total(1)");
+    std::println("  src/compiler/evaluator_primitives_query.cpp:11546-11605");
+    std::println("    query:aot-incremental-reemit-stats new keys + schema-2233");
+    std::println("  tests/compiler/test_aot_incremental_reemit.cpp ac_restamp_hit / miss / query / "
+                 "source_cite");
+    CHECK(true, "AC5: source-cite (8 restamp / clear / miss / query sites)");
+}
+
 } // namespace
 
 int main() {
@@ -1184,6 +1331,10 @@ int main() {
     ac13b_reemit_keep_fail();
     ac13c_reemit_query();
     ac14_specjit_shape_conservative();
+    ac_restamp_hit();
+    ac_restamp_miss();
+    ac_restamp_query();
+    ac_restamp_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

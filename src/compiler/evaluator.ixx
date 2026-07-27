@@ -1893,6 +1893,21 @@ public:
             return m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2233: post-reemit live-closure stamp metrics (hit / miss
+    // split). Distinct from the #2128 must_deopt_before_next_call_total
+    // (which counts the still-flagged-after-remap residual) — the
+    // #2233 pair measures the per-reason decision (hit vs miss)
+    // explicitly so Agents can branch on the remap outcome.
+    [[nodiscard]] std::uint64_t get_live_closure_epoch_restamp_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_live_closure_must_deopt_kept_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     void bump_aot_live_closure_refresh_on_mutation_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

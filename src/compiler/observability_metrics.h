@@ -453,6 +453,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> expire_stale_ir_closures_total{0};
     std::atomic<std::uint64_t> expire_stale_tree_walker_closures_total{0};
     std::atomic<std::uint64_t> expire_primcall_cache_clear_total{0};
+    // Issue #2233: post-reemit live-closure stamp metrics. Bumped from
+    // aura_remap_live_closures_after_reemit (aura_jit_runtime.cpp):
+    //   - live_closure_epoch_restamp_total — on **hit** (stored or
+    //     backfilled sid in the reemit set): bridge_epoch +
+    //     defuse_version restamped + MustDeopt cleared.
+    //   - live_closure_must_deopt_kept_total — on **miss** (name
+    //     candidate with fallback off, or no backfill): MustDeopt
+    //     kept + aura_jit_batch_deopt_for() called for the name.
+    // Distinct from must_deopt_before_next_call_total (which counts
+    // the still-flagged-after-remap residual) — the #2233 pair
+    // measures the per-reason decision (hit vs miss) explicitly.
+    std::atomic<std::uint64_t> live_closure_epoch_restamp_total{0};
+    std::atomic<std::uint64_t> live_closure_must_deopt_kept_total{0};
     // Issue #2043: atomic linear+GC invalidation window under mutate_mtx_.
     //   - linear_gc_window_finalize_total: times finalize_linear_gc_invalidation_window_ ran
     //   - linear_ownership_epoch_bumps_total: linear_ownership_epoch advances

@@ -192,6 +192,22 @@ extern "C" void aura_bump_must_deopt_before_next_call_total(std::uint64_t n) {
         m->must_deopt_before_next_call_total.fetch_add(n, std::memory_order_relaxed);
     }
 }
+
+// Issue #2233: post-reemit live-closure stamp metric bumpers
+// (hit / miss split). See observability_metrics.h for the per-reason
+// semantics — the #2233 pair measures the decision (hit vs miss)
+// explicitly so Agents can branch on the remap outcome.
+extern "C" void aura_bump_live_closure_epoch_restamp_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_epoch_restamp_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void aura_bump_live_closure_must_deopt_kept_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_must_deopt_kept_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
 extern "C" void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n) {
     if (auto* m = aot_metrics()) {
         m->must_deopt_force_deopt_success_total.fetch_add(n, std::memory_order_relaxed);

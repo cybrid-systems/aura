@@ -92,6 +92,10 @@ void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
 void aura_bump_live_closure_stable_id_backfill_total(std::uint64_t n);
 // Issue #2128: MustDeoptBeforeNextCall metric bumps (runtime → bridge).
 void aura_bump_must_deopt_before_next_call_total(std::uint64_t n);
+// Issue #2233: post-reemit live-closure stamp metric bumpers
+// (hit / miss split). See observability_metrics.h.
+void aura_bump_live_closure_epoch_restamp_total(std::uint64_t n);
+void aura_bump_live_closure_must_deopt_kept_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n);
 

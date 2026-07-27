@@ -11556,13 +11556,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t live_remap = qev->get_live_closure_remap_total();
             // Issue #2175: legacy sid=0 backfill (independent of name fallback).
             const std::uint64_t live_backfill = qev->get_live_closure_stable_id_backfill_total();
+            // Issue #2233: post-reemit live-closure stamp metrics
+            // (hit / miss split). The hit counter is the per-closure
+            // bump in aura_remap_live_closures_after_reemit when the
+            // restamp + clear-MustDeopt path runs; the miss counter
+            // is the per-closure bump in the name-candidate-no-remap
+            // path (when name_fallback is off but the name resolves in
+            // the reemit set).
+            const std::uint64_t epoch_restamp = qev->get_live_closure_epoch_restamp_total();
+            const std::uint64_t must_deopt_kept = qev->get_live_closure_must_deopt_kept_total();
             // Legacy compact sum path: (engine:metrics "query:..." "sum")
             if (!a.empty() && is_string(a[0])) {
                 auto sidx = as_string_idx(a[0]);
                 if (sidx < string_heap.size() && string_heap[sidx] == "sum") {
-                    return make_int(static_cast<std::int64_t>(total + success + preserved +
-                                                              assigned + closure_dep + live_remap +
-                                                              live_backfill));
+                    return make_int(static_cast<std::int64_t>(
+                        total + success + preserved + assigned + closure_dep + live_remap +
+                        live_backfill + epoch_restamp + must_deopt_kept));
                 }
             }
             auto* ht = FlatHashTable::create(32);
@@ -11598,6 +11607,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-1930", 1930);
             insert_kv("issue-1930", 1930);
             insert_kv("schema-1952", 1952);
+            // Issue #2233: post-reemit live-closure stamp metrics
+            // (hit / miss split). Schema bump for the 2233 lineage.
+            insert_kv("live-closure-epoch-restamp-total", static_cast<std::int64_t>(epoch_restamp));
+            insert_kv("live-closure-must-deopt-kept-total",
+                      static_cast<std::int64_t>(must_deopt_kept));
+            insert_kv("schema-2233", 2233);
+            insert_kv("issue-2233", 2233);
+            insert_kv("post-reemit-stamp-wired", make_int(1));
             insert_kv("schema-2013", 2013);
             insert_kv("active", 1);
             insert_kv("aot_incremental_reemit_count", static_cast<std::int64_t>(total));

@@ -1316,6 +1316,11 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
+        // Issue #2233: post-reemit stamp metric — hit path. The restamp
+        // + clear-MustDeopt above closes the stale-execution window
+        // required by the joint versioning contract (#2046). Bumped
+        // per-closure so Agents can branch on the remap outcome.
+        aura_bump_live_closure_epoch_restamp_total(1);
         if (via_name_fallback)
             ++name_fallback_count;
     }
