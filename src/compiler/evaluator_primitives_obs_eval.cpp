@@ -6460,6 +6460,17 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
                                                         .load(std::memory_order_relaxed)))},
                 {"partial-relower-storm-gate-wired", make_int(1)},
+                // Issue #2244: Strict-mode hard-fail + rebuild on source_to_ir_map
+                {"source-to-ir-inconsistency-total",
+                 make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
+                {"source_to_ir_inconsistency_total",
+                 make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
+                {"source-to-ir-hard-fail-total",
+                 make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
+                {"source_to_ir_hard_fail_total",
+                 make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
+                {"schema-2244", make_int(2244)},
+                {"issue-2244", make_int(2244)},
                 {"schema-2190", make_int(2190)},
                 {"issue-2190", make_int(2190)},
                 // Issue #2193: per-reason full-fallback (invalidate cascade)

@@ -1708,6 +1708,32 @@ def cmd_legacy_test_inventory():
     return 0
 
 
+def cmd_source_to_ir_strict():
+    """Issue #2244: source_to_ir_map Strict-mode hard-fail + rebuild coverage.
+
+    Validates the 5-AC contract from issue body:
+      AC1: ensure_source_to_ir_or_rebuild wire-up at invalidate_bridge_with_impact
+      AC2: default Off (unit-test safe)
+      AC3: zero-cost early return on consistent path
+      AC4: 2 atomic counters + 2 query keys + schema-2244 lineage
+      AC5: this gate (CI contract rows)
+    """
+    print(f"{B}═══ source_to_ir Strict coverage (#2244) ═══{N}")
+    script = ROOT / "scripts" / "check_source_to_ir_strict_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("source_to_ir Strict coverage contract rows failed")
+        return 1
+    ok("source_to_ir Strict coverage clean")
+    return 0
+
+
 def cmd_gate():
     """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
 
@@ -1759,6 +1785,7 @@ def cmd_gate():
         or cmd_orch_mvp_scope()
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
+        or cmd_source_to_ir_strict()
     )
 
 
@@ -2414,6 +2441,7 @@ def main():
         "orch-mvp-scope": cmd_orch_mvp_scope,
         "aot-env-linear-stamp": cmd_aot_env_linear_stamp,
         "legacy-test-inventory": cmd_legacy_test_inventory,
+        "source-to-ir-strict": cmd_source_to_ir_strict,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
         "test": lambda: cmd_test(args or ["all"]),

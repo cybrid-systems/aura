@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #2045 — source_to_ir_map consistency after selective
 // invalidate / re-lower (rebuild/patch + assert + SoA dual-emit sync).
+// Refine #2244 — Strict-mode hard-fail + rebuild on inconsistency.
 //
 //   AC1: source cites #2045; rebuild_or_patch + pure helpers + consistency
 //   AC2: pure — rebuild map; assert consistent; inject stale → inconsistent
@@ -9,6 +10,12 @@
 //   AC5: service — define/eval + invalidate cascade bumps rebuild/checks;
 //        inconsistency_total stays 0 (no under-invalidation on green path)
 //   AC6: multi-round mutate with quote/lambda; map checks stay green
+//   AC7: ensure_source_to_ir_or_rebuild consistent path — zero extra cost (AC3)
+//   AC8: ensure helper Strict desync fires hard_fail + rebuild (AC1, AC2 off-path)
+//        + wire-up at invalidate_bridge_with_impact + 2 metrics fields
+//   AC9: query:incremental-relower-stats surface has 2 new keys + schema-2244
+//        (AC4) + default Off (AC2)
+//   All AC7-AC9 land Issue #2244 — Strict-mode hard-fail + rebuild contract.
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -239,6 +246,80 @@ void ac6_quote_lambda_multi_mutate() {
 
 } // namespace
 
+// AC7: ensure_source_to_ir_or_rebuild consistent path (AC3 zero extra cost)
+void ac7_ensure_helper_consistent() {
+    std::println("\n--- AC7: ensure helper consistent path (AC3) ---");
+    auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    CHECK(!pure.empty() && pure.find("ensure_source_to_ir_or_rebuild") != std::string::npos,
+          "ensure helper declared");
+    CHECK(pure.find("SourceToIrStrictMode") != std::string::npos, "mode enum");
+    CHECK(pure.find("EnsureSourceToIrResult") != std::string::npos, "result struct");
+    std::vector<IRFunction> irs;
+    irs.push_back(make_fn_with_source_stamps("f", 10, 20));
+    SourceToIrMap map;
+    rebuild_source_to_ir_map_from_irs(irs, map);
+    // Off + consistent → zero-cost: was_consistent=true, no rebuild
+    auto r = ensure_source_to_ir_or_rebuild(irs, map, SourceToIrStrictMode::Off);
+    CHECK(r.was_consistent, "consistent path reports was_consistent");
+    CHECK(r.bad_entries == 0, "consistent path zero bad entries");
+    CHECK(!r.rebuilt, "consistent path no rebuild");
+    CHECK(!r.hard_failed, "consistent path no hard fail");
+    // Strict + consistent → same zero-cost outcome (AC3)
+    auto r2 = ensure_source_to_ir_or_rebuild(irs, map, SourceToIrStrictMode::Strict);
+    CHECK(r2.was_consistent, "strict + consistent same outcome");
+    CHECK(!r2.hard_failed, "strict + consistent no hard fail");
+}
+
+// AC8: ensure helper Strict desync fires hard_fail + rebuild (AC1, AC2 off-path)
+void ac8_ensure_helper_strict_hard_fail() {
+    std::println("\n--- AC8: ensure helper Strict desync (AC1, AC2 off-path) ---");
+    std::vector<IRFunction> irs;
+    irs.push_back(make_fn_with_source_stamps("g", 5, 6));
+    SourceToIrMap map;
+    rebuild_source_to_ir_map_from_irs(irs, map);
+    map[5] = SourceIrLoc{0, 99, 0}; // inject stale loc
+    CHECK(!source_to_ir_map_is_consistent(irs, map), "stale detected");
+    // Strict mode → hard_failed=true (AC1)
+    auto r = ensure_source_to_ir_or_rebuild(irs, map, SourceToIrStrictMode::Strict);
+    CHECK(!r.was_consistent, "was_consistent=false on stale");
+    CHECK(r.bad_entries >= 1, "bad entries >= 1");
+    CHECK(r.rebuilt, "rebuilt after stale");
+    CHECK(r.hard_failed, "strict mode hard_failed=true (AC1)");
+    CHECK(source_to_ir_map_is_consistent(irs, map), "consistent after rebuild");
+    // Off mode → rebuild but no hard_fail (AC2)
+    map[5] = SourceIrLoc{0, 99, 0}; // re-inject
+    auto r2 = ensure_source_to_ir_or_rebuild(irs, map, SourceToIrStrictMode::Off);
+    CHECK(r2.rebuilt && !r2.hard_failed, "off mode rebuild only (AC2)");
+    // Wire-up source-cite: service_dirty.cpp + metrics
+    auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("ensure_source_to_ir_or_rebuild") != std::string::npos,
+          "wire-up at invalidate_bridge_with_impact");
+    CHECK(dirty.find("g_source_to_ir_strict") != std::string::npos, "atomic toggle");
+    CHECK(dirty.find("aura_source_to_ir_set_strict") != std::string::npos, "setter");
+    CHECK(dirty.find("aura_source_to_ir_strict_v_read") != std::string::npos, "v_read");
+    CHECK(dirty.find("source_to_ir_hard_fail_total") != std::string::npos,
+          "hard_fail counter bump site");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(met.find("source_to_ir_inconsistency_total{0}") != std::string::npos, "counter 1 field");
+    CHECK(met.find("source_to_ir_hard_fail_total{0}") != std::string::npos, "counter 2 field");
+}
+
+// AC9: query:incremental-relower-stats has 2 new keys + schema-2244 (AC4) + AC2 default Off
+void ac9_query_surface() {
+    std::println("\n--- AC9: query surface + schema-2244 + default Off (AC4/AC2) ---");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("source-to-ir-inconsistency-total") != std::string::npos, "key 1 dash");
+    CHECK(q.find("source_to_ir_inconsistency_total") != std::string::npos, "key 1 underscore");
+    CHECK(q.find("source-to-ir-hard-fail-total") != std::string::npos, "key 2 dash");
+    CHECK(q.find("source_to_ir_hard_fail_total") != std::string::npos, "key 2 underscore");
+    CHECK(q.find("schema-2244") != std::string::npos, "schema-2244 lineage");
+    CHECK(q.find("issue-2244") != std::string::npos, "issue-2244 lineage");
+    // AC2: default Off — unit-test safe
+    auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("std::atomic<std::uint8_t> g_source_to_ir_strict{0}") != std::string::npos,
+          "default Off (AC2)");
+}
+
 int main() {
     std::println("=== test_source_to_ir_map_consistency_2045 ===");
     ac1_source();
@@ -247,6 +328,9 @@ int main() {
     ac4_query_schema();
     ac5_service_cascade_rebuild();
     ac6_quote_lambda_multi_mutate();
+    ac7_ensure_helper_consistent();
+    ac8_ensure_helper_strict_hard_fail();
+    ac9_query_surface();
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

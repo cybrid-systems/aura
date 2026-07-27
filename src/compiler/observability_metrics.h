@@ -199,6 +199,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> source_to_ir_map_inconsistency_total{0};
     std::atomic<std::uint64_t> source_to_ir_map_soa_desync_total{0};
     std::atomic<std::uint64_t> source_to_ir_map_consistent_checks_total{0};
+    // Issue #2244: Strict-mode hard-fail + rebuild on source_to_ir_map
+    //   - source_to_ir_inconsistency_total: ensure_source_to_ir_or_rebuild
+    //     found bad entries (sum across calls — AC1 metric)
+    //   - source_to_ir_hard_fail_total: Strict-mode hard-fail fired
+    //     (forces full re-lower — AC1 guardrail)
+    std::atomic<std::uint64_t> source_to_ir_inconsistency_total{0};
+    std::atomic<std::uint64_t> source_to_ir_hard_fail_total{0};
     // Issue #2032: dep_graph concurrent correctness + partial threshold.
     //   - dep_graph_edge_reject_stale_total: record_dependency rejected
     //     because mutation_epoch advanced while waiting for the lock
