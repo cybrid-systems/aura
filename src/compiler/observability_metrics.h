@@ -7396,6 +7396,12 @@ struct CompilerMetrics {
     //     ran cascade_mark_dirty after string BFS for precise marks
     std::atomic<std::uint64_t> dep_graph_node_mirror_edges_total{0};
     std::atomic<std::uint64_t> dep_graph_hybrid_cascade_hits{0};
+    // Issue #2187: block-level DepGraph edges (refine #2110).
+    //   - dep_graph_block_mirror_edges_total: callee fn → caller block edges
+    //   - dep_graph_node_cascade_block_hits: hybrid cascade applied a
+    //     block-precise dirty mark (not full body)
+    std::atomic<std::uint64_t> dep_graph_block_mirror_edges_total{0};
+    std::atomic<std::uint64_t> dep_graph_node_cascade_block_hits{0};
     std::atomic<std::uint64_t> hot_swap_versioned_mangle_enforced{0}; // #1262
     std::atomic<std::uint64_t> aot_region_filter_enforced{1};         // #1262
     std::atomic<std::uint64_t> arena_reset_dirty_forced{0};           // #1263

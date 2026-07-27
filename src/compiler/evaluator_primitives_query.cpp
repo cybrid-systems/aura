@@ -11571,16 +11571,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // the reemit set).
             const std::uint64_t epoch_restamp = qev->get_live_closure_epoch_restamp_total();
             const std::uint64_t must_deopt_kept = qev->get_live_closure_must_deopt_kept_total();
+            // Issue #2234: capture remount ok/fail totals.
+            const std::uint64_t capture_remount_ok = qev->get_closure_capture_remount_ok_total();
+            const std::uint64_t capture_remount_fail =
+                qev->get_closure_capture_remount_fail_total();
             // Legacy compact sum path: (engine:metrics "query:..." "sum")
             if (!a.empty() && is_string(a[0])) {
                 auto sidx = as_string_idx(a[0]);
                 if (sidx < string_heap.size() && string_heap[sidx] == "sum") {
                     return make_int(static_cast<std::int64_t>(
                         total + success + preserved + assigned + closure_dep + live_remap +
-                        live_backfill + epoch_restamp + must_deopt_kept));
+                        live_backfill + epoch_restamp + must_deopt_kept + capture_remount_ok +
+                        capture_remount_fail));
                 }
             }
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #1930/#2233/#2234 keys (was 32).
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

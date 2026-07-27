@@ -559,6 +559,13 @@ void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
 }
 } // extern "C"
 
+// Forward decl — definition later in this TU (after restamp helpers).
+static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
+                                                 aura::ast::StringPool& target_pool,
+                                                 aura::ast::FlatAST& source,
+                                                 aura::ast::StringPool& source_pool,
+                                                 aura::ast::NodeId new_root = aura::ast::NULL_NODE);
+
 // Issue #2235: C-linkage test helper that invokes
 // `ensure_cross_flat_expand_consistency` directly. The function is
 // `static` (file-local in this TU) so it's not exposed via module
@@ -656,10 +663,11 @@ static void restamp_after_expand(aura::ast::FlatAST& flat,
 // Single-flat clones remain an early-return (AC4 zero-perf-regression
 // contract preserved — the hot in-flat path used by macro_expand_all
 // is unaffected).
-static void
-ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
-                                     aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
-                                     aura::ast::NodeId new_root = aura::ast::NULL_NODE) {
+static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
+                                                 aura::ast::StringPool& target_pool,
+                                                 aura::ast::FlatAST& source,
+                                                 aura::ast::StringPool& source_pool,
+                                                 aura::ast::NodeId new_root) {
     const bool cross_flat = (&target != &source) || (&target_pool != &source_pool);
     if (!cross_flat)
         return;                             // AC4: single-flat path stays zero-overhead.

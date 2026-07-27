@@ -1158,6 +1158,46 @@ int aura_closure_is_freed(int64_t closure_id) {
     return (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) ? 1 : 0;
 }
 
+// Issue #2234: capture detection helper. Returns 1 when the
+// closure has any env or linear capture to remount (proxied by
+// non-zero defuse_version or non-zero linear_state). Lives here
+// (not bridge) because g_closure_* tables are file-static.
+extern "C" int aura_closure_has_env_or_linear_captures(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    const auto cid = static_cast<std::size_t>(closure_id);
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    const bool has_env =
+        cid < g_closure_defuse_versions.size() && g_closure_defuse_versions[cid] != 0;
+    const bool has_linear = cid < g_closure_linear_state.size() && g_closure_linear_state[cid] != 0;
+    return (has_env || has_linear) ? 1 : 0;
+}
+
+// Issue #2234: post-reemit / post-compact env_frame + linear capture
+// remount consistency gate. Returns 1 when captures match live
+// generation; 0 → caller sets MustDeopt.
+extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                             std::uint8_t linear_fp) {
+    if (closure_id < 0)
+        return 0;
+    const auto cid = static_cast<std::size_t>(closure_id);
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    const auto cid_defuse =
+        cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+    const auto cid_linear = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
+    const bool env_ok = (cid_defuse == 0) || (cid_defuse == live_env_gen);
+    const bool linear_ok = (cid_linear == 0) || (cid_linear == linear_fp);
+    return (env_ok && linear_ok) ? 1 : 0;
+}
+
 // Issue #660 Option 1: set the closure's name after allocation. Used by
 // MakeClosure runtime to record the function's stable name (assigned by
 // cache_define). When aura_closure_call's func_id lookup fails, the
