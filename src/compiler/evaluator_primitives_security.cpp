@@ -3411,10 +3411,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"linear-state-stamp-wired", make_int(1)},
                 {"schema-2129", make_int(2129)},
                 {"issue-2129", make_int(2129)},
-                // Issue #2182: Soft/Strict mode + hard-fail totals on the
-                // linear-ownership enforcement dashboard (production defaults
-                // force Strict; see query:post-steal-closed-loop-stats too).
+                // Issue #2182 / #2207: Soft/Strict mode + hard-fail totals on
+                // the linear-ownership enforcement dashboard (process default
+                // Strict; see query:post-steal-closed-loop-stats too).
                 {"linear-enforce-mode",
+                 make_int(static_cast<std::int64_t>(
+                     static_cast<std::uint8_t>(aura::core::provenance::linear_enforce_mode())))},
+                {"linear_enforce_mode",
                  make_int(static_cast<std::int64_t>(
                      static_cast<std::uint8_t>(aura::core::provenance::linear_enforce_mode())))},
                 {"linear-enforce-strict",
@@ -3426,13 +3429,24 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::core::provenance::g_linear_strict_hard_fail_total.load(
                          std::memory_order_relaxed)))},
+                {"linear-provenance-hard-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::linear_provenance_hard_fail_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"linear_provenance_hard_fail_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::linear_provenance_hard_fail_total_atomic().load(
+                         std::memory_order_relaxed)))},
                 {"linear-soft-incomplete-continue-total",
                  make_int(static_cast<std::int64_t>(
                      aura::core::provenance::g_linear_soft_incomplete_continue_total.load(
                          std::memory_order_relaxed)))},
                 {"linear-enforce-mode-wired", make_int(1)},
+                {"linear-enforce-strict-default", make_int(1)},
                 {"schema-2182", make_int(2182)},
                 {"issue-2182", make_int(2182)},
+                {"schema-2207", make_int(2207)},
+                {"issue-2207", make_int(2207)},
             };
             return build_hash(kv);
         });

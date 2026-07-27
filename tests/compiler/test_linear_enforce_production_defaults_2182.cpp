@@ -51,6 +51,7 @@ using aura::core::provenance::linear_enforce_require_complete;
 using aura::core::provenance::LinearEnforceMode;
 using aura::core::provenance::reset_linear_enforce_mode_for_test;
 using aura::core::provenance::reset_provenance_enforcement_for_test;
+using aura::core::provenance::restore_linear_enforce_production_default_for_test;
 using aura::core::provenance::set_linear_enforce_mode;
 using aura::core::provenance::validate_linear_provenance;
 using aura::core::sandbox::SandboxMode;
@@ -171,10 +172,17 @@ int main() {
 
     // ── AC3: AURA_LINEAR_ENFORCE override + #2103 Soft/Strict preserved ──
     {
-        std::println("\n--- AC3: env override + Soft default lineage ---");
-        // Process default (no apply_production) remains Soft (#2103).
+        std::println("\n--- AC3: env override + Soft opt-in lineage ---");
+        // Issue #2207: process-native default is Strict. Soft is explicit
+        // opt-in (test harness reset / set_linear_enforce_mode / env).
+        // Before reset, production atomics start Strict; reset_process
+        // forces Soft for Soft-path unit ergonomics.
+        restore_linear_enforce_production_default_for_test();
+        CHECK(linear_enforce_mode() == LinearEnforceMode::Strict,
+              "AC3: process default Strict (#2207)");
         reset_process();
-        CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "AC3: Soft process default");
+        CHECK(linear_enforce_mode() == LinearEnforceMode::Soft,
+              "AC3: Soft after test harness reset (opt-in)");
 
         // Production + canary Soft override.
         set_env("AURA_LINEAR_ENFORCE", "soft");

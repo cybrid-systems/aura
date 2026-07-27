@@ -9691,19 +9691,24 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("linear-provenance-wired", 1);
                 insert_kv("schema-2026", 2026);
                 insert_kv("issue-2026", 2026);
-                // Issue #2103 / #2182: Soft/Strict linear enforce mode + hard-fail
-                // totals. Production defaults force Strict (#2182).
+                // Issue #2103 / #2182 / #2207: Soft/Strict linear enforce mode +
+                // hard-fail totals. Process default Strict (#2207).
                 using aura::core::provenance::g_linear_soft_incomplete_continue_total;
                 using aura::core::provenance::g_linear_strict_hard_fail_total;
                 using aura::core::provenance::linear_enforce_mode;
                 using aura::core::provenance::LinearEnforceMode;
                 const auto mode = linear_enforce_mode();
+                const auto hard_fail = static_cast<std::int64_t>(
+                    g_linear_strict_hard_fail_total.load(std::memory_order_relaxed));
                 insert_kv("linear-enforce-mode",
                           static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
+                insert_kv("linear_enforce_mode",
+                          static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
                 insert_kv("linear-enforce-strict", mode == LinearEnforceMode::Strict ? 1 : 0);
-                insert_kv("linear-strict-hard-fail-total",
-                          static_cast<std::int64_t>(
-                              g_linear_strict_hard_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("linear-strict-hard-fail-total", hard_fail);
+                // Issue #2207 AC4: canonical hard-fail name + Soft retain.
+                insert_kv("linear-provenance-hard-fail-total", hard_fail);
+                insert_kv("linear_provenance_hard_fail_total", hard_fail);
                 insert_kv("linear-soft-incomplete-continue-total",
                           static_cast<std::int64_t>(g_linear_soft_incomplete_continue_total.load(
                               std::memory_order_relaxed)));
@@ -9717,6 +9722,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("linear-enforce-production-defaults-wired", 1);
                 insert_kv("schema-2182", 2182);
                 insert_kv("issue-2182", 2182);
+                // Issue #2207: process-default Strict + hard-fail surface.
+                insert_kv("linear-enforce-strict-default", 1);
+                insert_kv("schema-2207", 2207);
+                insert_kv("issue-2207", 2207);
             }
             insert_kv("issue", 1631);
             insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 / #2103)

@@ -35,6 +35,7 @@ module;
 #include "core/arena_auto_policy_stats.h"  // in_render_hotpath
 #include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
 #include "serve/fiber.h"                   // Issue #2184: publish MutationSafetySnapshot
+#include "compiler/shape_profiler.h"       // Issue #2255: current_global_shape_version
 #include <chrono>
 #include <cstdlib>
 #include <memory>

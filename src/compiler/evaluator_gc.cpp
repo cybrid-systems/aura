@@ -232,10 +232,11 @@ bool Evaluator::validate_linear_ownership_state(
     std::uint8_t linear_state, std::uint64_t frame_version, std::uint64_t current_version,
     std::uint64_t bridge_epoch, std::uint64_t current_bridge_epoch,
     std::atomic<std::uint64_t>* bridge_epoch_drift_counter) noexcept {
-    // Issue #1515 / #2026 / #2103: route through provenance_tracker::validate_linear_provenance
-    // so GC / steal / boundary / IR share one consistency policy.
-    // Soft dual-check uses linear_enforce_require_complete() (Strict → hard).
-    // Steal/GC enforce paths still pass require_complete=true explicitly.
+    // Issue #1515 / #2026 / #2103 / #2207: route through
+    // provenance_tracker::validate_linear_provenance so GC / steal /
+    // boundary / IR / dual-path apply share one consistency policy.
+    // Production Strict (#2207): incomplete trail hard-fails (no silent
+    // half-state). Soft is explicit opt-in only.
     using aura::core::provenance::linear_enforce_require_complete;
     using aura::core::provenance::validate_linear_provenance;
     const auto r = validate_linear_provenance(

@@ -80,9 +80,10 @@ inline void grant_render_kernel_principal() noexcept {
 //        - multi-tenant / Strict default K=64 (last 64 Mutation epochs)
 //        - AURA_GRANT_EPOCH_RETAIN=<N> overrides (0 disables auto fence)
 //        - AURA_SANDBOX=off forces K=0 (unit tests must not auto-fence)
-//   8. LinearEnforceMode (#2182 / refine #2103):
-//        - production → Strict (incomplete linear×provenance hard-fails)
-//        - AURA_SANDBOX=off → Soft (metric-only incomplete trail)
+//   8. LinearEnforceMode (#2207 / #2182 / refine #2103):
+//        - process default Strict (incomplete linear×provenance hard-fails)
+//        - Soft only via set_linear_enforce_mode(Soft), AURA_LINEAR_ENFORCE=soft,
+//          or AURA_SANDBOX=off (unit Soft-path ergonomics)
 //        - AURA_LINEAR_ENFORCE=soft|strict always wins when set (canary)
 //   9. Coercion provenance miss (#2185 / refine #2102):
 //        - production → reject_apply_on_provenance_miss (no CoercionNode)
@@ -261,12 +262,12 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
-    // 8) Issue #2182: LinearEnforceMode production Strict (align with Full
-    //    audit). Soft under AURA_SANDBOX=off so unit tests keep #2103 Soft
-    //    metric-only incomplete trails. AURA_LINEAR_ENFORCE=soft|strict
-    //    always wins when set (canary rollouts / intentional Soft prod).
-    //    IR hot path + enforce_linear_boundary_consistency both read
-    //    linear_enforce_require_complete() → same mode.
+    // 8) Issue #2207 / #2182: LinearEnforceMode process default is Strict
+    //    (align with Full audit). Soft under AURA_SANDBOX=off so unit tests
+    //    keep Soft metric-only incomplete trails. AURA_LINEAR_ENFORCE=soft|
+    //    strict always wins when set (canary / intentional Soft prod).
+    //    IR Move/Borrow/Drop + dual-path apply + boundary consistency all
+    //    read linear_enforce_require_complete() → same mode.
     {
         using aura::core::provenance::LinearEnforceMode;
         using aura::core::provenance::set_linear_enforce_mode;

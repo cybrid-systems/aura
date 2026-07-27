@@ -2344,6 +2344,11 @@ aura_add_issue_test(test_source_to_ir_desync_recovery_2206)
 aura_issue_test_link_llvm_jit(test_source_to_ir_desync_recovery_2206)
 add_dependencies(all_test_issue_targets test_source_to_ir_desync_recovery_2206)
 
+# Issue #2207: LinearEnforceMode Strict production process default + hard-fail.
+aura_add_issue_test(test_linear_enforce_strict_default_2207)
+aura_issue_test_link_llvm_jit(test_linear_enforce_strict_default_2207)
+add_dependencies(all_test_issue_targets test_linear_enforce_strict_default_2207)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
