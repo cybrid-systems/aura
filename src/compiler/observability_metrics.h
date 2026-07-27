@@ -4375,6 +4375,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> subtype_goal_solve_total{0};
     std::atomic<std::uint64_t> subtype_goal_conflict_total{0};
     std::atomic<std::uint64_t> last_unresolved_goal_kind{0}; // first unresolved on TIMEOUT
+    // Issue #2196: unified query:mutation-memory / query:blame-of join.
+    // mutation_memory_query_total: calls into the unified surface.
+    // mutation_memory_join_size_last: related records joined last call.
+    // mutation_memory_found_total: lookups that resolved a MutationRecord.
+    // mutation_memory_rolled_back_total: resolved records with RolledBack status.
+    std::atomic<std::uint64_t> mutation_memory_query_total{0};
+    std::atomic<std::uint64_t> mutation_memory_join_size_last{0};
+    std::atomic<std::uint64_t> mutation_memory_found_total{0};
+    std::atomic<std::uint64_t> mutation_memory_rolled_back_total{0};
     std::atomic<std::uint64_t> solve_delta_unresolved_last_count{0};
     std::atomic<std::uint64_t> solve_delta_unscanned_last{0};
     std::atomic<std::uint64_t> solve_delta_truncated_reverify_last{0};
