@@ -1113,11 +1113,14 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
     const auto gen = slot.table_generation.load(std::memory_order_acquire);
     if (gen != cur) {
         if (aot_metrics()) {
+            aot_metrics()->aot_stale_probe_hard_reject_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             aot_metrics()->aot_slot_stale_reject_total.fetch_add(1, std::memory_order_relaxed);
             aot_metrics()->aot_forced_recompile_on_mismatch_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
-        return 0;
+        return 0; // Issue #2252 AC1: hard-reject native (nullptr) —
+                  // never execute generation-behind AOT code.
     }
     return ptr;
 }

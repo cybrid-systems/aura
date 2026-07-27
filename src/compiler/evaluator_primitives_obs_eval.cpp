@@ -13285,7 +13285,19 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
                 {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
                 {"aot-reemit-keep-fail-debug-dir", make_string(dd_idx)},
+                // Issue #2252: hard-reject native execution when AOT
+                // slot table_generation != live epoch. Dedicated
+                // counter (distinct from aot_slot_stale_reject_total /
+                // aot_forced_recompile_on_mismatch_total) so dashboards
+                // can isolate the zero-native-hit guarantee signal.
+                {"aot-stale-probe-hard-reject-total",
+                 m ? make_int(static_cast<std::int64_t>(
+                         m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed)))
+                   : make_int(0)},
+                {"aot-stale-probe-hard-reject-wired", make_int(1)},
                 {"aot-incremental-reemit-stats-lineage", make_int(2095)},
+                {"schema-2252", make_int(2252)},
+                {"issue-2252", make_int(2252)},
             };
             return build_hash(kv);
         });

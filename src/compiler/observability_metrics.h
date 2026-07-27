@@ -6468,6 +6468,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_region_stale_mark_total{0};
     std::atomic<std::uint64_t> aot_slot_stale_reject_total{0};
     std::atomic<std::uint64_t> aot_forced_recompile_on_mismatch_total{0};
+    // Issue #2252: dedicated hard-reject counter for AOT slot
+    // probe. Bumped by aura_aot_probe_fn_ptr when slot.table_generation
+    // does NOT match g_aot_table_epoch (the pre-condition for refusing
+    // native execution per AC1). Distinct from
+    // aot_slot_stale_reject_total (which is bumped by the same probe
+    // path but tracks all stale-reject incidents; the hard-reject
+    // counter is the "zero native hit" guarantee signal).
+    std::atomic<std::uint64_t> aot_stale_probe_hard_reject_total{0};
     // Issue #2046: cascade path observes joint epoch for root+dependents.
     std::atomic<std::uint64_t> aot_cascade_joint_epoch_observe_total{0};
     std::atomic<std::uint64_t> aot_cascade_region_stale_names_total{0};
