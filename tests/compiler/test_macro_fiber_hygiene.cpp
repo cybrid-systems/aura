@@ -13,6 +13,16 @@
 //        per-fiber + runtime caps + concurrent + global counters
 //   AC7: #2174 runtime cap keys + per-fiber keys (zero-alloc atomic loads)
 //   AC8: #2174 concurrent + global counter keys (Agent self-throttling surface)
+//   AC9: #2241 filter surface — query:macro-fiber-hygiene with min-violations /
+//        min-depth filter args returns filter-mode=1 + filtered-entries + budget
+//        + deny-total keys (Agent throttling surface, refine #2097).
+//   AC10: #2241 gensym_map_size populated — bump_fiber_hygiene_on_exit now
+//         accepts name_map_size_snapshot + ConcurrentCloneGuard destructor
+//         passes name_map->size() (Issue AC2: "populated for active expands").
+//   AC11: #2241 per-fiber violation budget gate — budget set via
+//         aura_macro_self_evo_set_fiber_violation_budget, check helper
+//         aura_macro_self_evo_check_fiber_hygiene_budget returns 1 when
+//         violations > budget, deny counter bumps. Default budget=0 = unlimited.
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -43,6 +53,42 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Issue #2241: forward decls for the C-linkage budget / count helpers
+// (defined in src/compiler/macro_expansion.cpp; tests don't pull in
+// aura_jit_bridge.h directly because we want this test file to stay
+// independent of the bridge C-linkage surface). Forward decls are
+// extern "C" matching the impls (same signatures).
+extern "C" void aura_macro_self_evo_set_fiber_violation_budget(std::uint64_t budget) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_get_fiber_violation_budget(void) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_fiber_violation_deny_total_v_read(void) noexcept;
+extern "C" int aura_macro_self_evo_check_fiber_hygiene_budget(std::uint32_t fiber_id) noexcept;
+extern "C" std::uint64_t
+aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
+                                                int min_depth) noexcept;
+extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test(void) noexcept;
+
+// Issue #2241: RAII guard for budget + deny counter reset across tests.
+// Mirrors AnonPolicyGuard / RollbackAuditGuard / RestHygieneGuard family
+// (see #2237/#2238/#2239 for the convention). Saved value at construction
+// is restored at destruction so tests stay hermetic regardless of execution
+// order. The deny counter reset is unconditional (production doesn't read
+// this counter; only tests do — matching the existing test-reset pattern
+// for other counter families).
+struct FiberBudgetGuard {
+    std::uint64_t saved_budget;
+    FiberBudgetGuard() noexcept
+        : saved_budget(aura_macro_self_evo_get_fiber_violation_budget()) {
+        aura_macro_self_evo_set_fiber_violation_budget(0); // default permissive
+        aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test();
+    }
+    ~FiberBudgetGuard() noexcept {
+        aura_macro_self_evo_set_fiber_violation_budget(saved_budget);
+        aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test();
+    }
+    FiberBudgetGuard(const FiberBudgetGuard&) = delete;
+    FiberBudgetGuard& operator=(const FiberBudgetGuard&) = delete;
+};
 
 static std::string read_file(const char* path) {
     for (const auto* p :
