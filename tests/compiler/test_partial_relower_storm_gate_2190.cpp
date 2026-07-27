@@ -146,7 +146,11 @@ int main() {
         CHECK(should_partial_relower_storm_aware(1), "Shape+1 → partial");
         CHECK(should_partial_relower_storm_aware(3), "Shape+3 → partial");
         CHECK(should_partial_relower_storm_aware(7), "Shape+7 → partial");
-        CHECK(!should_partial_relower_storm_aware(8), "Shape+8 → full by thr");
+        // Issue #2212: Shape bit widens thr to 2× (8→16) so dirty=8 is partial.
+        // Beyond the widened window, full still applies (pure thr alone is 8).
+        CHECK(should_partial_relower_storm_aware(8), "Shape+8 → partial via #2212 widen");
+        CHECK(should_partial_relower_storm_aware(15), "Shape+15 → partial via #2212 widen");
+        CHECK(!should_partial_relower_storm_aware(16), "Shape+16 → full past 2× thr");
         CHECK(partial_relower_storm_forced_full_total_atomic().load() == f0,
               "no forced_full under Shape-only");
         // Both: Shape|Global → force full
