@@ -71,8 +71,8 @@ static void reset_all() {
 
 static void ac1_soft_incomplete_continues() {
     std::println("\n--- AC1: Soft + incomplete → continue ---");
-    reset_all();
-    CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "default Soft");
+    reset_all(); // forces Soft (explicit opt-in for Soft-path unit tests)
+    CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "Soft forced via reset");
     CHECK(!linear_enforce_require_complete(), "Soft → require_complete false");
 
     const auto soft0 = g_linear_soft_incomplete_continue_total.load();
@@ -130,10 +130,10 @@ static void ac3_full_audit_correlation() {
     reset_all();
 }
 
-static void ac4_lineage_soft_default() {
-    std::println("\n--- AC4: Soft default + Untracked/complete unchanged ---");
-    reset_all();
-    CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "Soft default");
+static void ac4_lineage_soft_opt_in() {
+    std::println("\n--- AC4: Soft opt-in + Untracked/complete unchanged ---");
+    reset_all(); // Soft opt-in for Soft-path semantics
+    CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "Soft opt-in");
     auto u = validate_linear_provenance(kLinearUntracked, 0, 0, 0, 0, 0, 0, 0, false);
     CHECK(u.ok, "Untracked always ok");
     auto c = validate_linear_provenance(kLinearOwned, 1, 7, 8, 0, 0, 0, 0, true);
@@ -185,7 +185,7 @@ int main() {
     ac1_soft_incomplete_continues();
     ac2_strict_incomplete_hard_fail();
     ac3_full_audit_correlation();
-    ac4_lineage_soft_default();
+    ac4_lineage_soft_opt_in();
     ac5_query_mode();
     ac6_source_wiring();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

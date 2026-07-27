@@ -142,8 +142,8 @@ static void ac1_strict_hard_fail() {
 // ── AC2: Soft revalidate metric-only ────────────────────────
 static void ac2_soft_metric_only() {
     std::println("\n--- AC2: Soft + steal revalidate (metric-only incomplete) ---");
-    reset_modes();
-    CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "Soft default");
+    reset_modes(); // Soft opt-in for Soft-path metric-only incomplete trails
+    CHECK(linear_enforce_mode() == LinearEnforceMode::Soft, "Soft opt-in after reset");
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto* m = metrics_of(cs);

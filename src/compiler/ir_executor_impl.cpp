@@ -147,9 +147,10 @@ static bool linear_state_allows_op(std::uint8_t state, LinearOpKind op) noexcept
 // pass/fail) to avoid double-counting linear_check_pass + violations.
 // Shared helper with Evaluator GC/steal/boundary via provenance_tracker.
 //
-// Soft (default): incomplete forensic trail is metric-only (continue).
-// Strict: incomplete trail → hard fail (no successful linear op commit).
-// Full TypedMutationAudit + Strict hard-fail bumps force-rollback total
+// Issue #2207: production default Strict — incomplete forensic trail
+// hard-fails (no successful linear op commit). Soft (explicit opt-in
+// via set_linear_enforce_mode / AURA_LINEAR_ENFORCE=soft) is metric-only
+// continue. Full TypedMutationAudit + Strict hard-fail bumps force-rollback
 // so Agents can correlate self-evo rollbacks with provenance gaps.
 static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
                                            std::uint32_t provenance_id = 0,
@@ -163,7 +164,7 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
         return true;
     using aura::core::provenance::linear_enforce_require_complete;
     using aura::core::provenance::validate_linear_provenance;
-    // Hot IR path: Soft → require_complete=false; Strict → true (#2103).
+    // Hot IR Move/Borrow/MutBorrow/Drop: Strict require_complete (#2207 / #2103).
     // force_deopt on Moved live / would-be-stale is always hard-fail.
     const bool require = linear_enforce_require_complete();
     const auto r =
@@ -171,7 +172,7 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
                                    /*frame_version=*/0, /*current_version=*/0,
                                    /*bridge_epoch=*/0, /*current_bridge_epoch=*/0, require);
     if (!r.ok && require && metrics) {
-        // AC3: Strict hard-fail correlates with force-rollback counter under
+        // Strict hard-fail correlates with force-rollback counter under
         // Full audit (and remains useful under Sampled as a linear fail).
         metrics->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
     }

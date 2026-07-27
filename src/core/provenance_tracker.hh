@@ -202,22 +202,35 @@ struct LinearProvenanceResult {
     const char* reason = nullptr;
 };
 
-// Issue #2103: process-wide linear enforce mode for IR hot path + shared
-// validate_linear_provenance callers. Soft (default) = incomplete forensic
-// trail is metric-only; Strict = hard fail (aligned with Full audit
-// force-rollback correlation). Steal/GC may still pass require_complete=true
-// regardless of Soft for live-root safety.
+// Issue #2103 / #2182 / #2207: process-wide linear enforce mode for IR
+// hot path + shared validate_linear_provenance callers.
+//
+// Production default is Strict (#2207): incomplete forensic trail on
+// Move/Borrow/MutBorrow/Drop or dual-path materialize hard-fails (no
+// silent half-state continue). Soft is an explicit opt-in for
+// experiments / unit Soft-path tests via set_linear_enforce_mode(Soft)
+// or AURA_LINEAR_ENFORCE=soft / AURA_SANDBOX=off (security_defaults).
+// Steal/GC may still pass require_complete=true regardless of Soft for
+// live-root safety.
 enum class LinearEnforceMode : std::uint8_t {
     Soft = 0,
     Strict = 1,
 };
 
+// Issue #2207 AC1: process-wide default Strict (was Soft under #2103).
 inline std::atomic<std::uint32_t> g_linear_enforce_mode{
-    static_cast<std::uint32_t>(LinearEnforceMode::Soft)};
+    static_cast<std::uint32_t>(LinearEnforceMode::Strict)};
 // Strict hard-fail samples (incomplete trail or other require_complete fail).
+// Issue #2207 AC4: also exposed as linear_provenance_hard_fail_total.
 inline std::atomic<std::uint64_t> g_linear_strict_hard_fail_total{0};
 // Soft incomplete samples that continued (require_complete=false path).
 inline std::atomic<std::uint64_t> g_linear_soft_incomplete_continue_total{0};
+
+// Issue #2207: AC4 public alias for Strict hard-fail counter.
+[[nodiscard]] inline std::atomic<std::uint64_t>&
+linear_provenance_hard_fail_total_atomic() noexcept {
+    return g_linear_strict_hard_fail_total;
+}
 
 [[nodiscard]] inline LinearEnforceMode linear_enforce_mode() noexcept {
     return static_cast<LinearEnforceMode>(g_linear_enforce_mode.load(std::memory_order_relaxed));
@@ -227,17 +240,25 @@ inline void set_linear_enforce_mode(LinearEnforceMode m) noexcept {
     g_linear_enforce_mode.store(static_cast<std::uint32_t>(m), std::memory_order_relaxed);
 }
 
-// IR hot path / soft dual-check: true when Strict mode is active.
+// IR hot path / dual-path apply: true when Strict mode is active.
 // Steal/GC enforce paths that always require complete pass true explicitly.
 [[nodiscard]] inline bool linear_enforce_require_complete() noexcept {
     return linear_enforce_mode() == LinearEnforceMode::Strict;
 }
 
+// Test harness Soft opt-in: Soft-mode unit tests force Soft explicitly
+// (AC3). Does NOT change the production process default (Strict).
 inline void reset_linear_enforce_mode_for_test() noexcept {
     g_linear_enforce_mode.store(static_cast<std::uint32_t>(LinearEnforceMode::Soft),
                                 std::memory_order_relaxed);
     g_linear_strict_hard_fail_total.store(0, std::memory_order_relaxed);
     g_linear_soft_incomplete_continue_total.store(0, std::memory_order_relaxed);
+}
+
+// Restore production default Strict after Soft unit suites (AC1).
+inline void restore_linear_enforce_production_default_for_test() noexcept {
+    g_linear_enforce_mode.store(static_cast<std::uint32_t>(LinearEnforceMode::Strict),
+                                std::memory_order_relaxed);
 }
 
 // Issue #2026: unified linear ownership + provenance consistency check.
@@ -249,9 +270,10 @@ inline void reset_linear_enforce_mode_for_test() noexcept {
 //   - Owned/Borrowed/MutBorrowed with stale frame_version: mismatch + deopt
 //   - bridge_epoch != 0 and != current: mismatch + deopt (steal/GC domain)
 //   - Tracked linear with both provenance_id==0 and mutation_id==0:
-//     incomplete forensic trail → bump incomplete; force_deopt only when
-//     require_complete=true (steal/GC enforce paths pass true; IR Strict
-//     mode via linear_enforce_require_complete() — Issue #2103)
+//     incomplete forensic trail → bump incomplete; force_deopt when
+//     require_complete=true (steal/GC enforce paths pass true; IR
+//     Move/Borrow/Drop + dual-path apply use linear_enforce_require_complete()
+//     — production Strict #2207 / #2103, Soft only explicit opt-in)
 //
 // node_id is for audit/forensics (env_id or AST node); 0 when unavailable.
 [[nodiscard]] inline LinearProvenanceResult
