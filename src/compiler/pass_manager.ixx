@@ -478,15 +478,16 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                       "SoAViewAware stages (#2060)");
     }
 
-    // Issue #2109: consult should_partial_relower at DirtyAware entry so
-    // Agents can correlate partial vs full decision with pass skip metrics.
+    // Issue #2109 / #2190: consult storm-aware partial gate at DirtyAware
+    // entry so Agents can correlate partial vs full with pass skip metrics
+    // and StormLevel Global force-full.
     if (define_cache && define_cache->block_dirty_per_func) {
         std::size_t dirty_n = 0;
         for (const auto& fb : *define_cache->block_dirty_per_func)
             for (auto b : fb)
                 if (b)
                     ++dirty_n;
-        (void)should_partial_relower(dirty_n); // decision used for peel path below
+        (void)should_partial_relower_storm_aware(dirty_n); // #2190 Global gate
     }
 
     // AC3 (#1574): early-skip whole pass when define-level mask is clean.

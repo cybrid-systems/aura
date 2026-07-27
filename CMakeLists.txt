@@ -2443,6 +2443,11 @@ aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty_2126)
 aura_add_issue_test(test_workload_adaptive_relower_2127)
 aura_issue_test_link_llvm_jit(test_workload_adaptive_relower_2127)
 
+# Issue #2190: StormLevel Global gate on partial relower (Shape-only does not).
+aura_add_issue_test(test_partial_relower_storm_gate_2190)
+aura_issue_test_link_llvm_jit(test_partial_relower_storm_gate_2190)
+add_dependencies(all_test_issue_targets test_partial_relower_storm_gate_2190)
+
 # Issue #2128: MustDeoptBeforeNextCall after reemit when live remap misses.
 aura_add_issue_test(test_must_deopt_before_next_call_2128)
 aura_issue_test_link_llvm_jit(test_must_deopt_before_next_call_2128)

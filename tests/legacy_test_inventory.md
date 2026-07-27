@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 474 | Preferred destination suites |
-| **Total scanned** | **474** | |
+| `tests/core/test_*.cpp` | 475 | Preferred destination suites |
+| **Total scanned** | **475** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 48 | 48 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 48 | 48 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 49 | 49 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 106 | 106 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 29 | 29 | P3 — review case-by-case |
@@ -452,6 +452,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_parallel_intend_pure_2163.cpp`
 - `tests/orch/test_parallel_intend_pure_contract_2230.cpp`
 - `tests/compiler/test_partial_relower_cascade_2041.cpp`
+- `tests/compiler/test_partial_relower_storm_gate_2190.cpp`
 - `tests/compiler/test_pass_contracts_hotpath_closed_loop.cpp`
 - `tests/compiler/test_pattern_structural_index_closed_loop.cpp`
 - `tests/compiler/test_pcv_children_safe_default_migration.cpp`
@@ -974,13 +975,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (48)
+### `jit_incremental` — JIT / AOT / incremental relower (49)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (48)
+#### domain/ (49)
 
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp` (#2238) [domain_suite, theme_compiler] — AC1: anonymous + aura_closure_check_aot_stable_id_policy under
@@ -1021,6 +1022,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
 - `tests/core/test_pair_slot_lock.cpp` (—) [domain_suite, theme_core] — test_pair_slot_lock.cpp -- runtime smoke test for B-024 / #1998
 - `tests/compiler/test_partial_relower_cascade_2041.cpp` (#2041) [domain_suite, theme_compiler] — Issue #2041 — Partial re-lower + JIT hot-swap end-to-end on
+- `tests/compiler/test_partial_relower_storm_gate_2190.cpp` (#2190) [domain_suite, theme_compiler] — AC1: Global storm + small dirty → full + forced_full metric
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — Issue #1711 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp` (#2114) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5):
 - `tests/compiler/test_region_priority_deopt_throttle_2132.cpp` (#2132) [domain_suite, theme_compiler] — AC1: should_throttle_reemit(region) vs no-arg global decision

@@ -44,6 +44,12 @@ import aura.core.ast;
 import aura.compiler.ir;
 import aura.compiler.dirty_propagation; // DepGraph (Issue #2179)
 
+// Issue #2190: StormLevel facade C ABI (defined in hot_update_registry /
+// weak stub). Must live outside the global module fragment (GMF may only
+// contain preprocessor inclusions). Global bit forces full relower;
+// Shape-only does not.
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+
 export namespace aura::compiler {
 
 // ── CacheEntryVersionStamp (#2033 / #2183) ─────────────────
@@ -672,6 +678,22 @@ inline std::atomic<std::uint64_t>& adaptive_density_adjust_total_atomic() noexce
     return n;
 }
 
+// Issue #2190: StormLevel gate on partial vs full relower.
+// Bits match HotUpdateRegistry::StormLevel (None=0, Shape=1, Global=2, Both=3).
+inline constexpr std::uint8_t kStormLevelNone = 0;
+inline constexpr std::uint8_t kStormLevelShape = 1;
+inline constexpr std::uint8_t kStormLevelGlobal = 2; // bit
+inline constexpr std::uint8_t kStormLevelBoth = 3;
+
+inline std::atomic<std::uint64_t>& partial_relower_storm_gate_consult_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+inline std::atomic<std::uint64_t>& partial_relower_storm_forced_full_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+
 [[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
     return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
 }
@@ -790,6 +812,9 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
     adaptive_full_decision_total_atomic().store(0, std::memory_order_relaxed);
     adaptive_deopt_adjust_total_atomic().store(0, std::memory_order_relaxed);
     adaptive_density_adjust_total_atomic().store(0, std::memory_order_relaxed);
+    // Issue #2190: clear StormLevel partial-gate metrics.
+    partial_relower_storm_gate_consult_total_atomic().store(0, std::memory_order_relaxed);
+    partial_relower_storm_forced_full_total_atomic().store(0, std::memory_order_relaxed);
 }
 
 // Issue #426 / #2032: estimate the re-lower cost of a dirty
@@ -893,6 +918,44 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     if (dirty_count >= threshold)
         return false;
     return true;
+}
+
+// ── Issue #2190: StormLevel gate on partial vs full ──────────────
+// HotUpdateRegistry::StormLevel (via aura_hot_update_current_storm_level):
+//   None=0, Shape=1, Global=2, Both=3.
+// When the Global bit is set (Global or Both), prefer full relower to
+// avoid partial-fail→full thrash under process-wide deopt storm.
+// Shape-only does NOT force full (align #2172 AC1).
+// set_partial_relower_threshold / env still apply; this is an
+// *additional* gate on top of #2032/#2112/#2127 threshold logic.
+//
+// Pure should_partial_relower remains threshold-only for unit tests.
+// Production cascade / DirtyAware / query surfaces use the storm-aware
+// helpers below (or consult_workload_adaptive_partial_ which applies
+// the same gate).
+
+[[nodiscard]] inline bool storm_level_has_global() noexcept {
+    return (aura_hot_update_current_storm_level() & kStormLevelGlobal) != 0;
+}
+
+// Apply Global-storm gate to a pre-storm partial decision.
+// Always bumps partial_relower_storm_gate_consult_total.
+// Under Global: bumps forced_full and returns false (prefer full).
+// Shape-only / None: returns want_partial_without_storm unchanged.
+[[nodiscard]] inline bool
+apply_partial_relower_storm_gate(bool want_partial_without_storm) noexcept {
+    partial_relower_storm_gate_consult_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    if (storm_level_has_global()) {
+        partial_relower_storm_forced_full_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return want_partial_without_storm;
+}
+
+// Drop-in production consult: threshold decision + StormLevel Global gate.
+// Shape-only leaves the pure threshold result intact.
+[[nodiscard]] inline bool should_partial_relower_storm_aware(std::size_t dirty_count) noexcept {
+    return apply_partial_relower_storm_gate(should_partial_relower(dirty_count));
 }
 
 // ── Issue #2127: workload / deopt / density adaptive threshold ──
@@ -1016,12 +1079,22 @@ struct AdaptiveRelowerDecision {
 }
 
 // Convenience: same signals as decide_*, for drop-in should_partial sites.
+// Does NOT apply StormLevel Global force-full (#2190) — use
+// should_partial_relower_workload_storm_aware for production.
 [[nodiscard]] inline bool should_partial_relower_workload(
     std::size_t dirty_count, std::size_t total_blocks = 0, std::uint64_t deopt_window_count = 0,
     std::uint64_t deopt_storm_threshold = 0, bool deopt_storm_active = false) noexcept {
     return decide_workload_adaptive_partial_relower(dirty_count, total_blocks, deopt_window_count,
                                                     deopt_storm_threshold, deopt_storm_active)
         .want_partial;
+}
+
+// Issue #2190: workload adaptive + StormLevel Global force-full gate.
+[[nodiscard]] inline bool should_partial_relower_workload_storm_aware(
+    std::size_t dirty_count, std::size_t total_blocks = 0, std::uint64_t deopt_window_count = 0,
+    std::uint64_t deopt_storm_threshold = 0, bool deopt_storm_active = false) noexcept {
+    return apply_partial_relower_storm_gate(should_partial_relower_workload(
+        dirty_count, total_blocks, deopt_window_count, deopt_storm_threshold, deopt_storm_active));
 }
 
 // ── Issue #2113: incremental soundness oracle (partial ≡ full) ──

@@ -2955,7 +2955,9 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
                 const char* tag = nullptr;
                 if (dirty == 0)
                     tag = "none";
-                else if (aura::compiler::should_partial_relower(dirty))
+                // Issue #2190: StormLevel Global forces "full" even for
+                // small dirty (Shape-only / None still use threshold).
+                else if (aura::compiler::should_partial_relower_storm_aware(dirty))
                     tag = "incremental";
                 else
                     tag = "full";

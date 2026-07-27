@@ -5996,7 +5996,9 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(256); // #1601 / #1623 / #1915 / #2032
+                // #1601 / #1623 / #1915 / #2032 / #2190: ~160+ keys — create(512)
+                // headroom so open-addressing never fails insert under load.
+                auto* ht = FlatHashTable::create(512);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -6399,6 +6401,24 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"workload-adaptive-relower-wired", make_int(1)},
                 {"schema-2127", make_int(2127)},
                 {"issue-2127", make_int(2127)},
+                // Issue #2190: StormLevel Global gate on partial relower
+                {"partial_relower_storm_gate_consult_total",
+                 make_int(static_cast<std::int64_t>(
+                     partial_relower_storm_gate_consult_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"partial-relower-storm-gate-consult-total",
+                 make_int(static_cast<std::int64_t>(
+                     partial_relower_storm_gate_consult_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"partial_relower_storm_forced_full_total",
+                 make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"partial-relower-storm-forced-full-total",
+                 make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"partial-relower-storm-gate-wired", make_int(1)},
+                {"schema-2190", make_int(2190)},
+                {"issue-2190", make_int(2190)},
                 // Issue #2133: consume affected_instrs in relower + DirtyAware peel
                 {"instr-level-relower-total", make_int(m ? load(m->instr_level_relower_total) : 0)},
                 {"instr-level-pass-skipped-clean",
@@ -6415,17 +6435,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2133", make_int(2133)},
                 {"issue-2133", make_int(2133)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032–#2133 satellites
+                // lineage 718 → … → 1639; #2032–#2190 satellites
+                {"schema", make_int(1639)},
             };
             return build_hash(kv);
         });
 
-    // Issue #2112 / #2127: (query:incremental-relower-policy-stats) — adaptive
-    // partial/full threshold policy (register_stats_impl only; SlimSurface).
+    // Issue #2112 / #2127 / #2190: (query:incremental-relower-policy-stats)
+    // adaptive partial/full threshold + StormLevel gate (SlimSurface).
     ObservabilityPrims::register_stats_impl(
         "query:incremental-relower-policy-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(128); // #2190 headroom
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6479,7 +6500,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"workload-adaptive-relower-wired", make_int(1)},
                 {"schema-2127", make_int(2127)},
                 {"issue-2127", make_int(2127)},
-                {"schema", make_int(2127)}, // latest policy schema
+                // Issue #2190: StormLevel Global gate on partial relower
+                {"partial_relower_storm_gate_consult_total",
+                 make_int(static_cast<std::int64_t>(
+                     partial_relower_storm_gate_consult_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"partial_relower_storm_forced_full_total",
+                 make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"partial-relower-storm-gate-wired", make_int(1)},
+                {"schema-2190", make_int(2190)},
+                {"issue-2190", make_int(2190)},
+                {"schema", make_int(2190)}, // latest policy schema
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
