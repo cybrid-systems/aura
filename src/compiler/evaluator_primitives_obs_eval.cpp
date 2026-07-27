@@ -6317,6 +6317,26 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                  make_int(
                      static_cast<std::int64_t>(aura::compiler::get_incremental_soundness_mode()))},
                 {"incremental-soundness-wired", make_int(1)},
+                // Issue #2245: production sampling of incremental soundness
+                {"incremental_soundness_prod_runs_total",
+                 make_int(m ? load(m->incremental_soundness_prod_runs_total) : 0)},
+                {"incremental-soundness-prod-runs",
+                 make_int(m ? load(m->incremental_soundness_prod_runs_total) : 0)},
+                {"incremental_soundness_prod_ok_total",
+                 make_int(m ? load(m->incremental_soundness_prod_ok_total) : 0)},
+                {"incremental-soundness-prod-ok",
+                 make_int(m ? load(m->incremental_soundness_prod_ok_total) : 0)},
+                {"incremental_soundness_mismatch_prod_total",
+                 make_int(m ? load(m->incremental_soundness_mismatch_prod_total) : 0)},
+                {"incremental-soundness-mismatch-prod",
+                 make_int(m ? load(m->incremental_soundness_mismatch_prod_total) : 0)},
+                {"incremental-soundness-sample-bp",
+                 make_int(static_cast<std::int64_t>(aura::compiler::soundness_sample_bp()))},
+                {"incremental-soundness-mode-allows-prod",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::incremental_soundness_mode_allows_prod() ? 1 : 0))},
+                {"schema-2245", make_int(2245)},
+                {"issue-2245", make_int(2245)},
                 {"schema-2113", make_int(2113)},
                 {"issue-2113", make_int(2113)},
                 // Issue #2033 / #2183: CacheEntryVersionStamp + bridge_epoch

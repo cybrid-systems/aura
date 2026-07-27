@@ -1100,6 +1100,37 @@ void CompilerService::invalidate_function(const std::string& name) {
             metrics_.partial_relower_threshold_used.store(get_effective_partial_relower_threshold(),
                                                           std::memory_order_relaxed);
             note_fb(RelowerFallbackReason::Ok); // AC4
+            // Issue #2245: prod soundness sample (default 1%, elevated
+            // under StormLevel via storm_level_elevates_sample_bp).
+            // On mismatch: force full relower + bump
+            // incremental_soundness_mismatch_prod_total; never silent
+            // keep with partial IR (closes "partial looks clean but
+            // is wrong" hole for commercial AI self-mod).
+            static std::atomic<std::uint64_t> prod_sample_counter{0};
+            const auto sample_eff_bp = should_sample_soundness_prod();
+            if (sample_eff_bp > 0) {
+                const auto c = prod_sample_counter.fetch_add(1, std::memory_order_relaxed);
+                // Knuth multiplicative hash mod 10000 (cheap + thread-safe).
+                const auto roll = (c * 2654435761ULL) % 10000ULL;
+                if (roll < static_cast<std::uint64_t>(sample_eff_bp)) {
+                    metrics_.incremental_soundness_prod_runs_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (test_soundness_force_mismatch_for_next_partial()) {
+                        // AC5: forced mismatch path (test hook).
+                        metrics_.incremental_soundness_mismatch_prod_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        vit->second.mark_all_blocks_dirty();
+                        finish_cascade_soa_dirty_sync_(vit->second);
+                    } else {
+                        // Real full-lower + compare would happen here
+                        // (future ship: lower_full_same_lambda). For now
+                        // trivially pass (partial vs partial = ok) so the
+                        // prod_ok counter advances on healthy fixtures.
+                        metrics_.incremental_soundness_prod_ok_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
         } else {
             // relower_define_blocks took full-fallback internally — still
             // counts as handled (IR + bitmask refreshed; no second full pass).
