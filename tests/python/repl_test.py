@@ -14,6 +14,9 @@ def spawn_repl():
     """Spawn REPL with TERM=dumb to avoid ANSI escape sequences."""
     env = os.environ.copy()
     env["TERM"] = "dumb"
+    # Issue #2213 / #2053: Soft sandbox for harness unless caller overrode.
+    if not str(env.get("AURA_SANDBOX", "")).strip():
+        env["AURA_SANDBOX"] = "off"
     child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT, env=env, encoding="utf-8", codec_errors="replace")
     child.delaybeforesend = 0.1
     return child

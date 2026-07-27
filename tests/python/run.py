@@ -155,6 +155,9 @@ def _cmd_script(args: argparse.Namespace, script: Path, category: str) -> int:
 def _cmd_bash(args: argparse.Namespace) -> int:
     script = _PYTHON / "run-tests.sh"
     env = {**os.environ, "AURA": os.environ.get("AURA", str(AURA_BIN))}
+    # Issue #2213 / #2053: production defaults break bash harness unless Soft.
+    if not str(env.get("AURA_SANDBOX", "")).strip():
+        env["AURA_SANDBOX"] = "off"
     t0 = __import__("time").time()
     rc = subprocess.run(["bash", str(script), *args.rest], cwd=str(ROOT), env=env).returncode
     elapsed = __import__("time").time() - t0

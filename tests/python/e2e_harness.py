@@ -77,6 +77,9 @@ def run_aura_file(
         raise FileNotFoundError(f"e2e script missing: {path}")
 
     run_env = {**os.environ, **(env or {})}
+    # Issue #2213 / #2053: Soft sandbox for e2e harness unless overridden.
+    if not str(run_env.get("AURA_SANDBOX", "")).strip():
+        run_env["AURA_SANDBOX"] = "off"
     t0 = time.time()
     try:
         proc = subprocess.run(
