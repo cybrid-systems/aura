@@ -127,6 +127,64 @@ def check_contract() -> tuple[int, list[str]]:
         if missing:
             failures.append(f"test_aot_reload_primitive.cpp missing #2178 AC entries: {missing}")
 
+    # 6. Issue #2240: stable cross-workspace reject reason code (refine
+    #    #2178). Agents branch on the reason without log scraping. This
+    #    row enforces the production surface contract for the reason code:
+    #    - aura_jit_bridge.h: CrossWorkspaceReject enum + C-linkage
+    #      reader / symbol helper declarations.
+    #    - aura_jit_bridge.cpp: g_last_cross_workspace_reject_reason
+    #      file-scope atomic + reader impl + symbol helper impl +
+    #      ForeignEval set at guard site (BEFORE counter increment) +
+    #      None reset at start of every attempt.
+    #    - tests/compiler/test_aot_reload_primitive.cpp: ac7b tests
+    #      the reason code + symbol helper + hash-mode query.
+    hd = (
+        _read(COMPILER_DIR.parent.parent / "src" / "compiler" / "aura_jit_bridge.h")
+        if False
+        else _read(COMPILER_DIR / "aura_jit_bridge.h")
+    )
+    if not hd:
+        failures.append("src/compiler/aura_jit_bridge.h missing")
+    else:
+        missing = _contains_all(
+            hd,
+            [
+                "enum class CrossWorkspaceReject",
+                "aura_last_cross_workspace_reject_reason_v_read",
+                "aura_cross_workspace_reject_reason_string",
+                "Issue #2240",
+            ],
+        )
+        if missing:
+            failures.append(f"src/compiler/aura_jit_bridge.h missing #2240 reason code pieces: {missing}")
+
+    if ab:
+        missing = _contains_all(
+            ab,
+            [
+                "g_last_cross_workspace_reject_reason{0}",
+                "aura_last_cross_workspace_reject_reason_v_read",
+                "aura_cross_workspace_reject_reason_string",
+                "CrossWorkspaceReject::ForeignEval",
+                "CrossWorkspaceReject::None",
+                "Issue #2240",
+            ],
+        )
+        if missing:
+            failures.append(f"src/compiler/aura_jit_bridge.cpp missing #2240 reason code pieces: {missing}")
+
+    if test_src:
+        missing = _contains_all(
+            test_src,
+            [
+                "ac7b_cross_workspace_reason_code_2240",
+                "ac7b_cross_workspace_reason_code_2240()",
+                "Issue #2240",
+            ],
+        )
+        if missing:
+            failures.append(f"test_aot_reload_primitive.cpp missing #2240 AC7b entries: {missing}")
+
     return (1 if failures else 0, failures)
 
 

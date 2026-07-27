@@ -201,6 +201,141 @@ static void ac7_cross_workspace_reject_2178() {
     aura_set_aot_metrics(nullptr);
 }
 
+// Issue #2240: stable cross-workspace / cross-COW reject reason code
+// + symbol accessor + query-surface hash mode (refine #2178, which
+// shipped the basic guard + counter but Agents could only see an
+// aggregate counter — not why). Extends AC7 family with:
+//   AC7b.1 — foreign eval_ptr → counter++ AND reason=ForeignEval
+//   AC7b.2 — null eval_ptr → dlopen fail (NOT foreign-reject) AND
+//            reason stays None=0 (parallel reset + not bumped)
+//   AC7b.3 — symbol accessor for all 4 enum values + out-of-range
+//   AC7b.4 — reason reset at start of next reload attempt
+//            (parallel to g_last_reload_fail_reason reset at L1988)
+//   AC7b.5 — source-cite: enum + atomic + C-linkage reader + bumper
+//            + Issue #2240 tag in aura_jit_bridge.{h,cpp} + hash
+//            mode of query:aot-hot-update-stats exposes the keys.
+static void ac7b_cross_workspace_reason_code_2240() {
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    // Hermetic test isolation — AC7 may have left reason in
+    // ForeignEval state from its foreign-eval reject path. Reset
+    // to None before this AC starts.
+    aura_test_reset_last_cross_workspace_reject_reason();
+    CHECK(aura_last_cross_workspace_reject_reason_v_read() == 0, "AC7b: reset reason → None (0)");
+
+    // Capture baseline rejected counter.
+    const auto rej0 = aura_cross_workspace_hot_update_rejected_total_v_read();
+
+    // AC7b.1: foreign eval_ptr → reject + counter++ + reason=ForeignEval=1.
+    aura_set_aot_region_mask(0);
+    aura_set_module_version(0);
+    CompilerService seed_cs;
+    (void)aura_reload_aot_module_for_eval(&seed_cs.evaluator(), "/tmp/aura_ac7b_seed_missing.so",
+                                          0);
+    void* foreign_eval = reinterpret_cast<void*>(0xDEAD'BEEF'CAFE'0001ULL);
+    const bool ok_foreign = aura_reload_aot_module_for_eval(foreign_eval, "ac7b_foreign.so", 0);
+    CHECK(ok_foreign == false,
+          "AC7b: foreign eval_ptr → aura_reload_aot_module_for_eval returns false");
+    CHECK(aura_cross_workspace_hot_update_rejected_total_v_read() == rej0 + 1,
+          "AC7b: cross_workspace_hot_update_rejected_total +1 (refine #2178 AC1)");
+    CHECK(aura_last_cross_workspace_reject_reason_v_read() == 1,
+          "AC7b: last_cross_workspace_reject_reason set to ForeignEval=1 (refine #2178)");
+
+    // AC7b.2: null eval_ptr → dlopen fail path (NOT foreign-reject) AND
+    // reason stays None=0 (parallel reset + not bumped in dlopen path).
+    aura_test_reset_last_cross_workspace_reject_reason();
+    CHECK(aura_last_cross_workspace_reject_reason_v_read() == 0,
+          "AC7b: post-reset reason → None=0");
+    const bool ok_null =
+        aura_reload_aot_module_for_eval(nullptr, "/tmp/aura_ac7b_null_missing.so", 0);
+    CHECK(ok_null == false, "AC7b: null eval_ptr reaches dlopen fail (not foreign-reject)");
+    CHECK(aura_cross_workspace_hot_update_rejected_total_v_read() == rej0 + 1,
+          "AC7b: counter unchanged after null eval (dlopen path, NOT bumped)");
+    CHECK(aura_last_cross_workspace_reject_reason_v_read() == 0,
+          "AC7b: reason stays None=0 after null eval dlopen fail (NOT bumped)");
+
+    // AC7b.3: symbol accessor for all 4 enum values + out-of-range.
+    CHECK(std::string(aura_cross_workspace_reject_reason_string(0)) == "none",
+          "AC7b: reason(0)='none'");
+    CHECK(std::string(aura_cross_workspace_reject_reason_string(1)) == "foreign_eval",
+          "AC7b: reason(1)='foreign_eval'");
+    CHECK(std::string(aura_cross_workspace_reject_reason_string(2)) == "cow_gen_mismatch",
+          "AC7b: reason(2)='cow_gen_mismatch' (reserved for future cross-COW)");
+    CHECK(std::string(aura_cross_workspace_reject_reason_string(3)) == "unknown",
+          "AC7b: reason(3)='unknown' (defensive)");
+    CHECK(std::string(aura_cross_workspace_reject_reason_string(99)) == "unknown",
+          "AC7b: reason(99)='unknown' (defensive out-of-range fallback)");
+
+    // AC7b.4: reason reset at start of next attempt (alongside
+    // g_last_reload_fail_reason reset; otherwise stale Unknown would
+    // leak across attempts).
+    aura_test_set_last_cross_workspace_reject_reason(3); // simulate stale Unknown
+    CHECK(aura_last_cross_workspace_reject_reason_v_read() == 3,
+          "AC7b: test-set reason → Unknown=3 (simulate stale)");
+    (void)aura_reload_aot_module("/tmp/aura_ac7b_reset_trigger.so", 0);
+    CHECK(
+        aura_last_cross_workspace_reject_reason_v_read() == 0,
+        "AC7b: reload attempt start resets reason → None=0 (parallel to last_reload_fail_reason)");
+
+    // AC7b.5: source-cite + hash-mode query surface.
+    std::ifstream ab("src/compiler/aura_jit_bridge.cpp");
+    std::string ab_contents((std::istreambuf_iterator<char>(ab)), std::istreambuf_iterator<char>());
+    CHECK(ab_contents.find("g_last_cross_workspace_reject_reason{0}") != std::string::npos,
+          "AC7b: file-level atomic in aura_jit_bridge.cpp");
+    CHECK(ab_contents.find("aura_last_cross_workspace_reject_reason_v_read") != std::string::npos,
+          "AC7b: C-linkage reader in aura_jit_bridge.cpp");
+    CHECK(ab_contents.find("CrossWorkspaceReject::ForeignEval") != std::string::npos,
+          "AC7b: ForeignEval reason set at guard site");
+    CHECK(ab_contents.find("Issue #2240") != std::string::npos,
+          "AC7b: aura_jit_bridge.cpp cites #2240");
+    std::ifstream hd("src/compiler/aura_jit_bridge.h");
+    std::string hd_contents((std::istreambuf_iterator<char>(hd)), std::istreambuf_iterator<char>());
+    CHECK(hd_contents.find("enum class CrossWorkspaceReject") != std::string::npos,
+          "AC7b: CrossWorkspaceReject enum in aura_jit_bridge.h");
+    CHECK(hd_contents.find("aura_last_cross_workspace_reject_reason_v_read") != std::string::npos,
+          "AC7b: C-linkage reader declared in aura_jit_bridge.h");
+    CHECK(hd_contents.find("Issue #2240") != std::string::npos,
+          "AC7b: aura_jit_bridge.h cites #2240");
+
+    // AC7b.6: hash-mode query surface exposes cross-workspace keys.
+    {
+        CompilerService cs;
+        // Force a foreign reject so the reason code is non-zero.
+        void* forced_foreign = reinterpret_cast<void*>(0xF00D'BABE'DEAD'0002ULL);
+        (void)aura_reload_aot_module_for_eval(forced_foreign, "ac7b_forced.so", 0);
+        // Hash mode: args[0]=1 returns the hash with #2240 keys
+        // (additive — default args[0]=0 still returns sum sentinel).
+        auto r = cs.eval("(engine:metrics \"query:aot-hot-update-stats\" 1)");
+        CHECK(r && is_hash(*r), "AC7b: query:aot-hot-update-stats[1] → hash");
+        if (r && is_hash(*r)) {
+            // hash-ref helper: read keys via aura's hash-ref symbol
+            auto k_cross_tot = cs.eval("(hash-ref (engine:metrics \"query:aot-hot-update-stats\" "
+                                       "1) \"cross-workspace-hot-update-rejected-total\")");
+            CHECK(k_cross_tot && is_int(*k_cross_tot) && as_int(*k_cross_tot) >= 0,
+                  "AC7b: hash key 'cross-workspace-hot-update-rejected-total' present");
+            auto k_wired = cs.eval("(hash-ref (engine:metrics \"query:aot-hot-update-stats\" 1) "
+                                   "\"cross-workspace-reject-wired\")");
+            CHECK(k_wired && is_int(*k_wired) && as_int(*k_wired) == 1,
+                  "AC7b: hash key 'cross-workspace-reject-wired=1' present");
+            auto k_reason = cs.eval("(hash-ref (engine:metrics \"query:aot-hot-update-stats\" 1) "
+                                    "\"cross-workspace-last-reject-reason\")");
+            CHECK(k_reason && is_int(*k_reason) && as_int(*k_reason) == 1,
+                  "AC7b: hash key 'cross-workspace-last-reject-reason=ForeignEval=1'");
+            auto k_schema = cs.eval(
+                "(hash-ref (engine:metrics \"query:aot-hot-update-stats\" 1) \"schema-2240\")");
+            CHECK(k_schema && is_int(*k_schema) && as_int(*k_schema) == 2240,
+                  "AC7b: hash key 'schema-2240=2240' lineage");
+        }
+        // AC4: default sum mode (no args) still returns -1 / sum sentinel
+        // (no schema break — additive hash mode on args[0]=1).
+        auto r_sum = cs.eval("(engine:metrics \"query:aot-hot-update-stats\")");
+        CHECK(r_sum && is_int(*r_sum),
+              "AC7b: query:aot-hot-update-stats default (no args) → int (backwards compat)");
+    }
+
+    aura_set_aot_metrics(nullptr);
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -220,6 +355,9 @@ int main() {
         aura_set_module_version(0);
     }
     ac7_cross_workspace_reject_2178();
+
+    // ── Issue #2240: stable cross-workspace reject reason code ──
+    ac7b_cross_workspace_reason_code_2240();
 
     // ── Aura: region mask round-trip ──
     // aot:get-region-mask is registered via register_stats_impl (engine:metrics).

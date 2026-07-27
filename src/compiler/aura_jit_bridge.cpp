@@ -951,6 +951,46 @@ extern "C" void aura_cross_workspace_hot_update_rejected_increment(void) noexcep
 extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept {
     return g_cross_workspace_hot_update_rejected_total.load(std::memory_order_relaxed);
 }
+
+// Issue #2240: stable last reject reason for cross-workspace / cross-COW
+// hot-update (refine #2178). Stored as uint8_t (CrossWorkspaceReject
+// enum) for C ABI stability. Thread-safe lock-free read. Default
+// value 0 = CrossWorkspaceReject::None (no reject since last reset).
+// Reset to None at the start of every aura_reload_aot_module_for_eval
+// attempt (alongside g_last_reload_fail_reason reset); ForeignEval is
+// stored before the counter increment at the guard site below.
+// CowGenMismatch + Unknown values are reserved for future expansion
+// (CowGenMismatch would require wiring a COW generation compare at
+// the guard site; Unknown is defensive — bumps if a future reject
+// path forgets to set a specific reason).
+static std::atomic<std::uint8_t> g_last_cross_workspace_reject_reason{0};
+
+extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept {
+    return g_last_cross_workspace_reject_reason.load(std::memory_order_relaxed);
+}
+
+extern "C" const char* aura_cross_workspace_reject_reason_string(std::uint8_t v) noexcept {
+    switch (static_cast<CrossWorkspaceReject>(v)) {
+        case CrossWorkspaceReject::None:
+            return "none";
+        case CrossWorkspaceReject::ForeignEval:
+            return "foreign_eval";
+        case CrossWorkspaceReject::CowGenMismatch:
+            return "cow_gen_mismatch";
+        case CrossWorkspaceReject::Unknown:
+            return "unknown";
+    }
+    return "unknown"; // defensive — out-of-range uint8
+}
+
+extern "C" void aura_test_set_last_cross_workspace_reject_reason(std::uint8_t v) noexcept {
+    g_last_cross_workspace_reject_reason.store(v, std::memory_order_release);
+}
+
+extern "C" void aura_test_reset_last_cross_workspace_reject_reason(void) noexcept {
+    g_last_cross_workspace_reject_reason.store(
+        static_cast<std::uint8_t>(CrossWorkspaceReject::None), std::memory_order_release);
+}
 // Issue #2178: returns true when eval_ptr is the current workspace-bound
 // evaluator or null (process-default AotState). Foreign eval contexts
 // (cross-workspace / cross-COW) are rejected by the reload / reemit
@@ -1983,6 +2023,12 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     // attempt's reason. AC3 covers the success-side clear below.
     g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Ok),
                                     std::memory_order_release);
+    // Issue #2240: clear cross-workspace last-reject reason at start of
+    // every attempt (parallel reset — Agents read this to pick a recovery
+    // policy without log scraping). ForeignEval/CowGenMismatch is set
+    // at the guard site below before counter increment.
+    g_last_cross_workspace_reject_reason.store(
+        static_cast<std::uint8_t>(CrossWorkspaceReject::None), std::memory_order_release);
 
     bump_reload_attempt();
     // Issue #1271: capture pre-reload epoch so failed paths never
@@ -2002,6 +2048,15 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     // and return false — never silently partial-succeed. The single-workspace
     // happy path (null eval_ptr / matching eval) is unchanged.
     if (eval_ptr != nullptr && !aura_is_current_workspace_eval(eval_ptr)) {
+        // Issue #2240: stable cross-workspace reject reason code (refine
+        // #2178). Set BEFORE the counter increment so that even if
+        // downstream operations fail, the reason is observable (Agents
+        // read this to pick recovery policy without log scraping).
+        // CowGenMismatch / Unknown values are reserved for future
+        // expansion (issue defers opening cross-COW write path).
+        g_last_cross_workspace_reject_reason.store(
+            static_cast<std::uint8_t>(CrossWorkspaceReject::ForeignEval),
+            std::memory_order_release);
         aura_cross_workspace_hot_update_rejected_increment();
         g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Other),
                                         std::memory_order_release);
