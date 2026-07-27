@@ -42,6 +42,7 @@ import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.envframe_lifetime;
+import aura.core.lifetime_pin; // Issue #2256: g_moving_compact_* process atomics
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
@@ -1628,54 +1629,28 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 2166);
             insert_kv("schema-2166", static_cast<std::int64_t>(aura::ast::kMovingCompactIssue));
             // Issue #2256: Moving-compact hard-contract observability
-            insert_kv("compact-count-total",
-                      m ? static_cast<std::int64_t>(
-                              m->compact_count_total.load(std::memory_order_relaxed))
-                        : static_cast<std::int64_t>(
-                              aura::core::lifetime::g_moving_compact_count_total.load(
-                                  std::memory_order_relaxed)));
-            insert_kv("bytes-reclaimed-total",
-                      m ? static_cast<std::int64_t>(
-                              m->bytes_reclaimed_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv(
-                "pin-hits-total",
-                m ? static_cast<std::int64_t>(m->pin_hits_total.load(std::memory_order_relaxed))
-                  : static_cast<std::int64_t>(
-                        aura::core::lifetime::g_moving_compact_pin_hits_total.load(
-                            std::memory_order_relaxed)));
-            insert_kv(
-                "remap-us-total",
-                m ? static_cast<std::int64_t>(m->remap_us_total.load(std::memory_order_relaxed))
-                  : static_cast<std::int64_t>(
-                        aura::core::lifetime::g_moving_compact_remap_us_total.load(
-                            std::memory_order_relaxed)));
-            insert_kv("moving-compact-wired", 1);
-            insert_kv("schema-2256", 2256);
-            insert_kv("issue-2256", 2256);
-            // Issue #2256: Moving-compact hard-contract observability
-            insert_kv("compact-count-total",
-                      m ? static_cast<std::int64_t>(
-                              m->compact_count_total.load(std::memory_order_relaxed))
-                        : static_cast<std::int64_t>(
-                              aura::core::lifetime::g_moving_compact_count_total.load(
-                                  std::memory_order_relaxed)));
-            insert_kv("bytes-reclaimed-total",
-                      m ? static_cast<std::int64_t>(
-                              m->bytes_reclaimed_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv(
-                "pin-hits-total",
-                m ? static_cast<std::int64_t>(m->pin_hits_total.load(std::memory_order_relaxed))
-                  : static_cast<std::int64_t>(
-                        aura::core::lifetime::g_moving_compact_pin_hits_total.load(
-                            std::memory_order_relaxed)));
-            insert_kv(
-                "remap-us-total",
-                m ? static_cast<std::int64_t>(m->remap_us_total.load(std::memory_order_relaxed))
-                  : static_cast<std::int64_t>(
-                        aura::core::lifetime::g_moving_compact_remap_us_total.load(
-                            std::memory_order_relaxed)));
+            // (process atomics from lifetime_pin; optional CompilerMetrics).
+            {
+                auto* met = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+                const auto compact_n =
+                    met ? met->compact_count_total.load(std::memory_order_relaxed)
+                        : aura::core::lifetime::g_moving_compact_count_total.load(
+                              std::memory_order_relaxed);
+                const auto pin_hits =
+                    met ? met->pin_hits_total.load(std::memory_order_relaxed)
+                        : aura::core::lifetime::g_moving_compact_pin_hits_total.load(
+                              std::memory_order_relaxed);
+                const auto remap_us =
+                    met ? met->remap_us_total.load(std::memory_order_relaxed)
+                        : aura::core::lifetime::g_moving_compact_remap_us_total.load(
+                              std::memory_order_relaxed);
+                const auto bytes_tot =
+                    met ? met->bytes_reclaimed_total.load(std::memory_order_relaxed) : 0;
+                insert_kv("compact-count-total", static_cast<std::int64_t>(compact_n));
+                insert_kv("bytes-reclaimed-total", static_cast<std::int64_t>(bytes_tot));
+                insert_kv("pin-hits-total", static_cast<std::int64_t>(pin_hits));
+                insert_kv("remap-us-total", static_cast<std::int64_t>(remap_us));
+            }
             insert_kv("moving-compact-wired", 1);
             insert_kv("schema-2256", 2256);
             insert_kv("issue-2256", 2256);
@@ -6411,6 +6386,39 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"issue-2245", make_int(2245)},
                 {"schema-2113", make_int(2113)},
                 {"issue-2113", make_int(2113)},
+                // Issue #2210: JIT / Interpreter PrimCall + apply_closure
+                // equivalence oracle (opt-in; zero-cost when mode 0/2)
+                {"jit_equivalence_runs_total",
+                 make_int(static_cast<std::int64_t>(aura::compiler::jit_equivalence_runs_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"jit-equivalence-runs", make_int(static_cast<std::int64_t>(
+                                             aura::compiler::jit_equivalence_runs_atomic().load(
+                                                 std::memory_order_relaxed)))},
+                {"jit_equivalence_ok_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed)))},
+                {"jit-equivalence-ok",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed)))},
+                {"jit_equivalence_mismatch_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::jit_equivalence_mismatch_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"jit-equivalence-mismatch",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::jit_equivalence_mismatch_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"jit_equivalence_deopt_force_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::jit_equivalence_deopt_force_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"jit-equivalence-enabled",
+                 make_int(aura::compiler::jit_equivalence_enabled() ? 1 : 0)},
+                {"jit-equivalence-mode",
+                 make_int(static_cast<std::int64_t>(aura::compiler::get_jit_equivalence_mode()))},
+                {"jit-equivalence-wired", make_int(1)},
+                {"schema-2210", make_int(2210)},
+                {"issue-2210", make_int(2210)},
                 // Issue #2033 / #2183: CacheEntryVersionStamp + bridge_epoch
                 // should_relower + unified restamp contract
                 {"cache_entry_version_stamp_total",

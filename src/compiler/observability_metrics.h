@@ -317,6 +317,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_soundness_prod_runs_total{0};
     std::atomic<std::uint64_t> incremental_soundness_prod_ok_total{0};
     std::atomic<std::uint64_t> incremental_soundness_mismatch_prod_total{0};
+    // Issue #2210: JIT / Interpreter PrimCall + apply_closure equivalence
+    // oracle (opt-in). Process atomics in ir_cache_pure are the source of
+    // truth; these mirror for CompilerMetrics dashboards.
+    //   - jit_equivalence_runs_total / ok / mismatch
+    //   - jit_equivalence_deopt_force_total: mismatch → force-deopt signal
+    std::atomic<std::uint64_t> jit_equivalence_runs_total{0};
+    std::atomic<std::uint64_t> jit_equivalence_ok_total{0};
+    std::atomic<std::uint64_t> jit_equivalence_mismatch_total{0};
+    std::atomic<std::uint64_t> jit_equivalence_deopt_force_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
     std::atomic<std::uint64_t> jit_partial_recompile_requests_total{0};
     // Issue #401: invalidate_function call counter. Bumped once per

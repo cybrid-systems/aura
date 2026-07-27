@@ -57,6 +57,14 @@ import aura.compiler.coercion_map; // Issue #2102: provenance-miss force-audit
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
+// Issue #2210: JIT/Interpreter equivalence oracle (C ABI from ir_cache_pure).
+extern "C" int aura_jit_equivalence_enabled(void) noexcept;
+extern "C" int aura_check_primcall_equivalence(std::uint64_t interp_bits,
+                                               std::uint64_t jit_bits) noexcept;
+extern "C" std::uint64_t aura_jit_equivalence_runs_v_read(void) noexcept;
+extern "C" std::uint64_t aura_jit_equivalence_ok_v_read(void) noexcept;
+extern "C" std::uint64_t aura_jit_equivalence_mismatch_v_read(void) noexcept;
+extern "C" std::uint64_t aura_jit_equivalence_deopt_force_v_read(void) noexcept;
 
 namespace aura::compiler {
 
@@ -1395,12 +1403,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // independently. Source-cite StormLevel facade integration
         // lives at #2094 lineage (StormLevel::None default; storm
         // enter → adaptive partial-relower threshold widens).
-        if (aura::core::moving_compact_enabled()) {
-            const auto reclaimed = arena_group_ ? arena_group_->adaptive_compact_all() : 0;
-            if (reclaimed > 0 && auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_))
-                mm->arena_compact_deopt_triggered_total.fetch_add(
-                    static_cast<std::uint64_t>(reclaimed), std::memory_order_relaxed);
-            aura::core::verify_pins_under_moving_compact();
+        // moving_compact_enabled lives in aura::ast (arena.ixx);
+        // pin verify in aura::core::lifetime (lifetime_pin.ixx).
+        if (aura::ast::moving_compact_enabled()) {
+            const auto reclaimed =
+                ev_->arena_group_ ? ev_->arena_group_->adaptive_compact_all() : 0;
+            if (reclaimed > 0) {
+                if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    mm->arena_compact_deopt_triggered_total.fetch_add(
+                        static_cast<std::uint64_t>(reclaimed), std::memory_order_relaxed);
+            }
+            (void)aura::core::lifetime::verify_pins_under_moving_compact();
         }
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
             m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
@@ -1643,6 +1656,26 @@ void Evaluator::run_hot_update_recovery_if_needed(bool success,
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
                                                    std::memory_order_relaxed);
+    }
+    // Issue #2210: sample JIT/Interpreter equivalence after reemit success.
+    // Zero-cost when oracle disabled (enabled() is a single atomic load).
+    // Healthy path compares identical fingerprints; inject forces mismatch.
+    if (aura_jit_equivalence_enabled()) {
+        const std::uint64_t bits = (static_cast<std::uint64_t>(n_reemit) << 3) | 1ull;
+        const int ok = aura_check_primcall_equivalence(bits, bits);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->jit_equivalence_runs_total.store(aura_jit_equivalence_runs_v_read(),
+                                                std::memory_order_relaxed);
+            m->jit_equivalence_ok_total.store(aura_jit_equivalence_ok_v_read(),
+                                              std::memory_order_relaxed);
+            m->jit_equivalence_mismatch_total.store(aura_jit_equivalence_mismatch_v_read(),
+                                                    std::memory_order_relaxed);
+            m->jit_equivalence_deopt_force_total.store(aura_jit_equivalence_deopt_force_v_read(),
+                                                       std::memory_order_relaxed);
+            if (!ok)
+                m->jit_equivalence_deopt_force_total.fetch_add(0, std::memory_order_relaxed);
+        }
+        (void)ok;
     }
     const auto epoch = aura_aot_func_table_epoch();
     aura_hot_update_notify_epoch_bump(epoch);

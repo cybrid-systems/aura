@@ -1670,6 +1670,133 @@ inline void reset_incremental_soundness_for_test() noexcept {
     incremental_soundness_mismatch_atomic().store(0, std::memory_order_relaxed);
 }
 
+// ── Issue #2210: JIT / Interpreter PrimCall + apply_closure equivalence
+// oracle (debug / production opt-in). Analogous to #2113 incremental
+// soundness: zero cost when disabled; detects silent semantic divergence
+// after deopt / reemit / epoch bumps.
+//
+// Mode:
+//   0 = off (production default — AC5 no behaviour change)
+//   1 = on  (explicit opt-in via set_jit_equivalence_mode(1) or
+//            -DAURA_JIT_EQUIVALENCE_ORACLE)
+//   2 = force off
+// AC1: mode 0/2 → enabled() false → callers early-return before work.
+
+inline std::atomic<int>& jit_equivalence_mode_atomic() noexcept {
+    static std::atomic<int> mode{0}; // 0 off (default), 1 on, 2 force off
+    return mode;
+}
+
+inline void set_jit_equivalence_mode(int mode) noexcept {
+    jit_equivalence_mode_atomic().store(mode, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline int get_jit_equivalence_mode() noexcept {
+    return jit_equivalence_mode_atomic().load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool jit_equivalence_enabled() noexcept {
+    const int m = get_jit_equivalence_mode();
+    if (m == 1)
+        return true;
+    if (m == 2)
+        return false;
+#if defined(AURA_JIT_EQUIVALENCE_ORACLE)
+    return true;
+#else
+    // Production default off (AC5). Unlike #2113, auto is NOT on in debug
+    // so mixed JIT/Interpreter unit tests stay zero-cost unless opted in.
+    return false;
+#endif
+}
+
+inline std::atomic<std::uint64_t>& jit_equivalence_runs_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& jit_equivalence_ok_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& jit_equivalence_mismatch_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+// Test inject: force next check to report mismatch (AC2).
+inline std::atomic<std::uint8_t>& jit_equivalence_force_mismatch_atomic() noexcept {
+    static std::atomic<std::uint8_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& jit_equivalence_deopt_force_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Lightweight result fingerprint (tag + payload bits) so pure helpers
+// need not depend on EvalValue module layout.
+struct EquivResultBits {
+    std::uint64_t bits = 0;
+    [[nodiscard]] friend bool operator==(EquivResultBits a, EquivResultBits b) noexcept {
+        return a.bits == b.bits;
+    }
+};
+
+[[nodiscard]] inline EquivResultBits make_equiv_int_bits(std::int64_t v) noexcept {
+    // Tag low 3 bits as "int-like" fingerprint (1); payload shifted.
+    return EquivResultBits{((static_cast<std::uint64_t>(v) << 3) | 1ull)};
+}
+
+// Pure: PrimCall result compare. Returns true when equal (or force-mismatch
+// inject fires → false). Always safe when disabled callers skip this.
+[[nodiscard]] inline bool check_primcall_equivalence(EquivResultBits interp,
+                                                     EquivResultBits jit) noexcept {
+    if (jit_equivalence_force_mismatch_atomic().exchange(0, std::memory_order_acq_rel) != 0) {
+        jit_equivalence_runs_atomic().fetch_add(1, std::memory_order_relaxed);
+        jit_equivalence_mismatch_atomic().fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    jit_equivalence_runs_atomic().fetch_add(1, std::memory_order_relaxed);
+    const bool ok = (interp == jit);
+    if (ok)
+        jit_equivalence_ok_atomic().fetch_add(1, std::memory_order_relaxed);
+    else
+        jit_equivalence_mismatch_atomic().fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
+// apply_closure dual-path: same EnvFrame / bridge_epoch should yield
+// identical result bits (or report mismatch).
+[[nodiscard]] inline bool check_apply_closure_equivalence(EquivResultBits path_a,
+                                                          EquivResultBits path_b) noexcept {
+    return check_primcall_equivalence(path_a, path_b);
+}
+
+// Gated entry used by reemit / deopt sample sites. Zero-cost when
+// disabled (single atomic load). On mismatch bumps deopt-force total
+// so Agents can force-deopt the JIT side (caller decides).
+[[nodiscard]] inline bool sample_jit_equivalence_if_enabled(EquivResultBits interp,
+                                                            EquivResultBits jit) noexcept {
+    if (!jit_equivalence_enabled())
+        return true; // AC1: zero work beyond enabled() when off
+    const bool ok = check_primcall_equivalence(interp, jit);
+    if (!ok)
+        jit_equivalence_deopt_force_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
+inline void inject_jit_equivalence_mismatch_for_test() noexcept {
+    jit_equivalence_force_mismatch_atomic().store(1, std::memory_order_relaxed);
+}
+
+inline void reset_jit_equivalence_for_test() noexcept {
+    set_jit_equivalence_mode(0);
+    jit_equivalence_runs_atomic().store(0, std::memory_order_relaxed);
+    jit_equivalence_ok_atomic().store(0, std::memory_order_relaxed);
+    jit_equivalence_mismatch_atomic().store(0, std::memory_order_relaxed);
+    jit_equivalence_force_mismatch_atomic().store(0, std::memory_order_relaxed);
+    jit_equivalence_deopt_force_total_atomic().store(0, std::memory_order_relaxed);
+}
+
 
 // ── Issue #2245: production sampling of incremental soundness ──
 // (partial ≡ full) under AI mutate. Refine #2113: keeps the
@@ -1814,5 +1941,50 @@ export {
 
     extern "C" void aura_test_set_soundness_force_mismatch(int v) noexcept {
         aura::compiler::set_soundness_force_mismatch_for_test(v);
+    }
+
+    // Issue #2210: JIT / Interpreter equivalence oracle C ABI.
+    extern "C" void aura_set_jit_equivalence_mode(int mode) noexcept {
+        aura::compiler::set_jit_equivalence_mode(mode);
+    }
+    extern "C" int aura_get_jit_equivalence_mode(void) noexcept {
+        return aura::compiler::get_jit_equivalence_mode();
+    }
+    extern "C" int aura_jit_equivalence_enabled(void) noexcept {
+        return aura::compiler::jit_equivalence_enabled() ? 1 : 0;
+    }
+    extern "C" int aura_check_primcall_equivalence(std::uint64_t interp_bits,
+                                                   std::uint64_t jit_bits) noexcept {
+        return aura::compiler::check_primcall_equivalence(
+                   aura::compiler::EquivResultBits{interp_bits},
+                   aura::compiler::EquivResultBits{jit_bits})
+                   ? 1
+                   : 0;
+    }
+    extern "C" int aura_check_apply_closure_equivalence(std::uint64_t a_bits,
+                                                        std::uint64_t b_bits) noexcept {
+        return aura::compiler::check_apply_closure_equivalence(
+                   aura::compiler::EquivResultBits{a_bits}, aura::compiler::EquivResultBits{b_bits})
+                   ? 1
+                   : 0;
+    }
+    extern "C" void aura_inject_jit_equivalence_mismatch_for_test(void) noexcept {
+        aura::compiler::inject_jit_equivalence_mismatch_for_test();
+    }
+    extern "C" void aura_reset_jit_equivalence_for_test(void) noexcept {
+        aura::compiler::reset_jit_equivalence_for_test();
+    }
+    extern "C" std::uint64_t aura_jit_equivalence_runs_v_read(void) noexcept {
+        return aura::compiler::jit_equivalence_runs_atomic().load(std::memory_order_relaxed);
+    }
+    extern "C" std::uint64_t aura_jit_equivalence_ok_v_read(void) noexcept {
+        return aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed);
+    }
+    extern "C" std::uint64_t aura_jit_equivalence_mismatch_v_read(void) noexcept {
+        return aura::compiler::jit_equivalence_mismatch_atomic().load(std::memory_order_relaxed);
+    }
+    extern "C" std::uint64_t aura_jit_equivalence_deopt_force_v_read(void) noexcept {
+        return aura::compiler::jit_equivalence_deopt_force_total_atomic().load(
+            std::memory_order_relaxed);
     }
 } // export C-linkage surface

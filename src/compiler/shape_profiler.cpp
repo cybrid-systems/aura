@@ -25,6 +25,14 @@
 // The shape_of function is implemented below using raw integer bit tests.
 namespace aura::compiler::shape {
 
+// Issue #2256: process-wide Moving-compact observability for pure unit
+// tests (shape profiler cannot import aura.core.lifetime module from this
+// non-module TU). Names match lifetime_pin.ixx counters for source-cite.
+namespace {
+    std::atomic<std::uint64_t> g_moving_compact_count_total{0};
+    std::atomic<std::uint64_t> g_moving_compact_remap_us_total{0};
+} // namespace
+
 namespace {
 
     ShapeDeoptHook g_shape_deopt_hook = nullptr;
