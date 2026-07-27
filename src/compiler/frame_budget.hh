@@ -1,13 +1,19 @@
-// frame_budget.hh — Issue #2137: frame-budget cascade isolation.
+// frame_budget.hh — Issue #2137 cascade isolation + #2218 present guardian.
 //
-// While present / render hotpath is active, non-render dirty cascade work
-// (mark_define_dirty fan-out, hybrid NodeId cascade, HotUpdate reemit) is
-// deferred or coalesced so frame p99 stays inside the budget (default ~16.6 ms).
-// Render-related defines (draw/present/tui/terminal/… evolution names and
-// registered critical defines) may still cascade.
+// #2137: While present / render hotpath is active, non-render dirty cascade
+// work (mark_define_dirty fan-out, hybrid NodeId cascade, HotUpdate reemit)
+// is deferred or coalesced so frame p99 stays inside the budget.
+// Render-related defines may still cascade. Deferred names drain when the
+// hotpath exits or on the next soft-dirty outside the hotpath.
 //
-// Deferred names are coalesced in a process-wide set and drained when the
-// hotpath exits or on the next soft-dirty outside the hotpath (eventual run).
+// #2218: Execution-layer guardian on tui:present / tui:present-dirty:
+// if recent frame-time p99 exceeds budget, or cached agent-health is low,
+// or last agent-action is hold/stop — prefer dirty short-circuit / skip
+// full rebuild (keep last good frame). Authoritative for the current frame;
+// forces agent-action hold/stop for the next mutate window. Zero extra cost
+// under budget beyond a few atomic loads.
+//
+// Env: AURA_FRAME_BUDGET_US (default 16000 µs ≈ 60 fps; 33000 for 30 fps).
 
 #ifndef AURA_COMPILER_FRAME_BUDGET_HH
 #define AURA_COMPILER_FRAME_BUDGET_HH
@@ -17,6 +23,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -26,8 +33,21 @@
 namespace aura::compiler::frame_budget {
 
 inline constexpr int kFrameBudgetIssue = 2137;
-// ~60 fps default (microseconds).
-inline constexpr std::uint64_t kDefaultBudgetUs = 16667;
+inline constexpr int kPresentGuardianIssue = 2218;
+// ~60 fps default (microseconds). AC #2218: 16000; was 16667 for #2137.
+inline constexpr std::uint64_t kDefaultBudgetUs = 16000;
+// Soft warn when p99 ≥ this fraction of budget (basis points; 8000 = 80%).
+inline constexpr std::uint64_t kSoftMarginBp = 8000;
+// Agent health below this triggers degrade (matches schema-2051 safe-to-mutate).
+inline constexpr std::int64_t kHealthDegradeThreshold = 60;
+// Dirty cells below this fraction of the buffer are "tiny" → skip full rebuild.
+inline constexpr std::uint64_t kTinyDirtyBp = 500; // 5%
+
+// agent-action codes (schema-2051): 0=hold 1=optimize-ok 2=reduce
+// 3=prefer-dirty-delta 4=stop-mutate
+inline constexpr std::int64_t kActionHold = 0;
+inline constexpr std::int64_t kActionOptimizeOk = 1;
+inline constexpr std::int64_t kActionStop = 4;
 
 // ── Metrics (process-wide; mirrored into CompilerMetrics / query surfaces) ──
 struct FrameBudgetMetrics {
@@ -47,6 +67,17 @@ struct FrameBudgetMetrics {
     std::atomic<std::uint64_t> present_hist_i{0};
     std::atomic<std::uint64_t> budget_us{kDefaultBudgetUs};
     std::atomic<std::uint64_t> wired{1};
+    // Issue #2218 present-path guardian
+    std::atomic<std::uint64_t> frame_budget_check_total{0};
+    std::atomic<std::uint64_t> frame_budget_degrade_total{0};
+    std::atomic<std::uint64_t> frame_budget_soft_warn_total{0};
+    std::atomic<std::uint64_t> frame_budget_last_p99_us{0};
+    std::atomic<std::uint64_t> frame_budget_skip_full_total{0};
+    std::atomic<std::int64_t> cached_agent_health{100};
+    std::atomic<std::int64_t> cached_agent_action{kActionOptimizeOk};
+    // -1 = no force; else override agent-action for next mutate window
+    std::atomic<std::int64_t> forced_agent_action{-1};
+    std::atomic<std::uint64_t> env_budget_applied{0};
 };
 
 [[nodiscard]] inline FrameBudgetMetrics& g_metrics() noexcept {
@@ -91,8 +122,125 @@ inline void set_budget_us(std::uint64_t us) noexcept {
     g_metrics().budget_us.store(us, std::memory_order_relaxed);
 }
 
+// Issue #2218: apply AURA_FRAME_BUDGET_US once (0 / empty → keep default).
+inline void ensure_budget_from_env() noexcept {
+    auto& m = g_metrics();
+    if (m.env_budget_applied.load(std::memory_order_relaxed) != 0)
+        return;
+    std::uint64_t expected = 0;
+    if (!m.env_budget_applied.compare_exchange_strong(expected, 1, std::memory_order_relaxed))
+        return;
+    if (const char* e = std::getenv("AURA_FRAME_BUDGET_US")) {
+        char* end = nullptr;
+        const auto v = std::strtoull(e, &end, 10);
+        if (end != e && v > 0)
+            set_budget_us(static_cast<std::uint64_t>(v));
+    }
+}
+
 [[nodiscard]] inline std::uint64_t budget_us() noexcept {
+    ensure_budget_from_env();
     return g_metrics().budget_us.load(std::memory_order_relaxed);
+}
+
+// Issue #2218: stash last closed-loop health/action from query:render-stats.
+inline void note_agent_closed_loop(std::int64_t health, std::int64_t action) noexcept {
+    auto& m = g_metrics();
+    m.cached_agent_health.store(health, std::memory_order_relaxed);
+    m.cached_agent_action.store(action, std::memory_order_relaxed);
+}
+
+// Effective agent-action for Agents (forced hold/stop after degrade wins).
+[[nodiscard]] inline std::int64_t effective_agent_action(std::int64_t computed) noexcept {
+    const auto forced = g_metrics().forced_agent_action.load(std::memory_order_relaxed);
+    if (forced >= 0)
+        return forced;
+    return computed;
+}
+
+// Clear forced action after a healthy under-budget window (optional recover).
+inline void clear_forced_agent_action() noexcept {
+    g_metrics().forced_agent_action.store(-1, std::memory_order_relaxed);
+}
+
+// ── Issue #2218 present guardian ──────────────────────────────────────────
+// Thread-local: current present took degrade path (Agents / body branches).
+inline thread_local bool t_present_degrade = false;
+
+struct PresentGuardianDecision {
+    bool degrade = false;
+    bool soft_warn = false;
+    bool skip_full_rebuild = false; // dirty clean or tiny → keep last good frame
+    std::uint64_t p99_us = 0;
+    std::uint64_t budget_us = 0;
+    std::int64_t health = 100;
+    std::int64_t action = kActionOptimizeOk;
+    std::int64_t forced_action = -1; // set when degrade engages
+};
+
+// Check at entry of tui:present / tui:present-dirty (after AURA_RENDER_HOT_ENTRY).
+// p99_us: pass render_frame_time_p99_us() (or 0 when unknown).
+// dirty_cells / total_cells: optional; when total>0 and dirty is clean/tiny under
+// degrade, skip_full_rebuild is set (keep last good frame on screen).
+// Under budget: a few atomic loads only — no locks, no sort.
+[[nodiscard]] inline PresentGuardianDecision
+check_present_guardian(std::uint64_t p99_us, std::uint64_t dirty_cells = 0,
+                       std::uint64_t total_cells = 0) noexcept {
+    PresentGuardianDecision d;
+    auto& m = g_metrics();
+    d.budget_us = budget_us();
+    d.p99_us = p99_us;
+    d.health = m.cached_agent_health.load(std::memory_order_relaxed);
+    d.action = m.cached_agent_action.load(std::memory_order_relaxed);
+    m.frame_budget_check_total.fetch_add(1, std::memory_order_relaxed);
+    m.frame_budget_last_p99_us.store(p99_us, std::memory_order_relaxed);
+
+    const bool over_budget = p99_us > 0 && p99_us > d.budget_us;
+    const bool soft =
+        p99_us > 0 && p99_us * 10000ull >= d.budget_us * kSoftMarginBp && !over_budget;
+    const bool low_health = d.health < kHealthDegradeThreshold;
+    const bool action_hold_stop = d.action == kActionHold || d.action == kActionStop;
+    // Forced action from a prior degrade also re-triggers until cleared.
+    const auto forced_prev = m.forced_agent_action.load(std::memory_order_relaxed);
+    const bool forced_active = forced_prev == kActionHold || forced_prev == kActionStop;
+
+    d.soft_warn = soft;
+    if (soft)
+        m.frame_budget_soft_warn_total.fetch_add(1, std::memory_order_relaxed);
+
+    d.degrade = over_budget || low_health || action_hold_stop || forced_active;
+    t_present_degrade = d.degrade;
+
+    if (!d.degrade) {
+        // Recover: under budget + healthy → drop forced action.
+        if (p99_us > 0 && p99_us * 2 < d.budget_us && d.health >= kHealthDegradeThreshold)
+            clear_forced_agent_action();
+        return d;
+    }
+
+    m.frame_budget_degrade_total.fetch_add(1, std::memory_order_relaxed);
+    // Force next mutate window: stop if critically unhealthy, else hold.
+    d.forced_action =
+        (d.health < 40 || d.action == kActionStop || over_budget) ? kActionStop : kActionHold;
+    m.forced_agent_action.store(d.forced_action, std::memory_order_relaxed);
+
+    // Prefer skip full rebuild when dirty is clean or tiny (keep last good frame).
+    if (total_cells == 0) {
+        // Unknown dirty → still prefer skip on full present (degrade path).
+        d.skip_full_rebuild = true;
+    } else if (dirty_cells == 0) {
+        d.skip_full_rebuild = true;
+    } else {
+        const auto dirty_bp = (dirty_cells * 10000ull) / total_cells;
+        d.skip_full_rebuild = dirty_bp < kTinyDirtyBp;
+    }
+    if (d.skip_full_rebuild)
+        m.frame_budget_skip_full_total.fetch_add(1, std::memory_order_relaxed);
+    return d;
+}
+
+[[nodiscard]] inline bool present_degrade_active() noexcept {
+    return t_present_degrade;
 }
 
 // Enter frame budget (nested). Default deadline = now + budget_us.
@@ -250,6 +398,16 @@ struct Snapshot {
     std::uint64_t deferred_pending = 0;
     std::uint64_t wired = 1;
     int schema = kFrameBudgetIssue;
+    // #2218 guardian
+    std::uint64_t frame_budget_check_total = 0;
+    std::uint64_t frame_budget_degrade_total = 0;
+    std::uint64_t frame_budget_soft_warn_total = 0;
+    std::uint64_t frame_budget_last_p99_us = 0;
+    std::uint64_t frame_budget_skip_full_total = 0;
+    std::int64_t cached_agent_health = 100;
+    std::int64_t cached_agent_action = kActionOptimizeOk;
+    std::int64_t forced_agent_action = -1;
+    int schema_2218 = kPresentGuardianIssue;
 };
 
 [[nodiscard]] inline Snapshot snapshot() noexcept {
@@ -269,6 +427,15 @@ struct Snapshot {
     s.deferred_pending = static_cast<std::uint64_t>(deferred_pending());
     s.wired = m.wired.load(std::memory_order_relaxed);
     s.schema = kFrameBudgetIssue;
+    s.frame_budget_check_total = m.frame_budget_check_total.load(std::memory_order_relaxed);
+    s.frame_budget_degrade_total = m.frame_budget_degrade_total.load(std::memory_order_relaxed);
+    s.frame_budget_soft_warn_total = m.frame_budget_soft_warn_total.load(std::memory_order_relaxed);
+    s.frame_budget_last_p99_us = m.frame_budget_last_p99_us.load(std::memory_order_relaxed);
+    s.frame_budget_skip_full_total = m.frame_budget_skip_full_total.load(std::memory_order_relaxed);
+    s.cached_agent_health = m.cached_agent_health.load(std::memory_order_relaxed);
+    s.cached_agent_action = m.cached_agent_action.load(std::memory_order_relaxed);
+    s.forced_agent_action = m.forced_agent_action.load(std::memory_order_relaxed);
+    s.schema_2218 = kPresentGuardianIssue;
     return s;
 }
 
@@ -288,6 +455,15 @@ inline void reset_for_test() noexcept {
     for (auto& h : m.present_hist)
         h.store(0, std::memory_order_relaxed);
     m.budget_us.store(kDefaultBudgetUs, std::memory_order_relaxed);
+    m.frame_budget_check_total.store(0, std::memory_order_relaxed);
+    m.frame_budget_degrade_total.store(0, std::memory_order_relaxed);
+    m.frame_budget_soft_warn_total.store(0, std::memory_order_relaxed);
+    m.frame_budget_last_p99_us.store(0, std::memory_order_relaxed);
+    m.frame_budget_skip_full_total.store(0, std::memory_order_relaxed);
+    m.cached_agent_health.store(100, std::memory_order_relaxed);
+    m.cached_agent_action.store(kActionOptimizeOk, std::memory_order_relaxed);
+    m.forced_agent_action.store(-1, std::memory_order_relaxed);
+    // Keep env_budget_applied so tests don't re-read env mid-suite unless cleared.
     {
         auto& st = g_deferred();
         std::lock_guard<std::mutex> lock(st.mtx);
@@ -296,6 +472,7 @@ inline void reset_for_test() noexcept {
     t_budget_depth = 0;
     t_enter_ns = 0;
     t_deadline_ns = 0;
+    t_present_degrade = false;
 }
 
 // RAII: enter on construct, exit on destroy.

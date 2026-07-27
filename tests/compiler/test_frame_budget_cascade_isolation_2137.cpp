@@ -74,7 +74,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 int main() {
     std::println("=== Issue #2137: frame-budget cascade isolation ===");
     CHECK(kFrameBudgetIssue == 2137, "issue stamp");
-    CHECK(kDefaultBudgetUs == 16667, "default ~60fps budget us");
+    CHECK(kDefaultBudgetUs == 16000, "default ~60fps budget us (#2218 AC1)");
 
     // ── AC5: source ──
     {
