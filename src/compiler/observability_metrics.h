@@ -7403,6 +7403,12 @@ struct CompilerMetrics {
     // clear follows so AI sessions cannot accumulate orphan defer across steals.
     // Exposed via query:mutation-boundary-hold-stats schema-2211.
     std::atomic<std::uint64_t> mutation_boundary_residual_defer_total{0}; // #2211
+    // Issue #2215: RenderFastExit (outermost success under render hotpath).
+    // Skips Full TypedMutationAudit + full linear/dual-path; defers reemit.
+    // Exposed via query:mutation-boundary-hold-stats schema-2215.
+    std::atomic<std::uint64_t> render_fast_exit_total{0};                 // #2215
+    std::atomic<std::uint64_t> render_fast_exit_skipped_audit_total{0};   // #2215
+    std::atomic<std::uint64_t> render_fast_exit_deferred_reemit_total{0}; // #2215
     // Issue #2114: reemit ↔ MutationBoundary handshake (mirrors HotUpdateRegistry;
     // primary counters live on registry snapshot / query:hot-update-registry-stats).
     // Prefer registry atomics; these optional mirrors exist for dump export.

@@ -5391,6 +5391,10 @@ private:
         workspace_region_holders_{};
     std::atomic<bool> workspace_region_concurrency_enabled_{true};
     bool force_lightweight_checkpoint_for_next_boundary_ = false;
+    // Issue #2215: set by outermost Guard dtor before exit_mutation_boundary
+    // when RenderFastExit applies — skip Full TypedMutationAudit / composite
+    // Full recovery on success (failure path never sets this).
+    bool render_fast_exit_this_boundary_ = false;
 
 public:
     // Issue #2121: public shard count + region helpers (Agents / tests).
@@ -12921,6 +12925,11 @@ public:
         // The FlatAST counter is lifetime-cumulative; dirty-marks for this
         // boundary is (exit_count > enter_count), not (exit_count > 0).
         std::uint64_t dirty_upward_at_enter_ = 0;
+        // Issue #2215: outermost entered under render hotpath → RenderFastExit
+        // on success (skip Full audit / full linear+dual-path; defer reemit).
+        // Captured at ctor from arena_policy::in_render_hotpath() (set by
+        // RenderHotEntryGuard / enter_render_hotpath).
+        bool render_fast_exit_ = false;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.

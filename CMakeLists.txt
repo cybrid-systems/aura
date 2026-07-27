@@ -2384,6 +2384,11 @@ aura_add_issue_test(test_tui_present_dirty_2214)
 aura_issue_test_link_llvm_jit(test_tui_present_dirty_2214)
 add_dependencies(all_test_issue_targets test_tui_present_dirty_2214)
 
+# Issue #2215: RenderFastExit for outermost MutationBoundary under render hotpath.
+aura_add_issue_test(test_render_fast_exit_2215)
+aura_issue_test_link_llvm_jit(test_render_fast_exit_2215)
+add_dependencies(all_test_issue_targets test_render_fast_exit_2215)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
