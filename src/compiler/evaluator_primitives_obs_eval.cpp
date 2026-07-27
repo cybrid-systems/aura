@@ -6335,6 +6335,26 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"incremental-soundness-mode-allows-prod",
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::incremental_soundness_mode_allows_prod() ? 1 : 0))},
+                // Issue #2248: Agent-driven adaptive relower threshold
+                {"adaptive-thr-current",
+                 make_int(static_cast<std::int64_t>(
+                     m ? load(m->adaptive_thr_current)
+                       : static_cast<std::uint64_t>(
+                             aura::compiler::current_adaptive_partial_thr()) *
+                             100))},
+                {"adaptive-thr-raises-total", make_int(m ? load(m->adaptive_thr_raises_total) : 0)},
+                {"adaptive-thr-decays-total", make_int(m ? load(m->adaptive_thr_decays_total) : 0)},
+                {"adaptive-thr-bad-window-count",
+                 make_int(
+                     m ? load(m->adaptive_thr_bad_window_count)
+                       : static_cast<std::int64_t>(
+                             aura::compiler::adaptive_thr_policy_singleton().bad_window_count))},
+                {"adaptive-thr-frozen",
+                 make_int(m ? load(m->adaptive_thr_frozen)
+                            : (aura::compiler::adaptive_thr_frozen() ? 1 : 0))},
+                {"adaptive-thr-wired", make_int(1)},
+                {"schema-2248", make_int(2248)},
+                {"issue-2248", make_int(2248)},
                 {"schema-2245", make_int(2245)},
                 {"issue-2245", make_int(2245)},
                 {"schema-2113", make_int(2113)},

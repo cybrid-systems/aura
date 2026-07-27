@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_adaptive_thr_coverage():
+    """Issue #2248: Agent-driven adaptive relower threshold from fallback-reason telemetry.
+
+    Validates the 5-AC contract from issue body:
+      AC1: bad-reason raises thr (measurable via query)
+      AC2: clean-window decays thr (no permanent ratchet)
+      AC3: env override AURA_ADAPTIVE_THR=0 freezes at base
+      AC4: 5 atomic counters + 4 query keys + schema-2248 lineage
+      AC5: StormLevel still ORs (preserved from #2112/#2190)
+    """
+    print(f"{B}═══ adaptive relower threshold coverage (#2248) ═══{N}")
+    script = ROOT / "scripts" / "check_adaptive_thr_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("adaptive relower threshold coverage contract rows failed")
+        return 1
+    ok("adaptive relower threshold coverage clean")
+    return 0
+
+
 def cmd_dual_dep_graph_parity_coverage():
     """Issue #2247: dual dep_graph write-parity gate + hybrid cascade consistency.
 
@@ -1865,6 +1891,7 @@ def cmd_gate():
         or cmd_source_to_ir_strict()
         or cmd_cross_function_impact_scope_coverage()
         or cmd_dual_dep_graph_parity_coverage()
+        or cmd_adaptive_thr_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2524,6 +2551,7 @@ def main():
         "source-to-ir-strict": cmd_source_to_ir_strict,
         "cross-fn-impact-scope": cmd_cross_function_impact_scope_coverage,
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
+        "adaptive-thr": cmd_adaptive_thr_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,

@@ -1240,6 +1240,109 @@ struct AdaptiveRelowerDecision {
         dirty_count, total_blocks, deopt_window_count, deopt_storm_threshold, deopt_storm_active));
 }
 
+// ── Issue #2248: Agent-driven adaptive relower threshold from
+// fallback-reason telemetry (refine #2112 / #2127 / #2190).
+//
+// AdaptiveThrPolicy: closed-loop controller that raises the partial
+// cost threshold when correctness-risk fallback reasons appear (e.g.
+// MapInconsistent / DesyncForceFull from #2181 / #2193), and decays
+// back toward base when the window is clean (Ok partial successes).
+//
+// AC1: sustained bad reasons raise current_thr (measurable via query).
+// AC2: clean window decays (no permanent ratchet).
+// AC3: env override AURA_ADAPTIVE_THR=0 freezes at base.
+// AC5: StormLevel still ORs (caller uses
+//      should_partial_relower_workload_storm_aware + adaptive check).
+struct AdaptiveThrPolicy {
+    std::uint32_t base_partial_cost_thr = 8;             // #2112 default
+    std::uint32_t current_thr = 8;                       // raised under bad reasons
+    std::uint32_t bad_window_count = 0;                  // MapInconsistent + DesyncForceFull
+    std::uint32_t bad_window_cap = 50;                   // prevent unbounded growth
+    std::uint32_t clean_window_count = 0;                // Ok successes for decay
+    static constexpr std::uint32_t kStepBp = 250;        // +25% per bad event (basis points)
+    static constexpr std::uint32_t kMaxRatioBp = 2500;   // cap at 2.5x base
+    static constexpr std::uint32_t kCleanDecayAfter = 5; // decay after 5 clean
+};
+
+inline AdaptiveThrPolicy& adaptive_thr_policy_singleton() noexcept {
+    static AdaptiveThrPolicy p;
+    return p;
+}
+
+[[nodiscard]] inline std::uint32_t current_adaptive_partial_thr() noexcept {
+    return adaptive_thr_policy_singleton().current_thr;
+}
+
+// Issue #2248 AC3: env override AURA_ADAPTIVE_THR=0 freezes at base.
+inline bool adaptive_thr_frozen() noexcept {
+    const char* env = std::getenv("AURA_ADAPTIVE_THR");
+    return env != nullptr && env[0] == '0';
+}
+
+// Update policy based on a fallback reason. Correctness-risk reasons
+// (MapInconsistent / DesyncForceFull) bump bad_window_count + raise
+// current_thr (bounded by kMaxRatioBp * base / 1000). Ok reasons
+// increment clean_window_count; after kCleanDecayAfter clean events,
+// decay current_thr back toward base (1-step per kCleanDecayAfter).
+// Threshold / ParseFail / RelowerReject / Other / NoSource / EmptyIr
+// are neutral (neither raise nor decay) — they're deliberate or
+// infrastructure reasons, not correctness risk.
+inline void note_relower_fallback_for_adaptive(aura::compiler::RelowerFallbackReason r) noexcept {
+    auto& p = adaptive_thr_policy_singleton();
+    if (adaptive_thr_frozen()) {
+        // AC3: env override freezes policy.
+        return;
+    }
+    const bool is_correctness_risk = r == aura::compiler::RelowerFallbackReason::MapInconsistent ||
+                                     r == aura::compiler::RelowerFallbackReason::DesyncForceFull;
+    if (is_correctness_risk) {
+        // AC1: raise threshold.
+        if (p.bad_window_count < p.bad_window_cap)
+            ++p.bad_window_count;
+        // Raise current_thr by kStepBp basis points per bad event.
+        const std::uint64_t raised =
+            static_cast<std::uint64_t>(p.current_thr) +
+            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * kStepBp) / 1000;
+        const std::uint64_t max_thr =
+            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * kMaxRatioBp) / 1000;
+        p.current_thr = raised > max_thr ? static_cast<std::uint32_t>(max_thr)
+                                         : static_cast<std::uint32_t>(raised);
+        // Reset clean window counter.
+        p.clean_window_count = 0;
+    } else if (r == aura::compiler::RelowerFallbackReason::Ok) {
+        // AC2: clean window decay.
+        ++p.clean_window_count;
+        if (p.clean_window_count >= kCleanDecayAfter) {
+            // Decay 1 step toward base.
+            if (p.current_thr > p.base_partial_cost_thr) {
+                const std::int64_t lower =
+                    static_cast<std::int64_t>(p.current_thr) -
+                    (static_cast<std::int64_t>(p.base_partial_cost_thr) * kStepBp) / 1000;
+                p.current_thr = lower < static_cast<std::int64_t>(p.base_partial_cost_thr)
+                                    ? p.base_partial_cost_thr
+                                    : static_cast<std::uint32_t>(lower);
+            }
+            if (p.bad_window_count > 0)
+                --p.bad_window_count;
+            p.clean_window_count = 0;
+        }
+    }
+}
+
+// Reset policy (test hook).
+inline void reset_adaptive_thr_for_test() noexcept {
+    auto& p = adaptive_thr_policy_singleton();
+    p = AdaptiveThrPolicy{};
+}
+
+// Inject a bad window (test hook for AC1).
+inline void inject_adaptive_thr_bad_for_test(std::uint32_t n) noexcept {
+    auto& p = adaptive_thr_policy_singleton();
+    for (std::uint32_t i = 0; i < n; ++i) {
+        note_relower_fallback_for_adaptive(aura::compiler::RelowerFallbackReason::MapInconsistent);
+    }
+}
+
 // ── Issue #2113: incremental soundness oracle (partial ≡ full) ──
 // Debug/self-evo confidence: after partial re-lower, optionally
 // re-lower fully and compare IR. Zero overhead when disabled

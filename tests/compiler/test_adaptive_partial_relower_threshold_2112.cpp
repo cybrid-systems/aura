@@ -167,6 +167,68 @@ static void ac5_regression_pure() {
     CHECK(q.find("schema-2112") != std::string::npos, "schema-2112");
 }
 
+
+// AC (Issue #2248): Agent-driven adaptive relower threshold from
+// fallback-reason telemetry. AC1 (bad reasons raise thr), AC2
+// (clean window decays), AC3 (env override freezes).
+void ac2248_agent_driven_adaptive_thr() {
+    std::println("\n--- AC #2248: Agent-driven adaptive thr ---");
+    auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    // Policy + helpers in ir_cache_pure.ixx
+    CHECK(pure.find("AdaptiveThrPolicy") != std::string::npos, "AdaptiveThrPolicy struct");
+    CHECK(pure.find("current_adaptive_partial_thr") != std::string::npos,
+          "current_adaptive_partial_thr getter");
+    CHECK(pure.find("note_relower_fallback_for_adaptive") != std::string::npos,
+          "note_relower_fallback_for_adaptive helper");
+    CHECK(pure.find("adaptive_thr_frozen") != std::string::npos,
+          "adaptive_thr_frozen env override");
+    CHECK(pure.find("AURA_ADAPTIVE_THR") != std::string::npos, "env override AURA_ADAPTIVE_THR");
+    CHECK(pure.find("MapInconsistent") != std::string::npos &&
+              pure.find("DesyncForceFull") != std::string::npos,
+          "correctness-risk reasons referenced");
+    // 5 atomic counters in observability_metrics.h
+    CHECK(met.find("adaptive_thr_current{800}") != std::string::npos, "adaptive_thr_current field");
+    CHECK(met.find("adaptive_thr_raises_total{0}") != std::string::npos, "raises counter field");
+    CHECK(met.find("adaptive_thr_decays_total{0}") != std::string::npos, "decays counter field");
+    CHECK(met.find("adaptive_thr_bad_window_count{0}") != std::string::npos,
+          "bad window count field");
+    CHECK(met.find("adaptive_thr_frozen{0}") != std::string::npos, "frozen field");
+    CHECK(met.find("note_relower_fallback_for_adaptive") != std::string::npos,
+          "note_relower_fallback feeds adaptive policy");
+    // Query surface (4 new keys + schema-2248)
+    CHECK(q.find("adaptive-thr-current") != std::string::npos, "adaptive-thr-current key");
+    CHECK(q.find("adaptive-thr-raises-total") != std::string::npos,
+          "adaptive-thr-raises-total key");
+    CHECK(q.find("adaptive-thr-decays-total") != std::string::npos,
+          "adaptive-thr-decays-total key");
+    CHECK(q.find("adaptive-thr-bad-window-count") != std::string::npos,
+          "adaptive-thr-bad-window-count key");
+    CHECK(q.find("adaptive-thr-frozen") != std::string::npos, "adaptive-thr-frozen key");
+    CHECK(q.find("adaptive-thr-wired") != std::string::npos, "wired sentinel");
+    CHECK(q.find("schema-2248") != std::string::npos, "schema-2248 lineage");
+    CHECK(q.find("issue-2248") != std::string::npos, "issue-2248 lineage");
+    // Runtime smoke (AC1): reset, inject 20 MapInconsistent, thr should rise.
+    aura::compiler::reset_adaptive_thr_for_test();
+    const auto base_thr = aura::compiler::current_adaptive_partial_thr();
+    aura::compiler::inject_adaptive_thr_bad_for_test(20);
+    const auto raised_thr = aura::compiler::current_adaptive_partial_thr();
+    CHECK(raised_thr > base_thr, "AC1: raised_thr > base after 20 bad events");
+    CHECK(raised_thr <= (base_thr * 25) / 10, "AC1: raised_thr <= 2.5x base (cap)");
+    // AC2: clean window decay.
+    const auto peak_thr = raised_thr;
+    for (int i = 0; i < 30; ++i) {
+        aura::compiler::note_relower_fallback_for_adaptive(
+            aura::compiler::RelowerFallbackReason::Ok);
+    }
+    const auto decayed_thr = aura::compiler::current_adaptive_partial_thr();
+    CHECK(decayed_thr < peak_thr, "AC2: decayed_thr < peak after clean window");
+    CHECK(decayed_thr >= base_thr, "AC2: decayed_thr >= base (no ratchet below base)");
+    // Restore for downstream tests.
+    aura::compiler::reset_adaptive_thr_for_test();
+}
+
 } // namespace
 
 int main() {
@@ -176,6 +238,7 @@ int main() {
     ac3_query_surface();
     ac4_force_threshold_hook();
     ac5_regression_pure();
+    ac2248_agent_driven_adaptive_thr();
     reset_partial_relower_threshold_for_test();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
