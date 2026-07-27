@@ -3859,6 +3859,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     case SecurityEventKind::EffectAllow:
                         kind_str = "EffectAllow";
                         break;
+                    case SecurityEventKind::MacroHygieneRollbackOnStrict:
+                        kind_str = "MacroHygieneRollbackOnStrict";
+                        break;
                 }
                 auto line = std::format(
                     "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} effect={} "
@@ -3925,6 +3928,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         return "MacroHygiene";
                     case SecurityEventKind::EffectAllow:
                         return "EffectAllow";
+                    case SecurityEventKind::MacroHygieneRollbackOnStrict:
+                        return "MacroHygieneRollbackOnStrict";
                 }
                 return "Unknown";
             };

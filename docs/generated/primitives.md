@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**537** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**541** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 98 primitives (18%)
-- **core**: 383 primitives (71%)
+- **core**: 387 primitives (72%)
 - **internal-observable**: 48 primitives (9%)
 - **convenience**: 8 primitives (1%)
 
@@ -182,7 +182,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (260)
+## Core builtins (264)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -351,6 +351,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `pin-stable-refs` *[core]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `pin-table-size` *[core]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `pow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `prim-cold-dispatch-fallback` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `prim-hot-dispatch-hits` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -427,6 +429,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `typecheck-current` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `typed-mutate-atomic` *[core]* — `src/compiler/evaluator_primitives_mutate.cpp`
+- `unpin-stable-refs` *[core]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -438,6 +441,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `void?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `while` *[core]* — `src/compiler/evaluator_primitives_control.cpp`
 - `with-capability` *[core]* — `src/compiler/evaluator_primitives_policy.cpp`
+- `with-pinned` *[core]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `workspace` *[core]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace-persist-format-version` *[mutation-safety]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` *[mutation-safety]* — `src/compiler/evaluator_primitives_persist.cpp`
@@ -793,7 +797,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (383)
+### Core builtins (must remain primitive) (387)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -996,6 +1000,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `orchestration:tune-gc-frequency` — `src/compiler/evaluator_primitives_query.cpp`
 - `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
+- `pin-stable-refs` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `pin-table-size` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `pow` — `src/compiler/evaluator_primitives_math.cpp`
 - `prim-cold-dispatch-fallback` — `src/compiler/evaluator_primitives_memory.cpp`
 - `prim-hot-dispatch-hits` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1156,6 +1162,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typed-mutate-atomic` — `src/compiler/evaluator_primitives_mutate.cpp`
+- `unpin-stable-refs` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector->list` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -1174,6 +1181,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_primitives_control.cpp`
 - `with-capability` — `src/compiler/evaluator_primitives_policy.cpp`
+- `with-pinned` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `workspace` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `write` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`

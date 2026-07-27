@@ -16,6 +16,9 @@ module;
 #include "core/sandbox.hh"                // Issue #1878: is_strict() for multi-tenant batch
 #include "core/provenance_tracker.hh"     // Issue #1878: last_hygiene tenant stamp
 #include "core/arena_auto_policy_stats.h" // Issue #1919: mutation pressure → auto-compact
+#include "core/security_event.hh"         // Issue #2237: MacroHygieneRollbackOnStrict audit
+#include "core/workspace_epoch.hh"        // Issue #2237: current_mutation_epoch
+#include "serve/fiber.h"                  // Issue #2237: aura_fiber_current_id
 
 module aura.compiler.evaluator;
 
@@ -47,6 +50,10 @@ import aura.compiler.soa_view;
 extern "C" std::uint64_t aura_unstamp_macro_introduced_with_counter(void* flat_ptr,
                                                                     std::uint32_t root,
                                                                     int keep_provenance) noexcept;
+// Issue #2237: rollback counters + strict-mode flag (macro_expansion.cpp).
+extern "C" void aura_rollback_macro_introduced_total_bump() noexcept;
+extern "C" void aura_rollback_strict_audited_total_bump() noexcept;
+extern "C" std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept;
 
 // Issue #1956: C snapshot only (do not attach HotUpdateRegistry to module).
 extern "C" {
@@ -644,6 +651,152 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         return ref;
     };
+
+    // Issue #2189: Agent-visible pin lifecycle (pin table = cow_boundary_pinned_refs_).
+    // Collect NodeIds / stable-refs from a single arg or a list of them.
+    auto collect_pin_handles = [&ev, unpack_stable_ref_arg](const EvalValue& arg,
+                                                            std::vector<StableNodeRef>& out) {
+        auto push_one = [&](const EvalValue& v) {
+            if (auto packed = unpack_stable_ref_arg(v)) {
+                out.push_back(*packed);
+                return;
+            }
+            if (is_int(v)) {
+                StableNodeRef r{};
+                r.id = static_cast<aura::ast::NodeId>(as_int(v));
+                out.push_back(r);
+            }
+        };
+        if (is_pair(arg)) {
+            // Could be a single (id . gen) OR a list of handles.
+            // Prefer packed stable-ref shape first.
+            if (auto packed = unpack_stable_ref_arg(arg)) {
+                out.push_back(*packed);
+                return;
+            }
+            // Walk as list.
+            EvalValue cur = arg;
+            while (is_pair(cur)) {
+                auto idx = as_pair_idx(cur);
+                if (static_cast<std::size_t>(idx) >= ev.pairs_.size())
+                    break;
+                push_one(ev.pairs_[idx].car);
+                cur = ev.pairs_[idx].cdr;
+            }
+            return;
+        }
+        push_one(arg);
+    };
+
+    // (pin-stable-refs ref | (ref ...) ...) — pin into Agent pin table.
+    // Returns count of pins registered. Tenant stamp + ensure_valid before pin
+    // so #2056 cross-tenant denial is not bypassed.
+    add("pin-stable-refs",
+        [mev, &ev, collect_pin_handles](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return mev("bad-arg", "usage: (pin-stable-refs ref|(ref ...) ...)");
+            if (!ev.workspace_flat_)
+                return mev("no-workspace", "no workspace AST loaded");
+            std::vector<StableNodeRef> handles;
+            for (const auto& arg : a)
+                collect_pin_handles(arg, handles);
+            std::size_t pinned = 0;
+            for (auto ref : handles) {
+                // Promote bare id to stamped live ref.
+                if (ref.gen == 0 && ref.wrap_epoch == 0)
+                    ref = ev.make_stamped_ref(ref.id);
+                else
+                    ev.stamp_stable_ref(ref);
+                // Tenant isolation: ensure_valid fails cross-tenant under sandbox.
+                if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
+                    continue;
+                ref.pin_for_cow();
+                ev.pin_stable_ref_for_cow_boundary(ref);
+                ++pinned;
+            }
+            return make_int(static_cast<std::int64_t>(pinned));
+        });
+    {
+        ::aura::compiler::PrimMeta meta{};
+        meta.pure = false;
+        meta.doc = "Issue #2189: pin StableNodeRef handles into Agent pin table";
+        ev.primitives().set_meta_for_name("pin-stable-refs", std::move(meta));
+    }
+
+    // (unpin-stable-refs ref | (ref ...) ...) — remove from pin table.
+    add("unpin-stable-refs",
+        [mev, &ev, collect_pin_handles](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return mev("bad-arg", "usage: (unpin-stable-refs ref|(ref ...) ...)");
+            std::vector<StableNodeRef> handles;
+            for (const auto& arg : a)
+                collect_pin_handles(arg, handles);
+            std::size_t n = 0;
+            for (const auto& ref : handles) {
+                if (ev.unpin_stable_ref_from_cow_boundary(ref.id, ref.workspace_id))
+                    ++n;
+            }
+            return make_int(static_cast<std::int64_t>(n));
+        });
+    {
+        ::aura::compiler::PrimMeta meta{};
+        meta.pure = false;
+        meta.doc = "Issue #2189: unpin StableNodeRef handles from Agent pin table";
+        ev.primitives().set_meta_for_name("unpin-stable-refs", std::move(meta));
+    }
+
+    // (with-pinned refs body) — RAII: pin on enter, restamp + unpin on exit.
+    // body: closure (eval body_id) or passthrough value.
+    add("with-pinned", [mev, &ev, collect_pin_handles](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2)
+            return mev("bad-arg", "usage: (with-pinned refs body)");
+        if (!ev.workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+        std::vector<StableNodeRef> handles;
+        collect_pin_handles(a[0], handles);
+        std::vector<aura::ast::NodeId> pinned_ids;
+        pinned_ids.reserve(handles.size());
+        for (auto ref : handles) {
+            if (ref.gen == 0 && ref.wrap_epoch == 0)
+                ref = ev.make_stamped_ref(ref.id);
+            else
+                ev.stamp_stable_ref(ref);
+            if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
+                continue;
+            ref.pin_for_cow();
+            ev.pin_stable_ref_for_cow_boundary(ref);
+            pinned_ids.push_back(ref.id);
+        }
+        // Evaluate body.
+        EvalValue result = make_void();
+        const auto& body = a[1];
+        if (is_closure(body) && ev.workspace_flat_ && ev.workspace_pool_) {
+            auto cid = as_closure_id(body);
+            auto it = ev.closures_.find(cid);
+            if (it != ev.closures_.end() && it->second.body_id != aura::ast::NULL_NODE)
+                result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, it->second.body_id,
+                                      ev.top_env())
+                             .value_or(make_void());
+        } else {
+            result = body;
+        }
+        // Exit: restamp pin table (Guard/mutate may have advanced gen), then unpin.
+        (void)ev.restamp_pinned_stable_refs();
+        for (auto id : pinned_ids)
+            (void)ev.unpin_stable_ref_from_cow_boundary(id);
+        return result;
+    });
+    {
+        ::aura::compiler::PrimMeta meta{};
+        meta.pure = false;
+        meta.doc = "Issue #2189: RAII pin table scope (pin → body → restamp+unpin)";
+        ev.primitives().set_meta_for_name("with-pinned", std::move(meta));
+    }
+
+    // (pin-table-size) — active Agent pin count.
+    add("pin-table-size", [&ev](std::span<const EvalValue>) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(ev.cow_boundary_pinned_ref_count()));
+    });
 
     auto resolve_mutate_node_arg = [&ev, mev, unpack_stable_ref_arg,
                                     safe_str](aura::ast::FlatAST& flat, const EvalValue& arg,
@@ -1590,6 +1743,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (aura_macro_expand_sandbox_strict_v_read() != 0 && unstampped > 0) {
                 using aura::core::security_event::SecurityEventKind;
                 using aura::core::security_event::append_security_event;
+                using aura::core::security_event::g_security_event_ring;
                 char reason_buf[80];
                 const int rn = std::snprintf(reason_buf, sizeof(reason_buf),
                                              "rollback unstampped=%llu root=%llu strict-mode",
@@ -1597,16 +1751,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                              static_cast<unsigned long long>(root));
                 (void)rn;
                 append_security_event(
-                    aura::core::security_event::g_security_event_ring(),
-                    SecurityEventKind::MacroHygieneRollbackOnStrict,
+                    g_security_event_ring(), SecurityEventKind::MacroHygieneRollbackOnStrict,
                     /*tenant=*/0,
-                    /*mutation_id=*/static_cast<std::uint64_t>(ev.current_mutation_id()),
-                    /*epoch=*/ev.epoch(),
+                    /*mutation_id=*/0,
+                    /*epoch=*/aura::core::current_mutation_epoch(),
                     /*effect_bits=*/aura::compiler::security::kEffectMutate,
                     /*op=*/"mutate:rollback-macro-introduced",
                     /*reason=*/std::string_view(reason_buf),
                     /*denied=*/false,
-                    /*fiber_id=*/aura_fiber_current_id());
+                    /*fiber_id=*/static_cast<std::int64_t>(aura_fiber_current_id()));
                 aura_rollback_strict_audited_total_bump();
             }
             return make_int(static_cast<std::int64_t>(unstampped));

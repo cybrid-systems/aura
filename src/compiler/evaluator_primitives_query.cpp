@@ -66,6 +66,10 @@ extern "C" std::uint64_t aura_macro_expand_mutate_restamp_total_v_read() noexcep
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp.
 extern "C" std::uint64_t aura_unstamp_macro_introduced_total_v_read() noexcept;
+// Issue #2237: rollback + strict-mode counters (macro_expansion.cpp).
+extern "C" std::uint64_t aura_rollback_macro_introduced_total_v_read() noexcept;
+extern "C" std::uint64_t aura_rollback_strict_audited_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept;
 // Issue #2021: depth + concurrent peak readers / metrics snapshot.
 extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
@@ -1677,9 +1681,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // sub-workspace pinning + boundary validity observability for
     // concurrent AI orchestration. Complements #527
     // (stable-ref-cow-fiber-stats) and #457 (stable-ref-stats).
+    // Issue #2189: Agent pin-lifecycle counters (schema-2189 fold-in).
     ObservabilityPrims::register_stats_impl(
         "query:stable-ref-boundary-stats-hash", [&ev, &string_heap](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
+            // Capacity 32: #738 keys + #2189 pin-lifecycle fields.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1724,6 +1730,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("boundary-validations", static_cast<std::int64_t>(boundary_checks));
             insert_kv("workspace-cow-epoch", static_cast<std::int64_t>(cow_epoch));
             insert_kv("schema", 738);
+            // Issue #2189: Agent pin table lifecycle (pin-stable-refs / with-pinned).
+            insert_kv("pin-table-size", static_cast<std::int64_t>(pins_active));
+            insert_kv("agent-pin-ops-total", static_cast<std::int64_t>(ev.agent_pin_ops_total()));
+            insert_kv("agent-unpin-ops-total",
+                      static_cast<std::int64_t>(ev.agent_unpin_ops_total()));
+            insert_kv("agent-pin-restamp-total",
+                      static_cast<std::int64_t>(ev.agent_pin_restamp_total()));
+            insert_kv("agent-pin-invalidate-total",
+                      static_cast<std::int64_t>(ev.agent_pin_invalidate_total()));
+            insert_kv("schema-2189", 2189);
+            insert_kv("issue-2189", 2189);
+            insert_kv("agent-pin-lifecycle-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

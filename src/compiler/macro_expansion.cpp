@@ -514,14 +514,12 @@ extern "C" void aura_rollback_strict_audited_total_bump() noexcept {
 }
 // Issue #2235: C-linkage reader / setter for the cross-FlatAST
 // hygiene-gate strict-mode flag (g_macro_expand_sandbox_strict).
-// Reader is inline so it's local-TU-cheap; setter is inline + atomic
-// store for cheap test toggles + runtime hook integration. Default 0
-// (relaxed) preserves backwards compat with the pre-#2235 production
-// behavior (counter-only on drift).
-inline std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept {
+// Must be extern "C" so mutate/query TUs can call them without
+// module import of macro_expansion internals.
+extern "C" std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept {
     return g_macro_expand_sandbox_strict.load(std::memory_order_relaxed);
 }
-inline void aura_macro_set_expand_sandbox_strict(int strict_mode) noexcept {
+extern "C" void aura_macro_set_expand_sandbox_strict(int strict_mode) noexcept {
     g_macro_expand_sandbox_strict.store(strict_mode != 0 ? 1 : 0, std::memory_order_relaxed);
 }
 // Issue #2098: per-cloned-subtree schema-cache + dirty/provenance

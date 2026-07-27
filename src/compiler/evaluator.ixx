@@ -12374,6 +12374,11 @@ public:
     std::vector<aura::ast::FlatAST::StableNodeRef> cow_boundary_pinned_refs_{};
     mutable std::mutex cow_boundary_pins_mtx_{};
     std::atomic<std::uint64_t> cow_boundary_pins_total_{0};
+    // Issue #2189: Agent pin-lifecycle observability (pin-table RAII surface).
+    std::atomic<std::uint64_t> agent_pin_ops_total_{0};
+    std::atomic<std::uint64_t> agent_unpin_ops_total_{0};
+    std::atomic<std::uint64_t> agent_pin_restamp_total_{0};
+    std::atomic<std::uint64_t> agent_pin_invalidate_total_{0};
     static constexpr std::size_t kMaxPinnedBoundaryRefs = 4096;
     void pin_stable_ref_for_cow_boundary(aura::ast::FlatAST::StableNodeRef ref) noexcept {
         ref.pin_for_cow();
@@ -12395,8 +12400,50 @@ public:
             cow_boundary_pinned_refs_.push_back(ref);
         }
         cow_boundary_pins_total_.fetch_add(1, std::memory_order_relaxed);
+        agent_pin_ops_total_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_flat_)
             workspace_flat_->bump_pinned_across_boundaries();
+    }
+    // Issue #2189: explicit unpin from Agent pin table (cow_boundary_pinned_refs_).
+    // Returns true if a pin was removed. Does not clear boundary_pinned on
+    // stack-held copies — only the registry entry.
+    bool unpin_stable_ref_from_cow_boundary(aura::ast::NodeId id,
+                                            std::uint32_t workspace_id = 0) noexcept {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        auto it = std::remove_if(cow_boundary_pinned_refs_.begin(), cow_boundary_pinned_refs_.end(),
+                                 [id, workspace_id](const aura::ast::FlatAST::StableNodeRef& r) {
+                                     if (r.id != id)
+                                         return false;
+                                     if (workspace_id != 0 && r.workspace_id != 0 &&
+                                         r.workspace_id != workspace_id)
+                                         return false;
+                                     return true;
+                                 });
+        if (it == cow_boundary_pinned_refs_.end())
+            return false;
+        cow_boundary_pinned_refs_.erase(it, cow_boundary_pinned_refs_.end());
+        agent_unpin_ops_total_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    [[nodiscard]] bool is_agent_pinned(aura::ast::NodeId id) const noexcept {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        for (const auto& r : cow_boundary_pinned_refs_) {
+            if (r.id == id)
+                return true;
+        }
+        return false;
+    }
+    [[nodiscard]] std::uint64_t agent_pin_ops_total() const noexcept {
+        return agent_pin_ops_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t agent_unpin_ops_total() const noexcept {
+        return agent_unpin_ops_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t agent_pin_invalidate_total() const noexcept {
+        return agent_pin_invalidate_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t agent_pin_restamp_total() const noexcept {
+        return agent_pin_restamp_total_.load(std::memory_order_relaxed);
     }
     void propagate_cow_pins_after_clone(std::uint32_t child_layer,
                                         std::uint64_t child_cow_epoch) noexcept {
