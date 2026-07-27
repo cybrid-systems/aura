@@ -154,6 +154,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             flat_ptr->root = pr.root;
             ev.workspace_flat_ = flat_ptr;
             ev.workspace_pool_ = pool_ptr;
+            // Issue #2220: set-code replaces workspace — drop long-lived
+            // TypeChecker so the next typecheck rebuilds against new AST.
+            ev.invalidate_persistent_typechecker();
             // Issue #1381: retain source for serialize-workspace.
             ev.workspace_source_text_ = ev.string_heap_[idx];
             // Issue #211: invalidate the (tag, arity) index
@@ -331,6 +334,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         flat_ptr->root = pr.root;
         ev.workspace_flat_ = flat_ptr;
         ev.workspace_pool_ = pool_ptr;
+        // Issue #2220: load-file replaces workspace — drop persistent TypeChecker.
+        ev.invalidate_persistent_typechecker();
         ev.update_shared_tree_root();
         // (ASAN fix #107 leak) delete the old index; see sibling site above.
         destroy_defuse_index();

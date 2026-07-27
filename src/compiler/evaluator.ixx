@@ -13331,6 +13331,23 @@ public:
     // Issue #1769: exception-safe (see run_typecheck_no_lock).
     bool run_post_mutate_typecheck_no_lock();
 
+    // ── Issue #2220: long-lived TypeChecker for multi-round mutate ──
+    // Reuses one TypeChecker (cs_cache_ / solve_delta_cs_ / inject_type_sigs)
+    // across consecutive post-mutate / inline typechecks on this Evaluator.
+    // Invalidated on set-code / TypeRegistry generation wrap.
+    // Returns opaque TypeChecker*; stable until invalidate/destroy.
+    [[nodiscard]] void* ensure_typechecker() noexcept;
+    void invalidate_persistent_typechecker() noexcept;
+    [[nodiscard]] void* persistent_typechecker() const noexcept {
+        return persistent_typechecker_opaque_;
+    }
+    [[nodiscard]] std::uint64_t persistent_typechecker_reuse_total() const noexcept {
+        return persistent_tc_reuse_total_;
+    }
+    [[nodiscard]] std::uint64_t persistent_typechecker_create_total() const noexcept {
+        return persistent_tc_create_total_;
+    }
+
     // ── Issue #2144: Guard-exit selective predicate-memo + occurrence ──
     //
     // Long-lived InferenceEngine (opaque) retains predicate_memo_ across
@@ -13366,6 +13383,14 @@ private:
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
     void* commit_occurrence_vars_opaque_ = nullptr;
     void destroy_commit_type_checker() noexcept;
+    // Issue #2220: primary long-lived TypeChecker for mutate/inline typecheck.
+    void* persistent_typechecker_opaque_ = nullptr;
+    std::uint64_t persistent_tc_registry_gen_ = 0;
+    std::uint64_t persistent_tc_workspace_gen_ = 0;
+    std::uint64_t persistent_tc_create_total_ = 0;
+    std::uint64_t persistent_tc_reuse_total_ = 0;
+    std::uint64_t persistent_tc_invalidate_total_ = 0;
+    void destroy_persistent_typechecker() noexcept;
 };
 
 

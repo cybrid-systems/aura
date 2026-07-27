@@ -6036,6 +6036,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2104", 2104);
             insert_kv("issue-2104", 2104);
             insert_kv("schema-2068", 2068);
+            // Issue #2220: long-lived TypeChecker on Evaluator mutate path.
+            {
+                const std::int64_t tc_create =
+                    m ? static_cast<std::int64_t>(
+                            m->typecheck_persistent_create_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t tc_reuse =
+                    m ? static_cast<std::int64_t>(
+                            m->typecheck_persistent_reuse_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t tc_inv =
+                    m ? static_cast<std::int64_t>(m->typecheck_persistent_invalidate_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t tc_hits =
+                    m ? static_cast<std::int64_t>(
+                            m->typecheck_persistent_cs_cache_hits.load(std::memory_order_relaxed))
+                      : 0;
+                insert_kv("typecheck-persistent-create-total", tc_create);
+                insert_kv("typecheck-persistent-reuse-total", tc_reuse);
+                insert_kv("typecheck-persistent-invalidate-total", tc_inv);
+                insert_kv("typecheck-persistent-cs-cache-hits", tc_hits);
+                insert_kv("typecheck-persistent-wired", 1);
+                insert_kv("schema-2220", 2220);
+                insert_kv("issue-2220", 2220);
+            }
             // Issue #2219: post-mutate Soft/Hard type gate policy surface.
             {
                 const auto mtg = mutate_type_gate::snapshot();
