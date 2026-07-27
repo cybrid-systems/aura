@@ -52,6 +52,15 @@ struct MacroSelfEvoPolicy {
     std::uint32_t max_depth = 256; // tighter than internal hard limit 1024
     bool allow_rest_hygiene = true;
     bool allow_concurrent_fiber = true;
+    // Issue #2243: enforce strict-mode hygiene defaults under multi-tenant.
+    // Default-ON for granted policies; Off-mode policy overrides to false below.
+    bool force_hygienic = true;
+    // 0 = unlimited. Hard ceiling on name_map size during expand; prevents
+    // memory amplification from adversarial macros.
+    std::uint32_t max_gensym_map_size = 0;
+    // 0 = unlimited. Maps into the C-linkage per-fiber violation budget
+    // helper at expand entry, complementing #2241's #2097 violation counter.
+    std::uint32_t max_violations_per_fiber = 0;
 };
 
 // Result of check_macro_self_evo (expand entry gate).
@@ -691,6 +700,13 @@ struct CapabilityEffectStatsSnapshot {
         out.effective.max_depth = 0;            // 0 = use MAX_HYGIENE_DEPTH
         out.effective.allow_rest_hygiene = true;
         out.effective.allow_concurrent_fiber = true;
+        // Issue #2243: Off / Restricted-inactive keeps historical unconstrained
+        // behavior — force_hygienic OFF, no gensym-map-size ceiling, no
+        // per-fiber violation budget. Multi-tenant enforcement comes from
+        // the granted-policy path (MacroSelfEvoPolicy{} defaults are ON).
+        out.effective.force_hygienic = false;
+        out.effective.max_gensym_map_size = 0;
+        out.effective.max_violations_per_fiber = 0;
         met.macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
         return out;
     }

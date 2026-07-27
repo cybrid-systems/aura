@@ -14771,6 +14771,15 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                 {"self-evo-depth-clamp-total",
                  make_int(static_cast<std::int64_t>(
                      g_macro_self_evo_depth_clamp_total.load(std::memory_order_relaxed)))},
+                // Issue #2243: surfaces for the 2 new MacroSelfEvo
+                // enforcement counters (force_hygienic deny + gensym-map-size
+                // exceeded).
+                {"self-evo-force-hygienic-denied-total",
+                 make_int(static_cast<std::int64_t>(g_macro_self_evo_force_hygienic_denied_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"self-evo-gensym-map-size-exceeded-total",
+                 make_int(static_cast<std::int64_t>(g_macro_self_evo_gensym_map_size_exceeded_total
+                                                        .load(std::memory_order_relaxed)))},
                 // Issue #2241: per-fiber violation budget surface + Agent
                 // filter view (refine #2097 FiberHygieneStats). Agents /
                 // supervisors can ask `query:macro-fiber-hygiene` with

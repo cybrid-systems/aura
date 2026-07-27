@@ -217,6 +217,15 @@ aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
                                                 int min_depth) noexcept;
 extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test(void) noexcept;
 
+// Issue #2243: per-policy self-evo enforcement counters (refine #2241).
+// Bumped from clone_macro_body at the force_hygienic deny fallback
+// (depth-limit + invalid-body fallback paths) and the gensym-map-size
+// exceeded gate in rename_binding_pre. Both are file-scope atomics in
+// src/compiler/macro_expansion.cpp (where the per-policy TLS knobs
+// live). Lock-free reads, safe for high-freq Agent polling.
+extern "C" std::uint64_t aura_macro_self_evo_force_hygienic_denied_total_v_read(void) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_gensym_map_size_exceeded_total_v_read(void) noexcept;
+
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
 // aura_set_aot_reload_auto_retry(0) for strict tests (#2093 counters).

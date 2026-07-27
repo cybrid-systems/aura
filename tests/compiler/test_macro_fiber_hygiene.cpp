@@ -23,6 +23,12 @@
 //         aura_macro_self_evo_set_fiber_violation_budget, check helper
 //         aura_macro_self_evo_check_fiber_hygiene_budget returns 1 when
 //         violations > budget, deny counter bumps. Default budget=0 = unlimited.
+//   AC12: #2243 MacroSelfEvoPolicy 3 fields + enforcement v_read —
+//         force_hygienic + max_gensym_map_size + max_violations_per_fiber
+//         threads via TopLevelMacroCapGuard → thread_local mirrors;
+//         2 new gates (force_hygienic deny + gensym-map-size exceeded)
+//         bump 2 new file-scope atomics, exposed via v_read C-linkage
+//         + query:macro-fiber-hygiene keys (Agent observability).
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -68,6 +74,13 @@ aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
                                                 int min_depth) noexcept;
 extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test(void) noexcept;
 
+// Issue #2243: per-policy self-evo enforcement v_read (force_hygienic
+// deny + gensym-map-size exceeded). Both bump sites live in
+// clone_macro_body MacroIntroduced path; counter file-scope atomics in
+// src/compiler/macro_expansion.cpp. Tests stay bridge-independent.
+extern "C" std::uint64_t aura_macro_self_evo_force_hygienic_denied_total_v_read(void) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_gensym_map_size_exceeded_total_v_read(void) noexcept;
+
 // Issue #2241: RAII guard for budget + deny counter reset across tests.
 // Mirrors AnonPolicyGuard / RollbackAuditGuard / RestHygieneGuard family
 // (see #2237/#2238/#2239 for the convention). Saved value at construction
@@ -91,13 +104,27 @@ struct FiberBudgetGuard {
 };
 
 static std::string read_file(const char* path) {
+    // Try the requested path first (cwd-relative), then `../<path>` for
+    // tests that run from build/ (caller-cwd is the source root vs the
+    // build dir). Only after both fail do we fall through to a fallback
+    // list of files commonly used by other ACs — this avoids the
+    // pre-#2243 trap where read_file("src/compiler/evaluator_primitives_obs_eval.cpp")
+    // would silently return macro_expansion.cpp content because the
+    // fallback list had macro_expansion.cpp paths before the primitive
+    // paths and the source-root primitive resolution failed from build/.
+    for (const auto* p : {path, std::string("..").append("/").append(path).c_str()}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
     for (const auto* p :
-         {path, "src/compiler/macro_expansion.cpp", "../src/compiler/macro_expansion.cpp",
+         {"src/compiler/macro_expansion.cpp", "../src/compiler/macro_expansion.cpp",
           "src/compiler/macro_expansion.ixx", "../src/compiler/macro_expansion.ixx",
           "src/compiler/observability_metrics.h", "../src/compiler/observability_metrics.h",
           "src/compiler/evaluator_primitives_obs_eval.cpp",
-          "../src/compiler/evaluator_primitives_obs_eval.cpp",
-          "tests/compiler/test_macro_fiber_hygiene.cpp",
+          "../src/compiler/evaluator_primitives_obs_eval.cpp", "src/core/capability_model.hh",
+          "../src/core/capability_model.hh", "tests/compiler/test_macro_fiber_hygiene.cpp",
           "../tests/compiler/test_macro_fiber_hygiene.cpp"}) {
         std::ifstream in(p);
         if (!in)
@@ -383,6 +410,83 @@ static void ac8_concurrent_and_global_counters_2174() {
           "AC8: clone-concurrent-peak monotonic");
 }
 
+// Issue #2243: per-policy self-evo enforcement (force_hygienic deny +
+// gensym-map-size exceeded). Source-cite for the 5 surface changes
+// + runtime check that the 2 v_read C-linkage are callable + atomic-safe.
+// Mirrors the AC4 / AC6 / AC8 sibling-keep source-gate convention.
+static void ac12_self_evo_enforcement_2243() {
+    std::println("\n--- AC12: #2243 MacroSelfEvoPolicy 3 fields + enforcement v_read ---");
+
+    // Source-cite: capability_model.hh — MacroSelfEvoPolicy 3 new fields
+    // + the Off-mode reset path (3 fields overwritten to unconstrained).
+    auto cap_src = read_file("src/core/capability_model.hh");
+    CHECK(cap_src.find("struct MacroSelfEvoPolicy") != std::string::npos,
+          "AC12: capability_model.hh defines MacroSelfEvoPolicy");
+    CHECK(cap_src.find("force_hygienic") != std::string::npos,
+          "AC12: MacroSelfEvoPolicy has force_hygienic field");
+    CHECK(cap_src.find("max_gensym_map_size") != std::string::npos,
+          "AC12: MacroSelfEvoPolicy has max_gensym_map_size field");
+    CHECK(cap_src.find("max_violations_per_fiber") != std::string::npos,
+          "AC12: MacroSelfEvoPolicy has max_violations_per_fiber field");
+
+    // Source-cite: macro_expansion.cpp — thread_local mirrors + guard +
+    // 2 new file-scope atomic counters (decl + 2 gate-site bumps).
+    auto me_src = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me_src.find("thread_local bool s_force_hygienic") != std::string::npos,
+          "AC12: macro_expansion.cpp has thread_local s_force_hygienic mirror");
+    CHECK(me_src.find("thread_local std::uint32_t s_max_gensym_map_size") != std::string::npos,
+          "AC12: macro_expansion.cpp has thread_local s_max_gensym_map_size mirror");
+    CHECK(me_src.find("thread_local std::uint32_t s_max_violations_per_fiber") != std::string::npos,
+          "AC12: macro_expansion.cpp has thread_local s_max_violations_per_fiber mirror");
+    CHECK(me_src.find("TopLevelMacroCapGuard") != std::string::npos,
+          "AC12: macro_expansion.cpp has TopLevelMacroCapGuard");
+    CHECK(me_src.find("g_macro_self_evo_force_hygienic_denied_total") != std::string::npos,
+          "AC12: macro_expansion.cpp defines force_hygienic_denied_total counter");
+    CHECK(me_src.find("g_macro_self_evo_gensym_map_size_exceeded_total") != std::string::npos,
+          "AC12: macro_expansion.cpp defines gensym_map_size_exceeded_total counter");
+    // 2 v_read C-linkage impls (live in macro_expansion.cpp, not bridge).
+    CHECK(me_src.find("aura_macro_self_evo_force_hygienic_denied_total_v_read") !=
+              std::string::npos,
+          "AC12: macro_expansion.cpp implements force_hygienic_denied_total_v_read");
+    CHECK(me_src.find("aura_macro_self_evo_gensym_map_size_exceeded_total_v_read") !=
+              std::string::npos,
+          "AC12: macro_expansion.cpp implements gensym_map_size_exceeded_total_v_read");
+
+    // Source-cite: macro_expansion.ixx — module-level export extern for
+    // the 2 new counters (read by the primitive without going through v_read).
+    auto ixx_src = read_file("src/compiler/macro_expansion.ixx");
+    CHECK(ixx_src.find("g_macro_self_evo_force_hygienic_denied_total") != std::string::npos,
+          "AC12: macro_expansion.ixx exports force_hygienic_denied_total");
+    CHECK(ixx_src.find("g_macro_self_evo_gensym_map_size_exceeded_total") != std::string::npos,
+          "AC12: macro_expansion.ixx exports gensym_map_size_exceeded_total");
+
+    // Source-cite: aura_jit_bridge.h — 2 v_read C-linkage decls.
+    auto bridge_src = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(bridge_src.find("aura_macro_self_evo_force_hygienic_denied_total_v_read") !=
+              std::string::npos,
+          "AC12: bridge.h declares force_hygienic_denied_total_v_read");
+    CHECK(bridge_src.find("aura_macro_self_evo_gensym_map_size_exceeded_total_v_read") !=
+              std::string::npos,
+          "AC12: bridge.h declares gensym_map_size_exceeded_total_v_read");
+
+    // Source-cite: evaluator_primitives_obs_eval.cpp — 2 new keys.
+    auto prim_src = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(prim_src.find("\"self-evo-force-hygienic-denied-total\"") != std::string::npos,
+          "AC12: primitive defines self-evo-force-hygienic-denied-total key");
+    CHECK(prim_src.find("\"self-evo-gensym-map-size-exceeded-total\"") != std::string::npos,
+          "AC12: primitive defines self-evo-gensym-map-size-exceeded-total key");
+
+    // Runtime: v_read callable + atomic-safe (load returns monotonic).
+    const auto fh0 = aura_macro_self_evo_force_hygienic_denied_total_v_read();
+    const auto gs0 = aura_macro_self_evo_gensym_map_size_exceeded_total_v_read();
+    CHECK(fh0 >= 0, "AC12: force_hygienic_denied_total v_read loadable (>=0)");
+    CHECK(gs0 >= 0, "AC12: gensym_map_size_exceeded_total v_read loadable (>=0)");
+    const auto fh1 = aura_macro_self_evo_force_hygienic_denied_total_v_read();
+    const auto gs1 = aura_macro_self_evo_gensym_map_size_exceeded_total_v_read();
+    CHECK(fh1 >= fh0, "AC12: force_hygienic_denied_total monotonic");
+    CHECK(gs1 >= gs0, "AC12: gensym_map_size_exceeded_total monotonic");
+}
+
 } // namespace
 
 int main() {
@@ -394,8 +498,9 @@ int main() {
     ac6_extended_hash_source_cite_2174();
     ac7_runtime_caps_and_per_fiber_2174();
     ac8_concurrent_and_global_counters_2174();
+    ac12_self_evo_enforcement_2243();
     if (g_failed)
         return 1;
-    std::println("macro fiber hygiene (#2097 + #2174): OK ({} passed)", g_passed);
+    std::println("macro fiber hygiene (#2097 + #2174 + #2241 + #2243): OK ({} passed)", g_passed);
     return 0;
 }
