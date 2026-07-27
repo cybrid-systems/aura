@@ -180,6 +180,15 @@ thread_local int s_effective_max_depth = MAX_HYGIENE_DEPTH;
 // Issue #2023: when false, rest-param hygiene gensym is skipped.
 thread_local bool s_allow_rest_hygiene = true;
 
+// Issue #2243: per-tenant / per-call mirrors of the 3 MacroSelfEvo policy
+// knobs (force_hygienic, max_gensym_map_size, max_violations_per_fiber).
+// Read inside clone_macro_body fallback paths + name_map insert guards;
+// written from TopLevelMacroCapGuard ctor, restored in dtor so recursion
+// stays consistent.
+thread_local bool s_force_hygienic = false;
+thread_local std::uint32_t s_max_gensym_map_size = 0;
+thread_local std::uint32_t s_max_violations_per_fiber = 0;
+
 // Issue #2101: process-wide runtime caps (atomics for concurrent set+expand).
 // Depth default = hard ceiling (no extra clamp). Pass default = 0 (no clamp).
 // Env (read once on first access): AURA_MACRO_HYGIENE_DEPTH_CAP, AURA_MACRO_HYGIENE_PASS_CAP.
@@ -302,6 +311,11 @@ std::atomic<std::uint64_t> g_macro_self_evo_denied_total{0};
 std::atomic<std::uint64_t> g_macro_self_evo_allowed_total{0};
 std::atomic<std::uint64_t> g_macro_self_evo_pass_clamp_total{0};
 std::atomic<std::uint64_t> g_macro_self_evo_depth_clamp_total{0};
+// Issue #2243: surfaces for the 3 new MacroSelfEvo enforcement modes
+// (force_hygienic deny, gensym-map-size exceeded). Both bumped from the
+// enforcement sites in clone_macro_body.
+std::atomic<std::uint64_t> g_macro_self_evo_force_hygienic_denied_total{0};
+std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total{0};
 
 // Forward decl — body runs under MacroSelfEvo TLS depth policy set by expand entry.
 static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
@@ -579,6 +593,15 @@ extern "C" std::uint64_t aura_macro_self_evo_fiber_violation_deny_total_v_read(v
 }
 extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test(void) noexcept {
     g_macro_self_evo_fiber_violation_deny_total.store(0, std::memory_order_relaxed);
+}
+// Issue #2243: per-policy self-evo enforcement v_read (refine #2241).
+// Counter bump sites live in clone_macro_body (force_hygienic deny
+// fallback) and rename_binding_pre (gensym-map-size exceeded gate).
+extern "C" std::uint64_t aura_macro_self_evo_force_hygienic_denied_total_v_read(void) noexcept {
+    return g_macro_self_evo_force_hygienic_denied_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_macro_self_evo_gensym_map_size_exceeded_total_v_read(void) noexcept {
+    return g_macro_self_evo_gensym_map_size_exceeded_total.load(std::memory_order_relaxed);
 }
 
 // Issue #2241: check whether a fiber is allowed to expand given its
@@ -962,12 +985,25 @@ aura::ast::NodeId clone_macro_body(
                     s_effective_max_depth = d;
             }
             s_allow_rest_hygiene = chk.effective.allow_rest_hygiene;
+            // Issue #2243: thread 3 new MacroSelfEvo knobs through for the
+            // duration of this expand + push the per-fiber violation budget
+            // into the C-linkage helper used by the per-fiber hygiene gate.
+            s_force_hygienic = chk.effective.force_hygienic;
+            s_max_gensym_map_size = chk.effective.max_gensym_map_size;
+            s_max_violations_per_fiber = chk.effective.max_violations_per_fiber;
+            aura_macro_self_evo_set_fiber_violation_budget(s_max_violations_per_fiber);
         }
         ~TopLevelMacroCapGuard() noexcept {
             if (!armed)
                 return;
             s_effective_max_depth = prev_depth;
             s_allow_rest_hygiene = prev_rest;
+            // Issue #2243: restore the 3 new knobs to default-off so nested
+            // expand / macro_expand_all doesn't leak outer-tenant limits.
+            s_force_hygienic = false;
+            s_max_gensym_map_size = 0;
+            s_max_violations_per_fiber = 0;
+            aura_macro_self_evo_set_fiber_violation_budget(0);
         }
         TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
         TopLevelMacroCapGuard& operator=(const TopLevelMacroCapGuard&) = delete;
@@ -1030,6 +1066,17 @@ aura::ast::NodeId clone_macro_body(
                          depth_limit, MAX_HYGIENE_DEPTH, runtime_hygiene_depth_cap(), origin,
                          s_hygiene_depth);
         }
+        // Issue #2243: if force_hygienic is set, deny instead of silently
+        // falling back to the unhygienic (original-name) substitution path on
+        // depth-limit. Bumps force_hygienic_denied_total + macro_origin
+        // provenance error counter; outer call returns NULL_NODE.
+        if (s_force_hygienic) {
+            g_macro_self_evo_force_hygienic_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_origin_provenance_errors.fetch_add(1, std::memory_order_relaxed);
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            return NULL_NODE;
+        }
         return NULL_NODE;
     }
     // Issue #1248: hygiene provenance tracer — track max depth + expansions.
@@ -1046,6 +1093,14 @@ aura::ast::NodeId clone_macro_body(
         g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #2097: per-fiber hygiene violation snapshot.
         bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+        // Issue #2243: force_hygienic elevates invalid-body to a deny
+        // instead of silent NULL_NODE; outermost caller returns NULL with
+        // sentinel.
+        if (s_force_hygienic) {
+            g_macro_self_evo_force_hygienic_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_origin_provenance_errors.fetch_add(1, std::memory_order_relaxed);
+        }
         return NULL_NODE;
     }
     auto v = source.get(body_id);
@@ -1124,6 +1179,18 @@ aura::ast::NodeId clone_macro_body(
         if (it != name_map->end())
             return target_pool.intern(it->second);
         auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
+        // Issue #2243: gensym-map-size ceiling enforcement. If the granted
+        // policy sets a non-zero max_gensym_map_size, deny the expansion here
+        // (bump counter + sentinel) instead of letting name_map balloon under
+        // adversarial macros. Empty name_map (pre-scan not run yet) is
+        // allowed.
+        if (s_max_gensym_map_size > 0 && name_map && name_map->size() >= s_max_gensym_map_size) {
+            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            return aura::ast::NULL_NODE;
+        }
         (*name_map)[name] = fresh;
         return target_pool.intern(fresh);
     };

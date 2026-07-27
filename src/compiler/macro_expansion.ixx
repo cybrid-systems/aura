@@ -115,6 +115,9 @@ export extern std::atomic<std::uint64_t> g_macro_self_evo_denied_total;
 export extern std::atomic<std::uint64_t> g_macro_self_evo_allowed_total;
 export extern std::atomic<std::uint64_t> g_macro_self_evo_pass_clamp_total;
 export extern std::atomic<std::uint64_t> g_macro_self_evo_depth_clamp_total;
+// Issue #2243: surfaces alongside the existing 4 macros.
+export extern std::atomic<std::uint64_t> g_macro_self_evo_force_hygienic_denied_total;
+export extern std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;
