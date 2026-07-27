@@ -243,8 +243,8 @@ bool HotUpdateRegistry::should_throttle_reemit(std::uint64_t region_or_priority)
     {
         std::lock_guard<std::mutex> lock(region_windows_mtx_);
         auto it = region_windows_.find(region_or_priority);
-        if (it != region_windows_.end())
-            w = &it->second;
+        if (it != region_windows_.end() && it->second)
+            w = it->second.get();
     }
     if (!w)
         return reemit_throttled_.load(std::memory_order_relaxed);
@@ -333,9 +333,11 @@ void HotUpdateRegistry::test_pump_deopt_for_region(std::uint64_t region, std::ui
         if (region_windows_.size() >= kStormIsolationRegionCap)
             return; // overflow → drop (matches issue AC2 "Cap map size; overflow falls back to
                     // global")
-        it = region_windows_.emplace(region, RegionWindow{}).first;
+        it = region_windows_.emplace(region, std::make_unique<RegionWindow>()).first;
     }
-    feed_region_deopt_locked(it->second, n, threshold, window_ms, hard_thr, region);
+    if (!it->second)
+        return;
+    feed_region_deopt_locked(*it->second, n, threshold, window_ms, hard_thr, region);
 }
 
 bool HotUpdateRegistry::feed_region_deopt_locked(RegionWindow& w, std::uint64_t n,
@@ -390,27 +392,14 @@ void HotUpdateRegistry::on_stale_deopt(std::uint64_t region) noexcept {
     auto it = region_windows_.find(region);
     if (it == region_windows_.end()) {
         if (region_windows_.size() >= kStormIsolationRegionCap) {
-            // Overflow: feed global window instead (matches issue AC2).
-            // Re-entry into on_stale_deopt() is safe because we hold no
-            // locks and the storm-isolation mode is read once per call.
-            // Drop the namespace-level lock first to avoid re-entrancy on
-            // std::mutex (mutex is non-recursive).
-            // We can't unlock here from inside the locked scope; instead
-            // simply skip the per-region entry and do the global feed
-            // via a raw call that doesn't re-acquire the mutex. Simplest:
-            // unlock the mutex and call on_stale_deopt() (Global branch).
-            // To do that safely we re-architect: pop the lock guard via
-            // a scoped block.
-            // Pragmatic: skip the per-region entry, do NOT feed global
-            // here (the no-arg on_stale_deopt from region==0 == Global
-            // path is the documented fallback path, called by callers).
-            // For test purposes the pump helper covers the explicit
-            // overflow case.
+            // Overflow: skip per-region entry (cap); callers use Global path.
             return;
         }
-        it = region_windows_.emplace(region, RegionWindow{}).first;
+        it = region_windows_.emplace(region, std::make_unique<RegionWindow>()).first;
     }
-    feed_region_deopt_locked(it->second, 1, threshold, window_ms, hard_thr, region);
+    if (!it->second)
+        return;
+    feed_region_deopt_locked(*it->second, 1, threshold, window_ms, hard_thr, region);
 }
 
 // Issue #2094: ShapeProfiler publishes its deopt_storm_active state

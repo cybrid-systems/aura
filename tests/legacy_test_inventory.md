@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 471 | Preferred destination suites |
-| **Total scanned** | **471** | |
+| `tests/core/test_*.cpp` | 472 | Preferred destination suites |
+| **Total scanned** | **472** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 50 | 50 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 133 | 133 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 47 | 47 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 48 | 48 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 47 | 47 | P2 — link-profile heavy; migrate AC smoke first |
@@ -400,6 +400,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_macro_schema_dirty_propagate.cpp`
 - `tests/compiler/test_macro_self_evo_capability.cpp`
 - `tests/orch/test_mailbox_bp_admit_2228.cpp`
+- `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp`
 - `tests/core/test_marker_metadata_lock.cpp`
 - `tests/compiler/test_matcher_stable_captures.cpp`
 - `tests/core/test_module_boundary.cpp`
@@ -857,13 +858,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (47)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (48)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (47)
+#### domain/ (48)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1: Happy path — B's body replies to ask protocol; A's
@@ -893,6 +894,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_join_drain_reclaim_2227.cpp` (#2227) [domain_suite, theme_orch] — AC1: residual + reclaim counters bump when non-yielding body +
 - `tests/serve/test_join_drain_timeout_2153.cpp` (#2153) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
 - `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
+- `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp` (#2188) [domain_suite, theme_serve] — AC1: under live Guard (depth≥1), recv(wait=true) does not yield;
 - `tests/serve/test_mutation_safety_snapshot_steal_2184.cpp` (#2184) [domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
 - `tests/serve/test_orch_agent_mutation_boundary_2118.cpp` (#2118) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false
 - `tests/serve/test_orchestration_steal_boost.cpp` (—) [small, domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492

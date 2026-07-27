@@ -15,6 +15,9 @@
 // per-thread mutation boundary depth probe. Defined
 // in evaluator_fiber_mutation.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+// Issue #2114 / #2188: outermost Guard held flag (weak default 0 in
+// fiber_bridge when Evaluator not linked).
+extern "C" int aura_evaluator_mutation_boundary_held();
 extern "C" std::uint64_t aura_fiber_current_id();
 
 // Issue #588: per-fiber mutation stack depth from opaque storage.

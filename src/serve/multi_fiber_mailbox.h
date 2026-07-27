@@ -4,6 +4,8 @@
 // #1881: fanout linear_checks + local push stats.
 // #2010: shared linear filter on all entry points; fanout backpressure
 //        observability (+ orch hook for dashboards).
+// #2188: forbid blocking recv / Fiber::yield while MutationBoundary is live
+//        (depth>0 or held) — Policy A: non-blocking empty + metric, no park.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
 
 #ifndef AURA_SERVE_MULTI_FIBER_MAILBOX_H
@@ -67,6 +69,9 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> linear_violations{0};
     // Issue #2010: fanout-specific backpressure (also counted in backpressure_rejects).
     std::atomic<std::uint64_t> fanout_backpressure_rejects{0};
+    // Issue #2188: blocking recv refused while MutationBoundary is live
+    // (depth>0 or held) — Policy A non-blocking empty return.
+    std::atomic<std::uint64_t> recv_rejected_in_mutation_boundary{0};
 };
 
 // Process-wide aggregate (tests / observability).
@@ -240,6 +245,13 @@ public:
     // Blocking recv for the current fiber (or host poll if no fiber).
     // timeout_ms < 0: wait forever; 0: try once; >0: deadline.
     // for_fiber: if non-zero, prefer messages with matching to_fiber or broadcast (0).
+    //
+    // Issue #2188 (Policy A): while MutationBoundary is live (depth>0 or
+    // held), never park / Fiber::yield — return empty immediately and bump
+    // recv_rejected_in_mutation_boundary. Agents under Guard must use
+    // try_pop / recv(wait=false|timeout_ms=0). Depth==0 path unchanged.
+    // Gate sits next to the #2010 linear-viol pure-string filter contract
+    // (both are hot-path safety fences before any blocking wait).
     [[nodiscard]] std::optional<MailMessage> recv(bool wait = true, int timeout_ms = -1,
                                                   std::uint64_t for_fiber = 0) {
         const auto deadline = timeout_ms > 0 ? std::chrono::steady_clock::now() +
@@ -265,6 +277,20 @@ public:
                 return std::nullopt;
             }
 
+            // Issue #2188: hard gate — no yield-while-Guard (depth or held).
+            // Mirrors #362 skip of mutation-boundary yield, but covers the
+            // generic Explicit/BlockingIO park used by Agent message loops.
+            const bool boundary_live = aura_evaluator_mutation_boundary_depth() > 0 ||
+                                       aura_evaluator_mutation_boundary_held() != 0;
+            if (boundary_live) {
+                g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.recv_rejected_in_mutation_boundary.fetch_add(
+                    1, std::memory_order_relaxed);
+                // Policy A: non-blocking empty (no park, no Fiber::yield).
+                return std::nullopt;
+            }
+
             g_mf_mailbox_stats.recv_waits.fetch_add(1, std::memory_order_relaxed);
             if (g_current_fiber != nullptr) {
                 // Park so GC safepoint / steal can proceed.
@@ -287,6 +313,11 @@ public:
         }
     }
 
+    // Issue #2188: Agent-facing alias for non-blocking recv (safe under Guard).
+    [[nodiscard]] std::optional<MailMessage> try_recv(std::uint64_t for_fiber = 0) {
+        return recv(/*wait=*/false, /*timeout_ms=*/0, for_fiber);
+    }
+
     [[nodiscard]] const MultiFiberMailboxStats& stats() const noexcept { return local_stats_; }
 
     // Snapshot process-wide counters into ints for tests.
@@ -302,12 +333,14 @@ public:
 
     // Issue #1881: full health snapshot (priority / waits / linear).
     // Issue #2010: optional fanout_bp out-param (pass nullptr to skip).
+    // Issue #2188: optional recv_rejected_boundary out-param.
     static void snapshot_global_full(std::uint64_t& pushes, std::uint64_t& pops,
                                      std::uint64_t& broadcasts, std::uint64_t& bp,
                                      std::uint64_t& attaches, std::uint64_t& priority_high,
                                      std::uint64_t& recv_waits, std::uint64_t& recv_timeouts,
                                      std::uint64_t& linear_checks, std::uint64_t& linear_violations,
-                                     std::uint64_t* fanout_bp = nullptr) noexcept {
+                                     std::uint64_t* fanout_bp = nullptr,
+                                     std::uint64_t* recv_rejected_boundary = nullptr) noexcept {
         snapshot_global(pushes, pops, broadcasts, bp, attaches);
         priority_high = g_mf_mailbox_stats.priority_high.load(std::memory_order_relaxed);
         recv_waits = g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
@@ -317,6 +350,9 @@ public:
         if (fanout_bp)
             *fanout_bp =
                 g_mf_mailbox_stats.fanout_backpressure_rejects.load(std::memory_order_relaxed);
+        if (recv_rejected_boundary)
+            *recv_rejected_boundary = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
+                std::memory_order_relaxed);
     }
 
 private:
