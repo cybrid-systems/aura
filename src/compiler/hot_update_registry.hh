@@ -17,10 +17,10 @@
 //      soft/hard) so listeners see the same epoch domain as JIT
 //      capture_fn_epoch / AOT slot table_generation. See aot_mangle.h
 //      "Joint versioning contract".
-//   8. Issue #2114 / #2205: HotUpdate reemit ↔ MutationBoundary handshake.
-//      Reemit never races dual-epoch / linear / GC outside a boundary.
-//      Policy for Agent / plugin authors (AC5 / #2205 production):
-//        - **Production default Defer (#2205)**: if reemit is invoked
+//   8. Issue #2114 / #2205 / #2208: HotUpdate reemit ↔ MutationBoundary
+//      handshake. Reemit never races dual-epoch / linear / GC outside a
+//      boundary. Policy for Agent / plugin authors (production #2205/#2208):
+//        - **Production default Defer (#2205 / #2208)**: if reemit is invoked
 //          outside a real MutationBoundary (depth==0 and !held), skip
 //          the body, record reemit_deferred_for_boundary_total + pending
 //          version; next outermost Guard exit (#2090) drains under lock.
@@ -230,12 +230,12 @@ public:
 
     // ── Issue #2114 / #2205: reemit ↔ MutationBoundary handshake ──
     // SoftEnter (0): test / explicit opt-in only — TLS soft boundary.
-    // Defer (1, production default #2205): outside → pending, no body.
+    // Defer (1, production default #2205 / #2208): outside → pending, no body.
     // RequireRealBoundary (2): outside → reject (no defer, no soft).
     enum class ReemitBoundaryPolicy : int { SoftEnter = 0, Defer = 1, RequireRealBoundary = 2 };
     void set_reemit_boundary_policy(ReemitBoundaryPolicy p) noexcept;
     [[nodiscard]] ReemitBoundaryPolicy reemit_boundary_policy() const noexcept;
-    // Issue #2205: SoftEnter allowed only when policy is SoftEnter
+    // Issue #2205 / #2208: SoftEnter allowed only when policy is SoftEnter
     // (set explicitly or via AURA_REEMIT_SOFT_ENTER under security defaults).
     [[nodiscard]] bool soft_enter_allowed() const noexcept;
     // True when real MutationBoundary depth/held or soft reemit depth > 0.
@@ -361,13 +361,16 @@ public:
         std::int64_t reemit_outside_boundary_total = 0;
         std::int64_t reemit_soft_boundary_entered_total = 0;
         std::int64_t reemit_deferred_for_boundary_total = 0;
-        std::int64_t reemit_boundary_policy = 1; // 0 SoftEnter, 1 Defer (prod #2205), 2 RequireReal
+        std::int64_t reemit_boundary_policy =
+            1; // 0 SoftEnter, 1 Defer (prod #2205/#2208), 2 RequireReal
         std::int64_t reemit_deferred_pending = 0;
         std::int64_t reemit_rejected_require_real_total = 0; // #2205
         std::int64_t schema_2114 = 2114;
         std::int64_t issue_2114 = 2114;
         std::int64_t schema_2205 = 2205;
         std::int64_t issue_2205 = 2205;
+        std::int64_t schema_2208 = 2208; // #2208 refine Defer default (no SoftEnter prod)
+        std::int64_t issue_2208 = 2208;
         // Issue #2236: StormIsolation mode + per-region trip counters.
         // storm_isolation_mode: 0=Global (default, process-wide window),
         // 1=PerRegion (per-region sliding windows with bounded 64 cap),
@@ -472,7 +475,7 @@ private:
     std::atomic<std::uint64_t> cascade_reemit_trigger_total_{0};
     std::atomic<std::uint64_t> last_region_mask_from_dirty_{0};
     // Issue #2114 / #2205: reemit ↔ MutationBoundary handshake.
-    // Default Defer (1) — production fail-closed under multi-fiber (#2205).
+    // Default Defer (1) — production fail-closed under multi-fiber (#2205/#2208).
     std::atomic<int> reemit_boundary_policy_{1}; // ReemitBoundaryPolicy::Defer
     std::atomic<std::uint64_t> reemit_outside_boundary_{0};
     std::atomic<std::uint64_t> reemit_soft_boundary_entered_{0};
@@ -596,6 +599,8 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t issue_2114;
     std::int64_t schema_2205; // #2205
     std::int64_t issue_2205;  // #2205
+    std::int64_t schema_2208; // #2208 refine Defer default
+    std::int64_t issue_2208;  // #2208
     // Issue #2236: StormIsolation mode + per-region storm counters.
     // MUST stay in lockstep with hot_update_registry.hh — the production
     // aura_hot_update_registry_get_snapshot() writes these fields; if
@@ -641,7 +646,7 @@ int aura_hot_update_reemit_provider_wired(void);
 // Issue #2114 / #2205: reemit ↔ MutationBoundary handshake C ABI.
 // Returns 1 when depth>0, MutationBoundary held, or soft reemit depth>0.
 int aura_hot_update_in_mutation_boundary_for_reemit(void);
-// Policy: 0=SoftEnter (opt-in), 1=Defer (production default #2205),
+// Policy: 0=SoftEnter (opt-in), 1=Defer (production default #2205/#2208),
 // 2=RequireRealBoundary (reject without defer).
 void aura_hot_update_set_reemit_boundary_policy(int policy);
 int aura_hot_update_get_reemit_boundary_policy(void);

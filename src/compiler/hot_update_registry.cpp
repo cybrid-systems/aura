@@ -475,8 +475,8 @@ HotUpdateRegistry::ReemitBoundaryPolicy HotUpdateRegistry::reemit_boundary_polic
 }
 
 bool HotUpdateRegistry::soft_enter_allowed() const noexcept {
-    // Issue #2205: SoftEnter only when policy is SoftEnter (explicit opt-in
-    // via setter or AURA_REEMIT_SOFT_ENTER under production defaults).
+    // Issue #2205 / #2208: SoftEnter only when policy is SoftEnter (explicit
+    // opt-in via setter or AURA_REEMIT_SOFT_ENTER under production defaults).
     // TLS soft boundary is not steal-safe — never allow SoftEnter when
     // production policy is Defer/RequireRealBoundary.
     return reemit_boundary_policy() == ReemitBoundaryPolicy::SoftEnter;
@@ -542,7 +542,7 @@ std::uint64_t HotUpdateRegistry::take_deferred_reemit_version() noexcept {
 }
 
 void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {
-    // Issue #2205: reset to production default Defer (not SoftEnter).
+    // Issue #2205 / #2208: reset to production default Defer (not SoftEnter).
     reemit_boundary_policy_.store(static_cast<int>(ReemitBoundaryPolicy::Defer),
                                   std::memory_order_relaxed);
     reemit_outside_boundary_.store(0, std::memory_order_relaxed);
@@ -766,7 +766,7 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.issue_2035 = 2035;
     // Issue #2094: unified StormLevel facade (Shape|Global|Both).
     s.storm_level = static_cast<std::int64_t>(current_storm_level());
-    // Issue #2114 / #2205: reemit ↔ MutationBoundary handshake.
+    // Issue #2114 / #2205 / #2208: reemit ↔ MutationBoundary handshake.
     s.reemit_outside_boundary_total =
         static_cast<std::int64_t>(reemit_outside_boundary_.load(std::memory_order_relaxed));
     s.reemit_soft_boundary_entered_total =
@@ -782,6 +782,8 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.issue_2114 = 2114;
     s.schema_2205 = 2205;
     s.issue_2205 = 2205;
+    s.schema_2208 = 2208;
+    s.issue_2208 = 2208;
     // Issue #2236: StormIsolation mode + per-region storm trip counters.
     s.storm_isolation_mode = static_cast<std::int64_t>(storm_isolation_mode());
     s.deopt_storm_region_detected_total = static_cast<std::int64_t>(
@@ -860,7 +862,7 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->issue_2035 = s.issue_2035;
     // Issue #2094: unified StormLevel facade (uint8_t enum, copied as int64_t).
     out->storm_level = s.storm_level;
-    // Issue #2114 / #2205
+    // Issue #2114 / #2205 / #2208
     out->reemit_outside_boundary_total = s.reemit_outside_boundary_total;
     out->reemit_soft_boundary_entered_total = s.reemit_soft_boundary_entered_total;
     out->reemit_deferred_for_boundary_total = s.reemit_deferred_for_boundary_total;
@@ -871,6 +873,8 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->issue_2114 = s.issue_2114;
     out->schema_2205 = s.schema_2205;
     out->issue_2205 = s.issue_2205;
+    out->schema_2208 = s.schema_2208;
+    out->issue_2208 = s.issue_2208;
     // Issue #2236: StormIsolation mode + per-region storm trip counters.
     out->storm_isolation_mode = s.storm_isolation_mode;
     out->deopt_storm_region_detected_total = s.deopt_storm_region_detected_total;

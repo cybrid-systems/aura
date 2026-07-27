@@ -128,7 +128,7 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t last_region_mask_from_dirty;
     std::int64_t schema_2035;
     std::int64_t issue_2035;
-    // Issue #2114 / #2205: MUST stay in lockstep with hot_update_registry.hh
+    // Issue #2114 / #2205 / #2208: MUST stay in lockstep with hot_update_registry.hh
     std::int64_t reemit_outside_boundary_total;
     std::int64_t reemit_soft_boundary_entered_total;
     std::int64_t reemit_deferred_for_boundary_total;
@@ -139,6 +139,8 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t issue_2114;
     std::int64_t schema_2205; // #2205
     std::int64_t issue_2205;  // #2205
+    std::int64_t schema_2208; // #2208
+    std::int64_t issue_2208;  // #2208
     // Issue #2236: StormIsolation mode + per-region storm counters.
     // MUST stay in lockstep with hot_update_registry.hh.
     std::int64_t storm_isolation_mode;
@@ -6667,11 +6669,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("reemit-handshake-wired", 1);
             insert_kv("schema-2114", snap.schema_2114 != 0 ? snap.schema_2114 : 2114);
             insert_kv("issue-2114", snap.issue_2114 != 0 ? snap.issue_2114 : 2114);
-            // Issue #2205: production default Defer + RequireRealBoundary.
+            // Issue #2205 / #2208: production default Defer + RequireRealBoundary.
             insert_kv("schema-2205", snap.schema_2205 != 0 ? snap.schema_2205 : 2205);
             insert_kv("issue-2205", snap.issue_2205 != 0 ? snap.issue_2205 : 2205);
+            insert_kv("schema-2208", snap.schema_2208 != 0 ? snap.schema_2208 : 2208);
+            insert_kv("issue-2208", snap.issue_2208 != 0 ? snap.issue_2208 : 2208);
             insert_kv("reemit-production-default-defer", 1);
             insert_kv("reemit-soft-enter-opt-in-only", 1);
+            insert_kv("reemit-no-soft-enter-outside-boundary", 1);
             insert_kv("reemit-rejected-require-real-total",
                       snap.reemit_rejected_require_real_total);
             // Issue #2236: StormIsolation mode + per-region storm
