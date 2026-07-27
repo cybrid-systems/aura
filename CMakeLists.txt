@@ -2349,6 +2349,11 @@ aura_add_issue_test(test_linear_enforce_strict_default_2207)
 aura_issue_test_link_llvm_jit(test_linear_enforce_strict_default_2207)
 add_dependencies(all_test_issue_targets test_linear_enforce_strict_default_2207)
 
+# Issue #2208: production default reemit Defer (no SoftEnter outside boundary; refine #2205).
+aura_add_issue_test(test_reemit_production_default_defer_2208)
+aura_issue_test_link_llvm_jit(test_reemit_production_default_defer_2208)
+add_dependencies(all_test_issue_targets test_reemit_production_default_defer_2208)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 492 | Preferred destination suites |
-| **Total scanned** | **492** | |
+| `tests/core/test_*.cpp` | 493 | Preferred destination suites |
+| **Total scanned** | **493** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 51 | 51 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 52 | 52 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 108 | 108 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 29 | 29 | P3 — review case-by-case |
@@ -510,6 +510,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_raw_pointer_safety.cpp`
 - `tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp`
 - `tests/compiler/test_reemit_production_default_defer_2205.cpp`
+- `tests/compiler/test_reemit_production_default_defer_2208.cpp`
 - `tests/compiler/test_refinement_closed_loop.cpp`
 - `tests/compiler/test_reflect_batch.cpp`
 - `tests/reflect/test_reflect_hygiene_agent_diagnostics.cpp`
@@ -1005,13 +1006,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (51)
+### `jit_incremental` — JIT / AOT / incremental relower (52)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (51)
+#### domain/ (52)
 
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp` (#2238) [domain_suite, theme_compiler] — AC1: anonymous + aura_closure_check_aot_stable_id_policy under
@@ -1056,6 +1057,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — Issue #1711 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp` (#2114) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):
 - `tests/compiler/test_reemit_production_default_defer_2205.cpp` (#2205) [domain_suite, theme_compiler] — AC1: Production default (reset / process init) → policy Defer;
+- `tests/compiler/test_reemit_production_default_defer_2208.cpp` (#2208) [domain_suite, theme_compiler] — AC1: Default policy is Defer; SoftEnter requires explicit set.
 - `tests/compiler/test_region_priority_deopt_throttle_2132.cpp` (#2132) [domain_suite, theme_compiler] — AC1: should_throttle_reemit(region) vs no-arg global decision
 - `tests/compiler/test_relower_fallback_reason_2193.cpp` (#2193) [domain_suite, theme_compiler] — AC1: RelowerFallbackReason enum defined
 - `tests/compiler/test_relower_strategy_cache_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.

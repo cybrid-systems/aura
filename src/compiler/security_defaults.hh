@@ -195,11 +195,10 @@ inline void apply_production_security_defaults() noexcept {
     if (!dev_off)
         grant_render_kernel_principal();
 
-    // 5b) Issue #2205: HotUpdate reemit boundary policy — production default
-    //     Defer (fail-closed under multi-fiber; SoftEnter is not steal-safe).
-    //     SoftEnter only via AURA_REEMIT_SOFT_ENTER=1 (or explicit setter in
-    //     tests). AURA_SANDBOX=off leaves SoftEnter available for unit tests
-    //     that set policy explicitly; process default remains Defer.
+    // 5b) Issue #2205 / #2208: HotUpdate reemit boundary policy — production
+    //     default Defer (fail-closed under multi-fiber; SoftEnter is not
+    //     steal-safe). SoftEnter only via AURA_REEMIT_SOFT_ENTER=1 (or
+    //     explicit setter in tests). Process default remains Defer.
     {
         using P = ::aura::compiler::HotUpdateRegistry::ReemitBoundaryPolicy;
         const char* soft = std::getenv("AURA_REEMIT_SOFT_ENTER");

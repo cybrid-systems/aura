@@ -2703,8 +2703,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         }
     }
 
-    // Issue #2114 / #2205: HotUpdate reemit ↔ MutationBoundary handshake.
-    // Production default Defer (#2205): outside → pending, no AOT body.
+    // Issue #2114 / #2205 / #2208: HotUpdate reemit ↔ MutationBoundary handshake.
+    // Production default Defer (#2205/#2208): outside → pending, no AOT body.
     // SoftEnter is opt-in only (not steal-safe — TLS does not migrate).
     // RequireRealBoundary: outside → reject without defer.
     // Inside (depth>0 or Guard held, including #2090 dtor window): proceed.
@@ -2741,7 +2741,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             g_last_reemit_success_count.store(0, std::memory_order_relaxed);
             return 0;
         } else {
-            // Defer (production default #2205) and any non-SoftEnter fallthrough.
+            // Defer (production default #2205/#2208) and any non-SoftEnter fallthrough.
             hur.defer_reemit_for_boundary(current_defuse_version);
             g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
             g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
