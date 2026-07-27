@@ -318,6 +318,9 @@ export struct EscapeAnalysisWrap {
 
     bool has_error() const { return false; }
     std::string_view name() const { return "escape-analysis"; }
+    // Issue #2258: HotPassDodCompliant for run_incremental_dirty_pipeline.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
     // Get escape map for a function. Returns nullptr if unavailable.
     const std::uint8_t* get_map(std::uint32_t func_id) const {
@@ -341,6 +344,9 @@ static_assert(DirtyAwarePass<EscapeAnalysisWrap>,
               "EscapeAnalysisWrap exposes is_block_dirty for IRSoA wiring");
 static_assert(IncrementalPass<EscapeAnalysisWrap>,
               "EscapeAnalysisWrap is IncrementalPass for dirty pipeline (#1574)");
+static_assert(HotPassDodCompliant<EscapeAnalysisWrap>,
+              "EscapeAnalysisWrap HotPassDodCompliant (#2258)");
+static_assert(PureWrapPass<EscapeAnalysisWrap>, "EscapeAnalysisWrap PureWrapPass (#2258)");
 
 // CompilerService — owns a full compilation session's lifecycle.
 //

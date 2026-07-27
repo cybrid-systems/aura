@@ -199,10 +199,14 @@ public:
     }
     void run(aura::ir::IRFunction& f) { impl_.run(f); }
     void run(aura::ir::BasicBlock& b) { impl_.run(b); }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { impl_.run_on_dirty_blocks_only(f); }
 
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "constant-fold"; }
     [[nodiscard]] std::size_t folded_count() const { return impl_.folded_count(); }
+    // Issue #2258: HotPassDodCompliant + pure Wrap for incremental path.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     aura::compiler::ConstantFoldingWrap impl_;
@@ -233,10 +237,14 @@ public:
     }
     void run(aura::ir::IRFunction& f) { impl_.run(f); }
     void run(aura::ir::BasicBlock& b) { impl_.run(b); }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { impl_.run_on_dirty_blocks_only(f); }
 
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "type-propagation"; }
     [[nodiscard]] std::size_t propagated_count() const { return impl_.propagated_count(); }
+    // Issue #2258: HotPassDodCompliant + pure Wrap for incremental path.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     aura::compiler::TypePropagationPass impl_;
@@ -261,9 +269,13 @@ public:
     }
     void run(aura::ir::IRFunction& f) { impl_.run(f); }
     void run(aura::ir::BasicBlock& b) { impl_.run(b); }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { impl_.run_on_dirty_blocks_only(f); }
 
     [[nodiscard]] bool has_error() const { return impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "compute-kind"; }
+    // Issue #2258: HotPassDodCompliant + pure Wrap for incremental path.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     mutable aura::compiler::ComputeKindWrap impl_;
@@ -362,6 +374,9 @@ public:
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "shape-aware-fold"; }
     [[nodiscard]] std::uint64_t fold_count() const { return impl_.fold_count(); }
+    // Issue #2258: HotPassDodCompliant + pure Wrap for incremental path.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     aura::compiler::ShapeAwareFoldingPass impl_;
@@ -377,6 +392,10 @@ static_assert(aura::compiler::DirtyAwarePass<ConstantFoldingPass>,
               "ConstantFoldingPass must be DirtyAware (#1576)");
 static_assert(aura::compiler::IncrementalPass<ConstantFoldingPass>,
               "ConstantFoldingPass must be Incremental (#1576)");
+static_assert(aura::compiler::HotPassDodCompliant<ConstantFoldingPass>,
+              "ConstantFoldingPass HotPassDodCompliant (#2258)");
+static_assert(aura::compiler::PureWrapPass<ConstantFoldingPass>,
+              "ConstantFoldingPass PureWrapPass (#2258)");
 
 static_assert(aura::compiler::Pass<TypePropagationPass>,
               "TypePropagationPass must satisfy Pass (#1576)");
@@ -384,6 +403,10 @@ static_assert(aura::compiler::DirtyAwarePass<TypePropagationPass>,
               "TypePropagationPass must be DirtyAware (#1576)");
 static_assert(aura::compiler::IncrementalPass<TypePropagationPass>,
               "TypePropagationPass must be Incremental (#1576)");
+static_assert(aura::compiler::HotPassDodCompliant<TypePropagationPass>,
+              "TypePropagationPass HotPassDodCompliant (#2258)");
+static_assert(aura::compiler::PureWrapPass<TypePropagationPass>,
+              "TypePropagationPass PureWrapPass (#2258)");
 
 // Issue #2025: DeadCoercionEliminationPass wrapper for the default pipeline
 // (after TypePropagation). Bridges pass_manager.ixx impl into Pass/DirtyAware
@@ -494,10 +517,15 @@ public:
         error_ = pass.has_error();
     }
 
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { run(f); }
+
     [[nodiscard]] bool has_error() const { return error_; }
     [[nodiscard]] std::string_view name() const { return "dead-coercion-elim"; }
     [[nodiscard]] std::size_t eliminated_count() const noexcept { return last_eliminated_; }
     [[nodiscard]] std::size_t narrow_evidence_hits() const noexcept { return last_narrow_hits_; }
+    // Issue #2258: HotPassDodCompliant + pure Wrap for incremental path.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     aura::compiler::DeadCoercionEliminationPass impl_;
@@ -588,6 +616,9 @@ public:
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "linear-ownership"; }
     [[nodiscard]] std::size_t use_after_move_count() const { return impl_.use_after_move_count(); }
+    // Issue #2258: HotPassDodCompliant + pure Wrap for incremental path.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     void run_function_(aura::ir::IRFunction& func) {
@@ -648,6 +679,8 @@ public:
         return block_dirty_fn_(block_id);
     }
     [[nodiscard]] bool uses_soa_view() const noexcept { return true; }
+    // Issue #2258: pure Wrap style render work units (local state only).
+    static constexpr bool kPureWrap = true;
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 

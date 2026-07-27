@@ -25,7 +25,8 @@ export namespace aura::compiler::pass_concepts {
 inline constexpr int kConceptConstraintsPhase = 1;
 // Number of named Pass-related concepts exported below (keep in sync).
 // #2060 adds DirtySoAEntryPass + RequiresDirtySoAEntryPass (was 10).
-inline constexpr int kPassConceptCount = 12;
+// #2258 adds PureWrapPass (was 12).
+inline constexpr int kPassConceptCount = 13;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -218,22 +219,43 @@ template <typename P>
 concept RequiresSoAViewPass =
     Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireSoAView == true; };
 
-// ── HotPassDodCompliant (#1918 / #2060) ────────────────────────
+// ── HotPassDodCompliant (#1918 / #2060 / #2258) ────────────────
 //
 // Production hot-path pass is either SoAViewAware (reports uses_soa_view)
 // or explicitly marked LegacyPass. Used by check_pass_dod_compliance
 // soft metrics + tests; hard static_assert for kRequireSoAView remains
 // RequiresSoAViewPass → SoAViewAwarePass.
 //
-// Issue #2060 contract (for future passes):
+// Issue #2060 contract:
 //   Non-Legacy HotPassDodCompliant stages that participate in
 //   run_incremental_dirty_pipeline MUST also satisfy DirtySoAEntryPass
 //   (provide run_on_dirty_blocks_only, or be Incremental+DirtyAware+SoA
 //   so the pipeline can route a dirty-only / SoA-columnar entry).
 //   Pure whole-module analysis (ArityWrap) may remain SoAViewAware without
 //   DirtySoAEntry — define-level any() short-circuit still applies.
+//
+// Issue #2258 contract:
+//   Any DirtyAwarePass / IncrementalPass registered into the production
+//   incremental / partial-relower pipeline MUST satisfy HotPassDodCompliant
+//   (compile-time reject via check_pass_dod_compliance). Prefer PureWrapPass
+//   style (kPureWrap / PureAnalysisPass) so identical inputs + dirty mask
+//   yield identical outputs with no hidden globals.
 template <typename P>
 concept HotPassDodCompliant = SoAViewAwarePass<P> || LegacyPass<P>;
+
+// ── PureWrapPass (#2258) ───────────────────────────────────────
+//
+// Pass is a pure-function Wrap: either it declares
+//   static constexpr bool kPureWrap = true;
+// (stateful wrapper over pure free functions / columnar pure helpers)
+// or it is PureAnalysisPass (const run, mutable accumulators only).
+//
+// Used for pass_pipeline_pure_wrap_total metrics and property tests that
+// identical IR + dirty mask → identical outputs under dirty short-circuit.
+template <typename P>
+concept PureWrapPass =
+    Pass<P> &&
+    (PureAnalysisPass<P> || requires { requires std::remove_cvref_t<P>::kPureWrap == true; });
 
 // ── DirtySoAEntryPass (#2060) ──────────────────────────────────
 //
