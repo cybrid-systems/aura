@@ -370,6 +370,9 @@ public:
     [[nodiscard]] static std::uint64_t static_yield_mutation_boundary_total() noexcept {
         return static_yield_mutation_boundary_total_.load(std::memory_order_relaxed);
     }
+    // Issue #2200: process-wide rejects of yield under MutationBoundary
+    // held/depth (no swapcontext). Agent / stress tests read this.
+    [[nodiscard]] static std::uint64_t yield_while_mutation_held_total() noexcept;
     // Issue #2119: timestamp (steady ns) when last MB yield began; 0 if none.
     void note_mutation_boundary_yield_enter_ns(std::uint64_t ns) noexcept {
         mb_yield_enter_ns_.store(ns, std::memory_order_relaxed);

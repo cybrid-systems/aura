@@ -14,10 +14,11 @@
 #include "core/gc_hooks.h" // Issue #1364
 
 #include <sys/mman.h>
-#include <cassert> // Issue #354: assert for yield-during-boundary check
+#include <cassert> // Issue #354 / #2200: assert for yield-during-boundary check
 #include <unistd.h>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 import std;
@@ -417,6 +418,67 @@ void Fiber::resume() {
 }
 
 // ── Yield — fiber → worker ────────────────────────────
+// ── Issue #2200: production hard-block yield under MutationBoundary ──
+//
+// #354 only DEBUG-assert / release-fprintf and still called swapcontext.
+// That left a generic yield-inside-Guard hole (mailbox #2188 is separate).
+// Production policy: while held (or depth>0), never park / stealable yield.
+// Mutate bodies must finish or mark_failed — long work exits boundary first.
+namespace {
+    std::atomic<std::uint64_t> g_yield_while_mutation_held_total{0};
+
+    // why: 1 = held flag, 2 = depth>0 (defense in depth)
+    [[nodiscard]] bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out) noexcept {
+        // Prefer messaging bridge (set while Evaluator yield-hook is live).
+        if (aura::messaging::g_mutation_boundary_held &&
+            aura::messaging::g_mutation_boundary_held()) {
+            if (why_out)
+                *why_out = 1;
+            return true;
+        }
+        // C-linkage held (covers held_ + depth fallback in evaluator_fiber_mutation).
+        if (aura_evaluator_mutation_boundary_held() != 0) {
+            if (why_out)
+                *why_out = 1;
+            return true;
+        }
+        if (aura_evaluator_mutation_boundary_depth() > 0) {
+            if (why_out)
+                *why_out = 2;
+            return true;
+        }
+        return false;
+    }
+
+    void note_yield_rejected_under_mutation_boundary(std::uint8_t why) noexcept {
+        g_yield_while_mutation_held_total.fetch_add(1, std::memory_order_relaxed);
+        auto& s = metrics::adaptive_steal_stats();
+        s.yield_while_mutation_held_total.fetch_add(1, std::memory_order_relaxed);
+        s.last_yield_rejected_reason.store(why, std::memory_order_relaxed);
+#ifndef NDEBUG
+        assert(false && "Fiber::yield under MutationBoundary held/depth (#2200 / #354)");
+#else
+        // Optional hard abort for production forensics.
+        static const bool abort_on_reject = []() noexcept {
+            const char* e = std::getenv("AURA_YIELD_HELD_ABORT");
+            return e != nullptr && e[0] != '\0' && e[0] != '0' && e[0] != 'f' && e[0] != 'F';
+        }();
+        if (abort_on_reject) {
+            std::fprintf(stderr,
+                         "FATAL: Fiber::yield rejected under MutationBoundary "
+                         "(AURA_YIELD_HELD_ABORT=1, why=%u)\n",
+                         static_cast<unsigned>(why));
+            std::abort();
+        }
+#endif
+    }
+} // namespace
+
+// Process-wide reject total (tests / C ABI without metrics module).
+std::uint64_t Fiber::yield_while_mutation_held_total() noexcept {
+    return g_yield_while_mutation_held_total.load(std::memory_order_relaxed);
+}
+
 // Static: called from within a fiber's execution.
 // Swaps back to g_worker_ctx (the current worker's dispatch loop).
 // After this, the fiber is suspended. The worker's loop will
@@ -436,27 +498,16 @@ void Fiber::yield() {
     if (!fb)
         return;
 
-    // Issue #354: "yield while holding a mutation
-    // boundary" check. The MutationBoundaryGuard
-    // holds the workspace write lock for its
-    // lifetime; yielding inside a mutate:*
-    // primitive body would release the fiber's
-    // view of the lock state and risk deadlock /
-    // starvation. In debug builds we assert; in
-    // release builds we log + continue (the
-    // production-readiness path doesn't crash).
-    // The bridge function is nullptr when no
-    // Evaluator is wired (test-binary), in which
-    // case we skip the check.
-    if (aura::messaging::g_mutation_boundary_held && aura::messaging::g_mutation_boundary_held()) {
-#ifndef NDEBUG
-        assert(false && "Fiber::yield called while a "
-                        "MutationBoundaryGuard is alive");
-#else
-        std::fprintf(stderr, "WARNING: Fiber::yield called while a "
-                             "MutationBoundaryGuard is alive "
-                             "(forward-looking Issue #354 check)\n");
-#endif
+    // Issue #354 / #2200: hard-block yield while MutationBoundary is
+    // live. Guard holds workspace write lock; park/steal here deadlocks
+    // multi-agent orchestration. Production: early-return (no swapcontext).
+    // Debug: assert. Optional AURA_YIELD_HELD_ABORT=1 aborts in release.
+    {
+        std::uint8_t why = 0;
+        if (yield_blocked_by_mutation_boundary(&why)) {
+            note_yield_rejected_under_mutation_boundary(why);
+            return; // no swapcontext — AC1
+        }
     }
 
     // Mark as explicit yield (safe to steal)
@@ -486,6 +537,18 @@ void Fiber::yield(YieldReason reason) {
 
     // Check GC safepoint before yielding (P2)
     check_gc_safepoint();
+
+    // Issue #354 / #2200: same hard gate for all YieldReason overloads
+    // (Explicit / MutationBoundary / OperationBoundary / PassPipeline / …).
+    // Must run before per-reason counters so rejected attempts are not
+    // counted as successful yields.
+    {
+        std::uint8_t why = 0;
+        if (yield_blocked_by_mutation_boundary(&why)) {
+            note_yield_rejected_under_mutation_boundary(why);
+            return; // no swapcontext — AC1
+        }
+    }
 
     // Record the yield reason for scheduler inspection
     fb->set_yield_reason(reason);
