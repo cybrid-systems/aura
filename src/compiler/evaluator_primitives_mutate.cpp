@@ -6459,6 +6459,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("reemit-handshake-wired", 1);
             insert_kv("schema-2114", snap.schema_2114 != 0 ? snap.schema_2114 : 2114);
             insert_kv("issue-2114", snap.issue_2114 != 0 ? snap.issue_2114 : 2114);
+            // Issue #2236: StormIsolation mode + per-region storm
+            // trip counters (5 new keys). 0 = Global (today's
+            // process-wide window, backwards compat), 1 = PerRegion
+            // (bounded 64 cap; overflow → global), 2 = PerEval
+            // (documented follow-up, eval_id threading needed).
+            // `storm-isolation-wired=1` is the wired signal key
+            // (same pattern as `region-priority-throttle-wired=1`
+            // for #2132 + `capture-remount-wired=1` for #2234).
+            insert_kv("storm-isolation-mode", snap.storm_isolation_mode);
+            insert_kv("deopt-storm-region-detected-total", snap.deopt_storm_region_detected_total);
+            insert_kv("deopt-storm-region-last-id", snap.deopt_storm_region_last_id);
+            insert_kv("storm-isolation-wired", 1);
+            insert_kv("schema-2236", snap.schema_2236 != 0 ? snap.schema_2236 : 2236);
+            insert_kv("issue-2236", snap.issue_2236 != 0 ? snap.issue_2236 : 2236);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

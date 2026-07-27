@@ -1820,6 +1820,12 @@ add_dependencies(all_test_issue_targets test_macro_cross_flat_hygiene_2235)
 aura_add_issue_test(test_macro_intro_restamp)
 aura_issue_test_link_llvm_jit(test_macro_intro_restamp)
 add_dependencies(all_test_issue_targets test_macro_intro_restamp)
+# Issue #2236: optional per-region / per-eval deopt-storm isolation
+# in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
+# critical bypass #2132 preserved; Shape-only #2172 invariant).
+aura_add_issue_test(test_storm_isolation_2236)
+aura_issue_test_link_llvm_jit(test_storm_isolation_2236)
+add_dependencies(all_test_issue_targets test_storm_isolation_2236)
 # Issue #2098: clone_macro_body schema_cache + dirty/provenance
 # propagation for rest-param + nested paths (metrics layer + tests).
 aura_add_issue_test(test_macro_schema_dirty_propagate)
