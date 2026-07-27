@@ -3314,6 +3314,24 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("send-backpressure",
                       static_cast<std::int64_t>(
                           os.send_backpressure_total.load(std::memory_order_relaxed)));
+            // Issue #2228: mailbox-backpressure admission preflight
+            // (process-wide BP event counter for the spawn soft-reject
+            // gate; separated from send_backpressure_total so the
+            // admit preflight doesn't conflate with cumulative sends).
+            insert_kv("mailbox-bp-recent-total",
+                      static_cast<std::int64_t>(
+                          os.mailbox_bp_recent_total.load(std::memory_order_relaxed)));
+            // Issue #2228: spawn admission-reject counter — bumped
+            // every time spawn_agent_with_mailbox soft-rejects a new
+            // agent because the process-wide BP condition is at/above
+            // the configured admit threshold. Reserved memory stays
+            // 0 (no leak per #2155 parity).
+            insert_kv("spawn-bp-admit-reject-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_bp_admit_reject_total.load(std::memory_order_relaxed)));
+            // Issue #2228: schema lineage.
+            insert_kv("schema-2228", 2228);
+            insert_kv("issue-2228", 2228);
             insert_kv("send-closed", static_cast<std::int64_t>(
                                          os.send_closed_total.load(std::memory_order_relaxed)));
             insert_kv("recv-empty", static_cast<std::int64_t>(
