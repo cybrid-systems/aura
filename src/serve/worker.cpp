@@ -206,10 +206,13 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             continue;
         }
 
-        // Issue #588: defer steal when victim yielded at
-        // MutationBoundary with active inner/outer guard
-        // (per-fiber stack depth > 0).
-        if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe()) {
+        // Issue #588 / #2184: one MutationSafetySnapshot sample for the
+        // steal decision (depth + held + yield jointly). Defer when
+        // MutationBoundary with active Guard (depth>0 or held).
+        const auto snap = stolen->mutation_safety_snapshot();
+        if (stolen->mutation_safety_snapshot_inconsistent(snap))
+            Fiber::bump_mutation_steal_snapshot_mismatch();
+        if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe(snap)) {
             const int pri = fiber_steal_priority(stolen);
             if (pri >= 2) {
                 metrics::adaptive_steal_stats().outermost_preferred.fetch_add(
@@ -231,7 +234,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // safe steal counter (always bumped on
             // successful cross-fiber steal at a
             // mutation boundary).
-            if (stolen->last_yield_reason() == YieldReason::MutationBoundary) {
+            if (snap.last_yield == YieldReason::MutationBoundary) {
                 stolen->bump_steal_outermost_mutation_boundary();
                 stolen->bump_cross_fiber_mutation_safe_steal();
                 // Issue #1641: paired boundary_held_steal_safe_total
@@ -248,15 +251,14 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             return true;
         }
 
-        // Issue #1492 / #1254 / #783 / #1633 / #2115: MANDATE defer +
+        // Issue #1492 / #1254 / #783 / #1633 / #2115 / #2184: MANDATE defer +
         // starvation mitigation when victim is at a MutationBoundary that
-        // is not depth-safe (depth > 0 — outermost or nested Guard still
-        // held). is_at_safe_mutation_boundary aliases depth-safe (#2115).
-        // Inner path always runs apply_starvation_mitigation so nested long
-        // mutations do not starve other agent fibers (50+ fiber AI orch).
-        if (stolen->is_stealable() &&
-            stolen->last_yield_reason() == YieldReason::MutationBoundary &&
-            !stolen->is_at_mutation_boundary_safe()) {
+        // is not snapshot-safe (depth>0 or held). is_at_safe_mutation_boundary
+        // aliases depth-safe (#2115). Inner path always runs
+        // apply_starvation_mitigation so nested long mutations do not starve
+        // other agent fibers (50+ fiber AI orch).
+        if (stolen->is_stealable() && snap.last_yield == YieldReason::MutationBoundary &&
+            !stolen->is_at_mutation_boundary_safe(snap)) {
             // Issue #2115 AC4: steal skipped because victim holds a
             // mutation boundary (depth-safe probe failed).
             auto& ads = metrics::adaptive_steal_stats();
@@ -280,7 +282,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             call_steal_deferred_violation();
             ads.global_deferred_mutation_total.fetch_add(1, std::memory_order_relaxed);
             ads.mutation_bias_hits.fetch_add(1, std::memory_order_relaxed);
-            if (stolen->is_at_inner_mutation_boundary()) {
+            if (stolen->is_at_inner_mutation_boundary(snap)) {
                 // #1633 AC1: bump_deferred_inner + apply_starvation_mitigation + defer
                 stolen->bump_steal_inner_mutation_boundary_deferred();
                 metrics::adaptive_steal_stats().steal_deferred_inner_boundary.fetch_add(

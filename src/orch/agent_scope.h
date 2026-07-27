@@ -196,7 +196,7 @@ public:
                     // Reset consecutive_stall on healthy (fresh heartbeat).
                     consecutive_stall_counts_[i] = 0;
                     break;
-                case KeepaliveWatchStatus::Stalled:
+                case KeepaliveWatchStatus::Stalled: {
                     ++r.stalled;
                     if (wr.cancelled)
                         ++r.cancelled;
@@ -244,6 +244,7 @@ public:
                     // ReportOnly path: nothing extra — aggregate count
                     // already bumped via r.stalled.
                     break;
+                }
                 case KeepaliveWatchStatus::Done:
                     ++r.done;
                     consecutive_stall_counts_[i] = 0;

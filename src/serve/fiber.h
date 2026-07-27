@@ -22,6 +22,10 @@ extern "C" std::uint64_t aura_fiber_current_id();
 // during work-steal (thief thread must not read thread_local).
 extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage);
 
+// Issue #2184: process-wide steal snapshot mismatch counter
+// (depth/held/yield inconsistent after resume or under steal).
+extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
 extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation();
@@ -38,6 +42,9 @@ extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total
 
 namespace aura::serve {
 
+// Forward declare (full type in scheduler.h) — used by Fiber owner back-pointer.
+struct Scheduler;
+
 // ── Yield reason — why a fiber yielded (Issue #31) ────
 // Used by the scheduler to determine if a fiber is at a safe
 // point to steal. Only fibers that yielded for Explicit or
@@ -52,6 +59,19 @@ enum class YieldReason : uint8_t {
     SchedulerSteal,    // fiber was stolen by another worker
     OperationBoundary, // yield at sender/receiver boundary (exec adapter)
     PassPipeline,      // yield between incremental pass-pipeline stages (#494)
+};
+
+// Issue #2184: atomic MutationSafetySnapshot for steal decisions.
+// depth from victim mutation_stack_storage_; held + defuse_version from
+// fiber-local mirrors published on Guard enter/exit / checkpoint push
+// / resume sync (seqlock — no torn depth/held pair under TSan).
+// Contract: live outermost Guard on F's evaluator ⟺ snapshot.held
+// (or depth>0 under soft orch agent window) ⇒ steal unsafe.
+struct MutationSafetySnapshot {
+    std::size_t depth = 0;
+    bool held = false;
+    std::uint64_t defuse_version = 0;
+    YieldReason last_yield = YieldReason::Explicit;
 };
 
 // ── Fiber state ────────────────────────────────────────
@@ -125,32 +145,87 @@ public:
                r == YieldReason::OperationBoundary || r == YieldReason::PassPipeline;
     }
 
-    // Issue #438 / #588 / #1254 / #2115 / #2118: depth-safe mutation
-    // boundary probe for work-stealing. Uses the victim fiber's
-    // per-fiber mutation_stack_storage_ (NOT thief TLS) via C-linkage
-    // aura_evaluator_mutation_stack_depth_from_ptr so steal decisions
-    // cannot race dual-path / linear / LifetimePin / panic checkpoint.
+    // Issue #2184: one acquire-ordered sample for steal path.
+    // depth from victim mutation_stack_storage_ (not thief TLS);
+    // held / defuse from fiber-local seqlock mirrors.
+    [[nodiscard]] MutationSafetySnapshot mutation_safety_snapshot() const noexcept {
+        MutationSafetySnapshot s;
+        // Seqlock read of held/defuse mirrors (AC3: no torn pair).
+        for (;;) {
+            const auto seq1 = safety_seq_.load(std::memory_order_acquire);
+            if (seq1 & 1u)
+                continue; // writer in progress
+            s.held = held_mirror_.load(std::memory_order_relaxed) != 0;
+            s.defuse_version = defuse_mirror_.load(std::memory_order_relaxed);
+            const auto seq2 = safety_seq_.load(std::memory_order_acquire);
+            if (seq1 == seq2)
+                break;
+        }
+        s.depth = aura_evaluator_mutation_stack_depth_from_ptr(
+            mutation_stack_storage_.load(std::memory_order_acquire));
+        s.last_yield = last_yield_reason_.load(std::memory_order_acquire);
+        return s;
+    }
+
+    // Issue #2184: publish fiber-visible held/defuse mirrors (Guard
+    // enter/exit, checkpoint push/pop, resume sync). Seqlock write.
+    void publish_mutation_safety_mirrors(std::size_t depth, bool held,
+                                         std::uint64_t defuse_version) noexcept {
+        (void)depth; // depth is authoritative from mutation_stack_storage_
+        safety_seq_.fetch_add(1, std::memory_order_release); // odd = writing
+        held_mirror_.store(held ? 1u : 0u, std::memory_order_relaxed);
+        defuse_mirror_.store(defuse_version, std::memory_order_relaxed);
+        safety_seq_.fetch_add(1, std::memory_order_release); // even = stable
+    }
+
+    // Issue #438 / #588 / #1254 / #2115 / #2118 / #2184: depth-safe mutation
+    // boundary probe for work-stealing. Uses MutationSafetySnapshot so
+    // depth + held + yield are one logical sample (not separate loads).
     //
     // Returns true if steal is safe at this yield point:
-    //   - not an orch agent soft-boundary window with depth > 0 (#2118), AND
+    //   - not an orch agent soft-boundary window with depth>0 / held, AND
+    //   - not held (outermost Guard live), AND
     //   - yield reason is not MutationBoundary, OR
-    //   - yield is MutationBoundary and per-fiber stack depth == 0.
-    // depth > 0 (Guard or orch soft boundary) → false when MB / agent active.
-    // YieldReason::MutationBoundary itself is unchanged (is_stealable
-    // still treats MB as a stealable *reason class*); depth gates
-    // visibility only (#2115 AC2).
+    //   - yield is MutationBoundary and depth==0 && !held.
     [[nodiscard]] bool is_at_mutation_boundary_safe() const noexcept {
-        const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(
-            mutation_stack_storage_.load(std::memory_order_acquire));
-        // Issue #2118: orch agent soft boundary + depth > 0 → never steal-safe
-        // (mutation window visible to steal even if yield reason is Explicit).
-        if (orch_agent_boundary_active() && depth > 0)
+        return is_at_mutation_boundary_safe(mutation_safety_snapshot());
+    }
+
+    // Issue #2184: evaluate safety from a pre-sampled snapshot (try_steal_from
+    // samples once and reuses for metrics).
+    [[nodiscard]] bool
+    is_at_mutation_boundary_safe(const MutationSafetySnapshot& s) const noexcept {
+        // Issue #2118: orch agent soft boundary + (depth>0 | held) → never safe
+        if (orch_agent_boundary_active() && (s.depth > 0 || s.held))
             return false;
-        auto r = last_yield_reason_.load(std::memory_order_acquire);
-        if (r != YieldReason::MutationBoundary)
+        // Outermost Guard live (held) → never steal-safe (#2184 contract).
+        if (s.held)
+            return false;
+        if (s.last_yield != YieldReason::MutationBoundary)
             return true;
-        // Issue #588 + #1254 + #2115: only depth == 0 is steal-safe.
-        return depth == 0;
+        // Issue #588 + #1254 + #2115 + #2184: only depth==0 && !held is safe.
+        return s.depth == 0 && !s.held;
+    }
+
+    // Issue #2184: post-resume / steal invariant — depth>0 implies
+    // MutationBoundary yield (or orch agent window). Returns true on mismatch.
+    [[nodiscard]] bool
+    mutation_safety_snapshot_inconsistent(const MutationSafetySnapshot& s) const noexcept {
+        if (s.depth > 0 && s.last_yield != YieldReason::MutationBoundary &&
+            !orch_agent_boundary_active())
+            return true;
+        // held without depth under MB yield is allowed briefly during
+        // outermost enter; held with depth==0 after exit is a bug.
+        if (s.held && s.depth == 0 && s.last_yield == YieldReason::MutationBoundary)
+            return false; // enter path may publish held before stack push
+        return false;
+    }
+
+    static void bump_mutation_steal_snapshot_mismatch() noexcept {
+        mutation_steal_snapshot_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t mutation_steal_snapshot_mismatch_total() noexcept {
+        return mutation_steal_snapshot_mismatch_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #2118: set when orch agent body soft-registers mutation depth
@@ -172,14 +247,14 @@ public:
         return is_at_mutation_boundary_safe();
     }
 
-    // Issue #1254: true when yielded at MutationBoundary with depth > 0
-    // (inner nested Guard). Used by steal loop for dedicated metrics.
+    // Issue #1254 / #2184: true when yielded at MutationBoundary with
+    // depth > 0 (inner nested Guard). Uses snapshot for joint sample.
     [[nodiscard]] bool is_at_inner_mutation_boundary() const noexcept {
-        auto r = last_yield_reason_.load(std::memory_order_acquire);
-        if (r != YieldReason::MutationBoundary)
-            return false;
-        return aura_evaluator_mutation_stack_depth_from_ptr(
-                   mutation_stack_storage_.load(std::memory_order_acquire)) > 0;
+        return is_at_inner_mutation_boundary(mutation_safety_snapshot());
+    }
+    [[nodiscard]] bool
+    is_at_inner_mutation_boundary(const MutationSafetySnapshot& s) const noexcept {
+        return s.last_yield == YieldReason::MutationBoundary && s.depth > 0;
     }
 
     // Issue #451: yield_classification() — returns a
@@ -582,6 +657,12 @@ private:
     // Issue #2118: orch agent body soft mutation-boundary window active
     // (per-fiber stack depth registered; steal/GC visibility).
     std::atomic<bool> orch_agent_boundary_active_{false};
+    // Issue #2184: fiber-local MutationSafetySnapshot mirrors (seqlock).
+    // safety_seq_ even = stable, odd = writer updating held/defuse.
+    mutable std::atomic<std::uint64_t> safety_seq_{0};
+    std::atomic<std::uint32_t> held_mirror_{0};
+    std::atomic<std::uint64_t> defuse_mirror_{0};
+    static std::atomic<std::uint64_t> mutation_steal_snapshot_mismatch_total_;
     // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
     std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
     // Issue #2227: back-pointer to owner Scheduler so the orch join

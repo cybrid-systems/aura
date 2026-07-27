@@ -2238,6 +2238,11 @@ aura_add_issue_test(test_depth_safe_mutation_boundary_steal_2115)
 aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal_2115)
 add_dependencies(all_test_issue_targets test_depth_safe_mutation_boundary_steal_2115)
 
+# Issue #2184: MutationSafetySnapshot for steal decisions.
+aura_add_issue_test(test_mutation_safety_snapshot_steal_2184)
+aura_issue_test_link_llvm_jit(test_mutation_safety_snapshot_steal_2184)
+add_dependencies(all_test_issue_targets test_mutation_safety_snapshot_steal_2184)
+
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
 aura_issue_test_link_llvm_jit(test_dual_path_desync_hard_fail_2116)

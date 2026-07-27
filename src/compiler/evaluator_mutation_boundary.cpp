@@ -34,6 +34,7 @@ module;
 #include "core/sandbox.hh"                 // Issue #2145 Strict hard-gate
 #include "core/arena_auto_policy_stats.h"  // in_render_hotpath
 #include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
+#include "serve/fiber.h"                   // Issue #2184: publish MutationSafetySnapshot
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -944,6 +945,13 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         // flag is cleared by the Guard dtor
         // (the outermost one only).
         ev_->mutation_boundary_held_.store(true, std::memory_order_release);
+        // Issue #2184: publish fiber-local MutationSafetySnapshot mirrors
+        // (held=true) so steal path never samples torn depth/held.
+        if (aura::serve::g_current_fiber) {
+            const auto depth = Evaluator::active_mutation_stack_static().size();
+            aura::serve::g_current_fiber->publish_mutation_safety_mirrors(depth, /*held=*/true,
+                                                                          defuse_version_at_enter_);
+        }
         // Issue #1252: coverage counter — every outermost Guard wrap.
         // Issue #1364: mutation × safepoint telemetry (benign race).
         if (m) {
@@ -1274,6 +1282,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (slot)
             (*slot)--;
         ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+        // Issue #2184: clear fiber-local held mirror after outermost exit.
+        if (aura::serve::g_current_fiber) {
+            const auto depth = Evaluator::active_mutation_stack_static().size();
+            aura::serve::g_current_fiber->publish_mutation_safety_mirrors(depth, /*held=*/false,
+                                                                          defuse_version_at_enter_);
+        }
         // Issue #2121: unlock matching acquire mode.
         if (region_mode_) {
             if (region_lock_.owns_lock()) {
