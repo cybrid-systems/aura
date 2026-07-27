@@ -38,6 +38,7 @@ import aura.compiler.pass_manager;
 import aura.compiler.dirty_propagation; // Issue #2191: type cone mirror metrics
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.compiler.ir_cache_pure; // Issue #2257: current_shape_stability_ratio
 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
@@ -10446,8 +10447,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         m->deopt_storm_isolations_total.load(std::memory_order_relaxed))
                   : static_cast<std::int64_t>(shape::g_deopt_storm_isolations_total_atomic().load(
                         std::memory_order_relaxed)));
+            // Issue #2257: stability ratio lives in aura::compiler
+            // (ir_cache_pure.ixx adaptive feed), not shape:: namespace.
             insert_kv("current-stability-ratio",
-                      static_cast<std::int64_t>(shape::current_shape_stability_ratio() * 10000.0));
+                      static_cast<std::int64_t>(current_shape_stability_ratio() * 10000.0));
             insert_kv("shape-version-wired", 1);
             insert_kv("schema-2257", 2257);
             insert_kv("issue-2257", 2257);

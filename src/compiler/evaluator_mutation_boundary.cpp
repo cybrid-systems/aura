@@ -36,6 +36,7 @@ module;
 #include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
 #include "serve/fiber.h"                   // Issue #2184: publish MutationSafetySnapshot
 #include "compiler/shape_profiler.h"       // Issue #2255: current_global_shape_version
+#include <cassert>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -1350,6 +1351,34 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // (strict force-fail) still reaches here via dtor — bit always
         // released. Nested guards never armed so never release here.
         aura::gc_hooks::release_mutation_hold_defer();
+        // Issue #2211: residual GcDeferReason assert after residual drain
+        // (phase3 panic clear + phase5 MutationHold release). Production soft
+        // (metric only); AURA_HARD_RESIDUAL_DEFER hard-fails. Best-effort clear
+        // of known residual for this evaluator so long AI sessions cannot
+        // accumulate orphan defer across steals. Fail/partial-recovery paths
+        // intentionally leave checkpoint+defer armed — skip residual assert.
+        if (success) {
+            const auto residual = aura::gc_hooks::defer_reasons_snapshot();
+            if (residual != 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    m->mutation_boundary_residual_defer_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                if (const char* e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    e && e[0] != '\0' && e[0] != '0') {
+                    // Hard mode: fail closed so sticky defer never ships silent.
+                    assert(residual == 0 &&
+                           "Issue #2211: residual GcDeferReason after outermost success");
+                    // NDEBUG strips assert — still abort when hard mode requested.
+                    if (aura::gc_hooks::defer_reasons_snapshot() != 0)
+                        std::abort();
+                }
+                // Best-effort clear: this-evaluator panic table + unbalanced
+                // MutationHold re-release (extra arm inject / steal orphan).
+                (void)aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
+                if (aura::gc_hooks::mutation_hold_defer_active())
+                    aura::gc_hooks::release_mutation_hold_defer();
+            }
+        }
         // Issue #2184: clear fiber-local held mirror after outermost exit.
         if (aura::serve::g_current_fiber) {
             const auto depth = Evaluator::active_mutation_stack_static().size();
