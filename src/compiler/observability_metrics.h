@@ -466,6 +466,15 @@ struct CompilerMetrics {
     // measures the per-reason decision (hit vs miss) explicitly.
     std::atomic<std::uint64_t> live_closure_epoch_restamp_total{0};
     std::atomic<std::uint64_t> live_closure_must_deopt_kept_total{0};
+    // Issue #2234: post-reemit / post-compact env_frame + linear
+    // capture remount metrics. Bumped from aura_remount_closure_captures
+    // (aura_jit_runtime.cpp) when a closure's captured env_frame version
+    // + linear state are rebound to the live generation (ok) or
+    // fail and force the caller to set MustDeopt (fail). Distinct from
+    // #2233 epoch_restamp_total (which only stamps func_id) — this
+    // pair measures the **capture state** rebind outcome.
+    std::atomic<std::uint64_t> closure_capture_remount_ok_total{0};
+    std::atomic<std::uint64_t> closure_capture_remount_fail_total{0};
     // Issue #2043: atomic linear+GC invalidation window under mutate_mtx_.
     //   - linear_gc_window_finalize_total: times finalize_linear_gc_invalidation_window_ ran
     //   - linear_ownership_epoch_bumps_total: linear_ownership_epoch advances

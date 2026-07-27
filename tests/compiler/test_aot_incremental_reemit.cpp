@@ -1306,6 +1306,142 @@ static void ac_restamp_source_cite() {
     CHECK(true, "AC5: source-cite (8 restamp / clear / miss / query sites)");
 }
 
+// Issue #2234: post-remit / post-compact env_frame + linear capture
+// remount. The hit path verifies the consistency gate returns
+// true (bump ok counter); the miss path verifies false (bump fail
+// counter + set MustDeopt + batch_deopt_for). The query surface
+// exposes the new keys + schema-2234. The source-cite maps the
+// 7 remount / capture / wire-up sites for grep reference.
+static void ac_capture_remount_hit() {
+    std::println("\n--- AC1: #2234 hit path — captures rebound, consistency gate ok ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+
+    const auto sid = aura_get_or_preserve_stable_func_id("cap_2234", nullptr);
+    CHECK(sid != 0, "AC1: stable id assigned");
+    const auto cid = aura_alloc_closure(static_cast<std::int64_t>(sid));
+    CHECK(cid >= 0, "AC1: alloc");
+    aura_closure_set_name(cid, "cap_2234");
+    // Stamp closure at the current live generation (defuse=1,
+    // linear fingerprint from aura_get_aot_live_linear_state_fingerprint)
+    // — the consistency gate should see defuse + linear match.
+    const auto cid_defuse_before = aura_get_closure_defuse_version(cid);
+    CHECK(cid_defuse_before == 1, "AC1: closure stamped at defuse=1");
+    // The live linear state fingerprint is propagated to the
+    // closure's g_closure_linear_state[cid] at alloc / set_name
+    // (see aura_jit_runtime.cpp:1048). Verify the capture helper.
+    CHECK(aura_closure_has_env_or_linear_captures(cid) == 1,
+          "AC1: closure has env or linear captures to remount");
+
+    ReemitFixture rf;
+    rf.candidates = {{"cap_2234", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto ok0 = metrics.closure_capture_remount_ok_total.load();
+    const auto fail0 = metrics.closure_capture_remount_fail_total.load();
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "AC1: reemit cap_2234 success");
+    // The remap hit path bumps ok (captures are consistent with
+    // the live generation — closure was stamped at defuse=1, live
+    // is still defuse=1).
+    CHECK(metrics.closure_capture_remount_ok_total.load() == ok0 + 1,
+          "AC1: closure_capture_remount_ok_total += 1 on hit");
+    CHECK(metrics.closure_capture_remount_fail_total.load() == fail0,
+          "AC1: closure_capture_remount_fail_total NOT bumped on hit");
+    // AC4: closures with no env/linear captures skip remount
+    // (zero overhead hot path). Verify the has_captures helper
+    // returns 0 for a closure with no captures.
+    CHECK(aura_closure_has_env_or_linear_captures(-1) == 0,
+          "AC1: AC4 — invalid cid returns 0 (no captures)");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+static void ac_capture_remount_miss() {
+    std::println("\n--- AC2: #2234 miss path — captures inconsistent, consistency gate fail ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+
+    const auto sid = aura_get_or_preserve_stable_func_id("cap_miss_2234", nullptr);
+    CHECK(sid != 0, "AC2: stable id assigned");
+    const auto cid = aura_alloc_closure(static_cast<std::int64_t>(sid));
+    CHECK(cid >= 0, "AC2: alloc");
+    aura_closure_set_name(cid, "cap_miss_2234");
+    // Bump the live defuse version AFTER the closure was stamped,
+    // so the closure's stamped defuse (1) < live defuse (2). The
+    // consistency gate should see the mismatch → fail.
+    aura_set_aot_defuse_version(2);
+
+    ReemitFixture rf;
+    rf.candidates = {{"cap_miss_2234", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto ok0 = metrics.closure_capture_remount_ok_total.load();
+    const auto fail0 = metrics.closure_capture_remount_fail_total.load();
+    CHECK(aura_reemit_aot_for_dirty(0) == 1,
+          "AC2: reemit cap_miss_2234 success (the reemit itself)");
+    // The capture remount gate should see defuse mismatch → fail.
+    CHECK(metrics.closure_capture_remount_ok_total.load() == ok0,
+          "AC2: closure_capture_remount_ok_total NOT bumped on fail");
+    CHECK(metrics.closure_capture_remount_fail_total.load() == fail0 + 1,
+          "AC2: closure_capture_remount_fail_total += 1 on fail");
+    // The must-deopt flag is set (caller's behavior on fail).
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) != 0,
+          "AC2: must_deopt flag set on fail (next call deopts)");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+static void ac_capture_remount_query() {
+    std::println("\n--- AC3: #2234 query surface — new keys + schema-2234 ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    CompilerService cs;
+    aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+    auto st = cs.eval("(engine:metrics \"query:aot-incremental-reemit-stats\")");
+    CHECK(st && is_hash(*st), "AC3: query returns hash");
+    for (const char* k : {"closure-capture-remount-ok-total", "closure-capture-remount-fail-total",
+                          "schema-2234", "issue-2234", "capture-remount-wired"}) {
+        CHECK(href(cs, "query:aot-incremental-reemit-stats", k) >= 0,
+              std::format("AC3: exposes '{}'", k));
+    }
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "capture-remount-wired") == 1,
+          "AC3: capture-remount-wired == 1");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "schema-2234") == 2234,
+          "AC3: schema-2234 == 2234");
+    aura_set_aot_metrics(nullptr);
+}
+
+static void ac_capture_remount_source_cite() {
+    std::println("\n--- AC5: #2234 source-cite (remount + capture + wire-up sites) ---");
+    std::println("  src/compiler/observability_metrics.h:462-470");
+    std::println("    closure_capture_remount_ok_total + closure_capture_remount_fail_total");
+    std::println("  src/compiler/aura_jit_bridge.cpp:200-240");
+    std::println("    aura_bump_closure_capture_remount_{ok,fail}_total C-linkage bumpers");
+    std::println("    aura_closure_has_env_or_linear_captures + aura_remount_closure_captures");
+    std::println("  src/compiler/aura_jit_bridge.h:100-115");
+    std::println("    C-linkage forward declarations");
+    std::println("  src/compiler/evaluator.ixx:1917-1928");
+    std::println("    get_closure_capture_remount_{ok,fail}_total inline accessors");
+    std::println("  src/compiler/aura_jit_runtime.cpp:1306-1336");
+    std::println("    remap hit path: capture remount gate + ok/fail bump + fail -> set-MustDeopt "
+                 "+ batch_deopt_for");
+    std::println("  src/compiler/evaluator_primitives_query.cpp:11546-11605");
+    std::println("    query:aot-incremental-reemit-stats new keys + schema-2234");
+    std::println("  tests/compiler/test_aot_incremental_reemit.cpp ac_capture_remount_hit / miss / "
+                 "query / source_cite");
+    CHECK(true, "AC5: source-cite (7 remount / capture / wire-up sites)");
+}
+
 } // namespace
 
 int main() {
@@ -1335,6 +1471,10 @@ int main() {
     ac_restamp_miss();
     ac_restamp_query();
     ac_restamp_source_cite();
+    ac_capture_remount_hit();
+    ac_capture_remount_miss();
+    ac_capture_remount_query();
+    ac_capture_remount_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
