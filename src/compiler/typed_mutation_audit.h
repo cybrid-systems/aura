@@ -96,6 +96,11 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> linear_invariant_fail{0};
     std::atomic<std::uint64_t> provenance_invariant_ok{0};
     std::atomic<std::uint64_t> provenance_invariant_fail{0};
+    // Issue #2223: ADT match exhaustiveness dimension of the invariant suite.
+    std::atomic<std::uint64_t> adt_invariant_ok{0};
+    std::atomic<std::uint64_t> adt_invariant_fail{0};
+    std::atomic<std::uint64_t> adt_exhaustiveness_sites_checked_total{0};
+    std::atomic<std::uint64_t> adt_non_exhaustive_sites_total{0};
     std::atomic<std::uint64_t> invariant_violations_caught{0};
     std::atomic<std::uint64_t> invariant_all_pass{0};
     // Issue #1894 AC metric names (aliases of invariant suite + contextual gate).
@@ -172,6 +177,8 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> partial_recovery_type_total{0};
     std::atomic<std::uint64_t> partial_recovery_linear_total{0};
     std::atomic<std::uint64_t> partial_recovery_provenance_total{0};
+    // Issue #2223: Full-strategy ADT renarrow / revalidate recovery category.
+    std::atomic<std::uint64_t> partial_recovery_adt_total{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -255,9 +262,11 @@ inline void apply_dev_audit_defaults() noexcept {
 // ownership-sensitive mutations).
 // Issue #2053: under production defaults, force any non-zero dirty scope
 // so self-modify / hygiene / invariant events are never under-sampled.
+// Issue #2223: match_sites_present forces audit under Sampled (mirror linear).
 [[nodiscard]] inline bool should_audit_contextual(std::uint64_t mutation_id,
                                                   std::uint64_t nodes_changed,
-                                                  bool linear_ops_present = false) noexcept {
+                                                  bool linear_ops_present = false,
+                                                  bool match_sites_present = false) noexcept {
     const auto s = get_strategy();
     if (s == AuditStrategy::Off)
         return false;
@@ -267,8 +276,8 @@ inline void apply_dev_audit_defaults() noexcept {
     }
     const auto force_n =
         production_defaults_active() ? kAuditForceNodesChangedProduction : kAuditForceNodesChanged;
-    // Sampled: force-hit for large dirty scopes / linear mutations / prod.
-    if (linear_ops_present || nodes_changed >= force_n) {
+    // Sampled: force-hit for large dirty / linear / ADT match sites / prod.
+    if (linear_ops_present || match_sites_present || nodes_changed >= force_n) {
         g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
         g_typed_mutation_audit_counters.contextual_force_audit_total.fetch_add(
             1, std::memory_order_relaxed);
@@ -278,14 +287,15 @@ inline void apply_dev_audit_defaults() noexcept {
 }
 
 // Issue #2145 Phase A — hard-gate policy:
-//   Full strategy OR Strict sandbox OR linear_ops OR nodes_changed >= N
+//   Full strategy OR Strict sandbox OR linear_ops OR match_sites OR nodes >= N
 // → always run post_mutation_invariant_check + linear_post_mutate_enforce*
 //   and force-rollback on fail (after #2029 partial recovery).
-// Sampled + small non-linear dirty → soft path (perf; AC3).
+// Sampled + small non-linear non-match dirty → soft path (perf; AC3).
 // Off sandbox / Off strategy → no hard gate (AC4).
+// Issue #2223: match_sites_present mirrors linear_ops_present force.
 [[nodiscard]] inline bool requires_invariant_hard_gate(std::uint64_t nodes_changed,
-                                                       bool linear_ops_present,
-                                                       bool strict_sandbox) noexcept {
+                                                       bool linear_ops_present, bool strict_sandbox,
+                                                       bool match_sites_present = false) noexcept {
     const auto s = get_strategy();
     if (s == AuditStrategy::Off)
         return false;
@@ -294,7 +304,7 @@ inline void apply_dev_audit_defaults() noexcept {
     // Sampled: contextual force only.
     const auto force_n =
         production_defaults_active() ? kAuditForceNodesChangedProduction : kAuditForceNodesChanged;
-    return linear_ops_present || nodes_changed >= force_n;
+    return linear_ops_present || match_sites_present || nodes_changed >= force_n;
 }
 
 // Issue #2145: Agent-stable deny reason (mirror #2076 format_deny_reason shape).
@@ -481,15 +491,21 @@ inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view 
 
 // Issue #1614: record result of type + linear + provenance invariant suite.
 // Issue #2027: composite_mode / cross_batch_linear_escape feed partial recovery.
+// Issue #2223: adt_ok = match exhaustiveness in dirty / workspace match sites.
 struct InvariantAuditResult {
     bool type_ok = true;
     bool linear_ok = true;
     bool provenance_ok = true;
+    bool adt_ok = true; // Issue #2223: non-exhaustive match fails under Full
     bool composite_mode = false;
     bool cross_batch_linear_escape = false;
+    // Issue #2223: true when ≥1 match site was exhaustiveness-checked.
+    bool adt_match_sites_present = false;
     std::uint32_t notes_count = 0;
+    std::uint32_t adt_sites_checked = 0;
+    std::uint32_t adt_non_exhaustive = 0;
     [[nodiscard]] bool all_ok() const noexcept {
-        return type_ok && linear_ok && provenance_ok && !cross_batch_linear_escape;
+        return type_ok && linear_ok && provenance_ok && adt_ok && !cross_batch_linear_escape;
     }
 };
 
@@ -607,6 +623,17 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
     else
         g_typed_mutation_audit_counters.provenance_invariant_fail.fetch_add(
             1, std::memory_order_relaxed);
+    // Issue #2223: ADT exhaustiveness dimension.
+    if (r.adt_ok)
+        g_typed_mutation_audit_counters.adt_invariant_ok.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.adt_invariant_fail.fetch_add(1, std::memory_order_relaxed);
+    if (r.adt_sites_checked > 0)
+        g_typed_mutation_audit_counters.adt_exhaustiveness_sites_checked_total.fetch_add(
+            r.adt_sites_checked, std::memory_order_relaxed);
+    if (r.adt_non_exhaustive > 0)
+        g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.fetch_add(
+            r.adt_non_exhaustive, std::memory_order_relaxed);
     // Issue #1884: correlate with last TypePropagation / DCE / memo snapshot.
     correlate_invariant_with_type_system(r);
     if (r.all_ok()) {
@@ -728,6 +755,12 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.linear_invariant_fail.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.provenance_invariant_ok.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.provenance_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_exhaustiveness_sites_checked_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.store(0,
+                                                                         std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_violations_caught.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_all_pass.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.store(
@@ -831,6 +864,7 @@ inline void reset_for_test() noexcept {
                                                                         std::memory_order_relaxed);
     g_typed_mutation_audit_counters.partial_recovery_provenance_total.store(
         0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_adt_total.store(0, std::memory_order_relaxed);
     apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)

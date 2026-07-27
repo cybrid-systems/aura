@@ -846,6 +846,11 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             (void)restamp_pinned_stable_refs();
             (void)post_mutation_reflect_validate();
         }
+        // Issue #2223: ADT renarrow / revalidate before re-audit.
+        if (!audit.adt_ok) {
+            c.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
+            partial_recover_adt_exhaustiveness(mutation_id);
+        }
         InvariantAuditResult after{};
         const bool after_ok = run_typed_mutation_invariant_audit(
             mutation_id, "composite-txn-partial-recover", target_node, before_epoch, after_epoch,
@@ -957,6 +962,36 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
     r.provenance_ok = post_mutation_reflect_validate();
 
+    // ── Issue #2223: ADT match exhaustiveness in workspace match sites ──
+    // Soft post-mutate TC may filter "missing constructor" TypeErrors;
+    // the invariant suite still requires exhaustive matches under Full
+    // so composite / hard-gate paths cannot ship non-exhaustive ADT self-mod.
+    r.adt_ok = true;
+    r.adt_match_sites_present = false;
+    r.adt_sites_checked = 0;
+    r.adt_non_exhaustive = 0;
+    if (flat && pool && reg) {
+        try {
+            const auto n = flat->size();
+            for (aura::ast::NodeId id = 0; id < n; ++id) {
+                if (!flat->has_match_info(id))
+                    continue;
+                r.adt_match_sites_present = true;
+                const auto exh = check_match_exhaustiveness(*flat, *pool, *reg, id);
+                if (!exh.checked)
+                    continue;
+                ++r.adt_sites_checked;
+                if (!exh.exhaustive) {
+                    ++r.adt_non_exhaustive;
+                    r.adt_ok = false;
+                }
+            }
+        } catch (...) {
+            // [SILENCE-PRIM] ADT walk failure → adt_ok=false (fail-closed).
+            r.adt_ok = false;
+        }
+    }
+
     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
     typed_audit::record_invariant_audit_result(mutation_id, op_name, r, before_epoch, after_epoch,
                                                target_node, fid, capability_tenant_id());
@@ -976,6 +1011,10 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             m->typed_mutation_linear_ok_total.fetch_add(1, std::memory_order_relaxed);
         if (r.provenance_ok)
             m->typed_mutation_prov_ok_total.fetch_add(1, std::memory_order_relaxed);
+        if (r.adt_ok)
+            m->typed_mutation_adt_ok_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            m->typed_mutation_adt_fail_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #1924: mirror TypedMutationAudit blame completeness into
         // CompilerMetrics (AI multi-round self-modify audit surface).
         if (mutation_id != 0) {
@@ -1022,7 +1061,19 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         return false;
     }
     const bool strict = aura::core::sandbox::is_strict();
-    if (!requires_invariant_hard_gate(nodes_changed, linear_ops_present, strict)) {
+    // Issue #2223: force hard-gate when workspace has match sites (Sampled
+    // must not under-sample ADT self-mod), mirror linear_ops_present.
+    bool match_sites = false;
+    if (workspace_flat_) {
+        const auto n = workspace_flat_->size();
+        for (aura::ast::NodeId id = 0; id < n; ++id) {
+            if (workspace_flat_->has_match_info(id)) {
+                match_sites = true;
+                break;
+            }
+        }
+    }
+    if (!requires_invariant_hard_gate(nodes_changed, linear_ops_present, strict, match_sites)) {
         ac.hard_gate_sampled_skip_total.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
@@ -1061,6 +1112,11 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
             (void)restamp_pinned_stable_refs();
             (void)post_mutation_reflect_validate();
         }
+        // Issue #2223: ADT renarrow / revalidate recovery category.
+        if (!r.adt_ok) {
+            ac.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
+            partial_recover_adt_exhaustiveness(mid);
+        }
         InvariantAuditResult after{};
         const bool after_ok = run_typed_mutation_invariant_audit(
             mid, "hard-gate-partial-recover", 0, epoch, epoch, /*composite_mode=*/false, &after);
@@ -1084,6 +1140,8 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         kind = "linear-escape";
     else if (!r.linear_ok)
         kind = "linear";
+    else if (!r.adt_ok)
+        kind = "adt";
     else if (!r.type_ok)
         kind = "type";
     else if (!r.provenance_ok)
@@ -1289,6 +1347,35 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
                           dst->constraint_system().touched_roots_size() > 0 || !occ->empty();
     } catch (...) {
         // [SILENCE-PRIM] stash is best-effort; commit falls back to empty CS.
+    }
+}
+
+// Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
+// Best-effort: renarrow does not synthesize missing match clauses; re-audit
+// must still see adt_ok for commit to continue.
+void Evaluator::partial_recover_adt_exhaustiveness(std::uint64_t mutation_id) noexcept {
+    try {
+        if (!workspace_flat_ || !workspace_pool_ || !type_registry_)
+            return;
+        auto& flat = *workspace_flat_;
+        auto& pool = *workspace_pool_;
+        auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+        std::vector<aura::ast::NodeId> roots;
+        for (const auto& rec : flat.all_mutations()) {
+            if (rec.target_node != 0)
+                roots.push_back(rec.target_node);
+            if (rec.parent_id != 0)
+                roots.push_back(rec.parent_id);
+        }
+        if (roots.empty() && flat.root != 0)
+            roots.push_back(flat.root);
+        (void)selective_adt_guardshape_renarrow(flat, pool, reg, roots, compiler_metrics_);
+        aura::ast::MutationRecord stub{};
+        stub.mutation_id = mutation_id;
+        revalidate_adt_typed_mutation_scope(flat, pool, reg, roots, stub, current_cache_epoch(),
+                                            compiler_metrics_);
+    } catch (...) {
+        // [SILENCE-PRIM] ADT recovery best-effort
     }
 }
 

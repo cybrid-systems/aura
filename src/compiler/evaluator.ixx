@@ -3183,6 +3183,8 @@ public:
     // Issue #2221: seed commit CS last_blame_chain for require-complete gate.
     void inject_commit_cs_incomplete_blame_for_test() noexcept;
     void inject_commit_cs_complete_blame_for_test() noexcept;
+    // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
+    void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
     // Issue #2105: Agent-visible flag — composite/nested txn still open
     // (half-typed views must not be treated as committed).
