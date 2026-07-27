@@ -953,6 +953,14 @@ void CompilerService::invalidate_function(const std::string& name) {
                     ? static_cast<std::uint64_t>(scope.affected_instrs.size() - instr_before)
                     : 0u,
                 std::memory_order_relaxed);
+            // Issue #2246: refine #2179 — indirect (Apply / closure)
+            // + unresolved callish block-level over-approx hits.
+            metrics_.impact_scope_cross_fn_indirect_total.fetch_add(
+                static_cast<std::uint64_t>(scope.cross_fn_indirect_hits),
+                std::memory_order_relaxed);
+            metrics_.impact_scope_unresolved_callee_total.fetch_add(
+                static_cast<std::uint64_t>(scope.unresolved_callee_hits),
+                std::memory_order_relaxed);
         }
         // Issue #2126 AC2: quote/lambda prefers impact instr/block dirty
         // under threshold; only unmapped/over-threshold falls back to

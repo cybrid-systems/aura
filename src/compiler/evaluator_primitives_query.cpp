@@ -4585,6 +4585,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
+            // Issue #2246: refine #2179 — indirect + unresolved callee hits
+            insert_kv("impact-scope-cross-fn-indirect-total",
+                      static_cast<std::int64_t>(
+                          m->impact_scope_cross_fn_indirect_total.load(std::memory_order_relaxed)));
+            insert_kv("impact-scope-unresolved-callee-total",
+                      static_cast<std::int64_t>(
+                          m->impact_scope_unresolved_callee_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2246", 2246);
+            insert_kv("issue-2246", 2246);
             insert_kv("schema-2179", 2179);
             insert_kv("issue-2179", 2179);
             insert_kv("impact-scope-cross-fn-wired", 1);

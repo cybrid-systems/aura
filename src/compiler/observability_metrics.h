@@ -6478,6 +6478,13 @@ struct CompilerMetrics {
     // surfaces on query:impact-scope-stats primitive.
     std::atomic<std::uint64_t> impact_scope_cross_fn_blocks_total{0}; // #2179
     std::atomic<std::uint64_t> impact_scope_cross_fn_instrs_total{0}; // #2179
+    // Issue #2246: refine #2179 — indirect + unresolved callee hits
+    // (caller scan cross-fn). Bumped by compute_impact_scope when
+    // an Apply (closure-valued) callee resolves to mutated_name
+    // (indirect) or when an unresolved callish falls back to
+    // conservative block-level over-approx dirty (AC2/AC3).
+    std::atomic<std::uint64_t> impact_scope_cross_fn_indirect_total{0}; // #2246
+    std::atomic<std::uint64_t> impact_scope_unresolved_callee_total{0}; // #2246
     // Issue #2178: cross-workspace / cross-COW hot-update reject counter.
     // Bumped when aura_reload_aot_module_for_eval / reemit callbacks are
     // invoked with a foreign eval_ptr (or when COW generation diverges).
