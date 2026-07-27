@@ -10902,6 +10902,306 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #2196: query:mutation-memory / query:blame-of — unified
+    // Agent self-repair surface ("代码即记忆").
+    //
+    // Single join of MutationRecord provenance + status + composite
+    // parent chain + dirty cascade + StableNodeRef/pin signals so
+    // Agents do not scrape schema-XXXX stats across multiple prims.
+    //
+    // Lookup modes (args after the stats name via engine:metrics):
+    //   ()                       → most recent mutation
+    //   (mutation-id)            → by mutation_id
+    //   (1 node-id)              → last mutation targeting node
+    //   (2 composite-tx-id)      → first/root record of composite txn
+    //   ("node" node-id)         → same as mode 1
+    //   ("composite" cid)        → same as mode 2
+    //   ("blame" / "memory")     → latest (alias)
+    //
+    // Agent closed-loop: mutate → observe blame → selective re-mutate
+    // or rollback. live-effects=0 when status=RolledBack (AC3).
+    // Prefer reusing MutationRecord fields — no second log.
+    {
+        auto mutation_memory_impl = [](std::span<const EvalValue> a) -> EvalValue {
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            if (m)
+                m->mutation_memory_query_total.fetch_add(1, std::memory_order_relaxed);
+
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_void();
+            const auto log = ws->mutation_log_view();
+
+            // Parse lookup mode.
+            enum class Mode : std::uint8_t { Latest = 0, ByMid = 1, ByNode = 2, ByComposite = 3 };
+            Mode mode = Mode::Latest;
+            std::uint64_t want = 0;
+            if (!a.empty()) {
+                if (is_string(a[0])) {
+                    const auto sidx = as_string_idx(a[0]);
+                    const auto heap = ev->string_heap();
+                    std::string_view key;
+                    if (sidx < heap.size())
+                        key = heap[sidx];
+                    if (key == "node" || key == "by-node" || key == "target") {
+                        mode = Mode::ByNode;
+                        if (a.size() >= 2 && is_int(a[1]))
+                            want = static_cast<std::uint64_t>(as_int(a[1]));
+                    } else if (key == "composite" || key == "by-composite" || key == "txn") {
+                        mode = Mode::ByComposite;
+                        if (a.size() >= 2 && is_int(a[1]))
+                            want = static_cast<std::uint64_t>(as_int(a[1]));
+                    } else if (key == "mutation" || key == "by-mutation" || key == "id") {
+                        mode = Mode::ByMid;
+                        if (a.size() >= 2 && is_int(a[1]))
+                            want = static_cast<std::uint64_t>(as_int(a[1]));
+                    } else {
+                        // "blame" / "memory" / unknown → latest
+                        mode = Mode::Latest;
+                    }
+                } else if (is_int(a[0])) {
+                    if (a.size() >= 2 && is_int(a[1])) {
+                        const auto mcode = as_int(a[0]);
+                        want = static_cast<std::uint64_t>(as_int(a[1]));
+                        if (mcode == 1)
+                            mode = Mode::ByNode;
+                        else if (mcode == 2)
+                            mode = Mode::ByComposite;
+                        else
+                            mode = Mode::ByMid;
+                    } else {
+                        mode = Mode::ByMid;
+                        want = static_cast<std::uint64_t>(as_int(a[0]));
+                    }
+                }
+            }
+
+            const aura::ast::MutationRecord* rec = nullptr;
+            if (log.empty()) {
+                // Empty log: still return schema shell so Agents can
+                // detect the surface without multi-stats scrape.
+            } else if (mode == Mode::Latest) {
+                rec = &log.back();
+            } else if (mode == Mode::ByMid) {
+                for (std::size_t i = log.size(); i-- > 0;) {
+                    if (log[i].mutation_id == want) {
+                        rec = &log[i];
+                        break;
+                    }
+                }
+            } else if (mode == Mode::ByNode) {
+                // Last mutation whose target_node matches.
+                for (std::size_t i = log.size(); i-- > 0;) {
+                    if (static_cast<std::uint64_t>(log[i].target_node) == want) {
+                        rec = &log[i];
+                        break;
+                    }
+                }
+            } else if (mode == Mode::ByComposite) {
+                // Prefer root (parent=0) of composite; else first match.
+                const aura::ast::MutationRecord* first = nullptr;
+                for (std::size_t i = 0; i < log.size(); ++i) {
+                    if (log[i].composite_transaction_id != want)
+                        continue;
+                    if (!first)
+                        first = &log[i];
+                    if (log[i].parent_mutation_id == 0) {
+                        rec = &log[i];
+                        break;
+                    }
+                }
+                if (!rec)
+                    rec = first;
+            }
+
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev->push_string_heap(k_str);
+                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            insert_kv("schema-2196", 2196);
+            insert_kv("issue-2196", 2196);
+            insert_kv("mutation-memory-wired", 1);
+            insert_kv("lookup-mode", static_cast<std::int64_t>(mode));
+            insert_kv("log-size", static_cast<std::int64_t>(log.size()));
+            insert_kv("found", rec ? 1 : 0);
+
+            std::uint64_t join_size = 0;
+            if (!rec) {
+                if (m)
+                    m->mutation_memory_join_size_last.store(0, std::memory_order_relaxed);
+                insert_kv("join-size", 0);
+                insert_kv("live-effects", 0);
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            }
+
+            if (m)
+                m->mutation_memory_found_total.fetch_add(1, std::memory_order_relaxed);
+
+            const bool rolled_back = rec->status == aura::ast::MutationStatus::RolledBack;
+            if (rolled_back && m)
+                m->mutation_memory_rolled_back_total.fetch_add(1, std::memory_order_relaxed);
+
+            // Core MutationRecord fields (reuse existing audit trail).
+            insert_kv("mutation-id", static_cast<std::int64_t>(rec->mutation_id));
+            insert_kv("timestamp-ms", static_cast<std::int64_t>(rec->timestamp_ms));
+            insert_kv("target-node", static_cast<std::int64_t>(rec->target_node));
+            insert_kv("affected-stable-node", static_cast<std::int64_t>(rec->target_node));
+            insert_kv("author-fingerprint", static_cast<std::int64_t>(rec->author_fingerprint));
+            insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec->parent_mutation_id));
+            insert_kv("composite-transaction-id",
+                      static_cast<std::int64_t>(rec->composite_transaction_id));
+            insert_kv("status", rolled_back ? 1 : 0); // 0=Committed, 1=RolledBack
+            insert_kv("live-effects", rolled_back ? 0 : 1);
+            insert_kv("has-rollback-data", rec->has_rollback_data ? 1 : 0);
+            insert_kv("invariant-status", static_cast<std::int64_t>(rec->invariant_status));
+            insert_kv("operator-name-len", static_cast<std::int64_t>(rec->operator_name.size()));
+            insert_kv("summary-len", static_cast<std::int64_t>(rec->summary.size()));
+            insert_kv("parent-id", static_cast<std::int64_t>(rec->parent_id));
+            insert_kv("field-offset", static_cast<std::int64_t>(rec->field_offset));
+
+            // Parent chain walk → root (cap 8 hops).
+            std::uint64_t chain[8] = {};
+            std::size_t chain_len = 0;
+            std::uint64_t walk = rec->mutation_id;
+            std::uint64_t root_mid = rec->mutation_id;
+            for (std::size_t hop = 0; hop < 8 && walk != 0; ++hop) {
+                chain[chain_len++] = walk;
+                join_size++;
+                const aura::ast::MutationRecord* cur = nullptr;
+                for (std::size_t i = log.size(); i-- > 0;) {
+                    if (log[i].mutation_id == walk) {
+                        cur = &log[i];
+                        break;
+                    }
+                }
+                if (!cur || cur->parent_mutation_id == 0)
+                    break;
+                walk = cur->parent_mutation_id;
+                root_mid = walk;
+            }
+            insert_kv("root-mutation-id", static_cast<std::int64_t>(root_mid));
+            insert_kv("chain-depth", static_cast<std::int64_t>(chain_len));
+            insert_kv("chain-0", chain_len > 0 ? static_cast<std::int64_t>(chain[0]) : 0);
+            insert_kv("chain-1", chain_len > 1 ? static_cast<std::int64_t>(chain[1]) : 0);
+            insert_kv("chain-2", chain_len > 2 ? static_cast<std::int64_t>(chain[2]) : 0);
+            insert_kv("chain-3", chain_len > 3 ? static_cast<std::int64_t>(chain[3]) : 0);
+
+            // Composite siblings / children (same composite_transaction_id).
+            std::uint64_t composite_siblings = 0;
+            std::uint64_t composite_children = 0;
+            std::uint64_t affected_nodes_sample[4] = {};
+            std::size_t affected_sample_n = 0;
+            auto push_affected = [&](std::uint64_t n) {
+                if (n == 0 || n == static_cast<std::uint64_t>(~0u))
+                    return;
+                for (std::size_t i = 0; i < affected_sample_n; ++i)
+                    if (affected_nodes_sample[i] == n)
+                        return;
+                if (affected_sample_n < 4)
+                    affected_nodes_sample[affected_sample_n++] = n;
+            };
+            push_affected(rec->target_node);
+            if (rec->composite_transaction_id != 0) {
+                for (const auto& r : log) {
+                    if (r.composite_transaction_id != rec->composite_transaction_id)
+                        continue;
+                    ++composite_siblings;
+                    join_size++;
+                    push_affected(r.target_node);
+                    if (r.parent_mutation_id == rec->mutation_id)
+                        ++composite_children;
+                }
+            } else {
+                composite_siblings = 1;
+            }
+            insert_kv("composite-sibling-count", static_cast<std::int64_t>(composite_siblings));
+            insert_kv("composite-child-count", static_cast<std::int64_t>(composite_children));
+            insert_kv("affected-node-0", affected_sample_n > 0
+                                             ? static_cast<std::int64_t>(affected_nodes_sample[0])
+                                             : 0);
+            insert_kv("affected-node-1", affected_sample_n > 1
+                                             ? static_cast<std::int64_t>(affected_nodes_sample[1])
+                                             : 0);
+            insert_kv("affected-node-2", affected_sample_n > 2
+                                             ? static_cast<std::int64_t>(affected_nodes_sample[2])
+                                             : 0);
+            insert_kv("affected-node-3", affected_sample_n > 3
+                                             ? static_cast<std::int64_t>(affected_nodes_sample[3])
+                                             : 0);
+            insert_kv("affected-node-sample-len", static_cast<std::int64_t>(affected_sample_n));
+
+            // Dirty cascade + StableNodeRef join (current workspace state).
+            const auto nid = rec->target_node;
+            const bool in_range = nid < ws->size();
+            const std::uint8_t dirty_bits =
+                in_range ? ws->dirty_reasons(nid) : static_cast<std::uint8_t>(0);
+            insert_kv("dirty-now", dirty_bits != 0 ? 1 : 0);
+            insert_kv("dirty-reasons", static_cast<std::int64_t>(dirty_bits));
+            insert_kv("stable-ref-invalidations",
+                      static_cast<std::int64_t>(ws->stable_ref_invalidations()));
+            insert_kv("workspace-gen", static_cast<std::int64_t>(ws->generation()));
+            insert_kv("dirty-nodes-snapshot",
+                      static_cast<std::int64_t>(ev->get_dirty_nodes_in_snapshot()));
+            // Pin hits: lifetime pin invalidations/restamps if metrics present.
+            std::int64_t pin_hits = 0;
+            if (m) {
+                pin_hits = static_cast<std::int64_t>(
+                    m->lifetime_pin_invalidations_total.load(std::memory_order_relaxed) +
+                    m->lifetime_pin_restamps_total.load(std::memory_order_relaxed));
+            }
+            insert_kv("pin-hits", pin_hits);
+            // Invalidation trace hit for this mutation (binding gen join).
+            insert_kv("invalidation-trace-hit",
+                      ws->last_invalidation_for(rec->mutation_id) ? 1 : 0);
+
+            // Safe to retry: live-effects + has rollback data, not rolled back.
+            insert_kv("safe-to-retry", (!rolled_back && rec->has_rollback_data) ? 1 : 0);
+            // Safe to re-mutate: RolledBack or no live effects claimed.
+            insert_kv("safe-to-remutate", rolled_back ? 1 : 0);
+
+            insert_kv("join-size", static_cast<std::int64_t>(join_size));
+            if (m)
+                m->mutation_memory_join_size_last.store(join_size, std::memory_order_relaxed);
+
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+
+        ObservabilityPrims::register_stats_impl("query:mutation-memory", mutation_memory_impl);
+        // Alias for Agent discoverability (issue names both).
+        ObservabilityPrims::register_stats_impl("query:blame-of", mutation_memory_impl);
+    }
+
     // (query:mutations-since <id>) — Issue #346: returns
     // a pair-list of mutations with mutation_id >
     // the given id. Useful for "what changed since my

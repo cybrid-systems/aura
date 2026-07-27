@@ -2285,6 +2285,11 @@ add_dependencies(all_test_issue_targets test_fiber_migration_refresh_2194)
 aura_add_issue_test(test_subtype_constraint_meet_2195)
 aura_issue_test_link_llvm_jit(test_subtype_constraint_meet_2195)
 add_dependencies(all_test_issue_targets test_subtype_constraint_meet_2195)
+
+# Issue #2196: unified query:mutation-memory / blame surface for Agent self-repair.
+aura_add_issue_test(test_mutation_memory_blame_2196)
+aura_issue_test_link_llvm_jit(test_mutation_memory_blame_2196)
+add_dependencies(all_test_issue_targets test_mutation_memory_blame_2196)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
