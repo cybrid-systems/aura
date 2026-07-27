@@ -6,6 +6,7 @@ module;
 #include "observability_metrics.h"
 #include "typed_mutation_audit.h"  // Issue #1614 / #2145 invariant audit + hard-gate
 #include "security_capabilities.h" // aura_fiber_current_id
+#include "mutate_type_gate.hh"     // Issue #2219 Soft/Hard post-mutate type gate
 #include "core/sandbox.hh"         // Issue #2145 Strict sandbox hard-gate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
@@ -195,10 +196,22 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     // the log is empty (degenerate / pre-log mutations).
     // Issue #1769: never throw into mutate Guard paths.
     try {
+        // Issue #2219: every post-mutate typecheck entry (for query/tests).
+        mutate_type_gate::g_gate_check_total.fetch_add(1, std::memory_order_relaxed);
+        if (compiler_metrics_) {
+            auto* gm = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            gm->mutate_type_gate_check_total.fetch_add(1, std::memory_order_relaxed);
+            gm->mutate_type_gate_mode.store(mutate_type_gate::is_hard() ? 1 : 0,
+                                            std::memory_order_relaxed);
+        }
         if (!workspace_flat_ || !workspace_pool_)
             return true;
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
         aura::compiler::TypeChecker tc(treg);
+        // Issue #2219: Hard rejects match exhaustiveness diags (Warning or
+        // TypeError). Do not force set_strict(true) at construction — apply
+        // only on full recheck path below.
+        const bool hard_gate = mutate_type_gate::is_hard();
         if (!declared_type_sigs_.empty()) {
             std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                                std::equal_to<>>
@@ -302,16 +315,47 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             }
         }
 
-        auto local_diags = diag.diagnostics();
+        std::vector<aura::diag::Diagnostic> local_diags;
+        {
+            auto span = diag.diagnostics();
+            local_diags.assign(span.begin(), span.end());
+        }
         // Selective rebind/set-body recheck can spuriously report UnboundVariable
         // for the rebinding name (partial env does not re-seed the define). Fall
         // back to a full infer_flat before rejecting the mutation — this unblocks
         // mutate:rebind dep-chain p0 cases without masking real full-TC errors.
-        if (!local_diags.empty() && selective) {
+        // Issue #2219 Hard: always full TC so match exhaustiveness / TypeError
+        // are visible (selective path may report empty diags for incomplete match).
+        if (selective && (hard_gate || !local_diags.empty())) {
+            // Hard: promote exhaustiveness to TypeError (strict match reporting).
+            if (hard_gate)
+                tc.set_strict(true);
             aura::diag::DiagnosticCollector full_diag;
             tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, full_diag);
             workspace_flat_->clear_all_dirty();
-            local_diags = full_diag.diagnostics();
+            {
+                auto span = full_diag.diagnostics();
+                local_diags.assign(span.begin(), span.end());
+            }
+            // Issue #2219 Hard: explicit match exhaustiveness walk — selective
+            // rebind can leave match sites without TypeError/Warning diags even
+            // when a constructor clause was removed.
+            if (hard_gate) {
+                auto& treg_ex = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+                for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+                    if (!workspace_flat_->has_match_info(id))
+                        continue;
+                    auto exh =
+                        check_match_exhaustiveness(*workspace_flat_, *workspace_pool_, treg_ex, id);
+                    if (!exh.checked || exh.exhaustive || exh.missing_constructors.empty())
+                        continue;
+                    auto msg = format_match_exhaustiveness_message(exh);
+                    if (msg.empty())
+                        msg = "match: missing constructor";
+                    local_diags.push_back(
+                        aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, msg));
+                }
+            }
             if (local_diags.empty()) {
                 last_mutate_error_.clear();
                 return true;
@@ -332,6 +376,14 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             }
             std::vector<aura::diag::Diagnostic> filtered;
             filtered.reserve(local_diags.size());
+            auto* gate_m = compiler_metrics_
+                               ? static_cast<struct CompilerMetrics*>(compiler_metrics_)
+                               : nullptr;
+            mutate_type_gate::g_gate_check_total.fetch_add(1, std::memory_order_relaxed);
+            if (gate_m) {
+                gate_m->mutate_type_gate_check_total.fetch_add(1, std::memory_order_relaxed);
+                gate_m->mutate_type_gate_mode.store(hard_gate ? 1 : 0, std::memory_order_relaxed);
+            }
             for (auto& d : local_diags) {
                 if (d.kind == aura::diag::ErrorKind::UnboundVariable) {
                     // message is typically the bare variable name (format prefixes kind).
@@ -343,13 +395,27 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                     if (top_defines.contains(m))
                         continue;
                 }
-                // Match exhaustiveness is tracked via adt-exhaustiveness metrics
-                // (tests #692+); do not hard-reject rebind when a clause is missing.
-                if (d.kind == aura::diag::ErrorKind::TypeError &&
-                    (d.message.find("missing constructor") != std::string::npos ||
-                     d.message.find("match:") != std::string::npos))
+                // Issue #2219: match exhaustiveness — Soft skip (legacy), Hard reject.
+                const bool match_exh = mutate_type_gate::is_match_exhaustiveness_msg(d.message);
+                if (match_exh && (d.kind == aura::diag::ErrorKind::TypeError ||
+                                  d.kind == aura::diag::ErrorKind::Warning)) {
+                    if (hard_gate) {
+                        mutate_type_gate::g_exhaustiveness_reject_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (gate_m)
+                            gate_m->mutate_type_gate_exhaustiveness_reject_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        filtered.push_back(std::move(d));
+                    } else {
+                        mutate_type_gate::g_soft_type_skip_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (gate_m)
+                            gate_m->mutate_soft_type_skip_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
                     continue;
-                // Soft notes/warnings never reject mutations.
+                }
+                // Soft notes/warnings never reject mutations (AC4: Hard keeps this).
                 if (d.kind == aura::diag::ErrorKind::Note ||
                     d.kind == aura::diag::ErrorKind::Warning)
                     continue;
@@ -361,14 +427,28 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 return true;
             }
             // Soft type noise (Linear refinement, ADT match shape) is tracked by
-            // ownership / adt-exhaustiveness metrics; do not hard-reject rebind.
+            // ownership / adt-exhaustiveness metrics; Soft gate does not hard-reject.
             // Keep ParseError / InternalError / ArityMismatch as hard rejects.
             // Issue #CI / p0: UnboundVariable that survived top_defines filtering is a
             // REAL free-var error (e.g. undefined-fn) — must hard-reject so
             // typecheck-status-after-bad-mutate / agents see selective failure.
+            // Issue #2219 Hard: any remaining TypeError rejects (only_soft=false).
             bool only_soft = true;
             for (auto& d : local_diags) {
                 if (d.kind == aura::diag::ErrorKind::UnboundVariable) {
+                    only_soft = false;
+                    break;
+                }
+                if (hard_gate && d.kind == aura::diag::ErrorKind::TypeError) {
+                    only_soft = false;
+                    mutate_type_gate::g_hard_type_error_reject_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (gate_m)
+                        gate_m->mutate_type_gate_hard_type_error_reject_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    break;
+                }
+                if (hard_gate && mutate_type_gate::is_match_exhaustiveness_msg(d.message)) {
                     only_soft = false;
                     break;
                 }
@@ -380,6 +460,13 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 }
             }
             if (only_soft) {
+                // Soft path: remaining pure TypeError / Warning / Note soft-pass.
+                if (!hard_gate) {
+                    mutate_type_gate::g_soft_type_skip_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    if (gate_m)
+                        gate_m->mutate_soft_type_skip_total.fetch_add(1, std::memory_order_relaxed);
+                }
                 last_mutate_error_.clear();
                 return true;
             }

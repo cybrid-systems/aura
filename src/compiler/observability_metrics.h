@@ -5068,6 +5068,17 @@ struct CompilerMetrics {
     // Issue #1769: run_typecheck_no_lock* / run_post_mutate_typecheck_no_lock
     // swallowed a throw (fuzzer + mutate inline TC paths).
     std::atomic<std::uint64_t> inline_typecheck_exception_total{0};
+    // Issue #2219: post-mutate type gate (Soft soft-skip vs Hard reject).
+    //   - mutate_soft_type_skip_total: Soft path skipped TypeError/exhaustiveness
+    //   - mutate_type_gate_exhaustiveness_reject_total: Hard reject missing ctor
+    //   - mutate_type_gate_hard_type_error_reject_total: Hard remaining TypeError
+    //   - mutate_type_gate_check_total: filter-loop entries
+    //   - mutate_type_gate_mode: 0 Soft / 1 Hard (snapshot mirror)
+    std::atomic<std::uint64_t> mutate_soft_type_skip_total{0};
+    std::atomic<std::uint64_t> mutate_type_gate_exhaustiveness_reject_total{0};
+    std::atomic<std::uint64_t> mutate_type_gate_hard_type_error_reject_total{0};
+    std::atomic<std::uint64_t> mutate_type_gate_check_total{0};
+    std::atomic<std::uint64_t> mutate_type_gate_mode{0};
 
     // Issue #718: fine-grained per-block re-lower observability
     // counters for (query:incremental-relower-stats). These

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 503 | Preferred destination suites |
-| **Total scanned** | **503** | |
+| `tests/core/test_*.cpp` | 504 | Preferred destination suites |
+| **Total scanned** | **504** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 51 | 51 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 145 | 145 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 146 | 146 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
@@ -420,6 +420,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_mutate_batch.cpp`
 - `tests/compiler/test_mutate_capability_force_2052.cpp`
 - `tests/compiler/test_mutate_cross_thread_migration.cpp`
+- `tests/compiler/test_mutate_type_gate_2219.cpp`
 - `tests/compiler/test_mutation_aot_unit_batch.cpp`
 - `tests/compiler/test_mutation_audit_wal.cpp`
 - `tests/compiler/test_mutation_boundary_batch.cpp`
@@ -748,13 +749,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (145)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (146)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (145)
+#### domain/ (146)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -830,6 +831,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutate_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutate_batch.cpp
 - `tests/compiler/test_mutate_capability_force_2052.cpp` (#2052) [domain_suite, theme_compiler] — AC1: Source: add_mutate calls check_and_record_effect + check_workspace_isolation
 - `tests/compiler/test_mutate_cross_thread_migration.cpp` (—) [domain_suite, theme_compiler] — test_mutate_cross_thread_migration.cpp — Issue #1373:
+- `tests/compiler/test_mutate_type_gate_2219.cpp` (#2219) [domain_suite, theme_compiler] — AC1: Soft default / Hard production; schema-2219 query surface
 - `tests/compiler/test_mutation_audit_wal.cpp` (—) [domain_suite, theme_compiler] — append/rotate, full effect/tenant/epoch fields, replay into ring,
 - `tests/compiler/test_mutation_boundary_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_boundary_batch.cpp
 - `tests/serve/test_mutation_boundary_guard.cpp` (—) [domain_suite, theme_serve] — Issue #1747/#1897/#1931/#1950 (#1978 renamed): issue# moved from filename to header.

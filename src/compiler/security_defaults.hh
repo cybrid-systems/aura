@@ -10,6 +10,7 @@
 #include "typed_mutation_audit.h"
 #include "coercion_provenance_policy.hh"   // Issue #2185 reject-on-miss production default
 #include "compiler/hot_update_registry.hh" // Issue #2205 reemit boundary production default
+#include "compiler/mutate_type_gate.hh"    // Issue #2219 post-mutate type gate
 #include "compiler/pipeline_policy.hh"     // Issue #2213 tree-walker fallback production gate
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
@@ -95,8 +96,13 @@ inline void grant_render_kernel_principal() noexcept {
 //        - production → Forbidden (hard-fail; never silent tree-walker)
 //        - AURA_SANDBOX=off → Allow (unit Soft ergonomics)
 //        - AURA_PIPELINE_STRICT=0|allow|force-soa|1|forbid overrides
+//  11. Mutate type gate (#2219):
+//        - production → Hard (match exhaustiveness / TypeError reject)
+//        - AURA_SANDBOX=off → Soft (unit Soft-path ergonomics)
+//        - AURA_MUTATE_TYPE_GATE=soft|hard always wins when set
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft
-// fiber + Soft linear enforce + soft coercion apply + tree-walker Allow.
+// fiber + Soft linear enforce + soft coercion apply + tree-walker Allow +
+// Soft mutate type gate.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -315,6 +321,11 @@ inline void apply_production_security_defaults() noexcept {
     //     Forbidden hard-fail by default in production; Allow under
     //     AURA_SANDBOX=off. AURA_PIPELINE_STRICT=0|allow|force-soa|1 overrides.
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/dev_off);
+
+    // 11) Issue #2219: post-mutate type gate — Hard under production so
+    //     Agents cannot treat soft-passed typecheck as success. Soft under
+    //     AURA_SANDBOX=off. AURA_MUTATE_TYPE_GATE=soft|hard overrides.
+    mutate_type_gate::apply_production_defaults(/*dev_sandbox_off=*/dev_off);
 }
 
 } // namespace aura::compiler::security
