@@ -55,6 +55,7 @@ module;
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "hot_update_registry.hh" // #2127: deopt-window signals for adaptive thr
+#include "pipeline_policy.hh"     // Issue #2213: tree-walker fallback production gate
 
 export module aura.compiler.service;
 import std;
@@ -1389,6 +1390,28 @@ public:
 
     // ---- Unified evaluation (IR-first with fallback) -----------------
 
+    // Issue #2213: production gate on silent tree-walker fallback.
+    // When needs_tree_walker_fallback is true:
+    //   Allow     → TakeWalker (legacy; unit default)
+    //   Forbidden → HardError  (production preferred)
+    //   ForceSoa  → ContinueIr + forced_soa metric
+    // Happy path (needs=false) is a single bool check + no metric write.
+    [[nodiscard]] TreeWalkerFallbackDisposition
+    consult_tree_walker_fallback_gate_(const aura::ast::FlatAST& flat,
+                                       const aura::ast::StringPool& pool, aura::ast::NodeId root) {
+        const bool needs = needs_tree_walker_fallback(flat, pool, root);
+        if (!needs)
+            return TreeWalkerFallbackDisposition::ContinueIr;
+        metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        const auto disp = tree_walker_fallback_disposition(/*needs_fallback=*/true);
+        if (disp == TreeWalkerFallbackDisposition::HardError)
+            metrics_.tree_walker_fallback_forbidden_total.fetch_add(1, std::memory_order_relaxed);
+        else if (disp == TreeWalkerFallbackDisposition::ContinueIr)
+            metrics_.tree_walker_fallback_forced_soa_total.fetch_add(1, std::memory_order_relaxed);
+        // TakeWalker: no extra counter (tree_walker_fallback_total is enough).
+        return disp;
+    }
+
     // Check if an expression needs the tree-walker evaluator.
     // IR pipeline cannot handle: EDSL primitives, quoted pairs, special forms,
     // macro definitions, error handling, or non-primitive variable references
@@ -2211,18 +2234,32 @@ public:
             }
         }
 
-        if (!is_fn_define && needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
-            auto result =
-                evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
-            // Track all bound names so subsequent eval calls don't fall
-            // through to the IR pipeline (which silently returns 0 for
-            // unknown vars). Issue #132: extracted to
-            // aura::compiler.collect_user_bindings.
-            for (auto& name :
-                 aura::compiler::collect_user_bindings(*flat_ptr, *pool_ptr, expanded_root)) {
-                user_bindings_.insert(std::move(name));
+        // Issue #2213: production forbids silent tree-walker fallback that
+        // abandons SoA + Impact + partial-relower. Gate is zero-cost when
+        // needs=false (AC4 happy path).
+        if (!is_fn_define) {
+            const auto tw_disp =
+                consult_tree_walker_fallback_gate_(*flat_ptr, *pool_ptr, expanded_root);
+            if (tw_disp == TreeWalkerFallbackDisposition::HardError) {
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "tree-walker fallback forbidden in production pipeline "
+                    "(Issue #2213; set AURA_PIPELINE_STRICT=0 or force-soa to override)"});
             }
-            return result;
+            if (tw_disp == TreeWalkerFallbackDisposition::TakeWalker) {
+                auto result =
+                    evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+                // Track all bound names so subsequent eval calls don't fall
+                // through to the IR pipeline (which silently returns 0 for
+                // unknown vars). Issue #132: extracted to
+                // aura::compiler.collect_user_bindings.
+                for (auto& name :
+                     aura::compiler::collect_user_bindings(*flat_ptr, *pool_ptr, expanded_root)) {
+                    user_bindings_.insert(std::move(name));
+                }
+                return result;
+            }
+            // ContinueIr (ForceSoa or needs=false): fall through to IR path.
         }
 
         // === Level 2: Type check via TypeCheckWrap pass ===
@@ -2296,6 +2333,31 @@ public:
                 auto ci = bind_define_value_in_env(std::string(name), *const_val);
                 ir_value_cell_bindings_[std::string(name)] = ci;
                 return *const_val;
+            }
+            // Issue #2213: value-define tree-walker fallback is also gated.
+            // Body needed walker or IR bind failed — under Forbidden hard-fail;
+            // under ForceSoa skip silent walker (no silent SoA abandonment).
+            {
+                metrics_.tree_walker_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                const auto disp = tree_walker_fallback_disposition(/*needs_fallback=*/true);
+                if (disp == TreeWalkerFallbackDisposition::HardError) {
+                    metrics_.tree_walker_fallback_forbidden_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return std::unexpected(aura::diag::Diagnostic{
+                        aura::diag::ErrorKind::InternalError,
+                        "tree-walker fallback forbidden in production pipeline "
+                        "(Issue #2213 value-define; AURA_PIPELINE_STRICT override)"});
+                }
+                if (disp == TreeWalkerFallbackDisposition::ContinueIr) {
+                    metrics_.tree_walker_fallback_forced_soa_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // Soft ForceSoa: refuse silent walker; surface as error
+                    // rather than inventing partial IR for an unlowerable body.
+                    return std::unexpected(aura::diag::Diagnostic{
+                        aura::diag::ErrorKind::InternalError,
+                        "tree-walker fallback blocked (ForceSoa); value define not IR-lowerable "
+                        "(Issue #2213)"});
+                }
             }
             // Fallback: tree-walker for env persistence + subsequent fallback tracking.
             auto result =
@@ -11009,6 +11071,14 @@ public:
                                                          const aura::ast::StringPool& pool,
                                                          aura::ast::NodeId root) const {
         return needs_tree_walker_fallback(flat, pool, root);
+    }
+
+    // Issue #2213: test/Agent hook — consult needs + production policy.
+    // disposition is the gate result; metrics always bump on needs=true.
+    [[nodiscard]] TreeWalkerFallbackDisposition
+    public_consult_tree_walker_fallback(const aura::ast::FlatAST& flat,
+                                        const aura::ast::StringPool& pool, aura::ast::NodeId root) {
+        return consult_tree_walker_fallback_gate_(flat, pool, root);
     }
 
     // Issue #282: public accessors for the Occurrence Typing

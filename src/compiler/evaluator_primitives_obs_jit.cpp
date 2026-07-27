@@ -35,6 +35,7 @@ module;
 #include "serve/fiber.h"
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
+#include "compiler/pipeline_policy.hh" // Issue #2213 tree-walker fallback policy
 #include <limits>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
@@ -896,6 +897,27 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"instr-level-partial-reemit-wired", make_int(1)},
                 {"schema-2109", make_int(2109)},
                 {"issue-2109", make_int(2109)},
+                // Issue #2213: production tree-walker fallback gate
+                {"tree_walker_fallback_total",
+                 make_int(L(&CompilerMetrics::tree_walker_fallback_total))},
+                {"tree-walker-fallback-total",
+                 make_int(L(&CompilerMetrics::tree_walker_fallback_total))},
+                {"tree_walker_fallback_forbidden_total",
+                 make_int(L(&CompilerMetrics::tree_walker_fallback_forbidden_total))},
+                {"tree-walker-fallback-forbidden-total",
+                 make_int(L(&CompilerMetrics::tree_walker_fallback_forbidden_total))},
+                {"tree_walker_fallback_forced_soa_total",
+                 make_int(L(&CompilerMetrics::tree_walker_fallback_forced_soa_total))},
+                {"tree-walker-fallback-forced-soa-total",
+                 make_int(L(&CompilerMetrics::tree_walker_fallback_forced_soa_total))},
+                {"pipeline-strict-policy",
+                 make_int(static_cast<std::int64_t>(
+                     static_cast<std::uint8_t>(aura::compiler::tree_walker_fallback_policy())))},
+                {"production-pipeline-strict",
+                 make_int(aura::compiler::production_pipeline_strict() ? 1 : 0)},
+                {"tree-walker-fallback-gate-wired", make_int(1)},
+                {"schema-2213", make_int(2213)},
+                {"issue-2213", make_int(2213)},
             };
             return build_hash(kv);
         });
