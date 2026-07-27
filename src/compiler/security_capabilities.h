@@ -114,6 +114,10 @@ inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 // apply_production_security_defaults (Soft when AURA_SANDBOX=off).
 inline constexpr int kLinearEnforceProductionDefaultsIssue = 2182;
 
+// Issue #2185: production reject_apply_on_provenance_miss under
+// apply_production_security_defaults (soft when AURA_SANDBOX=off).
+inline constexpr int kCoercionProvenanceRejectProductionIssue = 2185;
+
 // Issue #2057: side-effect primitives inherit capability enforcement by
 // construction. See security_side_effect.hh + scripts/check_side_effect_security.py.
 // Rule: new mutate/ffi/render/exec/file-write prims MUST use add_mutate,

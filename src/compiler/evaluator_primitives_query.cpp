@@ -5924,6 +5924,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("provenance-miss-force-audit-wired", 1);
             insert_kv("schema-2102", 2102);
             insert_kv("issue-2102", 2102);
+            // Issue #2185: production defaults force reject-on-miss
+            insert_kv("production-defaults-reject-on-miss",
+                      aura::compiler::reject_apply_on_provenance_miss() ? 1 : 0);
+            insert_kv("coercion-provenance-reject-production-wired", 1);
+            insert_kv("schema-2185", 2185);
+            insert_kv("issue-2185", 2185);
             // Issue #2028: stable constraint solver surface metrics
             const std::int64_t sdo_total =
                 m ? static_cast<std::int64_t>(

@@ -8,6 +8,7 @@
 #define AURA_COMPILER_SECURITY_DEFAULTS_HH
 
 #include "typed_mutation_audit.h"
+#include "coercion_provenance_policy.hh" // Issue #2185 reject-on-miss production default
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
@@ -60,8 +61,8 @@ inline void grant_render_kernel_principal() noexcept {
     g_capability_registry().grant(/*tenant=*/0, "render", Effect::Render, prov);
 }
 
-// Issue #2053 / #2150 / #2151 / #2182: production multi-tenant AI security defaults.
-// Applies (in order):
+// Issue #2053 / #2150 / #2151 / #2182 / #2185: production multi-tenant AI
+// security defaults. Applies (in order):
 //   1. AURA_SANDBOX → Restricted (default) | off | strict  (#2076)
 //   2. AURA_MULTI_TENANT=1|true|yes → escalate to Strict
 //   3. TypedMutationAudit Full (or AURA_TYPED_AUDIT=sampled|off|full)
@@ -82,8 +83,13 @@ inline void grant_render_kernel_principal() noexcept {
 //        - production → Strict (incomplete linear×provenance hard-fails)
 //        - AURA_SANDBOX=off → Soft (metric-only incomplete trail)
 //        - AURA_LINEAR_ENFORCE=soft|strict always wins when set (canary)
+//   9. Coercion provenance miss (#2185 / refine #2102):
+//        - production → reject_apply_on_provenance_miss (no CoercionNode)
+//        - AURA_SANDBOX=off → soft apply + sentinel (dev ergonomics)
+//        - force_audit_on_provenance_miss always true
+//        - AURA_COERCION_PROVENANCE_REJECT=reject|soft canary override
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft
-// fiber + Soft linear enforce.
+// fiber + Soft linear enforce + soft coercion apply.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -267,6 +273,18 @@ inline void apply_production_security_defaults() noexcept {
         } else {
             set_linear_enforce_mode(LinearEnforceMode::Strict);
         }
+    }
+
+    // 9) Issue #2185: production refuse CoercionNode insert on incomplete
+    //    provenance chain (forensic completeness under Restricted/Strict).
+    //    Dev sandbox=off keeps soft apply so iterative typecheck remains
+    //    ergonomic (#2102 AC soft path). force_audit stays true always.
+    //    AURA_COERCION_PROVENANCE_REJECT always wins when set.
+    {
+        using aura::compiler::apply_coercion_provenance_reject_env_override;
+        using aura::compiler::apply_production_coercion_provenance_defaults;
+        apply_production_coercion_provenance_defaults(/*dev_sandbox_off=*/dev_off);
+        (void)apply_coercion_provenance_reject_env_override();
     }
 }
 

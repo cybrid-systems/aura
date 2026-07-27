@@ -218,6 +218,9 @@ inline void apply_production_audit_defaults() noexcept {
 }
 
 // Issue #2053: restore fast-iteration Sampled defaults (tests / AURA_SANDBOX=off).
+// Issue #2185: does not flip coercion reject-on-miss — callers that want full
+// dev restore should also call reset_coercion_provenance_miss_policy_for_test
+// or apply_production_security_defaults with AURA_SANDBOX=off.
 inline void apply_dev_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);

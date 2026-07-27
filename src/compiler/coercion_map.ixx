@@ -37,15 +37,34 @@ module;
 #include <atomic>
 #include <cstdint>
 #include <vector>
-#include "core/provenance_tracker.hh"      // Issue #2024: hygiene stamp + chain recovery
-#include "core/sandbox.hh"                 // Issue #2147: Strict honesty
-#include "compiler/typed_mutation_audit.h" // Issue #2147: Full vs Sampled walk cap
+#include "core/provenance_tracker.hh"             // Issue #2024: hygiene stamp + chain recovery
+#include "core/sandbox.hh"                        // Issue #2147: Strict honesty
+#include "compiler/typed_mutation_audit.h"        // Issue #2147: Full vs Sampled walk cap
+#include "compiler/coercion_provenance_policy.hh" // Issue #2102 / #2185 miss policy
 
 export module aura.compiler.coercion_map;
 
 import aura.core.ast;
 
 namespace aura::compiler {
+
+// Re-export policy symbols for module importers (atomics live in the
+// shared header so security_defaults can flip production reject-on-miss).
+export using ::aura::compiler::g_force_audit_on_provenance_miss;
+export using ::aura::compiler::g_reject_apply_on_provenance_miss;
+export using ::aura::compiler::g_coercion_provenance_miss_force_audit_total;
+export using ::aura::compiler::g_coercion_provenance_miss_reject_total;
+export using ::aura::compiler::kCoercionProvenanceRejectProductionIssue;
+export using ::aura::compiler::set_force_audit_on_provenance_miss;
+export using ::aura::compiler::set_reject_apply_on_provenance_miss;
+export using ::aura::compiler::force_audit_on_provenance_miss;
+export using ::aura::compiler::reject_apply_on_provenance_miss;
+export using ::aura::compiler::note_provenance_miss_for_boundary;
+export using ::aura::compiler::provenance_miss_pending_for_boundary;
+export using ::aura::compiler::consume_provenance_miss_for_boundary;
+export using ::aura::compiler::reset_coercion_provenance_miss_policy_for_test;
+export using ::aura::compiler::apply_production_coercion_provenance_defaults;
+export using ::aura::compiler::apply_coercion_provenance_reject_env_override;
 
 // Issue #2024: forensic sentinel base for incomplete occurrence-narrowing
 // provenance (high nibble C0E5 = "coercion"). Low 16 bits carry original_child
@@ -75,16 +94,10 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_strict_reject_wea
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
 export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_total{0};
 
-// Issue #2102: provenance-miss policy + force-audit / reject metrics.
-// force_audit_on_provenance_miss (default true): under Sampled, note a
-// boundary flag so MutationBoundaryGuard exit runs Full-path invariant audit.
-// reject_apply_on_provenance_miss (default false): skip CoercionNode insert
-// when chain still incomplete after walk (caller re-infers with
-// set_active_mutation_id). Sentinel stamps remain when apply is allowed.
-export inline std::atomic<std::uint32_t> g_force_audit_on_provenance_miss{1};
-export inline std::atomic<std::uint32_t> g_reject_apply_on_provenance_miss{0};
-export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_force_audit_total{0};
-export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_reject_total{0};
+// Issue #2102 / #2185: provenance-miss policy atomics + helpers live in
+// coercion_provenance_policy.hh (re-exported above). Process start keeps
+// reject=false; apply_production_security_defaults forces reject=true
+// under production sandbox (Issue #2185).
 
 // Issue #2147 Phase A.2: thread-local active mutation context so log scan
 // is O(1) when entry.source_mutation_id is empty (Guard / TypeChecker stamp).
@@ -102,40 +115,6 @@ export inline void clear_coercion_active_mutation_context() noexcept {
 }
 export [[nodiscard]] inline std::uint64_t coercion_active_mutation_id() noexcept {
     return s_coercion_active_mutation_id;
-}
-
-// Thread-local: miss recorded during this fiber's apply → consumed on
-// MutationBoundary exit (process-wide counters stay global).
-inline thread_local bool s_provenance_miss_this_boundary = false;
-
-export inline void set_force_audit_on_provenance_miss(bool on) noexcept {
-    g_force_audit_on_provenance_miss.store(on ? 1u : 0u, std::memory_order_relaxed);
-}
-export inline void set_reject_apply_on_provenance_miss(bool on) noexcept {
-    g_reject_apply_on_provenance_miss.store(on ? 1u : 0u, std::memory_order_relaxed);
-}
-export [[nodiscard]] inline bool force_audit_on_provenance_miss() noexcept {
-    return g_force_audit_on_provenance_miss.load(std::memory_order_relaxed) != 0;
-}
-export [[nodiscard]] inline bool reject_apply_on_provenance_miss() noexcept {
-    return g_reject_apply_on_provenance_miss.load(std::memory_order_relaxed) != 0;
-}
-export inline void note_provenance_miss_for_boundary() noexcept {
-    s_provenance_miss_this_boundary = true;
-}
-export [[nodiscard]] inline bool provenance_miss_pending_for_boundary() noexcept {
-    return s_provenance_miss_this_boundary;
-}
-// Returns true if a miss was noted since last consume; clears the flag.
-export [[nodiscard]] inline bool consume_provenance_miss_for_boundary() noexcept {
-    const bool v = s_provenance_miss_this_boundary;
-    s_provenance_miss_this_boundary = false;
-    return v;
-}
-export inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
-    g_force_audit_on_provenance_miss.store(1, std::memory_order_relaxed);
-    g_reject_apply_on_provenance_miss.store(0, std::memory_order_relaxed);
-    s_provenance_miss_this_boundary = false;
 }
 
 export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
