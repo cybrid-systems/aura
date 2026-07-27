@@ -37,6 +37,11 @@
 // Re-emit / reload restamps slot table_generation to the new epoch
 // (commit_func_table_swap / aura_register_fn_tracked). Until then, mixed
 // JIT+AOT workloads must not execute generation-behind AOT code.
+//
+// Issue #2183: after successful AOT reemit, CompilerService also
+// restamp_cache_entry_live_ on the corresponding IR cache entry so
+// CacheEntryVersionStamp (mutation/bridge/defuse/soa) stays joint with
+// AOT table_generation. See ir_cache_pure.ixx restamp_cache_entry.
 
 #pragma once
 

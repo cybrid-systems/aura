@@ -46,10 +46,19 @@ import aura.compiler.dirty_propagation; // DepGraph (Issue #2179)
 
 export namespace aura::compiler {
 
-// ── CacheEntryVersionStamp (#2033) ────────────────────────
+// ── CacheEntryVersionStamp (#2033 / #2183) ─────────────────
 // Monotonic stamp binding mutation / bridge / defuse domains
 // so should_relower cannot silently serve IR after epoch bumps
 // when dirty/source_hash look clean (high-freq AI self-mod).
+//
+// Issue #2183 unified restamp contract:
+//   Every successful store_define_v2 / partial peel / full relower /
+//   cascade store / AOT reemit success MUST call restamp_cache_entry
+//   (or CompilerService::restamp_cache_entry_live_) with live atomics.
+//   lookup_define_v2 must never serve IR when should_relower reports
+//   stamp-domain drift (mutation / bridge / defuse / soa gen).
+//   AOT table_generation is joint with bridge via #2046; restamp after
+//   reemit keeps IR-cache stamp domains aligned with the joint epoch.
 struct CacheEntryVersionStamp {
     std::uint64_t mutation_count = 0; // mutation_epoch at lower/store
     std::uint64_t bridge_epoch = 0;
@@ -61,6 +70,17 @@ struct CacheEntryVersionStamp {
                soa_generation != 0;
     }
 };
+
+// Issue #2183: single pure restamp helper for CacheEntryVersionStamp.
+// All production store / partial / cascade / AOT success paths must
+// funnel here (or via IRCacheEntry::stamp_version which calls this).
+inline void restamp_cache_entry(CacheEntryVersionStamp& s, std::uint64_t mut, std::uint64_t bridge,
+                                std::uint64_t defuse, std::uint64_t soa_gen = 0) noexcept {
+    s.mutation_count = mut;
+    s.bridge_epoch = bridge;
+    s.defuse_version = defuse;
+    s.soa_generation = soa_gen;
+}
 
 // Reason bitflags for should_relower observability (optional out-param).
 inline constexpr std::uint32_t kRelowerDirty = 1u << 0;

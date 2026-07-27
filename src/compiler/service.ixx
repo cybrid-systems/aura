@@ -4060,14 +4060,12 @@ public:
         // Issue #1042: access stamp for LRU eviction under long-running serve.
         std::uint64_t last_used = 0;
 
-        // Issue #2033 / #2111: write stamp after successful lower / store.
+        // Issue #2033 / #2111 / #2183: write stamp after successful lower /
+        // store / partial / AOT restamp. Funnel through pure restamp_cache_entry.
         // soa_gen is the live SoA generation fence at store time.
         void stamp_version(std::uint64_t mut_epoch, std::uint64_t bridge, std::uint64_t defuse,
                            std::uint64_t soa_gen = 0) {
-            version_stamp_.mutation_count = mut_epoch;
-            version_stamp_.bridge_epoch = bridge;
-            version_stamp_.defuse_version = defuse;
-            version_stamp_.soa_generation = soa_gen;
+            restamp_cache_entry(version_stamp_, mut_epoch, bridge, defuse, soa_gen);
             mutation_count = static_cast<std::size_t>(mut_epoch);
             last_seen_epoch_ = mut_epoch;
         }
@@ -4602,14 +4600,23 @@ public:
                           it->second.dirty_block_count() > 0;
         if (need) {
             metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #2033: stamp-domain observability for silent-stale forensics.
+            // Issue #2033 / #2183: stamp-domain observability for silent-stale
+            // forensics. Never serve IR when stamp domains disagree with live.
             if (reasons & kRelowerBridgeEpoch)
                 metrics_.should_relower_bridge_epoch_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
-            if (reasons & (kRelowerMutationDrift | kRelowerBridgeEpoch | kRelowerDefuseVersion |
-                           kRelowerSoaGeneration))
+            const std::uint32_t stamp_bits =
+                reasons & (kRelowerMutationDrift | kRelowerBridgeEpoch | kRelowerDefuseVersion |
+                           kRelowerSoaGeneration);
+            if (stamp_bits != 0) {
                 metrics_.should_relower_stamp_mismatch_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                // Issue #2183 AC2: dedicated force-relower counter + reason OR.
+                metrics_.cache_stamp_mismatch_force_relower_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                metrics_.cache_stamp_mismatch_reasons_bits.fetch_or(
+                    static_cast<std::uint64_t>(stamp_bits), std::memory_order_relaxed);
+            }
             // Issue #2111: generation-only stale (dirty may be false).
             if (reasons & kRelowerSoaGeneration) {
                 metrics_.soa_generation_stale_prevented_total.fetch_add(1,
@@ -4640,11 +4647,8 @@ public:
         entry.strings = std::move(strings);
         entry.dirty = false;
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
-        // Issue #2033 / #2111: stamp mutation + bridge + defuse + SoA gen
-        // after successful lower (generation fence at store time).
-        entry.stamp_version(aura::core::current_mutation_epoch(), bridge_epoch(),
-                            evaluator_.defuse_version(), entry.live_soa_generation());
-        metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2033 / #2111 / #2183: unified restamp after successful store.
+        restamp_cache_entry_live_(entry);
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.
         // init_block_dirty_from_irs() sizes to irs[].blocks.size()
@@ -4854,6 +4858,19 @@ public:
         metrics_.soa_dirty_finish_wired.store(1, std::memory_order_relaxed);
         entry.bump_soa_generation();
         metrics_.soa_generation_bump_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #2183: unified restamp for IR cache entries — every successful
+    // store / partial peel / cascade store / AOT reemit success path calls
+    // this so CacheEntryVersionStamp matches live mutation/bridge/defuse/soa.
+    void restamp_cache_entry_live_(IRCacheEntry& entry) {
+        const auto mut = aura::core::current_mutation_epoch();
+        const auto bridge = bridge_epoch();
+        const auto defuse = evaluator_.defuse_version();
+        const auto soa = entry.live_soa_generation();
+        entry.stamp_version(mut, bridge, defuse, soa);
+        metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any
@@ -5499,6 +5516,8 @@ public:
                                                                          std::memory_order_relaxed);
                     // fall through to full
                 } else {
+                    // Issue #2183 AC1: restamp after successful partial peel.
+                    restamp_cache_entry_live_(it->second);
                     (void)flat;
                     (void)pool;
                     (void)expanded_root;
@@ -5678,6 +5697,8 @@ public:
                             1, std::memory_order_relaxed);
                         // Residual desync after peel → fall through to full.
                     } else {
+                        // Issue #2183 AC1: restamp after successful per-fn partial.
+                        restamp_cache_entry_live_(it->second);
                         // Issue #1514: sync JIT — evict native code for this
                         // define so next exec recompiles only the dirty fn.
                         (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
@@ -6335,6 +6356,40 @@ public:
         if (it == ir_cache_v2_.end())
             return nullptr;
         return &it->second;
+    }
+
+    // Issue #2183 test: inject stale stamp (clean dirty, old mutation/bridge)
+    // so lookup_define_v2 must force re-lower without dirty bit.
+    bool inject_stale_cache_stamp_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        auto& e = it->second;
+        e.dirty = false;
+        e.clear_all_block_dirty();
+        e.clear_all_instruction_dirty();
+        // Force detectable stamp drift even when live mut/bridge are 0:
+        //   - mutation_count = 0 (behind any live > 0)
+        //   - bridge_epoch = non-zero sentinel != live (always trips
+        //     stamp.bridge_epoch != 0 && != current_bridge_epoch)
+        constexpr std::uint64_t kStaleBridgeSentinel = 0xDEADBEEFull;
+        const auto live_bridge = bridge_epoch();
+        const auto stale_bridge = (live_bridge == kStaleBridgeSentinel) ? (kStaleBridgeSentinel - 1)
+                                                                        : kStaleBridgeSentinel;
+        restamp_cache_entry(e.version_stamp_, /*mut=*/0, stale_bridge,
+                            e.version_stamp_.defuse_version, e.version_stamp_.soa_generation);
+        e.mutation_count = 0;
+        e.last_seen_epoch_ = 0;
+        return true;
+    }
+
+    // Issue #2183 test: force restamp to live counters (monotonic check).
+    bool restamp_cache_entry_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        restamp_cache_entry_live_(it->second);
+        return true;
     }
 
     // Issue #2181 test helper: mark block 0 dirty and clear instruction

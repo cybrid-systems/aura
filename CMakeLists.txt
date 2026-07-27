@@ -1900,6 +1900,11 @@ aura_add_issue_test(test_cache_entry_version_stamp)
 aura_issue_test_link_llvm_jit(test_cache_entry_version_stamp)
 add_dependencies(all_test_issue_targets test_cache_entry_version_stamp)
 
+# Issue #2183: unified CacheEntryVersionStamp restamp contract.
+aura_add_issue_test(test_cache_stamp_restamp_contract_2183)
+aura_issue_test_link_llvm_jit(test_cache_stamp_restamp_contract_2183)
+add_dependencies(all_test_issue_targets test_cache_stamp_restamp_contract_2183)
+
 # Issue #2034: force instruction_dirty_ sync after cascade block dirty marks.
 aura_add_issue_test(test_soa_cascade_instr_dirty_sync)
 aura_issue_test_link_llvm_jit(test_soa_cascade_instr_dirty_sync)

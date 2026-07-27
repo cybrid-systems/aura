@@ -6273,9 +6273,20 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"incremental-soundness-wired", make_int(1)},
                 {"schema-2113", make_int(2113)},
                 {"issue-2113", make_int(2113)},
-                // Issue #2033: CacheEntryVersionStamp + bridge_epoch should_relower
+                // Issue #2033 / #2183: CacheEntryVersionStamp + bridge_epoch
+                // should_relower + unified restamp contract
                 {"cache_entry_version_stamp_total",
                  make_int(m ? load(m->cache_entry_version_stamp_total) : 0)},
+                {"cache_stamp_restamp_total", make_int(m ? load(m->cache_stamp_restamp_total) : 0)},
+                {"cache-stamp-restamp-total", make_int(m ? load(m->cache_stamp_restamp_total) : 0)},
+                {"cache_stamp_mismatch_force_relower_total",
+                 make_int(m ? load(m->cache_stamp_mismatch_force_relower_total) : 0)},
+                {"cache-stamp-mismatch-force-relower-total",
+                 make_int(m ? load(m->cache_stamp_mismatch_force_relower_total) : 0)},
+                {"cache_stamp_mismatch_reasons_bits",
+                 make_int(m ? load(m->cache_stamp_mismatch_reasons_bits) : 0)},
+                {"cache_stamp_aot_restamp_total",
+                 make_int(m ? load(m->cache_stamp_aot_restamp_total) : 0)},
                 {"should_relower_bridge_epoch_mismatch_total",
                  make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
                 {"should_relower_stamp_mismatch_total",
@@ -6284,8 +6295,11 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
                 {"cache-entry-version-stamp-wired", make_int(1)},
                 {"should-relower-bridge-epoch-wired", make_int(1)},
+                {"cache-stamp-restamp-wired", make_int(1)},
                 {"schema-2033", make_int(2033)},
                 {"issue-2033", make_int(2033)},
+                {"schema-2183", make_int(2183)},
+                {"issue-2183", make_int(2183)},
                 // Issue #2111: SoA generation fence (silent-stale under self-evo)
                 {"soa_generation_bump_total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
                 {"soa-generation-bump-total", make_int(m ? load(m->soa_generation_bump_total) : 0)},

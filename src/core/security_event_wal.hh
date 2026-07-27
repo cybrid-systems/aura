@@ -35,9 +35,17 @@
 #include <string_view>
 #include <vector>
 
+#include "core/mutation_audit_wal.hh" // resolve_mutation_audit_wal_dir fallthrough
 #include "core/security_event.hh"
 
 namespace aura::core::security_event_wal {
+
+// Re-export SecurityEvent types into this namespace so make_record /
+// persist_security_event compile without fully-qualified names
+// (security_event.hh keeps them under aura::core::security_event).
+using ::aura::core::security_event::kSecurityEventRingSize;
+using ::aura::core::security_event::SecurityEvent;
+using ::aura::core::security_event::SecurityEventKind;
 
 inline constexpr int kSecurityEventWalPhase = 1;
 inline constexpr int kSecurityEventWalIssue = 2225;
