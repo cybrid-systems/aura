@@ -56,15 +56,15 @@ For CPU-only pure work that must never touch the Evaluator, prefer direct
 
 MVP scope is single-agent only (`scripts/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
 
-### `AgentScope` (Issue #2083, opt-in feature flag)
+### `AgentScope` (Issue #2083, default multi-agent supervision root)
 
-`src/orch/agent_scope.h` provides an opt-in scoped multi-agent supervision root,
-gated by `#define AURA_ENABLE_AGENT_SCOPE`. Default builds keep the MVP linter
-green; commercial multi-agent builds define the flag per TU to opt in.
+`src/orch/agent_scope.h` provides the default scoped multi-agent supervision
+root. **Always available** under `aura::orch` via `#include "orch/orch.h"`
+(no `#define` required) — Issue #2226 promoted it from the opt-in
+`AURA_ENABLE_AGENT_SCOPE` feature flag to the default documented surface.
 
 ```cpp
-#define AURA_ENABLE_AGENT_SCOPE
-#include "orch/agent_scope.h"
+#include "orch/orch.h"   // pulls in agent_scope.h automatically
 
 aura::serve::Scheduler sched(2);
 // ... run scheduler ...
@@ -82,16 +82,16 @@ auto jr = scope.join_all(/*timeout_ms=*/5000); // mirror #2082 cancel+drain (def
 // ~AgentScope: cancel + best-effort drain + reservation release.
 ```
 
-Rules (per Issue #2083 AC4 / #2161 AC5):
+Rules (per Issue #2083 AC4 / #2161 AC5 / #2226):
 1. **No** process-global registry (linter still forbids `AgentRegistry` /
-   `global_agent_registry` / `conduct_parallel`).
+   `global_agent_registry` / `conduct_parallel`). AgentScope is bound to
+   an explicit `serve::Scheduler&` owner passed at construction — no static
+   name table, no process-static agent map. **Evaluator `orch:spawn-agent`
+   name bookkeeping is separate** (`OrchAgentNameTable` #2078) and not
+   touched by AgentScope.
 2. Scope destructor is the supervision root (cancel + best-effort drain +
    reservation release, mirroring `join_agents` #2082 contract).
-3. Default (flag off) tree still passes `--strict` MVP scope linter:
-   - `scripts/check_orch_mvp_scope.py` allows `AgentScope` only in TUs
-     that `#define AURA_ENABLE_AGENT_SCOPE` (new `FEATURE_FLAG_PATTERNS`
-     mechanism; see linter source).
-4. Distinct from `OrchAgentNameTable` (#2078) and `parallel_intend` (#1587):
+3. Distinct from `OrchAgentNameTable` (#2078) and `parallel_intend` (#1587):
    - `OrchAgentNameTable`: per-Evaluator name bookkeeping for Aura
      primitives (`orch:spawn-agent` / `orch:agent-join`).
    - `parallel_intend`: short-lived batch thunks (no long-lived names).

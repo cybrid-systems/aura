@@ -37,17 +37,14 @@ REMOVED_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("conduct_parallel", re.compile(r"\bconduct_parallel\b")),
 ]
 
-# Feature-flagged multi-agent patterns (allowed only when the corresponding
-# #define is present in the scanned file). Issue #2083: AgentScope opt-in.
-# Default builds keep the linter green (no #define → no symbols → no
-# violations). Commercial multi-agent builds #define AURA_ENABLE_AGENT_SCOPE
-# per TU to opt in.
+# Feature-flagged multi-agent patterns. Issue #2226: AgentScope was promoted
+# from opt-in (`AURA_ENABLE_AGENT_SCOPE`, #2083 / #2161) to the default
+# documented multi-agent supervision root, so it is no longer gated here.
+# The list is kept as a stable extension point in case future opt-in
+# multi-agent surfaces need a feature flag (e.g. tenant-scoped spawn).
 FEATURE_FLAG_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
-    (
-        "AgentScope",
-        re.compile(r"\bAgentScope\b"),
-        "AURA_ENABLE_AGENT_SCOPE",
-    ),
+    # (name, regex, flag_macro) — empty after #2226; see git history for
+    # the AURA_ENABLE_AGENT_SCOPE entry that was removed.
 ]
 FEATURE_FLAG_DEFINE_RE = re.compile(r"^\s*#\s*define\s+(?P<flag>[A-Z][A-Z0-9_]+)\b", re.MULTILINE)
 # A feature flag is also considered "opted-in" when the file uses #ifdef /
@@ -239,13 +236,13 @@ def main() -> int:
     print(
         f"⚠ orch_mvp_scope: {total_violations} removed multi-agent symbol(s) "
         f"reintroduced across {len(violation_files)}/{total_files} files "
-        f"(Issue #1966 / #2083 — AgentRegistry / global_agent_registry / "
-        f"conduct_parallel / AgentScope-without-flag must not return to the "
-        f"public orch surface)\n"
+        f"(Issue #1966 / #2226 — AgentRegistry / global_agent_registry / "
+        f"conduct_parallel must not return to the public orch surface. "
+        f"AgentScope is now the default multi-agent supervision root and "
+        f"is no longer feature-flag-gated.)\n"
         f"  Allowlisted files ({len(ALLOWLIST)}): see ALLOWLIST in "
         f"scripts/check_orch_mvp_scope.py\n"
-        f"  Feature-flag-gated symbols: {', '.join(p[0] for p in FEATURE_FLAG_PATTERNS)} "
-        f"(allowed only with #define {', '.join(p[2] for p in FEATURE_FLAG_PATTERNS)})\n"
+        f"  Feature-flag-gated symbols: {', '.join(p[0] for p in FEATURE_FLAG_PATTERNS) or '(none after #2226)'}\n"
         f"  Use --strict to enforce (exit 1; ./build.py gate always uses --strict)."
     )
     if not args.quiet:

@@ -1,21 +1,25 @@
-// test_agent_scope_2083.cpp — Issue #2083 AgentScope opt-in + #2161 watch_all.
+// test_agent_scope_2083.cpp — Issue #2083 AgentScope + #2161 watch_all
+// + #2226 default-on promotion.
 //
-// Defines AURA_ENABLE_AGENT_SCOPE so the AgentScope class is visible in
-// this TU. Default builds (no flag) compile this file as empty work —
-// the linter (scripts/check_orch_mvp_scope.py --strict) must still pass.
+// Issue #2226: AgentScope was promoted from opt-in (gated by
+// AURA_ENABLE_AGENT_SCOPE in #2083 / #2161) to the default multi-agent
+// supervision root. The class body in src/orch/agent_scope.h no longer
+// lives inside #ifdef AURA_ENABLE_AGENT_SCOPE, so this TU does NOT need
+// to #define the flag. The MVP linter (scripts/check_orch_mvp_scope.py
+// --strict) still forbids process-global registry symbols.
 //
 // Tests:
 //   AC1: AgentScope can spawn N agents, join_all / cancel_all behave under
 //        timeout.
 //   AC2: Destructor does not leak fibers or arena reservations.
 //   AC3: Two scopes do not share handles; no global map.
-//   AC4: Default (flag off) tree still passes --strict MVP scope linter
-//        (verified by the pre-push gate + a source-cite test below).
+//   AC4: Default tree passes --strict MVP scope linter; AgentScope is
+//        the default multi-agent supervision root (verified by the
+//        pre-push gate + a source-cite test below that asserts the
+//        AURA_ENABLE_AGENT_SCOPE gate is REMOVED in #2226).
 //   AC5: Stress: cancel mid-run + quota reject inside scope.
-//   AC6: Design note in src/orch/README.md (flag + semantics).
-//   #2161 AC1–AC5: watch_all batch liveness + stall cancel (feature-flagged).
-
-#define AURA_ENABLE_AGENT_SCOPE // opt-in for this TU (#2083 / #2161)
+//   AC6: Design note in src/orch/README.md (default root + semantics).
+//   #2161 AC1–AC5: watch_all batch liveness + stall cancel.
 
 #include "test_harness.hpp"
 
@@ -90,8 +94,8 @@ static void ac4_linter_and_source() {
     auto header_src = read_file("src/orch/agent_scope.h");
     CHECK(!header_src.empty(), "agent_scope.h exists");
     CHECK(header_src.find("Issue #2083") != std::string::npos, "agent_scope.h cites #2083");
-    CHECK(header_src.find("AURA_ENABLE_AGENT_SCOPE") != std::string::npos,
-          "agent_scope.h references the feature flag");
+    CHECK(header_src.find("AURA_ENABLE_AGENT_SCOPE") == std::string::npos,
+          "AC4: AURA_ENABLE_AGENT_SCOPE gate removed from agent_scope.h (#2226)");
     CHECK(header_src.find("class AgentScope") != std::string::npos, "AgentScope class declared");
     // Issue #2161: watch_all still behind the same flag (no global registry).
     CHECK(header_src.find("watch_all") != std::string::npos, "#2161: watch_all API");
@@ -245,8 +249,8 @@ static void ac6_readme_section() {
     auto readme = read_file("src/orch/README.md");
     CHECK(!readme.empty(), "src/orch/README.md readable");
     CHECK(readme.find("AgentScope") != std::string::npos, "README mentions AgentScope");
-    CHECK(readme.find("AURA_ENABLE_AGENT_SCOPE") != std::string::npos,
-          "README documents the feature flag");
+    CHECK(readme.find("AURA_ENABLE_AGENT_SCOPE") == std::string::npos,
+          "AC6: README no longer references the removed feature flag (#2226)");
     CHECK(readme.find("watch_all") != std::string::npos || readme.find("2161") != std::string::npos,
           "README documents watch_all / #2161");
 }
@@ -365,9 +369,10 @@ static void ac2161_watch_all_batch() {
 static void ac2161_flag_and_linter_surface() {
     std::println("\n--- #2161 AC1/AC5: flag + no global registry ---");
     auto header_src = read_file("src/orch/agent_scope.h");
-    // watch_all lives inside #ifdef AURA_ENABLE_AGENT_SCOPE (same as class).
-    CHECK(header_src.find("#ifdef AURA_ENABLE_AGENT_SCOPE") != std::string::npos,
-          "AC1: still behind AURA_ENABLE_AGENT_SCOPE");
+    // watch_all used to live inside #ifdef AURA_ENABLE_AGENT_SCOPE; #2226
+    // removed the gate so AgentScope (and watch_all) is now default-on.
+    CHECK(header_src.find("#ifdef AURA_ENABLE_AGENT_SCOPE") == std::string::npos,
+          "AC1: AURA_ENABLE_AGENT_SCOPE gate removed (#2226)");
     CHECK(header_src.find("StallPolicy") != std::string::npos, "StallPolicy present");
     // No process-static multi-agent registry symbols.
     CHECK(header_src.find("static Agent") == std::string::npos ||

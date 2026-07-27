@@ -32,6 +32,13 @@
 #define AURA_ORCH_ORCH_H
 
 #include "orch/agent_spawn.h"
+// Issue #2226: AgentScope promoted to default multi-agent supervision
+// root (was opt-in behind AURA_ENABLE_AGENT_SCOPE in #2083 / #2161).
+// Always available under aura::orch now; the orch MVP linter still
+// forbids process-global registry symbols (AgentRegistry /
+// global_agent_registry / conduct_parallel) so the "no global
+// registry" contract is preserved by the linter, not by a build gate.
+#include "orch/agent_scope.h"
 
 // Re-export serve orchestration building blocks into a single include surface.
 // Prefer:
