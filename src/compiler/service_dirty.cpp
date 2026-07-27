@@ -35,6 +35,30 @@ import std;
 
 namespace aura::compiler {
 
+// Issue #2244: source_to_ir Strict-mode toggle (file-scope; mirrors
+// g_macro_expand_sandbox_strict pattern from #2235). Default Off
+// (unit-test safe). When set via aura_source_to_ir_set_strict(1),
+// ensure_source_to_ir_or_rebuild reports hard_failed=true on any
+// inconsistency so the cascade forces mark_all_blocks_dirty
+// instead of serving stale clean blocks (under-invalidate fix).
+std::atomic<std::uint8_t> g_source_to_ir_strict{0};
+
+extern "C" std::uint64_t aura_source_to_ir_strict_v_read() noexcept {
+    return g_source_to_ir_strict.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_source_to_ir_set_strict(int strict_mode) noexcept {
+    g_source_to_ir_strict.store(strict_mode != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_set_source_to_ir_strict(int v) noexcept {
+    aura_source_to_ir_set_strict(v);
+}
+
+static inline bool source_to_ir_strict_enabled() noexcept {
+    return g_source_to_ir_strict.load(std::memory_order_relaxed) != 0;
+}
+
 // ── Issue #2035 / #2046: HotUpdateRegistry cascade notify + region-mask reemit
 // + joint AOT/JIT epoch identity. Soft/hard invalidate already advanced
 // bridge + AOT table epoch under mutate_mtx_ via atomic_bump_epochs; this
@@ -856,6 +880,29 @@ void CompilerService::invalidate_function(const std::string& name) {
     // Issue #682: GC root coordination before bindings cleared.
     const auto invalidate_bridge_with_impact = [&](const std::string& affected_name) {
         on_compiler_invalidate_gc_coordination(affected_name);
+        // Issue #2244: Strict-mode hard-fail gate BEFORE compute_impact_scope.
+        // Detects source_to_ir_map desync, rebuilds the reverse index,
+        // and (in Strict mode) forces mark_all_blocks_dirty so the next
+        // lookup serves a fresh map instead of stale clean blocks
+        // (under-invalidate fix). Off mode: rebuild only + bump
+        // diagnostic counter, no hard-fail (preserves existing soft-path
+        // tests per AC2).
+        if (auto cit_strict = ir_cache_v2_.find(affected_name); cit_strict != ir_cache_v2_.end()) {
+            const auto mode = source_to_ir_strict_enabled() ? SourceToIrStrictMode::Strict
+                                                            : SourceToIrStrictMode::Off;
+            auto audit_r = ensure_source_to_ir_or_rebuild(
+                cit_strict->second.irs, cit_strict->second.source_to_ir_map, mode);
+            if (!audit_r.was_consistent) {
+                metrics_.source_to_ir_inconsistency_total.fetch_add(
+                    static_cast<std::uint64_t>(audit_r.bad_entries), std::memory_order_relaxed);
+            }
+            if (audit_r.hard_failed) {
+                metrics_.source_to_ir_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+                cit_strict->second.dirty = true;
+                cit_strict->second.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(cit_strict->second);
+            }
+        }
         auto src_it = function_sources_.find(affected_name);
         if (src_it == function_sources_.end()) {
             invalidate_bridge_for(affected_name);

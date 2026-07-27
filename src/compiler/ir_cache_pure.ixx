@@ -508,6 +508,52 @@ assert_source_to_ir_map_consistent(const std::vector<aura::ir::IRFunction>& irs,
     return ok;
 }
 
+// Issue #2244: Strict-mode hard-fail + rebuild on source_to_ir_map
+// inconsistency (refine #2045 / #2045 helpers, complement #2193
+// MapInconsistent fallback reason — this issue owns the
+// correctness gate, not the reason enum).
+//
+// Two modes:
+//   - Off (default, unit-test): rebuild runs + bumps diagnostic
+//     counter, but does NOT hard-fail the next lookup (preserves
+//     existing soft-path tests).
+//   - Strict (production / multi-tenant sandbox): detect →
+//     metric → full rebuild of the map → caller signals
+//     hard_failed=true so the cascade can force full re-lower
+//     (mark_all_blocks_dirty) instead of serving stale clean
+//     blocks from a desynced reverse index.
+enum class SourceToIrStrictMode : std::uint8_t {
+    Off = 0,
+    Strict = 1,
+};
+
+struct EnsureSourceToIrResult {
+    bool was_consistent = true;
+    std::size_t bad_entries = 0;
+    bool rebuilt = false;
+    bool hard_failed = false;
+};
+
+// AC3: zero extra cost on the happy (consistent) path — single
+// count call (already O(map.size())) + early return before any
+// rebuild. Inconsistent path: bump counters + rebuild + signal
+// Strict-mode hard-fail so caller can force full re-lower.
+[[nodiscard]] inline EnsureSourceToIrResult
+ensure_source_to_ir_or_rebuild(const std::vector<aura::ir::IRFunction>& irs, SourceToIrMap& map,
+                               SourceToIrStrictMode mode) noexcept {
+    EnsureSourceToIrResult r;
+    r.bad_entries = count_source_to_ir_map_inconsistencies(irs, map);
+    r.was_consistent = (r.bad_entries == 0);
+    if (r.was_consistent)
+        return r;
+    rebuild_source_to_ir_map_from_irs(irs, map);
+    r.rebuilt = true;
+    if (mode == SourceToIrStrictMode::Strict)
+        r.hard_failed = true;
+    return r;
+}
+
+
 // ── compute_dependencies ──────────────────────────────────
 // Issue #126: pure walker extracted from the local
 // DepWalker struct inside CompilerService::record_define
