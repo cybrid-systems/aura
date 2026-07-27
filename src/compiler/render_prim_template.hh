@@ -47,6 +47,17 @@
 //   - LinearCellGrid.dirty is consumed when that grid is the active buffer.
 //   - Query: present-dirty-calls / present-dirty-short-circuit-rate-bp on
 //     query:render-stats schema-2214.
+//
+// ── Issue #2215: RenderFastExit under MutationBoundary + hotpath ───────────
+// When outermost MutationBoundaryGuard is entered under AURA_RENDER_HOT_ENTRY
+// (in_render_hotpath), success exit uses RenderFastExit:
+//   - Skip Full TypedMutationAudit + full linear/dual-path EnvFrame walk
+//   - Always: lightweight commit, pin restamp, held clear + unlock
+//   - Defer synchronous reemit (epoch notify only); coalesce on next
+//     non-render boundary
+// Agents must NOT put topology-changing workspace ops inside render-hotpath
+// Guards (use GlobalExclusive + full exit). Query: render-fast-exit-* on
+// query:mutation-boundary-hold-stats schema-2215.
 
 #ifndef AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 #define AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH

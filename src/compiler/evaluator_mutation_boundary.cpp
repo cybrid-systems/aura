@@ -514,174 +514,200 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // (type recheck / linear re-enforce / provenance restamp) before
         // structural rollback — composite and single-boundary alike.
         // #2102: provenance_miss (consumed above) forces Full-path audit.
+        // Issue #2215 RenderFastExit: skip Full suite under render hotpath
+        // success (frame budget); still record lightweight boundary outcome.
         {
             const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
             const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-            const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
-                                     (audit_op.find("move") != std::string_view::npos) ||
-                                     (audit_op.find("inline") != std::string_view::npos);
-            const bool batch_active = cp.bump_suppressed_at_entry ||
-                                      (workspace_flat_ && workspace_flat_->atomic_batch_active());
-            const bool composite = nested_boundary || batch_active;
-            const auto strat = typed_audit::get_strategy();
-            // Issue #2145: Strict sandbox links Full-class hard gate.
-            const bool strict_sandbox = aura::core::sandbox::is_strict();
-            const bool hard_gate = typed_audit::requires_invariant_hard_gate(
-                nodes_changed, linear_hint, strict_sandbox);
-            // Composite paths never under-sample (self-evo multi-step safety).
-            // Provenance miss forces audit even when Sampled would skip and
-            // even when nodes_changed==0 (apply may be the only side effect).
-            // Issue #2108: linear_ops_present (linear_hint) and composite
-            // always force the escape hard-block path — Sampled must not
-            // skip analyze_linear_escape / Moved live-root checks.
-            // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
-            const bool do_audit = strat != typed_audit::AuditStrategy::Off &&
-                                  (hard_gate || provenance_miss || composite || linear_hint ||
-                                   (nodes_changed > 0 && typed_audit::should_audit_contextual(
-                                                             mid, nodes_changed, linear_hint)));
-            if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
-                typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            if (do_audit) {
-                typed_audit::InvariantAuditResult first{};
-                bool inv_ok = false;
-                bool recovered = false;
-                // Issue #2105: composite/nested/atomic_batch uses ordered
-                // commit barrier (solve_delta_occurrence → linear revalidate
-                // → invariant audit → Full partial recovery or reject).
-                if (composite) {
-                    typed_audit::CompositeTxnCommitResult ccr{};
-                    inv_ok = composite_txn_commit(
-                        mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
-                        epoch_after, nested_boundary, batch_active, &ccr);
-                    first = ccr.audit;
-                    recovered = ccr.partial_recovered;
-                    if (inv_ok)
-                        clear_txn_dirty();
-                } else {
-                    inv_ok = run_typed_mutation_invariant_audit(
-                        mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
-                        epoch_after,
-                        /*composite_mode=*/false, &first);
-                }
-                // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
-                // per-category partial recover before structural rollback.
-                if (!composite && !inv_ok && hard_gate) {
-                    auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                    ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
-                    ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
-                    // Prefer linear re-enforce first (cheap; often fixes Moved live roots).
-                    if (!first.linear_ok || first.cross_batch_linear_escape) {
-                        ac.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
-                        (void)linear_post_mutate_enforce_all();
-                        (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
-                                                                  /*mark_all_linear=*/true);
-                    }
-                    // Type-only recheck: re-driven by the full suite below
-                    // (visitor rewalks NotChecked / dirty mutations).
-                    if (!first.type_ok) {
-                        ac.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    // Provenance fail → restamp pins / generations + re-validate chain.
-                    if (!first.provenance_ok) {
-                        ac.partial_recovery_provenance_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                        if (workspace_flat_)
-                            workspace_flat_->restamp_all_node_generations();
-                        (void)restamp_pinned_stable_refs();
-                        (void)post_mutation_reflect_validate();
-                    }
-                    typed_audit::InvariantAuditResult after{};
-                    inv_ok = run_typed_mutation_invariant_audit(
-                        mid, "full-partial-recover", static_cast<std::uint32_t>(audit_target),
-                        cp.version, epoch_after,
-                        /*composite_mode=*/false, &after);
-                    if (inv_ok) {
-                        recovered = true;
-                        ac.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
-                    } else {
-                        ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
-                // Issue #2145: hard-gate force rollback for Full / Strict / composite.
-                if (!inv_ok && !recovered && (composite || hard_gate)) {
-                    auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                    if (strat == typed_audit::AuditStrategy::Full || hard_gate) {
-                        ac.full_strategy_force_rollback_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                        ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
-                    }
+            if (render_fast_exit_this_boundary_ && !nested_boundary) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+                clear_txn_dirty();
+                typed_audit::record_boundary_outcome(
+                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                    static_cast<std::uint32_t>(audit_target),
+                    static_cast<std::uint32_t>(nodes_changed), fid);
+                // Skip Full/composite invariant walk + partial recovery.
+            } else {
+                const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
+                                         (audit_op.find("move") != std::string_view::npos) ||
+                                         (audit_op.find("inline") != std::string_view::npos);
+                const bool batch_active =
+                    cp.bump_suppressed_at_entry ||
+                    (workspace_flat_ && workspace_flat_->atomic_batch_active());
+                const bool composite = nested_boundary || batch_active;
+                const auto strat = typed_audit::get_strategy();
+                // Issue #2145: Strict sandbox links Full-class hard gate.
+                const bool strict_sandbox = aura::core::sandbox::is_strict();
+                const bool hard_gate = typed_audit::requires_invariant_hard_gate(
+                    nodes_changed, linear_hint, strict_sandbox);
+                // Composite paths never under-sample (self-evo multi-step safety).
+                // Provenance miss forces audit even when Sampled would skip and
+                // even when nodes_changed==0 (apply may be the only side effect).
+                // Issue #2108: linear_ops_present (linear_hint) and composite
+                // always force the escape hard-block path — Sampled must not
+                // skip analyze_linear_escape / Moved live-root checks.
+                // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
+                const bool do_audit = strat != typed_audit::AuditStrategy::Off &&
+                                      (hard_gate || provenance_miss || composite || linear_hint ||
+                                       (nodes_changed > 0 && typed_audit::should_audit_contextual(
+                                                                 mid, nodes_changed, linear_hint)));
+                if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
+                    typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total
+                        .fetch_add(1, std::memory_order_relaxed);
+                if (do_audit) {
+                    typed_audit::InvariantAuditResult first{};
+                    bool inv_ok = false;
+                    bool recovered = false;
+                    // Issue #2105: composite/nested/atomic_batch uses ordered
+                    // commit barrier (solve_delta_occurrence → linear revalidate
+                    // → invariant audit → Full partial recovery or reject).
                     if (composite) {
-                        ac.composite_full_rollback_total.fetch_add(1, std::memory_order_relaxed);
+                        typed_audit::CompositeTxnCommitResult ccr{};
+                        inv_ok = composite_txn_commit(
+                            mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
+                            epoch_after, nested_boundary, batch_active, &ccr);
+                        first = ccr.audit;
+                        recovered = ccr.partial_recovered;
+                        if (inv_ok)
+                            clear_txn_dirty();
+                    } else {
+                        inv_ok = run_typed_mutation_invariant_audit(
+                            mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
+                            epoch_after,
+                            /*composite_mode=*/false, &first);
                     }
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                        m->typed_mutation_full_force_rollback_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    // Agent-visible deny reason (#2145 / #2076 shape).
-                    std::string_view deny_kind = "invariant";
-                    if (first.cross_batch_linear_escape)
-                        deny_kind = "linear-escape";
-                    else if (!first.linear_ok)
-                        deny_kind = "linear";
-                    else if (!first.type_ok)
-                        deny_kind = "type";
-                    else if (!first.provenance_ok)
-                        deny_kind = "provenance";
-                    last_mutate_error_ = typed_audit::format_invariant_deny_reason(
-                        deny_kind, capability_tenant_id(),
-                        composite ? "composite-invariant-force-rollback"
-                                  : "invariant-force-rollback");
-                    if (strict_sandbox) {
-                        strict_mutate_hold_.store(1, std::memory_order_relaxed);
-                        ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+                    // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
+                    // per-category partial recover before structural rollback.
+                    if (!composite && !inv_ok && hard_gate) {
+                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                        ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
+                        ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
+                        // Prefer linear re-enforce first (cheap; often fixes Moved live roots).
+                        if (!first.linear_ok || first.cross_batch_linear_escape) {
+                            ac.partial_recovery_linear_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                            (void)linear_post_mutate_enforce_all();
+                            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                                      /*mark_all_linear=*/true);
+                        }
+                        // Type-only recheck: re-driven by the full suite below
+                        // (visitor rewalks NotChecked / dirty mutations).
+                        if (!first.type_ok) {
+                            ac.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        // Provenance fail → restamp pins / generations + re-validate chain.
+                        if (!first.provenance_ok) {
+                            ac.partial_recovery_provenance_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            if (workspace_flat_)
+                                workspace_flat_->restamp_all_node_generations();
+                            (void)restamp_pinned_stable_refs();
+                            (void)post_mutation_reflect_validate();
+                        }
+                        typed_audit::InvariantAuditResult after{};
+                        inv_ok = run_typed_mutation_invariant_audit(
+                            mid, "full-partial-recover", static_cast<std::uint32_t>(audit_target),
+                            cp.version, epoch_after,
+                            /*composite_mode=*/false, &after);
+                        if (inv_ok) {
+                            recovered = true;
+                            ac.partial_recovery_success_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        } else {
+                            ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
+                        }
                     }
-                    // Structural undo (same as failure path; preserves fine_rollback).
-                    BoundaryRollbackStats stats;
-                    stats.field_records_rolled =
-                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
-                    if (stats.field_records_rolled > 0) {
-                        bump_mutation_log_rollback_count();
-                        if (nested_boundary)
-                            bump_edsl_nested_atomic_rollback();
+                    // Issue #2145: hard-gate force rollback for Full / Strict / composite.
+                    if (!inv_ok && !recovered && (composite || hard_gate)) {
+                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                        if (strat == typed_audit::AuditStrategy::Full || hard_gate) {
+                            ac.full_strategy_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            ac.hard_gate_force_rollback_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        }
+                        if (composite) {
+                            ac.composite_full_rollback_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        }
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                            m->typed_mutation_full_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        // Agent-visible deny reason (#2145 / #2076 shape).
+                        std::string_view deny_kind = "invariant";
+                        if (first.cross_batch_linear_escape)
+                            deny_kind = "linear-escape";
+                        else if (!first.linear_ok)
+                            deny_kind = "linear";
+                        else if (!first.type_ok)
+                            deny_kind = "type";
+                        else if (!first.provenance_ok)
+                            deny_kind = "provenance";
+                        last_mutate_error_ = typed_audit::format_invariant_deny_reason(
+                            deny_kind, capability_tenant_id(),
+                            composite ? "composite-invariant-force-rollback"
+                                      : "invariant-force-rollback");
+                        if (strict_sandbox) {
+                            strict_mutate_hold_.store(1, std::memory_order_relaxed);
+                            ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        // Structural undo (same as failure path; preserves fine_rollback).
+                        BoundaryRollbackStats stats;
+                        stats.field_records_rolled =
+                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                        if (stats.field_records_rolled > 0) {
+                            bump_mutation_log_rollback_count();
+                            if (nested_boundary)
+                                bump_edsl_nested_atomic_rollback();
+                        }
+                        workspace_flat_->restore_children(std::move(cp.children_snapshot));
+                        stats.children_column_restored = true;
+                        if (cp.fine_rollback) {
+                            workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                            workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                            stats.sym_id_column_restored = true;
+                            stats.param_columns_restored = true;
+                        }
+                        // Realign atomic-batch flag if nested path left it inconsistent.
+                        if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+                            if (cp.bump_suppressed_at_entry)
+                                workspace_flat_->begin_atomic_batch();
+                            else
+                                workspace_flat_->rollback_atomic_batch();
+                            suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        last_boundary_rollback_stats_ = stats;
+                        defuse_index_ = nullptr;
+                        // Issue #2105: leave txn_dirty set until outermost clean exit,
+                        // or clear when no remaining nested guards.
+                        if (!nested_boundary)
+                            clear_txn_dirty();
+                        typed_audit::record_boundary_outcome(
+                            mid,
+                            composite ? "composite-invariant-force-rollback"
+                                      : "invariant-force-rollback",
+                            cp.version, epoch_after, /*success=*/false,
+                            static_cast<std::uint32_t>(audit_target), 0, fid);
+                        // Strict trail: Error outcome for Agent dashboards.
+                        if (strict_sandbox)
+                            typed_audit::capture_audit_event_forced(
+                                mid, "strict-invariant-denied",
+                                typed_audit::MutationKind::Structural, cp.version, epoch_after,
+                                typed_audit::AuditOutcome::Error,
+                                static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                        return cp;
                     }
-                    workspace_flat_->restore_children(std::move(cp.children_snapshot));
-                    stats.children_column_restored = true;
-                    if (cp.fine_rollback) {
-                        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-                        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
-                        stats.sym_id_column_restored = true;
-                        stats.param_columns_restored = true;
+                    // Success path: record outcome when audit passed / recovered.
+                    if (inv_ok || recovered) {
+                        if (!nested_boundary)
+                            clear_txn_dirty();
+                        typed_audit::record_boundary_outcome(
+                            mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                            static_cast<std::uint32_t>(audit_target),
+                            static_cast<std::uint32_t>(nodes_changed), fid);
                     }
-                    // Realign atomic-batch flag if nested path left it inconsistent.
-                    if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
-                        if (cp.bump_suppressed_at_entry)
-                            workspace_flat_->begin_atomic_batch();
-                        else
-                            workspace_flat_->rollback_atomic_batch();
-                        suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    last_boundary_rollback_stats_ = stats;
-                    defuse_index_ = nullptr;
-                    // Issue #2105: leave txn_dirty set until outermost clean exit,
-                    // or clear when no remaining nested guards.
-                    if (!nested_boundary)
-                        clear_txn_dirty();
-                    typed_audit::record_boundary_outcome(
-                        mid,
-                        composite ? "composite-invariant-force-rollback"
-                                  : "invariant-force-rollback",
-                        cp.version, epoch_after, /*success=*/false,
-                        static_cast<std::uint32_t>(audit_target), 0, fid);
-                    // Strict trail: Error outcome for Agent dashboards.
-                    if (strict_sandbox)
-                        typed_audit::capture_audit_event_forced(
-                            mid, "strict-invariant-denied", typed_audit::MutationKind::Structural,
-                            cp.version, epoch_after, typed_audit::AuditOutcome::Error,
-                            static_cast<std::uint32_t>(audit_target), 0, fid, 0);
-                    return cp;
-                }
-                // Success path: record outcome when audit passed / recovered.
-                if (inv_ok || recovered) {
+                } else {
                     if (!nested_boundary)
                         clear_txn_dirty();
                     typed_audit::record_boundary_outcome(
@@ -689,18 +715,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         static_cast<std::uint32_t>(audit_target),
                         static_cast<std::uint32_t>(nodes_changed), fid);
                 }
-            } else {
-                if (!nested_boundary)
-                    clear_txn_dirty();
-                typed_audit::record_boundary_outcome(
-                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
-                    static_cast<std::uint32_t>(audit_target),
-                    static_cast<std::uint32_t>(nodes_changed), fid);
-            }
+            } // !render_fast_exit_this_boundary_
         }
         // Issue #488: post-mutate reflect validation + snapshot fields.
         // (Also covered as provenance leg of #1614 invariant audit when sampled.)
-        (void)post_mutation_reflect_validate();
+        // Issue #2215: skip post_mutation_reflect_validate under RenderFastExit
+        // (provenance restamp still runs in dtor pin phase).
+        if (!render_fast_exit_this_boundary_)
+            (void)post_mutation_reflect_validate();
     } else if (!success) {
         // Issue #1589: TypedMutationAudit rollback trail.
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
@@ -880,6 +902,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     int prev = ++(*slot);
     bool outermost = (prev == 1);
     is_outermost_ = outermost;
+    // Issue #2215: RenderFastExit eligible when outermost Guard is entered
+    // under render hotpath (RenderHotEntryGuard / enter_render_hotpath).
+    // Success path skips Full audit + full linear/dual-path probes and
+    // defers synchronous reemit. Failure always takes the full restore path.
+    render_fast_exit_ = outermost && aura::core::arena_policy::in_render_hotpath();
     // Issue #2121: decide RegionExclusive vs GlobalExclusive.
     if (outermost && region_key.has_value() && ev_->workspace_region_concurrency_enabled()) {
         region_mode_ = true;
@@ -1210,7 +1237,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     //
     // Nested guards: only exit_mutation_boundary + depth_slot-- (outer owns pipeline).
     // ═══════════════════════════════════════════════════════════════════
+    // Issue #2215: RenderFastExit — success + outermost entered under
+    // render hotpath. Skip Full TypedMutationAudit / full linear+dual-path;
+    // always keep pin restamp + unlock. Failure never uses fast exit.
+    const bool render_fast = outermost && success && render_fast_exit_;
+    if (render_fast) {
+        ev_->render_fast_exit_this_boundary_ = true;
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);
+    }
     ev_->exit_mutation_boundary(success);
+    ev_->render_fast_exit_this_boundary_ = false;
     // Issue #2120: keep per-fiber mutation stack depth visible during
     // exit pipeline so steal/GC do not observe "depth==0 mid-probes".
     // exit_mutation_boundary already popped the real checkpoint; push a
@@ -1229,13 +1266,36 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // Issue #1486 / #1545 / #1568 / #1634 / #2120 / #2131
     // Issue #2131: outermost exit walks GcCoord PrePin → PostAudit
     // (boundary path; audit runs inside enforce helpers).
+    // Issue #2215 RenderFastExit: skip Full linear + dual-path EnvFrame walk
+    // (frame budget); still restamp pins for live render buffers.
     std::optional<gc_coord::Scope> boundary_gc_coord;
     if (outermost)
         boundary_gc_coord.emplace(gc_coord::Path::Boundary);
     if (outermost) {
-        if (!success) {
+        if (render_fast) {
+            // Fast: skip enforce_linear_boundary_consistency + dual-path scan.
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+            if (boundary_gc_coord)
+                boundary_gc_coord->enter_cascade();
+        } else if (!success) {
             // Issue #1951: 4-step closed-loop pattern consolidated helper.
             (void)ev_->enforce_linear_post_failure(Evaluator::kLinearGcRootAuditTypedMutate);
+            if (boundary_gc_coord)
+                boundary_gc_coord->enter_cascade();
+            // dual-path still on failure path below for non-fast
+            {
+                std::shared_lock<std::shared_mutex> rlock(ev_->env_frames_lock());
+                const auto n = ev_->env_frames_size();
+                for (EnvId id = 0; id < n; ++id) {
+                    if (!ev_->is_valid_env_id(id))
+                        continue;
+                    const auto& fr = ev_->env_frame(id);
+                    if (fr.version_ == INVALID_VERSION)
+                        continue;
+                    (void)ev_->ensure_envframe_dual_path_consistency(fr);
+                }
+            }
         } else {
             (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
                                                            /*mark_all_linear=*/false);
@@ -1243,25 +1303,26 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
                 m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
             }
-        }
-        if (boundary_gc_coord)
-            boundary_gc_coord->enter_cascade();
-        // Issue #2120 / #2116: dual-path consistency probe at boundary exit
-        // (no half-consistent EnvFrame left live after probes).
-        {
-            std::shared_lock<std::shared_mutex> rlock(ev_->env_frames_lock());
-            const auto n = ev_->env_frames_size();
-            for (EnvId id = 0; id < n; ++id) {
-                if (!ev_->is_valid_env_id(id))
-                    continue;
-                const auto& fr = ev_->env_frame(id);
-                if (fr.version_ == INVALID_VERSION)
-                    continue;
-                (void)ev_->ensure_envframe_dual_path_consistency(fr);
+            if (boundary_gc_coord)
+                boundary_gc_coord->enter_cascade();
+            // Issue #2120 / #2116: dual-path consistency probe at boundary exit
+            // (no half-consistent EnvFrame left live after probes).
+            {
+                std::shared_lock<std::shared_mutex> rlock(ev_->env_frames_lock());
+                const auto n = ev_->env_frames_size();
+                for (EnvId id = 0; id < n; ++id) {
+                    if (!ev_->is_valid_env_id(id))
+                        continue;
+                    const auto& fr = ev_->env_frame(id);
+                    if (fr.version_ == INVALID_VERSION)
+                        continue;
+                    (void)ev_->ensure_envframe_dual_path_consistency(fr);
+                }
             }
         }
         // Issue #1500 / #2085: LifetimePin + StableNodeRef restamp under lock
         // (BEFORE reemit so hot-update sees consistent pins — #2120 order).
+        // Always on outermost (including RenderFastExit — live render buffers).
         (void)ev_->restamp_pinned_stable_refs();
         const std::uint64_t boundary_gen =
             ev_->workspace_flat() != nullptr ? ev_->workspace_flat()->generation() : 0;
@@ -1324,11 +1385,32 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // Issue #2090 / #2162: outermost dtor drives the single-owner helper so
     // fiber-steal restore / partial recovery / exception unwind / compact-only
     // share the same ordered sequence (no silent stale closures).
+    // Issue #2215 RenderFastExit: defer synchronous reemit under render hotpath
+    // success — HotUpdateRegistry Defer policy already fail-closed for steal;
+    // do not block present on full reemit. Non-render / failure still recover.
     if (outermost) {
-        ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
-                                               dirty_upward_at_enter_);
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-            m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
+        if (render_fast) {
+            const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
+            const std::uint64_t dirty_calls =
+                ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
+            const bool dirty =
+                (cur_defuse != defuse_version_at_enter_) || (dirty_calls > dirty_upward_at_enter_);
+            if (dirty) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    m->render_fast_exit_deferred_reemit_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                // Epoch notify only (no sync reemit) so dual-epoch observers
+                // see a bump; actual reemit coalesces on next non-render boundary.
+                aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
+                                                   dirty_upward_at_enter_);
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // ── Phase 5: flush + depth/unlock LAST (#2120) ──
     if (outermost) {
@@ -1569,6 +1651,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     // Issue #2090: propagate defuse snapshot across move; the new owner
     // keeps the same dirty-detection horizon as the source guard.
     , defuse_version_at_enter_(o.defuse_version_at_enter_)
+    , dirty_upward_at_enter_(o.dirty_upward_at_enter_)
+    , render_fast_exit_(o.render_fast_exit_)
     , ev_(o.ev_)
     , flag_(o.flag_)
     , lock_(std::move(o.lock_))
@@ -1584,6 +1668,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.inert_ = false;
     o.enter_ts_.reset();
     o.defuse_version_at_enter_ = 0;
+    o.dirty_upward_at_enter_ = 0;
+    o.render_fast_exit_ = false;
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;
@@ -1611,6 +1697,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         enter_ts_ = std::move(o.enter_ts_);
         uncaught_at_enter_ = o.uncaught_at_enter_;
         defuse_version_at_enter_ = o.defuse_version_at_enter_;
+        dirty_upward_at_enter_ = o.dirty_upward_at_enter_;
+        render_fast_exit_ = o.render_fast_exit_;
         ev_ = o.ev_;
         flag_ = o.flag_;
         lock_ = std::move(o.lock_);
@@ -1626,6 +1714,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         o.inert_ = false;
         o.enter_ts_.reset();
         o.defuse_version_at_enter_ = 0;
+        o.dirty_upward_at_enter_ = 0;
+        o.render_fast_exit_ = false;
         o.uncaught_at_enter_ = 0;
         o.ev_ = nullptr;
         o.flag_ = nullptr;

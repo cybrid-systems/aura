@@ -5766,6 +5766,20 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"residual-defer-assert-wired", make_int(1)},
                 {"schema-2211", make_int(2211)},
                 {"issue-2211", make_int(2211)},
+                // Issue #2215: RenderFastExit (outermost success under render hotpath).
+                {"render-fast-exit-total", make_int(m ? load(m->render_fast_exit_total) : 0)},
+                {"render_fast_exit_total", make_int(m ? load(m->render_fast_exit_total) : 0)},
+                {"render-fast-exit-skipped-audit-total",
+                 make_int(m ? load(m->render_fast_exit_skipped_audit_total) : 0)},
+                {"render_fast_exit_skipped_audit_total",
+                 make_int(m ? load(m->render_fast_exit_skipped_audit_total) : 0)},
+                {"render-fast-exit-deferred-reemit-total",
+                 make_int(m ? load(m->render_fast_exit_deferred_reemit_total) : 0)},
+                {"render_fast_exit_deferred_reemit_total",
+                 make_int(m ? load(m->render_fast_exit_deferred_reemit_total) : 0)},
+                {"render-fast-exit-wired", make_int(1)},
+                {"schema-2215", make_int(2215)},
+                {"issue-2215", make_int(2215)},
             };
             return build_hash(kv);
         });
