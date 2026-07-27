@@ -20,6 +20,7 @@ module;
 #include "linear_occurrence_mutate_stats.h" // Issue #2030 occurrence hit-rate ratios
 #include "basis_points.h"                   // Issue #2030 ratio bp helpers
 #include "core/provenance_tracker.hh"       // Issue #2030 linear-provenance consistency bp
+#include "mutate_type_gate.hh"              // Issue #2219 Soft/Hard post-mutate type gate
 
 #include <filesystem>
 #include <fstream>
@@ -6035,6 +6036,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2104", 2104);
             insert_kv("issue-2104", 2104);
             insert_kv("schema-2068", 2068);
+            // Issue #2219: post-mutate Soft/Hard type gate policy surface.
+            {
+                const auto mtg = mutate_type_gate::snapshot();
+                insert_kv("mutate-type-gate-mode", mtg.mode);
+                insert_kv("mutate-soft-type-skip-total",
+                          static_cast<std::int64_t>(mtg.soft_type_skip_total));
+                insert_kv("mutate-type-gate-exhaustiveness-reject-total",
+                          static_cast<std::int64_t>(mtg.exhaustiveness_reject_total));
+                insert_kv("mutate-type-gate-hard-type-error-reject-total",
+                          static_cast<std::int64_t>(mtg.hard_type_error_reject_total));
+                insert_kv("mutate-type-gate-check-total",
+                          static_cast<std::int64_t>(mtg.gate_check_total));
+                insert_kv("mutate-type-gate-wired", 1);
+                insert_kv("schema-2219", 2219);
+                insert_kv("issue-2219", 2219);
+            }
             // Issue #2191: type affected cone ↔ dirty::DepGraph cascade unify.
             {
                 const std::int64_t type_mirrored =
