@@ -33,6 +33,13 @@ inline std::atomic<std::uint64_t> dirty_cascade_nodes_marked_total{0};
 inline std::atomic<std::uint64_t> dirty_sync_from_ir_total{0};
 inline std::atomic<std::uint64_t> dirty_push_to_ir_total{0};
 
+// Issue #2191: type affected-subtree cone mirrored into DepGraph cascade.
+// type_dirty_cone_mirrored_total — AST NodeIds pushed as cascade roots.
+// type_ir_cone_union_size_{sum,samples} — avg |type ∪ IR dirty| after mirror.
+inline std::atomic<std::uint64_t> type_dirty_cone_mirrored_total{0};
+inline std::atomic<std::uint64_t> type_ir_cone_union_size_sum{0};
+inline std::atomic<std::uint64_t> type_ir_cone_union_samples{0};
+
 // Issue #2106: optional sink → CompilerMetrics::cascade_skip_subtree_total.
 // Set by CompilerService ctor (or tests); null when no service is live.
 inline std::atomic<std::uint64_t>* g_cascade_skip_subtree_metrics = nullptr;
@@ -430,6 +437,108 @@ struct BlockDepDecode {
     d.func_idx = static_cast<std::uint16_t>((id >> 8) & 0x7Fu);
     d.block_idx = static_cast<std::uint16_t>(id & 0xFFu);
     return d;
+}
+
+// Issue #2191: AST NodeId cone for type partial ↔ IR cascade unify.
+// Layout (distinct from fn / block-dep / local block encodings):
+//   bit31 = 0, bit30 = 0, bit29 = 1 (kAstDepTag)
+//   bits[28:0] = FlatAST NodeId
+// Used so type-affected subtrees share a dirty cone with hybrid
+// cascade (#2110/#2187) without colliding with encode_block_node.
+inline constexpr NodeId kAstDepTag = 0x20000000u;
+
+[[nodiscard]] inline NodeId encode_ast_dep_node(NodeId ast_nid) noexcept {
+    return kAstDepTag | (ast_nid & 0x1FFFFFFFu);
+}
+
+[[nodiscard]] inline bool is_ast_dep_node(NodeId id) noexcept {
+    return (id & kFnNodeTag) == 0 && (id & kBlockDepTag) == 0 && (id & kAstDepTag) != 0;
+}
+
+[[nodiscard]] inline NodeId decode_ast_dep_node(NodeId id) noexcept {
+    return id & 0x1FFFFFFFu;
+}
+
+// Last mirrored type cone (AST NodeIds, not encoded). Thread-local for
+// tests / Agent dashboards after infer_flat_partial.
+inline thread_local std::vector<NodeId> t_last_type_cone_ast{};
+
+[[nodiscard]] inline const std::vector<NodeId>& last_type_cone_ast() noexcept {
+    return t_last_type_cone_ast;
+}
+
+[[nodiscard]] inline double type_ir_cone_union_size_avg() noexcept {
+    const auto n = type_ir_cone_union_samples.load(std::memory_order_relaxed);
+    if (n == 0)
+        return 0.0;
+    return static_cast<double>(type_ir_cone_union_size_sum.load(std::memory_order_relaxed)) /
+           static_cast<double>(n);
+}
+
+// Pull cascade / global-dirty AST dep nodes into out (decoded NodeIds).
+// Used to seed infer_flat_partial when IR cascade marked AST-linked dirty.
+inline void pull_cascade_ast_dirty_into(std::vector<NodeId>& out) {
+    for (NodeId d : g_global_dirty.dirty_nodes()) {
+        if (!is_ast_dep_node(d))
+            continue;
+        out.push_back(decode_ast_dep_node(d));
+    }
+    // Also scan pending pipeline cascade roots not yet flushed.
+    for (NodeId r : t_pipeline_cascade_roots) {
+        if (!is_ast_dep_node(r))
+            continue;
+        out.push_back(decode_ast_dep_node(r));
+    }
+}
+
+// Issue #2191: after infer_flat_partial builds `affected` (and occurrence
+// Ifs), mirror the type cone into the pipeline DepGraph cascade so
+// DirtyAware / partial re-lower see type ∪ IR authority.
+// Returns number of distinct AST nodes mirrored.
+inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affected_ast) {
+    t_last_type_cone_ast.clear();
+    if (affected_ast.empty()) {
+        // Still sample union size so avg tracks quiet windows.
+        std::size_t ir_n = 0;
+        for (NodeId d : g_global_dirty.dirty_nodes()) {
+            if (!is_ast_dep_node(d))
+                ++ir_n;
+        }
+        type_ir_cone_union_size_sum.fetch_add(ir_n, std::memory_order_relaxed);
+        type_ir_cone_union_samples.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+    std::unordered_set<NodeId> seen;
+    seen.reserve(affected_ast.size() * 2);
+    t_last_type_cone_ast.reserve(affected_ast.size());
+    std::size_t mirrored = 0;
+    for (NodeId nid : affected_ast) {
+        if (nid == 0)
+            continue; // NULL_NODE
+        if (!seen.insert(nid).second)
+            continue;
+        t_last_type_cone_ast.push_back(nid);
+        const NodeId dep = encode_ast_dep_node(nid);
+        note_pipeline_cascade_root(dep);
+        // Immediate mark so reverse pull + DirtySet queries see the cone
+        // even before flush_pipeline_cascade_roots (pass_manager entry).
+        g_global_dirty.mark(dep);
+        ++mirrored;
+    }
+    if (mirrored)
+        type_dirty_cone_mirrored_total.fetch_add(mirrored, std::memory_order_relaxed);
+
+    // Union size = |type AST cone| + |non-AST dirty in global DirtySet|
+    // (fn / block-dep / local block encodings from #2110/#2187).
+    std::size_t ir_n = 0;
+    for (NodeId d : g_global_dirty.dirty_nodes()) {
+        if (!is_ast_dep_node(d))
+            ++ir_n;
+    }
+    const std::size_t union_sz = mirrored + ir_n;
+    type_ir_cone_union_size_sum.fetch_add(union_sz, std::memory_order_relaxed);
+    type_ir_cone_union_samples.fetch_add(1, std::memory_order_relaxed);
+    return mirrored;
 }
 
 // Sync multi-function block dirty matrix [func][block] into DirtySet.

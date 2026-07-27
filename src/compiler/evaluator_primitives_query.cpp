@@ -35,6 +35,7 @@ import aura.compiler.coercion_map; // Issue #2024: provenance completeness count
 import aura.compiler.ir;
 import aura.compiler.macro_expansion; // Issue #2020: hygiene atomics for Agent diagnostics
 import aura.compiler.pass_manager;
+import aura.compiler.dirty_propagation; // Issue #2191: type cone mirror metrics
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -5817,6 +5818,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2104", 2104);
             insert_kv("issue-2104", 2104);
             insert_kv("schema-2068", 2068);
+            // Issue #2191: type affected cone ↔ dirty::DepGraph cascade unify.
+            {
+                const std::int64_t type_mirrored =
+                    m ? static_cast<std::int64_t>(
+                            m->type_dirty_cone_mirrored_total.load(std::memory_order_relaxed))
+                      : static_cast<std::int64_t>(
+                            aura::compiler::dirty::type_dirty_cone_mirrored_total.load(
+                                std::memory_order_relaxed));
+                const std::int64_t union_avg_x100 = static_cast<std::int64_t>(
+                    aura::compiler::dirty::type_ir_cone_union_size_avg() * 100.0);
+                insert_kv("type_dirty_cone_mirrored_total", type_mirrored);
+                insert_kv("type-dirty-cone-mirrored-total", type_mirrored);
+                insert_kv("type_ir_cone_union_size_avg", union_avg_x100);
+                insert_kv("type-ir-cone-union-size-avg-x100", union_avg_x100);
+                insert_kv("type-dirty-cone-mirror-wired", 1);
+                insert_kv("schema-2191", 2191);
+                insert_kv("issue-2191", 2191);
+            }
             // Issue #2144: outermost Guard-exit selective memo + occurrence reanalyze.
             const std::int64_t guard_refresh =
                 m ? static_cast<std::int64_t>(

@@ -19,6 +19,7 @@ module;
 module aura.compiler.type_checker;
 import std;
 import aura.core.mutation;
+import aura.compiler.dirty_propagation; // Issue #2191: type cone ↔ DepGraph
 // Issue #411 fu1 follow-up #3: per-DefUseIndex tracker
 // for O(uses) re-inference routing. The header is shared
 // with CompilerService (see per_defuse_index.h).
@@ -6446,6 +6447,24 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
     }
 
+    // Issue #2191: pull IR/cascade-marked AST dep nodes into the type
+    // affected set (reverse unify). Preserves #1456 locality — only
+    // nodes already in g_global_dirty / pending cascade roots as
+    // encode_ast_dep_node, not sibling defines.
+    {
+        std::vector<NodeId> cascade_ast;
+        dirty::pull_cascade_ast_dirty_into(cascade_ast);
+        if (!cascade_ast.empty()) {
+            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            for (auto id : cascade_ast) {
+                if (id == NULL_NODE || id >= flat.size())
+                    continue;
+                if (seen.insert(id).second)
+                    affected.push_back(id);
+            }
+        }
+    }
+
     // Issue #518 P0 Phase 1: collect dirty if-contexts from the
     // affected set plus the mutation target subtree (rebind
     // auto-wires kOccurrenceDirty on if-nodes in the new body
@@ -6474,6 +6493,39 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         for (auto id : occurrence_targets) {
             flat.mark_dirty(id, kOccurrenceBit);
             flat.mark_occurrence_stale(id);
+        }
+    }
+
+    // Issue #2191: mirror type cone (affected ∪ occurrence Ifs) into
+    // dirty::DepGraph cascade so partial re-lower / DirtyAware see
+    // type ∪ IR as authority. Occurrence If nodes stay in the cone
+    // when cascade also marks their blocks (AC3).
+    {
+        std::vector<NodeId> cone;
+        cone.reserve(affected.size() + occurrence_targets.size());
+        std::unordered_set<NodeId> seen;
+        seen.reserve((affected.size() + occurrence_targets.size()) * 2);
+        for (auto id : affected) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (seen.insert(id).second)
+                cone.push_back(id);
+        }
+        for (auto id : occurrence_targets) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (seen.insert(id).second)
+                cone.push_back(id);
+        }
+        const auto mirrored = dirty::mirror_type_affected_to_cascade(cone);
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            if (mirrored > 0)
+                m->type_dirty_cone_mirrored_total.fetch_add(mirrored, std::memory_order_relaxed);
+            // Snapshot last union size for Agent (avg lives in dirty::).
+            const auto avg_bp = static_cast<std::uint64_t>(dirty::type_ir_cone_union_size_avg() *
+                                                           100.0); // fixed-point ×100
+            m->type_ir_cone_union_size_avg_x100.store(avg_bp, std::memory_order_relaxed);
         }
     }
 

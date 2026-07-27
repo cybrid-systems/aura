@@ -57,6 +57,11 @@ extern "C" {
 // hot_update_registry.hh into this TU since only the getter is used).
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 extern "C" void aura_hot_update_set_shape_storm_active(int active);
+// Issue #2238: anonymous AOT-bound closure policy (defs in aura_jit_runtime).
+// File-scope so module partitions can call them from register_stats_impl
+// lambdas (block-scope extern "C" is not visible reliably under -fmodules-ts).
+extern "C" std::uint64_t aura_anonymous_aot_reject_total_v_read(void) noexcept;
+extern "C" int aura_get_require_stable_id_for_aot(void) noexcept;
 // Issue #2095: postmortem hook for default-LLVM reemit failures.
 // env-gated via AURA_REEMIT_KEEP_FAIL; rename to /tmp/aura_reemit_failed/.
 extern "C" int aura_reemit_keep_fail_enabled(void);
@@ -14418,15 +14423,8 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
     // 2 bridge_epoch fields. The old primitive stays for
     // backward compat (existing tests use closure:stats).
     ObservabilityPrims::register_stats_impl("query:closure-stats", [&ev](const auto&) -> EvalValue {
-        // Issue #2238: forward declarations for the anonymous-AOT-bound
-        // closure policy C-linkage readers. Defined in aura_jit_runtime.cpp
-        // (file-level atomics g_require_stable_id_for_aot +
-        // g_anonymous_aot_reject_total). The closure-stats query surface
-        // exposes both live policy flag + cumulative reject counter so
-        // AI agents can verify production is in strict-mode + observe the
-        // reject rate post-deploy.
-        extern "C" std::uint64_t aura_anonymous_aot_reject_total_v_read() noexcept;
-        extern "C" int aura_get_require_stable_id_for_aot(void) noexcept;
+        // Issue #2238: anonymous-AOT policy readers are file-scope extern C
+        // (aura_anonymous_aot_reject_total_v_read / aura_get_require_stable_id_for_aot).
         // Reuse the same build_hash pattern as closure:stats.
         // Inline here (instead of refactoring closure:stats to
         // a helper) so the new primitive stays self-contained
@@ -14526,9 +14524,9 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(aura_anonymous_aot_reject_total_v_read()))},
             {"require-stable-id-for-aot",
              make_int(static_cast<std::int64_t>(aura_get_require_stable_id_for_aot()))},
-            {"require-stable-id-wired", 1},
-            {"schema-2238", 2238},
-            {"issue-2238", 2238},
+            {"require-stable-id-wired", make_int(1)},
+            {"schema-2238", make_int(2238)},
+            {"issue-2238", make_int(2238)},
         };
         return build_hash(kv);
     });
@@ -14954,18 +14952,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // (engine:metrics "query:dirty-cascade-stats") — Issue #2063 / #2106:
-    // summary-dirty early-exit observability. register_stats_impl only
-    // (SlimSurface freeze: no new public prim name). Keys:
-    //   cascade-skip-subtree-total  — CompilerMetrics + unflushed file-scope
-    //   cascade-nodes-marked-total  — dirty_cascade_nodes_marked_total
-    //   cascade-bfs-hits            — dirty_propagation_bfs_hits
-    //   cascade-depth-samples       — dirty_cascade_depth_samples
-    //   schema-2106 / schema        — 2106
+    // (engine:metrics "query:dirty-cascade-stats") — Issue #2063 / #2106 / #2191:
+    // summary-dirty early-exit + type cone mirror observability.
+    // register_stats_impl only (SlimSurface freeze: no new public prim name).
     ObservabilityPrims::register_stats_impl(
         "query:dirty-cascade-stats", [&ev](const auto&) -> EvalValue {
             (void)aura::compiler::dirty::flush_dirty_skip_subtree_to_metrics();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32); // #2191 headroom
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -14982,6 +14975,15 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 m ? load(m->cascade_skip_subtree_total)
                   : static_cast<std::int64_t>(
                         aura::compiler::dirty::cascade_skip_subtree_visible());
+            // Issue #2191: type cone mirror metrics (also on fidelity stats).
+            const auto type_mirrored_file =
+                load(aura::compiler::dirty::type_dirty_cone_mirrored_total);
+            const auto type_mirrored_m =
+                m ? load(m->type_dirty_cone_mirrored_total) : type_mirrored_file;
+            const auto type_mirrored =
+                type_mirrored_m > type_mirrored_file ? type_mirrored_m : type_mirrored_file;
+            const auto union_avg_x100 = static_cast<std::int64_t>(
+                aura::compiler::dirty::type_ir_cone_union_size_avg() * 100.0);
             const std::pair<std::string, EvalValue> fields[] = {
                 {"cascade-skip-subtree-total", make_int(skip_metrics)},
                 {"cascade-nodes-marked-total",
@@ -14992,9 +14994,17 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                  make_int(load(aura::compiler::dirty::dirty_cascade_depth_samples))},
                 {"cascade-skip-file-scope",
                  make_int(load(aura::compiler::dirty::dirty_skip_subtree))},
+                // Issue #2191: type affected-subtree ↔ DepGraph unify
+                {"type_dirty_cone_mirrored_total", make_int(type_mirrored)},
+                {"type-dirty-cone-mirrored-total", make_int(type_mirrored)},
+                {"type_ir_cone_union_size_avg", make_int(union_avg_x100)}, // ×100 fixed-point
+                {"type-ir-cone-union-size-avg-x100", make_int(union_avg_x100)},
+                {"type-dirty-cone-mirror-wired", make_int(1)},
+                {"schema-2191", make_int(2191)},
+                {"issue-2191", make_int(2191)},
                 {"schema-2063", make_int(2063)},
                 {"schema-2106", make_int(2106)},
-                {"schema", make_int(2106)},
+                {"schema", make_int(2191)}, // latest cascade schema
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
