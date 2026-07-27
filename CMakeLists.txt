@@ -2313,6 +2313,11 @@ add_dependencies(all_test_issue_targets test_mutation_hold_hard_timeout_2199)
 aura_add_issue_test(test_yield_while_mutation_held_2200)
 aura_issue_test_link_llvm_jit(test_yield_while_mutation_held_2200)
 add_dependencies(all_test_issue_targets test_yield_while_mutation_held_2200)
+
+# Issue #2201: Agent-visible mutation-log pressure + forced compact.
+aura_add_issue_test(test_mutation_log_pressure_2201)
+aura_issue_test_link_llvm_jit(test_mutation_log_pressure_2201)
+add_dependencies(all_test_issue_targets test_mutation_log_pressure_2201)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

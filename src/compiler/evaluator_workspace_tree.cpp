@@ -511,6 +511,12 @@ void Evaluator::compact_mutation_log() noexcept {
     if (!workspace_flat_)
         return;
     const std::size_t saved = workspace_flat_->compact_mutation_log();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        // Issue #2201: Guard-exit / explicit shrink path observability.
+        m->mutation_log_guard_compact_total.fetch_add(1, std::memory_order_relaxed);
+        m->mutation_log_last_compact_bytes.store(static_cast<std::uint64_t>(saved),
+                                                 std::memory_order_relaxed);
+    }
     if (saved > 0)
         bump_mutation_log_compact_bytes_saved(static_cast<std::uint64_t>(saved));
 }
