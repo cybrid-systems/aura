@@ -32,6 +32,10 @@ void aura_evaluator_bump_steal_mutation_boundary_deferred() __attribute__((weak)
 void aura_evaluator_bump_starvation_mitigated_for_boundary() __attribute__((weak));
 // Issue #2118: orch agent soft-boundary steal skip counter.
 void aura_orch_note_agent_steal_skipped_boundary() __attribute__((weak));
+// Issue #2203: single mandatory steal-complete entry (clear orphan GC
+// defer + stack handoff metric). Strong def in evaluator_fiber_mutation.cpp;
+// weak no-op in fiber_bridge.cpp for light test binaries.
+void aura_evaluator_on_steal_complete(void* fiber_ptr) __attribute__((weak));
 }
 
 static inline void call_steal_arena_yield() noexcept {
@@ -45,6 +49,16 @@ static inline void call_steal_outermost_enforced() noexcept {
 static inline void call_probe_linear_on_steal() noexcept {
     if (aura_evaluator_probe_linear_on_steal)
         aura_evaluator_probe_linear_on_steal();
+}
+// Issue #2203: prefer single steal-complete entry when linked; fall back
+// to legacy N weak calls for light binaries without evaluator TU.
+static inline void call_steal_complete(Fiber* stolen) noexcept {
+    if (aura_evaluator_on_steal_complete) {
+        aura_evaluator_on_steal_complete(stolen);
+        return;
+    }
+    call_probe_linear_on_steal();
+    call_steal_outermost_enforced();
 }
 static inline void call_steal_deferred_violation() noexcept {
     if (aura_evaluator_bump_steal_deferred_violation)
@@ -245,8 +259,10 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 if (aura_evaluator_bump_boundary_held_steal_safe)
                     aura_evaluator_bump_boundary_held_steal_safe();
             }
-            call_probe_linear_on_steal();
-            call_steal_outermost_enforced();
+            // Issue #2203: single mandatory steal-complete entry (clear
+            // orphan GcDeferReason::Panic from previous host + metrics).
+            // Falls back to probe_linear + outermost when weak/null.
+            call_steal_complete(stolen);
             local_queue_.push(stolen);
             return true;
         }

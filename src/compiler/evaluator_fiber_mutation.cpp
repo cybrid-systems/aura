@@ -2065,6 +2065,87 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
+// Issue #2203: single mandatory steal-complete entry.
+// Called from WorkerThread::try_steal_from on every successful cross-worker
+// steal (strong symbol linked). Responsibilities:
+//   1. clear_gc_defer_for_evaluator(prev host from yield CP evaluator_id)
+//   2. ensure mutation_stack_storage_ is published (pointer already on Fiber)
+//   3. bump steal_complete_total + orphan_cleared_on_steal if clear>0
+//   4. fold probe_linear + outermost-enforced (avoid N weak calls from worker)
+// Does NOT reemit / SoftEnter (leave to Guard / #2114) and does NOT run
+// full post-resume Env/bridge refresh (leave to #1490 / #2194 resume path).
+extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
+    // Always count the steal-complete entry (even with null fiber).
+    aura::gc_hooks::g_steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+    aura::serve::metrics::adaptive_steal_stats().steal_complete_total.fetch_add(
+        1, std::memory_order_relaxed);
+
+    auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    void* prev_eval_id = nullptr;
+    if (fiber) {
+        // (2) mutation_stack_storage_ handoff: fiber already carries the
+        // pointer across steal (#588/#1992). Touch under acquire so the
+        // thief worker observes a published storage after the push.
+        (void)fiber->mutation_stack_ptr();
+        (void)fiber->yield_checkpoint_ptr();
+
+        // (1) Prefer yield-checkpoint evaluator_id (previous host at yield).
+        if (void* yp = fiber->yield_checkpoint_ptr()) {
+            auto& ystack = fiber_stack_pool_detail::yield_stack_from_ptr(yp);
+            if (!ystack.empty())
+                prev_eval_id = ystack.back().evaluator_id;
+        }
+    }
+
+    if (prev_eval_id != nullptr) {
+        const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(prev_eval_id);
+        if (cleared > 0) {
+            aura::gc_hooks::g_gc_defer_orphan_cleared_on_steal_total.fetch_add(
+                cleared, std::memory_order_relaxed);
+            // Mirror into CompilerMetrics when a scheduler evaluator is live
+            // (Agent dashboards that already read gc_defer_orphan_cleared_total).
+            if (auto* ev = evaluator_for_scheduler_hooks()) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                    m->gc_defer_orphan_cleared_total.fetch_add(cleared, std::memory_order_relaxed);
+                    m->gc_defer_orphan_cleared_on_steal_total.fetch_add(cleared,
+                                                                        std::memory_order_relaxed);
+                    m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        } else if (auto* ev = evaluator_for_scheduler_hooks()) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else if (auto* ev = evaluator_for_scheduler_hooks()) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Fold legacy weak-call sites so worker only needs one entry (AC5 still
+    // keeps weak stubs for light binaries that never link this strong def).
+    aura_evaluator_probe_linear_on_steal();
+    aura_evaluator_bump_steal_outermost_enforced();
+}
+
+// Issue #2203: test-only helper — seed fiber yield-checkpoint evaluator_id
+// (previous host) then invoke steal-complete. Production steal path gets
+// evaluator_id from checkpoint_yield_boundary at real yield time.
+extern "C" void aura_evaluator_test_seed_yield_cp_and_steal_complete(void* fiber_ptr,
+                                                                     void* eval_id) noexcept {
+    auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    if (!fiber)
+        return;
+    auto* stack = fiber_stack_pool_detail::ensure_yield_stack_ptr(fiber);
+    if (!stack)
+        return;
+    Evaluator::YieldBoundaryCheckpoint cp;
+    cp.evaluator_id = eval_id;
+    cp.had_active_boundary = true;
+    cp.thread_id = std::this_thread::get_id();
+    stack->push_back(std::move(cp));
+    aura_evaluator_on_steal_complete(fiber);
+}
+
 // Issue #1490 / #1631: refresh EnvFrame.version_ / bridge_epoch after fiber
 // steal. Walks live closures, refreshes stale frames, repairs dual-path
 // drift, optionally compact. Bridge drift triggers JIT active-closure walk

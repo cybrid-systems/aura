@@ -380,6 +380,9 @@ struct AdaptiveStealStats {
     // reject reason (1=held, 2=depth) for Agent dashboards.
     std::atomic<std::uint64_t> yield_while_mutation_held_total{0}; // #2200
     std::atomic<std::uint8_t> last_yield_rejected_reason{0};       // #2200
+    // Issue #2203: successful try_steal_from → on_steal_complete entry.
+    // Mirrors gc_hooks::g_steal_complete_total for orchestration dashboards.
+    std::atomic<std::uint64_t> steal_complete_total{0}; // #2203
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {
