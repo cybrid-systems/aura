@@ -54,6 +54,30 @@ std::int64_t href(CompilerService& cs, const char* q, const char* key) {
 std::string build_test_so(std::uint64_t version) {
     const char* dir = "/tmp";
     std::string cpath = std::format("{}/aura_aot_test_{}.c", dir, version);
+    // Issue #2232: .so with both aot_emit_version + aot_env_frame_version
+    // so the Env retry-recovery AC can fire repeatedly (the default
+    // build_test_so only sets aot_emit_version + aot_region_mask).
+    std::string build_test_so_with_env(std::uint64_t version, std::uint64_t env_version) {
+        const char* dir = "/tmp";
+        std::string cpath = std::format("{}/aura_aot_test_{}_{}.c", dir, version, env_version);
+        std::string sopath = std::format("{}/aura_aot_test_{}_{}.so", dir, version, env_version);
+        {
+            std::ofstream f(cpath);
+            if (!f)
+                return {};
+            f << "#include <stdint.h>\n";
+            f << "uint64_t aot_emit_version = " << version << "ULL;\n";
+            f << "uint64_t aot_region_mask = 0ULL;\n";
+            f << "uint64_t aot_env_frame_version = " << env_version << "ULL;\n";
+            f << "__attribute__((constructor)) static void reg(void) {(void)aot_emit_version; "
+                 "(void)aot_env_frame_version;}\n";
+        }
+        std::string cmd = std::format("cc -shared -fPIC -o {} {} 2>/dev/null", sopath, cpath);
+        if (std::system(cmd.c_str()) != 0)
+            return {};
+        return sopath;
+    }
+
     std::string sopath = std::format("{}/aura_aot_test_{}.so", dir, version);
     {
         std::ofstream f(cpath);
@@ -734,6 +758,136 @@ int main() {
             CHECK(samples.load() > 0, "concurrent samples collected");
             CHECK(torn.load() == 0, "func_table_epoch never went backwards under stress");
         }
+        aura_set_aot_metrics(nullptr);
+    }
+
+    // ── Issue #2232: reason-driven multi-round reload recovery policy ──
+    {
+        std::println("\n--- #2232: reason-driven multi-round reload policy ---");
+        CompilerMetrics metrics;
+        aura_set_aot_metrics(&metrics);
+        aura_set_aot_region_mask(0);
+        aura_set_aot_defuse_version(0);
+        aura_set_module_version(0);
+        aura_set_aot_env_frame_version_for_eval(nullptr, /*host_env=*/100);
+        aura_set_aot_reload_auto_retry(1);
+
+        // AC1: Defuse — max_reemit=3, backoff_ms=5, fall_back_jit_only=true.
+        // Use Defuse (not Version) because the Version retry uses
+        // version=0 (always succeeds for any non-negative emit) — so
+        // Version can never exhaust under the current policy. Defuse
+        // uses the same `version` across retries, so all 3 retries
+        // fail (binary stale relative to host expected=99) and the
+        // loop exhausts → fall_back_jit_only counter bumps.
+        {
+            auto bad = build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88,
+                                            /*tag=*/"ar2232_defuse");
+            if (bad.empty()) {
+                CHECK(true, "AC1 skip (cc unavailable)");
+            } else {
+                const auto ap0 = metrics.aot_reload_policy_attempt_total.load();
+                const auto fb0 = metrics.aot_reload_fall_back_jit_only_total.load();
+                const auto ex0 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                const bool ok = aura_reload_aot_module(bad.c_str(), /*expected=*/99);
+                const auto ap1 = metrics.aot_reload_policy_attempt_total.load();
+                const auto fb1 = metrics.aot_reload_fall_back_jit_only_total.load();
+                const auto ex1 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                std::println("  AC1: ok={} ap_delta={} fb_delta={} ex_delta={}", ok, ap1 - ap0,
+                             fb1 - fb0, ex1 - ex0);
+                CHECK(!ok, "AC1: Defuse exhausted → false");
+                CHECK(ap1 - ap0 == 3,
+                      "AC1: aot_reload_policy_attempt_total += 3 (policy.max_reemit)");
+                CHECK(fb1 - fb0 == 1, "AC1: aot_reload_fall_back_jit_only_total += 1 "
+                                      "(policy.fall_back_jit_only=true)");
+                CHECK(ex1 - ex0 == 1, "AC1: aot_reload_auto_retry_exhausted_total += 1");
+                CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                          AotReloadFail::Defuse,
+                      "AC1: last-fail = Defuse (the final reason from the last attempt)");
+            }
+        }
+
+        // AC2: Env — max_remit=2, backoff_ms=10, fall_back_jit_only=true.
+        // .so has env_frame_version=1; host's env=100 (set above) →
+        // drift check fires on every retry. After 2 retries →
+        // exhausted + fall_back.
+        {
+            auto bad_env = build_test_so_with_env(/*version=*/99, /*env_version=*/1);
+            if (bad_env.empty()) {
+                CHECK(true, "AC2 skip (cc unavailable)");
+            } else {
+                const auto ap0 = metrics.aot_reload_policy_attempt_total.load();
+                const auto fb0 = metrics.aot_reload_fall_back_jit_only_total.load();
+                const auto ex0 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                const bool ok = aura_reload_aot_module(bad_env.c_str(), /*expected=*/99);
+                const auto ap1 = metrics.aot_reload_policy_attempt_total.load();
+                const auto fb1 = metrics.aot_reload_fall_back_jit_only_total.load();
+                const auto ex1 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                std::println("  AC2: ok={} ap_delta={} fb_delta={} ex_delta={}", ok, ap1 - ap0,
+                             fb1 - fb0, ex1 - ex0);
+                CHECK(!ok, "AC2: Env exhausted → false");
+                CHECK(ap1 - ap0 == 2,
+                      "AC2: aot_reload_policy_attempt_total += 2 (policy.max_reemit=2)");
+                CHECK(fb1 - fb0 == 1, "AC2: aot_reload_fall_back_jit_only_total += 1 "
+                                      "(policy.fall_back_jit_only=true)");
+                CHECK(ex1 - ex0 == 1, "AC2: aot_reload_auto_retry_exhausted_total += 1");
+            }
+        }
+
+        // AC3: Dlopen — max_reemit=0, backoff_ms=0, fall_back_jit_only=false.
+        // Non-existent file → Dlopen fail. policy_for(Dlopen) returns
+        // {0, 0, false} → aot_reload_policy_attempt_total does NOT
+        // bump (no retry attempts at all).
+        {
+            const auto ap0 = metrics.aot_reload_policy_attempt_total.load();
+            const bool ok = aura_reload_aot_module("/nonexistent/aura_2232_dlopen.so",
+                                                   /*expected=*/1);
+            const auto ap1 = metrics.aot_reload_policy_attempt_total.load();
+            std::println("  AC3: ok={} ap_delta={}", ok, ap1 - ap0);
+            CHECK(!ok, "AC3: Dlopen fail → false");
+            CHECK(ap1 - ap0 == 0, "AC3: aot_reload_policy_attempt_total does NOT bump "
+                                  "(policy.max_remit=0 for Dlopen)");
+            CHECK(static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason()) ==
+                      AotReloadFail::Dlopen,
+                  "AC3: last-fail = Dlopen");
+        }
+
+        // AC4: success on 1st attempt — no retry needed. Correct-version
+        // .so → first attempt succeeds → aot_reload_policy_attempt_total
+        // does NOT bump (no retry attempts).
+        {
+            auto good = build_registering_so(/*version=*/42, /*region=*/0, /*func_id=*/88,
+                                             /*tag=*/"ar2232_ok");
+            if (good.empty()) {
+                CHECK(true, "AC4 skip (cc unavailable)");
+            } else {
+                const auto ap0 = metrics.aot_reload_policy_attempt_total.load();
+                const auto ex0 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                const bool ok = aura_reload_aot_module(good.c_str(), /*expected=*/42);
+                const auto ap1 = metrics.aot_reload_policy_attempt_total.load();
+                const auto ex1 = metrics.aot_reload_auto_retry_exhausted_total.load();
+                std::println("  AC4: ok={} ap_delta={} ex_delta={}", ok, ap1 - ap0, ex1 - ex0);
+                CHECK(ok, "AC4: success on 1st attempt → true");
+                CHECK(ap1 - ap0 == 0,
+                      "AC4: aot_reload_policy_attempt_total does NOT bump (no retry on success)");
+                CHECK(ex1 - ex0 == 0, "AC4: aot_reload_auto_retry_exhausted_total does NOT bump");
+            }
+        }
+
+        // AC5: query:aot-stats exposes the new policy keys + schema-2232.
+        {
+            CompilerService cs;
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+            for (const char* k :
+                 {"aot-reload-policy-attempt-total", "aot-reload-fall-back-jit-only-total",
+                  "schema-2232", "issue-2232", "reload-policy-wired"}) {
+                CHECK(href(cs, "query:aot-stats", k) >= 0,
+                      std::format("AC5: query:aot-stats exposes '{}'", k));
+            }
+            CHECK(href(cs, "query:aot-stats", "reload-policy-wired") == 1,
+                  "AC5: reload-policy-wired == 1");
+        }
+        aura_set_aot_reload_auto_retry(0);
+        aura_set_aot_env_frame_version_for_eval(nullptr, 0);
         aura_set_aot_metrics(nullptr);
     }
 

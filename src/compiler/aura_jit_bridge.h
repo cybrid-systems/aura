@@ -146,6 +146,44 @@ extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void);
 extern "C" void aura_set_aot_reload_auto_retry(int enabled);
 extern "C" int aura_aot_reload_auto_retry_enabled(void);
 
+// Issue #2232: reason-driven multi-round reload recovery policy.
+// Replaces the #2165 single-retry (TLS depth) with an iterative loop
+// driven by a per-reason policy table. Production zero-downtime under
+// sustained mutation (defuse/env churn) needs more than one retry
+// and a safe exhausted fall-back (force JIT). Dlopen/Region/Staging/
+// Other remain never-auto (path/ops/bug class — no recovery by design).
+//
+//   Version | Defuse   → {max_reemit=3, backoff_ms=5,  fall_back_jit_only=true}
+//   Env | Linear      → {max_reemit=2, backoff_ms=10, fall_back_jit_only=true}
+//   other             → {0, 0, false} (never auto)
+//
+// The policy is a small POD so tests can assert the table directly.
+// `policy_for(r)` is the single source of truth (one-definition
+// rule across TUs).
+struct ReloadPolicy {
+    int max_reemit;
+    int backoff_ms;
+    bool fall_back_jit_only;
+};
+
+inline ReloadPolicy policy_for(AotReloadFail r) noexcept {
+    switch (r) {
+        case AotReloadFail::Version:
+        case AotReloadFail::Defuse:
+            return ReloadPolicy{/*max_reemit=*/3, /*backoff_ms=*/5, /*fall_back_jit_only=*/true};
+        case AotReloadFail::Env:
+        case AotReloadFail::Linear:
+            return ReloadPolicy{/*max_reemit=*/2, /*backoff_ms=*/10, /*fall_back_jit_only=*/true};
+        case AotReloadFail::Dlopen:
+        case AotReloadFail::Region:
+        case AotReloadFail::Staging:
+        case AotReloadFail::Other:
+        case AotReloadFail::Ok:
+        default:
+            return ReloadPolicy{/*max_reemit=*/0, /*backoff_ms=*/0, /*fall_back_jit_only=*/false};
+    }
+}
+
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 

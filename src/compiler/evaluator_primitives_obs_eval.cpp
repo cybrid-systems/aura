@@ -12816,6 +12816,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             auto_retry_ok = m->aot_reload_auto_retry_success_total.load(std::memory_order_relaxed);
             auto_retry_exh =
                 m->aot_reload_auto_retry_exhausted_total.load(std::memory_order_relaxed);
+            // Issue #2232: reason-driven multi-round retry policy
+            // metrics (per-attempt counter + exhausted-fall-back-to-JIT).
+            auto_retry_policy_attempt =
+                m->aot_reload_policy_attempt_total.load(std::memory_order_relaxed);
+            auto_retry_fall_back_jit =
+                m->aot_reload_fall_back_jit_only_total.load(std::memory_order_relaxed);
         }
         // Issue #2094: read the unified StormLevel facade OUTSIDE the
         // metrics if-block since aura_hot_update_current_storm_level() is
@@ -12922,6 +12928,13 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-auto-retry-enabled",
              make_int(static_cast<std::int64_t>(::aura_aot_reload_auto_retry_enabled()))},
             {"schema-2165", make_int(2165)},
+            // Issue #2232: reason-driven multi-round retry policy
+            // (supersedes the #2165 single-retry via policy_for()).
+            {"aot-reload-policy-attempt-total", make_int64(auto_retry_policy_attempt)},
+            {"aot-reload-fall-back-jit-only-total", make_int64(auto_retry_fall_back_jit)},
+            {"schema-2232", make_int(2232)},
+            {"issue-2232", make_int(2232)},
+            {"reload-policy-wired", make_int(1)},
             {"issue-2165", make_int(2165)},
             // Issue #2046: joint AOT/JIT region versioning after invalidate
             {"aot_joint_epoch_bump_total", make_int(static_cast<std::int64_t>(joint_bump))},

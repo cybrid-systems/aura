@@ -2142,8 +2142,15 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     return true;
 }
 
-// Issue #2165: public entry — one reemit + one retry for Version/Env/Linear/Defuse.
-// TLS depth prevents reemit→reload recursion from nested auto-retry.
+// Issue #2232: public entry — reason-driven multi-round retry driven by
+// `policy_for(reason)`. Replaces the #2165 single-retry (TLS depth)
+// with an iterative loop bounded by `policy.max_reemit`. On exhausted,
+// the policy may direct a fall-back to JIT (force-stale mark on
+// affected AOT slots) so long-running AI self-mod survives sustained
+// defuse/env churn without losing the host thread. Dlopen/Region/
+// Staging/Other remain never-auto (path/ops/bug class — no recovery).
+// The TLS depth guard is preserved so a reemit→reload nested call
+// doesn't re-enter the loop recursively.
 extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
                                                 std::uint64_t version) {
     thread_local int t_auto_retry_depth = 0;
@@ -2157,34 +2164,63 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
 
     const auto reason = static_cast<AotReloadFail>(aura_aot_last_reload_fail_reason());
     if (!aot_reload_fail_is_auto_retryable(reason))
-        return false; // AC2: Dlopen / Region / Staging / Other — no retry
+        return false; // Dlopen / Region / Staging / Other — no retry by design
+
+    // Issue #2232: look up the per-reason policy. Version | Defuse get
+    // 3 retries @ 5ms; Env | Linear get 2 @ 10ms; everything else
+    // (the Dlopen/Region/Staging/Other branch already returned
+    // above via is_auto_retryable) is {0,0,false}.
+    const ReloadPolicy policy = policy_for(reason);
+    if (policy.max_reemit == 0)
+        return false;
 
     ++t_auto_retry_depth;
     if (aot_metrics())
         aot_metrics()->aot_reload_auto_retry_total.fetch_add(1, std::memory_order_relaxed);
 
-    // Step 1: force one incremental reemit (may be no-op without host emit).
-    (void)aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
-
-    // Step 2: retry once. Version recovery trusts binary after reemit
-    // (host expected version may be stale relative to rebuilt stamps).
-    const std::uint64_t retry_version = (reason == AotReloadFail::Version) ? 0 : version;
-    const bool ok2 = aura_reload_aot_module_for_eval_once(eval_ptr, path, retry_version);
-
-    if (aot_metrics()) {
-        if (ok2) {
-            // AC4: success path clears last-fail inside once(); intermediate
-            // Version/Env fail counters remain for Agents (observability).
-            aot_metrics()->aot_reload_auto_retry_success_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-        } else {
-            aot_metrics()->aot_reload_auto_retry_exhausted_total.fetch_add(
-                1, std::memory_order_relaxed);
-            // last-fail is the *final* reason from the second attempt.
+    // Iterative loop, not recursive. Each attempt: incremental
+    // reemit (best-effort, may be a no-op if no host emit is
+    // available) then a fresh single-attempt reload. Version
+    // recovery trusts the binary after reemit (version=0); other
+    // reasons keep the caller's expected version.
+    for (int attempt = 0; attempt < policy.max_reemit; ++attempt) {
+        if (aot_metrics())
+            aot_metrics()->aot_reload_policy_attempt_total.fetch_add(1, std::memory_order_relaxed);
+        (void)aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+        const std::uint64_t retry_version = (reason == AotReloadFail::Version) ? 0 : version;
+        const bool ok = aura_reload_aot_module_for_eval_once(eval_ptr, path, retry_version);
+        if (ok) {
+            if (aot_metrics())
+                aot_metrics()->aot_reload_auto_retry_success_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            --t_auto_retry_depth;
+            return true;
+        }
+        // Optional backoff between attempts (not after the last —
+        // we exit the loop and report exhausted).
+        if (policy.backoff_ms > 0 && attempt + 1 < policy.max_reemit) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(policy.backoff_ms));
         }
     }
+
+    // Exhausted. If the policy directs a fall-back to JIT, mark
+    // affected AOT slots generation-stale (force JIT) so subsequent
+    // calls in the host skip the broken AOT path. The actual slot
+    // invalidation is a future follow-up — for #2232 the visible
+    // contract is the metric + a hot_update_registry() callback
+    // that Agents can observe. last-fail is the *final* reason
+    // from the last attempt (left in place by _once()).
+    if (policy.fall_back_jit_only) {
+        aura::compiler::hot_update_registry().on_force_jit_for_reason(reason);
+        if (aot_metrics())
+            aot_metrics()->aot_reload_fall_back_jit_only_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    }
+    if (aot_metrics())
+        aot_metrics()->aot_reload_auto_retry_exhausted_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
     --t_auto_retry_depth;
-    return ok2;
+    return false;
 }
 
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
