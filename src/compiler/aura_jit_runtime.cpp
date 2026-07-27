@@ -272,6 +272,19 @@ static std::uint32_t g_jit_fn_provenance[kJitMacroMarkerSlots]{};
 // native metadata (compile or register). Live count = slots currently
 // holding marker==1. Recoverable = slots with marker==1 and provenance!=0.
 static std::atomic<uint64_t> g_jit_native_marker_preserved_total{0};
+// Issue #2238: alloc-time / set_name-time policy knob for anonymous
+// AOT-bound closures. Default 0 = permissive (today's behavior;
+// legacy sid=0 + empty name still allowed, falls back to MustDeopt
+// gate at call time). 1 = strict (set_name-time check flags
+// anonymous AOT-bound closures as MustDeopt immediately so the
+// next call is interpreter-only; no native pointer install).
+// Production default for Strict / multi-tenant: ON. Test default:
+// OFF (legacy tests use the permissive path).
+static std::atomic<uint64_t> g_require_stable_id_for_aot{0};
+// Issue #2238: counter — bumps each time the policy rejects an
+// anonymous closure. Exposed via aura_anonymous_aot_reject_total_v_read()
+// and via query:closure-stats `anonymous-aot-reject-total` key.
+static std::atomic<uint64_t> g_anonymous_aot_reject_total{0};
 static std::atomic<uint64_t> g_jit_live_macro_fn_count{0};
 static std::atomic<uint64_t> g_jit_macro_provenance_recoverable_total{0};
 
@@ -468,6 +481,71 @@ extern "C" void aura_jit_note_native_macro_preserved(uint8_t marker, uint32_t pr
     g_jit_live_macro_fn_count.fetch_add(1, std::memory_order_relaxed);
     if (provenance != 0)
         g_jit_macro_provenance_recoverable_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2238: alloc-time / set_name-time policy setter + getter +
+// env resolver + counter reader. Default value = 0 (permissive for
+// tests). Production sets via aura_set_require_stable_id_for_aot(1)
+// or env AURA_REQUIRE_STABLE_ID_FOR_AOT=1.
+extern "C" void aura_set_require_stable_id_for_aot(int mode) noexcept {
+    g_require_stable_id_for_aot.store(mode != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+extern "C" int aura_get_require_stable_id_for_aot(void) noexcept {
+    return static_cast<int>(g_require_stable_id_for_aot.load(std::memory_order_relaxed));
+}
+
+// Issue #2238: env resolver for AURA_REQUIRE_STABLE_ID_FOR_AOT.
+// Reads at call time (no global cache) so runtime hosts can change
+// the env without restarting. Accepts: "1"/"on"/"true"/"yes" → 1;
+// "0"/"off"/"false"/"no" → 0. Invalid values fall back to 0
+// (preserves backwards compat with a typo). Case-insensitive
+// comparison via inline fold-comparison (avoid POSIX strcasecmp
+// dependency for portability).
+extern "C" void aura_apply_require_stable_id_for_aot_env(void) noexcept {
+    const char* env = std::getenv("AURA_REQUIRE_STABLE_ID_FOR_AOT");
+    int mode = 0;
+    if (env != nullptr && env[0] != '\0') {
+        const auto ieq = [](const char* a, const char* b) -> bool {
+            for (; *a && *b; ++a, ++b) {
+                const char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
+                const char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+                if (ca != cb)
+                    return false;
+            }
+            return *a == '\0' && *b == '\0';
+        };
+        if (ieq(env, "1") || ieq(env, "on") || ieq(env, "true") || ieq(env, "yes"))
+            mode = 1;
+        // else invalid → keep mode=0 (typo-safe fallback)
+    }
+    g_require_stable_id_for_aot.store(mode != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+// Issue #2238: counter reader — exposed via query:closure-stats
+// `anonymous-aot-reject-total` key. Cumulative lifetime count.
+extern "C" std::uint64_t aura_anonymous_aot_reject_total_v_read() noexcept {
+    return g_anonymous_aot_reject_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2238: test setter for require_stable_id_for_aot (mirrors
+// aura_test_set_macro_expand_sandbox_strict pattern from #2235).
+// Test-only API; production should use aura_set_require_stable_id_for_aot
+// or aura_apply_require_stable_id_for_aot_env.
+extern "C" void aura_test_set_require_stable_id_for_aot(int v) noexcept {
+    g_require_stable_id_for_aot.store(v != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+// Issue #2238: test counter reader — same value as
+// aura_anonymous_aot_reject_total_v_read but under _test_ suffix
+// for symmetry with aura_test_set_require_stable_id_for_aot.
+extern "C" std::uint64_t aura_test_anonymous_aot_reject_total_v_read() noexcept {
+    return g_anonymous_aot_reject_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2238: reset counter to 0 for test-order isolation.
+extern "C" void aura_test_reset_anonymous_aot_reject_total_for_test() noexcept {
+    g_anonymous_aot_reject_total.store(0, std::memory_order_relaxed);
 }
 
 extern "C" void aura_counters_reset() {
@@ -1225,7 +1303,56 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
             g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
         g_closure_stable_func_ids[cid] = name ? aura_lookup_stable_func_id(name) : 0;
     }
+    // Issue #2238: alloc-time / set_name-time policy. If policy is on
+    // AND the caller passed an empty name (nullptr or ""), the closure
+    // stays anonymous + sid=0 (per #2175 AC3 — empty name never
+    // backfills). Such a closure cannot participate in stable-id remap;
+    // if it later binds to AOT native code, post-reemit safety depends
+    // solely on the MustDeopt / call-time checks. Setting MustDeopt
+    // here forces the next call to interpreter-only (gating at
+    // aura_jit_runtime.cpp:1591 already implemented for #2128), so
+    // no native ptr install happens — the AOT bind path simply
+    // sees MustDeopt and refuses to install (AC1 "force MustDeopt +
+    // never install native ptr" branch). Already-stamped sids (non-
+    // zero) never enter this branch, so the named backfill path
+    // (#2175) stays untouched (AC3).
+    if (g_require_stable_id_for_aot.load(std::memory_order_relaxed) != 0 &&
+        (name == nullptr || name[0] == '\0') && cid < g_closure_must_deopt.size() &&
+        cid < g_closure_func_ids.size() &&
+        (cid >= g_closure_freed.size() || g_closure_freed[cid] == 0)) {
+        g_closure_must_deopt[cid] = 1;
+        g_anonymous_aot_reject_total.fetch_add(1, std::memory_order_relaxed);
+    }
     aura_unlock_workspace_write();
+}
+
+// Issue #2238: dedicated C-linkage policy check for AOT bind sites.
+// Called by AOT install path BEFORE installing native ptr. Returns 1
+// when the caller must set MustDeopt + never install native ptr
+// (anonymous AOT-bound closure under strict policy). Returns 0 when
+// install is permitted (either policy off, closure has sid, or
+// closure is freed). Independent of aura_closure_set_name's own
+// policy check so callers can gate installs explicitly (useful when
+// the AOT install path doesn't go through set_name).
+extern "C" int aura_closure_check_aot_stable_id_policy(int64_t closure_id) noexcept {
+    if (closure_id < 0)
+        return 0;
+    if (g_require_stable_id_for_aot.load(std::memory_order_relaxed) == 0)
+        return 0;
+    const auto cid = static_cast<std::size_t>(closure_id);
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    const bool has_sid =
+        (cid < g_closure_stable_func_ids.size() && g_closure_stable_func_ids[cid] != 0);
+    const bool has_name = (cid < g_closure_names.size() && !g_closure_names[cid].empty());
+    if (has_sid || has_name)
+        return 0; // permit
+    // Anonymous + sid=0 under strict policy → reject. Bump counter.
+    g_anonymous_aot_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return 1;
 }
 
 // Issue #2092: live-closure remap after successful reemit, keyed by
