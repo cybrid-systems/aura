@@ -3049,6 +3049,69 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
+    // Issue #2231: orch:agent-ask name payload [:timeout-ms n] → hash
+    // {ok, status, payload, correlation-id, schema-2231}. Standard
+    // cross-agent request/response channel without a global registry
+    // (per #1966): the C++ helper `aura::orch::agent_ask(target,
+    // body, timeout_ms)` builds a fresh per-ask reply mailbox,
+    // encodes the correlation id in-band in the payload prefix
+    // ("ask:<id>:<body>" + "reply:<id>:<body>"), and surfaces the
+    // structured AskResult. No process-global state beyond a
+    // process atomic correlation-id counter.
+    add("orch:agent-ask", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0])) {
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "orch:agent-ask: usage (orch:agent-ask name payload [:timeout-ms n])",
+                ev.primitive_error_counter_ptr());
+        }
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        auto* hp = ev.agent_names_->find(name);
+        if (!hp || !hp->ok) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-ask: unknown agent",
+                                        ev.primitive_error_counter_ptr());
+        }
+        // Coerce payload to a string (mirror orch:agent-send).
+        std::string payload;
+        if (types::is_string(a[1]))
+            payload = heap_str_from(ev.string_heap_, a[1]);
+        else if (types::is_int(a[1]))
+            payload = std::to_string(types::as_int(a[1]));
+        else if (types::is_bool(a[1]))
+            payload = types::as_bool(a[1]) ? "#t" : "#f";
+        else
+            payload = "payload";
+        // Default timeout 5000ms; optional 3rd arg (int ms).
+        std::uint64_t timeout_ms = 5000;
+        if (a.size() >= 3 && types::is_int(a[2])) {
+            const auto t = types::as_int(a[2]);
+            if (t > 0)
+                timeout_ms = static_cast<std::uint64_t>(t);
+        }
+        // Delegate to the C++ helper (same metric + text-prefix
+        // protocol as the helper path).
+        const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
+        // Encode the structured hash: ok / status / payload /
+        // correlation-id / schema-2231.
+        auto st_s = r.status; // already "ok" | "timeout" | "no-mailbox" | "malformed"
+        auto st_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(st_s);
+        auto payload_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(r.payload);
+        auto corr_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::to_string(r.correlation_id));
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(r.ok)},
+            {"status", make_string(st_idx)},
+            {"payload", make_string(payload_idx)},
+            {"correlation-id", make_string(corr_idx)},
+            {"schema", make_int(2231)},
+            {"schema-2231", make_int(2231)},
+        };
+        return build_orch_hash(kv);
+    });
+
     // Issue #2011: language surface for agent_send / agent_recv.
     add("orch:agent-send", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0])) {

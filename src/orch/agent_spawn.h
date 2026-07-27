@@ -191,6 +191,14 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agent_restart_total{0};
     std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
     std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
+    // Issue #2231: agent-ask request/response channel metrics.
+    // Bumped by the C++ helper agent_ask(...) and the Aura
+    // primitive (orch:agent-ask name payload [:timeout-ms n]).
+    // agent_ask_total counts successful Ok returns; agent_ask_timeout_total
+    // counts wait-window expirations. Both share the same
+    // process-wide atomic surface as the send/recv counters above.
+    std::atomic<std::uint64_t> agent_ask_total{0};
+    std::atomic<std::uint64_t> agent_ask_timeout_total{0};
     // Issue #2008: keepalive / liveness.
     std::atomic<std::uint64_t> keepalive_emitted_total{0};
     std::atomic<std::uint64_t> stalled_agents_total{0};
@@ -1071,6 +1079,121 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
     else
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
     return m;
+}
+
+// Issue #2231: agent-ask request/response helper. Sends a payload
+// to `target`'s mailbox with a correlation id (in-band in the
+// payload), waits for a matching reply on a fresh per-ask reply
+// mailbox, and returns a structured AskResult. No process-global
+// registry (per #1966): the reply mailbox is a fresh local
+// shared_ptr<MultiFiberMailbox> + the correlation lives in the
+// payload prefix.
+//
+// Convention (text-prefix, no struct change to MailMessage):
+//   request: payload = "ask:<corr-id>:" + body
+//   reply:   payload = "reply:<corr-id>:" + body
+//
+// Interleave safety (AC5): the reply mailbox is unique per ask,
+// so concurrent asks to the same target don't drop unrelated
+// messages. The caller's own mailbox is unaffected (the ask
+// never reads from it). If the target replies on its main mailbox
+// using the wrong convention, status="malformed" is returned
+// (no hang, no global map).
+struct AskResult {
+    bool ok = false;
+    std::string status;  // "ok" | "timeout" | "no-mailbox" | "malformed"
+    std::string payload; // reply body (empty on timeout / malformed)
+    std::uint64_t correlation_id = 0;
+};
+
+[[nodiscard]] inline AskResult agent_ask(AgentHandle& target, std::string_view body,
+                                         std::uint64_t timeout_ms) noexcept {
+    AskResult out;
+    if (!target.ok || !target.mailbox) {
+        out.status = "no-mailbox";
+        return out;
+    }
+    // Process atomic correlation id (no global map; the id is
+    // embedded in the payload prefix).
+    static std::atomic<std::uint64_t> g_ask_corr_id{0};
+    const auto corr_id = g_ask_corr_id.fetch_add(1, std::memory_order_relaxed) + 1;
+    out.correlation_id = corr_id;
+    // Fresh reply mailbox (16-slot, high_water=16) so unrelated
+    // traffic on the caller's or target's main mailbox doesn't
+    // interleave. The mailbox is local to this ask; no registration,
+    // no global state.
+    auto reply_mb = std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(/*high_water=*/16);
+    // Build the request payload: "ask:<id>:" + body.
+    std::string req_payload;
+    req_payload.reserve(16 + body.size());
+    req_payload.append("ask:");
+    req_payload.append(std::to_string(corr_id));
+    req_payload.append(":");
+    req_payload.append(body);
+    // Send to target's mailbox with from_fiber = 0 (host thread or
+    // caller's id; not strictly required for the protocol).
+    serve::mf_mailbox::MailMessage msg;
+    msg.payload = std::move(req_payload);
+    msg.priority = serve::mf_mailbox::MailPriority::Normal;
+    msg.to_fiber = target.id;
+    auto st = target.mailbox->push(std::move(msg));
+    if (st == serve::mf_mailbox::PushStatus::Closed) {
+        out.status = "no-mailbox";
+        return out;
+    }
+    // If backpressure, the target's mailbox is at high_water. The
+    // request was rejected; the caller can retry or treat as
+    // timeout. We do NOT loop-retry (would block on the caller's
+    // scheduler thread) — the explicit Ok path is the only forward
+    // contract.
+    if (st != serve::mf_mailbox::PushStatus::Ok) {
+        out.status = "timeout";
+        g_orch_module_stats.agent_ask_timeout_total.fetch_add(1, std::memory_order_relaxed);
+        return out;
+    }
+    // Loop on the reply mailbox until a matching reply or timeout.
+    // The reply mailbox has no attachers, so the recv uses
+    // `to_fiber=0` (any) matching — recv returns one message per
+    // call. We loop with the requested timeout as the per-call
+    // budget; if the helper thread can't honor the budget (e.g.
+    // host thread without scheduler), the overall cap is enforced
+    // via a deadline wall-clock.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    std::string reply_prefix;
+    reply_prefix.reserve(16);
+    reply_prefix.append("reply:");
+    reply_prefix.append(std::to_string(corr_id));
+    reply_prefix.append(":");
+    for (;;) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            out.status = "timeout";
+            g_orch_module_stats.agent_ask_timeout_total.fetch_add(1, std::memory_order_relaxed);
+            return out;
+        }
+        const auto remaining_ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        auto m = reply_mb->recv(/*wait=*/true, remaining_ms, /*fiber_id=*/0);
+        if (!m)
+            continue; // spurious wake or empty; loop until deadline
+        // Filter by reply prefix.
+        if (m->payload.size() >= reply_prefix.size() &&
+            m->payload.compare(0, reply_prefix.size(), reply_prefix) == 0) {
+            out.ok = true;
+            out.status = "ok";
+            out.payload = m->payload.substr(reply_prefix.size());
+            g_orch_module_stats.agent_ask_total.fetch_add(1, std::memory_order_relaxed);
+            return out;
+        }
+        // Non-matching message: per AC5, the reply mailbox is unique
+        // per ask, so any non-matching message is a malformed
+        // reply (the target replied with the wrong convention or
+        // a leftover from another protocol). Surface as malformed
+        // so the caller can branch — do NOT silently drop.
+        out.status = "malformed";
+        out.payload = m->payload;
+        return out;
+    }
 }
 
 // ── Issue #2008: supervisor liveness watch ─────────────

@@ -2624,6 +2624,15 @@ add_dependencies(all_test_issue_targets test_agent_failure_policy_2229)
 aura_add_issue_test(test_parallel_intend_pure_contract_2230)
 aura_issue_test_link_llvm_jit(test_parallel_intend_pure_contract_2230)
 add_dependencies(all_test_issue_targets test_parallel_intend_pure_contract_2230)
+
+# Issue #2231: standardized cross-agent request/response channel
+# (agent-ask) without global registry. C++ helper agent_ask() +
+# orch:agent-ask Aura primitive + per-ask temp reply mailbox +
+# query:orch-module-stats agent-ask-total / agent-ask-timeout-total
+# keys + schema-2231.
+aura_add_issue_test(test_agent_ask_2231)
+aura_issue_test_link_llvm_jit(test_agent_ask_2231)
+add_dependencies(all_test_issue_targets test_agent_ask_2231)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)
