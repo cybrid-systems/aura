@@ -6308,6 +6308,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("schema", 1889); // lineage 1889
             insert_kv("issue", 1889);
             insert_kv("active", 1);
+            // Issue #2251: RegionExclusive env_gen fence for EnvFrame
+            // dual-path / shared parent walks.
+            insert_kv("env-gen-fence-reject-total",
+                      m ? static_cast<std::int64_t>(
+                              m->env_gen_fence_reject_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("env-gen-fence-wired", 1);
+            insert_kv("schema-2251", 2251);
+            insert_kv("issue-2251", 2251);
             insert_kv("bridge-epoch-bump-on-truncate",
                       m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
                               std::memory_order_relaxed))

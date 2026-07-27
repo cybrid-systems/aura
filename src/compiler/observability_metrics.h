@@ -552,6 +552,14 @@ struct CompilerMetrics {
     //     the checkpoint that were forced bridge_epoch=0 after truncate
     std::atomic<std::uint64_t> bridge_epoch_bump_on_truncate_total{0};
     std::atomic<std::uint64_t> envframe_truncate_doomed_closures_total{0};
+    // Issue #2251: RegionExclusive env_gen fence for EnvFrame
+    // dual-path / shared parent walks. Bumped when
+    // materialize_call_env detects frame.env_gen_stamp_ !=
+    // current env_generation_ (sibling region restamped mid-walk).
+    // Each bump triggers empty-Env fallback (same shape as
+    // bridge-stale path) so no foreign-generation bindings are
+    // silently used under concurrent region writers.
+    std::atomic<std::uint64_t> env_gen_fence_reject_total{0};
     // Issue #1948: MutationBoundaryGuard violation tracking for env
     // compaction paths (compact_env_frames + truncate_env_frames_to_checkpoint).
     //   - mutation_boundary_violation_on_env_compact_total: # of times

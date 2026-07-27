@@ -1865,6 +1865,15 @@ aura::core::LayoutStamp Evaluator::publish_layout_stamp() noexcept {
         m->layout_stamp_last_flat_gen.store(static_cast<std::uint64_t>(stamp.flat_gen),
                                             std::memory_order_relaxed);
     }
+    // Issue #2251: refresh env_gen_stamp_ on existing env_frames_ so
+    // post-publish lookups / walks see fresh frames. Frames allocated
+    // AFTER this call get the new stamp via alloc_env_frame (2a wire-up).
+    // Note: env_generation_ bumps happen under workspace_mtx_ (per
+    // #759 SOAK contract) so the env_frames_ mutation is race-free.
+    for (auto& fr : env_frames_) {
+        if (fr.env_gen_stamp_ != 0)
+            fr.env_gen_stamp_ = stamp.env_gen;
+    }
     return stamp;
 }
 

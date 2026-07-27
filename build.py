@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_env_gen_fence_coverage():
+    """Issue #2251: RegionExclusive env_gen fence for EnvFrame dual-path / shared parent walks.
+
+    Validates the 5-AC contract from issue body:
+      AC1: env_gen_stamp_ on EnvFrame + alloc + publish refresh
+      AC2: materialize_call_env fence + empty-Env fallback + bump
+      AC3: lookup_by_symid_chain / walk_env_frames gen-mismatch fences
+      AC4: env_gen_fence_reject_total counter + query + schema-2251
+      AC5: dual-region concurrent apply on shared parent AC
+    """
+    print(f"{B}=== env_gen fence coverage (#2251) ==={N}")
+    script = ROOT / "scripts" / "check_env_gen_fence_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("env_gen fence coverage contract rows failed")
+        return 1
+    ok("env_gen fence coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_fence_coverage():
     """Issue #2250: LayoutStamp fence on Fiber resume/steal.
 
@@ -1947,6 +1973,7 @@ def cmd_gate():
         or cmd_adaptive_thr_coverage()
         or cmd_aot_reload_policy_coverage()
         or cmd_layout_stamp_fence_coverage()
+        or cmd_env_gen_fence_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2609,6 +2636,7 @@ def main():
         "adaptive-thr": cmd_adaptive_thr_coverage,
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
+        "env-gen-fence": cmd_env_gen_fence_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
