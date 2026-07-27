@@ -4922,12 +4922,18 @@ public:
 
     // Issue #2127: consult deopt-storm + dirty density + base thr (#2112)
     // for partial/full decision. Records effective thr on CompilerMetrics.
+    // Issue #2190: after workload decision, apply StormLevel Global gate
+    // (prefer full under Global/Both; Shape-only does not force full).
     AdaptiveRelowerDecision
     consult_workload_adaptive_partial_(std::size_t dirty_n, std::size_t total_blocks = 0) noexcept {
         auto& reg = hot_update_registry();
+        // #2127 thr adaptation still sees soft throttle OR shape storm.
         const bool storm = reg.should_throttle_reemit() || reg.shape_storm_active();
         auto d = decide_workload_adaptive_partial_relower(
             dirty_n, total_blocks, reg.deopt_window_count(), reg.deopt_storm_threshold(), storm);
+        // #2190: Global bit of unified StormLevel → force full (additional
+        // gate; set_partial_relower_threshold still controls base thr).
+        d.want_partial = apply_partial_relower_storm_gate(d.want_partial);
         metrics_.partial_relower_threshold_used.store(d.effective_threshold,
                                                       std::memory_order_relaxed);
         return d;
