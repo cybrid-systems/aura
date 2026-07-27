@@ -2265,6 +2265,11 @@ aura_add_issue_test(test_dep_graph_hybrid_cascade_2110)
 aura_add_issue_test(test_type_dirty_cone_dep_graph_2191)
 aura_issue_test_link_llvm_jit(test_type_dirty_cone_dep_graph_2191)
 add_dependencies(all_test_issue_targets test_type_dirty_cone_dep_graph_2191)
+
+# Issue #2192: QueryEpoch snapshot contract (concurrent mutate/query).
+aura_add_issue_test(test_query_epoch_contract_2192)
+aura_issue_test_link_llvm_jit(test_query_epoch_contract_2192)
+add_dependencies(all_test_issue_targets test_query_epoch_contract_2192)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

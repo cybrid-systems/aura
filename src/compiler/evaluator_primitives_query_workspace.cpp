@@ -6,8 +6,9 @@ module;
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
-#include "serve/fiber.h"          // Issue #1630: aura_fiber_current_id for query:stable-ref
-#include "typed_mutation_audit.h" // Issue #1892: hygiene skip audit trail
+#include "core/workspace_epoch.hh" // Issue #2192: QueryEpoch contract
+#include "serve/fiber.h"           // Issue #1630: aura_fiber_current_id for query:stable-ref
+#include "typed_mutation_audit.h"  // Issue #1892: hygiene skip audit trail
 
 module aura.compiler.evaluator;
 
@@ -97,6 +98,25 @@ void register_workspace_query_primitives(
                            string_heap,         temp_arena,     tag_arity_index,
                            tag_arity_index_mtx, canonical_pool, build_tag_arity_index};
 
+    // Issue #2192: QueryEpoch helpers for primary workspace queries.
+    // Capture under shared_lock (caller holds); finish re-checks before return.
+    auto begin_query_epoch = [](aura::ast::FlatAST* flat,
+                                std::uint32_t workspace_id = 0) -> aura::core::QueryEpoch {
+        const auto gen = flat ? static_cast<std::uint64_t>(flat->generation())
+                              : aura::core::kWorkspaceEpochUnset;
+        return aura::core::capture_query_epoch(gen, workspace_id);
+    };
+    auto end_query_epoch = [&mev](const aura::core::QueryEpoch& start, aura::ast::FlatAST* flat,
+                                  EvalValue ok) -> EvalValue {
+        const auto gen = flat ? static_cast<std::uint64_t>(flat->generation())
+                              : aura::core::kWorkspaceEpochUnset;
+        if (!aura::core::finish_query_epoch(start, gen))
+            return mev("query-epoch-stale",
+                       "workspace advanced during query (QueryEpoch strict mode; "
+                       "see engine:metrics \"query:query-epoch-stats\")");
+        return ok;
+    };
+
     // Issue #2186: force every public EDSL query consumer of a node handle
     // through ensure_valid_or_refresh (silent-stale zero-tolerance). Accepts
     // bare NodeId or packed (id . gen) / (id . (gen . _)) stable-ref pairs
@@ -177,7 +197,7 @@ void register_workspace_query_primitives(
     };
 
     // (query:find name) — Find all node IDs with matching symbol name
-    add("query:find", [ws, mev](const auto& a) -> EvalValue {
+    add("query:find", [ws, mev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:find name)");
@@ -187,6 +207,7 @@ void register_workspace_query_primitives(
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
         auto name = ws.string_heap[idx];
         // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
         auto sym = ws.canonical_pool()->intern(name);
@@ -202,30 +223,33 @@ void register_workspace_query_primitives(
                 result = make_pair(pid);
             }
         }
-        return result;
+        return end_query_epoch(qe, &flat, result);
     });
 
     // (query:children node-id|stable-ref) — Get children node IDs
     // Issue #2186: resolve via ensure_valid_or_refresh (no bare get).
-    add("query:children", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !ws.workspace_flat)
-            return mev("bad-arg", "usage: (query:children node-id|stable-ref)");
-        bool ok = true;
-        aura::ast::NodeId node = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        auto v = flat.get(node);
-        EvalValue result = make_void();
-        for (std::size_t i = v.children.size(); i > 0; --i) {
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.child(i - 1))), result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
+    add("query:children",
+        [ws, mev, resolve_query_node_arg, begin_query_epoch,
+         end_query_epoch](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !ws.workspace_flat)
+                return mev("bad-arg", "usage: (query:children node-id|stable-ref)");
+            bool ok = true;
+            aura::ast::NodeId node = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            auto v = flat.get(node);
+            EvalValue result = make_void();
+            for (std::size_t i = v.children.size(); i > 0; --i) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.child(i - 1))), result});
+                result = make_pair(pid);
+            }
+            return end_query_epoch(qe, &flat, result);
+        });
 
     // Issue #249: (query:children-stable node-id|stable-ref) — Get children
     // as a list of (node-id . generation) stable-ref pairs. Use
@@ -235,60 +259,64 @@ void register_workspace_query_primitives(
     // (mutate:check-stable-ref) or pass it back to a mutate
     // primitive that supports stable-ref inputs.
     // Issue #2186: parent handle goes through ensure_valid_or_refresh.
-    add("query:children-stable", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !ws.workspace_flat)
-            return mev("bad-arg", "usage: (query:children-stable node-id|stable-ref)");
-        bool ok = true;
-        aura::ast::NodeId node = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        // Issue #398: truly zero-allocation path (no local
-        // vector). The result is a list of (id . gen) pairs
-        // — each child takes 3 entries in ws.pairs:
-        //   - (gen, nil)
-        //   - (id, ^prev)
-        //   - (pair_ev, ^next-list-node)
-        // We pre-allocate 3*N entries directly in ws.pairs
-        // (no temp vector), fill them via the callback, then
-        // thread the list-node cdrs in a second O(N) walk.
-        auto gen = flat.generation();
-        std::size_t n = flat.stable_child_count(node);
-        if (n == 0)
-            return make_void();
-        const auto base = ws.pairs.size();
-        // Pre-allocate 3*N slots with placeholder pairs. The
-        // exact car / cdr values are filled in below; the
-        // placeholders keep the indices stable.
-        for (std::size_t i = 0; i < 3 * n; ++i) {
-            ws.pairs.push_back({make_void(), make_void()});
-        }
-        // Fill (gen, nil) and (id, ^gen-pair) for each child.
-        // The list-node cdr is filled in the second loop.
-        std::size_t i = 0;
-        flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
-            const auto gen_idx = static_cast<int>(base + 3 * i);
-            const auto pair_idx = static_cast<int>(base + 3 * i + 1);
-            const auto list_idx = static_cast<int>(base + 3 * i + 2);
-            ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
-            ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_idx)};
-            // The list-node cdr is filled below (we don't know
-            // the next list-node index until the loop ends).
-            ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
-            ++i;
+    add("query:children-stable",
+        [ws, mev, resolve_query_node_arg, begin_query_epoch,
+         end_query_epoch](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !ws.workspace_flat)
+                return mev("bad-arg", "usage: (query:children-stable node-id|stable-ref)");
+            bool ok = true;
+            aura::ast::NodeId node = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            // Issue #398: truly zero-allocation path (no local
+            // vector). The result is a list of (id . gen) pairs
+            // — each child takes 3 entries in ws.pairs:
+            //   - (gen, nil)
+            //   - (id, ^prev)
+            //   - (pair_ev, ^next-list-node)
+            // We pre-allocate 3*N entries directly in ws.pairs
+            // (no temp vector), fill them via the callback, then
+            // thread the list-node cdrs in a second O(N) walk.
+            auto gen = flat.generation();
+            std::size_t n = flat.stable_child_count(node);
+            if (n == 0)
+                return end_query_epoch(qe, &flat, make_void());
+            const auto base = ws.pairs.size();
+            // Pre-allocate 3*N slots with placeholder pairs. The
+            // exact car / cdr values are filled in below; the
+            // placeholders keep the indices stable.
+            for (std::size_t i = 0; i < 3 * n; ++i) {
+                ws.pairs.push_back({make_void(), make_void()});
+            }
+            // Fill (gen, nil) and (id, ^gen-pair) for each child.
+            // The list-node cdr is filled in the second loop.
+            std::size_t i = 0;
+            flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
+                const auto gen_idx = static_cast<int>(base + 3 * i);
+                const auto pair_idx = static_cast<int>(base + 3 * i + 1);
+                const auto list_idx = static_cast<int>(base + 3 * i + 2);
+                ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
+                ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)),
+                                      make_pair(gen_idx)};
+                // The list-node cdr is filled below (we don't know
+                // the next list-node index until the loop ends).
+                ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
+                ++i;
+            });
+            // Thread the list-node cdrs: list[i].cdr = list[i+1]
+            // for i in 0..N-2; list[N-1].cdr = nil (already set).
+            for (std::size_t j = 0; j + 1 < n; ++j) {
+                const auto list_idx = static_cast<int>(base + 3 * j + 2);
+                const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
+                ws.pairs[list_idx].cdr = make_pair(next_idx);
+            }
+            // The final result is the first list-node.
+            return end_query_epoch(qe, &flat, make_pair(static_cast<int>(base + 2)));
         });
-        // Thread the list-node cdrs: list[i].cdr = list[i+1]
-        // for i in 0..N-2; list[N-1].cdr = nil (already set).
-        for (std::size_t j = 0; j + 1 < n; ++j) {
-            const auto list_idx = static_cast<int>(base + 3 * j + 2);
-            const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
-            ws.pairs[list_idx].cdr = make_pair(next_idx);
-        }
-        // The final result is the first list-node.
-        return make_pair(static_cast<int>(base + 2));
-    });
 
     // Issue #249: (query:parent-stable node-id|stable-ref) — Get the
     // parent as a (node-id . generation) stable-ref pair. Returns
@@ -317,13 +345,15 @@ void register_workspace_query_primitives(
     });
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
-    add("query:root", [ws, mev](const auto&) -> EvalValue {
+    add("query:root", [ws, mev, begin_query_epoch, end_query_epoch](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
         if (ws.workspace_flat->root == aura::ast::NULL_NODE)
             return mev("no-root", "workspace AST has no root node");
-        return make_int(static_cast<std::int64_t>(ws.workspace_flat->root));
+        const auto qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
+        auto out = make_int(static_cast<std::int64_t>(ws.workspace_flat->root));
+        return end_query_epoch(qe, ws.workspace_flat, out);
     });
 
 
@@ -511,7 +541,7 @@ void register_workspace_query_primitives(
     // (define ...) node regardless of name. 1-arg
     // filters by name (preserves the (query:calls name)
     // symmetry for AI agent workflows).
-    add("query:defines", [ws, mev](const auto& a) -> EvalValue {
+    add("query:defines", [ws, mev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
             return mev("bad-arg", "usage: (query:defines) or (query:defines name)");
@@ -525,6 +555,7 @@ void register_workspace_query_primitives(
             sym = ws.canonical_pool()->intern(ws.string_heap[idx]);
         }
         auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
@@ -539,7 +570,7 @@ void register_workspace_query_primitives(
             ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
             result = make_pair(pid);
         }
-        return result;
+        return end_query_epoch(qe, &flat, result);
     });
 
     // ═══════════════════════════════════════════════════════════════
@@ -548,32 +579,35 @@ void register_workspace_query_primitives(
 
     // (query:parent node-id|stable-ref) — Find parent node IDs (nodes whose children include this
     // ID) Issue #2186: resolve target via ensure_valid_or_refresh.
-    add("query:parent", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query:parent node-id|stable-ref)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        bool ok = true;
-        aura::ast::NodeId target = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                if (v.child(ci) == target) {
-                    auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                    result = make_pair(pid);
-                    break;
+    add("query:parent",
+        [ws, mev, resolve_query_node_arg, begin_query_epoch,
+         end_query_epoch](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query:parent node-id|stable-ref)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            bool ok = true;
+            aura::ast::NodeId target = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (v.child(ci) == target) {
+                        auto pid = ws.pairs.size();
+                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                        result = make_pair(pid);
+                        break;
+                    }
                 }
             }
-        }
-        return result;
-    });
+            return end_query_epoch(qe, &flat, result);
+        });
 
     // Issue #1449 / Tier-1 demotion: (query:siblings) removed from the public
     // engine registry. Use lib/std/compat.aura shim or:
@@ -1766,487 +1800,491 @@ void register_workspace_query_primitives(
     //   contract: structural self-modify must not match macro residue by
     //   default. Metrics: pattern_hygiene_filtered_total +
     //   pattern_include_macro_opt_in_total (query:pattern-hygiene-stats).
-    add("query:pattern", [ws, mev, &ev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg",
-                       "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                       " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
-                       " [:respect-hygiene [#t|#f]]"
-                       " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
-        if (!ws.workspace_flat || !ws.workspace_pool)
-            return mev("no-workspace", "no workspace AST loaded");
-
-        bool have_pattern = false;
-        std::size_t pattern_string_idx = 0;
-        bool include_macro_introduced = false;
-        // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
-        // Default (#t) is Kleene (`...` consumes 0..N consecutive
-        // children). Set `:nested-arity #f` or `:strict-arity #t` to
-        // opt back into the pre-#289 strict single-subtree wildcard
-        // behavior (`...` consumes exactly 1 child). The :strict-arity
-        // keyword is a discoverable alias for :nested-arity #f —
-        // both flip the matcher to position-by-position matching.
-        // Issue #1374: mutate:replace-pattern shares QueryMatcher and
-        // the same default (Kleene) so query-then-mutate pipelines see
-        // the same node set without an explicit :nested-arity flag.
-        bool nested_arity = true;
-        // Issue #289: result format. Default (false) preserves the
-        // pre-#289 result shape — a flat list of NodeIds. When
-        // #t, each result item is a (NodeId . marker-int) pair so
-        // agents can see which matches came from macro-expanded
-        // code without a separate provenance query.
-        bool with_markers = false;
-        for (std::size_t ai = 0; ai < a.size(); ++ai) {
-            if (is_string(a[ai])) {
-                if (have_pattern)
-                    return mev("bad-arg", "query:pattern: multiple pattern strings");
-                have_pattern = true;
-                pattern_string_idx = as_string_idx(a[ai]);
-                if (pattern_string_idx >= ws.string_heap.size())
-                    return mev("bad-arg", "pattern string index out of range");
-            } else if (is_keyword(a[ai])) {
-                auto kidx = as_keyword_idx(a[ai]);
-                if (kidx >= ws.keyword_table.size())
-                    return mev("bad-arg", "unknown keyword");
-                auto kw = ws.keyword_table[kidx];
-                // Issue #289: shared bool/optional-int flag consumer
-                // for the three new keyword args. `target` defaults
-                // to #t when the value is omitted (just keyword alone).
-                auto consume_bool = [&](bool& target) {
-                    target = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            target = as_bool(a[ai + 1]);
-                        else
-                            target = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                };
-                if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
-                    consume_bool(include_macro_introduced);
-                } else if (kw == ":exclude-macro-introduced") {
-                    // Issue #922: explicit hygiene predicate for safe
-                    // self-evolution. Default exclude (include=false) is
-                    // already the behavior when the keyword is absent;
-                    // this keyword makes the filter discoverable for AI
-                    // agents. :exclude-macro-introduced #t → skip MacroIntroduced
-                    // (safe); #f → allow MacroIntroduced in results.
-                    bool exclude = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            exclude = as_bool(a[ai + 1]);
-                        else
-                            exclude = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                    include_macro_introduced = !exclude;
-                } else if (kw == ":respect-hygiene") {
-                    // Issue #547: discoverable alias for
-                    // :include-macro-introduced. Same semantics
-                    // (skip MacroIntroduced by default for
-                    // hygiene safety); the keyword reads more
-                    // naturally for the EDSL self-evolution
-                    // use case.
-                    bool v = false;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            v = as_bool(a[ai + 1]);
-                        else
-                            v = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                    include_macro_introduced = v;
-                } else if (kw == ":nested-arity") {
-                    consume_bool(nested_arity);
-                } else if (kw == ":strict-arity") {
-                    // Issue #481: discoverable alias for the strict
-                    // single-subtree wildcard mode (pre-#289 default).
-                    // Equivalent to `:nested-arity #f`.
-                    bool v = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            v = as_bool(a[ai + 1]);
-                        else
-                            v = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
-                    nested_arity = !v;
-                } else if (kw == ":with-markers") {
-                    consume_bool(with_markers);
-                } else {
-                    return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
-                }
-            } else {
+    add("query:pattern",
+        [ws, mev, &ev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
                 return mev("bad-arg",
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"
                            " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                           " [:respect-hygiene [#t|#f]]"
                            " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
-            }
-        }
-        if (!have_pattern)
-            return mev("bad-arg", "query:pattern: missing pattern string");
-        auto idx = pattern_string_idx;
+            if (!ws.workspace_flat || !ws.workspace_pool)
+                return mev("no-workspace", "no workspace AST loaded");
+            const auto qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
 
-        // Phase 2.5.0: pat_pool stays separate from canonical_pool.
-        // Patterns parse into a fresh FlatAST + pool per call (ws.temp_arena
-        // reclaims at gc-temp). The wildcard "..." sym is intern'd in
-        // pat_pool so pat_node.sym_id comparisons work — sharing the
-        // canonical pool would mix pattern-specific garbage into the long-
-        // lived workspace, and the pattern's sym_ids would clash with
-        // workspace sym_ids (different ASTs, same pool). Documented
-        // exception to the canonical-pool migration — see commit 14682c5.
-        // Parse pattern string into its own FlatAST (separate from workspace).
-        // Use ws.temp_arena so (gc-temp) reclaims it per call.
-        auto alloc = ws.temp_arena->allocator();
-        auto* pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
-        auto* pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
-        auto pr = aura::parser::parse_to_flat(ws.string_heap[idx], *pat_flat, *pat_pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_void();
-
-        // Intern "..." in the pattern pool for wildcard matching.
-        // (Symbol comparison keeps the wildcard + capture paths
-        // orthogonal — "?x" is a capture, "..." is the legacy
-        // single-subtree / new Kleene-star wildcard, never both.)
-        auto wildcard_sym = pat_pool->intern("...");
-
-        // Issue #482: use the shared QueryMatcher from query_matcher.hh.
-        // Same matcher used by mutate:replace-pattern, so the two
-        // primitives agree on which nodes match a pattern regardless
-        // of :nested-arity mode.
-        // Issue #2123: default skip MacroIntroduced (!include); opt-in
-        // bumps pattern_include_macro_opt_in_total for dashboards.
-        if (include_macro_introduced) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->pattern_include_macro_opt_in_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        aura::compiler::QueryMatcher matcher(ws.workspace_flat, ws.workspace_pool, pat_flat,
-                                             pat_pool, wildcard_sym, nested_arity,
-                                             !include_macro_introduced);
-
-        // ─── Per-match state (Issue #289, refactored in #482) ───────
-        // Captures are stored as an insertion-ordered vector (linear
-        // scan lookup is fine — typical patterns have < 10 captures;
-        // the alternative unordered_map adds complexity for
-        // save/restore during backtracking). Backtracking uses a
-        // savepoint pattern: snapshot the current size, restore by
-        // truncating the vector.
-
-
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-
-        // Issue #292: guard predicate support. After
-        // match_subtree returns true, check pending_guards_ on
-        // the matcher. If a guard is pending, build a let
-        // expression that binds each ?capture to its captured
-        // NodeId (as int), eval the guard string, and accept
-        // the match only if the guard returns truthy. The
-        // captures used here are pat-side sym_ids (e.g. "?x")
-        // which the matcher recorded during match_subtree;
-        // we resolve them via pat_pool to get the binding
-        // name.
-        auto check_guard = [&]() -> bool {
-            if (!matcher.has_pending_guard())
-                return true;
-            const auto& pg = matcher.take_pending_guard();
-            // Build let source. Each capture: (name value).
-            // The captured value is the workspace node's value
-            // (LiteralInt int_value) if applicable, else the
-            // NodeId. This makes the guard expression natural
-            // to write — the user does (> ?x 0) not (> <node-id> 0).
-            std::string let_src = "(let (";
-            for (const auto& kv : pg.captures) {
-                // Skip sentinel sym_id 0 (wildcard captures).
-                if (kv.first == 0)
-                    continue;
-                auto name = pat_pool->resolve(kv.first);
-                if (name.empty() || name[0] != '?')
-                    continue;
-                // Issue #1695: capture values are StableNodeRef.
-                const auto cap_id = kv.second.id;
-                int64_t bind_value = static_cast<int64_t>(cap_id);
-                if (cap_id != aura::ast::NULL_NODE && cap_id < ws.workspace_flat->size()) {
-                    auto wsn = ws.workspace_flat->get(cap_id);
-                    if (wsn.tag == aura::ast::NodeTag::LiteralInt) {
-                        bind_value = wsn.int_value;
+            bool have_pattern = false;
+            std::size_t pattern_string_idx = 0;
+            bool include_macro_introduced = false;
+            // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
+            // Default (#t) is Kleene (`...` consumes 0..N consecutive
+            // children). Set `:nested-arity #f` or `:strict-arity #t` to
+            // opt back into the pre-#289 strict single-subtree wildcard
+            // behavior (`...` consumes exactly 1 child). The :strict-arity
+            // keyword is a discoverable alias for :nested-arity #f —
+            // both flip the matcher to position-by-position matching.
+            // Issue #1374: mutate:replace-pattern shares QueryMatcher and
+            // the same default (Kleene) so query-then-mutate pipelines see
+            // the same node set without an explicit :nested-arity flag.
+            bool nested_arity = true;
+            // Issue #289: result format. Default (false) preserves the
+            // pre-#289 result shape — a flat list of NodeIds. When
+            // #t, each result item is a (NodeId . marker-int) pair so
+            // agents can see which matches came from macro-expanded
+            // code without a separate provenance query.
+            bool with_markers = false;
+            for (std::size_t ai = 0; ai < a.size(); ++ai) {
+                if (is_string(a[ai])) {
+                    if (have_pattern)
+                        return mev("bad-arg", "query:pattern: multiple pattern strings");
+                    have_pattern = true;
+                    pattern_string_idx = as_string_idx(a[ai]);
+                    if (pattern_string_idx >= ws.string_heap.size())
+                        return mev("bad-arg", "pattern string index out of range");
+                } else if (is_keyword(a[ai])) {
+                    auto kidx = as_keyword_idx(a[ai]);
+                    if (kidx >= ws.keyword_table.size())
+                        return mev("bad-arg", "unknown keyword");
+                    auto kw = ws.keyword_table[kidx];
+                    // Issue #289: shared bool/optional-int flag consumer
+                    // for the three new keyword args. `target` defaults
+                    // to #t when the value is omitted (just keyword alone).
+                    auto consume_bool = [&](bool& target) {
+                        target = true;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                target = as_bool(a[ai + 1]);
+                            else
+                                target = (as_int(a[ai + 1]) != 0);
+                            ++ai;
+                        }
+                    };
+                    if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
+                        consume_bool(include_macro_introduced);
+                    } else if (kw == ":exclude-macro-introduced") {
+                        // Issue #922: explicit hygiene predicate for safe
+                        // self-evolution. Default exclude (include=false) is
+                        // already the behavior when the keyword is absent;
+                        // this keyword makes the filter discoverable for AI
+                        // agents. :exclude-macro-introduced #t → skip MacroIntroduced
+                        // (safe); #f → allow MacroIntroduced in results.
+                        bool exclude = true;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                exclude = as_bool(a[ai + 1]);
+                            else
+                                exclude = (as_int(a[ai + 1]) != 0);
+                            ++ai;
+                        }
+                        include_macro_introduced = !exclude;
+                    } else if (kw == ":respect-hygiene") {
+                        // Issue #547: discoverable alias for
+                        // :include-macro-introduced. Same semantics
+                        // (skip MacroIntroduced by default for
+                        // hygiene safety); the keyword reads more
+                        // naturally for the EDSL self-evolution
+                        // use case.
+                        bool v = false;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                v = as_bool(a[ai + 1]);
+                            else
+                                v = (as_int(a[ai + 1]) != 0);
+                            ++ai;
+                        }
+                        include_macro_introduced = v;
+                    } else if (kw == ":nested-arity") {
+                        consume_bool(nested_arity);
+                    } else if (kw == ":strict-arity") {
+                        // Issue #481: discoverable alias for the strict
+                        // single-subtree wildcard mode (pre-#289 default).
+                        // Equivalent to `:nested-arity #f`.
+                        bool v = true;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                v = as_bool(a[ai + 1]);
+                            else
+                                v = (as_int(a[ai + 1]) != 0);
+                            ++ai;
+                        }
+                        nested_arity = !v;
+                    } else if (kw == ":with-markers") {
+                        consume_bool(with_markers);
+                    } else {
+                        return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
                     }
+                } else {
+                    return mev(
+                        "bad-arg",
+                        "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                        " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                        " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
                 }
-                let_src += "(" + std::string(name) + " " + std::to_string(bind_value) + ")";
             }
-            let_src += ") " + pg.guard_expr + ")";
-            // Parse the let source into a temp flat and eval
-            // it in top_env. This is the same parse_to_flat +
-            // eval_flat pipeline used elsewhere in this file
-            // (see pattern parse above); we use ws.temp_arena
-            // so (gc-temp) reclaims it per call.
+            if (!have_pattern)
+                return mev("bad-arg", "query:pattern: missing pattern string");
+            auto idx = pattern_string_idx;
+
+            // Phase 2.5.0: pat_pool stays separate from canonical_pool.
+            // Patterns parse into a fresh FlatAST + pool per call (ws.temp_arena
+            // reclaims at gc-temp). The wildcard "..." sym is intern'd in
+            // pat_pool so pat_node.sym_id comparisons work — sharing the
+            // canonical pool would mix pattern-specific garbage into the long-
+            // lived workspace, and the pattern's sym_ids would clash with
+            // workspace sym_ids (different ASTs, same pool). Documented
+            // exception to the canonical-pool migration — see commit 14682c5.
+            // Parse pattern string into its own FlatAST (separate from workspace).
+            // Use ws.temp_arena so (gc-temp) reclaims it per call.
             auto alloc = ws.temp_arena->allocator();
-            auto* guard_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
-            auto* guard_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
-            auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
-            bool ok = false;
-            if (pr.success && pr.root != aura::ast::NULL_NODE) {
-                auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
-                if (gr) {
-                    auto& gv = *gr;
-
-                    // Truthy = non-zero int, non-#f, non-void.
-                    if (types::is_int(gv))
-                        ok = (types::as_int(gv) != 0);
-                    else if (types::is_bool(gv))
-                        ok = types::as_bool(gv);
-                    else if (types::is_pair(gv))
-                        ok = true;
-                }
-            }
-
-            matcher.clear_pending_guard();
-            return ok;
-        };
-
-        // Issue #186 Phase 1: pre-compute the pattern's children
-        // count once. The outer loop can then skip nodes whose
-        // children count doesn't match the pattern's children
-        // count, avoiding the recursive descent into subtrees
-        // that can't possibly match. For large ASTs (500-5000
-        // nodes) this is a real win — the O(N × Depth) becomes
-        // O(N) when the pattern's children count is a strong
-        // filter.
-        auto pat_root_node = pat_flat->get(pr.root);
-        const std::size_t pat_child_count = pat_root_node.children.size();
-        const bool pat_root_is_wildcard = pat_root_node.tag == aura::ast::NodeTag::Variable &&
-                                          pat_root_node.sym_id == wildcard_sym;
-        // Issue #289: pre-compute whether the pattern contains any
-        // "..." descendant. In Kleene mode + ellipsis anywhere in
-        // the pattern, the workspace arity is not fixed, so the
-        // (tag, arity) index fast path can't prune by arity — we
-        // must do a full walk. In the default strict mode the
-        // arity is still fixed (single-subtree wildcard), so the
-        // index helps regardless of ellipsis presence.
-        const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pr.root);
-        // Issue #292: (:guard <sub-pat> "expr") wrappers have
-        // tag=Call, arity=2-3 — the index fast path would skip
-        // positions whose (tag, arity) doesn't match. Force
-        // slow path for guard wrappers.
-        const bool pat_is_guard = matcher.is_guard_root(pr.root);
-        const bool use_index_fast_path =
-            !pat_root_is_wildcard && !pat_is_guard && (!nested_arity || !pat_has_ellipsis);
-
-
-        // Walk every node in workspace and try matching at each position.
-        // Issue #140 / #1636 / #1892: MANDATE default skip of
-        // SyntaxMarker::MacroIntroduced roots (and recursive subtrees via
-        // QueryMatcher). Hygiene correctness for AI self-evolution:
-        // matching macro-introduced code as user code would leak into
-        // mutate feedback loops. Opt-in only via
-        // :include-macro-introduced / :allow-macro-introduced #t.
-        //
-        // Issue #186: also skip nodes whose children count doesn't
-        // match the pattern's children count (the pattern's
-        // children are the only subtree that can match). This is
-        // a quick early-exit that's safe because:
-        //   - If pat_root is a wildcard "..." → no constraint
-        //   - Otherwise, the children count must match exactly
-        //     (verified later in match_subtree's default case)
-        //
-        // Issue #211: use the (tag, arity) index to skip
-        // non-matching nodes BEFORE the recursive descent.
-        // For patterns where the root's (tag, arity) is rare
-        // (e.g., looking for `(+ 1 2)` in a workspace with
-        // mostly `define`s and `lambda`s), this is a massive
-        // speedup vs. the O(N) full walk.
-        //
-        // The index is built lazily on first use and cached
-        // per-workspace (invalidated when ws.workspace_flat is
-        // changed via set_workspace_flat).
-        //
-        // Issue #1892: count skips this call for TypedMutationAudit
-        // (one summary event per query — not per-node, hotpath safe).
-        std::uint64_t macro_skips_this_query = 0;
-        if (use_index_fast_path) {
-            // Issue #593: tag_arity delta hits during hygiene query.
-            if (flat.tag_arity_index_dirty())
-                ev.bump_tag_arity_hygiene_query_delta();
-            // Index lookup: find all nodes whose (tag, arity)
-            // matches the pattern's root.
-            //
-            // Issue #1372 (closes #371 follow-up): build + bucket
-            // copy under a single unique_lock via
-            // snapshot_tag_arity_bucket — eliminates the race
-            // window between build's lock release and shared
-            // find. Match iterates the returned snapshot outside
-            // the lock (reader parallelism preserved for match
-            // work; only the short build+copy is exclusive).
-            const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
-            const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
-                                          static_cast<std::uint64_t>(pat_child_count);
-            // Issue #1501 / #1892: hygiene default uses user-only tag_arity
-            // index (MacroIntroduced roots excluded at bucket serve time).
-            // trigger 0 = LazyQuery (PatternIndexRebuildTrigger).
-            const auto bucket =
-                ev.snapshot_tag_arity_bucket(pat_key, /*trigger=*/0,
-                                             /*skip_macro_introduced=*/!include_macro_introduced);
-            if (bucket.empty()) {
-                // No nodes match the pattern's (tag, arity).
-                // Skip the full walk.
-                ev.bump_pattern_structural_index_miss();
+            auto* pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
+            auto* pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+            auto pr = aura::parser::parse_to_flat(ws.string_heap[idx], *pat_flat, *pat_pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE)
                 return make_void();
-            }
-            ev.bump_pattern_structural_index_hit();
-            ev.bump_total_query_calls();
-            for (aura::ast::NodeId id : bucket) {
-                if (id >= flat.size())
-                    continue;
-                if (!include_macro_introduced && flat.is_macro_introduced(id)) {
-                    // Issue #458 / #1501 / #1609 / #1636 / #1892: MANDATE
-                    // force-skip MacroIntroduced on query:pattern hot path
-                    // (default hygiene) unless :allow-macro-introduced #t.
-                    ev.bump_macro_introduced_skipped_in_query();
-                    ++macro_skips_this_query;
-                    if (flat.provenance(id) != 0)
-                        ev.bump_macro_hygiene_provenance_violation();
-                    continue;
-                }
-                // Issue #289: fresh per-match state. Captures
-                // and depth are reset so a failed match doesn't
-                // pollute the next position's attempt.
-                matcher.state.captures.clear();
-                matcher.state.depth = 0;
-                if (matcher.match_subtree(id, pr.root)) {
-                    // Issue #292: guard predicate check.
-                    if (!check_guard())
-                        continue;
-                    // Issue #289: result format. With
-                    // :with-markers #t, store a (NodeId . marker-int)
-                    // pair per match so agents can see which
-                    // matches came from macro-expanded code.
-                    // Default (false) keeps the pre-#289 shape —
-                    // flat list of NodeIds.
-                    EvalValue item;
-                    if (with_markers) {
-                        auto nid_int = make_int(static_cast<std::int64_t>(id));
-                        auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
-                        auto pair_pid = ws.pairs.size();
-                        ws.pairs.push_back({nid_int, marker_int});
-                        item = make_pair(pair_pid);
-                    } else {
-                        item = make_int(static_cast<std::int64_t>(id));
-                    }
-                    auto pid = ws.pairs.size();
-                    ws.pairs.push_back({item, result});
-                    result = make_pair(pid);
-                }
-            }
-        } else {
-            // Full walk (Kleene + ellipsis, or wildcard root).
-            ev.bump_total_query_calls();
-            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                if (!include_macro_introduced && flat.is_macro_introduced(id)) {
-                    ev.bump_macro_introduced_skipped_in_query();
-                    ++macro_skips_this_query;
-                    if (flat.provenance(id) != 0)
-                        ev.bump_macro_hygiene_provenance_violation();
-                    continue;
-                }
-                // Issue #484: skip orphan nodes (parent_ == NULL
-                // and not the workspace root). After
-                // mutate:replace-pattern, the OLD matched child
-                // has its parent_ cleared by set_child, leaving
-                // it orphaned in the flat. Such orphans should
-                // not be returned by query:pattern — they are
-                // no longer reachable from the workspace tree.
-                //
-                // Issue #484 follow-up: marker-based
-                // disambiguation. MacroIntroduced-marker
-                // orphans are macro-expanded bodies cloned by
-                // clone_macro_body whose cloned top got
-                // MacroIntroduced marker but whose
-                // macro_expand_all call failed to splice them
-                // into the workspace (a separate bug — see
-                // #484 follow-up). Allowing them through keeps
-                // these bodies queryable. User-marker orphans
-                // are typically mutate-replaced children (the
-                // genuine lost-from-tree case) and should be
-                // excluded.
-                //
-                // Edge case: if the flat has no root set (root
-                // == NULL_NODE, e.g. test fixture that builds a
-                // bare flat without a workspace root), every
-                // node is by definition orphan. Don't skip any
-                // — the caller (test fixture) is intentionally
-                // exercising index operations on orphan-like
-                // nodes.
-                if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
-                    flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
-                    continue;
-                matcher.state.captures.clear();
-                matcher.state.depth = 0;
-                if (matcher.match_subtree(id, pr.root)) {
-                    // Issue #292: guard predicate check.
-                    if (!check_guard())
-                        continue;
-                    EvalValue item;
-                    if (with_markers) {
-                        auto nid_int = make_int(static_cast<std::int64_t>(id));
-                        auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
-                        auto pair_pid = ws.pairs.size();
-                        ws.pairs.push_back({nid_int, marker_int});
-                        item = make_pair(pair_pid);
-                    } else {
-                        item = make_int(static_cast<std::int64_t>(id));
-                    }
-                    auto pid = ws.pairs.size();
-                    ws.pairs.push_back({item, result});
-                    result = make_pair(pid);
-                }
-            }
-        }
 
-        // Issue #421 / #1892 / #2123: sync recursive hygiene skips + verify
-        // default-hygiene results never surface MacroIntroduced
-        // node ids (post query-split contract).
-        if (matcher.recursive_macro_skipped() > 0) {
-            ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
-            // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
-            ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
-            // Issue #2123: recursive skips count toward filtered total.
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->pattern_hygiene_filtered_total.fetch_add(matcher.recursive_macro_skipped(),
-                                                            std::memory_order_relaxed);
-                m->pattern_hygiene_filter_hits.fetch_add(matcher.recursive_macro_skipped(),
-                                                         std::memory_order_relaxed);
+            // Intern "..." in the pattern pool for wildcard matching.
+            // (Symbol comparison keeps the wildcard + capture paths
+            // orthogonal — "?x" is a capture, "..." is the legacy
+            // single-subtree / new Kleene-star wildcard, never both.)
+            auto wildcard_sym = pat_pool->intern("...");
+
+            // Issue #482: use the shared QueryMatcher from query_matcher.hh.
+            // Same matcher used by mutate:replace-pattern, so the two
+            // primitives agree on which nodes match a pattern regardless
+            // of :nested-arity mode.
+            // Issue #2123: default skip MacroIntroduced (!include); opt-in
+            // bumps pattern_include_macro_opt_in_total for dashboards.
+            if (include_macro_introduced) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->pattern_include_macro_opt_in_total.fetch_add(1, std::memory_order_relaxed);
             }
-            macro_skips_this_query += matcher.recursive_macro_skipped();
-        }
-        if (matcher.macro_intro_filtered_strict() > 0) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->pattern_hygiene_violations_caught.fetch_add(
-                    matcher.macro_intro_filtered_strict(), std::memory_order_relaxed);
+            aura::compiler::QueryMatcher matcher(ws.workspace_flat, ws.workspace_pool, pat_flat,
+                                                 pat_pool, wildcard_sym, nested_arity,
+                                                 !include_macro_introduced);
+
+            // ─── Per-match state (Issue #289, refactored in #482) ───────
+            // Captures are stored as an insertion-ordered vector (linear
+            // scan lookup is fine — typical patterns have < 10 captures;
+            // the alternative unordered_map adds complexity for
+            // save/restore during backtracking). Backtracking uses a
+            // savepoint pattern: snapshot the current size, restore by
+            // truncating the vector.
+
+
+            auto& flat = *ws.workspace_flat;
+            EvalValue result = make_void();
+
+            // Issue #292: guard predicate support. After
+            // match_subtree returns true, check pending_guards_ on
+            // the matcher. If a guard is pending, build a let
+            // expression that binds each ?capture to its captured
+            // NodeId (as int), eval the guard string, and accept
+            // the match only if the guard returns truthy. The
+            // captures used here are pat-side sym_ids (e.g. "?x")
+            // which the matcher recorded during match_subtree;
+            // we resolve them via pat_pool to get the binding
+            // name.
+            auto check_guard = [&]() -> bool {
+                if (!matcher.has_pending_guard())
+                    return true;
+                const auto& pg = matcher.take_pending_guard();
+                // Build let source. Each capture: (name value).
+                // The captured value is the workspace node's value
+                // (LiteralInt int_value) if applicable, else the
+                // NodeId. This makes the guard expression natural
+                // to write — the user does (> ?x 0) not (> <node-id> 0).
+                std::string let_src = "(let (";
+                for (const auto& kv : pg.captures) {
+                    // Skip sentinel sym_id 0 (wildcard captures).
+                    if (kv.first == 0)
+                        continue;
+                    auto name = pat_pool->resolve(kv.first);
+                    if (name.empty() || name[0] != '?')
+                        continue;
+                    // Issue #1695: capture values are StableNodeRef.
+                    const auto cap_id = kv.second.id;
+                    int64_t bind_value = static_cast<int64_t>(cap_id);
+                    if (cap_id != aura::ast::NULL_NODE && cap_id < ws.workspace_flat->size()) {
+                        auto wsn = ws.workspace_flat->get(cap_id);
+                        if (wsn.tag == aura::ast::NodeTag::LiteralInt) {
+                            bind_value = wsn.int_value;
+                        }
+                    }
+                    let_src += "(" + std::string(name) + " " + std::to_string(bind_value) + ")";
+                }
+                let_src += ") " + pg.guard_expr + ")";
+                // Parse the let source into a temp flat and eval
+                // it in top_env. This is the same parse_to_flat +
+                // eval_flat pipeline used elsewhere in this file
+                // (see pattern parse above); we use ws.temp_arena
+                // so (gc-temp) reclaims it per call.
+                auto alloc = ws.temp_arena->allocator();
+                auto* guard_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
+                auto* guard_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+                auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
+                bool ok = false;
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
+                    if (gr) {
+                        auto& gv = *gr;
+
+                        // Truthy = non-zero int, non-#f, non-void.
+                        if (types::is_int(gv))
+                            ok = (types::as_int(gv) != 0);
+                        else if (types::is_bool(gv))
+                            ok = types::as_bool(gv);
+                        else if (types::is_pair(gv))
+                            ok = true;
+                    }
+                }
+
+                matcher.clear_pending_guard();
+                return ok;
+            };
+
+            // Issue #186 Phase 1: pre-compute the pattern's children
+            // count once. The outer loop can then skip nodes whose
+            // children count doesn't match the pattern's children
+            // count, avoiding the recursive descent into subtrees
+            // that can't possibly match. For large ASTs (500-5000
+            // nodes) this is a real win — the O(N × Depth) becomes
+            // O(N) when the pattern's children count is a strong
+            // filter.
+            auto pat_root_node = pat_flat->get(pr.root);
+            const std::size_t pat_child_count = pat_root_node.children.size();
+            const bool pat_root_is_wildcard = pat_root_node.tag == aura::ast::NodeTag::Variable &&
+                                              pat_root_node.sym_id == wildcard_sym;
+            // Issue #289: pre-compute whether the pattern contains any
+            // "..." descendant. In Kleene mode + ellipsis anywhere in
+            // the pattern, the workspace arity is not fixed, so the
+            // (tag, arity) index fast path can't prune by arity — we
+            // must do a full walk. In the default strict mode the
+            // arity is still fixed (single-subtree wildcard), so the
+            // index helps regardless of ellipsis presence.
+            const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pr.root);
+            // Issue #292: (:guard <sub-pat> "expr") wrappers have
+            // tag=Call, arity=2-3 — the index fast path would skip
+            // positions whose (tag, arity) doesn't match. Force
+            // slow path for guard wrappers.
+            const bool pat_is_guard = matcher.is_guard_root(pr.root);
+            const bool use_index_fast_path =
+                !pat_root_is_wildcard && !pat_is_guard && (!nested_arity || !pat_has_ellipsis);
+
+
+            // Walk every node in workspace and try matching at each position.
+            // Issue #140 / #1636 / #1892: MANDATE default skip of
+            // SyntaxMarker::MacroIntroduced roots (and recursive subtrees via
+            // QueryMatcher). Hygiene correctness for AI self-evolution:
+            // matching macro-introduced code as user code would leak into
+            // mutate feedback loops. Opt-in only via
+            // :include-macro-introduced / :allow-macro-introduced #t.
+            //
+            // Issue #186: also skip nodes whose children count doesn't
+            // match the pattern's children count (the pattern's
+            // children are the only subtree that can match). This is
+            // a quick early-exit that's safe because:
+            //   - If pat_root is a wildcard "..." → no constraint
+            //   - Otherwise, the children count must match exactly
+            //     (verified later in match_subtree's default case)
+            //
+            // Issue #211: use the (tag, arity) index to skip
+            // non-matching nodes BEFORE the recursive descent.
+            // For patterns where the root's (tag, arity) is rare
+            // (e.g., looking for `(+ 1 2)` in a workspace with
+            // mostly `define`s and `lambda`s), this is a massive
+            // speedup vs. the O(N) full walk.
+            //
+            // The index is built lazily on first use and cached
+            // per-workspace (invalidated when ws.workspace_flat is
+            // changed via set_workspace_flat).
+            //
+            // Issue #1892: count skips this call for TypedMutationAudit
+            // (one summary event per query — not per-node, hotpath safe).
+            std::uint64_t macro_skips_this_query = 0;
+            if (use_index_fast_path) {
+                // Issue #593: tag_arity delta hits during hygiene query.
+                if (flat.tag_arity_index_dirty())
+                    ev.bump_tag_arity_hygiene_query_delta();
+                // Index lookup: find all nodes whose (tag, arity)
+                // matches the pattern's root.
+                //
+                // Issue #1372 (closes #371 follow-up): build + bucket
+                // copy under a single unique_lock via
+                // snapshot_tag_arity_bucket — eliminates the race
+                // window between build's lock release and shared
+                // find. Match iterates the returned snapshot outside
+                // the lock (reader parallelism preserved for match
+                // work; only the short build+copy is exclusive).
+                const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
+                const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
+                                              static_cast<std::uint64_t>(pat_child_count);
+                // Issue #1501 / #1892: hygiene default uses user-only tag_arity
+                // index (MacroIntroduced roots excluded at bucket serve time).
+                // trigger 0 = LazyQuery (PatternIndexRebuildTrigger).
+                const auto bucket = ev.snapshot_tag_arity_bucket(
+                    pat_key, /*trigger=*/0,
+                    /*skip_macro_introduced=*/!include_macro_introduced);
+                if (bucket.empty()) {
+                    // No nodes match the pattern's (tag, arity).
+                    // Skip the full walk.
+                    ev.bump_pattern_structural_index_miss();
+                    return make_void();
+                }
+                ev.bump_pattern_structural_index_hit();
+                ev.bump_total_query_calls();
+                for (aura::ast::NodeId id : bucket) {
+                    if (id >= flat.size())
+                        continue;
+                    if (!include_macro_introduced && flat.is_macro_introduced(id)) {
+                        // Issue #458 / #1501 / #1609 / #1636 / #1892: MANDATE
+                        // force-skip MacroIntroduced on query:pattern hot path
+                        // (default hygiene) unless :allow-macro-introduced #t.
+                        ev.bump_macro_introduced_skipped_in_query();
+                        ++macro_skips_this_query;
+                        if (flat.provenance(id) != 0)
+                            ev.bump_macro_hygiene_provenance_violation();
+                        continue;
+                    }
+                    // Issue #289: fresh per-match state. Captures
+                    // and depth are reset so a failed match doesn't
+                    // pollute the next position's attempt.
+                    matcher.state.captures.clear();
+                    matcher.state.depth = 0;
+                    if (matcher.match_subtree(id, pr.root)) {
+                        // Issue #292: guard predicate check.
+                        if (!check_guard())
+                            continue;
+                        // Issue #289: result format. With
+                        // :with-markers #t, store a (NodeId . marker-int)
+                        // pair per match so agents can see which
+                        // matches came from macro-expanded code.
+                        // Default (false) keeps the pre-#289 shape —
+                        // flat list of NodeIds.
+                        EvalValue item;
+                        if (with_markers) {
+                            auto nid_int = make_int(static_cast<std::int64_t>(id));
+                            auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
+                            auto pair_pid = ws.pairs.size();
+                            ws.pairs.push_back({nid_int, marker_int});
+                            item = make_pair(pair_pid);
+                        } else {
+                            item = make_int(static_cast<std::int64_t>(id));
+                        }
+                        auto pid = ws.pairs.size();
+                        ws.pairs.push_back({item, result});
+                        result = make_pair(pid);
+                    }
+                }
+            } else {
+                // Full walk (Kleene + ellipsis, or wildcard root).
+                ev.bump_total_query_calls();
+                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    if (!include_macro_introduced && flat.is_macro_introduced(id)) {
+                        ev.bump_macro_introduced_skipped_in_query();
+                        ++macro_skips_this_query;
+                        if (flat.provenance(id) != 0)
+                            ev.bump_macro_hygiene_provenance_violation();
+                        continue;
+                    }
+                    // Issue #484: skip orphan nodes (parent_ == NULL
+                    // and not the workspace root). After
+                    // mutate:replace-pattern, the OLD matched child
+                    // has its parent_ cleared by set_child, leaving
+                    // it orphaned in the flat. Such orphans should
+                    // not be returned by query:pattern — they are
+                    // no longer reachable from the workspace tree.
+                    //
+                    // Issue #484 follow-up: marker-based
+                    // disambiguation. MacroIntroduced-marker
+                    // orphans are macro-expanded bodies cloned by
+                    // clone_macro_body whose cloned top got
+                    // MacroIntroduced marker but whose
+                    // macro_expand_all call failed to splice them
+                    // into the workspace (a separate bug — see
+                    // #484 follow-up). Allowing them through keeps
+                    // these bodies queryable. User-marker orphans
+                    // are typically mutate-replaced children (the
+                    // genuine lost-from-tree case) and should be
+                    // excluded.
+                    //
+                    // Edge case: if the flat has no root set (root
+                    // == NULL_NODE, e.g. test fixture that builds a
+                    // bare flat without a workspace root), every
+                    // node is by definition orphan. Don't skip any
+                    // — the caller (test fixture) is intentionally
+                    // exercising index operations on orphan-like
+                    // nodes.
+                    if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
+                        flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
+                        continue;
+                    matcher.state.captures.clear();
+                    matcher.state.depth = 0;
+                    if (matcher.match_subtree(id, pr.root)) {
+                        // Issue #292: guard predicate check.
+                        if (!check_guard())
+                            continue;
+                        EvalValue item;
+                        if (with_markers) {
+                            auto nid_int = make_int(static_cast<std::int64_t>(id));
+                            auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
+                            auto pair_pid = ws.pairs.size();
+                            ws.pairs.push_back({nid_int, marker_int});
+                            item = make_pair(pair_pid);
+                        } else {
+                            item = make_int(static_cast<std::int64_t>(id));
+                        }
+                        auto pid = ws.pairs.size();
+                        ws.pairs.push_back({item, result});
+                        result = make_pair(pid);
+                    }
+                }
             }
-        }
-        if (!include_macro_introduced) {
-            const auto violations_before = ev.get_pattern_macro_filter_violations();
-            ev.verify_pattern_result_hygiene(flat, result, with_markers);
-            const auto violations_after = ev.get_pattern_macro_filter_violations();
-            // Issue #1280 / #1892: default exclude-MacroIntroduced path is the
-            // production hygiene contract for query:pattern (self-evo hotpath).
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->pattern_hygiene_default_exclude.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1892: TypedMutationAudit summary for this query call.
-            // Success = intentional default skip (hygiene held). Error =
-            // verify found MacroIntroduced leakage in results (must be 0).
-            if (macro_skips_this_query > 0 || violations_after > violations_before) {
-                const bool leaked = violations_after > violations_before;
-                typed_audit::capture_macro_hygiene_audit(
-                    leaked ? "query-pattern-macro-leak" : "query-pattern-macro-skip",
-                    leaked ? typed_audit::AuditOutcome::Error : typed_audit::AuditOutcome::Success,
-                    /*target_node=*/0, static_cast<std::int64_t>(aura_fiber_current_id()),
-                    ev.capability_tenant_id());
+
+            // Issue #421 / #1892 / #2123: sync recursive hygiene skips + verify
+            // default-hygiene results never surface MacroIntroduced
+            // node ids (post query-split contract).
+            if (matcher.recursive_macro_skipped() > 0) {
+                ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
+                // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
+                ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
+                // Issue #2123: recursive skips count toward filtered total.
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->pattern_hygiene_filtered_total.fetch_add(matcher.recursive_macro_skipped(),
+                                                                std::memory_order_relaxed);
+                    m->pattern_hygiene_filter_hits.fetch_add(matcher.recursive_macro_skipped(),
+                                                             std::memory_order_relaxed);
+                }
+                macro_skips_this_query += matcher.recursive_macro_skipped();
             }
-        }
-        return result;
-    });
+            if (matcher.macro_intro_filtered_strict() > 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->pattern_hygiene_violations_caught.fetch_add(
+                        matcher.macro_intro_filtered_strict(), std::memory_order_relaxed);
+                }
+            }
+            if (!include_macro_introduced) {
+                const auto violations_before = ev.get_pattern_macro_filter_violations();
+                ev.verify_pattern_result_hygiene(flat, result, with_markers);
+                const auto violations_after = ev.get_pattern_macro_filter_violations();
+                // Issue #1280 / #1892: default exclude-MacroIntroduced path is the
+                // production hygiene contract for query:pattern (self-evo hotpath).
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->pattern_hygiene_default_exclude.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1892: TypedMutationAudit summary for this query call.
+                // Success = intentional default skip (hygiene held). Error =
+                // verify found MacroIntroduced leakage in results (must be 0).
+                if (macro_skips_this_query > 0 || violations_after > violations_before) {
+                    const bool leaked = violations_after > violations_before;
+                    typed_audit::capture_macro_hygiene_audit(
+                        leaked ? "query-pattern-macro-leak" : "query-pattern-macro-skip",
+                        leaked ? typed_audit::AuditOutcome::Error
+                               : typed_audit::AuditOutcome::Success,
+                        /*target_node=*/0, static_cast<std::int64_t>(aura_fiber_current_id()),
+                        ev.capability_tenant_id());
+                }
+            }
+            return end_query_epoch(qe, ws.workspace_flat, result); // Issue #2192
+        });
 
     // Issue #282: (query:provenance-of var-name) — return the
     // list of NarrowingRecords that narrowed `var-name`. Each
@@ -2677,6 +2715,82 @@ void register_workspace_query_primitives(
             aura::ast::mutation::register_custom_predicate(string_heap[nidx], string_heap[tidx]);
             return make_bool(true);
         });
+
+    // Issue #2192: (engine:metrics "query:query-epoch-stats") /
+    // (engine:metrics "query:last-epoch") — QueryEpoch snapshot contract.
+    // SlimSurface: register_stats_impl only (no new public add ceiling).
+    // Schema 2192 keys: last-mutation-epoch, last-generation, last-bridge-epoch,
+    // last-workspace-id, capture-total, mismatch-total, stale-total, strict,
+    // current-mutation-epoch, wired, schema-2192.
+    auto query_epoch_stats_fn = [ws](const auto&) -> EvalValue {
+        aura::core::maybe_init_query_epoch_strict_from_env();
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto i = ((h >> 1) + at) & (hcap - 1);
+                if (meta[i] == 0xFF) {
+                    meta[i] = fp;
+                    auto kidx = ws.string_heap.size();
+                    ws.string_heap.push_back(k_str);
+                    keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[i] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const auto last = aura::core::last_query_epoch();
+        insert_kv("last-mutation-epoch", static_cast<std::int64_t>(last.mutation_epoch));
+        insert_kv("last_mutation_epoch", static_cast<std::int64_t>(last.mutation_epoch));
+        insert_kv("last-generation", static_cast<std::int64_t>(last.generation));
+        insert_kv("last_generation", static_cast<std::int64_t>(last.generation));
+        insert_kv("last-bridge-epoch", static_cast<std::int64_t>(last.bridge_epoch));
+        insert_kv("last-workspace-id", static_cast<std::int64_t>(last.workspace_id));
+        insert_kv("current-mutation-epoch",
+                  static_cast<std::int64_t>(aura::core::current_mutation_epoch()));
+        insert_kv("capture-total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_epoch_capture_total().load(std::memory_order_relaxed)));
+        insert_kv("query_epoch_capture_total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_epoch_capture_total().load(std::memory_order_relaxed)));
+        insert_kv("mismatch-total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_epoch_mismatch_total().load(std::memory_order_relaxed)));
+        insert_kv("query_epoch_mismatch_total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_epoch_mismatch_total().load(std::memory_order_relaxed)));
+        insert_kv("stale-total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_epoch_stale_total().load(std::memory_order_relaxed)));
+        insert_kv("query_epoch_stale_total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_epoch_stale_total().load(std::memory_order_relaxed)));
+        insert_kv("strict", aura::core::query_epoch_strict() ? 1 : 0);
+        insert_kv("query-epoch-strict", aura::core::query_epoch_strict() ? 1 : 0);
+        insert_kv("query-epoch-wired", 1);
+        insert_kv("schema-2192", 2192);
+        insert_kv("issue-2192", 2192);
+        insert_kv("schema", 2192);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+    ObservabilityPrims::register_stats_impl("query:query-epoch-stats", query_epoch_stats_fn);
+    // Alias: Agents looking for query:last-epoch (AC sketch).
+    ObservabilityPrims::register_stats_impl("query:last-epoch", query_epoch_stats_fn);
 }
 
 } // namespace aura::compiler::primitives_detail
