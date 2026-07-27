@@ -14386,6 +14386,15 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
     // 2 bridge_epoch fields. The old primitive stays for
     // backward compat (existing tests use closure:stats).
     ObservabilityPrims::register_stats_impl("query:closure-stats", [&ev](const auto&) -> EvalValue {
+        // Issue #2238: forward declarations for the anonymous-AOT-bound
+        // closure policy C-linkage readers. Defined in aura_jit_runtime.cpp
+        // (file-level atomics g_require_stable_id_for_aot +
+        // g_anonymous_aot_reject_total). The closure-stats query surface
+        // exposes both live policy flag + cumulative reject counter so
+        // AI agents can verify production is in strict-mode + observe the
+        // reject rate post-deploy.
+        extern "C" std::uint64_t aura_anonymous_aot_reject_total_v_read() noexcept;
+        extern "C" int aura_get_require_stable_id_for_aot(void) noexcept;
         // Reuse the same build_hash pattern as closure:stats.
         // Inline here (instead of refactoring closure:stats to
         // a helper) so the new primitive stays self-contained
@@ -14463,6 +14472,31 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
             {"bridge-fraction-pct", make_int(bridge_pct)},
             {"bridge-epoch-hits", make_int(static_cast<std::int64_t>(bridge_epoch_hits))},
             {"bridge-epoch-drift-pct", make_int(drift_pct)},
+            // Issue #2238: anonymous AOT-bound closure policy surface.
+            // 5 new keys (AC2 metric + signal + lineage). Hash table
+            // size 32 already has room (9+5=14 keys, load ~44%).
+            // - anonymous-aot-reject-total: cumulative count from
+            //   g_anonymous_aot_reject_total (bumped in
+            //   aura_closure_set_name + aura_closure_check_aot_stable_id_policy
+            //   when policy is on AND closure is sid=0 + empty name).
+            // - require-stable-id-for-aot: live read of policy flag.
+            //   0 = permissive (legacy tests), 1 = strict (production).
+            //   Live read so Agent can detect env-driven toggles without
+            //   restart.
+            // - require-stable-id-wired=1: signal key, mirrors
+            //   `region-priority-throttle-wired=1` for #2132 +
+            //   `capture-remount-wired=1` for #2234 +
+            //   `storm-isolation-wired=1` for #2236 +
+            //   `rollback-wired=1` for #2237.
+            // - schema-2238 / issue-2238: schema lineage keys (per
+            //   #2093 MUST-stay-in-lockstep pattern).
+            {"anonymous-aot-reject-total",
+             make_int(static_cast<std::int64_t>(aura_anonymous_aot_reject_total_v_read()))},
+            {"require-stable-id-for-aot",
+             make_int(static_cast<std::int64_t>(aura_get_require_stable_id_for_aot()))},
+            {"require-stable-id-wired", 1},
+            {"schema-2238", 2238},
+            {"issue-2238", 2238},
         };
         return build_hash(kv);
     });

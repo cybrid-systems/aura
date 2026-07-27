@@ -465,6 +465,13 @@ struct CompilerMetrics {
     // the still-flagged-after-remap residual) — the #2233 pair
     // measures the per-reason decision (hit vs miss) explicitly.
     std::atomic<std::uint64_t> live_closure_epoch_restamp_total{0};
+    // Issue #2238: anonymous AOT-bound closure reject counter. Bumps
+    // when require_stable_id_for_aot policy is on AND a closure with
+    // sid=0 + empty name is encountered at aura_closure_set_name time
+    // or aura_closure_check_aot_stable_id_policy call. Mirrors the
+    // file-level atomic g_anonymous_aot_reject_total in
+    // aura_jit_runtime.cpp.
+    std::atomic<std::uint64_t> closure_aot_without_stable_id_total{0};
     std::atomic<std::uint64_t> live_closure_must_deopt_kept_total{0};
     // Issue #2234: post-reemit / post-compact env_frame + linear
     // capture remount metrics. Bumped from aura_remount_closure_captures

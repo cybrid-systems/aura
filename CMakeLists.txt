@@ -1839,6 +1839,16 @@ add_dependencies(all_test_issue_targets test_storm_isolation_2236)
 aura_add_issue_test(test_rollback_by_marker_2237)
 aura_issue_test_link_llvm_jit(test_rollback_by_marker_2237)
 add_dependencies(all_test_issue_targets test_rollback_by_marker_2237)
+# Issue #2238: alloc-time / set_name-time policy for anonymous /
+# sid=0 AOT-bound closures. Default permissive (today's behavior);
+# opt-in via AURA_REQUIRE_STABLE_ID_FOR_AOT=1 or
+# aura_set_require_stable_id_for_aot(1). When ON, anonymous closures
+# get MustDeopt set at aura_closure_set_name time
+# (or aura_closure_check_aot_stable_id_policy call from AOT install),
+# forcing interpreter-only on next call (existing #2128 gate).
+aura_add_issue_test(test_aot_anonymous_closure_policy_2238)
+aura_issue_test_link_llvm_jit(test_aot_anonymous_closure_policy_2238)
+add_dependencies(all_test_issue_targets test_aot_anonymous_closure_policy_2238)
 # Issue #2098: clone_macro_body schema_cache + dirty/provenance
 # propagation for rest-param + nested paths (metrics layer + tests).
 aura_add_issue_test(test_macro_schema_dirty_propagate)
