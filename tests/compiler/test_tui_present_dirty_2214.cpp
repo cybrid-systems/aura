@@ -86,7 +86,10 @@ int main() {
               "cites #2214");
         CHECK(tui.find("AURA_RENDER_HOT_ENTRY") != std::string::npos, "hot entry");
         CHECK(tui.find("present_batch") != std::string::npos, "uses present_batch path");
-        CHECK(tui.find("add(\"tui:present\"") != std::string::npos, "full present retained");
+        CHECK(tui.find("tui:present") != std::string::npos &&
+                  (tui.find("register_render_hot_prim") != std::string::npos ||
+                   tui.find("add(\"tui:present\"") != std::string::npos),
+              "full present retained");
         CHECK(tpl.find("present-dirty") != std::string::npos, "template docs Agents");
     }
 
@@ -103,9 +106,10 @@ int main() {
         auto full = cs.eval("(tui:present)");
         CHECK(full.has_value(), "tui:present retained");
         auto tui = read_file("src/compiler/evaluator_primitives_tui.cpp");
-        CHECK(tui.find("RENDER_PRIMITIVE_META") != std::string::npos &&
-                  tui.find("tui:present-dirty") != std::string::npos,
-              "AC1: render meta on present-dirty");
+        CHECK(tui.find("tui:present-dirty") != std::string::npos &&
+                  (tui.find("register_render_hot_prim") != std::string::npos ||
+                   tui.find("RENDER_PRIMITIVE_META") != std::string::npos),
+              "AC1: render meta on present-dirty (helper or RENDER_PRIMITIVE_META)");
     }
 
     // ── AC2: TermBuf dirty ratios ──

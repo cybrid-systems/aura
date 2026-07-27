@@ -1708,6 +1708,24 @@ def cmd_legacy_test_inventory():
     return 0
 
 
+def cmd_register_render_hot_prim_coverage():
+    """Issue #2217: known TUI/render hot prims must use register_render_hot_prim."""
+    print(f"{B}=== register_render_hot_prim coverage (#2217) ==={N}")
+    script = ROOT / "scripts" / "check_register_render_hot_prim_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("register_render_hot_prim coverage contract failed")
+        return 1
+    ok("register_render_hot_prim coverage clean")
+    return 0
+
+
 def cmd_incremental_soundness_prod_coverage():
     """Issue #2245: production sampling of incremental soundness coverage.
 
@@ -2140,6 +2158,7 @@ def cmd_gate():
         or cmd_arena_moving_compaction_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
+        or cmd_register_render_hot_prim_coverage()
     )
 
 
@@ -2809,6 +2828,7 @@ def main():
         "arena-moving-compaction": cmd_arena_moving_compaction_coverage,
         "shape-storm-isolation": cmd_shape_storm_isolation_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
+        "register-render-hot-prim": cmd_register_render_hot_prim_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
         "test": lambda: cmd_test(args or ["all"]),

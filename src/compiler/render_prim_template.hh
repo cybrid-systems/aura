@@ -1,11 +1,13 @@
-// render_prim_template.hh — Issue #1677: high-perf render primitive development template.
+// render_prim_template.hh — Issue #1677 / #2217: high-perf render primitive template.
 //
 // Canonical pattern for production terminal/TUI/draw primitives:
-//   1. Register with RENDER_PRIMITIVE_META(arity, doc, schema)
-//      → perf_tier=hot, category=rendering, render_critical + stable_hot_path
-//      → required_effects=kEffectRender (#2136 — auto require_effect at dispatch)
+//   1. Register via register_render_hot_prim(...) (#2217 REQUIRED for new hot prims)
+//      → add(name, fn) + RENDER_PRIMITIVE_META (perf_tier=hot, category=rendering,
+//        render_critical + stable_hot_path, required_effects=kEffectRender)
+//      Do NOT ad-hoc add() + set_meta_for_name for tui:/terminal: hot names.
 //   2. Body opens with AURA_RENDER_HOT_ENTRY(ev)
 //      → enter render hotpath + linear/epoch fence (#1676)
+//      (helper does not auto-wrap; body must open with the macro)
 //   3. Prefer frame bump arena / zero-copy / dirty short-circuit (#1559–#1675)
 //   4. Bump targeted metrics; never grow SlimSurface public add() for dashboards
 //   5. FFI batch hand-off: FFIBatchHotPath::dispatch_batch(..., render_effect_ok)
@@ -58,13 +60,26 @@
 // Agents must NOT put topology-changing workspace ops inside render-hotpath
 // Guards (use GlobalExclusive + full exit). Query: render-fast-exit-* on
 // query:mutation-boundary-hold-stats schema-2215.
+//
+// ── Issue #2217: register_render_hot_prim ────────────────────────────────
+// New hot prims MUST use register_render_hot_prim so Agent-generated and
+// hand-written verticals stamp identical meta (render_critical + hot tier)
+// for invoke_prim_with_telemetry trusted fast path. Body still opens with
+// AURA_RENDER_HOT_ENTRY. Soft-dirty / rebind of aura_is_render_evolution_name
+// defines may request hot-tier meta via existing mutate feedback; no new
+// public prim name required.
 
 #ifndef AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 #define AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 
 #include "primitives_detail.h"
+#include "security_capabilities.h"
 
+#include <atomic>
+#include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 
 // Issue #1677: RAII hot entry (linear/epoch fence + hotpath depth).
 // Expands to a unique guard name per call site.
@@ -74,6 +89,8 @@
 
 #define AURA_RENDER_HOT_ENTRY_JOIN(a, b) AURA_RENDER_HOT_ENTRY_JOIN2(a, b)
 #define AURA_RENDER_HOT_ENTRY_JOIN2(a, b) a##b
+
+namespace aura::compiler {
 
 // Issue #1677: detect Agent-facing render evolution names (rebind / optimize).
 [[nodiscard]] inline bool aura_is_render_evolution_name(std::string_view name) noexcept {
@@ -91,5 +108,51 @@ inline constexpr int kRenderPrimTemplatePhase = 1;
 // Issue #2051: default safe mutate window (ms) — matches deopt throttle.
 inline constexpr int kRenderSafeMutateWindowMs = 500;
 inline constexpr int kRenderAgentClosedLoopIssue = 2051;
+
+// Issue #2217: registration helper stamp + observability.
+inline constexpr int kRegisterRenderHotPrimIssue = 2217;
+inline std::atomic<std::uint64_t>& g_register_render_hot_prim_total() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
+
+// Issue #2217: unified registration for render-critical hot prims.
+//   add(name, fn) then set_meta_for_name with RENDER_PRIMITIVE_META fields
+//   (perf_tier=hot, category=rendering, render_critical, stable_hot_path,
+//    required_effects=kEffectRender).
+// Body of `fn` must still open with AURA_RENDER_HOT_ENTRY(ev) — no auto-wrap
+// (keeps capture / RAII explicit for review and agents).
+// EvaluatorT is a template param so this header stays module-safe (no
+// ambiguous forward-decl of Evaluator / PrimMeta vs export class).
+template <typename PrimRegistrarT, typename EvaluatorT, typename PrimFnT>
+inline void register_render_hot_prim(PrimRegistrarT&& add, EvaluatorT& ev, std::string_view name,
+                                     int arity, PrimFnT&& fn, std::string_view doc,
+                                     std::string_view schema) {
+    std::string name_s(name);
+    std::forward<PrimRegistrarT>(add)(name_s, std::forward<PrimFnT>(fn));
+    // Dependent PrimMeta type — complete only at instantiation (evaluator module).
+    using PrimMetaT = std::remove_cvref_t<decltype(ev.primitives().meta_for_slot(0))>;
+    PrimMetaT meta{};
+    meta.arity = static_cast<std::uint8_t>(arity);
+    meta.pure = false;
+    meta.safety_flags = static_cast<std::uint8_t>(kPrimSafetyIo | kPrimSafetyFiber);
+    meta.perf_tier = kPrimPerfHot;
+    meta.security_level = kPrimSecSandboxed;
+    meta.render_critical = true;
+    meta.stable_hot_path = true;
+    meta.required_effects = security::kEffectRender;
+    meta.doc = std::string(doc);
+    meta.category = "rendering";
+    meta.schema = std::string(schema);
+    ev.primitives().set_meta_for_name(name_s, std::move(meta));
+    g_register_render_hot_prim_total().fetch_add(1, std::memory_order_relaxed);
+}
+// Known TUI/render hot names that MUST register via the helper (CI gate).
+inline constexpr std::string_view kRenderHotPrimNamesRequired[] = {
+    "tui:present",    "tui:cell",      "tui:clear",         "tui:present-dirty",
+    "tui:draw-batch", "tui:fill-rect", "tui:present-batch", "tui:frame-ansi",
+};
+
+} // namespace aura::compiler
 
 #endif // AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH

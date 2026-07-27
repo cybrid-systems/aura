@@ -56,6 +56,7 @@ COVERAGE_MARKERS = (
     "effect_enforced_in_body",
     "required_effects",  # PrimMeta stamp (RENDER_PRIMITIVE_META / #2136)
     "RENDER_PRIMITIVE_META",  # auto stamps kEffectRender (#2136)
+    "register_render_hot_prim",  # #2217 unified hot render registrar
     "effective_required_effects",  # #2152 dispatch helper
 )
 
