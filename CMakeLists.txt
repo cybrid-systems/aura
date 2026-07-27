@@ -2318,6 +2318,11 @@ add_dependencies(all_test_issue_targets test_yield_while_mutation_held_2200)
 aura_add_issue_test(test_mutation_log_pressure_2201)
 aura_issue_test_link_llvm_jit(test_mutation_log_pressure_2201)
 add_dependencies(all_test_issue_targets test_mutation_log_pressure_2201)
+
+# Issue #2202: chaos multi-worker mutate × steal × GC × mailbox × panic.
+aura_add_issue_test(test_chaos_fiber_mutation_gc_mailbox)
+aura_issue_test_link_llvm_jit(test_chaos_fiber_mutation_gc_mailbox)
+add_dependencies(all_test_issue_targets test_chaos_fiber_mutation_gc_mailbox)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
