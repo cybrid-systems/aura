@@ -2424,6 +2424,11 @@ aura_add_issue_test(test_linear_enforce_boundary_align_2222)
 aura_issue_test_link_llvm_jit(test_linear_enforce_boundary_align_2222)
 add_dependencies(all_test_issue_targets test_linear_enforce_boundary_align_2222)
 
+# Issue #2223: ADT match exhaustiveness in TypedMutationAudit (adt_ok).
+aura_add_issue_test(test_adt_exhaustiveness_audit_2223)
+aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit_2223)
+add_dependencies(all_test_issue_targets test_adt_exhaustiveness_audit_2223)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

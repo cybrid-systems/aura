@@ -5984,6 +5984,23 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("partial-recovery-provenance",
                           static_cast<std::int64_t>(
                               c.partial_recovery_provenance_total.load(std::memory_order_relaxed)));
+                // Issue #2223: ADT exhaustiveness recovery category
+                insert_kv("partial-recovery-adt",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_adt_total.load(std::memory_order_relaxed)));
+                insert_kv("adt-invariant-ok", static_cast<std::int64_t>(c.adt_invariant_ok.load(
+                                                  std::memory_order_relaxed)));
+                insert_kv("adt-invariant-fail", static_cast<std::int64_t>(c.adt_invariant_fail.load(
+                                                    std::memory_order_relaxed)));
+                insert_kv("adt-exhaustiveness-sites-checked-total",
+                          static_cast<std::int64_t>(c.adt_exhaustiveness_sites_checked_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("adt-non-exhaustive-sites-total",
+                          static_cast<std::int64_t>(
+                              c.adt_non_exhaustive_sites_total.load(std::memory_order_relaxed)));
+                insert_kv("adt-exhaustiveness-audit-wired", 1);
+                insert_kv("schema-2223", 2223);
+                insert_kv("issue-2223", 2223);
                 insert_kv("partial-recovery-wired", 1);
                 insert_kv("full-partial-recover-wired", 1);
                 insert_kv("provenance-restamp-recover-wired", 1);

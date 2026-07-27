@@ -533,6 +533,18 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
                                          (audit_op.find("move") != std::string_view::npos) ||
                                          (audit_op.find("inline") != std::string_view::npos);
+                // Issue #2223: match sites force Sampled hard-gate / audit
+                // (mirror linear_ops_present — ADT self-mod must not under-sample).
+                bool match_sites = false;
+                if (workspace_flat_) {
+                    const auto n = workspace_flat_->size();
+                    for (aura::ast::NodeId id = 0; id < n; ++id) {
+                        if (workspace_flat_->has_match_info(id)) {
+                            match_sites = true;
+                            break;
+                        }
+                    }
+                }
                 const bool batch_active =
                     cp.bump_suppressed_at_entry ||
                     (workspace_flat_ && workspace_flat_->atomic_batch_active());
@@ -541,7 +553,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // Issue #2145: Strict sandbox links Full-class hard gate.
                 const bool strict_sandbox = aura::core::sandbox::is_strict();
                 const bool hard_gate = typed_audit::requires_invariant_hard_gate(
-                    nodes_changed, linear_hint, strict_sandbox);
+                    nodes_changed, linear_hint, strict_sandbox, match_sites);
                 // Composite paths never under-sample (self-evo multi-step safety).
                 // Provenance miss forces audit even when Sampled would skip and
                 // even when nodes_changed==0 (apply may be the only side effect).
@@ -549,10 +561,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // always force the escape hard-block path — Sampled must not
                 // skip analyze_linear_escape / Moved live-root checks.
                 // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
-                const bool do_audit = strat != typed_audit::AuditStrategy::Off &&
-                                      (hard_gate || provenance_miss || composite || linear_hint ||
-                                       (nodes_changed > 0 && typed_audit::should_audit_contextual(
-                                                                 mid, nodes_changed, linear_hint)));
+                // Issue #2223: match_sites force Sampled audit.
+                const bool do_audit =
+                    strat != typed_audit::AuditStrategy::Off &&
+                    (hard_gate || provenance_miss || composite || linear_hint || match_sites ||
+                     (nodes_changed > 0 && typed_audit::should_audit_contextual(
+                                               mid, nodes_changed, linear_hint, match_sites)));
                 if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
                     typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total
                         .fetch_add(1, std::memory_order_relaxed);
@@ -605,6 +619,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 workspace_flat_->restamp_all_node_generations();
                             (void)restamp_pinned_stable_refs();
                             (void)post_mutation_reflect_validate();
+                        }
+                        // Issue #2223: ADT renarrow / revalidate before re-audit.
+                        if (!first.adt_ok) {
+                            ac.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
+                            partial_recover_adt_exhaustiveness(mid);
                         }
                         typed_audit::InvariantAuditResult after{};
                         inv_ok = run_typed_mutation_invariant_audit(

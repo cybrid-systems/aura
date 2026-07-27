@@ -8676,6 +8676,30 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("sample-ratio", static_cast<std::int64_t>(get_sample_ratio()));
             insert_kv("schema-2053", 2053);
             insert_kv("issue-2053", 2053);
+            // Issue #2223: ADT exhaustiveness invariant dimension
+            insert_kv("adt-invariant-ok", static_cast<std::int64_t>(
+                                              g_typed_mutation_audit_counters.adt_invariant_ok.load(
+                                                  std::memory_order_relaxed)));
+            insert_kv(
+                "adt-invariant-fail",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.adt_invariant_fail.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "adt-exhaustiveness-sites-checked-total",
+                static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.adt_exhaustiveness_sites_checked_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv("adt-non-exhaustive-sites-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("partial-recovery-adt",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.partial_recovery_adt_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("adt-exhaustiveness-audit-wired", 1);
+            insert_kv("schema-2223", 2223);
+            insert_kv("issue-2223", 2223);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
