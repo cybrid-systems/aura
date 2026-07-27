@@ -74,11 +74,16 @@ ShapeDeoptHook shape_deopt_hook() noexcept {
 
 ShapeID inline_shape_of(std::int64_t val) {
     aura::core::cpp26::record_hotpath_invariant_hit();
-    using aura::compiler::types::classify_eval_value_tag;
+    using aura::compiler::types::classify_eval_value_tag_consteval;
     using aura::compiler::types::EvalValueTag;
+    using aura::compiler::types::note_value_tag_stability;
     using aura::compiler::types::ref_type;
 
-    const EvalValueTag tag = classify_eval_value_tag(val);
+    // Issue #2259: pure consteval-path classify on the shape hot path
+    // (no per-call atomics). Tag stability feed raises Fixnum/Ref
+    // confidence for ShapeProfiler speculative decisions.
+    const EvalValueTag tag = classify_eval_value_tag_consteval(val);
+    note_value_tag_stability(tag);
     // Issue #378 follow-up: test_shape's v1-style boundary cases
     // (kFloatBias - 1, kStringBias + 1, kStringBias - 1) hit values
     // that have no valid v2 encoding (v&3 != 0 for floats, or v&3

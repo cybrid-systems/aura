@@ -104,14 +104,17 @@ export inline EvalValue make_int(std::int64_t v) noexcept {
     AURA_HOT_CONTRACT(v >= kMin && v <= kMax);
     return EvalValue(v << kFixnumShift); // fixnum encoding (#907)
 }
+// Issue #2259: pure low2/range tag test — no atomics on the hot path.
+// Full observability still available via classify_eval_value_tag().
 export inline bool is_int(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Fixnum;
+    return is_fixnum_hot(v.val);
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
-    // Issue #571 / #1622 / #2142: tagged fixnum contracts (unified helper).
-    AURA_HOT_RECORD();
-    AURA_HOT_CHECK(is_int(v));
+    // Issue #571 / #1622 / #2142 / #2259: tagged fixnum contracts.
+    // Release: contract elided; debug/enforce: fail-closed with source location.
+    AURA_HOT_CONTRACT(is_int(v));
     AURA_HOT_CHECK((v.val & 1) == 0); // fixnum low bit clear
+    note_value_tag_hot_path();
     return v.val >> kFixnumShift;
 }
 
@@ -120,11 +123,12 @@ export inline EvalValue make_bool(bool v) noexcept {
     return EvalValue(v ? kSpecialTrue : kSpecialFalse); // #902
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Special &&
-           (v.val == kSpecialFalse || v.val == kSpecialTrue);
+    // #2259: pure Special low2 + exact sentinel (no classify atomics).
+    return is_special_hot(v.val) && (v.val == kSpecialFalse || v.val == kSpecialTrue);
 }
 export inline bool as_bool(const EvalValue& v) noexcept {
-    AURA_HOT_CONTRACT(is_bool(v)); // Issue #1519 / #2142
+    AURA_HOT_CONTRACT(is_bool(v)); // Issue #1519 / #2142 / #2259
+    note_value_tag_hot_path();
     return v.val == kSpecialTrue;
 }
 
@@ -132,17 +136,18 @@ export inline EvalValue make_void() noexcept {
     return EvalValue(kSpecialVoid); // #902
 }
 export inline bool is_void(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Special && v.val == kSpecialVoid;
+    return is_special_hot(v.val) && v.val == kSpecialVoid;
 }
 
 export inline EvalValue make_float(double d) {
     return EvalValue(aura_alloc_float(d)); // FLOAT_BIAS encoding
 }
 export inline bool is_float(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::Float;
+    return is_float_hot(v.val); // #2259 pure
 }
 export inline double as_float(const EvalValue& v) {
-    AURA_HOT_CONTRACT(is_float(v)); // Issue #2142
+    AURA_HOT_CONTRACT(is_float(v)); // Issue #2142 / #2259
+    note_value_tag_hot_path();
     return aura_float_ref(v.val);
 }
 
@@ -157,14 +162,14 @@ export inline EvalValue make_string(std::uint64_t idx) noexcept {
     return EvalValue(make_string_raw_v2(idx));
 }
 export inline bool is_string(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::StringV2;
+    return is_string_v2_hot(v.val); // #2259 pure
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
-    // Issue #1622 / #2142: v2 string tag + bias range (unified helper).
-    AURA_HOT_RECORD();
-    AURA_HOT_CHECK(is_string(v));
+    // Issue #1622 / #2142 / #2259: v2 string tag + bias range.
+    AURA_HOT_CONTRACT(is_string(v));
     AURA_HOT_CHECK((v.val & 3) == 2);
     AURA_HOT_CHECK(v.val <= STRING_BIAS_VAL_2);
+    note_value_tag_hot_path();
     return string_idx_raw_v2(v.val);
 }
 
@@ -182,7 +187,7 @@ export inline EvalValue make_string_v2(std::uint64_t idx) noexcept {
     return EvalValue(make_string_raw_v2(idx));
 }
 export inline bool is_string_v2(const EvalValue& v) noexcept {
-    return classify_eval_value_tag(v.val) == EvalValueTag::StringV2;
+    return is_string_v2_hot(v.val); // #2259 pure
 }
 export inline std::uint64_t as_string_idx_v2(const EvalValue& v) noexcept {
     contract_assert(is_string_v2(v));
@@ -193,10 +198,12 @@ export inline EvalValue make_pair(std::uint64_t idx) noexcept {
     return EvalValue(make_ref(RefPair, idx));
 }
 export inline bool is_pair(const EvalValue& v) noexcept {
+    // #2259: Ref low2 single-branch + subtype nibble (no full classify).
     return is_ref(v.val) && ref_type(v.val) == RefPair;
 }
 export inline std::uint64_t as_pair_idx(const EvalValue& v) noexcept {
-    contract_assert(is_pair(v));
+    AURA_HOT_CONTRACT(is_pair(v)); // #2259
+    note_value_tag_hot_path();
     return ref_index(v.val);
 }
 
@@ -207,7 +214,8 @@ export inline bool is_closure(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefClosure;
 }
 export inline std::uint64_t as_closure_id(const EvalValue& v) noexcept {
-    contract_assert(is_closure(v));
+    AURA_HOT_CONTRACT(is_closure(v)); // #2259 apply_closure hot path
+    note_value_tag_hot_path();
     return ref_index(v.val);
 }
 
@@ -218,7 +226,8 @@ export inline bool is_cell(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefCell;
 }
 export inline std::uint64_t as_cell_id(const EvalValue& v) noexcept {
-    contract_assert(is_cell(v));
+    AURA_HOT_CONTRACT(is_cell(v)); // #2259
+    note_value_tag_hot_path();
     return ref_index(v.val);
 }
 
@@ -229,7 +238,8 @@ export inline bool is_vector(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefVector;
 }
 export inline std::uint64_t as_vector_idx(const EvalValue& v) noexcept {
-    contract_assert(is_vector(v));
+    AURA_HOT_CONTRACT(is_vector(v)); // #2259
+    note_value_tag_hot_path();
     return ref_index(v.val);
 }
 
@@ -240,7 +250,8 @@ export inline bool is_hash(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefHash;
 }
 export inline std::uint64_t as_hash_idx(const EvalValue& v) noexcept {
-    contract_assert(is_hash(v));
+    AURA_HOT_CONTRACT(is_hash(v)); // #2259
+    note_value_tag_hot_path();
     return ref_index(v.val);
 }
 
@@ -251,7 +262,8 @@ export inline bool is_primitive(const EvalValue& v) noexcept {
     return is_ref(v.val) && ref_type(v.val) == RefPrimitive;
 }
 export inline std::size_t as_primitive_slot(const EvalValue& v) noexcept {
-    contract_assert(is_primitive(v));
+    AURA_HOT_CONTRACT(is_primitive(v)); // #2259
+    note_value_tag_hot_path();
     return static_cast<std::size_t>(ref_index(v.val));
 }
 
