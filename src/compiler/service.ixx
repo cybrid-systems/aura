@@ -10074,6 +10074,37 @@ private:
                 body_fi = 1;
             mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, body_fi, /*block_idx=*/0);
         }
+        // Issue #2247: dual-write parity gate (chokepoint for all 4
+        // gate points in issue body: store_define_v2 / invalidate_bridge /
+        // free-var / finish_dirty_sync all flow through record_dependency).
+        // AC1: graphs_consistent check after dual-write. AC2: Off mode
+        // (default) is soft — rebuild optional, no force. AC3: happy
+        // path zero extra cost when consistent.
+        metrics_.dual_dep_graph_parity_check_total.fetch_add(1, std::memory_order_relaxed);
+        g_dual_dep_graph_parity_check_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        if (!graphs_consistent(dep_graph_, node_dep_graph_, dep_name_to_slot_)) {
+            metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
+            g_dual_dep_graph_parity_fail_total_atomic().fetch_add(1, std::memory_order_relaxed);
+            // AC2: Off mode is soft — rebuild + no force.
+            rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_, dep_name_to_slot_);
+            // Strict mode (AC1): force all callers dirty so next cascade
+            // picks up the freshly-mirrored edges.
+            if (dual_dep_graph_strict_enabled()) {
+                // Strict: force all callers dirty so next cascade
+                // picks up the freshly-mirrored edges (AC1).
+                auto str_it = dep_graph_.find(callee);
+                if (str_it != dep_graph_.end()) {
+                    for (const auto& caller_name : str_it->second.called_by) {
+                        auto cit2 = ir_cache_v2_.find(caller_name);
+                        if (cit2 != ir_cache_v2_.end()) {
+                            cit2->second.dirty = true;
+                            cit2->second.mark_all_blocks_dirty();
+                            finish_cascade_soa_dirty_sync_(cit2->second);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Issue #2187: record a block-level DepGraph edge under dep_graph_mtx_.

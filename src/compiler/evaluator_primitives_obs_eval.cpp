@@ -15220,6 +15220,23 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"type_ir_cone_union_size_avg", make_int(union_avg_x100)}, // ×100 fixed-point
                 {"type-ir-cone-union-size-avg-x100", make_int(union_avg_x100)},
                 {"type-dirty-cone-mirror-wired", make_int(1)},
+                // Issue #2247: dual dep_graph write-parity gate
+                {"dual-dep-graph-parity-check-total",
+                 make_int(
+                     m ? load(m->dual_dep_graph_parity_check_total)
+                       : static_cast<std::int64_t>(
+                             aura::compiler::dirty::g_dual_dep_graph_parity_check_total_atomic()
+                                 .load(std::memory_order_relaxed)))},
+                {"dual-dep-graph-parity-fail-total",
+                 make_int(m ? load(m->dual_dep_graph_parity_fail_total)
+                            : static_cast<std::int64_t>(
+                                  aura::compiler::dirty::g_dual_dep_graph_parity_fail_total_atomic()
+                                      .load(std::memory_order_relaxed)))},
+                {"dual-dep-graph-parity-strict",
+                 make_int(aura::compiler::dirty::dual_dep_graph_strict_enabled() ? 1 : 0)},
+                {"dual-dep-graph-parity-wired", make_int(1)},
+                {"schema-2247", make_int(2247)},
+                {"issue-2247", make_int(2247)},
                 {"schema-2191", make_int(2191)},
                 {"issue-2191", make_int(2191)},
                 {"schema-2063", make_int(2063)},

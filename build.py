@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_dual_dep_graph_parity_coverage():
+    """Issue #2247: dual dep_graph write-parity gate + hybrid cascade consistency.
+
+    Validates the 5-AC contract from issue body:
+      AC1: graphs_consistent + rebuild_node_dep_graph_from_string helpers
+      AC2: default Off (unit-test safe) + Strict toggle
+      AC3: happy-path O(1) extra work
+      AC4: 2 atomic counters + 2 query keys + schema-2247 lineage
+      AC5: this gate (CI contract rows)
+    """
+    print(f"{B}═══ dual dep_graph parity coverage (#2247) ═══{N}")
+    script = ROOT / "scripts" / "check_dual_dep_graph_parity_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("dual dep_graph parity coverage contract rows failed")
+        return 1
+    ok("dual dep_graph parity coverage clean")
+    return 0
+
+
 def cmd_cross_function_impact_scope_coverage():
     """Issue #2179 + #2246: cross-function impact scope (direct + indirect + unresolved).
 
@@ -1838,6 +1864,7 @@ def cmd_gate():
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
         or cmd_cross_function_impact_scope_coverage()
+        or cmd_dual_dep_graph_parity_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2496,6 +2523,7 @@ def main():
         "legacy-test-inventory": cmd_legacy_test_inventory,
         "source-to-ir-strict": cmd_source_to_ir_strict,
         "cross-fn-impact-scope": cmd_cross_function_impact_scope_coverage,
+        "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
