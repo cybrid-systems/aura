@@ -1335,6 +1335,11 @@ AURA_COMPILER_METRICS_FIELD(panic_transfer_failed)
 AURA_COMPILER_METRICS_FIELD(gc_defer_orphan_cleared_total)
 AURA_COMPILER_METRICS_FIELD(fiber_migration_refresh_total)
 AURA_COMPILER_METRICS_FIELD(fiber_migration_gc_defer_cleared_total)
+// Issue #2197: post-steal linear×type provenance revalidate (R6).
+AURA_COMPILER_METRICS_FIELD(post_steal_linear_revalidate_total)
+AURA_COMPILER_METRICS_FIELD(post_steal_linear_hard_fail_total)
+AURA_COMPILER_METRICS_FIELD(post_steal_linear_soft_incomplete_total)
+AURA_COMPILER_METRICS_FIELD(post_steal_linear_force_audit_armed)
 AURA_COMPILER_METRICS_FIELD(gc_defer_table_overflow_total)
 // Issue #2088: unified GcDeferReason bitmask lineage.
 AURA_COMPILER_METRICS_FIELD(gc_defer_arm_panic_total)

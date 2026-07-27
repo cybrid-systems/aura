@@ -3092,6 +3092,13 @@ public:
         std::atomic<std::uint64_t>* bridge_epoch_drift_counter = nullptr) noexcept;
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
+    // Issue #2197: post-steal / GC-window linear×type provenance revalidate.
+    // Runs enforce_linear_boundary_consistency + mode-aware require_complete
+    // validation. Strict hard-fail arms force-audit; Soft incomplete is
+    // metric-only. path is a kLinearGcRootAudit* tag. Returns true if safe.
+    [[nodiscard]] bool
+    revalidate_linear_type_provenance_after_migration(std::uint8_t path,
+                                                      bool mark_all_linear = false) noexcept;
     // Issue #1490 / #1580: post-steal / post-resume EnvFrame + bridge_epoch
     // consistency. Walks live closures (and optional hint env_id),
     // refreshes stale frame.version_ vs defuse_version_, detects

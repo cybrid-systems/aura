@@ -9511,6 +9511,37 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fiber-migration-refresh-wired", 1);
             insert_kv("schema-2194", 2194);
             insert_kv("issue-2194", 2194);
+            // Issue #2197: post-steal / GC-window linear×type provenance revalidate.
+            // Agent branches on hard_fail / force-audit-armed under Strict.
+            {
+                const std::int64_t reval =
+                    m ? static_cast<std::int64_t>(
+                            m->post_steal_linear_revalidate_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t hard =
+                    m ? static_cast<std::int64_t>(
+                            m->post_steal_linear_hard_fail_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t soft_inc =
+                    m ? static_cast<std::int64_t>(m->post_steal_linear_soft_incomplete_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t armed =
+                    m ? static_cast<std::int64_t>(
+                            m->post_steal_linear_force_audit_armed.load(std::memory_order_relaxed))
+                      : 0;
+                insert_kv("post-steal-linear-revalidate-total", reval);
+                insert_kv("post_steal_linear_revalidate_total", reval);
+                insert_kv("post-steal-linear-hard-fail-total", hard);
+                insert_kv("post_steal_linear_hard_fail_total", hard);
+                insert_kv("post-steal-linear-soft-incomplete-total", soft_inc);
+                insert_kv("post_steal_linear_soft_incomplete_total", soft_inc);
+                insert_kv("post-steal-linear-force-audit-armed", armed);
+                insert_kv("post_steal_linear_force_audit_armed", armed);
+                insert_kv("post-steal-linear-revalidate-wired", 1);
+                insert_kv("schema-2197", 2197);
+                insert_kv("issue-2197", 2197);
+            }
             insert_kv("fiber-lifecycle-mandate-active", 1);
             insert_kv("resume-pre-swap-migration-wired", 1);
             insert_kv("resume-post-swap-validate-wired", 1);

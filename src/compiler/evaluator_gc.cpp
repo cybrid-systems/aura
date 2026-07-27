@@ -8,7 +8,8 @@ module;
 #include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
 #include "core/gc_hooks.h"
-#include "core/provenance_tracker.hh" // Issue #2026: validate_linear_provenance
+#include "core/provenance_tracker.hh"    // Issue #2026 / #2197: validate_linear_provenance
+#include "coercion_provenance_policy.hh" // Issue #2197: note_provenance_miss force-audit
 
 module aura.compiler.evaluator;
 
@@ -735,29 +736,54 @@ make_envframe_lifetime_host(Evaluator& ev) {
         static_cast<void*>(&ev), &Evaluator::envframe_lifetime_trampoline);
 }
 
-void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
-    // Issue #2003: EnvFrame explicit lifetime protocol — guard runs
-    // scan_skip_freed_closures + bumps site-tagged counter on dtor
-    // (scope exit). Instantiated at function entry so its dtor runs
-    // after the enforce + restamp below complete.
-    aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
-        make_envframe_lifetime_host(*this),
-        aura::core::envframe_lifetime::EnvFrameLifetimeSite::FiberSteal};
-    // Issue #1557 / #1568: full boundary consistency (scan all linear +
-    // epoch fence + enforce_all + GC root audit).
-    // Issue #1664: scan_live_closures (via enforce) uses closures → env
-    // lock order; do not re-acquire env then closures here.
-    const auto r =
-        enforce_linear_boundary_consistency(kLinearGcRootAuditFiberSteal, /*mark_all_linear=*/true);
+// Issue #2197: post-steal / GC-window linear×type provenance revalidate (R6).
+// Shared by fiber-steal probe and finalize_linear_gc_invalidation_window_.
+// Soft: revalidate always runs; incomplete trail is metric-only (no silent
+// skip of the walk). Strict / production_defaults: require_complete=true →
+// hard fail + force-audit arm (no silent continue).
+bool Evaluator::revalidate_linear_type_provenance_after_migration(std::uint8_t path,
+                                                                  bool mark_all_linear) noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-    std::atomic<std::uint64_t>* site = m ? &m->linear_steal_enforced : nullptr;
-    // Issue #2026: post-enforce linear × provenance closed-loop at steal.
+    if (m)
+        m->post_steal_linear_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+
+    using aura::core::provenance::g_linear_soft_incomplete_continue_total;
     using aura::core::provenance::g_provenance_enforcement;
+    using aura::core::provenance::linear_enforce_require_complete;
     using aura::core::provenance::validate_linear_provenance;
+
+    const auto soft_incomplete_before =
+        g_linear_soft_incomplete_continue_total.load(std::memory_order_relaxed);
+
+    // enforce: scan + epoch fence + EnvFrame sweep + mode-aware step-5
+    // provenance walk (linear_enforce_require_complete).
+    const auto r = enforce_linear_boundary_consistency(path, mark_all_linear);
+
     g_provenance_enforcement().linear_provenance_steal_checks_total.fetch_add(
         1, std::memory_order_relaxed);
-    bool prov_violation = false;
-    {
+
+    // Extra Soft incomplete sample accounting (enforce step-5 already
+    // bumped soft continue counters inside validate_linear_provenance).
+    const auto soft_incomplete_after =
+        g_linear_soft_incomplete_continue_total.load(std::memory_order_relaxed);
+    if (m && soft_incomplete_after > soft_incomplete_before) {
+        m->post_steal_linear_soft_incomplete_total.fetch_add(
+            soft_incomplete_after - soft_incomplete_before, std::memory_order_relaxed);
+    }
+
+    const bool strict = linear_enforce_require_complete();
+    bool hard_fail = false;
+    if (!r.all_safe && strict) {
+        hard_fail = true;
+    } else if (!r.all_safe) {
+        // Soft mismatch (e.g. Moved live) still correlates steal metrics;
+        // incomplete trails without force_deopt stay metric-only.
+        hard_fail = false;
+    }
+
+    // Second walk only when Strict: confirm require_complete=true hard-fail
+    // path (AC1) even if enforce step-5 path was short-circuited.
+    if (strict && !hard_fail) {
         const auto current_ver = defuse_version_snapshot();
         const auto current_bridge = current_bridge_epoch();
         const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
@@ -774,25 +800,57 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
                 const auto pr = validate_linear_provenance(
                     s, static_cast<std::uint32_t>(cl.env_id), hy.node_id, hy.source_mutation_id,
                     fr.version_, current_ver, cl.bridge_epoch, current_bridge,
-                    /*require_complete=*/false);
+                    /*require_complete=*/true);
                 if (!pr.ok && pr.force_deopt) {
-                    prov_violation = true;
+                    hard_fail = true;
                     break;
                 }
             }
-            if (prov_violation)
+            if (hard_fail)
                 break;
         }
     }
-    const bool any_violation = !r.all_safe || prov_violation;
+
+    if (hard_fail) {
+        if (m) {
+            m->post_steal_linear_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+            m->post_steal_linear_force_audit_armed.store(1, std::memory_order_relaxed);
+            m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Arm Full audit on next MutationBoundary exit (Agent self-repair).
+        note_provenance_miss_for_boundary();
+        return false;
+    }
+    if (m)
+        m->post_steal_linear_force_audit_armed.store(0, std::memory_order_relaxed);
+    return r.all_safe;
+}
+
+void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
+    // Issue #2003: EnvFrame explicit lifetime protocol — guard runs
+    // scan_skip_freed_closures + bumps site-tagged counter on dtor
+    // (scope exit). Instantiated at function entry so its dtor runs
+    // after the enforce + restamp below complete.
+    aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
+        make_envframe_lifetime_host(*this),
+        aura::core::envframe_lifetime::EnvFrameLifetimeSite::FiberSteal};
+    // Issue #1557 / #1568 / #2197: full boundary consistency + mode-aware
+    // linear×type provenance revalidate (Strict hard-fail, Soft metric-only).
+    // Issue #1664: scan_live_closures (via enforce) uses closures → env
+    // lock order; do not re-acquire env then closures here.
+    // mark_all_linear=true retains pre-#2197 steal aggressiveness for Moved
+    // capture scan; revalidate helper also supports mark_all=false.
+    const bool ok = revalidate_linear_type_provenance_after_migration(kLinearGcRootAuditFiberSteal,
+                                                                      /*mark_all_linear=*/true);
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    std::atomic<std::uint64_t>* site = m ? &m->linear_steal_enforced : nullptr;
+    const bool any_violation = !ok;
     record_linear_gc_probe(*this, any_violation, site);
     if (any_violation) {
         bump_runtime_observability_steal_ownership_violation_correlated();
         if (m) {
             m->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
             m->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
-            if (prov_violation)
-                m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     // Issue #1473 / #1497: unified auto-restamp at fiber-steal time.
