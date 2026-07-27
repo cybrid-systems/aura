@@ -969,7 +969,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_issue_178.cpp` (#178) [small, early_issue, domain_suite, theme_reflect] — test_issue_178.cpp — Issue #178 / #268: production NodeView
 - `tests/reflect/test_issue_178_reflect.cpp` (#178) [early_issue, domain_suite, theme_reflect] — Non-module TU: P2996 reflection (Issue #268).
 - `tests/compiler/test_macro_cross_flat_hygiene_2235.cpp` (#2235) [domain_suite, theme_compiler] — warning. Single-flat path stays zero-overhead (AC4 contract
-- `tests/compiler/test_macro_fiber_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2097 + FiberHygieneStats + get_fiber_hygiene_metrics
+- `tests/compiler/test_macro_fiber_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2097 + FiberHygieneStats + get_fiber_hygiene_metrics
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp` (—) [domain_suite, theme_compiler] — Issue #1501/#1589/#1593/#1609/#1613 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2021; peak / in-flight atomics + snapshot helper
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp` (—) [domain_suite, theme_compiler] — test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp — Issue #654:
