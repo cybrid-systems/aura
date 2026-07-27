@@ -3424,6 +3424,24 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2159", aura::orch::kFiberNativeKeepaliveIssue);
             insert_kv("issue-2159", aura::orch::kFiberNativeKeepaliveIssue);
             insert_kv("fiber-native-keepalive-wired", 1);
+            // Issue #2229: supervision policy metrics (RestartN path).
+            // Bumped by AgentScope::watch_all(stall_timeout_ms,
+            // AgentFailurePolicy) when on_stall == RestartN, plus
+            // the circuit-like consecutive_stall_limit and the
+            // exhausted-after-max-restarts signal. Reset-for-test
+            // helper (reset_orch_module_stats_for_test) clears
+            // these together with the other supervision counters.
+            insert_kv("agent-restart-total", static_cast<std::int64_t>(os.agent_restart_total.load(
+                                                 std::memory_order_relaxed)));
+            insert_kv("agent-restart-exhausted-total",
+                      static_cast<std::int64_t>(
+                          os.agent_restart_exhausted_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-consecutive-stall-total",
+                      static_cast<std::int64_t>(
+                          os.agent_consecutive_stall_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2229", 2229);
+            insert_kv("issue-2229", 2229);
+            insert_kv("agent-failure-policy-wired", 1);
             // Issue #2153: secondary drain residual / wait after non-Ok cancel.
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(
