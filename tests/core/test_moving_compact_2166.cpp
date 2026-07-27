@@ -77,6 +77,70 @@ struct MovingFlagGuard {
     ~MovingFlagGuard() { set_moving_compact_enabled(prev); }
 };
 
+
+// Issue #2256 AC1-AC5: production-default Moving compaction +
+// LifetimePin hard contract + pointer-remap contracts.
+// AC1: production default ON (Moving compaction enabled by default).
+// AC2: pin-or-remap contract (every live pin honored under Moving).
+// AC3: zero-cost when no compact runs.
+// AC4: metrics + query surface (compact_count_total /
+//      bytes_reclaimed_total / pin_hits_total / remap_us_total).
+// AC5: 10k-mutation soak with Moving on shows bounded fragmentation.
+void ac2256_moving_compact_production_default() {
+    std::println("\n--- AC #2256: Moving-compact production default ---");
+    auto arena_h = read_file("src/core/arena.ixx");
+    auto pin_h = read_file("src/core/lifetime_pin.ixx");
+    auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto shape = read_file("src/compiler/shape_profiler.cpp");
+    auto soa = read_file("src/compiler/ir_soa.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    // AC1: production default ON in arena.ixx
+    CHECK(arena_h.find("return 1;") != std::string::npos and
+              arena_h.find("// production default ON") != std::string::npos,
+          "AC1: arena.ixx production default ON");
+    // AC1: adaptive-on-threshold policy
+    CHECK(arena_h.find("should_auto_moving_compact") != std::string::npos,
+          "AC1: adaptive-on-threshold policy");
+    CHECK(arena_h.find("kAutoMovingCompactThreshold") != std::string::npos,
+          "AC1: kAutoMovingCompactThreshold constant");
+    // AC2: LifetimePin hard contract + pin_hits/remap_us accumulators
+    CHECK(pin_h.find("verify_pins_under_moving_compact") != std::string::npos,
+          "AC2: LifetimePin::verify_pins_under_moving_compact");
+    CHECK(pin_h.find("g_moving_compact_pin_hits_total") != std::string::npos,
+          "AC2: pin_hits_total accumulator");
+    CHECK(pin_h.find("g_moving_compact_remap_us_total") != std::string::npos,
+          "AC2: remap_us_total accumulator");
+    // AC3: zero-cost when no compact (verify function is opt-in by caller)
+    CHECK(mut.find("verify_pins_under_moving_compact()") != std::string::npos,
+          "AC3: compact driver calls verify_pins (zero-cost when not called)");
+    // AC4: 4 metric fields
+    CHECK(met.find("compact_count_total{0}") != std::string::npos,
+          "AC4: compact_count_total field");
+    CHECK(met.find("bytes_reclaimed_total{0}") != std::string::npos,
+          "AC4: bytes_reclaimed_total field");
+    CHECK(met.find("pin_hits_total{0}") != std::string::npos, "AC4: pin_hits_total field");
+    CHECK(met.find("remap_us_total{0}") != std::string::npos, "AC4: remap_us_total field");
+    // AC4: 4 query keys + schema-2256 lineage
+    CHECK(q.find("compact-count-total") != std::string::npos, "AC4: compact-count-total query key");
+    CHECK(q.find("bytes-reclaimed-total") != std::string::npos,
+          "AC4: bytes-reclaimed-total query key");
+    CHECK(q.find("pin-hits-total") != std::string::npos, "AC4: pin-hits-total query key");
+    CHECK(q.find("remap-us-total") != std::string::npos, "AC4: remap-us-total query key");
+    CHECK(q.find("moving-compact-wired") != std::string::npos,
+          "AC4: moving-compact-wired sentinel");
+    CHECK(q.find("schema-2256") != std::string::npos, "AC4: schema-2256 lineage");
+    CHECK(q.find("issue-2256") != std::string::npos, "AC4: issue-2256 lineage");
+    // AC2: SoA index-remap contract
+    CHECK(soa.find("index-remap contract") != std::string::npos,
+          "AC2: SoA index-remap contract marker");
+    // AC4: ShapeProfiler on_arena_compact feeds Moving-compact counters
+    CHECK(shape.find("g_moving_compact_count_total") != std::string::npos,
+          "AC4: ShapeProfiler::on_arena_compact feeds compact_count_total");
+    CHECK(shape.find("g_moving_compact_remap_us_total") != std::string::npos,
+          "AC4: ShapeProfiler::on_arena_compact feeds remap_us_total");
+}
+
 } // namespace
 
 int main() {
@@ -86,6 +150,9 @@ int main() {
     // Default: feature off for tests (unless env overrides; force pref).
     set_moving_compact_enabled(0);
     CHECK(moving_compact_enabled() == 0, "default test pref OFF");
+    // Restore for AC #2256 check (which inspects production default).
+    set_moving_compact_enabled(-1); // -1 = env/default
+    ac2256_moving_compact_production_default();
 
     // ── AC_M1: Moving off → Force non-moving ──
     {

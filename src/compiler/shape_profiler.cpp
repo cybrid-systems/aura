@@ -589,6 +589,11 @@ void ShapeProfiler::invalidate_all() noexcept {
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2256: feed Moving-compact observability counters
+    // (process atomics; mirrors the CompilerMetrics fields for pure
+    // unit tests). pin_hits + remap_us honor the LifetimePin
+    // hard contract under Moving mode.
+    const auto t0 = std::chrono::steady_clock::now();
 
     // Issue #2141: mutate under unique lock; fire hooks after unlock.
     struct HookWork {
@@ -639,6 +644,15 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
             dirty_hook_copy(h.fn, kShapeDirtyScopeArenaCompact);
         }
     }
+    // Issue #2256: Moving-compact hard-contract observability
+    // counters (process atomics; mirror the per-CompilerMetrics
+    // fields for pure unit tests). Cumulative across all ShapeProfiler
+    // instances — pin-or-remap honor + remap cost.
+    const auto t1 = std::chrono::steady_clock::now();
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+    g_moving_compact_remap_us_total.fetch_add(static_cast<std::uint64_t>(us),
+                                              std::memory_order_relaxed);
     return touched;
 }
 

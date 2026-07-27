@@ -1627,6 +1627,58 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("moving-blocked-precondition", lc.moving_blocked_precondition ? 1 : 0);
             insert_kv("schema", 2166);
             insert_kv("schema-2166", static_cast<std::int64_t>(aura::ast::kMovingCompactIssue));
+            // Issue #2256: Moving-compact hard-contract observability
+            insert_kv("compact-count-total",
+                      m ? static_cast<std::int64_t>(
+                              m->compact_count_total.load(std::memory_order_relaxed))
+                        : static_cast<std::int64_t>(
+                              aura::core::lifetime::g_moving_compact_count_total.load(
+                                  std::memory_order_relaxed)));
+            insert_kv("bytes-reclaimed-total",
+                      m ? static_cast<std::int64_t>(
+                              m->bytes_reclaimed_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv(
+                "pin-hits-total",
+                m ? static_cast<std::int64_t>(m->pin_hits_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(
+                        aura::core::lifetime::g_moving_compact_pin_hits_total.load(
+                            std::memory_order_relaxed)));
+            insert_kv(
+                "remap-us-total",
+                m ? static_cast<std::int64_t>(m->remap_us_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(
+                        aura::core::lifetime::g_moving_compact_remap_us_total.load(
+                            std::memory_order_relaxed)));
+            insert_kv("moving-compact-wired", 1);
+            insert_kv("schema-2256", 2256);
+            insert_kv("issue-2256", 2256);
+            // Issue #2256: Moving-compact hard-contract observability
+            insert_kv("compact-count-total",
+                      m ? static_cast<std::int64_t>(
+                              m->compact_count_total.load(std::memory_order_relaxed))
+                        : static_cast<std::int64_t>(
+                              aura::core::lifetime::g_moving_compact_count_total.load(
+                                  std::memory_order_relaxed)));
+            insert_kv("bytes-reclaimed-total",
+                      m ? static_cast<std::int64_t>(
+                              m->bytes_reclaimed_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv(
+                "pin-hits-total",
+                m ? static_cast<std::int64_t>(m->pin_hits_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(
+                        aura::core::lifetime::g_moving_compact_pin_hits_total.load(
+                            std::memory_order_relaxed)));
+            insert_kv(
+                "remap-us-total",
+                m ? static_cast<std::int64_t>(m->remap_us_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(
+                        aura::core::lifetime::g_moving_compact_remap_us_total.load(
+                            std::memory_order_relaxed)));
+            insert_kv("moving-compact-wired", 1);
+            insert_kv("schema-2256", 2256);
+            insert_kv("issue-2256", 2256);
             insert_kv("issue-2166", static_cast<std::int64_t>(aura::ast::kMovingCompactIssue));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

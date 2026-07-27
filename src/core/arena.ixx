@@ -489,7 +489,32 @@ export inline int moving_compact_enabled() noexcept {
         if (e[0] == '0')
             return 0;
     }
-    return 0; // production default OFF (Agent opt-in)
+    // Issue #2256: production default ON. Long-running AI multi-round
+    // self-mod sustained mutation workloads need Moving compaction to
+    // bound fragmentation. Tests can force OFF via
+    // AURA_ARENA_MOVING_COMPACT=0.
+    return 1;
+}
+
+// Issue #2256: Adaptive-on-threshold policy. When fragmentation
+// ratio crosses kAutoMovingCompactThreshold and no compact has
+// run in the last kAdaptiveCompactCooldownMs, Moving compact is
+// auto-triggered. Bounds fragmentation under sustained mutation
+// without paying the Moving compact cost every compact cycle.
+inline constexpr double kAutoMovingCompactThreshold = 0.40; // 40% fragmentation
+export inline std::atomic<std::uint64_t> g_last_moving_compact_ms{0};
+export inline bool should_auto_moving_compact(double current_fragmentation) noexcept {
+    if (current_fragmentation < kAutoMovingCompactThreshold)
+        return false;
+    if (!moving_compact_enabled())
+        return false;
+    const auto now_ms =
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count());
+    const auto last_ms = g_last_moving_compact_ms.load(std::memory_order_acquire);
+    constexpr std::uint64_t kCooldownMs = 100; // at most 10 Hz
+    return (now_ms - last_ms) >= kCooldownMs;
 }
 
 export struct LiveCompactResult {

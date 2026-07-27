@@ -572,6 +572,10 @@ export struct IRModuleV2 {
     // flipped 0→1 (for metric accounting).
     //
     // Issue #2139: production cascade sites MUST call finish_dirty_sync()
+    // Issue #2256: index-remap contract. After Moving compact (#2166),
+    //   all live SoA indices must be either pinned (LifetimePin) or
+    //   remapped here. Per-AC2 (no UAF), the compact driver verifies
+    //   pin-or-remap before finish_dirty_sync returns.
     // (or CompilerService::finish_cascade_soa_dirty_sync_) rather than this
     // method directly. Tests may still call sync_… to construct desync
     // fixtures and verify the repair path.

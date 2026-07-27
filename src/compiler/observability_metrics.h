@@ -2487,6 +2487,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_compact_deopt_throttled_total{0};
     std::atomic<std::uint64_t> arena_frag_post_compact_bp{0};
     std::atomic<std::uint64_t> arena_compact_soft_gated_boundary_total{0};
+    // Issue #2256: Moving-compact hard-contract observability. Mirrors
+    //   the process atomics in lifetime_pin.ixx (pin_hits_total /
+    //   remap_us_total / compact_count_total) so per-CompilerMetrics
+    //   dashboards can observe. bytes_reclaimed_total is new.
+    //   - compact_count_total: every compact (Moving or Force)
+    //   - bytes_reclaimed_total: bytes saved by adaptive_compact_all
+    //   - pin_hits_total: live pins honored under Moving
+    //   - remap_us_total: cumulative remap cost (microseconds)
+    std::atomic<std::uint64_t> compact_count_total{0};
+    std::atomic<std::uint64_t> bytes_reclaimed_total{0};
+    std::atomic<std::uint64_t> pin_hits_total{0};
+    std::atomic<std::uint64_t> remap_us_total{0};
     // Issue #2005: render hotpath FFI buffer safety — surfaced via the
     // (ffi:pin-buffer) / (ffi:unpin-buffer) primitives. ffi_pin_active_count
     // is the live LifetimePin count for FFI buffers; ffi_defer_because_pin_total
