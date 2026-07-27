@@ -883,11 +883,21 @@ TypeId TypeRegistry::meet(TypeId a, TypeId b) const {
                name_of(a) == name_of(b)) {
         // Same ADT tag name (nominal): keep the first TypeId.
         result = a;
+    } else {
+        // Issue #2195: identical concrete scalar tags do not widen to
+        // Dynamic (AC2). Differing tags (Int ∩ String) still → Dynamic.
+        const auto ta = tag_of(a);
+        const auto tb = tag_of(b);
+        const bool scalar_concrete = (ta == TypeTag::INT || ta == TypeTag::BOOL ||
+                                      ta == TypeTag::STRING || ta == TypeTag::FLOAT);
+        if (ta == tb && scalar_concrete) {
+            result = a;
+        }
+        // else: Int ∩ String, Int ∩ Float (if not subtype), etc. → Dynamic
     }
-    // else: Int ∩ String, Int ∩ Float, etc. → Dynamic
 
-    // Issue #2148: precise meet when inputs differ and we
-    // still got a non-Dynamic answer (e.g. Int ∩ Any = Int).
+    // Issue #2148 / #2195: precise meet when inputs differ and we
+    // still got a non-Dynamic answer (e.g. Int ∩ Any = Int, same-tag).
     if (a != b && result != dyn && result.valid()) {
         meet_precision_hit_total_.fetch_add(1, std::memory_order_relaxed);
         if (meet_precision_hit_counter_)
@@ -921,6 +931,15 @@ TypeId TypeRegistry::join(TypeId a, TypeId b) const {
         return a;
     if (tag_of(a) == TypeTag::VARIANT && tag_of(b) == TypeTag::VARIANT && name_of(a) == name_of(b))
         return a;
+    // Issue #2195: same concrete scalar tag → keep a (no Dynamic widen).
+    {
+        const auto ta = tag_of(a);
+        const auto tb = tag_of(b);
+        const bool scalar_concrete = (ta == TypeTag::INT || ta == TypeTag::BOOL ||
+                                      ta == TypeTag::STRING || ta == TypeTag::FLOAT);
+        if (ta == tb && scalar_concrete)
+            return a;
+    }
     // Int ∪ Float → Dynamic (no Number supertype registered).
     // String ∪ Int → Dynamic. No false precision.
     return dyn;

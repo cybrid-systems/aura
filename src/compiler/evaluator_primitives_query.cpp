@@ -6091,6 +6091,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("solve-delta-unresolved-export-wired", 1);
                 insert_kv("schema-2107", 2107);
                 insert_kv("issue-2107", 2107);
+                // Issue #2195: goal kind on conflict/timeout export (SUBTYPE=2).
+                insert_kv("last-conflict-goal-kind",
+                          m ? static_cast<std::int64_t>(
+                                  m->last_conflict_goal_kind.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("last-unresolved-goal-kind",
+                          m ? static_cast<std::int64_t>(
+                                  m->last_unresolved_goal_kind.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("subtype-goal-solve-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->subtype_goal_solve_total.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("subtype-goal-conflict-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->subtype_goal_conflict_total.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("subtype-goal-wired", 1);
+                insert_kv("schema-2195", 2195);
+                insert_kv("issue-2195", 2195);
             }
             // Issue #2030: agent blame completeness + occurrence post-mutate hit rate
             {

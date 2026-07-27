@@ -698,14 +698,19 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
             m->let_poly_priority_reverify_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         bool ok = false;
+        // Issue #2195: SUBTYPE reverify via consistent_subtype.
         if (c.kind == Constraint::EQUAL)
             ok = unify(c.lhs, c.rhs);
+        else if (c.kind == Constraint::SUBTYPE)
+            ok = consistent_subtype(c.lhs, c.rhs);
         else
             ok = consistent_unify(c.lhs, c.rhs);
         if (!ok) {
             if (metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                 m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
+                if (c.kind == Constraint::SUBTYPE)
+                    m->subtype_goal_conflict_total.fetch_add(1, std::memory_order_relaxed);
             }
             record_cross_delta_blame_hit();
             return false;
@@ -1286,8 +1291,11 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
         for (auto idx : current) {
             auto& c = constraints_[idx];
             bool ok;
+            // Issue #2195: route by goal kind (EQUAL / CONSISTENT / SUBTYPE).
             if (c.kind == Constraint::EQUAL)
                 ok = unify(c.lhs, c.rhs);
+            else if (c.kind == Constraint::SUBTYPE)
+                ok = consistent_subtype(c.lhs, c.rhs);
             else
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok)
@@ -1616,17 +1624,31 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                 seen[idx] = true; // #1528: track processed for partial clean
             auto& c = constraints_[idx];
             bool ok;
+            // Issue #2195: SUBTYPE goals via consistent_subtype (zero extra
+            // work when no SUBTYPE dirty goals on the worklist).
             if (c.kind == Constraint::EQUAL)
                 ok = unify(c.lhs, c.rhs);
-            else
+            else if (c.kind == Constraint::SUBTYPE) {
+                if (metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->subtype_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                ok = consistent_subtype(c.lhs, c.rhs);
+            } else
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok) {
                 if (metrics_) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2195: last conflict goal kind for Agent export.
+                    m->last_conflict_goal_kind.store(static_cast<std::uint8_t>(c.kind),
+                                                     std::memory_order_relaxed);
+                    if (c.kind == Constraint::SUBTYPE)
+                        m->subtype_goal_conflict_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Issue #2107: include the failing constraint for Agent
                 // diagnostics (AC3 — CONFLICT still returns conflict).
+                // Kind (EQUAL/CONSISTENT/SUBTYPE) is on the constraint.
                 if (unresolved_out)
                     unresolved_out->push_back(c);
                 record_cross_delta_blame_hit();
@@ -2951,10 +2973,12 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
             for (std::size_t i = 0; i < unresolved.size() && i < max_show; ++i) {
                 if (i > 0)
                     unresolved_str += ", ";
-                unresolved_str += std::string(unresolved[i].kind == Constraint::EQUAL ? "=" : "~") +
-                                  std::to_string(unresolved[i].lhs.index) + " " +
-                                  (unresolved[i].kind == Constraint::EQUAL ? "=" : "~") + " " +
-                                  std::to_string(unresolved[i].rhs.index);
+                // Issue #2195: include goal kind symbol (= ~ <:) for Agents.
+                const char* op = unresolved[i].kind == Constraint::EQUAL     ? "="
+                                 : unresolved[i].kind == Constraint::SUBTYPE ? "<:"
+                                                                             : "~";
+                unresolved_str += std::string(op) + std::to_string(unresolved[i].lhs.index) + " " +
+                                  op + " " + std::to_string(unresolved[i].rhs.index);
             }
             if (unresolved.size() > max_show) {
                 unresolved_str += ", +" + std::to_string(unresolved.size() - max_show) + " more";
@@ -8526,9 +8550,17 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
             m->solve_delta_unresolved_export_total.fetch_add(1, std::memory_order_relaxed);
             m->solve_delta_unresolved_constraints_total.fetch_add(r.unresolved.size(),
                                                                   std::memory_order_relaxed);
+            // Issue #2195: first unresolved goal kind for Agent export
+            // (TIMEOUT + CONFLICT both land here when list non-empty).
+            m->last_unresolved_goal_kind.store(static_cast<std::uint64_t>(r.unresolved[0].kind),
+                                               std::memory_order_relaxed);
         }
         if (r.status == SolveResult::TIMEOUT) {
             m->solve_delta_timeout_unresolved_total.fetch_add(1, std::memory_order_relaxed);
+            // TIMEOUT with empty list still documents kind=0 (EQUAL default).
+            if (r.unresolved.empty()) {
+                m->last_unresolved_goal_kind.store(0, std::memory_order_relaxed);
+            }
         }
     }
     return r;
