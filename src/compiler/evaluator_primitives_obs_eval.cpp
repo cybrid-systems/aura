@@ -5695,6 +5695,26 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"region-concurrency-wired", make_int(1)},
                 {"schema-2121", make_int(2121)},
                 {"issue-2121", make_int(2121)},
+                // Issue #2199: hard timeout / force-fail for long outermost holds.
+                // Soft: metrics + hook only; Strict: forced abort → rollback.
+                // Abort is transactional (success=false → exit_mutation_boundary
+                // rollback), not async preempt mid-mutate without Guard.
+                {"long-mutation-forced-abort-total",
+                 make_int(m ? load(m->long_mutation_forced_abort_total) : 0)},
+                {"long_mutation_forced_abort_total",
+                 make_int(m ? load(m->long_mutation_forced_abort_total) : 0)},
+                {"long-mutation-strict-mode", make_int(m ? load(m->long_mutation_strict_mode) : 0)},
+                {"long-mutation-threshold-us",
+                 make_int(m ? load(m->long_mutation_threshold_us) : 500'000)},
+                {"max-extreme-mutation-us",
+                 make_int(m ? load(m->max_extreme_mutation_us) : 30'000'000)},
+                {"hard-timeout-us", make_int(m ? load(m->hard_timeout_us) : 0)},
+                {"long-mutation-extreme-total",
+                 make_int(m ? load(m->long_mutation_extreme_total) : 0)},
+                {"mutation-too-long-total", make_int(m ? load(m->mutation_too_long_total) : 0)},
+                {"hard-timeout-force-fail-wired", make_int(1)},
+                {"schema-2199", make_int(2199)},
+                {"issue-2199", make_int(2199)},
             };
             return build_hash(kv);
         });

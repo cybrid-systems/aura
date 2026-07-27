@@ -7178,6 +7178,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> long_mutation_extreme_total{0};      // #1443
     std::atomic<std::uint64_t> last_long_mutation_fiber_id{0};      // #1443 (telemetry)
     std::atomic<std::uint64_t> last_long_mutation_duration_us{0};   // #1443 (telemetry)
+    // Issue #2199: hard timeout force-abort for outermost holds under
+    // strict mode (AURA_MUTATION_HOLD_STRICT=1 / long_mutation_strict_mode).
+    // When hold_us > max_extreme_mutation_us (hard_timeout_us alias):
+    // force *flag_=false BEFORE exit_mutation_boundary so rollback runs.
+    // Soft (strict_mode=0): metrics + scheduler hook only — no force-fail.
+    std::atomic<std::uint64_t> long_mutation_forced_abort_total{0}; // #2199
+    // Optional hard_timeout_us: 0 = use max_extreme_mutation_us; non-zero
+    // overrides extreme ceiling for force-fail (still outermost-only).
+    std::atomic<std::uint64_t> hard_timeout_us{0}; // #2199
     // Issue #1373: cross-fiber yield + hold observability (Agent dashboard)
     //   - yield_same_thread: yield while boundary held, same OS thread
     //   - cross_thread_migration: yield checkpoint resume on different thread

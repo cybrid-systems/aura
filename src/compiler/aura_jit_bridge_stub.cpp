@@ -421,6 +421,16 @@ extern "C" std::uint64_t aura_get_long_mutation_strict_mode(void) {
 extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
     (void)us;
 }
+// Issue #2199: hard_timeout / forced-abort stubs.
+extern "C" void aura_set_hard_timeout_us(std::uint64_t us) {
+    (void)us;
+}
+extern "C" std::uint64_t aura_get_hard_timeout_us(void) {
+    return 0;
+}
+extern "C" std::uint64_t aura_get_long_mutation_forced_abort_total(void) {
+    return 0;
+}
 
 // Issue #1443 AC3 follow-up + #1445 AC6: scheduler hook stubs.
 extern "C" void aura_set_long_mutation_scheduler_hook(aura_long_mutation_scheduler_hook_fn fn) {
