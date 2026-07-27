@@ -4,12 +4,20 @@ module;
 #include "jit_typed_mutation_stats.h"
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
+// Issue #2254: production SoA-only default. Macro must be in this TU's
+// GMF — module imports do not re-export preprocessor definitions from
+// ir_soa.ixx. Keep in lockstep with ir_soa.ixx / coverage script AC1.
+#ifndef AURA_IR_SOA_ONLY
+#define AURA_IR_SOA_ONLY 1
+#endif
+
 module aura.compiler.lowering;
 import std;
 import aura.core.ast;
 import aura.compiler.lowering_linear_types;
 import aura.compiler.value;
 import aura.compiler.ir_cache_pure; // Issue #2109: should_partial_relower
+import aura.compiler.ir_soa;        // #2254 g_soa_only_path_total_atomic etc.
 
 namespace aura::compiler {
 

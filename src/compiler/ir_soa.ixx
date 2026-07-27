@@ -35,18 +35,6 @@
 #define AURA_IR_SOA_ONLY 1
 #endif
 
-// Issue #2254 AC4: process-wide SoA-only + residual AoS bridge counters.
-// Mirror the CompilerMetrics fields so pure unit tests (no Evaluator /
-// no CompilerService) can read them too.
-inline std::atomic<std::uint64_t>& g_soa_only_path_total_atomic() noexcept {
-    static std::atomic<std::uint64_t> v{0};
-    return v;
-}
-inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() noexcept {
-    static std::atomic<std::uint64_t> v{0};
-    return v;
-}
-
 // Issue #2045: after dual-emit / re-lower, CompilerService rebuilds
 // IRCacheEntry::source_to_ir_map from AoS irs and cross-checks SoA
 // source_node_ids_ so impact_scope cannot under-invalidate.
@@ -55,6 +43,7 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory_resource>
@@ -70,6 +59,30 @@ import std;
 import aura.compiler.ir; // for aura::ir::IROpcode (lives in aura::ir)
 
 namespace aura::compiler {
+
+// Issue #2254 AC4: process-wide SoA-only + residual AoS bridge counters.
+// Must live after `export module` (not before `module;`) — GMF may only
+// hold preprocessor inclusions. Mirror CompilerMetrics fields so pure
+// unit tests (no Evaluator / CompilerService) can read them too.
+export inline std::atomic<std::uint64_t>& g_soa_only_path_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+export inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Compile-time SoA-only default (macro lives in this TU + consumers that
+// #include the GMF define block or set -DAURA_IR_SOA_ONLY). Exported for
+// importers that cannot see the preprocessor macro across modules.
+export inline constexpr int kIrSoaOnlyDefault =
+#if defined(AURA_IR_SOA_ONLY)
+    AURA_IR_SOA_ONLY
+#else
+    1
+#endif
+    ;
 
 // Issue #742: consteval SoA column count (must match cxx26_invariants.ixx).
 inline constexpr std::size_t kIrSoaColumnCount = 10;

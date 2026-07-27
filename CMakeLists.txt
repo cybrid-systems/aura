@@ -2339,6 +2339,11 @@ aura_add_issue_test(test_reemit_production_default_defer_2205)
 aura_issue_test_link_llvm_jit(test_reemit_production_default_defer_2205)
 add_dependencies(all_test_issue_targets test_reemit_production_default_defer_2205)
 
+# Issue #2206: aggressive source_to_ir_map desync recovery (no silent full-relower).
+aura_add_issue_test(test_source_to_ir_desync_recovery_2206)
+aura_issue_test_link_llvm_jit(test_source_to_ir_desync_recovery_2206)
+add_dependencies(all_test_issue_targets test_source_to_ir_desync_recovery_2206)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

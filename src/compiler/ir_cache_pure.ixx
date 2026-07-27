@@ -660,6 +660,58 @@ ensure_source_to_ir_or_rebuild(const std::vector<aura::ir::IRFunction>& irs, Sou
     return r;
 }
 
+// Issue #2206: aggressive source_to_ir_map desync recovery.
+// Prefer per-function patch for the dirty / preferred set, then
+// full rebuild only if still inconsistent. Callers on the partial
+// path use this instead of escalating to full-relower solely
+// because of a prior desync (closes "looks incremental but full").
+struct SourceToIrDesyncRecovery {
+    bool recovered = false; // consistent after recovery
+    std::size_t bad_before = 0;
+    std::size_t bad_after = 0;
+    std::size_t funcs_patched = 0;
+    bool used_full_rebuild = false;
+};
+
+// preferred_func_indices: dirty function slots to patch first.
+// Empty → patch all live functions before optional full rebuild.
+[[nodiscard]] inline SourceToIrDesyncRecovery recover_source_to_ir_map_desync(
+    const std::vector<aura::ir::IRFunction>& irs, SourceToIrMap& map,
+    const std::vector<std::size_t>& preferred_func_indices = {}) noexcept {
+    SourceToIrDesyncRecovery r;
+    r.bad_before = count_source_to_ir_map_inconsistencies(irs, map);
+    if (r.bad_before == 0) {
+        r.recovered = true;
+        r.bad_after = 0;
+        return r;
+    }
+    // Prefer targeted patch for dirty/affected functions.
+    if (!preferred_func_indices.empty()) {
+        for (const auto fi : preferred_func_indices) {
+            if (fi < irs.size()) {
+                patch_source_to_ir_map_for_function(irs[fi], fi, map);
+                ++r.funcs_patched;
+            }
+        }
+    } else {
+        for (std::size_t fi = 0; fi < irs.size(); ++fi) {
+            patch_source_to_ir_map_for_function(irs[fi], fi, map);
+            ++r.funcs_patched;
+        }
+    }
+    r.bad_after = count_source_to_ir_map_inconsistencies(irs, map);
+    if (r.bad_after == 0) {
+        r.recovered = true;
+        return r;
+    }
+    // Last resort: full rebuild (still not a full *relower* of IR).
+    rebuild_source_to_ir_map_from_irs(irs, map);
+    r.used_full_rebuild = true;
+    r.bad_after = count_source_to_ir_map_inconsistencies(irs, map);
+    r.recovered = (r.bad_after == 0);
+    return r;
+}
+
 
 // ── compute_dependencies ──────────────────────────────────
 // Issue #126: pure walker extracted from the local

@@ -206,6 +206,14 @@ struct CompilerMetrics {
     //     (forces full re-lower — AC1 guardrail)
     std::atomic<std::uint64_t> source_to_ir_inconsistency_total{0};
     std::atomic<std::uint64_t> source_to_ir_hard_fail_total{0};
+    // Issue #2206: aggressive source_to_ir_map desync recovery (no silent
+    // full-relower solely because the reverse index was desynced).
+    //   - source_to_ir_desync_recovered_total: recover succeeded (patch
+    //     and/or full map rebuild); partial path continues
+    //   - source_to_ir_desync_funcs_patched: sum of per-function patches
+    //     applied during recovery (preferred dirty set, or all)
+    std::atomic<std::uint64_t> source_to_ir_desync_recovered_total{0};
+    std::atomic<std::uint64_t> source_to_ir_desync_funcs_patched{0};
     // Issue #2247: dual dep_graph write-parity gate + hybrid cascade
     //   - dual_dep_graph_parity_check_total: graphs_consistent invocations
     //   - dual_dep_graph_parity_fail_total: rebuild_node_dep_graph_from_string

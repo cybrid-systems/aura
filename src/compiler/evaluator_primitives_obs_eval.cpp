@@ -6511,6 +6511,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
                 {"schema-2244", make_int(2244)},
                 {"issue-2244", make_int(2244)},
+                // Issue #2206: aggressive source_to_ir_map desync recovery
+                {"source-to-ir-desync-recovered-total",
+                 make_int(m ? load(m->source_to_ir_desync_recovered_total) : 0)},
+                {"source_to_ir_desync_recovered_total",
+                 make_int(m ? load(m->source_to_ir_desync_recovered_total) : 0)},
+                {"source-to-ir-desync-funcs-patched",
+                 make_int(m ? load(m->source_to_ir_desync_funcs_patched) : 0)},
+                {"source_to_ir_desync_funcs_patched",
+                 make_int(m ? load(m->source_to_ir_desync_funcs_patched) : 0)},
+                {"source-to-ir-desync-recovery-wired", make_int(1)},
+                {"schema-2206", make_int(2206)},
+                {"issue-2206", make_int(2206)},
                 {"schema-2190", make_int(2190)},
                 {"issue-2190", make_int(2190)},
                 // Issue #2193: per-reason full-fallback (invalidate cascade)
@@ -13232,11 +13244,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         "query:aot-incremental-reemit-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t success = 0;
             std::uint64_t fail = 0;
+            std::uint64_t stale_hard_reject = 0;
             int keep_enabled = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 success = m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
                 fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
+                // Issue #2252: hard-reject when AOT slot table_generation != live epoch.
+                stale_hard_reject =
+                    m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed);
             }
             keep_enabled = ::aura_reemit_keep_fail_enabled();
             constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
@@ -13293,9 +13309,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 // aot_forced_recompile_on_mismatch_total) so dashboards
                 // can isolate the zero-native-hit guarantee signal.
                 {"aot-stale-probe-hard-reject-total",
-                 m ? make_int(static_cast<std::int64_t>(
-                         m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed)))
-                   : make_int(0)},
+                 make_int(static_cast<std::int64_t>(stale_hard_reject))},
                 {"aot-stale-probe-hard-reject-wired", make_int(1)},
                 {"aot-incremental-reemit-stats-lineage", make_int(2095)},
                 {"schema-2252", make_int(2252)},
