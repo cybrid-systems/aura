@@ -96,6 +96,29 @@ void aura_bump_must_deopt_before_next_call_total(std::uint64_t n);
 // (hit / miss split). See observability_metrics.h.
 void aura_bump_live_closure_epoch_restamp_total(std::uint64_t n);
 void aura_bump_live_closure_must_deopt_kept_total(std::uint64_t n);
+// Issue #2234: post-reemit / post-compact env_frame + linear capture
+// remount metric bumpers. See observability_metrics.h for the
+// per-outcome semantics — the #2234 pair measures the capture
+// state rebind outcome (ok vs fail), distinct from the #2233
+// epoch_restamp_total which only stamps func_id.
+void aura_bump_closure_capture_remount_ok_total(std::uint64_t n);
+void aura_bump_closure_capture_remount_fail_total(std::uint64_t n);
+// Issue #2234: post-reemit / post-compact env_frame + linear capture
+// remount hook. Reads the closure's stamped g_closure_defuse_versions
+// + g_closure_linear_state (captured at closure create / re-stamp)
+// and compares with the live values passed in. Returns true when all
+// env captures are rebound to the live generation + linear ownership
+// is consistent; returns false when the caller must set MustDeopt
+// (the per-closure defuse_version is the env-frame proxy; the
+// per-closure linear_state is the linear ownership proxy).
+int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                  std::uint8_t linear_fp);
+// Issue #2234: capture detection helper. Returns true when the
+// closure has any env or linear capture to remount (proxied by
+// non-zero defuse_version or non-zero linear_state). The remap +
+// compact paths use this to skip the remount call when no captures
+// exist (AC4 zero overhead hot path).
+int aura_closure_has_env_or_linear_captures(std::int64_t closure_id);
 void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n);
 

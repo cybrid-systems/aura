@@ -208,6 +208,70 @@ extern "C" void aura_bump_live_closure_must_deopt_kept_total(std::uint64_t n) {
         m->live_closure_must_deopt_kept_total.fetch_add(n, std::memory_order_relaxed);
     }
 }
+
+// Issue #2234: post-reemit / post-compact env_frame + linear capture
+// remount metric bumpers. See observability_metrics.h.
+extern "C" void aura_bump_closure_capture_remount_ok_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->closure_capture_remount_ok_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void aura_bump_closure_capture_remount_fail_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->closure_capture_remount_fail_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
+// Issue #2234: capture detection helper. Returns 1 when the
+// closure has any env or linear capture to remount (proxied by
+// non-zero defuse_version or non-zero linear_state). The remap +
+// compact paths use this to skip the remount call when no captures
+// exist (AC4 zero overhead hot path).
+extern "C" int aura_closure_has_env_or_linear_captures(std::int64_t closure_id) {
+    const auto cid = static_cast<std::size_t>(closure_id);
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    const bool has_env =
+        cid < g_closure_defuse_versions.size() && g_closure_defuse_versions[cid] != 0;
+    const bool has_linear = cid < g_closure_linear_state.size() && g_closure_linear_state[cid] != 0;
+    return (has_env || has_linear) ? 1 : 0;
+}
+
+// Issue #2234: post-reemit / post-compact env_frame + linear capture
+// remount. Reads the closure's stamped defuse_version (env-frame
+// proxy) + linear_state (linear ownership proxy) and compares with
+// the live values. Returns 1 when all captures are rebound + linear
+// ownership is consistent; returns 0 when the caller must set
+// MustDeopt. The remount itself is a no-op rebind — the live_env_gen
+// is the post-compact / post-remap defuse_version the dep_graph
+// has already published (publish_live_env_linear_to_bridge() at
+// compact_env_frames + remap hit). The check is the *consistency*
+// gate that the #2234 issue calls out.
+extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                             std::uint8_t linear_fp) {
+    const auto cid = static_cast<std::size_t>(closure_id);
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    // Capture proxies: defuse_version (env-frame) + linear_state
+    // (linear ownership fingerprint).
+    const auto cid_defuse =
+        cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+    const auto cid_linear = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
+    // Issue #2234 AC1: env captures rebound if stamped defuse matches
+    // the live generation; linear ownership consistent if stamped
+    // linear fingerprint matches the live one. Either mismatch →
+    // fail (caller sets MustDeopt + batch_deopt).
+    const bool env_ok = (cid_defuse == 0) || (cid_defuse == live_env_gen);
+    const bool linear_ok = (cid_linear == 0) || (cid_linear == linear_fp);
+    return (env_ok && linear_ok) ? 1 : 0;
+}
 extern "C" void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n) {
     if (auto* m = aot_metrics()) {
         m->must_deopt_force_deopt_success_total.fetch_add(n, std::memory_order_relaxed);
