@@ -396,6 +396,42 @@ inline constexpr NodeId kFnNodeTag = 0x80000000u;
     return static_cast<std::uint32_t>(id & 0x7FFFFFFFu);
 }
 
+// Issue #2187: block-level DepGraph edge targets (cross-define unique).
+// Distinct from encode_block_node (IR bridge local (fi,bi) without
+// caller identity). Layout:
+//   bit31 = 0 (not fn node)
+//   bit30 = 1 (block-dep tag)
+//   bits[29:15] = caller_fn_slot (15 bits)
+//   bits[14:8]  = func_idx within define (7 bits)
+//   bits[7:0]   = block_idx (8 bits)
+// Dirty propagates: encode_fn_node(callee) → encode_block_dep_node(caller,…)
+// so cascade from a mutated callee marks only the call-site block.
+inline constexpr NodeId kBlockDepTag = 0x40000000u;
+
+[[nodiscard]] inline NodeId encode_block_dep_node(std::uint32_t caller_slot, std::uint16_t func_idx,
+                                                  std::uint16_t block_idx) noexcept {
+    return kBlockDepTag | ((static_cast<NodeId>(caller_slot & 0x7FFFu)) << 15) |
+           ((static_cast<NodeId>(func_idx & 0x7Fu)) << 8) | static_cast<NodeId>(block_idx & 0xFFu);
+}
+
+[[nodiscard]] inline bool is_block_dep_node(NodeId id) noexcept {
+    return (id & kFnNodeTag) == 0 && (id & kBlockDepTag) != 0;
+}
+
+struct BlockDepDecode {
+    std::uint32_t caller_slot = 0;
+    std::uint16_t func_idx = 0;
+    std::uint16_t block_idx = 0;
+};
+
+[[nodiscard]] inline BlockDepDecode decode_block_dep_node(NodeId id) noexcept {
+    BlockDepDecode d;
+    d.caller_slot = static_cast<std::uint32_t>((id >> 15) & 0x7FFFu);
+    d.func_idx = static_cast<std::uint16_t>((id >> 8) & 0x7Fu);
+    d.block_idx = static_cast<std::uint16_t>(id & 0xFFu);
+    return d;
+}
+
 // Sync multi-function block dirty matrix [func][block] into DirtySet.
 inline void sync_from_block_dirty_matrix(DirtySet& dest,
                                          const std::vector<std::vector<std::uint8_t>>& per_func) {

@@ -763,18 +763,31 @@ void CompilerService::invalidate_function(const std::string& name) {
         // record_dependency that raced the exclusive window rejects.
         dep_graph_generation_.fetch_add(1, std::memory_order_release);
         metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
-        // Issue #2110: drop NodeId mirror slots/edges for erased names
-        // (rebuild via record_dependency on next re-lower). Keep root.
+        // Issue #2110 / #2187: drop NodeId mirror slots/edges for erased
+        // names (fn + block-dep targets). Rebuild on next re-lower.
         for (auto& f : dependents) {
             auto sit = dep_name_to_slot_.find(f);
             if (sit == dep_name_to_slot_.end())
                 continue;
             const auto slot = sit->second;
-            const auto node = aura::compiler::dirty::encode_fn_node(slot);
-            node_dep_graph_.adj.erase(node);
-            // Drop inbound edges pointing at this node (scan adj).
+            const auto fn_node = aura::compiler::dirty::encode_fn_node(slot);
+            node_dep_graph_.adj.erase(fn_node);
+            // Drop inbound edges pointing at this fn node OR any block-dep
+            // node owned by this caller slot.
             for (auto& [from, tos] : node_dep_graph_.adj) {
-                tos.erase(std::remove(tos.begin(), tos.end(), node), tos.end());
+                tos.erase(std::remove_if(tos.begin(), tos.end(),
+                                         [slot, fn_node](aura::compiler::dirty::NodeId n) {
+                                             if (n == fn_node)
+                                                 return true;
+                                             if (aura::compiler::dirty::is_block_dep_node(n)) {
+                                                 const auto d =
+                                                     aura::compiler::dirty::decode_block_dep_node(
+                                                         n);
+                                                 return d.caller_slot == slot;
+                                             }
+                                             return false;
+                                         }),
+                          tos.end());
                 (void)from;
             }
         }
@@ -1127,19 +1140,25 @@ void CompilerService::invalidate_function(const std::string& name) {
     notify_hot_update_after_cascade_(name, dependents);
 }
 
-// Issue #2110: hybrid NodeId cascade after string-keyed BFS.
-// Mirrors function-level edges (encode_fn_node) and ensures each
-// string-BFS dependent has body-only block dirty (call-site), without
-// marking nested lambdas that do not free-ref the root (AC2 / AC5).
+// Issue #2110 / #2187: hybrid NodeId cascade after string-keyed BFS.
+// Mirrors function-level edges (encode_fn_node) and block-level edges
+// (encode_block_dep_node). Prefer NodeId BFS when mirror is populated:
+//   1. cascade_mark_dirty from root fn node
+//   2. Apply block-precise dirty for any marked block-dep nodes first
+//   3. Fallback body-only for string dependents lacking block marks
+// Nested lambdas without free-ref remain clean (#1505 authority).
 // Lock order: may take dep_graph shared; mutate should already be held
 // by mark_define_dirty / invalidate_function public entry.
+// Determinism: string_dependents stay FIFO/sorted for re-lower order.
 std::size_t
 CompilerService::hybrid_node_cascade_(const std::string& root_name,
                                       const std::vector<std::string>& string_dependents) {
     using aura::compiler::dirty::cascade_mark_dirty;
+    using aura::compiler::dirty::decode_block_dep_node;
     using aura::compiler::dirty::decode_fn_slot;
     using aura::compiler::dirty::DirtySet;
     using aura::compiler::dirty::encode_fn_node;
+    using aura::compiler::dirty::is_block_dep_node;
     using aura::compiler::dirty::is_fn_node;
     using lock_order::Level;
     using lock_order::OrderedSharedLock;
@@ -1158,13 +1177,67 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
     }
 
     DirtySet set;
+    // Prefer NodeId BFS when mirror has edges (#2187 AC2).
     const auto marked = cascade_mark_dirty(set, encode_fn_node(root_slot), graph_snap);
     metrics_.dep_graph_hybrid_cascade_hits.fetch_add(1, std::memory_order_relaxed);
 
-    // Apply body-only dirty for each NodeId-marked caller (fn node).
-    // Prefer string_dependents list for determinism (#401 FIFO order already
-    // sorted for hard invalidate; soft mark_define uses visit order).
+    // Names that received a block-precise mark (skip full body-only).
+    std::unordered_set<std::string> block_precise_names;
+
+    // Issue #2187: apply block-precise dirty from block-dep nodes first.
+    auto apply_block_precise = [&](std::uint32_t caller_slot, std::uint16_t func_idx,
+                                   std::uint16_t block_idx) {
+        std::string name;
+        {
+            OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+            if (caller_slot >= dep_slot_to_name_.size())
+                return;
+            name = dep_slot_to_name_[caller_slot];
+        }
+        if (name.empty() || name == root_name)
+            return;
+        auto cit = ir_cache_v2_.find(name);
+        if (cit == ir_cache_v2_.end())
+            return;
+        auto& centry = cit->second;
+        const std::size_t fi = static_cast<std::size_t>(func_idx);
+        if (centry.block_dirty_per_func_.size() < centry.irs.size())
+            centry.block_dirty_per_func_.resize(centry.irs.size());
+        if (fi >= centry.block_dirty_per_func_.size()) {
+            if (fi < centry.irs.size())
+                centry.block_dirty_per_func_.resize(fi + 1);
+            else
+                return;
+        }
+        auto& fb = centry.block_dirty_per_func_[fi];
+        if (fb.empty() && fi < centry.irs.size())
+            fb.assign(centry.irs[fi].blocks.size(), std::uint8_t{0});
+        if (block_idx < fb.size()) {
+            fb[block_idx] = 1;
+            centry.dirty = true;
+            block_precise_names.insert(name);
+            metrics_.dep_graph_node_cascade_block_hits.fetch_add(1, std::memory_order_relaxed);
+            // Nested free-var targeting only (no full nested dirty).
+            if (centry.irs.size() > 2) {
+                for (std::size_t nfi = 2; nfi < centry.irs.size(); ++nfi)
+                    (void)mark_nested_lambda_blocks_targeted(centry, nfi, root_name);
+            }
+            finish_cascade_soa_dirty_sync_(centry);
+        }
+    };
+
+    for (const auto nid : set.dirty_nodes()) {
+        if (!is_block_dep_node(nid))
+            continue;
+        const auto dec = decode_block_dep_node(nid);
+        apply_block_precise(dec.caller_slot, dec.func_idx, dec.block_idx);
+    }
+
+    // Apply body-only dirty for string dependents without block-precise mark.
+    // Prefer string_dependents list for determinism (#401 FIFO/sorted order).
     auto apply_body_only = [&](const std::string& dep_name) {
+        if (block_precise_names.count(dep_name))
+            return; // already precise — do not over-dirty body
         auto cit = ir_cache_v2_.find(dep_name);
         if (cit == ir_cache_v2_.end())
             return;

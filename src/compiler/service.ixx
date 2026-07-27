@@ -10036,6 +10036,9 @@ private:
         metrics_.dep_graph_record_inserted.fetch_add(1, std::memory_order_relaxed);
         // Issue #2110: mirror into NodeId DepGraph (callee → caller so
         // dirty propagates along called_by). Dedup handled by DepGraph::add_edge.
+        // Issue #2187: also mirror a block-level edge to the caller's body
+        // entry block (func_idx=1 when multi-fn convention, else 0; block 0).
+        // Precise call-site block can be refined via record_block_dependency.
         {
             const auto caller_slot = ensure_dep_fn_slot_(caller);
             const auto callee_slot = ensure_dep_fn_slot_(callee);
@@ -10045,7 +10048,50 @@ private:
             node_dep_graph_.add_edge(from, to);
             if (node_dep_graph_.edge_count() > edges_before)
                 metrics_.dep_graph_node_mirror_edges_total.fetch_add(1, std::memory_order_relaxed);
+            // Block-level edge (callee fn → caller body block 0).
+            // Prefer body_idx=1 when caller IR has multi-fn (entry+body).
+            std::uint16_t body_fi = 0;
+            auto cit = ir_cache_v2_.find(caller);
+            if (cit != ir_cache_v2_.end() && cit->second.irs.size() >= 2)
+                body_fi = 1;
+            mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, body_fi, /*block_idx=*/0);
         }
+    }
+
+    // Issue #2187: record a block-level DepGraph edge under dep_graph_mtx_.
+    // Dirty propagates encode_fn_node(callee) → encode_block_dep_node(caller,fi,bi).
+    // Also ensures the string + fn-level mirror edge exists (idempotent).
+    void record_block_dependency(const std::string& caller, const std::string& callee,
+                                 std::uint16_t caller_func_idx, std::uint16_t call_block_idx) {
+        // Ensure string/fn edge first (takes its own exclusive lock).
+        record_dependency(caller, callee);
+        metrics_.dep_graph_record_total.fetch_add(1, std::memory_order_relaxed);
+        const auto epoch_before = aura::core::current_mutation_epoch();
+        const auto gen_before = dep_graph_generation_.load(std::memory_order_acquire);
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        sync_lock_order_metrics_();
+        const auto epoch_after = aura::core::current_mutation_epoch();
+        const auto gen_after = dep_graph_generation_.load(std::memory_order_acquire);
+        if (epoch_before != epoch_after || gen_before != gen_after) {
+            metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        const auto caller_slot = ensure_dep_fn_slot_(caller);
+        const auto callee_slot = ensure_dep_fn_slot_(callee);
+        mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, caller_func_idx, call_block_idx);
+    }
+
+    // Issue #2187: unlocked helper — caller holds exclusive dep_graph_mtx_.
+    void mirror_block_dep_edge_unlocked_(std::uint32_t callee_slot, std::uint32_t caller_slot,
+                                         std::uint16_t func_idx, std::uint16_t block_idx) {
+        const auto from = aura::compiler::dirty::encode_fn_node(callee_slot);
+        const auto to =
+            aura::compiler::dirty::encode_block_dep_node(caller_slot, func_idx, block_idx);
+        const auto edges_before = node_dep_graph_.edge_count();
+        node_dep_graph_.add_edge(from, to);
+        if (node_dep_graph_.edge_count() > edges_before)
+            metrics_.dep_graph_block_mirror_edges_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Scan FlatAST from the given node for Variable nodes that reference cached functions.
@@ -10732,6 +10778,13 @@ public:
         record_dependency(caller, callee);
     }
 
+    // Issue #2187: test hook — block-level DepGraph edge.
+    void public_record_block_dependency(const std::string& caller, const std::string& callee,
+                                        std::uint16_t caller_func_idx,
+                                        std::uint16_t call_block_idx) {
+        record_block_dependency(caller, callee, caller_func_idx, call_block_idx);
+    }
+
     // Issue #1376: record path counters (for concurrent dedup assertions).
     [[nodiscard]] std::uint64_t public_dep_graph_record_total() const noexcept {
         return metrics_.dep_graph_record_total.load(std::memory_order_relaxed);
@@ -10748,6 +10801,13 @@ public:
     }
     [[nodiscard]] std::uint64_t public_dep_graph_hybrid_cascade_hits() const noexcept {
         return metrics_.dep_graph_hybrid_cascade_hits.load(std::memory_order_relaxed);
+    }
+    // Issue #2187: block-level mirror / cascade observability.
+    [[nodiscard]] std::uint64_t public_dep_graph_block_mirror_edges() const noexcept {
+        return metrics_.dep_graph_block_mirror_edges_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_dep_graph_node_cascade_block_hits() const noexcept {
+        return metrics_.dep_graph_node_cascade_block_hits.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::size_t public_node_dep_graph_edge_count() const noexcept {
         lock_order::OrderedSharedLock<std::shared_mutex> r(dep_graph_mtx_,
@@ -10768,6 +10828,39 @@ public:
         if (!deps)
             return false;
         return std::find(deps->begin(), deps->end(), to) != deps->end();
+    }
+    // Issue #2187: true when NodeId graph has callee→caller-block edge.
+    [[nodiscard]] bool public_node_dep_has_block_edge(const std::string& caller,
+                                                      const std::string& callee,
+                                                      std::uint16_t caller_func_idx,
+                                                      std::uint16_t call_block_idx) const noexcept {
+        lock_order::OrderedSharedLock<std::shared_mutex> r(dep_graph_mtx_,
+                                                           lock_order::Level::DepGraph);
+        auto cit = dep_name_to_slot_.find(callee);
+        auto ait = dep_name_to_slot_.find(caller);
+        if (cit == dep_name_to_slot_.end() || ait == dep_name_to_slot_.end())
+            return false;
+        const auto from = aura::compiler::dirty::encode_fn_node(cit->second);
+        const auto to = aura::compiler::dirty::encode_block_dep_node(ait->second, caller_func_idx,
+                                                                     call_block_idx);
+        const auto* deps = node_dep_graph_.dependents(from);
+        if (!deps)
+            return false;
+        return std::find(deps->begin(), deps->end(), to) != deps->end();
+    }
+    // Issue #2187: test — is block bi dirty on caller's body func?
+    [[nodiscard]] bool public_is_block_dirty(const std::string& name, std::size_t func_idx,
+                                             std::size_t block_idx) const noexcept {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        const auto& e = it->second;
+        if (func_idx >= e.block_dirty_per_func_.size())
+            return false;
+        const auto& fb = e.block_dirty_per_func_[func_idx];
+        if (block_idx >= fb.size())
+            return false;
+        return fb[block_idx] != 0;
     }
 
     // Issue #272: test/observability accessor.
