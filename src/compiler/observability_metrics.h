@@ -279,6 +279,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_soundness_runs_total{0};
     std::atomic<std::uint64_t> incremental_soundness_ok_total{0};
     std::atomic<std::uint64_t> incremental_soundness_mismatch_total{0};
+    // Issue #2245: production sampling of incremental soundness
+    // (partial ≡ full) under AI mutate. Distinct from #2113
+    // debug-gated oracle counters above — these track the prod
+    // sample path (default ~1%, elevated under StormLevel).
+    //   - incremental_soundness_prod_runs_total: prod sample invocations
+    //   - incremental_soundness_prod_ok_total: prod sample ok (partial ≡ full)
+    //   - incremental_soundness_mismatch_prod_total: prod mismatch
+    //     (forces full relower + Agent audit row; never silent keep)
+    std::atomic<std::uint64_t> incremental_soundness_prod_runs_total{0};
+    std::atomic<std::uint64_t> incremental_soundness_prod_ok_total{0};
+    std::atomic<std::uint64_t> incremental_soundness_mismatch_prod_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
     std::atomic<std::uint64_t> jit_partial_recompile_requests_total{0};
     // Issue #401: invalidate_function call counter. Bumped once per

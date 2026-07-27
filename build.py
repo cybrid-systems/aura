@@ -1708,6 +1708,32 @@ def cmd_legacy_test_inventory():
     return 0
 
 
+def cmd_incremental_soundness_prod_coverage():
+    """Issue #2245: production sampling of incremental soundness coverage.
+
+    Validates the 5-AC contract from issue body:
+      AC1: sample_bp > 0 + mode allows prod runs oracle on partial
+      AC2: forced mismatch under sample_bp=10000 -> mismatch counter + forced full
+      AC3: sample_bp=0 -> zero oracle cost
+      AC4: 4 new query keys + schema-2245 lineage on query:incremental-soundness-stats
+      AC5: StormLevel elevation factor (10x storm / 3x elevated)
+    """
+    print(f"{B}=== incremental soundness prod coverage (#2245) ==={N}")
+    script = ROOT / "scripts" / "check_incremental_soundness_prod_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("incremental soundness prod coverage contract rows failed")
+        return 1
+    ok("incremental soundness prod coverage clean")
+    return 0
+
+
 def cmd_source_to_ir_strict():
     """Issue #2244: source_to_ir_map Strict-mode hard-fail + rebuild coverage.
 
@@ -1786,6 +1812,7 @@ def cmd_gate():
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
+        or cmd_incremental_soundness_prod_coverage()
     )
 
 
@@ -2442,6 +2469,7 @@ def main():
         "aot-env-linear-stamp": cmd_aot_env_linear_stamp,
         "legacy-test-inventory": cmd_legacy_test_inventory,
         "source-to-ir-strict": cmd_source_to_ir_strict,
+        "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
         "test": lambda: cmd_test(args or ["all"]),
