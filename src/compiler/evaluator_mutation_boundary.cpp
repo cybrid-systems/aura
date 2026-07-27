@@ -1382,7 +1382,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const auto stamp = ev_->current_layout_stamp();
             cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
                                                stamp.mutation_epoch, stamp.env_gen,
-                                               stamp.defuse_version);
+                                               stamp.defuse_version, stamp.shape_version);
         }
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
             m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
@@ -1865,8 +1865,13 @@ aura::core::LayoutStamp Evaluator::current_layout_stamp() const noexcept {
     // redefinition in other TUs (see layout_stamp.hh preamble note).
     // mutation_epoch is filled here via the directly-included
     // workspace_epoch.hh acquire-load.
+    // Issue #2255: ShapeProfiler monotonic generation as a first-
+    // class field of LayoutStamp (7th field). Read the file-scope
+    // bump counter so all ShapeProfiler instances share a single
+    // monotonic source of truth for the resume fence.
+    const auto sver = aura::compiler::shape::current_global_shape_version();
     return aura::core::LayoutStamp(arena_id, arena_gen, flat_gen,
-                                   aura::core::current_mutation_epoch(), env_gen, dver);
+                                   aura::core::current_mutation_epoch(), env_gen, dver, sver);
 }
 
 aura::core::LayoutStamp Evaluator::publish_layout_stamp() noexcept {
@@ -1915,6 +1920,15 @@ std::uint64_t Evaluator::get_layout_stamp_publish_total() const noexcept {
 std::uint64_t Evaluator::get_layout_stamp_resume_mismatch_total() const noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     return m ? m->layout_stamp_resume_mismatch_total.load(std::memory_order_relaxed) : 0;
+}
+
+// Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
+// field) hard-fence counter. Bumped by
+// evaluator_fiber_mutation.cpp when fiber->resume_shape_version() !=
+// current layout stamp's shape_version field.
+std::uint64_t Evaluator::get_shape_version_fence_reject_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->shape_version_fence_reject_total.load(std::memory_order_relaxed) : 0;
 }
 
 } // namespace aura::compiler

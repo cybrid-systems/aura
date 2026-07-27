@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_layout_stamp_shape_version_fence_coverage():
+    """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
+
+    Validates the 5-AC contract from issue body:
+      AC1: Phase 5 writes complete stamp (incl. shape_version) into current Fiber
+      AC2: hard compare + shape_version_fence_reject bump on mismatch
+      AC3: ShapeProfiler accessor exposes current_global_shape_version()
+      AC4: shape_version_fence_reject_total counter + query + schema-2255
+      AC5: dual-worker stress test surface
+    """
+    print(f"{B}=== LayoutStamp + shape_version fence coverage (#2255) ==={N}")
+    script = ROOT / "scripts" / "check_layout_stamp_shape_version_fence_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("LayoutStamp + shape_version fence coverage contract rows failed")
+        return 1
+    ok("LayoutStamp + shape_version fence coverage clean")
+    return 0
+
+
 def cmd_soa_single_source_of_truth_coverage():
     """Issue #2254: SoA single source of truth (refine #1629 #1920 #1377).
 
@@ -2057,6 +2083,7 @@ def cmd_gate():
         or cmd_aot_stale_probe_hard_reject_coverage()
         or cmd_hold_aware_steal_scoring_coverage()
         or cmd_soa_single_source_of_truth_coverage()
+        or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2723,6 +2750,7 @@ def main():
         "aot-stale-probe-hard-reject": cmd_aot_stale_probe_hard_reject_coverage,
         "hold-aware-steal-scoring": cmd_hold_aware_steal_scoring_coverage,
         "soa-single-source-of-truth": cmd_soa_single_source_of_truth_coverage,
+        "layout-stamp-shape-version-fence": cmd_layout_stamp_shape_version_fence_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,

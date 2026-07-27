@@ -290,6 +290,11 @@ void ac2250_fiber_resume_fence() {
     CHECK(serve_fiber_h.find("resume_defuse") != std::string::npos, "AC1: resume_defuse field");
     CHECK(serve_fiber_h.find("has_resume_layout_stamp") != std::string::npos,
           "AC1: has_resume_layout_stamp check");
+    // AC #2255: 7th field (shape_version) hard-fence
+    CHECK(serve_fiber_h.find("resume_shape_version_") != std::string::npos,
+          "AC #2255: resume_shape_version_ field on Fiber");
+    CHECK(serve_fiber_h.find("resume_shape_version()") != std::string::npos,
+          "AC #2255: resume_shape_version() getter");
     // AC1: Phase 5 wire-up calls set_resume_layout_stamp before unlock
     CHECK(mut_boundary.find("set_resume_layout_stamp(") != std::string::npos,
           "AC1: Phase 5 wire-up");

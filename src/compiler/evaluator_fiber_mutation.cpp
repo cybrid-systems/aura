@@ -1712,13 +1712,22 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
                                   fiber->resume_flat_gen() != cur.flat_gen ||
                                   fiber->resume_mutation_epoch() != cur.mutation_epoch ||
                                   fiber->resume_env_gen() != cur.env_gen ||
-                                  fiber->resume_defuse() != cur.defuse_version;
+                                  fiber->resume_defuse() != cur.defuse_version ||
+                                  // Issue #2255: 7th field (ShapeProfiler monotonic gen)
+                                  fiber->resume_shape_version() != cur.shape_version;
             if (mismatch) {
                 if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2255: dedicated shape_version fence counter
+                    // (7th field of LayoutStamp). Bumps independently
+                    // so dashboards can isolate shape-version drift
+                    // from arena/defuse drift.
+                    if (fiber->resume_shape_version() != cur.shape_version)
+                        mm->shape_version_fence_reject_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                 }
                 // Force dual-check (mark_invalid=true, only_if_moved=false).
-                scan_live_closures_for_linear_captures(true, false);
+                scan_live_closures_for_linear_captures(true, std::false_type{});
             }
         }
         // Clear the resume fence after consumption (one-shot).
@@ -1778,10 +1787,16 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                                   fiber->resume_flat_gen() != cur.flat_gen ||
                                   fiber->resume_mutation_epoch() != cur.mutation_epoch ||
                                   fiber->resume_env_gen() != cur.env_gen ||
-                                  fiber->resume_defuse() != cur.defuse_version;
+                                  fiber->resume_defuse() != cur.defuse_version ||
+                                  // Issue #2255: 7th field (ShapeProfiler monotonic gen)
+                                  fiber->resume_shape_version() != cur.shape_version;
             if (mismatch) {
                 if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2255: dedicated shape_version fence counter
+                    if (fiber->resume_shape_version() != cur.shape_version)
+                        mm->shape_version_fence_reject_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                 }
                 scan_live_closures_for_linear_captures(true, false);
             }

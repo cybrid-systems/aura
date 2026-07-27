@@ -63,16 +63,26 @@ struct LayoutStamp {
     // defuse_version comes from Evaluator::defuse_version_ (#213
     // cycle 1/2 — boundary publication counter).
     std::uint64_t defuse_version = 0;
+    // Issue #2255: shape_version is the ShapeProfiler monotonic
+    // generation (bumped on invalidate + on_arena_compact). Adds
+    // a 7th field so Fiber resume / JIT deopt / ShapeProfiler
+    // version are coherent under steal × hot-update × shape window.
+    // Default 0 means "never stamped" — legacy LayoutStamp (pre-#2255)
+    // is shape-version-less; the fence treats 0 vs current != 0 as
+    // a mismatch only when current != 0 (the cold-start exception).
+    std::uint64_t shape_version = 0;
 
     constexpr LayoutStamp() noexcept = default;
     constexpr LayoutStamp(std::uint64_t aid, std::uint64_t agen, std::uint16_t fgen,
-                          std::uint64_t mepoch, std::uint64_t egen, std::uint64_t dver) noexcept
+                          std::uint64_t mepoch, std::uint64_t egen, std::uint64_t dver,
+                          std::uint64_t sver = 0) noexcept
         : arena_id(aid)
         , arena_gen(agen)
         , flat_gen(fgen)
         , mutation_epoch(mepoch)
         , env_gen(egen)
-        , defuse_version(dver) {}
+        , defuse_version(dver)
+        , shape_version(sver) {}
 
     // operator== — full 6-field equality. A captured stamp matches
     // the current state only if EVERY field matches (per #2170

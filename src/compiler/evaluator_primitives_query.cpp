@@ -1222,6 +1222,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("layout-stamp-resume-wired", 1);
             insert_kv("schema-2250", 2250);
             insert_kv("issue-2250", 2250);
+            // Issue #2255: ShapeProfiler monotonic generation (7th
+            // LayoutStamp field) hard-fence counter.
+            insert_kv("shape-version-fence-reject-total",
+                      static_cast<std::int64_t>(ev.get_shape_version_fence_reject_total()));
+            insert_kv("shape-version-fence-wired", 1);
+            insert_kv("schema-2255", 2255);
+            insert_kv("issue-2255", 2255);
             // Issue #738: cross-COW + boundary pinning observability.
             insert_kv("cross-cow-invalidations",
                       static_cast<std::int64_t>(ev.get_cross_cow_invalidations()));

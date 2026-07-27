@@ -2783,9 +2783,15 @@ struct CompilerMetrics {
     // Evaluator::current_layout_stamp() mismatches any of the 6
     // fields. Each bump forces scan_live_closures_for_linear_captures
     // (must not execute generation-behind AOT native code).
-    std::atomic<std::uint64_t> layout_stamp_resume_mismatch_total{0}; // #2170
-    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0};        // #2170
-    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};         // #2170
+    std::atomic<std::uint64_t> layout_stamp_resume_mismatch_total{0};
+    // Issue #2255: ShapeProfiler monotonic generation fence.
+    // Bumped when fiber->resume_shape_version() != current layout
+    // stamp's shape_version field (the 7th field added by #2255).
+    // Independent from layout_stamp_resume_mismatch_total so
+    // dashboards can isolate shape-version drift.
+    std::atomic<std::uint64_t> shape_version_fence_reject_total{0}; // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0};      // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};       // #2170
 
     // Issue #2099: HygieneCheckpoint save/restore counters for Agent
     // what-if / self-evo rollback semantics.

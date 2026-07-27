@@ -46,6 +46,17 @@ namespace aura::compiler::shape {
 // Multi-fiber mutate + eval + compact is production-supported under this model.
 inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
 
+// Issue #2255: process-wide shape version accessor for
+// LayoutStamp.shape_version capture in
+// Evaluator::current_layout_stamp(). Reads the file-scope
+// shape_version_bump_count atomic so all instances share a
+// single monotonic counter (Arena compact / invalidate bump it
+// globally; this is the source of truth for resume fence).
+[[nodiscard]] inline std::uint64_t current_global_shape_version() noexcept {
+    extern std::atomic<std::uint64_t> shape_version_bump_count;
+    return shape_version_bump_count.load(std::memory_order_acquire);
+}
+
 class ShapeProfiler {
 public:
     ShapeProfiler();
