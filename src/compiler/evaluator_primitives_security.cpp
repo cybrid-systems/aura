@@ -3447,6 +3447,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"issue-2182", make_int(2182)},
                 {"schema-2207", make_int(2207)},
                 {"issue-2207", make_int(2207)},
+                // Issue #2222: boundary Strict hold alignment
+                {"linear-enforce-effective-mode",
+                 make_int(static_cast<std::int64_t>(static_cast<std::uint8_t>(
+                     aura::core::provenance::linear_enforce_effective_mode())))},
+                {"linear-enforce-boundary-strict-active",
+                 make_int(aura::core::provenance::linear_enforce_boundary_strict_active() ? 1 : 0)},
+                {"force-strict-on-mutation-boundary",
+                 make_int(aura::core::provenance::force_strict_on_mutation_boundary() ? 1 : 0)},
+                {"linear-enforce-mode-forced-boundary-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::g_linear_enforce_mode_forced_boundary_total.load(
+                         std::memory_order_relaxed)))},
+                {"linear-enforce-boundary-align-wired", make_int(1)},
+                {"schema-2222", make_int(2222)},
+                {"issue-2222", make_int(2222)},
             };
             return build_hash(kv);
         });

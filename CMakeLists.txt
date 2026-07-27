@@ -2419,6 +2419,11 @@ aura_add_issue_test(test_blame_complete_commit_gate_2221)
 aura_issue_test_link_llvm_jit(test_blame_complete_commit_gate_2221)
 add_dependencies(all_test_issue_targets test_blame_complete_commit_gate_2221)
 
+# Issue #2222: LinearEnforceMode Soft/Strict boundary + production align.
+aura_add_issue_test(test_linear_enforce_boundary_align_2222)
+aura_issue_test_link_llvm_jit(test_linear_enforce_boundary_align_2222)
+add_dependencies(all_test_issue_targets test_linear_enforce_boundary_align_2222)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

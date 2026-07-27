@@ -82,11 +82,13 @@ inline void grant_render_kernel_principal() noexcept {
 //        - multi-tenant / Strict default K=64 (last 64 Mutation epochs)
 //        - AURA_GRANT_EPOCH_RETAIN=<N> overrides (0 disables auto fence)
 //        - AURA_SANDBOX=off forces K=0 (unit tests must not auto-fence)
-//   8. LinearEnforceMode (#2207 / #2182 / refine #2103):
+//   8. LinearEnforceMode (#2207 / #2182 / #2222 / refine #2103):
 //        - process default Strict (incomplete linear×provenance hard-fails)
 //        - Soft only via set_linear_enforce_mode(Soft), AURA_LINEAR_ENFORCE=soft,
 //          or AURA_SANDBOX=off (unit Soft-path ergonomics)
 //        - AURA_LINEAR_ENFORCE=soft|strict always wins when set (canary)
+//        - MutationBoundary fiber hold forces *effective* Strict (#2222)
+//          even when process Soft (early detect; #2108 composite remains)
 //   9. Coercion provenance miss (#2185 / refine #2102) + blame commit
 //      hard-require (#2221):
 //        - production → reject_apply_on_provenance_miss (no CoercionNode)
@@ -104,8 +106,9 @@ inline void grant_render_kernel_principal() noexcept {
 //        - AURA_SANDBOX=off → Soft (unit Soft-path ergonomics)
 //        - AURA_MUTATE_TYPE_GATE=soft|hard always wins when set
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft
-// fiber + Soft linear enforce + soft coercion apply + observe-only blame
-// commit + tree-walker Allow + Soft mutate type gate.
+// fiber + Soft linear process mode (boundary still forces effective Strict
+// when force-on-boundary is on, #2222) + soft coercion apply + observe-only
+// blame commit + tree-walker Allow + Soft mutate type gate.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;

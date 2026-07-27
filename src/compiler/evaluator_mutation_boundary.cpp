@@ -32,6 +32,7 @@ module;
                                            // aura_reemit_aot_for_dirty
 #include "typed_mutation_audit.h"          // Issue #1589 / #1614 / #1894 / #2145
 #include "core/sandbox.hh"                 // Issue #2145 Strict hard-gate
+#include "core/provenance_tracker.hh"      // Issue #2222: boundary LinearEnforce Strict hold
 #include "core/arena_auto_policy_stats.h"  // in_render_hotpath
 #include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
 #include "serve/fiber.h"                   // Issue #2184: publish MutationSafetySnapshot
@@ -1026,6 +1027,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     if (fine_rollback_)
         ev_->request_fine_rollback_for_next_boundary();
     ev_->enter_mutation_boundary();
+    // Issue #2222: arm fiber-local LinearEnforce Strict hold for the
+    // Guard lifetime so Soft process mode still early-detects incomplete
+    // linear×provenance under Agent mutate (does not flip process-wide
+    // Soft; multi-fiber safe). Nested Guards nest the depth.
+    (void)aura::core::provenance::mutation_boundary_push_linear_enforce_strict();
+    linear_enforce_strict_pushed_ = true;
     // Issue #241: capture panic checkpoint at the OUTERMOST
     // guard only (nested guards share the outer checkpoint).
     // save_panic_checkpoint() snapshots `current-source` so
@@ -1045,8 +1052,14 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
 
 // ── destructor ───────────────────────────────────────────────────────────
 Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
-    if (!ev_ || inert_)
+    if (!ev_ || inert_) {
+        // Issue #2222: if somehow pushed without full enter, still pop.
+        if (linear_enforce_strict_pushed_) {
+            aura::core::provenance::mutation_boundary_pop_linear_enforce_strict();
+            linear_enforce_strict_pushed_ = false;
+        }
         return; // Issue #1590: quota soft-reject never entered a boundary
+    }
     // Issue #1897 / #1818 class: auto-flip success_flag when an
     // exception is unwinding through the Guard and the caller did
     // not mark_failed / set flag=false. Without this, dtor would
@@ -1617,6 +1630,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
     }
+    // Issue #2222: drop fiber-local LinearEnforce Strict hold after
+    // linear revalidate / exit probes so mid-boundary IR still saw
+    // require_complete. Process Soft (if any) is restored effectively.
+    if (linear_enforce_strict_pushed_) {
+        aura::core::provenance::mutation_boundary_pop_linear_enforce_strict();
+        linear_enforce_strict_pushed_ = false;
+    }
     // unique_lock destructor runs automatically here.
 }
 
@@ -1653,6 +1673,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , defuse_version_at_enter_(o.defuse_version_at_enter_)
     , dirty_upward_at_enter_(o.dirty_upward_at_enter_)
     , render_fast_exit_(o.render_fast_exit_)
+    , linear_enforce_strict_pushed_(o.linear_enforce_strict_pushed_)
     , ev_(o.ev_)
     , flag_(o.flag_)
     , lock_(std::move(o.lock_))
@@ -1670,6 +1691,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.defuse_version_at_enter_ = 0;
     o.dirty_upward_at_enter_ = 0;
     o.render_fast_exit_ = false;
+    o.linear_enforce_strict_pushed_ = false; // ownership transferred; do not double-pop
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;
@@ -1699,6 +1721,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         defuse_version_at_enter_ = o.defuse_version_at_enter_;
         dirty_upward_at_enter_ = o.dirty_upward_at_enter_;
         render_fast_exit_ = o.render_fast_exit_;
+        linear_enforce_strict_pushed_ = o.linear_enforce_strict_pushed_;
         ev_ = o.ev_;
         flag_ = o.flag_;
         lock_ = std::move(o.lock_);
@@ -1716,6 +1739,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         o.defuse_version_at_enter_ = 0;
         o.dirty_upward_at_enter_ = 0;
         o.render_fast_exit_ = false;
+        o.linear_enforce_strict_pushed_ = false;
         o.uncaught_at_enter_ = 0;
         o.ev_ = nullptr;
         o.flag_ = nullptr;
