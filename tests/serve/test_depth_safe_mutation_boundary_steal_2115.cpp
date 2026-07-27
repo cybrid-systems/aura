@@ -156,7 +156,9 @@ static void ac3_alias_and_source() {
           "old always-false path removed");
     CHECK(wc.find("steal_skipped_mutation_boundary_total") != std::string::npos,
           "worker bumps skip metric");
-    CHECK(wc.find("is_at_mutation_boundary_safe()") != std::string::npos, "worker depth-safe");
+    // #2184: steal samples MutationSafetySnapshot then calls
+    // is_at_mutation_boundary_safe(snap); empty-paren form is not required.
+    CHECK(wc.find("is_at_mutation_boundary_safe") != std::string::npos, "worker depth-safe");
 }
 
 static void ac4_query_and_metric_bump() {

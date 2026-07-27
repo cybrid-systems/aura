@@ -123,6 +123,11 @@ extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_tot
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total() {
     return Fiber::static_steal_inner_mutation_boundary_deferred_total();
 }
+
+// Issue #2184: process-wide MutationSafetySnapshot mismatch total.
+extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total() {
+    return Fiber::mutation_steal_snapshot_mismatch_total();
+}
 extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total() {
     return Fiber::static_cross_fiber_mutation_safe_steal_total();
 }
@@ -135,6 +140,8 @@ std::atomic<std::uint64_t> Fiber::static_steal_outermost_mutation_boundary_count
 std::atomic<std::uint64_t> Fiber::static_steal_inner_mutation_boundary_deferred_count_{0};
 std::atomic<std::uint64_t> Fiber::static_cross_fiber_mutation_safe_steal_count_{0};
 std::atomic<std::uint64_t> Fiber::static_yield_mutation_boundary_total_{0};
+// Issue #2184: MutationSafetySnapshot mismatch under steal/resume.
+std::atomic<std::uint64_t> Fiber::mutation_steal_snapshot_mismatch_total_{0};
 // The runtime-side hook installer (defined in
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
@@ -361,6 +368,12 @@ void Fiber::resume() {
     // read of an atomic field).
     if (g_fiber_sync_mutation_stack_)
         g_fiber_sync_mutation_stack_(mutation_stack_storage_.load(std::memory_order_acquire));
+    // Issue #2184: post-sync snapshot invariant (debug metric).
+    {
+        const auto snap = mutation_safety_snapshot();
+        if (mutation_safety_snapshot_inconsistent(snap))
+            bump_mutation_steal_snapshot_mismatch();
+    }
     // Issue #485: transfer mutation stack + bump migration stats.
     aura_evaluator_resume_fiber_migration();
     state_.store(FiberState::Running, std::memory_order_release);

@@ -1464,6 +1464,13 @@ void Evaluator::sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept {
     if (per_fiber_stack != nullptr)
         fiber->set_mutation_stack_ptr(per_fiber_stack);
     (void)fiber_stack_pool_detail::ensure_mutation_stack_ptr(fiber);
+    // Issue #2184: republish held/defuse mirrors after resume stack bind so
+    // steal samples see the fiber's true Guard state (not thief TLS).
+    const auto depth = active_mutation_stack_static().size();
+    auto* ev = yield_hook_evaluator();
+    const bool held = (ev && ev->mutation_boundary_held()) || depth > 0;
+    const auto defuse = ev ? ev->defuse_version() : 0;
+    fiber->publish_mutation_safety_mirrors(depth, held, defuse);
 }
 
 // Test seam (#588): push/pop a synthetic checkpoint on the
@@ -1478,12 +1485,28 @@ extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save() {
 
 extern "C" void aura_evaluator_test_push_mutation_checkpoint() {
     Evaluator::active_mutation_stack_static().push_back({0, 0});
+    // Issue #2184: publish fiber-local held/depth mirrors for steal snapshot.
+    if (aura::serve::g_current_fiber) {
+        const auto depth = Evaluator::active_mutation_stack_static().size();
+        std::uint64_t defuse = 0;
+        if (auto* ev = Evaluator::yield_hook_evaluator())
+            defuse = ev->defuse_version();
+        aura::serve::g_current_fiber->publish_mutation_safety_mirrors(depth, depth > 0, defuse);
+    }
 }
 
 extern "C" void aura_evaluator_test_pop_mutation_checkpoint() {
     auto& stack = Evaluator::active_mutation_stack_static();
     if (!stack.empty())
         stack.pop_back();
+    // Issue #2184: refresh fiber-local mirrors after pop.
+    if (aura::serve::g_current_fiber) {
+        const auto depth = stack.size();
+        std::uint64_t defuse = 0;
+        if (auto* ev = Evaluator::yield_hook_evaluator())
+            defuse = ev->defuse_version();
+        aura::serve::g_current_fiber->publish_mutation_safety_mirrors(depth, depth > 0, defuse);
+    }
 }
 
 // Issue #439: C-linkage shims for GC safepoint

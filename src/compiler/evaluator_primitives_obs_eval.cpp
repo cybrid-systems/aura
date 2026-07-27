@@ -65,6 +65,7 @@ extern "C" std::uint64_t aura_fiber_init_aura_result_ok_total();
 extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total();
 extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
+extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
@@ -11728,8 +11729,8 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             else if (outermost_total > 0 || inner_deferred_total > 0 || cross_fiber_total > 0)
                 recommendation = 2; // Phase 1 only (steal split shipped)
             else
-                recommendation = 3; // early-stage (no steal activity yet)
-            auto* ht = FlatHashTable::create(8);
+                recommendation = 3;               // early-stage (no steal activity yet)
+            auto* ht = FlatHashTable::create(32); // #2184 schema keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11767,6 +11768,16 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("envframe-version-refresh", envframe_version_refresh);
             insert_kv("bias-deferred-outermost-total", bias_deferred_outermost_total);
             insert_kv("recommendation", recommendation);
+            // Issue #2184: MutationSafetySnapshot mismatch total + schema
+            insert_kv("mutation-steal-snapshot-mismatch-total",
+                      static_cast<std::int64_t>(
+                          aura_fiber_static_mutation_steal_snapshot_mismatch_total()));
+            insert_kv("mutation_steal_snapshot_mismatch_total",
+                      static_cast<std::int64_t>(
+                          aura_fiber_static_mutation_steal_snapshot_mismatch_total()));
+            insert_kv("mutation-safety-snapshot-wired", 1);
+            insert_kv("schema-2184", 2184);
+            insert_kv("issue-2184", 2184);
             insert_kv("schema", 783);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
