@@ -221,6 +221,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dep_graph_edge_reject_stale_total{0};
     std::atomic<std::uint64_t> dep_graph_generation_total{0};
     std::atomic<std::uint64_t> partial_relower_threshold_used{8};
+    // Issue #2248: Agent-driven adaptive relower threshold from
+    // fallback-reason telemetry (refine #2112 / #2127 / #2190).
+    //   - adaptive_thr_current: current effective partial cost thr
+    //     (basis points * 100 for fixed-point precision)
+    //   - adaptive_thr_raises_total: bad-reason window raised thr
+    //   - adaptive_thr_decays_total: clean-window decayed thr
+    //   - adaptive_thr_bad_window_count: current bad_window_count
+    //   - adaptive_thr_frozen: 1 if AURA_ADAPTIVE_THR=0 (AC3 override)
+    std::atomic<std::uint64_t> adaptive_thr_current{800};
+    std::atomic<std::uint64_t> adaptive_thr_raises_total{0};
+    std::atomic<std::uint64_t> adaptive_thr_decays_total{0};
+    std::atomic<std::uint64_t> adaptive_thr_bad_window_count{0};
+    std::atomic<std::uint64_t> adaptive_thr_frozen{0};
     std::atomic<std::uint64_t> avg_partial_relower_cost_ns{0};
     std::atomic<std::uint64_t> avg_full_relower_cost_ns{0};
     std::atomic<std::uint64_t> partial_vs_full_win_ratio_bp{0};
@@ -8135,6 +8148,20 @@ struct CompilerMetrics {
 // Ok clears last-reason to success (mirror #2093 AotReloadFail::Ok).
 inline void note_relower_fallback(CompilerMetrics& m, RelowerFallbackReason r) noexcept {
     m.relower_last_fallback_reason.store(static_cast<std::uint8_t>(r), std::memory_order_relaxed);
+    // Issue #2248: feed the adaptive policy (closed-loop control
+    // from fallback-reason telemetry). Helper bumps
+    // adaptive_thr_current / raises_total / decays_total /
+    // bad_window_count / frozen counters itself.
+    note_relower_fallback_for_adaptive(r);
+    if (aura::compiler::adaptive_thr_frozen())
+        m.adaptive_thr_frozen.store(1, std::memory_order_relaxed);
+    else
+        m.adaptive_thr_frozen.store(0, std::memory_order_relaxed);
+    const auto cur = aura::compiler::current_adaptive_partial_thr();
+    m.adaptive_thr_current.store(static_cast<std::uint64_t>(cur) * 100, std::memory_order_relaxed);
+    m.adaptive_thr_bad_window_count.store(
+        aura::compiler::adaptive_thr_policy_singleton().bad_window_count,
+        std::memory_order_relaxed);
     switch (r) {
         case RelowerFallbackReason::Ok:
             m.relower_fallback_ok_total.fetch_add(1, std::memory_order_relaxed);
