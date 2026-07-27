@@ -202,8 +202,16 @@ struct LinearProvenanceResult {
     const char* reason = nullptr;
 };
 
-// Issue #2103 / #2182 / #2207: process-wide linear enforce mode for IR
-// hot path + shared validate_linear_provenance callers.
+// Issue #2103 / #2182 / #2207 / #2222: process-wide linear enforce mode
+// for IR hot path + shared validate_linear_provenance callers.
+//
+// ── Decision table (Issue #2222; Agent closed-loop policy) ─────────────
+//   production_defaults (Restricted/Strict sandbox)  → process Strict
+//   AURA_SANDBOX=off / set_linear_enforce_mode(Soft)  → process Soft
+//   inside MutationBoundary (fiber-local depth > 0)   → effective Strict
+//     (when g_force_strict_on_mutation_boundary, default on)
+//   AURA_LINEAR_ENFORCE=strict|soft                  → process override
+//   #2108 composite escape hard-block                → always on (belt)
 //
 // Production default is Strict (#2207): incomplete forensic trail on
 // Move/Borrow/MutBorrow/Drop or dual-path materialize hard-fails (no
@@ -212,6 +220,10 @@ struct LinearProvenanceResult {
 // or AURA_LINEAR_ENFORCE=soft / AURA_SANDBOX=off (security_defaults).
 // Steal/GC may still pass require_complete=true regardless of Soft for
 // live-root safety.
+//
+// Issue #2222: MutationBoundary forces *effective* Strict for the
+// calling fiber without flipping the process-wide Soft mode (multi-
+// fiber safe). Composite #2108 escape hard-block remains independent.
 enum class LinearEnforceMode : std::uint8_t {
     Soft = 0,
     Strict = 1,
@@ -225,6 +237,18 @@ inline std::atomic<std::uint32_t> g_linear_enforce_mode{
 inline std::atomic<std::uint64_t> g_linear_strict_hard_fail_total{0};
 // Soft incomplete samples that continued (require_complete=false path).
 inline std::atomic<std::uint64_t> g_linear_soft_incomplete_continue_total{0};
+
+// Issue #2222: force effective Strict while MutationBoundary holds
+// (fiber-local depth). Default on so Soft process mode still early-
+// detects incomplete linear×provenance under Agent mutate.
+inline std::atomic<std::uint32_t> g_force_strict_on_mutation_boundary{1};
+// Outermost boundary enter that forced Soft process → effective Strict.
+inline std::atomic<std::uint64_t> g_linear_enforce_mode_forced_boundary_total{0};
+// Fiber-local nesting depth for boundary Strict hold.
+inline thread_local int s_linear_enforce_boundary_strict_depth = 0;
+
+// Issue #2222 stamp for query surfaces / Agent discovery.
+inline constexpr int kLinearEnforceBoundaryAlignIssue = 2222;
 
 // Issue #2207: AC4 public alias for Strict hard-fail counter.
 [[nodiscard]] inline std::atomic<std::uint64_t>&
@@ -240,9 +264,53 @@ inline void set_linear_enforce_mode(LinearEnforceMode m) noexcept {
     g_linear_enforce_mode.store(static_cast<std::uint32_t>(m), std::memory_order_relaxed);
 }
 
-// IR hot path / dual-path apply: true when Strict mode is active.
+inline void set_force_strict_on_mutation_boundary(bool on) noexcept {
+    g_force_strict_on_mutation_boundary.store(on ? 1u : 0u, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool force_strict_on_mutation_boundary() noexcept {
+    return g_force_strict_on_mutation_boundary.load(std::memory_order_relaxed) != 0;
+}
+
+// Issue #2222: MutationBoundaryGuard enter — arm fiber-local Strict hold.
+// Returns true when this call armed a new Soft→Strict force (outermost
+// under process Soft). Nested enters only bump depth.
+inline bool mutation_boundary_push_linear_enforce_strict() noexcept {
+    if (!force_strict_on_mutation_boundary())
+        return false;
+    bool forced = false;
+    if (s_linear_enforce_boundary_strict_depth == 0 &&
+        linear_enforce_mode() != LinearEnforceMode::Strict) {
+        g_linear_enforce_mode_forced_boundary_total.fetch_add(1, std::memory_order_relaxed);
+        forced = true;
+    }
+    ++s_linear_enforce_boundary_strict_depth;
+    return forced;
+}
+
+// Issue #2222: MutationBoundaryGuard exit — drop one Strict-hold level.
+inline void mutation_boundary_pop_linear_enforce_strict() noexcept {
+    if (s_linear_enforce_boundary_strict_depth <= 0)
+        return;
+    --s_linear_enforce_boundary_strict_depth;
+}
+
+[[nodiscard]] inline bool linear_enforce_boundary_strict_active() noexcept {
+    return s_linear_enforce_boundary_strict_depth > 0;
+}
+
+// Effective mode: boundary hold wins over process Soft (#2222).
+[[nodiscard]] inline LinearEnforceMode linear_enforce_effective_mode() noexcept {
+    if (s_linear_enforce_boundary_strict_depth > 0)
+        return LinearEnforceMode::Strict;
+    return linear_enforce_mode();
+}
+
+// IR hot path / dual-path apply: true when Strict mode is active OR
+// fiber is under MutationBoundary Strict hold (#2222).
 // Steal/GC enforce paths that always require complete pass true explicitly.
 [[nodiscard]] inline bool linear_enforce_require_complete() noexcept {
+    if (s_linear_enforce_boundary_strict_depth > 0)
+        return true;
     return linear_enforce_mode() == LinearEnforceMode::Strict;
 }
 
@@ -253,12 +321,17 @@ inline void reset_linear_enforce_mode_for_test() noexcept {
                                 std::memory_order_relaxed);
     g_linear_strict_hard_fail_total.store(0, std::memory_order_relaxed);
     g_linear_soft_incomplete_continue_total.store(0, std::memory_order_relaxed);
+    g_force_strict_on_mutation_boundary.store(1, std::memory_order_relaxed);
+    g_linear_enforce_mode_forced_boundary_total.store(0, std::memory_order_relaxed);
+    s_linear_enforce_boundary_strict_depth = 0;
 }
 
 // Restore production default Strict after Soft unit suites (AC1).
 inline void restore_linear_enforce_production_default_for_test() noexcept {
     g_linear_enforce_mode.store(static_cast<std::uint32_t>(LinearEnforceMode::Strict),
                                 std::memory_order_relaxed);
+    g_force_strict_on_mutation_boundary.store(1, std::memory_order_relaxed);
+    s_linear_enforce_boundary_strict_depth = 0;
 }
 
 // Issue #2026: unified linear ownership + provenance consistency check.

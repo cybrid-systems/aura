@@ -9854,6 +9854,25 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("linear-enforce-strict-default", 1);
                 insert_kv("schema-2207", 2207);
                 insert_kv("issue-2207", 2207);
+                // Issue #2222: boundary Strict hold + Soft process alignment.
+                using aura::core::provenance::force_strict_on_mutation_boundary;
+                using aura::core::provenance::g_linear_enforce_mode_forced_boundary_total;
+                using aura::core::provenance::linear_enforce_boundary_strict_active;
+                using aura::core::provenance::linear_enforce_effective_mode;
+                const auto eff = linear_enforce_effective_mode();
+                insert_kv("linear-enforce-effective-mode",
+                          static_cast<std::int64_t>(static_cast<std::uint8_t>(eff)));
+                insert_kv("linear-enforce-boundary-strict-active",
+                          linear_enforce_boundary_strict_active() ? 1 : 0);
+                insert_kv("force-strict-on-mutation-boundary",
+                          force_strict_on_mutation_boundary() ? 1 : 0);
+                insert_kv(
+                    "linear-enforce-mode-forced-boundary-total",
+                    static_cast<std::int64_t>(g_linear_enforce_mode_forced_boundary_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("linear-enforce-boundary-align-wired", 1);
+                insert_kv("schema-2222", 2222);
+                insert_kv("issue-2222", 2222);
             }
             insert_kv("issue", 1631);
             insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 / #2103)

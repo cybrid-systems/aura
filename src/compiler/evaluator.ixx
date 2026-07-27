@@ -12933,6 +12933,9 @@ public:
         // Captured at ctor from arena_policy::in_render_hotpath() (set by
         // RenderHotEntryGuard / enter_render_hotpath).
         bool render_fast_exit_ = false;
+        // Issue #2222: true when ctor armed fiber-local LinearEnforce Strict
+        // hold (must pop in dtor / transfer on move).
+        bool linear_enforce_strict_pushed_ = false;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
