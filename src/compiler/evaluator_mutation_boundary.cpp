@@ -577,6 +577,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // Issue #2105: composite/nested/atomic_batch uses ordered
                     // commit barrier (solve_delta_occurrence → linear revalidate
                     // → invariant audit → Full partial recovery or reject).
+                    // Issue #2260: non-composite hard-gate must prove SOLVED /
+                    // !truncated_reverify (or full-resync) before native continues.
                     if (composite) {
                         typed_audit::CompositeTxnCommitResult ccr{};
                         inv_ok = composite_txn_commit(
@@ -587,10 +589,21 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         if (inv_ok)
                             clear_txn_dirty();
                     } else {
-                        inv_ok = run_typed_mutation_invariant_audit(
-                            mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
-                            epoch_after,
-                            /*composite_mode=*/false, &first);
+                        bool proof_trunc = false;
+                        bool proof_force = false;
+                        const bool proof_ok = boundary_solve_proof_gate(
+                            hard_gate, linear_hint, nodes_changed, &proof_trunc, &proof_force);
+                        if (hard_gate && (!proof_ok || proof_force)) {
+                            first.type_ok = false;
+                            inv_ok = false;
+                            // Fall through to force-rollback path below.
+                        } else {
+                            inv_ok = run_typed_mutation_invariant_audit(
+                                mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
+                                epoch_after,
+                                /*composite_mode=*/false, &first);
+                        }
+                        (void)proof_trunc;
                     }
                     // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
                     // per-category partial recover before structural rollback.

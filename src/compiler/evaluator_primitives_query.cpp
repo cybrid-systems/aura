@@ -6439,6 +6439,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2030", 2030);
                 insert_kv("issue-2030", 2030);
             }
+            // Issue #2260: boundary type-proof hard-gate metrics
+            {
+                using namespace aura::compiler::typed_audit;
+                insert_kv("boundary-solve-hard-gate-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.boundary_solve_hard_gate_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("boundary-solve-full-resync-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.boundary_solve_full_resync_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "boundary-solve-force-rollback-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.boundary_solve_force_rollback_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "boundary-solve-truncated-seen-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.boundary_solve_truncated_seen_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv("boundary-solve-hard-gate-wired",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.boundary_solve_hard_gate_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-2260", 2260);
+                insert_kv("issue-2260", 2260);
+            }
             insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
             insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030
             auto hidx = g_hash_tables.size();

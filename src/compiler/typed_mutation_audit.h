@@ -118,6 +118,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> hard_gate_strict_hold_total{0};
     std::atomic<std::uint64_t> hard_gate_sampled_skip_total{0};
     std::atomic<std::uint32_t> hard_gate_wired{1};
+    // Issue #2260: MutationBoundary type-proof (SOLVED / !truncated_reverify).
+    // Hard-gate exit must full-resync or force-rollback — never silent continue.
+    std::atomic<std::uint64_t> boundary_solve_hard_gate_total{0};
+    std::atomic<std::uint64_t> boundary_solve_full_resync_total{0};
+    std::atomic<std::uint64_t> boundary_solve_force_rollback_total{0};
+    std::atomic<std::uint64_t> boundary_solve_truncated_seen_total{0};
+    std::atomic<std::uint32_t> boundary_solve_hard_gate_wired{1};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
     std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
     std::atomic<std::uint64_t> aot_hotupdate_audits{0};
@@ -783,6 +790,16 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.store(0,
                                                                        std::memory_order_relaxed);
     g_typed_mutation_audit_counters.hard_gate_wired.store(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_hard_gate_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_full_resync_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_force_rollback_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_truncated_seen_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_hard_gate_wired.store(1,
+                                                                         std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_attempts.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_audits.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_ok.store(0, std::memory_order_relaxed);
