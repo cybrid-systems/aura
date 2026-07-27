@@ -566,6 +566,42 @@ public:
         resume_env_hint_ = 0;
         resume_bridge_epoch_hint_ = 0;
     }
+    // Issue #2250: LayoutStamp fence captured at outermost Guard Phase 5
+    // exit. On Fiber::resume / refresh_stale_frames_after_steal, the
+    // stored stamp is hard-compared vs Evaluator::current_layout_stamp();
+    // any mismatch -> bump layout_stamp_resume_mismatch_total + force
+    // dual-check (must not execute generation-behind AOT native code).
+    void set_resume_layout_stamp(std::uint64_t arena_id, std::uint64_t arena_gen,
+                                 std::uint64_t flat_gen, std::uint64_t mutation_epoch,
+                                 std::uint64_t env_gen, std::uint64_t defuse) noexcept {
+        resume_arena_id_ = arena_id;
+        resume_arena_gen_ = arena_gen;
+        resume_flat_gen_ = flat_gen;
+        resume_mutation_epoch_ = mutation_epoch;
+        resume_env_gen_ = env_gen;
+        resume_defuse_ = defuse;
+        resume_layout_stamp_set_ = 1;
+    }
+    [[nodiscard]] std::uint64_t resume_arena_id() const noexcept { return resume_arena_id_; }
+    [[nodiscard]] std::uint64_t resume_arena_gen() const noexcept { return resume_arena_gen_; }
+    [[nodiscard]] std::uint64_t resume_flat_gen() const noexcept { return resume_flat_gen_; }
+    [[nodiscard]] std::uint64_t resume_mutation_epoch() const noexcept {
+        return resume_mutation_epoch_;
+    }
+    [[nodiscard]] std::uint64_t resume_env_gen() const noexcept { return resume_env_gen_; }
+    [[nodiscard]] std::uint64_t resume_defuse() const noexcept { return resume_defuse_; }
+    [[nodiscard]] bool has_resume_layout_stamp() const noexcept {
+        return resume_layout_stamp_set_ != 0;
+    }
+    void clear_resume_layout_stamp() noexcept {
+        resume_arena_id_ = 0;
+        resume_arena_gen_ = 0;
+        resume_flat_gen_ = 0;
+        resume_mutation_epoch_ = 0;
+        resume_env_gen_ = 0;
+        resume_defuse_ = 0;
+        resume_layout_stamp_set_ = 0;
+    }
 
 private:
     uint64_t id_;
@@ -658,6 +694,16 @@ private:
     // Issue #1580: captured at MutationBoundary yield for post-resume refresh.
     std::uint64_t resume_env_hint_ = 0;
     std::uint64_t resume_bridge_epoch_hint_ = 0;
+    // Issue #2250: LayoutStamp fence captured at outermost Guard Phase 5
+    // exit (before unlock). 6-field POD + set flag. Compared at Fiber::resume
+    // / refresh_stale_frames_after_steal; mismatch -> hard fence path.
+    std::uint64_t resume_arena_id_ = 0;
+    std::uint64_t resume_arena_gen_ = 0;
+    std::uint64_t resume_flat_gen_ = 0;
+    std::uint64_t resume_mutation_epoch_ = 0;
+    std::uint64_t resume_env_gen_ = 0;
+    std::uint64_t resume_defuse_ = 0;
+    std::uint32_t resume_layout_stamp_set_ = 0;
     // Issue #1584: cooperative cancel flag.
     std::atomic<bool> cancel_requested_{false};
     // Issue #2118: orch agent body soft mutation-boundary window active

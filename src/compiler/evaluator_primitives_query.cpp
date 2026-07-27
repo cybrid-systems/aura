@@ -1216,6 +1216,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("layout-stamp-schema", static_cast<std::int64_t>(2170));
             insert_kv("layout-stamp-issue", 2170);
             insert_kv("layout-stamp-active", 1);
+            // Issue #2250: LayoutStamp fence on Fiber resume/steal
+            insert_kv("layout-stamp-resume-mismatch-total",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_resume_mismatch_total()));
+            insert_kv("layout-stamp-resume-wired", 1);
+            insert_kv("schema-2250", 2250);
+            insert_kv("issue-2250", 2250);
             // Issue #738: cross-COW + boundary pinning observability.
             insert_kv("cross-cow-invalidations",
                       static_cast<std::int64_t>(ev.get_cross_cow_invalidations()));

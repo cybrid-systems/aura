@@ -1360,6 +1360,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // helper so the last-stamp fields stay consistent regardless of
         // which path bumps the underlying generations).
         ev_->publish_layout_stamp();
+        // Issue #2250: write current LayoutStamp into the current
+        // Fiber (fence captured BEFORE unlock so a concurrent reemit
+        // by another fiber of the same Evaluator is detectable at
+        // Fiber::resume / refresh_stale_frames_after_steal). 6-field
+        // POD copied by value (LayoutStamp is trivially copyable
+        // per #2170 contract).
+        if (auto* cur_fiber = current_fiber()) {
+            const auto stamp = ev_->current_layout_stamp();
+            cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
+                                               stamp.mutation_epoch, stamp.env_gen,
+                                               stamp.defuse_version);
+        }
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
             m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
             m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
@@ -1873,6 +1885,15 @@ std::uint64_t Evaluator::get_layout_stamp_last_flat_gen() const noexcept {
 std::uint64_t Evaluator::get_layout_stamp_publish_total() const noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     return m ? m->layout_stamp_publish_total.load(std::memory_order_relaxed) : 0;
+}
+
+// Issue #2250: LayoutStamp fence on Fiber resume/steal. Bumped by
+// evaluator_fiber_mutation.cpp when fiber-stored stamp vs
+// current_layout_stamp() mismatches any of the 6 fields. Read by
+// query:stable-ref-stats primitive.
+std::uint64_t Evaluator::get_layout_stamp_resume_mismatch_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->layout_stamp_resume_mismatch_total.load(std::memory_order_relaxed) : 0;
 }
 
 } // namespace aura::compiler

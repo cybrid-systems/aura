@@ -2762,9 +2762,15 @@ struct CompilerMetrics {
     //                                   (relaxed for stats-only)
     //   - layout_stamp_last_flat_gen:  last published LayoutStamp.flat_gen
     //                                   (relaxed for stats-only)
-    std::atomic<std::uint64_t> layout_stamp_publish_total{0};  // #2170
-    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0}; // #2170
-    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};  // #2170
+    std::atomic<std::uint64_t> layout_stamp_publish_total{0};
+    // Issue #2250: LayoutStamp fence on Fiber resume/steal. Bumped
+    // by evaluator_fiber_mutation.cpp when fiber-stored stamp vs
+    // Evaluator::current_layout_stamp() mismatches any of the 6
+    // fields. Each bump forces scan_live_closures_for_linear_captures
+    // (must not execute generation-behind AOT native code).
+    std::atomic<std::uint64_t> layout_stamp_resume_mismatch_total{0}; // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0};        // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};         // #2170
 
     // Issue #2099: HygieneCheckpoint save/restore counters for Agent
     // what-if / self-evo rollback semantics.

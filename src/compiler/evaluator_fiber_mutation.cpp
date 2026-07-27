@@ -1701,6 +1701,28 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
         auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
         hint_env = fiber->resume_env_hint();
         expected_epoch = fiber->resume_bridge_epoch_hint();
+        // Issue #2250: LayoutStamp fence — hard compare fiber-stored
+        // stamp vs current. Any 6-field mismatch -> bump
+        // layout_stamp_resume_mismatch_total + force dual-check
+        // (must not execute generation-behind AOT native code).
+        if (fiber->has_resume_layout_stamp()) {
+            const auto cur = current_layout_stamp();
+            const bool mismatch = fiber->resume_arena_id() != cur.arena_id ||
+                                  fiber->resume_arena_gen() != cur.arena_gen ||
+                                  fiber->resume_flat_gen() != cur.flat_gen ||
+                                  fiber->resume_mutation_epoch() != cur.mutation_epoch ||
+                                  fiber->resume_env_gen() != cur.env_gen ||
+                                  fiber->resume_defuse() != cur.defuse_version;
+            if (mismatch) {
+                if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                // Force dual-check (mark_invalid=true, only_if_moved=false).
+                scan_live_closures_for_linear_captures(true, false);
+            }
+        }
+        // Clear the resume fence after consumption (one-shot).
+        fiber->clear_resume_layout_stamp();
     }
 
     // 2) EnvFrame dual-epoch refresh under resume hints.
@@ -1748,6 +1770,23 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
         hint_env = fiber->resume_env_hint();
         expected_epoch = fiber->resume_bridge_epoch_hint();
+        // Issue #2250: same LayoutStamp fence for post-join path.
+        if (fiber->has_resume_layout_stamp()) {
+            const auto cur = current_layout_stamp();
+            const bool mismatch = fiber->resume_arena_id() != cur.arena_id ||
+                                  fiber->resume_arena_gen() != cur.arena_gen ||
+                                  fiber->resume_flat_gen() != cur.flat_gen ||
+                                  fiber->resume_mutation_epoch() != cur.mutation_epoch ||
+                                  fiber->resume_env_gen() != cur.env_gen ||
+                                  fiber->resume_defuse() != cur.defuse_version;
+            if (mismatch) {
+                if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                scan_live_closures_for_linear_captures(true, false);
+            }
+        }
+        fiber->clear_resume_layout_stamp();
     }
 
     const auto refreshed = refresh_stale_frames_after_steal(hint_env, expected_epoch);
