@@ -1734,6 +1734,34 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_hold_aware_steal_scoring_coverage():
+    """Issue #2253: hold-aware work-steal scoring (depth + hold_us + priority boost).
+
+    Validates the 4-AC contract from issue body:
+      AC1: WorkerThread::steal() ranks with integer score
+           (+100 outermost-safe + +50 priority boost
+            + +20 short-yield - 40 recent hold > p90)
+      AC2: long-hold victims remain steal-deferred until outermost-safe
+      AC3: scoring is arithmetic over already-loaded snapshot fields;
+           steal_score_selected_total + bucket histogram bumps
+      AC4: mixed-MB-load steal distribution test source-cite
+    """
+    print(f"{B}=== hold-aware work-steal scoring coverage (#2253) ==={N}")
+    script = ROOT / "scripts" / "check_hold_aware_steal_scoring_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("hold-aware work-steal scoring coverage contract rows failed")
+        return 1
+    ok("hold-aware work-steal scoring coverage clean")
+    return 0
+
+
 def cmd_aot_stale_probe_hard_reject_coverage():
     """Issue #2252: hard-reject native execution when AOT slot table_generation != live epoch.
 
@@ -2001,6 +2029,7 @@ def cmd_gate():
         or cmd_layout_stamp_fence_coverage()
         or cmd_env_gen_fence_coverage()
         or cmd_aot_stale_probe_hard_reject_coverage()
+        or cmd_hold_aware_steal_scoring_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2665,6 +2694,7 @@ def main():
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,
         "aot-stale-probe-hard-reject": cmd_aot_stale_probe_hard_reject_coverage,
+        "hold-aware-steal-scoring": cmd_hold_aware_steal_scoring_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,

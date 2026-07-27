@@ -334,6 +334,14 @@ public:
     void clear_steal_priority_boost() noexcept {
         steal_priority_boost_.store(0, std::memory_order_release);
     }
+    // Issue #2253: last-hold accessor (microseconds). Set by
+    // Scheduler::on_long_mutation_held on outermost Guard dtor.
+    [[nodiscard]] std::uint64_t last_hold_us() const noexcept {
+        return last_hold_us_.load(std::memory_order_acquire);
+    }
+    void set_last_hold_us(std::uint64_t us) noexcept {
+        last_hold_us_.store(us, std::memory_order_release);
+    }
     [[nodiscard]] std::uint64_t cross_fiber_mutation_safe_steal_count() const noexcept {
         return cross_fiber_mutation_safe_steal_count_.load(std::memory_order_relaxed);
     }
@@ -649,6 +657,12 @@ private:
     std::atomic<std::uint64_t> gc_pause_attributed_to_mutation_count_{0};
     // Issue #1492: 1 when apply_starvation_mitigation raised steal priority.
     std::atomic<std::uint32_t> steal_priority_boost_{0};
+    // Issue #2253: last-hold hint for hold-aware steal scoring. Set
+    // by Scheduler::on_long_mutation_held whenever a fiber releases
+    // an outermost Guard (the duration of the outermost hold).
+    // Read at the steal site to deprioritize long-hold victims when
+    // p90 > 100 ms (per AC1 score -40 penalty).
+    std::atomic<std::uint64_t> last_hold_us_{0};
     int affinity_ = -1; // -1 = any worker, [0,N) = pinned to specific worker
     ucontext_t ctx_;
     void* stack_ = nullptr;

@@ -925,7 +925,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp` (#2188) [domain_suite, theme_serve] — AC1: under live Guard (depth≥1), recv(wait=true) does not yield;
 - `tests/serve/test_mutation_safety_snapshot_steal_2184.cpp` (#2184) [domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
 - `tests/serve/test_orch_agent_mutation_boundary_2118.cpp` (#2118) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false
-- `tests/serve/test_orchestration_steal_boost.cpp` (—) [small, domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
+- `tests/serve/test_orchestration_steal_boost.cpp` (—) [domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp` (—) [domain_suite, theme_serve] — test_panic_checkpoint_fiber_resume_safety.cpp — Issue #592:
 - `tests/compiler/test_pcv_children_safe_default_migration.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2036; children_ is PersistentChildVector; children_default
 - `tests/compiler/test_per_defuse_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_per_defuse_batch.cpp — batch driver for per_defuse_index family.
