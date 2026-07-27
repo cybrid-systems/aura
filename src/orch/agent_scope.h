@@ -1,9 +1,14 @@
-// agent_scope.h — Issue #2083 / #2161: opt-in scoped multi-agent coordination.
+// agent_scope.h — Issue #2083 / #2161: scoped multi-agent coordination.
+// Issue #2226: promoted from opt-in feature flag to default multi-agent
+// supervision root. AgentScope is now always available under aura::orch
+// (the class body no longer lives inside `#ifdef AURA_ENABLE_AGENT_SCOPE`).
 //
-// STATUS: Advanced / Experimental (Issue #2083, feature-flagged).
-// Lives behind AURA_ENABLE_AGENT_SCOPE so the MVP linter
-// (scripts/check_orch_mvp_scope.py --strict) stays green by default.
-// Commercial multi-agent builds define this flag to opt in.
+// STATUS: Default / Documented multi-agent supervision surface.
+// MVP linter (scripts/check_orch_mvp_scope.py --strict) still forbids
+// the process-global registry identifiers removed in #1966
+// (AgentRegistry / global_agent_registry / conduct_parallel), so the
+// "no global registry" contract from #2083 is preserved by the linter,
+// not by a build-time gate.
 // Issue #2161: scope-level watch_all (batch liveness + optional stall cancel).
 //
 // Distinct from evaluator-local OrchAgentNameTable (#2078) and
@@ -15,13 +20,13 @@
 //                         semantics, bound to an explicit owner (Scheduler
 //                         reference). NOT a global registry.
 //
-// Rules (per Issue #2083 AC4):
+// Rules (per Issue #2083 AC4 / #2226):
 //   - No process-global registry (the orch MVP scope linter still forbids
 //     the multi-agent process-static identifiers removed in #1966).
 //   - Scope destructor is the supervision root (cancel + best-effort drain
 //     + reservation release, mirroring join_agents #2082 contract).
-//   - Default builds keep the MVP linter green; the class body lives inside
-//     #ifdef AURA_ENABLE_AGENT_SCOPE so opt-in is explicit per TU.
+//   - Default-on (no #define required). Documented in src/orch/README.md
+//     as the supported multi-agent supervision root.
 
 #ifndef AURA_ORCH_AGENT_SCOPE_H
 #define AURA_ORCH_AGENT_SCOPE_H
@@ -33,8 +38,6 @@
 #include <optional>
 #include <span>
 #include <vector>
-
-#ifdef AURA_ENABLE_AGENT_SCOPE
 
 namespace aura::orch {
 
@@ -180,7 +183,5 @@ private:
 };
 
 } // namespace aura::orch
-
-#endif // AURA_ENABLE_AGENT_SCOPE
 
 #endif // AURA_ORCH_AGENT_SCOPE_H
