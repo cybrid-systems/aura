@@ -2290,6 +2290,11 @@ add_dependencies(all_test_issue_targets test_subtype_constraint_meet_2195)
 aura_add_issue_test(test_mutation_memory_blame_2196)
 aura_issue_test_link_llvm_jit(test_mutation_memory_blame_2196)
 add_dependencies(all_test_issue_targets test_mutation_memory_blame_2196)
+
+# Issue #2197: post-steal / GC-window linear×type provenance revalidate (R6).
+aura_add_issue_test(test_post_steal_linear_revalidate_2197)
+aura_issue_test_link_llvm_jit(test_post_steal_linear_revalidate_2197)
+add_dependencies(all_test_issue_targets test_post_steal_linear_revalidate_2197)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

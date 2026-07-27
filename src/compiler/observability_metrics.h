@@ -7291,6 +7291,15 @@ struct CompilerMetrics {
     // (also contributes to gc_defer_orphan_cleared_total for #2086 dashboards).
     std::atomic<std::uint64_t> fiber_migration_refresh_total{0};          // #2194
     std::atomic<std::uint64_t> fiber_migration_gc_defer_cleared_total{0}; // #2194
+    // Issue #2197: post-steal / GC-window linear×type provenance revalidate (R6).
+    // post_steal_linear_revalidate_total — every steal/GC finalize revalidate run
+    // post_steal_linear_hard_fail_total — Strict + incomplete/mismatch (no silent continue)
+    // post_steal_linear_soft_incomplete_total — Soft incomplete (metric-only continue)
+    // post_steal_linear_force_audit_armed — last arm state (1=force Full audit next boundary)
+    std::atomic<std::uint64_t> post_steal_linear_revalidate_total{0};      // #2197
+    std::atomic<std::uint64_t> post_steal_linear_hard_fail_total{0};       // #2197
+    std::atomic<std::uint64_t> post_steal_linear_soft_incomplete_total{0}; // #2197
+    std::atomic<std::uint8_t> post_steal_linear_force_audit_armed{0};      // #2197
     // Issue #2086: bumped when arm_gc_defer_pending_panic_for overflows
     // the bounded kMaxArmedEvaluators=64 table (process-wide-only arm).
     std::atomic<std::uint64_t> gc_defer_table_overflow_total{0}; // #2086

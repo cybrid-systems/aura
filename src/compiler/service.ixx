@@ -10253,6 +10253,12 @@ private:
         metrics_.linear_ownership_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
 
         (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
+        // Issue #2197: post-GC-window linear×type provenance revalidate (R6).
+        // Soft = metric-only incomplete; Strict = hard-fail + force-audit arm.
+        // mark_all_linear=false avoids re-invalidating already-scanned captures
+        // (scan above already mark_invalid=true for all linear).
+        (void)evaluator_.revalidate_linear_type_provenance_after_migration(
+            Evaluator::kLinearGcRootAuditInvalidate, /*mark_all_linear=*/false);
         // Issue #2131: PostAudit phase — close GcCoordScope if active.
         gc_coord::note_post_audit_if_active();
         // Publish complete linear+GC window to concurrent apply / fiber steal.
