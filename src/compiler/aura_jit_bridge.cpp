@@ -243,9 +243,11 @@ extern "C" void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n) {
 //
 // C-linkage setters for `long_mutation_threshold_us` (default 500'000 µs
 // = 500ms) and `long_mutation_strict_mode` (0 = metric-only,
-// 1 = abort/rollback on extreme holds >= max_extreme_mutation_us).
-// Read in MutationBoundaryGuard::~MutationBoundaryGuard (evaluator.ixx)
-// via std::atomic load — racy by design (best-effort policy).
+// 1 = abort/rollback on extreme holds >= max_extreme_mutation_us /
+// hard_timeout_us when set). Issue #2199: AURA_MUTATION_HOLD_STRICT=1
+// also enables force-fail in the Guard dtor (env OR atomic).
+// Read in MutationBoundaryGuard::~MutationBoundaryGuard via std::atomic
+// load — racy by design (best-effort policy).
 extern "C" void aura_set_long_mutation_threshold_us(std::uint64_t us) {
     if (g_aot_metrics)
         g_aot_metrics->long_mutation_threshold_us.store(us, std::memory_order_relaxed);
@@ -271,6 +273,24 @@ extern "C" std::uint64_t aura_get_long_mutation_strict_mode(void) {
 extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
     if (g_aot_metrics)
         g_aot_metrics->max_extreme_mutation_us.store(us, std::memory_order_relaxed);
+}
+
+// Issue #2199: optional hard_timeout_us override (0 = use max_extreme).
+extern "C" void aura_set_hard_timeout_us(std::uint64_t us) {
+    if (g_aot_metrics)
+        g_aot_metrics->hard_timeout_us.store(us, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_get_hard_timeout_us(void) {
+    if (g_aot_metrics)
+        return g_aot_metrics->hard_timeout_us.load(std::memory_order_relaxed);
+    return 0;
+}
+
+extern "C" std::uint64_t aura_get_long_mutation_forced_abort_total(void) {
+    if (g_aot_metrics)
+        return g_aot_metrics->long_mutation_forced_abort_total.load(std::memory_order_relaxed);
+    return 0;
 }
 
 // ── Issue #1443 AC3 follow-up + #1445 AC6: long-mutation scheduler hook ──

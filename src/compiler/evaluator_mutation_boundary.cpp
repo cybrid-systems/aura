@@ -36,14 +36,13 @@ module;
 #include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
 #include "serve/fiber.h"                   // Issue #2184: publish MutationSafetySnapshot
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 #include <utility>
 #include <vector>
 
@@ -1057,7 +1056,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 b.hist_bucket = 7;
             // Issue #1493: adaptive safepoint (may touch GC hooks; not a metric atomic).
             ev_->adapt_gc_frequency_from_hold_us(uus);
-            // Issue #1443: threshold load (1 relaxed load; not a write).
+            // Issue #1443 / #2199: threshold load (1 relaxed load; not a write).
+            // Soft path: metrics + scheduler hook only when hold > threshold.
+            // Strict path (long_mutation_strict_mode / AURA_MUTATION_HOLD_STRICT):
+            // hold > hard_timeout (hard_timeout_us if set, else max_extreme)
+            // → force *flag_=false BEFORE exit_mutation_boundary (rollback).
+            // Nested guards never enter this block (outermost-only + enter_ts_).
             const auto max_us = static_cast<std::int64_t>(
                 m->long_mutation_threshold_us.load(std::memory_order_relaxed));
             if (us > max_us) {
@@ -1066,11 +1070,30 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 b.contention_us = uus;
                 b.long_fiber_id = aura_fiber_current_id();
                 b.update_max = true;
+                // AC4: scheduler hook still fires on too_long (steal priority).
                 ::aura_invoke_long_mutation_scheduler_hook(b.long_fiber_id, uus);
                 const auto extreme_us = static_cast<std::int64_t>(
                     m->max_extreme_mutation_us.load(std::memory_order_relaxed));
-                if (m->long_mutation_strict_mode.load(std::memory_order_relaxed) != 0 &&
-                    us > extreme_us) {
+                // Issue #2199: hard_timeout_us overrides extreme when non-zero.
+                const auto hard_cfg = m->hard_timeout_us.load(std::memory_order_relaxed);
+                const auto hard_us = static_cast<std::int64_t>(
+                    hard_cfg != 0 ? hard_cfg : static_cast<std::uint64_t>(extreme_us));
+                // Issue #2199: AURA_MUTATION_HOLD_STRICT=1 aligns with
+                // long_mutation_strict_mode (process-wide production knob).
+                static const bool env_hold_strict = []() noexcept {
+                    const char* e = std::getenv("AURA_MUTATION_HOLD_STRICT");
+                    return e != nullptr && e[0] != '\0' && e[0] != '0' && e[0] != 'f' &&
+                           e[0] != 'F' && e[0] != 'n' && e[0] != 'N';
+                }();
+                const bool strict = env_hold_strict || m->long_mutation_strict_mode.load(
+                                                           std::memory_order_relaxed) != 0;
+                if (us > extreme_us)
+                    b.extreme = 1;
+                // Strict force-fail: outermost only (this block), after
+                // threshold exceed, when hold exceeds hard timeout.
+                // AC5: only flips success flag — does not unlock early
+                // (exit_mutation_boundary / depth / unlock still ordered).
+                if (strict && us > hard_us) {
                     b.extreme = 1;
                     b.force_fail = true;
                 }
@@ -1114,8 +1137,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                                   std::memory_order_relaxed);
                 if (b.extreme)
                     m->long_mutation_extreme_total.fetch_add(1, std::memory_order_relaxed);
-                if (b.force_fail && flag_)
-                    *flag_ = false;
+                // Issue #2199 AC1: force-fail BEFORE exit_mutation_boundary.
+                // Must also re-sync `success` (captured earlier from *flag_)
+                // so rollback + linear post-failure enforce actually run.
+                if (b.force_fail) {
+                    if (flag_)
+                        *flag_ = false;
+                    success = false;
+                    m->long_mutation_forced_abort_total.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             // Export-ready: one load + conditional store (avoid write every dtor).
             if (m->runtime_obs_export_ready.load(std::memory_order_relaxed) == 0)

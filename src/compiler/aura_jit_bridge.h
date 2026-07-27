@@ -586,6 +586,17 @@ void aura_set_long_mutation_scheduler_hook(aura_long_mutation_scheduler_hook_fn 
 void aura_invoke_long_mutation_scheduler_hook(std::uint64_t fiber_id, std::uint64_t duration_us);
 std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void);
 
+// Issue #1443 / #2199: long-mutation hold policy knobs.
+void aura_set_long_mutation_threshold_us(std::uint64_t us);
+std::uint64_t aura_get_long_mutation_threshold_us(void);
+void aura_set_long_mutation_strict_mode(int on);
+std::uint64_t aura_get_long_mutation_strict_mode(void);
+void aura_set_max_extreme_mutation_us(std::uint64_t us);
+// Issue #2199: hard_timeout_us (0 = use max_extreme) + forced-abort total.
+void aura_set_hard_timeout_us(std::uint64_t us);
+std::uint64_t aura_get_hard_timeout_us(void);
+std::uint64_t aura_get_long_mutation_forced_abort_total(void);
+
 } // extern "C"
 
 #endif // AURA_COMPILER_AURA_JIT_BRIDGE_H
