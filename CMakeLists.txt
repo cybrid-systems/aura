@@ -1849,6 +1849,9 @@ add_dependencies(all_test_issue_targets test_rollback_by_marker_2237)
 aura_add_issue_test(test_aot_anonymous_closure_policy_2238)
 aura_issue_test_link_llvm_jit(test_aot_anonymous_closure_policy_2238)
 add_dependencies(all_test_issue_targets test_aot_anonymous_closure_policy_2238)
+aura_add_issue_test(test_query_by_marker_provenance_2242)
+aura_issue_test_link_llvm_jit(test_query_by_marker_provenance_2242)
+add_dependencies(all_test_issue_targets test_query_by_marker_provenance_2242)
 # Issue #2098: clone_macro_body schema_cache + dirty/provenance
 # propagation for rest-param + nested paths (metrics layer + tests).
 aura_add_issue_test(test_macro_schema_dirty_propagate)
