@@ -1669,6 +1669,15 @@ AURA_COMPILER_METRICS_FIELD(mutation_boundary_steal_safe_total)
 // Issue #1638: SoA EnvFrame dual-path consistency + mutation_log compact.
 AURA_COMPILER_METRICS_FIELD(dual_path_stale_fallback_total)
 AURA_COMPILER_METRICS_FIELD(mutation_log_compact_bytes_saved)
+// Issue #2201: mutation-log pressure + forced/guard compact signals.
+AURA_COMPILER_METRICS_FIELD(mutation_log_high_water)
+AURA_COMPILER_METRICS_FIELD(mutation_log_pressure_score_bp)
+AURA_COMPILER_METRICS_FIELD(mutation_log_pressure_flag)
+AURA_COMPILER_METRICS_FIELD(mutation_log_forced_compact_total)
+AURA_COMPILER_METRICS_FIELD(mutation_log_guard_compact_total)
+AURA_COMPILER_METRICS_FIELD(mutation_log_last_compact_dropped)
+AURA_COMPILER_METRICS_FIELD(mutation_log_last_compact_bytes)
+AURA_COMPILER_METRICS_FIELD(mutation_log_soft_threshold)
 AURA_COMPILER_METRICS_FIELD(env_frame_version_drift_prevented)
 // Issue #2116: dual-path desync hard-fail policy.
 AURA_COMPILER_METRICS_FIELD(dual_path_desync_hard_fail_total)

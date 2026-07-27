@@ -8,8 +8,11 @@ module;
 #include "messaging_bridge.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
+#include "security_capabilities.h" // Issue #2201: kEffectMutate gate on compact
+#include "primitives_meta.h"       // kPrimSecSandboxed / kPrimSafetyMutates
 #include "core/gc_hooks.h"
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include <algorithm>                       // std::min
 
 module aura.compiler.evaluator;
 
@@ -123,9 +126,15 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1362: compact committed mutation log prefix (keep recent tail).
-    // (mutation-log-compact [keep-recent=1000] [keep-rolledback?=true]) → dropped count
+    // Issue #1362 / #2201: compact committed mutation log prefix.
+    // (mutation-log-compact [keep-recent=1000] [keep-rolledback?=true]) → dropped
+    // AC3: capability-gated like mutate ops (kEffectMutate).
+    // Agent policy: compact before long composite txns / after N rounds
+    // when pressure-flag=1 or pressure-score-bp ≥ 10000.
     add("mutation-log-compact", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        using ::aura::compiler::security::kEffectMutate;
+        if (!ev.require_effect(kEffectMutate, "mutation-log-compact"))
+            return make_int(-1); // denied
         if (!ev.workspace_flat_)
             return make_int(0);
         std::size_t keep_recent = 1000;
@@ -136,61 +145,154 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         if (a.size() >= 2 && is_bool(a[1]))
             keep_rolledback = as_bool(a[1]);
+        const auto before = ev.workspace_flat_->mutation_log_size();
         const auto dropped = ev.workspace_flat_->compact_mutation_log(keep_recent, keep_rolledback);
+        const auto after = ev.workspace_flat_->mutation_log_size();
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            // Issue #2201: explicit Agent forced compact signal.
+            m->mutation_log_forced_compact_total.fetch_add(1, std::memory_order_relaxed);
+            m->mutation_log_last_compact_dropped.store(static_cast<std::uint64_t>(dropped),
+                                                       std::memory_order_relaxed);
+            auto hw = m->mutation_log_high_water.load(std::memory_order_relaxed);
+            while (before > hw &&
+                   !m->mutation_log_high_water.compare_exchange_weak(
+                       hw, static_cast<std::uint64_t>(before), std::memory_order_relaxed)) {
+            }
+            const auto soft = m->mutation_log_soft_threshold.load(std::memory_order_relaxed);
+            const auto soft_n = soft == 0 ? 5'000ull : soft;
+            const auto score =
+                soft_n == 0
+                    ? 0ull
+                    : std::min<std::uint64_t>(
+                          10'000ull, (static_cast<std::uint64_t>(after) * 10'000ull) / soft_n);
+            m->mutation_log_pressure_score_bp.store(score, std::memory_order_relaxed);
+            m->mutation_log_pressure_flag.store(after >= soft_n ? 1 : 0, std::memory_order_relaxed);
+        }
         return make_int(static_cast<std::int64_t>(dropped));
     });
+    {
+        ::aura::compiler::PrimMeta meta{};
+        meta.pure = false;
+        meta.required_effects = ::aura::compiler::security::kEffectMutate;
+        meta.effect_enforced_in_body = true;
+        meta.security_level = ::aura::compiler::kPrimSecSandboxed;
+        meta.safety_flags = ::aura::compiler::kPrimSafetyMutates;
+        meta.category = "security-gated";
+        meta.doc = "mutation-log-compact (#1362/#2201); requires Mutate effect";
+        ev.primitives().set_meta_for_name("mutation-log-compact", std::move(meta));
+    }
 
-    // Issue #1362: compaction observability hash (size/compacted/ops).
+    // Issue #1362 / #2201: compaction + pressure observability hash.
     // Do NOT reuse query:mutation-log-stats — that name is the #553
-    // integer sum of atomic-batch + steal/rollback counters (registered
-    // in register_query_primitives). Overwriting it broke late4
-    // test_issue_557_observability and every #553 int regression.
-    ObservabilityPrims::register_stats_impl(
-        "query:mutation-log-compact-stats", [&ev](const auto&) -> EvalValue {
-            if (!ev.workspace_flat_)
-                return make_void();
-            auto* ht = FlatHashTable::create(16);
-            if (!ht)
-                return make_void();
-            auto put = [&](const char* k, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                EvalValue val_ev = make_int(v);
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = val_ev.val;
-                        ht->size++;
-                        return;
-                    }
+    // integer sum of atomic-batch + steal/rollback counters.
+    // Alias query:mutation-log-pressure for Agent discoverability (#2201).
+    auto mutation_log_pressure_stats = [&ev](const auto&) -> EvalValue {
+        if (!ev.workspace_flat_)
+            return make_void();
+        // Capacity power-of-two; #2201 adds pressure keys.
+        auto* ht = FlatHashTable::create(64);
+        if (!ht)
+            return make_void();
+        auto put = [&](const char* k, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            EvalValue val_ev = make_int(v);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = val_ev.val;
+                    ht->size++;
+                    return;
                 }
-            };
-            auto* flat = ev.workspace_flat_;
-            put("log-size", static_cast<std::int64_t>(flat->mutation_count()));
-            put("compacted-records",
-                static_cast<std::int64_t>(flat->mutation_log_compacted_records()));
-            put("compact-ops", static_cast<std::int64_t>(flat->mutation_log_compact_ops()));
-            put("auto-threshold",
-                static_cast<std::int64_t>(aura::ast::FlatAST::kMutationLogAutoCompactThreshold));
-            put("schema", 1362);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        });
-
+            }
+        };
+        auto* flat = ev.workspace_flat_;
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto log_sz = static_cast<std::uint64_t>(flat->mutation_log_size());
+        // Live high-water / pressure stamp on every poll (Agent tick).
+        std::uint64_t soft_n = 5'000;
+        if (m) {
+            soft_n = m->mutation_log_soft_threshold.load(std::memory_order_relaxed);
+            if (soft_n == 0)
+                soft_n = 5'000;
+            auto hw = m->mutation_log_high_water.load(std::memory_order_relaxed);
+            while (log_sz > hw && !m->mutation_log_high_water.compare_exchange_weak(
+                                      hw, log_sz, std::memory_order_relaxed)) {
+            }
+            const auto score =
+                soft_n == 0 ? 0ull
+                            : std::min<std::uint64_t>(10'000ull, (log_sz * 10'000ull) / soft_n);
+            m->mutation_log_pressure_score_bp.store(score, std::memory_order_relaxed);
+            m->mutation_log_pressure_flag.store(log_sz >= soft_n ? 1 : 0,
+                                                std::memory_order_relaxed);
+        }
+        const auto auto_th =
+            static_cast<std::int64_t>(aura::ast::FlatAST::kMutationLogAutoCompactThreshold);
+        put("log-size", static_cast<std::int64_t>(log_sz));
+        put("mutation-log-size", static_cast<std::int64_t>(log_sz));
+        put("compacted-records", static_cast<std::int64_t>(flat->mutation_log_compacted_records()));
+        put("compact-ops", static_cast<std::int64_t>(flat->mutation_log_compact_ops()));
+        put("auto-threshold", auto_th);
+        put("guard-compact-threshold", static_cast<std::int64_t>(64 * 1024));
+        // Issue #2201 pressure surface
+        put("high-water", m ? static_cast<std::int64_t>(
+                                  m->mutation_log_high_water.load(std::memory_order_relaxed))
+                            : static_cast<std::int64_t>(log_sz));
+        put("pressure-score-bp",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_log_pressure_score_bp.load(std::memory_order_relaxed))
+              : 0);
+        put("pressure-flag", m ? static_cast<std::int64_t>(
+                                     m->mutation_log_pressure_flag.load(std::memory_order_relaxed))
+                               : 0);
+        put("soft-threshold", static_cast<std::int64_t>(soft_n));
+        put("forced-compact-total",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_log_forced_compact_total.load(std::memory_order_relaxed))
+              : 0);
+        put("guard-compact-total",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_log_guard_compact_total.load(std::memory_order_relaxed))
+              : 0);
+        put("last-compact-dropped",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_log_last_compact_dropped.load(std::memory_order_relaxed))
+              : 0);
+        put("last-compact-bytes",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_log_last_compact_bytes.load(std::memory_order_relaxed))
+              : 0);
+        put("bytes-saved-total",
+            m ? static_cast<std::int64_t>(
+                    m->mutation_log_compact_bytes_saved.load(std::memory_order_relaxed))
+              : 0);
+        put("mutation-log-pressure-wired", 1);
+        put("schema", 2201); // lineage 1362 → 2201
+        put("schema-1362", 1362);
+        put("schema-2201", 2201);
+        put("issue-2201", 2201);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+    ObservabilityPrims::register_stats_impl("query:mutation-log-compact-stats",
+                                            mutation_log_pressure_stats);
+    // Agent-discoverable alias (issue names mutation-log-pressure).
+    ObservabilityPrims::register_stats_impl("query:mutation-log-pressure",
+                                            mutation_log_pressure_stats);
     // Issue #1054: bad-arg and empty-history both return void (list-or-void
     // contract). Never return make_int(0) on bad args (truthy, wrong type).
     ObservabilityPrims::register_stats_impl(

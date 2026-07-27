@@ -7382,8 +7382,23 @@ struct CompilerMetrics {
     //     EnvFrame was detected and prevented from being used (the
     //     positive control for dual_path_stale_fallback — count
     //     detections and preventions together to verify parity).
-    std::atomic<std::uint64_t> dual_path_stale_fallback_total{0};    // #1638
-    std::atomic<std::uint64_t> mutation_log_compact_bytes_saved{0};  // #1638
+    std::atomic<std::uint64_t> dual_path_stale_fallback_total{0};   // #1638
+    std::atomic<std::uint64_t> mutation_log_compact_bytes_saved{0}; // #1638
+    // Issue #2201: Agent-visible mutation-log pressure + forced compact.
+    // high_water: max log entry count observed (CAS).
+    // pressure_score_bp: last computed size*10000/soft_threshold (cap 10000).
+    // pressure_flag: 1 when size >= soft threshold (Agent soft alert).
+    // forced_compact_total: explicit (mutation-log-compact) calls that dropped.
+    // guard_compact_total: Guard-exit shrink_to_fit compact invocations.
+    // last_compact_dropped / last_compact_bytes: last compact outcome.
+    std::atomic<std::uint64_t> mutation_log_high_water{0};           // #2201
+    std::atomic<std::uint64_t> mutation_log_pressure_score_bp{0};    // #2201
+    std::atomic<std::uint64_t> mutation_log_pressure_flag{0};        // #2201
+    std::atomic<std::uint64_t> mutation_log_forced_compact_total{0}; // #2201
+    std::atomic<std::uint64_t> mutation_log_guard_compact_total{0};  // #2201
+    std::atomic<std::uint64_t> mutation_log_last_compact_dropped{0}; // #2201
+    std::atomic<std::uint64_t> mutation_log_last_compact_bytes{0};   // #2201
+    std::atomic<std::uint64_t> mutation_log_soft_threshold{5'000};   // #2201 (half auto)
     std::atomic<std::uint64_t> env_frame_version_drift_prevented{0}; // #1638
     // Issue #2116: dual-path desync hard-fail in materialize_call_env +
     // GCEnvWalkFn. Default Hard: do not continue with half-consistent

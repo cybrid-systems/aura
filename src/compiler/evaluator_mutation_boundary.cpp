@@ -332,16 +332,34 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // so closed-loop self-evo can blame dirty nodes on this boundary.
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->provenance_boundary_capture_count.fetch_add(1, std::memory_order_relaxed);
-    // Issue #1638: mutation_log compact at boundary exit (success
+    // Issue #1638 / #2201: mutation_log compact at boundary exit (success
     // path only — failure path already rolls back via
     // rollback_to_size, so the log is already shrunk). Threshold
     // gate avoids the shrink_to_fit cost on small log states
     // (heavy-mutation safety net — 200MB+/day reclaim in long-
-    // running Agent scenarios per the open mutation-log-growth
-    // issue). Cheap when under threshold (single size() read).
+    // running Agent scenarios). Cheap when under threshold.
+    // #2201: also stamp high-water + pressure for Agent closed-loop.
     if (success && workspace_flat_) {
-        static constexpr std::size_t kCompactThreshold = 64 * 1024; // 64KB
-        if (workspace_flat_->mutation_log_size() > kCompactThreshold)
+        static constexpr std::size_t kCompactThreshold = 64 * 1024; // entries
+        const auto log_sz = workspace_flat_->mutation_log_size();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            auto hw = m->mutation_log_high_water.load(std::memory_order_relaxed);
+            while (log_sz > hw &&
+                   !m->mutation_log_high_water.compare_exchange_weak(
+                       hw, static_cast<std::uint64_t>(log_sz), std::memory_order_relaxed)) {
+            }
+            const auto soft = m->mutation_log_soft_threshold.load(std::memory_order_relaxed);
+            const auto soft_n = soft == 0 ? 5'000ull : soft;
+            const auto score =
+                soft_n == 0
+                    ? 0ull
+                    : std::min<std::uint64_t>(
+                          10'000ull, (static_cast<std::uint64_t>(log_sz) * 10'000ull) / soft_n);
+            m->mutation_log_pressure_score_bp.store(score, std::memory_order_relaxed);
+            m->mutation_log_pressure_flag.store(log_sz >= soft_n ? 1 : 0,
+                                                std::memory_order_relaxed);
+        }
+        if (log_sz > kCompactThreshold)
             compact_mutation_log();
     }
     // Bump version on both success and failure (legacy
