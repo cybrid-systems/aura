@@ -536,6 +536,23 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         // retry
     }
     metrics_.dep_graph_hygiene_propagate.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2209: feed cascade depth + dirty_rate into adaptive partial
+    // threshold (maybe_adapt reads these on the next cost sample).
+    aura::compiler::dirty::dirty_cascade_depth_sum.fetch_add(final_depth,
+                                                             std::memory_order_relaxed);
+    aura::compiler::dirty::dirty_cascade_depth_samples.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::size_t dirty_funcs = 0;
+        for (const auto& kv : ir_cache_v2_) {
+            if (kv.second.dirty || kv.second.any_block_dirty())
+                ++dirty_funcs;
+        }
+        const auto total = ir_cache_v2_.size();
+        if (total > 0) {
+            const auto bp = static_cast<std::uint32_t>((dirty_funcs * 10000ull) / total);
+            note_adaptive_dirty_rate_bp(bp);
+        }
+    }
     // Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit.
     notify_hot_update_after_cascade_(name, cascade_dependents);
 

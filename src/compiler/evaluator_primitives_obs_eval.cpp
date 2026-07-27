@@ -6702,7 +6702,29 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"partial-relower-storm-gate-wired", make_int(1)},
                 {"schema-2190", make_int(2190)},
                 {"issue-2190", make_int(2190)},
-                {"schema", make_int(2190)}, // latest policy schema
+                // Issue #2209: cascade depth + dirty_rate fed into adaptive thr
+                {"cascade-depth-avg-x1000", make_int(static_cast<std::int64_t>(
+                                                adaptive_last_cascade_depth_avg_milli_atomic().load(
+                                                    std::memory_order_relaxed)))},
+                {"cascade_depth_avg_x1000", make_int(static_cast<std::int64_t>(
+                                                adaptive_last_cascade_depth_avg_milli_atomic().load(
+                                                    std::memory_order_relaxed)))},
+                {"dirty-rate-bp",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_dirty_rate_bp_atomic().load(std::memory_order_relaxed)))},
+                {"dirty_rate_bp",
+                 make_int(static_cast<std::int64_t>(
+                     adaptive_dirty_rate_bp_atomic().load(std::memory_order_relaxed)))},
+                {"cascade-depth-live-x1000",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::dirty::dirty_cascade_depth_avg() * 1000.0 + 0.5))},
+                {"adaptive-cascade-signal-raise-total",
+                 make_int(static_cast<std::int64_t>(adaptive_cascade_signal_raise_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"cascade-depth-dirty-rate-adaptive-wired", make_int(1)},
+                {"schema-2209", make_int(2209)},
+                {"issue-2209", make_int(2209)},
+                {"schema", make_int(2209)}, // latest policy schema
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
