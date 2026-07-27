@@ -198,13 +198,22 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> partial_vs_full_win_ratio_bp{0};
     std::atomic<std::uint64_t> partial_relower_cost_samples{0};
     std::atomic<std::uint64_t> full_relower_cost_samples{0};
-    // Issue #2033: CacheEntryVersionStamp / should_relower bridge check.
-    //   - cache_entry_version_stamp_total: stamps written on store_define_v2
+    // Issue #2033 / #2183: CacheEntryVersionStamp / should_relower bridge check.
+    //   - cache_entry_version_stamp_total: stamps written (store / restamp)
+    //   - cache_stamp_restamp_total: unified restamp_cache_entry_live_ calls
+    //   - cache_stamp_mismatch_force_relower_total: lookup forced re-lower on
+    //     stamp-domain drift (never serve IR) — AC2 name for #2183
     //   - should_relower_bridge_epoch_mismatch_total: bridge_epoch forced re-lower
     //   - should_relower_stamp_mismatch_total: any stamp-domain mismatch
+    //   - cache_stamp_mismatch_reasons_bits: OR of kRelower* reasons seen
+    //   - cache_stamp_aot_restamp_total: restamps after AOT reemit success
     std::atomic<std::uint64_t> cache_entry_version_stamp_total{0};
+    std::atomic<std::uint64_t> cache_stamp_restamp_total{0};
+    std::atomic<std::uint64_t> cache_stamp_mismatch_force_relower_total{0};
     std::atomic<std::uint64_t> should_relower_bridge_epoch_mismatch_total{0};
     std::atomic<std::uint64_t> should_relower_stamp_mismatch_total{0};
+    std::atomic<std::uint64_t> cache_stamp_mismatch_reasons_bits{0};
+    std::atomic<std::uint64_t> cache_stamp_aot_restamp_total{0};
     // Issue #2038: push-automatic post-mutate incremental cascade
     // (dirty → DefUse / IR / JIT) on outermost successful MutationBoundaryGuard exit.
     //   - post_mutate_incremental_cascade_total: cascade invocations

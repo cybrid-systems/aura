@@ -92,6 +92,23 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
         metrics_.aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
         if (n > 0)
             metrics_.commercial_reemits_total.fetch_add(n, std::memory_order_relaxed);
+        // Issue #2183 AC3: after successful AOT reemit, restamp IR cache
+        // entries for root + dependents so CacheEntryVersionStamp stays
+        // joint with AOT table_generation / bridge / defuse.
+        if (n > 0) {
+            if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end()) {
+                restamp_cache_entry_live_(it->second);
+                metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            for (const auto& d : dependents) {
+                if (d.empty() || d == name)
+                    continue;
+                if (auto it = ir_cache_v2_.find(d); it != ir_cache_v2_.end()) {
+                    restamp_cache_entry_live_(it->second);
+                    metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
         // Issue #2162 AC3: cascade path is single-owner for this defuse when
         // reemit actually ran — Guard dtor must not double-reemit.
         if (n > 0)
