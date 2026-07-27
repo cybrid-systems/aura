@@ -7793,6 +7793,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_cache_hit_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_pruned_total{0};
     std::atomic<std::uint64_t> type_dep_graph_affected_expand_total{0};
+    // Issue #2191: type affected cone mirrored into dirty::DepGraph cascade.
+    // type_dirty_cone_mirrored_total — AST nodes pushed as encode_ast_dep_node.
+    // type_ir_cone_union_size_avg_x100 — last avg |type ∪ IR| × 100.
+    std::atomic<std::uint64_t> type_dirty_cone_mirrored_total{0};
+    std::atomic<std::uint64_t> type_ir_cone_union_size_avg_x100{0};
     std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
     // Issue #2065: solve_delta_epoch_skip_total — count of touched /

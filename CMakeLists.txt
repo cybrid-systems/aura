@@ -2260,6 +2260,11 @@ add_dependencies(all_test_issue_targets test_instruction_level_impact_partial_21
 
 # Issue #2110: hybrid string dep_graph_ ↔ NodeId DepGraph cascade.
 aura_add_issue_test(test_dep_graph_hybrid_cascade_2110)
+
+# Issue #2191: type affected_subtree cone ↔ dirty::DepGraph cascade unify.
+aura_add_issue_test(test_type_dirty_cone_dep_graph_2191)
+aura_issue_test_link_llvm_jit(test_type_dirty_cone_dep_graph_2191)
+add_dependencies(all_test_issue_targets test_type_dirty_cone_dep_graph_2191)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
