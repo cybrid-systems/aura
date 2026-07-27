@@ -995,13 +995,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(as_int(a[3]));
     });
 
-    // Issue #291: (ast:ref-serialize id gen mutation_id workspace_id)
-    // — pack a StableNodeRef into a 24-byte blob. Returns the
-    // blob as a string (the caller persists it however they
-    // like — base64, file, etc.). Returns #f on bad args.
-    // The blob format is fixed-size (see kStableRefSerializedSize)
-    // and includes a 4-byte magic header so
-    // (ast:ref-deserialize) can reject pre-#291 buffers.
+    // Issue #291 / #2198: (ast:ref-serialize id gen mutation_id workspace_id)
+    // — pack a StableNodeRef into a v2 blob (56 bytes; #2198).
+    // Returns the blob as a string. Returns #f on bad args.
+    // Magic header rejects pre-#291 buffers on deserialize.
+    // Optional trailing args (when present as ints):
+    //   fiber_id tenant_id wrap_epoch cow_epoch pin(0/1)
+    // so Agents can persist full provenance without C++.
     add("ast:ref-serialize", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
@@ -1012,6 +1012,17 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         ref.gen = static_cast<std::uint16_t>(as_int(a[1]));
         ref.mutation_id_at_capture = static_cast<std::uint64_t>(as_int(a[2]));
         ref.workspace_id = static_cast<std::uint32_t>(as_int(a[3]));
+        // Issue #2198: optional Agent provenance args.
+        if (a.size() >= 5 && is_int(a[4]))
+            ref.fiber_id = static_cast<std::uint32_t>(as_int(a[4]));
+        if (a.size() >= 6 && is_int(a[5]))
+            ref.tenant_id = static_cast<std::uint64_t>(as_int(a[5]));
+        if (a.size() >= 7 && is_int(a[6]))
+            ref.wrap_epoch = static_cast<std::uint32_t>(as_int(a[6]));
+        if (a.size() >= 8 && is_int(a[7]))
+            ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(a[7]));
+        if (a.size() >= 9 && is_int(a[8]))
+            ref.boundary_pinned = as_int(a[8]) != 0;
         std::uint8_t buf[aura::ast::FlatAST::kStableRefSerializedSize];
         auto n = ev.workspace_flat_->serialize_stable_ref(ref, buf);
         std::string s(reinterpret_cast<const char*>(buf), n);
@@ -1020,12 +1031,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         return types::make_string(sidx);
     });
 
-    // Issue #291: (ast:ref-deserialize string) — unpack a
-    // 24-byte blob back to a 4-tuple (id gen mutation_id
-    // workspace_id). The tuple is returned as a pair of pairs
-    // ((id . gen) . (mutation_id . workspace_id)) for Aura
-    // pair-list consumption. Returns #f if the magic doesn't
-    // match or the buffer is the wrong size.
+    // Issue #291 / #2198: (ast:ref-deserialize string) — unpack a
+    // v1 (24) or v2 (56) blob. Returns 4-tuple ((id . gen) .
+    // (mutation_id . workspace_id)) for Aura pair-list consumers
+    // (pre-#2198 shape preserved). Returns #f if magic mismatch
+    // or buffer shorter than v1.
     add("ast:ref-deserialize", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
@@ -1035,7 +1045,8 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         if (sidx >= ev.string_heap_.size())
             return make_bool(false);
         const std::string& blob = ev.string_heap_[sidx];
-        if (blob.size() < aura::ast::FlatAST::kStableRefSerializedSize)
+        // Accept v1 minimum; v2 is larger.
+        if (blob.size() < aura::ast::FlatAST::kStableRefSerializedSizeV1)
             return make_bool(false);
         aura::ast::FlatAST::StableNodeRef ref{};
         if (!ev.workspace_flat_->deserialize_stable_ref(

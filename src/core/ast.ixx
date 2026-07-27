@@ -6662,10 +6662,10 @@ public:
         // Issue #738: set when pin_for_cow() records this ref
         // in the evaluator's boundary pin registry.
         bool boundary_pinned = false;
-        // Issue #1566: multi-tenant isolation stamp. Default 0 =
+        // Issue #1566 / #2198: multi-tenant isolation stamp. Default 0 =
         // unset / single-tenant (isolation check treats 0 as
-        // "no provenance tenant constraint"). Not part of the
-        // on-wire serialize_stable_ref blob (additive in-memory).
+        // "no provenance tenant constraint"). Round-trips on the
+        // v2 wire format (#2198); v1 buffers default tenant_id=0.
         std::uint64_t tenant_id = 0;
 
         // Issue #738: mark this ref as pinned across a COW
@@ -6716,40 +6716,53 @@ public:
         }
     };
 
-    // Issue #291: serialize a StableNodeRef to a compact
-    // 16-byte binary blob. Format (little-endian):
-    //   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad][u64 mutation_id][u32 workspace_id][u32
-    //   reserved] = 4+4+2+2+8+4+4 = 24 bytes
-    // The packed form is designed to be:
-    //   - trivially memcpy-able (no host-endian conversion needed
-    //     for use within one process; cross-endian callers
-    //     should use the Aura helper (ast:ref-serialize) which
-    //     returns a string in canonical order)
-    //   - forward-compatible: new fields can be appended without
-    //     breaking existing readers (just bump the version byte
-    //     and ignore unknown trailing data)
-    //   - distinguishable from old (id, gen)-only refs: the new
-    //     format starts with a 4-byte magic number
-    //     (0x2901A17A) so readers can tell a #291+ serialized
-    //     blob from a raw (id, gen) binary.
-    // Issue #379: kStableRefSerializedSize + kStableRefMagic stay
-    // as class statics (callers reference them as
-    // FlatAST::kStableRefSerializedSize). Moving them to a free
-    // constexpr would change the public API.
-    static constexpr std::size_t kStableRefSerializedSize = 24;
+    // Issue #291 / #392 / #2198: StableNodeRef wire format.
+    //
+    // Magic 0x2901A17A distinguishes #291+ blobs from raw (id,gen).
+    // Version byte at offset 10:
+    //   0/1 = v1 (24 bytes, #291/#392)
+    //   2   = v2 (56 bytes, #2198 — tenant/fiber/pin/cow/wrap/full mid)
+    //
+    // v1 layout (24 bytes, little-endian):
+    //   [0..3]   u32 magic
+    //   [4..7]   u32 id
+    //   [8..9]   u16 gen
+    //   [10..11] u8 version | u8 pad
+    //   [12..15] u32 mutation_id low
+    //   [16..17] u16 subtree_gen_at_capture
+    //   [18..19] reserved (v1) / last_validated_generation (v2 header)
+    //   [20..23] u32 workspace_id
+    //
+    // v2 extension (bytes 24..55) — no silent tenant truncation:
+    //   [24..27] u32 mutation_id high
+    //   [28..31] u32 fiber_id
+    //   [32..39] u64 tenant_id
+    //   [40..43] u32 wrap_epoch
+    //   [44..51] u64 cow_epoch_at_capture
+    //   [52..55] reserved (0)
+    // Flags (byte 11): bit0 = boundary_pinned
+    //
+    // serialize_stable_ref always writes v2 (56 bytes).
+    // deserialize_stable_ref accepts v1 (24) and v2 (56+); missing
+    // v2 fields default safely (tenant=0, pin=false, fiber=0, …).
+    static constexpr std::size_t kStableRefSerializedSizeV1 = 24;
+    static constexpr std::size_t kStableRefSerializedSizeV2 = 56;
+    // Current writer size (v2). Prefer this for allocate-then-serialize.
+    static constexpr std::size_t kStableRefSerializedSize = kStableRefSerializedSizeV2;
     static constexpr std::uint32_t kStableRefMagic = 0x2901A17A; // #291 + AURA tag
+    static constexpr std::uint8_t kStableRefWireVersionV1 = 0;
+    static constexpr std::uint8_t kStableRefWireVersionV2 = 2;
+    static constexpr std::uint8_t kStableRefFlagBoundaryPinned = 0x01;
 
-    // Issue #291: pack a StableNodeRef into a 20-byte buffer.
-    // Returns the number of bytes written (= kStableRefSerializedSize).
+    // Issue #291 / #2198: pack a StableNodeRef into a buffer of at least
+    // kStableRefSerializedSize bytes. Returns bytes written (v2 size).
     // Issue #379: body moved to src/core/ast_stability.cpp.
     [[nodiscard]] std::size_t serialize_stable_ref(const StableNodeRef& ref,
                                                    std::uint8_t* out) const noexcept;
 
-    // Issue #291: deserialize a 20-byte buffer back to a
-    // StableNodeRef. Returns false if the magic doesn't match
-    // or buffer is too small. The caller is responsible for
-    // checking is_valid() AFTER deserializing to confirm the
-    // ref still points to a live node in the current flat.
+    // Issue #291 / #2198: deserialize v1 (24) or v2 (56+) buffer.
+    // Returns false if magic mismatch or buffer smaller than v1.
+    // Caller must check is_valid() after deserialize.
     // Issue #379: body moved to src/core/ast_stability.cpp.
     [[nodiscard]] bool deserialize_stable_ref(std::span<const std::uint8_t> buf,
                                               StableNodeRef& out) const noexcept;

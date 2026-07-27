@@ -2298,6 +2298,11 @@ add_dependencies(all_test_issue_targets test_mutation_memory_blame_2196)
 aura_add_issue_test(test_post_steal_linear_revalidate_2197)
 aura_issue_test_link_llvm_jit(test_post_steal_linear_revalidate_2197)
 add_dependencies(all_test_issue_targets test_post_steal_linear_revalidate_2197)
+
+# Issue #2198: StableNodeRef wire format v2 (tenant/fiber/pin/cow/wrap).
+aura_add_issue_test(test_stable_ref_wire_v2_2198)
+aura_issue_test_link_llvm_jit(test_stable_ref_wire_v2_2198)
+add_dependencies(all_test_issue_targets test_stable_ref_wire_v2_2198)
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
