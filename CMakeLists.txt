@@ -2374,6 +2374,11 @@ aura_add_issue_test(test_shape_storm_partial_relower_2212)
 aura_issue_test_link_llvm_jit(test_shape_storm_partial_relower_2212)
 add_dependencies(all_test_issue_targets test_shape_storm_partial_relower_2212)
 
+# Issue #2213: production hard-fail / ForceSoa on tree-walker fallback.
+aura_add_issue_test(test_tree_walker_fallback_strict_2213)
+aura_issue_test_link_llvm_jit(test_tree_walker_fallback_strict_2213)
+add_dependencies(all_test_issue_targets test_tree_walker_fallback_strict_2213)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

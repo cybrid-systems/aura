@@ -381,6 +381,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> needs_tree_walker_fallback_calls{0};
     std::atomic<std::uint64_t> needs_tree_walker_fast_path_hits{0};
     std::atomic<std::uint64_t> needs_tree_walker_slow_path_hits{0};
+    // Issue #2213: production gate on silent tree-walker fallback.
+    // tree_walker_fallback_total: needs_tree_walker was true (would take
+    //   legacy walker under Allow).
+    // tree_walker_fallback_forbidden_total: Forbidden policy hard-fail.
+    // tree_walker_fallback_forced_soa_total: ForceSoa continued IR path.
+    // Exposed via query:soa-dirty-stats schema-2213.
+    std::atomic<std::uint64_t> tree_walker_fallback_total{0};            // #2213
+    std::atomic<std::uint64_t> tree_walker_fallback_forbidden_total{0};  // #2213
+    std::atomic<std::uint64_t> tree_walker_fallback_forced_soa_total{0}; // #2213
     // Issue #224 cycle 4: dep_graph_-aware cascade. When
     // mark_define_dirty cascades a mutation to a dependent,
     // it tries to mark only the body function's blocks dirty
