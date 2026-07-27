@@ -47,6 +47,11 @@ __attribute__((weak)) void aura_evaluator_wait_for_safepoint(std::uint64_t /*tim
 // Issue #683: linear ownership probe on fiber steal.
 __attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 
+// Issue #2203: steal-complete single entry (strong def in
+// evaluator_fiber_mutation.cpp). Weak no-op so light test binaries
+// that do not link the evaluator TU still resolve the worker path.
+__attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_ptr*/) {}
+
 // Issue #485: deferred steal violation + resume migration.
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}
 __attribute__((weak)) void aura_evaluator_bump_mutation_steal_attempt() {}

@@ -7325,6 +7325,12 @@ struct CompilerMetrics {
     // panic-defer depth from the previous host (avoids permanently
     // deferring GC after a steal across evaluators).
     std::atomic<std::uint64_t> gc_defer_orphan_cleared_total{0}; // #2086
+    // Issue #2203: steal-complete single entry (worker try_steal_from).
+    // steal_complete_total — every successful steal that hit on_steal_complete
+    // gc_defer_orphan_cleared_on_steal_total — depths cleared at steal-complete
+    //   (subset of gc_defer_orphan_cleared_total; resume/migration may add more)
+    std::atomic<std::uint64_t> steal_complete_total{0};                   // #2203
+    std::atomic<std::uint64_t> gc_defer_orphan_cleared_on_steal_total{0}; // #2203
     // Issue #2194: unified Fiber::resume / steal refresh (pairs with Guard exit).
     // fiber_migration_refresh_total — refresh_after_fiber_migration calls
     // fiber_migration_gc_defer_cleared_total — orphan depths cleared in that helper

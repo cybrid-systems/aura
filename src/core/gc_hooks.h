@@ -363,6 +363,23 @@ inline std::atomic<std::uint64_t> g_gc_defer_table_overflow_total{0};
 inline std::atomic<std::uint64_t> g_gc_defer_last_fiber_id{0};
 inline std::atomic<std::uint64_t> g_gc_defer_last_checkpoint_epoch{0};
 
+// Issue #2203: steal-complete single entry observability (process-wide).
+// Bumped by aura_evaluator_on_steal_complete on every successful
+// cross-worker steal (worker.cpp try_steal_from success path).
+// g_steal_complete_total: every successful steal that hit the ABI.
+// g_gc_defer_orphan_cleared_on_steal_total: sum of depths cleared via
+// clear_gc_defer_for_evaluator from the steal-complete entry (orphan
+// panic-defer from previous host). Distinct from CompilerMetrics
+// gc_defer_orphan_cleared_total (which also tracks resume/migration).
+inline std::atomic<std::uint64_t> g_steal_complete_total{0};                   // #2203
+inline std::atomic<std::uint64_t> g_gc_defer_orphan_cleared_on_steal_total{0}; // #2203
+[[nodiscard]] inline std::uint64_t steal_complete_total() noexcept {
+    return g_steal_complete_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t gc_defer_orphan_cleared_on_steal_total() noexcept {
+    return g_gc_defer_orphan_cleared_on_steal_total.load(std::memory_order_relaxed);
+}
+
 // Issue #2088: process-wide arm-count mirrors for Agent dashboards
 // (query:gc-defer-reason-stats). Bumped when a reason bit transitions
 // 0→set (first nest level), not on every nested arm. Combined any_total

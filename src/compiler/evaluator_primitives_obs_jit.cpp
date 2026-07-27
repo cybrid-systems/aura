@@ -10756,6 +10756,22 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 "table-overflow-total",
                 static_cast<std::int64_t>(aura::gc_hooks::g_gc_defer_table_overflow_total.load(
                     std::memory_order_relaxed)));
+            // Issue #2203: steal-complete single entry metrics (lineage retained;
+            // schema-2088 primary keys unchanged). Process-wide atomics are
+            // the source of truth; CompilerMetrics mirrors when present.
+            insert_kv("schema-2203", 2203);
+            insert_kv("issue-2203", 2203);
+            insert_kv("steal-complete-wired", 1);
+            insert_kv("steal-complete-total",
+                      static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
+            insert_kv("gc-defer-orphan-cleared-on-steal-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+            insert_kv("steal_complete_total",
+                      static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
+            insert_kv("gc_defer_orphan_cleared_on_steal_total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
