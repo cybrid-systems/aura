@@ -2414,6 +2414,11 @@ aura_add_issue_test(test_persistent_typechecker_2220)
 aura_issue_test_link_llvm_jit(test_persistent_typechecker_2220)
 add_dependencies(all_test_issue_targets test_persistent_typechecker_2220)
 
+# Issue #2221: blame-complete optional hard gate on apply + composite commit.
+aura_add_issue_test(test_blame_complete_commit_gate_2221)
+aura_issue_test_link_llvm_jit(test_blame_complete_commit_gate_2221)
+add_dependencies(all_test_issue_targets test_blame_complete_commit_gate_2221)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

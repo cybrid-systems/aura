@@ -1091,6 +1091,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> blame_propagation_miss_total{0};
     std::atomic<std::uint64_t> blame_propagation_coercion_stamped_total{0};
     std::atomic<std::uint64_t> blame_propagation_narrow_stamped_total{0};
+    // Issue #2221: composite_txn_commit hard-reject on incomplete blame.
+    std::atomic<std::uint64_t> blame_commit_reject_total{0};
     std::atomic<std::uint64_t> blame_propagation_wired{1};
     // Issue #1873: add_delta constraints still missing provenance after
     // active-context stamp (warning / degrade path — keep partial chain).

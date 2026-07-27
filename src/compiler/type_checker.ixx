@@ -401,6 +401,40 @@ public:
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return last_blame_chain_;
     }
+    // Issue #2221: test/Agent helpers — force complete or incomplete
+    // last_blame_chain without a full infer_flat_partial pass.
+    void force_last_blame_incomplete_for_test(std::uint64_t mutation_id = 2221,
+                                              std::uint32_t affected_node = 1) noexcept {
+        last_blame_chain_ = {};
+        last_blame_chain_.root_mutation_id = mutation_id;
+        last_blame_chain_.complete = false;
+        last_blame_chain_.partial = true;
+        DeltaBlameFrame f;
+        f.source_mutation_id = mutation_id;
+        f.predicate_cond_node = 0; // missing triple → incomplete
+        f.affected_node = affected_node;
+        f.constraint_index = UINT32_MAX;
+        f.kind = 0;
+        last_blame_chain_.frames.push_back(f);
+        last_blame_chain_.missing_provenance_frames = 1;
+    }
+    void force_last_blame_complete_for_test(std::uint64_t mutation_id = 2221,
+                                            std::uint32_t predicate = 7,
+                                            std::uint32_t affected_node = 3) noexcept {
+        last_blame_chain_ = {};
+        last_blame_chain_.root_mutation_id = mutation_id;
+        last_blame_chain_.complete = true;
+        last_blame_chain_.partial = false;
+        last_blame_chain_.truncated_reverify = false;
+        last_blame_chain_.missing_provenance_frames = 0;
+        DeltaBlameFrame f;
+        f.source_mutation_id = mutation_id;
+        f.predicate_cond_node = predicate;
+        f.affected_node = affected_node;
+        f.constraint_index = UINT32_MAX;
+        f.kind = 0;
+        last_blame_chain_.frames.push_back(f);
+    }
     // Issue #2024: cross-delta continuity anchors after clear_blame_context.
     [[nodiscard]] std::uint64_t retained_mutation_id() const noexcept {
         return retained_mutation_id_;
@@ -803,6 +837,16 @@ public:
     }
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return cs_.last_blame_chain();
+    }
+    // Issue #2221: test injects for composite blame-complete gate.
+    void force_last_blame_incomplete_for_test(std::uint64_t mutation_id = 2221,
+                                              std::uint32_t affected_node = 1) noexcept {
+        cs_.force_last_blame_incomplete_for_test(mutation_id, affected_node);
+    }
+    void force_last_blame_complete_for_test(std::uint64_t mutation_id = 2221,
+                                            std::uint32_t predicate = 7,
+                                            std::uint32_t affected_node = 3) noexcept {
+        cs_.force_last_blame_complete_for_test(mutation_id, predicate, affected_node);
     }
     // Issue #2024: cross-delta continuity anchors.
     [[nodiscard]] std::uint64_t retained_mutation_id() const noexcept {
@@ -1669,6 +1713,17 @@ export struct TypeChecker {
     [[nodiscard]] ConstraintSystem& constraint_system() noexcept { return solve_delta_cs_; }
     [[nodiscard]] const ConstraintSystem& constraint_system() const noexcept {
         return solve_delta_cs_;
+    }
+    // Issue #2221: test injects for composite blame-complete gate
+    // (forwards to the persistent solve_delta ConstraintSystem).
+    void force_last_blame_incomplete_for_test(std::uint64_t mutation_id = 2221,
+                                              std::uint32_t affected_node = 1) noexcept {
+        solve_delta_cs_.force_last_blame_incomplete_for_test(mutation_id, affected_node);
+    }
+    void force_last_blame_complete_for_test(std::uint64_t mutation_id = 2221,
+                                            std::uint32_t predicate = 7,
+                                            std::uint32_t affected_node = 3) noexcept {
+        solve_delta_cs_.force_last_blame_complete_for_test(mutation_id, predicate, affected_node);
     }
 
 private:

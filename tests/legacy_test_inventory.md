@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 505 | Preferred destination suites |
-| **Total scanned** | **505** | |
+| `tests/core/test_*.cpp` | 506 | Preferred destination suites |
+| **Total scanned** | **506** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 51 | 51 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 147 | 147 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 148 | 148 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
@@ -198,6 +198,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_batch_terminal_dirty_phase2_2047.cpp`
 - `tests/compiler/test_bidirectional_annotation.cpp`
 - `tests/core/test_bidirectional_stats.cpp`
+- `tests/compiler/test_blame_complete_commit_gate_2221.cpp`
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp`
 - `tests/compiler/test_blame_stamp_on_degrade.cpp`
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp`
@@ -750,13 +751,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (147)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (148)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (147)
+#### domain/ (148)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -766,6 +767,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp` (#2150) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env_2076.cpp` (#2076) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/renderer/test_batch_terminal_dirty_phase2_2047.cpp` (#2047) [phase_slice, batch_driver, domain_suite, theme_renderer] — AC1: kBatchTerminalPhase == 2; source cites #2047; DirtyRegion + dirty build
+- `tests/compiler/test_blame_complete_commit_gate_2221.cpp` (#2221) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/core/test_capability_sandbox_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_capability_sandbox_batch.cpp
 - `tests/compiler/test_capability_unified_2077.cpp` (#2077) [domain_suite, theme_compiler] — AC1: has_capability("mutate") under Strict consults the effect matrix,

@@ -6020,6 +6020,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("txn-dirty", ev.txn_dirty() ? 1 : 0);
                 insert_kv("schema-2105", 2105);
                 insert_kv("issue-2105", 2105);
+                // Issue #2221: blame-complete hard gate on composite commit
+                insert_kv("require-blame-complete-on-commit",
+                          aura::compiler::require_blame_complete_on_commit() ? 1 : 0);
+                insert_kv("blame-commit-reject-total",
+                          static_cast<std::int64_t>(
+                              c.blame_commit_reject_total.load(std::memory_order_relaxed)));
+                insert_kv("blame-commit-incomplete-observe-total",
+                          static_cast<std::int64_t>(c.blame_commit_incomplete_observe_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("blame-commit-check-total",
+                          static_cast<std::int64_t>(
+                              c.blame_commit_check_total.load(std::memory_order_relaxed)));
+                insert_kv("blame-commit-require-wired", 1);
+                insert_kv("schema-2221", 2221);
+                insert_kv("issue-2221", 2221);
                 // Issue #2108: hard-block composite cross-batch linear escape
                 insert_kv("linear-escape-commit-blocked-total",
                           static_cast<std::int64_t>(c.linear_escape_commit_blocked_total.load(
