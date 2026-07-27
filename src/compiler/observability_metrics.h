@@ -24,6 +24,21 @@ struct TypeCacheStatsSnapshot {
     std::uint64_t gen_saved = 0;
 };
 
+// Issue #2193: why invalidate / workspace-sweep preferred full re-lower
+// over partial (Agent recovery branching; mirrors #2093 AotReloadFail).
+// Stable ABI: do not reorder — values appear in query snapshots.
+enum class RelowerFallbackReason : std::uint8_t {
+    Ok = 0,              // partial success (clears last-reason)
+    NoSource = 1,        // function_sources_ miss
+    EmptyIr = 2,         // ir_cache_v2 empty / missing
+    Threshold = 3,       // dirty_n ≥ effective thr / storm force-full
+    ParseFail = 4,       // parse_to_flat failed
+    RelowerReject = 5,   // relower_only_dirty_blocks returned false
+    DesyncForceFull = 6, // SoA block/instr dirty desync (#2181)
+    MapInconsistent = 7, // source_to_ir_map inconsistency
+    Other = 8,           // internal full-fallback / unclassified
+};
+
 // Top-level counters. Single instance per CompilerService.
 // Note: counters are std::atomic<uint64_t> for thread safety
 // (Issue #62 Iter 1). They serialize as plain integers via
@@ -4975,6 +4990,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_partial_relower_total{0};
     std::atomic<std::uint64_t> incremental_full_fallback_total{0};
     std::atomic<std::uint64_t> incremental_time_saved_us_total{0};
+    // Issue #2193: per-reason full-fallback (invalidate cascade / sweep).
+    // last-reason is RelowerFallbackReason as uint8; Ok on partial success.
+    std::atomic<std::uint8_t> relower_last_fallback_reason{0};
+    std::atomic<std::uint64_t> relower_fallback_ok_total{0};
+    std::atomic<std::uint64_t> relower_fallback_no_source_total{0};
+    std::atomic<std::uint64_t> relower_fallback_empty_ir_total{0};
+    std::atomic<std::uint64_t> relower_fallback_threshold_total{0};
+    std::atomic<std::uint64_t> relower_fallback_parse_fail_total{0};
+    std::atomic<std::uint64_t> relower_fallback_relower_reject_total{0};
+    std::atomic<std::uint64_t> relower_fallback_desync_force_full_total{0};
+    std::atomic<std::uint64_t> relower_fallback_map_inconsistent_total{0};
+    std::atomic<std::uint64_t> relower_fallback_other_total{0};
     // Issue #1854: query:incremental-effectiveness snapshot() threw;
     // primitive returns void (not a false-clean 4-tuple of zeros).
     std::atomic<std::uint64_t> incremental_effectiveness_snapshot_failures{0};
@@ -8013,6 +8040,46 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cross_cow_provenance_enforced_total{0};
 };
 
+// Issue #2193: record partial→full decision reason (last + per-reason totals).
+// Ok clears last-reason to success (mirror #2093 AotReloadFail::Ok).
+inline void note_relower_fallback(CompilerMetrics& m, RelowerFallbackReason r) noexcept {
+    m.relower_last_fallback_reason.store(static_cast<std::uint8_t>(r), std::memory_order_relaxed);
+    switch (r) {
+        case RelowerFallbackReason::Ok:
+            m.relower_fallback_ok_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::NoSource:
+            m.relower_fallback_no_source_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::EmptyIr:
+            m.relower_fallback_empty_ir_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::Threshold:
+            m.relower_fallback_threshold_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::ParseFail:
+            m.relower_fallback_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::RelowerReject:
+            m.relower_fallback_relower_reject_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::DesyncForceFull:
+            m.relower_fallback_desync_force_full_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::MapInconsistent:
+            m.relower_fallback_map_inconsistent_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case RelowerFallbackReason::Other:
+        default:
+            m.relower_fallback_other_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+    }
+}
+
+inline void note_relower_fallback(CompilerMetrics* m, RelowerFallbackReason r) noexcept {
+    if (m)
+        note_relower_fallback(*m, r);
+}
 
 // Per-function metrics, returned by CompilerService::snapshot()
 // for --evo-explain. Reflect-friendly.

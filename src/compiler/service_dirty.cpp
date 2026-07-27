@@ -971,32 +971,57 @@ void CompilerService::invalidate_function(const std::string& name) {
     //
     // Helper: try partial path for one define. Returns true when the
     // entry is clean / was partially re-lowered (caller must not full-lower).
+    // Issue #2193: per-reason full-fallback so Agents branch recovery.
+    auto note_fb = [&](RelowerFallbackReason r) { note_relower_fallback(metrics_, r); };
     auto try_partial_invalidate_relower = [&](const std::string& fname) -> bool {
         auto src_it = function_sources_.find(fname);
-        if (src_it == function_sources_.end())
+        if (src_it == function_sources_.end()) {
+            note_fb(RelowerFallbackReason::NoSource);
             return false;
+        }
         auto vit = ir_cache_v2_.find(fname);
-        if (vit == ir_cache_v2_.end() || vit->second.irs.empty())
+        if (vit == ir_cache_v2_.end() || vit->second.irs.empty()) {
+            note_fb(RelowerFallbackReason::EmptyIr);
             return false;
+        }
         const std::size_t dirty_n = vit->second.dirty_block_count();
         // Clean entry — nothing to re-lower.
-        if (dirty_n == 0 && !vit->second.dirty)
+        if (dirty_n == 0 && !vit->second.dirty) {
+            note_fb(RelowerFallbackReason::Ok); // AC4: clear last-reason
             return true;
+        }
         // Issue #2041 / #2127: workload-adaptive partial gate (deopt + density).
         // Large dirty surfaces (≥ effective threshold) go to the full path below.
+        // Issue #2181: SoA desync forces full before peel.
+        // gate_partial_soa_dirty_sync_ already notes DesyncForceFull (#2193).
+        if (!gate_partial_soa_dirty_sync_(vit->second))
+            return false;
+        // Issue #2045: inconsistent source_to_ir_map → prefer full.
+        if (!source_to_ir_map_is_consistent(vit->second.irs, vit->second.source_to_ir_map)) {
+            const auto bad = count_source_to_ir_map_inconsistencies(vit->second.irs,
+                                                                    vit->second.source_to_ir_map);
+            if (bad > 0)
+                metrics_.source_to_ir_map_inconsistency_total.fetch_add(bad,
+                                                                        std::memory_order_relaxed);
+            note_fb(RelowerFallbackReason::MapInconsistent);
+            return false;
+        }
         std::size_t total_blocks = 0;
         for (const auto& fb : vit->second.block_dirty_per_func_)
             total_blocks += fb.size();
         const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
         if (dirty_n > 0 && !adaptive.want_partial) {
+            note_fb(RelowerFallbackReason::Threshold);
             return false;
         }
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            note_fb(RelowerFallbackReason::ParseFail);
             return false;
+        }
         flat.root = pr.root;
         // Prefer Lambda body node for per-function re-lower.
         aura::ast::NodeId expanded = pr.root;
@@ -1012,8 +1037,10 @@ void CompilerService::invalidate_function(const std::string& name) {
             metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
         const auto blocks_before =
             metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
-        if (!relower_only_dirty_blocks(fname, src_it->second, flat, pool, expanded))
+        if (!relower_only_dirty_blocks(fname, src_it->second, flat, pool, expanded)) {
+            note_fb(RelowerFallbackReason::RelowerReject);
             return false;
+        }
         // True partial win (per-fn / per-block), not internal full-fallback.
         const bool true_partial =
             metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
@@ -1025,10 +1052,12 @@ void CompilerService::invalidate_function(const std::string& name) {
             // Issue #2127: keep threshold_used at last adaptive effective thr.
             metrics_.partial_relower_threshold_used.store(get_effective_partial_relower_threshold(),
                                                           std::memory_order_relaxed);
+            note_fb(RelowerFallbackReason::Ok); // AC4
         } else {
             // relower_define_blocks took full-fallback internally — still
             // counts as handled (IR + bitmask refreshed; no second full pass).
             metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            note_fb(RelowerFallbackReason::Other);
         }
         return true;
     };
