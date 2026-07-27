@@ -7839,6 +7839,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_hotpath_hold_ns{0};
     std::atomic<std::uint64_t> frame_budget_pending{0};
     std::atomic<std::uint64_t> frame_budget_wired{1};
+    // Issue #2218: present-path frame-budget guardian (degrade on over-p99).
+    //   - frame_budget_check_total: guardian entries on present / present-dirty
+    //   - frame_budget_degrade_total: over budget / low health / hold-stop
+    //   - frame_budget_last_p99_us: last sample observed by guardian
+    //   - frame_budget_skip_full_total: full present skipped (keep last good)
+    //   - frame_budget_soft_warn_total: p99 ≥ 80% budget (not yet degrade)
+    std::atomic<std::uint64_t> frame_budget_check_total{0};
+    std::atomic<std::uint64_t> frame_budget_degrade_total{0};
+    std::atomic<std::uint64_t> frame_budget_last_p99_us{0};
+    std::atomic<std::uint64_t> frame_budget_skip_full_total{0};
+    std::atomic<std::uint64_t> frame_budget_soft_warn_total{0};
     // Issue #2138: evolvable present strategy (Agent-hot-replaceable policy).
     std::atomic<std::uint64_t> render_strategy_set_total{0};
     std::atomic<std::uint64_t> render_strategy_epoch{1};

@@ -11,6 +11,7 @@ module;
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "primitives_detail.h"
+#include "frame_budget.hh" // #2137 cascade + #2218 present guardian
 #include "render_prim_template.hh"
 #include "security_capabilities.h"
 #include "terminal_buffer_registry.hh"    // Issue #2134: TermBuf + DirtyRegion
@@ -246,15 +247,46 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // 6. (tui:present)
     // Issue #1676/#1677/#2217: register_render_hot_prim + hot entry.
+    // Issue #2218: frame-budget guardian — skip full rebuild under degrade
+    // when dirty is clean/tiny (keep last good frame on screen).
     register_render_hot_prim(
         add, ev, "tui:present", 0,
         [&ev](std::span<const EvalValue>) -> EvalValue {
             AURA_RENDER_HOT_ENTRY(ev);
             auto& tui = aura::tui::global_tui();
             if (tui.is_initialized()) {
+                const auto p99 = aura::renderer::render_frame_time_p99_us();
+                std::uint64_t dirty_cells = 0;
+                const auto total_cells =
+                    static_cast<std::uint64_t>(tui.cols()) * static_cast<std::uint64_t>(tui.rows());
+                std::uint32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                if (tui.compute_dirty_aabb(x0, y0, x1, y1)) {
+                    dirty_cells = static_cast<std::uint64_t>(x1 - x0 + 1) *
+                                  static_cast<std::uint64_t>(y1 - y0 + 1);
+                }
+                const auto guard = aura::compiler::frame_budget::check_present_guardian(
+                    p99, dirty_cells, total_cells);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->frame_budget_check_total.fetch_add(1, std::memory_order_relaxed);
+                    m->frame_budget_last_p99_us.store(p99, std::memory_order_relaxed);
+                    if (guard.degrade) {
+                        m->frame_budget_degrade_total.fetch_add(1, std::memory_order_relaxed);
+                        if (guard.skip_full_rebuild)
+                            m->frame_budget_skip_full_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                if (guard.degrade && guard.skip_full_rebuild) {
+                    // Keep last good frame — do not full-rebuild under budget pressure.
+                    bump_tui_metrics(ev);
+                    return make_void();
+                }
                 tui.present();
                 // Issue #1674: wire term_render_present (was dead).
                 ev.bump_term_render_present();
+            } else {
+                // Still count guardian checks when no TUI (idle path under budget).
+                const auto p99 = aura::renderer::render_frame_time_p99_us();
+                (void)aura::compiler::frame_budget::check_present_guardian(p99, 0, 0);
             }
             bump_tui_metrics(ev);
             return make_void();
@@ -685,6 +717,20 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
         add, ev, "tui:present-dirty", 0,
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             AURA_RENDER_HOT_ENTRY(ev);
+
+            // Issue #2218: present-path guardian (p99 / health / agent-action).
+            // Dirty path already short-circuits when clean; guardian records
+            // degrade and forces hold/stop for the next mutate window.
+            {
+                const auto p99 = aura::renderer::render_frame_time_p99_us();
+                const auto guard = aura::compiler::frame_budget::check_present_guardian(p99, 0, 0);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->frame_budget_check_total.fetch_add(1, std::memory_order_relaxed);
+                    m->frame_budget_last_p99_us.store(p99, std::memory_order_relaxed);
+                    if (guard.degrade)
+                        m->frame_budget_degrade_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
 
             auto note_metrics = [&](std::int64_t n, bool skipped, std::uint64_t cells,
                                     bool partial) {

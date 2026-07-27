@@ -1497,7 +1497,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto load = [](const std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
-            auto* ht = FlatHashTable::create(128); // #2051 Agent closed-loop keys
+            // Capacity must exceed key count (~160+ after #2218); power-of-two.
+            auto* ht = FlatHashTable::create(512); // #2051/#2218 Agent closed-loop keys
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
@@ -1664,6 +1665,35 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("frame-budget-wired", 1);
                 insert_kv("schema-2137", 2137);
                 insert_kv("issue-2137", 2137);
+                // Issue #2218: present-path guardian counters + lineage
+                insert_kv("frame-budget-check-total",
+                          static_cast<std::int64_t>(fb.frame_budget_check_total));
+                insert_kv("frame-budget-degrade-total",
+                          static_cast<std::int64_t>(fb.frame_budget_degrade_total));
+                insert_kv("frame-budget-soft-warn-total",
+                          static_cast<std::int64_t>(fb.frame_budget_soft_warn_total));
+                insert_kv("frame-budget-last-p99-us",
+                          static_cast<std::int64_t>(fb.frame_budget_last_p99_us));
+                insert_kv("frame-budget-skip-full-total",
+                          static_cast<std::int64_t>(fb.frame_budget_skip_full_total));
+                insert_kv("frame-budget-forced-action",
+                          static_cast<std::int64_t>(fb.forced_agent_action));
+                insert_kv("frame-budget-guardian-wired", 1);
+                insert_kv("schema-2218", 2218);
+                insert_kv("issue-2218", 2218);
+                if (m) {
+                    // Mirror guardian atomics for process metrics consumers.
+                    m->frame_budget_check_total.store(fb.frame_budget_check_total,
+                                                      std::memory_order_relaxed);
+                    m->frame_budget_degrade_total.store(fb.frame_budget_degrade_total,
+                                                        std::memory_order_relaxed);
+                    m->frame_budget_last_p99_us.store(fb.frame_budget_last_p99_us,
+                                                      std::memory_order_relaxed);
+                    m->frame_budget_skip_full_total.store(fb.frame_budget_skip_full_total,
+                                                          std::memory_order_relaxed);
+                    m->frame_budget_soft_warn_total.store(fb.frame_budget_soft_warn_total,
+                                                          std::memory_order_relaxed);
+                }
             }
             // Issue #2138: evolvable present strategy vs fixed kernel
             {
@@ -1782,6 +1812,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 action = 1;
             else
                 action = 0;
+            // Issue #2218: present guardian may force hold/stop for next mutate window.
+            // Stash computed health/action, then apply forced override if active.
+            aura::compiler::frame_budget::note_agent_closed_loop(health, action);
+            action = aura::compiler::frame_budget::effective_agent_action(action);
+            // Re-derive safe-to-mutate when guardian forces hold/stop.
+            const std::int64_t safe_to_mutate_eff =
+                (action == 0 || action == 4) ? 0 : safe_to_mutate;
 
             insert_kv("frame-time-avg-us", frame_avg);
             insert_kv("frame-time-p99-us", frame_p99);
@@ -1800,7 +1837,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("render-arena-pressure-bp", arena_pressure_bp);
             insert_kv("present-pin-handoffs-agent", pin_hits);
             insert_kv("agent-health-score", health);
-            insert_kv("safe-to-mutate", safe_to_mutate);
+            insert_kv("safe-to-mutate", safe_to_mutate_eff);
             insert_kv("agent-action", action);
             insert_kv("closed-loop-rounds", m ? load(m->render_closed_loop_rounds_total) : 0);
             insert_kv("closed-loop-stable", m ? load(m->render_closed_loop_stable_total) : 0);

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 502 | Preferred destination suites |
-| **Total scanned** | **502** | |
+| `tests/core/test_*.cpp` | 503 | Preferred destination suites |
+| **Total scanned** | **503** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 28 | 28 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 55 | 55 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 110 | 110 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 111 | 111 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 31 | 31 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -297,6 +297,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_followups.cpp`
 - `tests/core/test_force_compact_hard_mutex_2157.cpp`
 - `tests/compiler/test_frame_budget_cascade_isolation_2137.cpp`
+- `tests/compiler/test_frame_budget_guardian_2218.cpp`
 - `tests/compiler/test_full_strategy_partial_recovery.cpp`
 - `tests/serve/test_gc_batch.cpp`
 - `tests/serve/test_gc_compact_batch.cpp`
@@ -1111,13 +1112,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (110)
+### `observability` — Observability / metrics / query:*-stats (111)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (110)
+#### domain/ (111)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
@@ -1147,6 +1148,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp` (—) [domain_suite, theme_compiler] — Issue #1490/#1592/#1608/#1612 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_fine_dirty_relower.cpp` (—) [domain_suite, theme_compiler] — test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
 - `tests/compiler/test_frame_budget_cascade_isolation_2137.cpp` (#2137) [domain_suite, theme_compiler] — AC1: under FrameBudget / render hotpath, non-render cascade deferred
+- `tests/compiler/test_frame_budget_guardian_2218.cpp` (#2218) [domain_suite, theme_compiler] — AC1: Budget config (default 16000 µs; env AURA_FRAME_BUDGET_US; soft 80%)
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_instr_impact_minimal_dirty_2126.cpp` (#2126) [minimal, domain_suite, theme_compiler] — AC1: nested lambda free-var body-only → no mark_all_blocks_dirty;
 - `tests/compiler/test_instr_level_impact_scope.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2031; ImpactScope::InstrRef + SourceIrLoc + affected_instrs

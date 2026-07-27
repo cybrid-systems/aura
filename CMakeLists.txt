@@ -2399,6 +2399,11 @@ aura_add_issue_test(test_register_render_hot_prim_2217)
 aura_issue_test_link_llvm_jit(test_register_render_hot_prim_2217)
 add_dependencies(all_test_issue_targets test_register_render_hot_prim_2217)
 
+# Issue #2218: frame-budget guardian + automatic degrade on present path.
+aura_add_issue_test(test_frame_budget_guardian_2218)
+aura_issue_test_link_llvm_jit(test_frame_budget_guardian_2218)
+add_dependencies(all_test_issue_targets test_frame_budget_guardian_2218)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

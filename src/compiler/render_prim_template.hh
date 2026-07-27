@@ -68,7 +68,22 @@
 // AURA_RENDER_HOT_ENTRY. Soft-dirty / rebind of aura_is_render_evolution_name
 // defines may request hot-tier meta via existing mutate feedback; no new
 // public prim name required.
-
+//
+// ── Issue #2218: frame-budget guardian on present ───────────────────────
+// Execution-layer enforcement of the #2051 closed-loop contract:
+//   - At entry of tui:present / tui:present-dirty (after AURA_RENDER_HOT_ENTRY)
+//     the guardian loads frame-time p99 + cached agent-health / agent-action.
+//   - Over budget (default AURA_FRAME_BUDGET_US=16000) OR health < 60 OR
+//     action in {hold, stop} → degrade: prefer dirty short-circuit / skip
+//     full rebuild when dirty is clean or tiny (keep last good frame).
+//   - Degrade forces agent-action hold/stop for the next mutate window
+//     (query:render-stats agent-action is authoritative; present-side wins
+//     over Agent-only checks for the current frame).
+//   - Under budget: a few atomic loads only.
+//   - (mutate :closed-loop-tick) remains the stamp API; counters:
+//       frame-budget-check-total / frame-budget-degrade-total /
+//       frame-budget-last-p99-us / schema-2218 on query:render-stats.
+//
 #ifndef AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 #define AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 
