@@ -1303,6 +1303,8 @@ AURA_COMPILER_METRICS_FIELD(outermost_exit_phase3_gc_defer_total)
 AURA_COMPILER_METRICS_FIELD(outermost_exit_phase4_reemit_total)
 AURA_COMPILER_METRICS_FIELD(outermost_exit_phase5_unlock_total)
 AURA_COMPILER_METRICS_FIELD(outermost_exit_order_complete_total)
+// Issue #2211: residual GcDeferReason after outermost success drain.
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_residual_defer_total)
 // Issue #2040: workspace_mtx_ unique-acquire contention + wait latency.
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_acquire_total)
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_contended_total)

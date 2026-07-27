@@ -5754,6 +5754,18 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"yield-while-mutation-held-wired", make_int(1)},
                 {"schema-2200", make_int(2200)},
                 {"issue-2200", make_int(2200)},
+                // Issue #2211: residual GcDeferReason after outermost success
+                // drain (schema-2120 lineage — folds into hold-stats, no new
+                // public primitive name). Soft metric + best-effort clear.
+                {"mutation-boundary-residual-defer-total",
+                 make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
+                {"residual-defer-total",
+                 make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
+                {"mutation_boundary_residual_defer_total",
+                 make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
+                {"residual-defer-assert-wired", make_int(1)},
+                {"schema-2211", make_int(2211)},
+                {"issue-2211", make_int(2211)},
             };
             return build_hash(kv);
         });

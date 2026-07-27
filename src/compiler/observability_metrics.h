@@ -7388,6 +7388,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> outermost_exit_phase4_reemit_total{0};   // #2120
     std::atomic<std::uint64_t> outermost_exit_phase5_unlock_total{0};   // #2120
     std::atomic<std::uint64_t> outermost_exit_order_complete_total{0};  // #2120
+    // Issue #2211: residual GcDeferReason bits after outermost success drain
+    // (post phase3 panic clear + phase5 MutationHold release). Soft metric
+    // by default; AURA_HARD_RESIDUAL_DEFER forces hard assert. Best-effort
+    // clear follows so AI sessions cannot accumulate orphan defer across steals.
+    // Exposed via query:mutation-boundary-hold-stats schema-2211.
+    std::atomic<std::uint64_t> mutation_boundary_residual_defer_total{0}; // #2211
     // Issue #2114: reemit ↔ MutationBoundary handshake (mirrors HotUpdateRegistry;
     // primary counters live on registry snapshot / query:hot-update-registry-stats).
     // Prefer registry atomics; these optional mirrors exist for dump export.

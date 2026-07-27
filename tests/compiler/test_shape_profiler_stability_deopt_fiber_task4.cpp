@@ -31,6 +31,7 @@ import aura.core.ast;
 import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.compiler.service;
+import aura.compiler.ir_cache_pure; // Issue #2257 AC4: set/current_shape_stability_ratio
 
 namespace aura_issue_570_detail {
 
@@ -413,10 +414,11 @@ int run_tests() {
         CHECK(v1 >= 1, "AC1: bump is observable (file-scope atomic queryable)");
         const auto iso = aura::compiler::shape::g_deopt_storm_isolations_total_atomic().load();
         CHECK(iso >= 0, "AC2: isolations atomic is observable");
-        aura::compiler::shape::set_shape_stability_ratio(0.42);
-        CHECK(std::abs(aura::compiler::shape::current_shape_stability_ratio() - 0.42) < 0.001,
+        // AC4 helpers live in aura::compiler (ir_cache_pure.ixx), not shape::.
+        aura::compiler::set_shape_stability_ratio(0.42);
+        CHECK(std::abs(aura::compiler::current_shape_stability_ratio() - 0.42) < 0.001,
               "AC4: set/get round-trip works");
-        aura::compiler::shape::set_shape_stability_ratio(0.90);
+        aura::compiler::set_shape_stability_ratio(0.90);
     }
     return RUN_ALL_TESTS();
 }
