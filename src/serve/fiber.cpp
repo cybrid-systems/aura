@@ -400,16 +400,15 @@ void Fiber::resume() {
         aura::messaging::g_transfer_panic_checkpoint();
     }
 
-    // Issue #1490 / #1580 / #1592 / #1608 / #1612 / #1631: MANDATE EnvFrame /
-    // bridge_epoch refresh + linear re-pin + MacroIntroduced marker/provenance
-    // refresh after resume validate (pairs with pre-swap migration refresh in
-    // aura_evaluator_resume_fiber_migration → complete_post_resume_steal_refresh).
-    // #1631: this call is non-optional on the resume main path — steal + GC +
-    // concurrent mutate must not leave version_/bridge_epoch dangling.
-    // Path: aura_evaluator_post_resume_refresh → complete_post_resume_steal_refresh
-    //   → refresh_stale_frames_after_steal (+ JIT walk on bridge drift)
-    //   → probe_and_repin_linear_on_steal
-    //   → refresh_stale_macro_frames + probe_and_repin_macro_provenance (#1612).
+    // Issue #1490 / #1580 / #1592 / #1608 / #1612 / #1631 / #2194: MANDATE
+    // EnvFrame / bridge_epoch refresh + linear re-pin + MacroIntroduced
+    // marker/provenance + orphan GC-defer clear after resume validate.
+    // #1631/#2194: non-optional on resume main path — steal + GC + concurrent
+    // mutate must not leave version_/bridge_epoch / pins / defer dangling.
+    // Path: aura_evaluator_post_resume_refresh → refresh_after_fiber_migration
+    //   → clear_gc_defer (orphan prev host) + refresh_stale_frames_after_steal
+    //   → probe_and_repin_linear_on_steal + restamp_pinned StableNodeRefs
+    //   → refresh_stale_macro_frames + clear_resume_refresh_hints.
     aura_evaluator_post_resume_refresh();
 
     if (g_fiber_setter_)

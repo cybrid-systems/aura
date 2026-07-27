@@ -864,7 +864,14 @@ aura::ast::NodeId clone_macro_body(
     struct ConcurrentCloneGuard {
         bool armed = false;
         std::uint32_t captured_fiber_id = 0;
-        ConcurrentCloneGuard() noexcept {
+        // Issue #2241: capture name_map* by value — dtor cannot touch
+        // enclosing function parameters (C++ local-class rule).
+        const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                 std::equal_to<>>* name_map_ptr = nullptr;
+        explicit ConcurrentCloneGuard(
+            const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                     std::equal_to<>>* nm) noexcept
+            : name_map_ptr(nm) {
             if (s_hygiene_depth != 0)
                 return;
             armed = true;
@@ -888,18 +895,16 @@ aura::ast::NodeId clone_macro_body(
                 // Issue #2097: zero per-fiber depth on exit (violations
                 // persist for agent diagnostic; depth re-bumps on entry).
                 // Issue #2241: snapshot the live name_map occupancy so
-                // gensym_map_size reflects the rename footprint of this
-                // expand (not a placeholder zero). name_map is in scope
-                // as a clone_macro_body parameter.
+                // gensym_map_size reflects the rename footprint of this expand.
                 if (captured_fiber_id != 0) {
-                    const std::size_t nm_size = name_map ? name_map->size() : 0u;
+                    const std::size_t nm_size = name_map_ptr ? name_map_ptr->size() : 0u;
                     bump_fiber_hygiene_on_exit(captured_fiber_id, nm_size);
                 }
             }
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
-    } concurrent_guard;
+    } concurrent_guard{name_map};
     // Issue #2023: top-level clone entry also consults MacroSelfEvo so
     // direct clone_macro_body (without macro_expand_all) cannot bypass
     // the sandbox. Nested recursion skips the check.

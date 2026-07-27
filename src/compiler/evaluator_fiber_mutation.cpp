@@ -805,20 +805,20 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     const std::size_t current_bdepth = mutation_boundary_depth();
     const std::uint64_t current_ver = defuse_version_snapshot();
     bool thread_migrated = cp.thread_id != std::this_thread::get_id();
-    // Issue #2086: on fiber-steal / cross-evaluator resume, clear the
-    // panic-defer depth the **previous** host armed. Without this call,
-    // a fiber that yields on Evaluator A with an active PanicCheckpoint
-    // and resumes on Evaluator B leaves A's per-evaluator slot permanently
-    // armed (the discriminator table never auto-clears on cross-host
-    // steal — only the current host's Guard dtor does). This can
-    // permanently defer GC or pin wrong evaluator's COW / StableNodeRef
-    // "protected" state. Clear before any restamp so the per-evaluator
-    // counter is gone before this fiber's bump_per_fiber metrics fire.
-    if (thread_migrated && cp.evaluator_id != nullptr) {
+    // Issue #2086 / #2194: on fiber-steal / cross-evaluator resume, clear
+    // panic-defer depth the **previous** host armed. Gate on evaluator_id
+    // mismatch (not only thread_migrated) so multi-eval same-thread steals
+    // and restamped thread_id cases still drop orphan slots. Without this,
+    // a fiber that yields on Evaluator A and resumes on B leaves A's slot
+    // permanently armed. Clear before restamp so per-eval counter is gone.
+    if (cp.evaluator_id != nullptr && cp.evaluator_id != static_cast<void*>(this)) {
         const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(cp.evaluator_id);
         if (cleared > 0) {
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->gc_defer_orphan_cleared_total.fetch_add(cleared, std::memory_order_relaxed);
+                m->fiber_migration_gc_defer_cleared_total.fetch_add(cleared,
+                                                                    std::memory_order_relaxed);
+            }
         }
     }
     bool size_mismatch = cp.mutation_stack_depth != current_mdepth;
@@ -995,9 +995,10 @@ namespace {
             aura_aot_record_deopt_on_steal();
         (void)ev->restore_post_yield_or_rollback();
         ev->restore_panic_checkpoint_on_fiber_resume_if_needed();
-        // Issue #1580: closed-loop refresh after yield validate (pairs with
-        // post-swap complete_post_resume_steal_refresh in Fiber::resume).
-        ev->complete_post_resume_steal_refresh(Evaluator::g_current_fiber_void);
+        // Issue #1580 / #2194: closed-loop refresh after yield validate
+        // (pairs with Fiber::resume → aura_evaluator_post_resume_refresh →
+        // refresh_after_fiber_migration).
+        ev->refresh_after_fiber_migration(Evaluator::g_current_fiber_void);
     }
     void fiber_sync_mutation_stack_impl(void* per_fiber_stack) {
         Evaluator::sync_per_fiber_mutation_stack(per_fiber_stack);
@@ -1603,7 +1604,8 @@ extern "C" void aura_evaluator_post_resume_refresh() {
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
         return;
-    ev->complete_post_resume_steal_refresh(Evaluator::g_current_fiber_void);
+    // Issue #2194: mandatory post-steal resume refresh (unified helper).
+    ev->refresh_after_fiber_migration(Evaluator::g_current_fiber_void);
 }
 
 // Issue #1580: transfer pending PanicCheckpoint across steal/resume and
@@ -1645,18 +1647,51 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
     return true;
 }
 
-// Issue #1580 / #1592 / #1631: full post-resume steal closed loop used by
-// Fiber::resume and fiber_resume_validate_impl.
-// AC (#1592/#1631): refresh_stale_frames_after_steal + linear repin +
-// StableNodeRef auto-restamp + linear ownership enforce on steal/resume
-// main path — mandated on every Fiber::resume (pre-swap migration +
-// post-swap validate + post_resume hook).
+// Issue #1580 / #1592 / #1631 / #2194: full post-resume steal closed loop.
+// Fiber::resume and fiber_resume_validate_impl mandate this on every resume.
+// Implementation is refresh_after_fiber_migration (#2194 unified helper).
 void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
+    refresh_after_fiber_migration(fiber_void);
+}
+
+// Issue #2194: unified fiber-migration refresh (steal/resume main path).
+// Aligns post-steal state with outermost MutationBoundaryGuard exit:
+//   1) clear orphan GC defer for previous host evaluator (peek yield CP)
+//   2) refresh_stale_frames_after_steal (EnvFrame dual-epoch)
+//   3) restamp pinned StableNodeRefs (generation-bound, idempotent)
+//   4) linear probe + post-mutate enforce (only_if needed)
+//   5) clear_resume_refresh_hints
+// Called from Fiber::resume after g_fiber_sync_mutation_stack_ (via
+// aura_evaluator_post_resume_refresh / fiber_resume_validate_impl).
+// Guard dtor keeps its own restamp path; auto_restamp is generation-idempotent.
+void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->resume_forced_refresh_total.fetch_add(1, std::memory_order_relaxed);
+        m->fiber_migration_refresh_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #1879: orch/steal provenance enforcement on every resume.
         m->orch_fiber_steal_provenance_enforced_total.fetch_add(1, std::memory_order_relaxed);
         m->orch_stable_ref_auto_refresh_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // 1) Orphan GC defer clear — peek yield checkpoint (may already be
+    // consumed by restore_post_yield_or_rollback; then this is a no-op).
+    // Cross-evaluator mismatch (not only thread_migrated) — #2194 / #2086.
+    {
+        auto& ystack = active_yield_checkpoint_stack();
+        if (!ystack.empty()) {
+            const auto& cp = ystack.back();
+            if (cp.evaluator_id != nullptr && cp.evaluator_id != static_cast<void*>(this)) {
+                const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(cp.evaluator_id);
+                if (cleared > 0) {
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+                        m->gc_defer_orphan_cleared_total.fetch_add(cleared,
+                                                                   std::memory_order_relaxed);
+                        m->fiber_migration_gc_defer_cleared_total.fetch_add(
+                            cleared, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
     }
 
     std::uint64_t hint_env = 0;
@@ -1668,45 +1703,35 @@ void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
         expected_epoch = fiber->resume_bridge_epoch_hint();
     }
 
+    // 2) EnvFrame dual-epoch refresh under resume hints.
     const auto refreshed = refresh_stale_frames_after_steal(hint_env, expected_epoch);
+    // 4a) Linear probe/repin (before pin restamp for ownership probes).
     probe_and_repin_linear_on_steal();
-    // Issue #1905 Step 3 marker: post-steal AOT revalidation hook
-    // is wired via the service.ixx aot_post_steal trampoline on
-    // Fiber::resume / steal (out of scope for the inline
-    // mutation-file edit). The hook bumps
-    // aot_bridge_epoch_bump_on_steal_total + aot_stale_deopt_on_steal_total
 
-    // Issue #1908: post-steal repin enforced MacroIntroduced boundary.
-    // (probe_and_repin_macro_provenance above already did the per-fiber
-    //  provenance restamp; bump the boundary-interaction counters so
-    //  (query:macro-provenance-stats) shows the repin landed.)
+    // Issue #1908: post-steal repin MacroIntroduced boundary counters.
     bump_macro_provenance_repin_on_steal_total();
     bump_hygiene_violation_prevented_on_boundary_total();
-    // on bridge_epoch drift between the resumed fiber's snapshot
-    // and the global current. See docs/design/1905-aot-hot-update-loop.md.
-    (void)refreshed; // suppress unused warning
-    // Explicit Steal-site StableNodeRef auto-restamp (beyond probe_and_repin).
+    (void)refreshed;
+
+    // 3) StableNodeRef pin restamp (generation-bound; safe if Guard also restamped).
     (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
     // Issue #1612: MacroIntroduced marker + provenance refresh on resume/steal.
     (void)refresh_stale_macro_frames(hint_env, expected_epoch);
     probe_and_repin_macro_provenance();
 
-    // Issue #1592 AC3: linear ownership closed-loop after steal/resume.
-    // Prefer hinted env when available; full sweep when drift was repaired
-    // (refreshed > 0) so MoveOp / linear captures cannot dangle across steal.
+    // 4b) Linear ownership closed-loop (pairs with Guard-exit enforce).
     if (hint_env != 0 && hint_env != static_cast<std::uint64_t>(NULL_ENV_ID)) {
         (void)linear_post_mutate_enforce(static_cast<EnvId>(hint_env));
     } else if (refreshed > 0) {
         (void)linear_post_mutate_enforce_all();
     } else {
-        // Still bump once so dashboards see resume-path liveness even when
-        // no frames were stale (pairs with Guard-exit enforcement).
         bump_linear_post_mutate_enforcement();
     }
 
     if (pending_panic_checkpoint())
         (void)transfer_and_revalidate_panic_checkpoint(fb_void);
 
+    // 5) Clear one-shot resume hints after consumption.
     if (fb_void != nullptr)
         static_cast<aura::serve::Fiber*>(fb_void)->clear_resume_refresh_hints();
 }
