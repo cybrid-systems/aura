@@ -128,6 +128,11 @@ struct ParallelOrchStats {
     std::atomic<std::uint64_t> circuit_opened_total{0};
     // Issue #2153: secondary drain after Timeout cancel.
     std::atomic<std::uint64_t> join_drain_residual_total{0};
+    // Issue #2227: hard-reclaim counter — mirrors
+    // OrchModuleStats.join_drain_residual_reclaim_total for the
+    // parallel_orch Timeout residual path (per AC4: parallel
+    // timeout shares the same reclaim protocol).
+    std::atomic<std::uint64_t> join_drain_residual_reclaim_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
 };
 
@@ -512,9 +517,27 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                 if (f && !f->is_done())
                     ++residual;
             }
-            if (residual > 0)
+            if (residual > 0) {
                 g_parallel_orch_stats.join_drain_residual_total.fetch_add(
                     residual, std::memory_order_relaxed);
+                // Issue #2227: parallel Timeout residual shares the
+                // hard-reclaim protocol (per AC4). Per-fiber
+                // note_orphan_fiber with the same drain_ms*8 / 30s
+                // cap used by the orch layer. Best-effort: fibers
+                // without an owner Scheduler (test / host-thread)
+                // are skipped; the counter still increments.
+                const std::uint64_t hard_ms = std::min<std::uint64_t>(
+                    policy.drain_ms > 0 ? policy.drain_ms * 8 : 30000, 30000);
+                for (auto* f : not_done) {
+                    if (!f || f->is_done())
+                        continue;
+                    if (auto* sched = f->owner_sched()) {
+                        sched->note_orphan_fiber(f, hard_ms);
+                    }
+                    g_parallel_orch_stats.join_drain_residual_reclaim_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
         }
     }
 

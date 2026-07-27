@@ -143,6 +143,12 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
 
+    // Issue #2227: owner Scheduler back-pointer so the orch join path
+    // can register hard-reclaim orphans without a global FiberId → Scheduler
+    // lookup. Set before any registration so a concurrent note_orphan
+    // call from a join path sees a non-null owner_sched().
+    ptr->set_owner_sched(this);
+
     // Register eventfd with epoll
 #if AURA_HAVE_EPOLL
     struct epoll_event ee;
@@ -361,6 +367,140 @@ void Scheduler::remove_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
     list.erase(std::remove(list.begin(), list.end(), joiner), list.end());
     if (list.empty())
         joiner_map_.erase(it);
+}
+
+// Issue #2227: hard-reclaim orphan tracking. The orch join path
+// registers a fiber here after observing !is_done() post-drain.
+// The Scheduler holds the orphan for hard_deadline_ms, then
+// reaps it via reap_orphans_now(). Idempotent: if the same
+// fiber is already on the orphan list (e.g. multiple residual
+// observations for the same fiber), the entry is refreshed in
+// place (newest hard_deadline wins) instead of double-registered.
+void Scheduler::note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noexcept {
+    if (!f || hard_deadline_ms == 0)
+        return;
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(hard_deadline_ms);
+    std::lock_guard<std::mutex> lock(orphan_mutex_);
+    // Refresh in place if already registered (newest deadline wins).
+    for (auto& e : orphan_fibers_) {
+        if (e.fiber == f) {
+            e.hard_deadline = deadline;
+            return;
+        }
+    }
+    orphan_fibers_.push_back(OrphanEntry{f, deadline});
+}
+
+// Issue #2227: force-reap all orphans past their hard_deadline.
+// For each candidate (!is_done && !is_reclaimed):
+//   - mark fiber reclaimed_ (so joiners see "logically done")
+//   - drop from wait_map_ / joiner_map_ (wake joiners with 1-byte write)
+//   - drop from owned_fibers_ (releases the unique_ptr)
+//   - unregister from all workers
+//   - release process fiber quota (paired with spawn)
+//   - bump orphans_reaped_total_
+// Returns the number of fibers actually reaped. Idempotent: a
+// second call past the same deadline is a no-op (all entries
+// already removed from orphan_fibers_).
+//
+// Lock order: orphan_mutex_ is held throughout the reaping pass
+// (the list is small, typically 0–1 entries under cancel storms).
+// Per-fiber cleanup acquires wait_map_mutex_ → joiner_map_mutex_
+// → owned_fibers_mutex_ in the same order as on_fiber_done
+// (line 271) to avoid inversion. Per-worker unregister takes the
+// worker's own internal mutex; order across workers doesn't matter.
+std::size_t Scheduler::reap_orphans_now() noexcept {
+    const auto now = std::chrono::steady_clock::now();
+    std::size_t reaped = 0;
+    std::lock_guard<std::mutex> lock(orphan_mutex_);
+    // Two-pass: first pass identifies candidates under the lock;
+    // second pass removes them after the per-fiber cleanup
+    // (which may release other locks). Cleanup is done under the
+    // orphan_mutex_ to keep the orphan list consistent.
+    for (auto it = orphan_fibers_.begin(); it != orphan_fibers_.end();) {
+        Fiber* f = it->fiber;
+        if (!f) {
+            it = orphan_fibers_.erase(it);
+            continue;
+        }
+        if (it->hard_deadline > now || f->is_done() || f->is_reclaimed()) {
+            // Not yet due, or already cleaned up by on_fiber_done.
+            // Keep the entry (will be removed on next pass if still
+            // stale after its deadline).
+            ++it;
+            continue;
+        }
+        // Force-reclaim path. Mark reclaimed_ first so any
+        // concurrent joiner sees the flag before they observe
+        // removal from the maps.
+        f->mark_reclaimed();
+        // Drop from wait_map_ (epoll wake-ups for this fiber id
+        // are no longer relevant; the body is detached).
+        {
+            std::lock_guard<std::mutex> wl(wait_map_mutex_);
+            const auto evfd = f->eventfd();
+            if (evfd >= 0)
+                wait_map_.erase(evfd);
+        }
+        // Unregister from all workers (no future dispatch).
+        for (auto& w : workers_) {
+            w->unregister_fiber(f);
+        }
+        // Drop from joiner_map_ and wake any registered joiners.
+        // Best-effort: writing 1 to the joiner's eventfd wakes
+        // them; they'll observe is_reclaimed() and return
+        // JoinStatus::Ok (the joiner path treats reclaimed
+        // fibers as done — see Fiber::join for the bit).
+        {
+            std::lock_guard<std::mutex> jl(joiner_map_mutex_);
+            auto jit = joiner_map_.find(f->id());
+            if (jit != joiner_map_.end()) {
+                for (Fiber* joiner : jit->second) {
+                    if (!joiner)
+                        continue;
+                    const auto joiner_evfd = joiner->eventfd();
+                    if (joiner_evfd >= 0) {
+                        std::uint64_t one = 1;
+                        (void)::write(joiner_evfd, &one, sizeof(one));
+                    }
+                }
+                joiner_map_.erase(jit);
+            }
+        }
+        // Drop from owned_fibers_ (releases the unique_ptr; the
+        // fiber's destructor runs at this point if no other ref
+        // holds it. The body stack is freed here; non-yielding
+        // bodies leak stack until return — documented limitation).
+        {
+            std::lock_guard<std::mutex> ol(owned_fibers_mutex_);
+            for (auto oit = owned_fibers_.begin(); oit != owned_fibers_.end(); ++oit) {
+                if (oit->get() == f) {
+                    owned_fibers_.erase(oit);
+                    break;
+                }
+            }
+        }
+        // Release process fiber quota (paired with spawn).
+        aura::core::resource_quota::process_resource_quota().release(
+            aura::core::resource_quota::Dimension::Fibers, 1);
+        if (metrics_on_) {
+            metrics_.fibers_completed.fetch_add(1, std::memory_order_relaxed);
+        }
+        orphans_reaped_total_.fetch_add(1, std::memory_order_relaxed);
+        ++reaped;
+        it = orphan_fibers_.erase(it);
+    }
+    return reaped;
+}
+
+std::size_t Scheduler::orphan_count() const noexcept {
+    std::lock_guard<std::mutex> lock(orphan_mutex_);
+    return orphan_fibers_.size();
+}
+
+std::uint64_t Scheduler::orphans_reaped_total() const noexcept {
+    return orphans_reaped_total_.load(std::memory_order_relaxed);
 }
 
 // Issue #119: lookup a fiber by ID. Returns nullptr if no

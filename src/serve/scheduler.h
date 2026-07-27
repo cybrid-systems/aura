@@ -107,6 +107,29 @@ public:
     // already done before registering as a joiner.
     Fiber* fiber_by_id(std::uint64_t fiber_id) const;
 
+    // ── Issue #2227: hard-reclaim orphan tracking ─────────────────
+    // The orch join path (cancel_and_drain_* / join_agent / parallel
+    // Timeout residual) calls note_orphan_fiber after observing
+    // !is_done() post-drain. The Scheduler holds the orphan for
+    // hard_deadline_ms, then reaps it: removes from wait_map_ /
+    // joiner_map_ / owned_fibers_, sets the fiber's reclaimed_ flag
+    // (so the next joiner sees "logically done"), wakes any
+    // registered joiners. Bodies that never yield still consume
+    // stack until they return — documented limitation, same as
+    // the cooperative cancel protocol (#2153). The reap is also
+    // invoked eagerly by reap_orphans_now() for tests + the IO
+    // thread tick.
+    struct OrphanEntry {
+        Fiber* fiber;
+        std::chrono::steady_clock::time_point hard_deadline;
+    };
+    void note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noexcept;
+    // Force-reap all orphans past their hard_deadline. Returns
+    // the number of fibers actually reclaimed. Idempotent.
+    std::size_t reap_orphans_now() noexcept;
+    [[nodiscard]] std::size_t orphan_count() const noexcept;
+    [[nodiscard]] std::uint64_t orphans_reaped_total() const noexcept;
+
     // ── Worker management ───────────────────────────
     int num_workers() const { return num_workers_; }
     WorkerThread* worker(int idx);
@@ -195,6 +218,15 @@ private:
     // joiner can join multiple targets without double-registration.
     std::unordered_map<std::uint64_t, std::vector<Fiber*>> joiner_map_;
     mutable std::mutex joiner_map_mutex_;
+    // Issue #2227: hard-reclaim orphan list. Each entry is a fiber
+    // that has been observed as !is_done() after the cooperative
+    // drain window; the scheduler reaps it when its hard_deadline
+    // elapses (drop from wait_map_ / joiner_map_ / owned_fibers_,
+    // set reclaimed_ flag, wake joiners). Small (one entry per
+    // residual fiber); mutated only under orphan_mutex_.
+    std::vector<OrphanEntry> orphan_fibers_;
+    mutable std::mutex orphan_mutex_;
+    std::atomic<std::uint64_t> orphans_reaped_total_{0};
 
     // Stdin fiber (handles stdin line protocol in serve mode)
     Fiber* stdin_fiber_ = nullptr;

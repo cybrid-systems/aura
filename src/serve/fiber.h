@@ -357,7 +357,16 @@ public:
     FiberState state() const { return state_.load(std::memory_order_acquire); }
     void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
     int eventfd() const { return eventfd_; }
-    bool is_done() const { return state_.load(std::memory_order_acquire) == FiberState::Done; }
+    // is_done() now also returns true for force-reclaimed fibers
+    // (Issue #2227): a fiber whose hard_deadline elapsed and was
+    // force-reaped by Scheduler::reap_orphans_now. Existing join()
+    // callers treat this as a normal Done so they wake up and
+    // return Ok; the OrchModuleStats.join_drain_residual_reclaim_total
+    // counter tracks the actual force-reclaim path.
+    bool is_done() const {
+        return state_.load(std::memory_order_acquire) == FiberState::Done ||
+               reclaimed_.load(std::memory_order_acquire);
+    }
 
     // ── Issue #1584: structured join ───────────────────
     // Block the current fiber (or host thread) until `target`
@@ -380,6 +389,24 @@ public:
     [[nodiscard]] bool is_cancel_requested() const noexcept {
         return cancel_requested_.load(std::memory_order_acquire);
     }
+    // Issue #2227: owner Scheduler back-pointer accessor. Returns
+    // nullptr for fibers created outside a Scheduler (test / host
+    // thread / static Fibers); the orch join path skips the
+    // hard-reclaim orphan path when this is null.
+    [[nodiscard]] Scheduler* owner_sched() const noexcept { return owner_sched_; }
+    void set_owner_sched(Scheduler* s) noexcept { owner_sched_ = s; }
+    // Issue #2227: hard-reclaim flag. Set by Scheduler::reap_orphans_now
+    // when the fiber's hard_deadline has passed and !is_done(). Once
+    // set, is_done() still returns the body-truth state, but the
+    // scheduler treats the fiber as "logically done" (removed from
+    // wait_map_ / joiner_map_ / owned_fibers_). Bodies that yield
+    // post-reclaim are NOT re-dispatched; bodies that never yield
+    // keep their stack until they return (best-effort, same
+    // limitation as the cooperative cancel protocol #2153).
+    [[nodiscard]] bool is_reclaimed() const noexcept {
+        return reclaimed_.load(std::memory_order_acquire);
+    }
+    void mark_reclaimed() noexcept { reclaimed_.store(true, std::memory_order_release); }
 
     // Process-wide join metrics (#1584 / #1595).
     [[nodiscard]] static std::uint64_t join_total() noexcept;
@@ -557,6 +584,21 @@ private:
     std::atomic<bool> orch_agent_boundary_active_{false};
     // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
     std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
+    // Issue #2227: back-pointer to owner Scheduler so the orch join
+    // path can register hard-reclaim orphans without going through
+    // a global lookup. Set by Scheduler::spawn; nullptr for
+    // out-of-scheduler fibers (test / host-thread / etc.).
+    Scheduler* owner_sched_ = nullptr;
+    // Issue #2227: reclaimed flag — set by Scheduler::reap_orphans_now
+    // when the fiber's hard_deadline has passed and !is_done(). The
+    // body may still be running (non-yielding tight loop); the flag
+    // is a hint to the joiner / metric observer that this fiber has
+    // been force-reclaimed and is "logically done" from the
+    // scheduler's perspective. Bodies that don't poll is_reclaimed()
+    // (or yield) will continue to consume stack until they return —
+    // documented limitation, same as #2153 cooperative cancel
+    // protocol.
+    std::atomic<bool> reclaimed_{false};
 
     // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;
