@@ -393,6 +393,18 @@ std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total{0};
 // method only updates the per-instance FlatAST member, which the
 // snapshot function syncs into CompilerMetrics).
 std::atomic<std::uint64_t> g_unstamp_macro_introduced_total{0};
+// Issue #2237: agent-driven rollback counter (always bumps on every
+// mutate:rollback-macro-introduced call regardless of strict-mode).
+// Distinct from g_unstamp_macro_introduced_total which counts the
+// nodes actually unstampped; this counts the rollback ops invoked.
+// AC2 / AC3: query:macro-hygiene-stats exposes both via dedicated keys.
+std::atomic<std::uint64_t> g_rollback_macro_introduced_total{0};
+// Issue #2237: strict-audited rollback counter. Bumps only when
+// `g_macro_expand_sandbox_strict` is set AND the rollback actually
+// unstampped >=1 node. AC4: paired with SecurityEventKind::
+// MacroHygieneRollbackOnStrict emit (via append_security_event into
+// g_security_event_ring() and SecurityEventWAL if enabled).
+std::atomic<std::uint64_t> g_rollback_strict_audited_total{0};
 // Issue #2235: process-wide strict-mode flag for cross-FlatAST clone
 // hygiene gate. When 0 (default = relaxed mode), the cross-flat
 // post-restamp validate is counter-only (no abort, no second-pass
@@ -465,6 +477,40 @@ extern "C" std::uint64_t aura_unstamp_macro_introduced_with_counter(void* flat_p
 // experimental rollback path). Bumped per successful unstamp.
 std::uint64_t aura_unstamp_macro_introduced_total_v_read() noexcept {
     return g_unstamp_macro_introduced_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2237: agent-driven rollback counter reader (AC2 / AC3).
+// Always-bump counter — separate from per-node unstampped total so
+// ops vs nodes are observable independently. Used by
+// query:macro-hygiene-stats under the `rollback-macro-introduced-total`
+// key. No-op rollback calls (root=NULL_NODE, out-of-bounds, no
+// MacroIntroduced descendants) still bump the counter because the
+// op was invoked; the per-node count stays at 0.
+extern "C" std::uint64_t aura_rollback_macro_introduced_total_v_read() noexcept {
+    return g_rollback_macro_introduced_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2237: strict-audited rollback counter reader (AC4). Only
+// bumps when `g_macro_expand_sandbox_strict` is set AND at least one
+// node was unstampped. Used by query:macro-hygiene-stats under
+// `rollback-strict-audited-total`. Should normally be 0 unless the
+// sandbox is in strict mode (which is opt-in via
+// aura_macro_set_expand_sandbox_strict(1)).
+extern "C" std::uint64_t aura_rollback_strict_audited_total_v_read() noexcept {
+    return g_rollback_strict_audited_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2237: bumpers for the new counters (called from
+// mutate:rollback-macro-introduced in evaluator_primitives_mutate.cpp).
+// `aura_rollback_macro_introduced_total_bump` always bumps (per-op
+// counter); `aura_rollback_strict_audited_total_bump` only bumps
+// from the strict-mode branch (after SecurityEvent emit succeeded).
+extern "C" void aura_rollback_macro_introduced_total_bump() noexcept {
+    g_rollback_macro_introduced_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_rollback_strict_audited_total_bump() noexcept {
+    g_rollback_strict_audited_total.fetch_add(1, std::memory_order_relaxed);
 }
 // Issue #2235: C-linkage reader / setter for the cross-FlatAST
 // hygiene-gate strict-mode flag (g_macro_expand_sandbox_strict).

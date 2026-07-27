@@ -1567,6 +1567,41 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // restamp counters.
             const std::uint64_t unstampped = aura_unstamp_macro_introduced_with_counter(
                 ev.workspace_flat_, root, keep_provenance);
+            // Issue #2237 AC2/AC3: always bump rollback counter (even
+            // for no-op root=NULL_NODE / out-of-bounds calls — caller
+            // still attempted the op). Separate from
+            // g_unstamp_macro_introduced_total which counts nodes
+            // actually unstampped (in aura_unstamp_macro_introduced_with_counter).
+            aura_rollback_macro_introduced_total_bump();
+            // Issue #2237 AC4: under sandbox-strict mode, audit the
+            // rollback into the SecurityEvent ring (and SecurityEventWAL
+            // if enabled — #2225) with kind=MacroHygieneRollbackOnStrict.
+            // Only audited when count > 0 (no-op rollbacks not
+            // audit-noise). denied=false since it's a permissive audit
+            // (the rollback itself succeeded; strict-mode just demands
+            // forensic visibility for AI self-evo hygiene).
+            if (aura_macro_expand_sandbox_strict_v_read() != 0 && unstampped > 0) {
+                using aura::core::security_event::SecurityEventKind;
+                using aura::core::security_event::append_security_event;
+                char reason_buf[80];
+                const int rn = std::snprintf(reason_buf, sizeof(reason_buf),
+                                             "rollback unstampped=%llu root=%llu strict-mode",
+                                             static_cast<unsigned long long>(unstampped),
+                                             static_cast<unsigned long long>(root));
+                (void)rn;
+                append_security_event(
+                    aura::core::security_event::g_security_event_ring(),
+                    SecurityEventKind::MacroHygieneRollbackOnStrict,
+                    /*tenant=*/0,
+                    /*mutation_id=*/static_cast<std::uint64_t>(ev.current_mutation_id()),
+                    /*epoch=*/ev.epoch(),
+                    /*effect_bits=*/aura::compiler::security::kEffectMutate,
+                    /*op=*/"mutate:rollback-macro-introduced",
+                    /*reason=*/std::string_view(reason_buf),
+                    /*denied=*/false,
+                    /*fiber_id=*/aura_fiber_current_id());
+                aura_rollback_strict_audited_total_bump();
+            }
             return make_int(static_cast<std::int64_t>(unstampped));
         });
 
