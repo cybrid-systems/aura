@@ -62,6 +62,12 @@ extern "C" void aura_hot_update_set_shape_storm_active(int active);
 // lambdas (block-scope extern "C" is not visible reliably under -fmodules-ts).
 extern "C" std::uint64_t aura_anonymous_aot_reject_total_v_read(void) noexcept;
 extern "C" int aura_get_require_stable_id_for_aot(void) noexcept;
+// Issue #2241: macro fiber hygiene filter / budget C ABI (macro_expansion.cpp).
+extern "C" std::uint64_t
+aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
+                                                int min_depth) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_get_fiber_violation_budget(void) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_fiber_violation_deny_total_v_read(void) noexcept;
 // Issue #2095: postmortem hook for default-LLVM reemit failures.
 // env-gated via AURA_REEMIT_KEEP_FAIL; rename to /tmp/aura_reemit_failed/.
 extern "C" int aura_reemit_keep_fail_enabled(void);
@@ -9484,6 +9490,27 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("bridge-epoch-drift-post-steal", bridge_drift);
             insert_kv("bridge_epoch_deopt_walk_post_steal", bridge_deopt);
             insert_kv("bridge-epoch-deopt-walk-post-steal", bridge_deopt);
+            // Issue #2194: unified refresh_after_fiber_migration metrics
+            const std::int64_t mig_refresh =
+                m ? static_cast<std::int64_t>(
+                        m->fiber_migration_refresh_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t mig_gc_cleared =
+                m ? static_cast<std::int64_t>(
+                        m->fiber_migration_gc_defer_cleared_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t orphan_cleared =
+                m ? static_cast<std::int64_t>(
+                        m->gc_defer_orphan_cleared_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("fiber_migration_refresh_total", mig_refresh);
+            insert_kv("fiber-migration-refresh-total", mig_refresh);
+            insert_kv("fiber_migration_gc_defer_cleared_total", mig_gc_cleared);
+            insert_kv("fiber-migration-gc-defer-cleared-total", mig_gc_cleared);
+            insert_kv("gc_defer_orphan_cleared_total", orphan_cleared);
+            insert_kv("fiber-migration-refresh-wired", 1);
+            insert_kv("schema-2194", 2194);
+            insert_kv("issue-2194", 2194);
             insert_kv("fiber-lifecycle-mandate-active", 1);
             insert_kv("resume-pre-swap-migration-wired", 1);
             insert_kv("resume-post-swap-validate-wired", 1);
@@ -14596,8 +14623,7 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
             const bool filter_active = (min_violations > 0 || min_depth > 0);
             const std::uint64_t filtered_entries =
                 filter_active
-                    ? aura::compiler::macro_exp::aura_macro_self_evo_count_fibers_meeting_filter(
-                          min_violations, min_depth)
+                    ? aura_macro_self_evo_count_fibers_meeting_filter(min_violations, min_depth)
                     : 0ULL;
             // Inline FNV-based hash builder (mirrors closure-stats pattern at
             // line 13990+ — small + self-contained, no new helper dep).
@@ -14727,12 +14753,11 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                 {"min-violations-filter", make_int(static_cast<std::int64_t>(min_violations))},
                 {"min-depth-filter", make_int(static_cast<std::int64_t>(min_depth))},
                 {"filtered-entries", make_int(static_cast<std::int64_t>(filtered_entries))},
-                {"fiber-violation-budget",
-                 make_int(static_cast<std::int64_t>(
-                     g_macro_self_evo_fiber_violation_budget.load(std::memory_order_relaxed)))},
+                {"fiber-violation-budget", make_int(static_cast<std::int64_t>(
+                                               aura_macro_self_evo_get_fiber_violation_budget()))},
                 {"fiber-violation-deny-total",
                  make_int(static_cast<std::int64_t>(
-                     g_macro_self_evo_fiber_violation_deny_total.load(std::memory_order_relaxed)))},
+                     aura_macro_self_evo_fiber_violation_deny_total_v_read()))},
             };
             return build_hash(kv);
         });

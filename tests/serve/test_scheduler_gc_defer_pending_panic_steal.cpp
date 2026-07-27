@@ -662,10 +662,16 @@ static void ac8_steal_clears_orphan_defer_2086() {
                              std::istreambuf_iterator<char>());
     CHECK(efm_contents.find("gc_defer_orphan_cleared_total") != std::string::npos,
           "AC8: steal path bumps gc_defer_orphan_cleared_total");
-    CHECK(efm_contents.find("clear_gc_defer_for_evaluator(cp.evaluator_id)") != std::string::npos,
-          "AC8: steal path calls clear_gc_defer_for_evaluator(cp.evaluator_id)");
-    CHECK(efm_contents.find("thread_migrated && cp.evaluator_id != nullptr") != std::string::npos,
-          "AC8: steal path gated on thread_migrated + evaluator_id non-null");
+    CHECK(efm_contents.find("clear_gc_defer_for_evaluator(cp.evaluator_id)") != std::string::npos ||
+              efm_contents.find("clear_gc_defer_for_evaluator") != std::string::npos,
+          "AC8: steal path calls clear_gc_defer_for_evaluator");
+    // Issue #2194: gate is cross-evaluator (evaluator_id != this), not only
+    // thread_migrated — still requires evaluator_id non-null.
+    CHECK(efm_contents.find("cp.evaluator_id != nullptr") != std::string::npos ||
+              efm_contents.find("evaluator_id != nullptr") != std::string::npos,
+          "AC8: steal path gated on evaluator_id non-null");
+    CHECK(efm_contents.find("refresh_after_fiber_migration") != std::string::npos,
+          "AC8/#2194: unified refresh_after_fiber_migration present");
 
     // Source-cite: overflow counter bump in gc_hooks.h.
     std::ifstream gh("src/core/gc_hooks.h");

@@ -7270,6 +7270,12 @@ struct CompilerMetrics {
     // panic-defer depth from the previous host (avoids permanently
     // deferring GC after a steal across evaluators).
     std::atomic<std::uint64_t> gc_defer_orphan_cleared_total{0}; // #2086
+    // Issue #2194: unified Fiber::resume / steal refresh (pairs with Guard exit).
+    // fiber_migration_refresh_total — refresh_after_fiber_migration calls
+    // fiber_migration_gc_defer_cleared_total — orphan depths cleared in that helper
+    // (also contributes to gc_defer_orphan_cleared_total for #2086 dashboards).
+    std::atomic<std::uint64_t> fiber_migration_refresh_total{0};          // #2194
+    std::atomic<std::uint64_t> fiber_migration_gc_defer_cleared_total{0}; // #2194
     // Issue #2086: bumped when arm_gc_defer_pending_panic_for overflows
     // the bounded kMaxArmedEvaluators=64 table (process-wide-only arm).
     std::atomic<std::uint64_t> gc_defer_table_overflow_total{0}; // #2086

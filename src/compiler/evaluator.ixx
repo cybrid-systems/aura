@@ -3121,6 +3121,11 @@ public:
     // linear/StableNodeRef, transfer panic checkpoint. Uses fiber resume
     // hints when fiber_void is a Fiber*.
     void complete_post_resume_steal_refresh(void* fiber_void = nullptr) noexcept;
+    // Issue #2194: unified steal/resume refresh (Guard-exit–aligned).
+    // clear orphan GC defer → EnvFrame dual-epoch refresh → pin restamp →
+    // linear probe → clear resume hints. Called from Fiber::resume after
+    // mutation-stack sync; complete_post_resume_steal_refresh delegates here.
+    void refresh_after_fiber_migration(void* fiber_void = nullptr) noexcept;
     // Issue #1595: after Fiber::join / parallel child completion — linear
     // ownership probe + StableNodeRef restamp (joiner-side enforcement).
     // joined_fiber_void may be null (uses current fiber / full scan).
