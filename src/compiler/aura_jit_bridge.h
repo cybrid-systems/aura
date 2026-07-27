@@ -285,15 +285,19 @@ inline ReloadPolicy policy_for(AotReloadFail r) noexcept {
 // retry into a storming region mask / staging handshake. Caller
 // (aura_jit_bridge.cpp) consults this in the iterative retry loop
 // and short-circuits to exhausted + JIT-only when true.
+// C-linkage storm level (defined in hot_update_registry.cpp).
+std::uint8_t aura_hot_update_current_storm_level(void);
+// Note: aot_reload_storm_skip_retry_for_2249 is C++-only (inline below).
+} // extern "C" temporarily closed for C++ inline helper
 inline bool aot_reload_storm_skip_retry_for_2249(AotReloadFail r) noexcept {
     if (r != AotReloadFail::Region && r != AotReloadFail::Staging)
         return false; // only suppress the new auto-retry classes
-    // Consult HotUpdateRegistry::current_storm_level() via the existing
-    // aura_hot_update_storm_level_v_read accessor (C-linkage, no
-    // module dependency). Default 0 = None. Anything >= 2 = Storm.
-    const std::uint64_t lvl = aura_hot_update_storm_level_v_read();
+    // Consult HotUpdateRegistry::current_storm_level() via C ABI.
+    // Default 0 = None. Anything >= 2 = Storm/Global bit set.
+    const std::uint64_t lvl = static_cast<std::uint64_t>(aura_hot_update_current_storm_level());
     return lvl >= 2;
 }
+extern "C" {
 
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);

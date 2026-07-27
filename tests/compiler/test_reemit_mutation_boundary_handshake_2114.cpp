@@ -1,16 +1,17 @@
 // @category: unit
 // @reason: Issue #2114 — HotUpdate reemit ↔ MutationBoundary explicit handshake.
 //
-// Handshake policy for Agent / plugin authors (AC5):
-//   SoftEnter (default, policy=0): reemit outside a real MutationBoundary
-//     enters a TLS soft reemit boundary for the call duration. Dual-epoch /
-//     linear / GC steal see soft depth via aura_hot_update_soft_reemit_boundary_active.
-//   Defer (policy=1): reemit outside records pending version and returns 0;
-//     next outermost MutationBoundary exit drains it under the real Guard.
+// Handshake policy for Agent / plugin authors (AC5 / #2205):
+//   SoftEnter (policy=0, **opt-in only**): reemit outside a real
+//     MutationBoundary enters a TLS soft reemit boundary for the call
+//     duration. Not steal-safe — production default is Defer (#2205).
+//   Defer (policy=1, **production default #2205**): reemit outside records
+//     pending version and returns 0; next outermost MutationBoundary exit
+//     drains it under the real Guard.
 //   Inside real boundary (depth>0 or held flag, #2090 dtor window): proceed
 //     without soft-enter. Outside path is never silent (always counted).
 //
-//   AC1: Forced reemit outside → soft-enter or defer (never silent)
+//   AC1: Forced reemit outside → soft-enter (opt-in) or defer (never silent)
 //   AC2: Soft path does not break baseline reemit / inside-boundary path
 //   AC3: Query exposes three counters + schema-2114
 //   AC4: Existing reemit wiring still present (source + soft path green)
@@ -132,9 +133,13 @@ static void ac1_outside_soft_or_defer() {
     EmitFixture ef;
     wire_reemit(rf, ef);
 
-    // Outside: no Guard, depth 0, held 0 → SoftEnter
+    // Production default Defer (#2205) after reset.
     CHECK(aura_hot_update_in_mutation_boundary_for_reemit() == 0, "outside before");
-    CHECK(aura_hot_update_get_reemit_boundary_policy() == 0, "default SoftEnter");
+    CHECK(aura_hot_update_get_reemit_boundary_policy() == 1, "default Defer (#2205)");
+
+    // SoftEnter is opt-in (#2205 AC5) — set policy 0 for soft path test.
+    aura_hot_update_set_reemit_boundary_policy(0);
+    CHECK(aura_hot_update_get_reemit_boundary_policy() == 0, "SoftEnter opt-in");
     const auto n = aura_reemit_aot_for_dirty(0);
     CHECK(n >= 1, "soft-enter reemit succeeds");
     auto snap = hot_update_registry().snapshot();
@@ -144,10 +149,9 @@ static void ac1_outside_soft_or_defer() {
     CHECK(aura_hot_update_soft_reemit_boundary_active() == 0, "soft depth cleared after call");
     CHECK(ef.ok.load() >= 1, "emit ran under soft boundary");
 
-    // Defer policy
+    // Defer policy (production default)
     aura_hot_update_reset_reemit_boundary_handshake_for_test();
-    aura_hot_update_set_reemit_boundary_policy(1);
-    CHECK(aura_hot_update_get_reemit_boundary_policy() == 1, "policy Defer");
+    CHECK(aura_hot_update_get_reemit_boundary_policy() == 1, "reset → Defer");
     wire_reemit(rf, ef);
     const auto n2 = aura_reemit_aot_for_dirty(42);
     CHECK(n2 == 0, "deferred returns 0");
@@ -170,7 +174,6 @@ static void ac1_outside_soft_or_defer() {
         CHECK(n3 >= 1, "inside reemit succeeds");
         CHECK(aura_hot_update_has_deferred_reemit() == 0, "deferred drained");
     }
-    aura_hot_update_set_reemit_boundary_policy(0);
 }
 
 static void ac2_inside_boundary_baseline() {
@@ -204,7 +207,9 @@ static void ac3_query_surface() {
     ReemitFixture rf;
     EmitFixture ef;
     wire_reemit(rf, ef);
-    (void)aura_reemit_aot_for_dirty(0); // soft-enter outside
+    // Soft path: opt-in SoftEnter then reemit outside.
+    aura_hot_update_set_reemit_boundary_policy(0);
+    (void)aura_reemit_aot_for_dirty(0);
 
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "eval");

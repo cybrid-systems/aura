@@ -2334,6 +2334,11 @@ aura_add_issue_test(test_gc_defer_mutation_hold_2204)
 aura_issue_test_link_llvm_jit(test_gc_defer_mutation_hold_2204)
 add_dependencies(all_test_issue_targets test_gc_defer_mutation_hold_2204)
 
+# Issue #2205: production default reemit policy Defer (disable SoftEnter multi-fiber).
+aura_add_issue_test(test_reemit_production_default_defer_2205)
+aura_issue_test_link_llvm_jit(test_reemit_production_default_defer_2205)
+add_dependencies(all_test_issue_targets test_reemit_production_default_defer_2205)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

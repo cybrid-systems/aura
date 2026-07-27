@@ -1377,7 +1377,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Fiber::resume / refresh_stale_frames_after_steal). 6-field
         // POD copied by value (LayoutStamp is trivially copyable
         // per #2170 contract).
-        if (auto* cur_fiber = current_fiber()) {
+        // Issue #2250: current fiber via g_current_fiber / get_current_fiber.
+        if (auto* cur_fiber = aura::serve::g_current_fiber) {
             const auto stamp = ev_->current_layout_stamp();
             cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
                                                stamp.mutation_epoch, stamp.env_gen,

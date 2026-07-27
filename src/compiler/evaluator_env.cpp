@@ -762,21 +762,10 @@ bool EnvFrame::set_linear_ownership_state_by_name(const std::string& n, std::uin
 // lookup_by_symid_chain (and legacy Env paths) using the
 // owning Evaluator's central cells_ pmr::vector. This
 // makes frames fully index-driven and reallocation-safe.
-std::optional<types::EvalValue> EnvFrame::lookup_local(
-    const std::string& n) const { // Issue #2251: env_gen fence at walk entry. Foreign-generation
-    // frames are skipped (no silent use of stale bindings). Each
-    // skipped frame bumps env_gen_fence_reject_total so dashboards
-    // can observe the rate.
-    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-        const auto cur_gen = env_generation_.load(std::memory_order_acquire);
-        for (std::size_t i = 0; i < env_frames_.size(); ++i) {
-            const auto& fr = env_frames_[i];
-            if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != cur_gen) {
-                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
-
+std::optional<types::EvalValue> EnvFrame::lookup_local(const std::string& n) const {
+    // Issue #2251 env_gen fence lives on Evaluator chain walks
+    // (lookup_by_symid_chain / walk_env_frames), not frame-local
+    // pure lookup — EnvFrame has no Evaluator members.
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
         if (it->first == n) {
             return it
@@ -835,7 +824,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // baseline (matches current_layout_stamp().env_gen). Without
     // this the legacy 0 sentinel would either always match (cold
     // start) or always mismatch (after first env_generation_ bump).
-    fr.env_gen_stamp_ = env_generation_.load(std::memory_order_acquire);
+    fr.env_gen_stamp_ = env_generation_;
     env_frames_.push_back(std::move(fr));
     const EnvId id = static_cast<EnvId>(env_frames_.size() - 1);
     // Issue #1903: set the owner_ back-pointer so the frame's
@@ -969,8 +958,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // + bump env_gen_fence_reject_total so dashboards can observe.
     if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
         const auto& fr = env_frames_[cl.env_id];
-        if (fr.env_gen_stamp_ != 0 &&
-            fr.env_gen_stamp_ != env_generation_.load(std::memory_order_acquire)) {
+        if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
             // Empty-Env fallback (preserves downstream type-safety
@@ -2283,8 +2271,7 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
     // foreign-generation bindings.
     if (start != NULL_ENV_ID && start < env_frames_.size()) {
         const auto& fr = env_frames_[start];
-        if (fr.env_gen_stamp_ != 0 &&
-            fr.env_gen_stamp_ != env_generation_.load(std::memory_order_acquire)) {
+        if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
             return std::nullopt;

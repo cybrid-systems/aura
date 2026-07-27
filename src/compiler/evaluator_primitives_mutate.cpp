@@ -128,14 +128,17 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t last_region_mask_from_dirty;
     std::int64_t schema_2035;
     std::int64_t issue_2035;
-    // Issue #2114: MUST stay in lockstep with hot_update_registry.hh
+    // Issue #2114 / #2205: MUST stay in lockstep with hot_update_registry.hh
     std::int64_t reemit_outside_boundary_total;
     std::int64_t reemit_soft_boundary_entered_total;
     std::int64_t reemit_deferred_for_boundary_total;
     std::int64_t reemit_boundary_policy;
     std::int64_t reemit_deferred_pending;
+    std::int64_t reemit_rejected_require_real_total; // #2205
     std::int64_t schema_2114;
     std::int64_t issue_2114;
+    std::int64_t schema_2205; // #2205
+    std::int64_t issue_2205;  // #2205
     // Issue #2236: StormIsolation mode + per-region storm counters.
     // MUST stay in lockstep with hot_update_registry.hh.
     std::int64_t storm_isolation_mode;
@@ -6657,12 +6660,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       snap.reemit_deferred_for_boundary_total);
             insert_kv("reemit-boundary-policy", snap.reemit_boundary_policy);
             insert_kv("reemit-deferred-pending", snap.reemit_deferred_pending);
-            // AC5 docs sentinels: SoftEnter=0, Defer=1
+            // AC5 docs sentinels: SoftEnter=0, Defer=1, RequireReal=2
             insert_kv("reemit-handshake-policy-soft-enter", 0);
             insert_kv("reemit-handshake-policy-defer", 1);
+            insert_kv("reemit-handshake-policy-require-real", 2);
             insert_kv("reemit-handshake-wired", 1);
             insert_kv("schema-2114", snap.schema_2114 != 0 ? snap.schema_2114 : 2114);
             insert_kv("issue-2114", snap.issue_2114 != 0 ? snap.issue_2114 : 2114);
+            // Issue #2205: production default Defer + RequireRealBoundary.
+            insert_kv("schema-2205", snap.schema_2205 != 0 ? snap.schema_2205 : 2205);
+            insert_kv("issue-2205", snap.issue_2205 != 0 ? snap.issue_2205 : 2205);
+            insert_kv("reemit-production-default-defer", 1);
+            insert_kv("reemit-soft-enter-opt-in-only", 1);
+            insert_kv("reemit-rejected-require-real-total",
+                      snap.reemit_rejected_require_real_total);
             // Issue #2236: StormIsolation mode + per-region storm
             // trip counters (5 new keys). 0 = Global (today's
             // process-wide window, backwards compat), 1 = PerRegion

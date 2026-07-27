@@ -1290,21 +1290,23 @@ inline bool adaptive_thr_frozen() noexcept {
 }
 
 // Update policy based on a fallback reason. Correctness-risk reasons
-// (MapInconsistent / DesyncForceFull) bump bad_window_count + raise
-// current_thr (bounded by kMaxRatioBp * base / 1000). Ok reasons
-// increment clean_window_count; after kCleanDecayAfter clean events,
-// decay current_thr back toward base (1-step per kCleanDecayAfter).
+// (MapInconsistent=7 / DesyncForceFull=6 per RelowerFallbackReason ABI)
+// bump bad_window_count + raise current_thr. Ok=0 decays. Uses int ABI
+// so this module does not depend on observability_metrics.h.
 // Threshold / ParseFail / RelowerReject / Other / NoSource / EmptyIr
-// are neutral (neither raise nor decay) — they're deliberate or
-// infrastructure reasons, not correctness risk.
-inline void note_relower_fallback_for_adaptive(aura::compiler::RelowerFallbackReason r) noexcept {
+// are neutral (neither raise nor decay).
+inline constexpr int kRelowerFbOk = 0;
+inline constexpr int kRelowerFbDesyncForceFull = 6;
+inline constexpr int kRelowerFbMapInconsistent = 7;
+
+inline void note_relower_fallback_for_adaptive(int r) noexcept {
     auto& p = adaptive_thr_policy_singleton();
     if (adaptive_thr_frozen()) {
         // AC3: env override freezes policy.
         return;
     }
-    const bool is_correctness_risk = r == aura::compiler::RelowerFallbackReason::MapInconsistent ||
-                                     r == aura::compiler::RelowerFallbackReason::DesyncForceFull;
+    const bool is_correctness_risk =
+        r == kRelowerFbMapInconsistent || r == kRelowerFbDesyncForceFull;
     if (is_correctness_risk) {
         // AC1: raise threshold.
         if (p.bad_window_count < p.bad_window_cap)
@@ -1312,22 +1314,25 @@ inline void note_relower_fallback_for_adaptive(aura::compiler::RelowerFallbackRe
         // Raise current_thr by kStepBp basis points per bad event.
         const std::uint64_t raised =
             static_cast<std::uint64_t>(p.current_thr) +
-            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * kStepBp) / 1000;
+            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * AdaptiveThrPolicy::kStepBp) /
+                1000;
         const std::uint64_t max_thr =
-            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * kMaxRatioBp) / 1000;
+            (static_cast<std::uint64_t>(p.base_partial_cost_thr) * AdaptiveThrPolicy::kMaxRatioBp) /
+            1000;
         p.current_thr = raised > max_thr ? static_cast<std::uint32_t>(max_thr)
                                          : static_cast<std::uint32_t>(raised);
         // Reset clean window counter.
         p.clean_window_count = 0;
-    } else if (r == aura::compiler::RelowerFallbackReason::Ok) {
+    } else if (r == kRelowerFbOk) {
         // AC2: clean window decay.
         ++p.clean_window_count;
-        if (p.clean_window_count >= kCleanDecayAfter) {
+        if (p.clean_window_count >= AdaptiveThrPolicy::kCleanDecayAfter) {
             // Decay 1 step toward base.
             if (p.current_thr > p.base_partial_cost_thr) {
-                const std::int64_t lower =
-                    static_cast<std::int64_t>(p.current_thr) -
-                    (static_cast<std::int64_t>(p.base_partial_cost_thr) * kStepBp) / 1000;
+                const std::int64_t lower = static_cast<std::int64_t>(p.current_thr) -
+                                           (static_cast<std::int64_t>(p.base_partial_cost_thr) *
+                                            AdaptiveThrPolicy::kStepBp) /
+                                               1000;
                 p.current_thr = lower < static_cast<std::int64_t>(p.base_partial_cost_thr)
                                     ? p.base_partial_cost_thr
                                     : static_cast<std::uint32_t>(lower);
@@ -1349,8 +1354,23 @@ inline void reset_adaptive_thr_for_test() noexcept {
 inline void inject_adaptive_thr_bad_for_test(std::uint32_t n) noexcept {
     auto& p = adaptive_thr_policy_singleton();
     for (std::uint32_t i = 0; i < n; ++i) {
-        note_relower_fallback_for_adaptive(aura::compiler::RelowerFallbackReason::MapInconsistent);
+        note_relower_fallback_for_adaptive(kRelowerFbMapInconsistent);
     }
+}
+
+// Issue #2248: C ABI for observability_metrics.h note_relower_fallback
+// (header cannot import this module; weak refs from metrics.h).
+extern "C" void aura_note_relower_fallback_for_adaptive(int reason) noexcept {
+    note_relower_fallback_for_adaptive(reason);
+}
+extern "C" int aura_adaptive_thr_frozen_v_read(void) noexcept {
+    return adaptive_thr_frozen() ? 1 : 0;
+}
+extern "C" std::uint32_t aura_current_adaptive_partial_thr_v_read(void) noexcept {
+    return current_adaptive_partial_thr();
+}
+extern "C" std::uint64_t aura_adaptive_thr_bad_window_count_v_read(void) noexcept {
+    return adaptive_thr_policy_singleton().bad_window_count;
 }
 
 // ── Issue #2113: incremental soundness oracle (partial ≡ full) ──
