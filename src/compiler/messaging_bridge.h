@@ -228,10 +228,10 @@ extern FlushMutationBoundaryFn g_flush_mutation_boundary;
 // check. Returns true when an outermost MutationBoundaryGuard
 // is currently alive (i.e. the per-Evaluator atomic flag
 // `mutation_boundary_held_` is true). Set by evaluator at
-// module init; called by Fiber::yield right before swapcontext.
-// In debug builds, Fiber::yield asserts when the check returns
-// true (a yield-while-holding is a programmer error). In
-// release builds, Fiber::yield logs a warning + continues.
+// module init; called by Fiber::yield before swapcontext.
+// Issue #2200 (refine #354): production hard-blocks yield —
+// early-return without swapcontext + yield_while_mutation_held_total.
+// Debug still asserts; optional AURA_YIELD_HELD_ABORT=1 aborts.
 // nullptr means "no active evaluator" (test-binary), in which
 // case Fiber::yield treats it as a no-op (no check).
 using MutationBoundaryHeldFn = bool (*)();

@@ -375,6 +375,11 @@ struct AdaptiveStealStats {
     std::atomic<std::uint64_t> adaptive_prefer_non_boundary_total{0};
     std::atomic<int> adaptive_boundary_policy_enabled{0};                     // 0=off (default AC3)
     std::atomic<std::uint64_t> adaptive_boundary_pressure_threshold_bp{5000}; // 50%
+    // Issue #2200: production hard-block Fiber::yield while MutationBoundary
+    // held / depth>0 (no swapcontext). Process-wide reject counter + last
+    // reject reason (1=held, 2=depth) for Agent dashboards.
+    std::atomic<std::uint64_t> yield_while_mutation_held_total{0}; // #2200
+    std::atomic<std::uint8_t> last_yield_rejected_reason{0};       // #2200
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {

@@ -5715,6 +5715,18 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"hard-timeout-force-fail-wired", make_int(1)},
                 {"schema-2199", make_int(2199)},
                 {"issue-2199", make_int(2199)},
+                // Issue #2200: yield-under-Guard reject total (correlate with holds).
+                {"yield-while-mutation-held-total",
+                 make_int(static_cast<std::int64_t>(
+                     ::aura::serve::metrics::adaptive_steal_stats()
+                         .yield_while_mutation_held_total.load(std::memory_order_relaxed)))},
+                {"last-yield-rejected-reason",
+                 make_int(static_cast<std::int64_t>(
+                     ::aura::serve::metrics::adaptive_steal_stats().last_yield_rejected_reason.load(
+                         std::memory_order_relaxed)))},
+                {"yield-while-mutation-held-wired", make_int(1)},
+                {"schema-2200", make_int(2200)},
+                {"issue-2200", make_int(2200)},
             };
             return build_hash(kv);
         });
@@ -7501,13 +7513,28 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"adaptive-boundary-policy-default-off", make_int(1)},
                 {"schema-2119", make_int(2119)},
                 {"issue-2119", make_int(2119)},
+                // Issue #2200: hard-block Fiber::yield under MutationBoundary.
+                // Reject storms correlate with long holds (#2199) / steal skips.
+                {"yield-while-mutation-held-total",
+                 make_int(load(s.yield_while_mutation_held_total))},
+                {"yield_while_mutation_held_total",
+                 make_int(load(s.yield_while_mutation_held_total))},
+                {"last-yield-rejected-reason",
+                 make_int(static_cast<std::int64_t>(
+                     s.last_yield_rejected_reason.load(std::memory_order_relaxed)))},
+                {"last_yield_rejected_reason",
+                 make_int(static_cast<std::int64_t>(
+                     s.last_yield_rejected_reason.load(std::memory_order_relaxed)))},
+                {"yield-while-mutation-held-wired", make_int(1)},
+                {"schema-2200", make_int(2200)},
+                {"issue-2200", make_int(2200)},
                 // #1633 mandate wire flags
                 {"inner-defer-mitigation-wired", make_int(1)},
                 {"long-mutation-hook-wired", make_int(1)},
                 {"steal-loop-inner-defer-wired", make_int(1)},
                 {"starvation-mitigation-mandate-active", make_int(1)},
                 {"issue", make_int(1633)},
-                {"schema", make_int(1633)}, // lineage 1492 / 1445; #2115/#2119 satellites
+                {"schema", make_int(1633)}, // lineage 1492 / 1445; #2115/#2119/#2200 satellites
             };
             return build_hash(kv);
         });
