@@ -164,6 +164,36 @@ enum class AotReloadFail : std::uint8_t {
 // Returns AotReloadFail as uint8_t for C ABI stability.
 extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void);
 
+// Issue #2240: stable cross-workspace / cross-COW reject reason code
+// (refine #2178 — Agents branch on this without log scraping).
+// Stored in process atomic `g_last_cross_workspace_reject_reason` in
+// aura_jit_bridge.cpp; thread-safe lock-free read. Stable ABI: do
+// not reorder — existing values are persisted in query snapshots.
+// - None: success state (no reject); cleared at start of every
+//   aura_reload_aot_module_for_eval attempt.
+// - ForeignEval: rejected because eval_ptr is foreign to the current
+//   workspace AotState map (single-workspace MVP, #1943).
+// - CowGenMismatch: reserved for future cross-COW migration
+//   observability; NOT yet wired (issue explicitly defers opening
+//   cross-COW write path).
+// - Unknown: defensive; bumped if a future reject path doesn't
+//   set a specific reason before bumping the counter.
+enum class CrossWorkspaceReject : std::uint8_t {
+    None = 0,
+    ForeignEval = 1,
+    CowGenMismatch = 2,
+    Unknown = 3,
+};
+
+// Issue #2240: C-linkage readers for the last cross-workspace reject
+// reason (file-scope atomic in aura_jit_bridge.cpp; thread-safe
+// lock-free read). Returns CrossWorkspaceReject as uint8_t for C ABI
+// stability. Test-only setter + reset for hermetic test isolation.
+extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept;
+extern "C" const char* aura_cross_workspace_reject_reason_string(std::uint8_t v) noexcept;
+extern "C" void aura_test_set_last_cross_workspace_reject_reason(std::uint8_t v) noexcept;
+extern "C" void aura_test_reset_last_cross_workspace_reject_reason(void) noexcept;
+
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
 // aura_set_aot_reload_auto_retry(0) for strict tests (#2093 counters).

@@ -11558,16 +11558,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //     on stolen fiber resume (vs the regular jit_closure_stale_deopt_total
     //     which is the on-AOT path).
     //
-    // Returns -1 sentinel when aot_stale_deopt_on_steal_total > 0
-    // (grep-friendly regression marker). Otherwise returns the sum
-    // of all 6 counters.
+    // Default (no args or args[0]==0): Returns -1 sentinel when
+    // aot_stale_deopt_on_steal_total > 0 (grep-friendly regression
+    // marker). Otherwise returns the sum of all 6 counters. Returns
+    // 0 when no AOT hot-update activity observed yet (a fresh
+    // evaluator with no Guard exits + no steals is not in violation
+    // of the contract — vacuously covered).
     //
-    // Returns 0 when no AOT hot-update activity observed yet (a
-    // fresh evaluator with no Guard exits + no steals is not in
-    // violation of the contract — vacuously covered).
+    // Issue #2240: hash mode (args[0]!=0) returns a hash of all
+    // counters + cross-workspace reject metadata (refine #2178).
+    // Additive — default arg=0 path is unchanged so existing
+    // dashboards keep working.
     ObservabilityPrims::register_stats_impl(
-        "query:aot-hot-update-stats", [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
+        "query:aot-hot-update-stats", [&](std::span<const EvalValue> a) -> EvalValue {
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_int(0);
@@ -11577,11 +11580,75 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t bridge_steal = ev->get_aot_bridge_epoch_bump_on_steal_total();
             const std::uint64_t region_mismatch = ev->get_aot_region_mismatch_on_resume_total();
             const std::uint64_t stale_deopt = ev->get_aot_stale_deopt_on_steal_total();
-            if (stale_deopt > 0)
-                return make_int(-1); // regression sentinel
-            return make_int(static_cast<std::int64_t>(refresh_mut + refresh_steal + bridge_mut +
-                                                      bridge_steal + region_mismatch +
-                                                      stale_deopt));
+
+            // Issue #2240: optional hash mode via args[0]. Default
+            // (no args / args[0]==0) keeps existing sum sentinel
+            // behavior for backwards compat — no schema break.
+            const bool hash_mode = (!a.empty() && is_int(a[0]) && as_int(a[0]) != 0);
+            if (!hash_mode) {
+                if (stale_deopt > 0)
+                    return make_int(-1); // regression sentinel
+                return make_int(static_cast<std::int64_t>(refresh_mut + refresh_steal + bridge_mut +
+                                                          bridge_steal + region_mismatch +
+                                                          stale_deopt));
+            }
+
+            // Hash mode (#2240 refine #2178): forward-declared
+            // C-linkage readers for cross-workspace atomic (file-scope
+            // in aura_jit_bridge.cpp). Mirrors pattern used in
+            // query:closure-stats for #2238 anonymous-AOT policy keys.
+            extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(
+                void) noexcept;
+            extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept;
+            extern "C" const char* aura_cross_workspace_reject_reason_string(
+                std::uint8_t v) noexcept;
+            const std::uint64_t cw_reject_total =
+                aura_cross_workspace_hot_update_rejected_total_v_read();
+            const std::uint8_t cw_last_reason_u8 = aura_last_cross_workspace_reject_reason_v_read();
+            const char* cw_last_reason_symbol =
+                aura_cross_workspace_reject_reason_string(cw_last_reason_u8);
+
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"aot-live-closure-refresh-on-mutation-total",
+                 make_int(static_cast<std::int64_t>(refresh_mut))},
+                {"aot-live-closure-refresh-on-steal-total",
+                 make_int(static_cast<std::int64_t>(refresh_steal))},
+                {"aot-bridge-epoch-bump-on-mutation-total",
+                 make_int(static_cast<std::int64_t>(bridge_mut))},
+                {"aot-bridge-epoch-bump-on-steal-total",
+                 make_int(static_cast<std::int64_t>(bridge_steal))},
+                {"aot-region-mismatch-on-resume-total",
+                 make_int(static_cast<std::int64_t>(region_mismatch))},
+                {"aot-stale-deopt-on-steal-total",
+                 make_int(static_cast<std::int64_t>(stale_deopt))},
+                // Issue #2178 cross-workspace reject counter
+                // (additive — agent dashboards branch on this).
+                {"cross-workspace-hot-update-rejected-total",
+                 make_int(static_cast<std::int64_t>(cw_reject_total))},
+                // Issue #2240: stable last reject reason code
+                // (refine #2178). Numeric (CrossWorkspaceReject as
+                // uint8: 0=None, 1=ForeignEval, 2=CowGenMismatch,
+                // 3=Unknown) + symbol string for human/agent logs.
+                // Default 0 = None; bumped by aura_reload_aot_module_for_eval
+                // foreign-eval guard before counter increment.
+                {"cross-workspace-last-reject-reason",
+                 make_int(static_cast<std::int64_t>(cw_last_reason_u8))},
+                {"cross-workspace-last-reject-reason-symbol",
+                 make_string(cw_last_reason_symbol ? cw_last_reason_symbol : "unknown")},
+                // Signal key (mirrors `region-priority-throttle-wired=1`
+                // #2132 + `capture-remount-wired=1` #2234 +
+                // `storm-isolation-wired=1` #2236 + `rollback-wired=1`
+                // #2237 + `require-stable-id-wired=1` #2238).
+                {"cross-workspace-reject-wired", make_int(1)},
+                // Lineage keys (per #2093 MUST-stay-in-lockstep
+                // pattern). #2178 ship carried the guard + counter;
+                // #2240 refines with stable reason code.
+                {"schema-2178", make_int(2178)},
+                {"issue-2178", make_int(2178)},
+                {"schema-2240", make_int(2240)},
+                {"issue-2240", make_int(2240)},
+            };
+            return build_hash(kv);
         });
 
     // Issue #1952 / #1930: query:aot-incremental-reemit-stats.
