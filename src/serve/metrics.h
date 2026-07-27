@@ -373,6 +373,22 @@ struct AdaptiveStealStats {
     std::atomic<std::uint64_t> steal_starvation_boundary_pressure{0}; // basis points 0..10000
     std::atomic<std::uint64_t> steal_attempt_sample_total{0};         // for pressure ratio
     std::atomic<std::uint64_t> adaptive_prefer_non_boundary_total{0};
+    // Issue #2253: hold-aware work-steal scoring. Selected-score
+    // counter + 5-bucket histogram of scores selected (e.g.
+    // 0-49 / 50-99 / 100-149 / 150+ for the AC1 scoring scheme).
+    //   - steal_score_selected_total: every successful steal bumps
+    //     this with the score (sanity-check that scoring runs on
+    //     every success path — not a sample).
+    //   - steal_score_bucket_0_49 / 50_99 / 100_149 / 150_199 / 200p:
+    //     distribution of selected scores so Agents can observe
+    //     whether the scorer is preferring the highest-quality
+    //     candidates or clustering in the middle.
+    std::atomic<std::uint64_t> steal_score_selected_total{0};
+    std::atomic<std::uint64_t> steal_score_bucket_0_49{0};
+    std::atomic<std::uint64_t> steal_score_bucket_50_99{0};
+    std::atomic<std::uint64_t> steal_score_bucket_100_149{0};
+    std::atomic<std::uint64_t> steal_score_bucket_150_199{0};
+    std::atomic<std::uint64_t> steal_score_bucket_200p{0};
     std::atomic<int> adaptive_boundary_policy_enabled{0};                     // 0=off (default AC3)
     std::atomic<std::uint64_t> adaptive_boundary_pressure_threshold_bp{5000}; // 50%
     // Issue #2200: production hard-block Fiber::yield while MutationBoundary

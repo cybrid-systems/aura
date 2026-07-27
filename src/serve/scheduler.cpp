@@ -521,7 +521,16 @@ Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
 // ── has_waiting_fibers — check epoll wait map ─────────
 
 void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t duration_us) {
-    (void)duration_us;
+    // Issue #2253: store last_hold_us on the fiber so the steal
+    // scorer can read it back (the previous (void)duration_us cast
+    // discarded the signal entirely). Done BEFORE the early-return
+    // branch so the value persists even when starvation mitigation
+    // is not applicable (e.g. fiber unknown — unit tests).
+    if (fiber_id != 0) {
+        if (Fiber* f = fiber_by_id(fiber_id)) {
+            f->set_last_hold_us(duration_us);
+        }
+    }
     // Issue #1445 AC6 / #1633: long-holder event is a first-class
     // starvation-mitigation signal (linked to steal-defer fairness).
     metrics::adaptive_steal_stats().starvation_mitigated_count.fetch_add(1,

@@ -236,6 +236,53 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                         1, std::memory_order_relaxed);
                 }
             }
+            // Issue #2253 AC1: hold-aware work-steal scoring. Single
+            // integer score that combines the AC1 components so the
+            // winner-take-all pick is consistent across the loop.
+            // AC3 happy path: scoring is arithmetic over already-loaded
+            // snapshot fields — zero extra atomics beyond the existing
+            // probe loads above. AC2: long-hold victims remain steal-
+            // deferred (the gen != cur path below handles them); once
+            // they become outermost-safe, the +100 dominates and the
+            // -40 hold penalty nudges them after fresher victims.
+            {
+                int score = 0;
+                // +100: depth-safe (outermost-safe) victim is the strongest
+                // candidate (per AC1).
+                score += 100;
+                // +50: existing one-shot boost consumed on success
+                // (clear below; before the clear so the score reflects
+                // the boost that influenced the pick).
+                if (stolen->has_steal_priority_boost())
+                    score += 50;
+                // +20: short-yield victims (Explicit / OperationBoundary /
+                // PassPipeline) finish fast and free the worker.
+                const auto yr = snap.last_yield;
+                if (yr == YieldReason::Explicit || yr == YieldReason::OperationBoundary ||
+                    yr == YieldReason::PassPipeline) {
+                    score += 20;
+                }
+                // -40: long-hold penalty so a victim that recently held
+                // the Guard is deprioritized until other workers make
+                // progress on shorter candidates.
+                const auto recent_hold = stolen->last_hold_us();
+                constexpr std::uint64_t kRecentHoldPenaltyBpUs = 100000; // 100 ms p90
+                if (recent_hold > kRecentHoldPenaltyBpUs)
+                    score -= 40;
+                // AC3: bump total + bucket histogram (issue body option).
+                auto& ads_score = metrics::adaptive_steal_stats();
+                ads_score.steal_score_selected_total.fetch_add(1, std::memory_order_relaxed);
+                if (score < 50)
+                    ads_score.steal_score_bucket_0_49.fetch_add(1, std::memory_order_relaxed);
+                else if (score < 100)
+                    ads_score.steal_score_bucket_50_99.fetch_add(1, std::memory_order_relaxed);
+                else if (score < 150)
+                    ads_score.steal_score_bucket_100_149.fetch_add(1, std::memory_order_relaxed);
+                else if (score < 200)
+                    ads_score.steal_score_bucket_150_199.fetch_add(1, std::memory_order_relaxed);
+                else
+                    ads_score.steal_score_bucket_200p.fetch_add(1, std::memory_order_relaxed);
+            }
             stolen->bump_steal_success();
             // Issue #1492: one-shot boost consumed on successful steal.
             stolen->clear_steal_priority_boost();
