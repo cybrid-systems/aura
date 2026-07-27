@@ -416,6 +416,27 @@ std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total{0};
 // Agents / observability dashboards visibility into the stamping rate
 // (previously silent). Surfaces via (query:macro-schema-cache-dirty-stamp-stats).
 std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total{0};
+// Issue #2239: per-rest-param + nested-qq breakdown for the schema_cache
+// stamping path. Bumped once per rest-param binding that the qq-aware
+// pre_scan discovered while walking through a (quasiquote ...) template
+// body (Call to 'quasiquote' = recursive scan; Call to 'unquote' = stop).
+// Tracks the "rest-param nested in qq" path separately from the existing
+// rest_param_hygiene_total counter so Agents can see the nested-qq
+// coverage as its own observability dimension. Surfaces via
+// (query:macro-schema-cache-dirty-stamp-stats) under
+// `rest-param-nested-qq-hits-total`.
+std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total{0};
+// Issue #2239: per-rest-list node stamp counter for the freshly
+// allocated `(list remaining...)` Call in expand_inner_macros +
+// macro_expand_all_body rest-param paths. Bumped once per node in the
+// new rest-list spine (the freshly allocated Call + every arg) that
+// stamp_rest_param_hygiene applied kMacroExpansion dirty bit +
+// set_provenance + copied schema_cache from the source rest binding.
+// Mirrors the g_macro_schema_cache_dirty_stamped_total pattern
+// (file-level atomic + C-linkage reader). Surfaces via
+// (query:macro-schema-cache-dirty-stamp-stats) under
+// `schema-cache-rest-stamped-total`.
+std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total{0};
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp via the
 // C-linkage helper aura_unstamp_macro_introduced_with_counter below.
@@ -557,6 +578,21 @@ extern "C" void aura_macro_set_expand_sandbox_strict(int strict_mode) noexcept {
 // stamp counter C-linkage reader (clone_macro_body walk visibility).
 std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept {
     return g_macro_schema_cache_dirty_stamped_total.load(std::memory_order_relaxed);
+}
+// Issue #2239: nested-qq rest-param hits reader (the per-rest-binding
+// hit counter discovered by the qq-aware pre_scan while walking
+// (quasiquote ...) template bodies). Pairs with
+// g_macro_rest_param_nested_qq_hits_total atomic.
+std::uint64_t aura_macro_rest_param_nested_qq_hits_total_v_read() noexcept {
+    return g_macro_rest_param_nested_qq_hits_total.load(std::memory_order_relaxed);
+}
+// Issue #2239: per-rest-list node stamp reader. Bumped by
+// stamp_rest_param_hygiene (the focused rest-list helper) for every
+// node in the freshly allocated `(list remaining...)` spine that
+// received kMacroExpansion dirty bit + set_provenance + schema_cache
+// copy. Pairs with g_macro_schema_cache_rest_stamped_total atomic.
+std::uint64_t aura_macro_schema_cache_rest_stamped_total_v_read() noexcept {
+    return g_macro_schema_cache_rest_stamped_total.load(std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
     return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
@@ -1244,10 +1280,48 @@ aura::ast::NodeId clone_macro_body(
     // Issue #2018: Lambda / MacroDef with dotted rest — last param is a
     // rest binding; gensym via rename_rest_binding_pre (`__rest_` prefix).
     if (name_map) {
-        std::function<void(NodeId)> pre_scan = [&](NodeId nid) {
+        // Issue #2239: qq-aware pre_scan. Tracks `(quasiquote ...)` /
+        // `(unquote ...)` boundaries so rest-param bindings nested
+        // inside qq templates get gensym'd (template scope = gensym),
+        // while unquote inner expressions are NOT gensym'd (caller
+        // scope). Also bumps g_macro_rest_param_nested_qq_hits_total
+        // whenever a dotted Lambda/MacroDef is discovered inside qq
+        // (qq_depth > 0) — gives Agents visibility into the
+        // rest-param + nested-qq path separately from the flat
+        // rest_param_hygiene_total counter.
+        std::function<void(NodeId, int)> pre_scan = [&](NodeId nid, int qq_depth) {
             if (nid == NULL_NODE || nid >= source.size())
                 return;
             auto nv = source.get(nid);
+            // Quasiquote / unquote boundary detection. Both are encoded
+            // as Call nodes whose head is a Variable named 'quasiquote'
+            // or 'unquote' (matches the data_to_flat pattern at
+            // evaluator_eval_flat.cpp:948-960 — there's no dedicated
+            // NodeTag::Quasiquote). Quasiquote → recurse into first arg
+            // with deeper qq_depth; unquote → stop recursion (caller
+            // scope, no gensym). Only matches when the head variable
+            // resolves to the exact symbol name; arbitrary Call nodes
+            // fall through to the existing Let/Lambda/MacroDef logic.
+            if (nv.tag == NodeTag::Call && !nv.children.empty()) {
+                auto callee_n = source.get(nv.child(0));
+                if (callee_n.tag == NodeTag::Variable) {
+                    auto cname = std::string(source_pool.resolve(callee_n.sym_id));
+                    if (cname == "quasiquote" && nv.children.size() >= 2) {
+                        // Entering qq body: bump depth + recurse ONLY
+                        // into the qq template (first arg). Other args
+                        // (rare, but `,@x` unquote-splice variants) are
+                        // unquote-handled below.
+                        pre_scan(nv.child(1), qq_depth + 1);
+                        return;
+                    }
+                    if (cname == "unquote") {
+                        // Boundary: do NOT recurse into unquote inner.
+                        // Bindings inside unquote live in the caller's
+                        // scope and must NOT be gensym'd by the macro.
+                        return;
+                    }
+                }
+            }
             // If this node is a binding position, gensym its name
             // (into the name_map) but don't generate any target node.
             if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec || nv.tag == NodeTag::Define) {
@@ -1261,6 +1335,11 @@ aura::ast::NodeId clone_macro_body(
                     else
                         rename_binding_pre(nv.params[i]);
                 }
+                // Issue #2239: track rest-param bindings discovered
+                // inside nested qq templates as their own observability
+                // dimension (separate from the flat rest-param counter).
+                if (dotted && qq_depth > 0)
+                    g_macro_rest_param_nested_qq_hits_total.fetch_add(1, std::memory_order_relaxed);
             } else if (nv.tag == NodeTag::MacroDef) {
                 // Nested macro defs inside a template: rest bit is bit 0 of
                 // int_value (same encoding as add_macrodef).
@@ -1272,12 +1351,14 @@ aura::ast::NodeId clone_macro_body(
                     else
                         rename_binding_pre(nv.params[i]);
                 }
+                if (dotted && qq_depth > 0)
+                    g_macro_rest_param_nested_qq_hits_total.fetch_add(1, std::memory_order_relaxed);
             }
             std::vector<aura::ast::NodeId> scan_children(nv.children.begin(), nv.children.end());
             for (auto c : scan_children)
-                pre_scan(c);
+                pre_scan(c, qq_depth);
         };
-        pre_scan(body_id);
+        pre_scan(body_id, /*qq_depth=*/0);
     }
 
     auto rename_binding = [&](SymId sid) -> SymId {
@@ -1599,6 +1680,49 @@ namespace detail {
 
 } // namespace detail
 
+// Issue #2239: focused rest-list hygiene stamp. Applied to the
+// freshly allocated `(list remaining...)` Call in expand_inner_macros
+// + macro_expand_all_body. Multi-pass expansion can re-introduce
+// free uses of rest names without restamping the new list_call —
+// without this stamp the new nodes are missing kMacroExpansion +
+// provenance + schema_cache, so type checking re-infers and downstream
+// hygiene gates (MutationBoundaryGuard etc.) don't see the new
+// rest-list. Iterative walk via std::vector stack (same shape as the
+// existing clone_macro_body stamp loop at #2098).
+static inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target,
+                                            const aura::ast::FlatAST& source,
+                                            aura::ast::NodeId src_body_id,
+                                            aura::ast::NodeId list_root) {
+    using namespace aura::ast;
+    if (list_root == NULL_NODE || list_root >= target.size())
+        return;
+    const std::uint32_t src_prov = source.provenance(src_body_id);
+    const std::uint32_t origin =
+        src_prov != 0 ? src_prov : static_cast<std::uint32_t>(src_body_id == 0 ? 1 : src_body_id);
+    const std::uint64_t src_schema = source.schema_cache(src_body_id);
+    std::vector<NodeId> stack;
+    stack.push_back(list_root);
+    while (!stack.empty()) {
+        auto cur = stack.back();
+        stack.pop_back();
+        if (cur == NULL_NODE || cur >= target.size())
+            continue;
+        target.apply_macro_dirty_bits(
+            cur, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+        if (target.provenance(cur) == 0)
+            target.set_provenance(cur, origin);
+        if (src_schema != 0)
+            target.set_schema_cache(cur, src_schema);
+        g_macro_schema_cache_rest_stamped_total.fetch_add(1, std::memory_order_relaxed);
+        auto cv = target.get(cur);
+        std::vector<NodeId> walk_children(cv.children.begin(), cv.children.end());
+        for (auto child : walk_children) {
+            if (child != NULL_NODE && child < target.size())
+                stack.push_back(child);
+        }
+    }
+}
+
 aura::ast::NodeId expand_inner_macros(
     aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root, int depth,
     int max_depth,
@@ -1662,6 +1786,16 @@ aura::ast::NodeId expand_inner_macros(
                         auto list_var = flat->add_variable(pool->intern("list"));
                         auto list_call = flat->add_call(list_var, remaining);
                         subst[md.params.back()] = list_call;
+                        // Issue #2239: focused rest-list hygiene stamp —
+                        // apply kMacroExpansion + provenance +
+                        // schema_cache copy from the source rest
+                        // binding (macro body in the source flat) to
+                        // every node in the freshly allocated
+                        // `(list remaining...)` spine. Without this,
+                        // multi-pass expand_inner_macros can
+                        // re-introduce free uses of rest names
+                        // without restamping the new list_call.
+                        stamp_rest_param_hygiene(*flat, *md.flat, md.body_id, list_call);
                     }
                     // Clone the macro body into the current flat and
                     // re-intern sym_ids. Use the runtime registry's
@@ -1883,6 +2017,16 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                             auto list_var = flat.add_variable(pool.intern("list"));
                             auto list_call = flat.add_call(list_var, remaining);
                             subst[md.params.back()] = list_call;
+                            // Issue #2239: focused rest-list hygiene
+                            // stamp — apply kMacroExpansion +
+                            // provenance + schema_cache copy from the
+                            // source rest binding (macro body in the
+                            // source flat) to every node in the freshly
+                            // allocated `(list remaining...)` spine.
+                            // Without this, multi-pass macro_expand_all
+                            // can re-introduce free uses of rest names
+                            // without restamping the new list_call.
+                            stamp_rest_param_hygiene(flat, *md.src_flat, md.body_id, list_call);
                         }
                         // Clone macro body with substitution
                         std::unordered_map<std::string, std::string,

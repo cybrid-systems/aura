@@ -1805,6 +1805,14 @@ aura_add_issue_test(test_rest_param_hygiene_2169)
 aura_issue_test_link_llvm_jit(test_rest_param_hygiene_2169)
 add_dependencies(all_test_issue_targets test_rest_param_hygiene_2169)
 
+# Issue #2239: complete rest-param + nested quasiquote hygiene + schema_cache
+# stamping visibility (qq-aware pre_scan + stamp_rest_param_hygiene helper
+# at both rest-list allocation sites + per-rest + per-qq metrics + query
+# primitive hash upgrade).
+aura_add_issue_test(test_rest_param_nested_qq_hygiene_2239)
+aura_issue_test_link_llvm_jit(test_rest_param_nested_qq_hygiene_2239)
+add_dependencies(all_test_issue_targets test_rest_param_nested_qq_hygiene_2239)
+
 # Issue #2019: MacroIntroduced restamp after expand → FlatAST.
 aura_add_issue_test(test_macro_restamp_after_flat)
 aura_issue_test_link_llvm_jit(test_macro_restamp_after_flat)
