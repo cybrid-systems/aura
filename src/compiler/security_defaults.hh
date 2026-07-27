@@ -8,7 +8,8 @@
 #define AURA_COMPILER_SECURITY_DEFAULTS_HH
 
 #include "typed_mutation_audit.h"
-#include "coercion_provenance_policy.hh" // Issue #2185 reject-on-miss production default
+#include "coercion_provenance_policy.hh"   // Issue #2185 reject-on-miss production default
+#include "compiler/hot_update_registry.hh" // Issue #2205 reemit boundary production default
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
@@ -192,6 +193,23 @@ inline void apply_production_security_defaults() noexcept {
     //    multi-tenant Agents still need an explicit grant.
     if (!dev_off)
         grant_render_kernel_principal();
+
+    // 5b) Issue #2205: HotUpdate reemit boundary policy — production default
+    //     Defer (fail-closed under multi-fiber; SoftEnter is not steal-safe).
+    //     SoftEnter only via AURA_REEMIT_SOFT_ENTER=1 (or explicit setter in
+    //     tests). AURA_SANDBOX=off leaves SoftEnter available for unit tests
+    //     that set policy explicitly; process default remains Defer.
+    {
+        using P = ::aura::compiler::HotUpdateRegistry::ReemitBoundaryPolicy;
+        const char* soft = std::getenv("AURA_REEMIT_SOFT_ENTER");
+        const bool want_soft = soft && *soft &&
+                               (std::string_view(soft) == "1" || std::string_view(soft) == "true" ||
+                                std::string_view(soft) == "yes" || std::string_view(soft) == "on");
+        if (want_soft)
+            ::aura::compiler::hot_update_registry().set_reemit_boundary_policy(P::SoftEnter);
+        else
+            ::aura::compiler::hot_update_registry().set_reemit_boundary_policy(P::Defer);
+    }
 
     // 6) Issue #2151: hard fiber isolation policy.
     //    Soft default preserves #2055 (same-tenant multi-fiber share grants;

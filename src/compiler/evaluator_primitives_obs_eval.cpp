@@ -13037,6 +13037,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         // Issue #2232: multi-round policy attempt + JIT-only fall-back.
         std::uint64_t auto_retry_policy_attempt = 0;
         std::uint64_t auto_retry_fall_back_jit = 0;
+        std::uint64_t region_staging_retry = 0;     // #2249
+        std::uint64_t region_staging_exhausted = 0; // #2249
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);

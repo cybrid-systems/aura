@@ -474,6 +474,14 @@ HotUpdateRegistry::ReemitBoundaryPolicy HotUpdateRegistry::reemit_boundary_polic
         reemit_boundary_policy_.load(std::memory_order_relaxed));
 }
 
+bool HotUpdateRegistry::soft_enter_allowed() const noexcept {
+    // Issue #2205: SoftEnter only when policy is SoftEnter (explicit opt-in
+    // via setter or AURA_REEMIT_SOFT_ENTER under production defaults).
+    // TLS soft boundary is not steal-safe — never allow SoftEnter when
+    // production policy is Defer/RequireRealBoundary.
+    return reemit_boundary_policy() == ReemitBoundaryPolicy::SoftEnter;
+}
+
 bool HotUpdateRegistry::in_mutation_boundary_for_reemit() const noexcept {
     // Soft reemit boundary (this thread mid-reemit soft-enter).
     if (g_soft_reemit_boundary_depth > 0)
@@ -513,6 +521,10 @@ void HotUpdateRegistry::on_reemit_deferred_for_boundary() noexcept {
     reemit_deferred_for_boundary_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_reemit_rejected_require_real() noexcept {
+    reemit_rejected_require_real_.fetch_add(1, std::memory_order_relaxed);
+}
+
 void HotUpdateRegistry::defer_reemit_for_boundary(std::uint64_t defuse_version) noexcept {
     reemit_deferred_version_.store(defuse_version, std::memory_order_relaxed);
     reemit_deferred_pending_.store(true, std::memory_order_release);
@@ -530,10 +542,13 @@ std::uint64_t HotUpdateRegistry::take_deferred_reemit_version() noexcept {
 }
 
 void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {
-    reemit_boundary_policy_.store(0, std::memory_order_relaxed);
+    // Issue #2205: reset to production default Defer (not SoftEnter).
+    reemit_boundary_policy_.store(static_cast<int>(ReemitBoundaryPolicy::Defer),
+                                  std::memory_order_relaxed);
     reemit_outside_boundary_.store(0, std::memory_order_relaxed);
     reemit_soft_boundary_entered_.store(0, std::memory_order_relaxed);
     reemit_deferred_for_boundary_.store(0, std::memory_order_relaxed);
+    reemit_rejected_require_real_.store(0, std::memory_order_relaxed);
     reemit_deferred_pending_.store(false, std::memory_order_relaxed);
     reemit_deferred_version_.store(0, std::memory_order_relaxed);
     // Clear TLS soft depth for this thread (test isolation).
@@ -751,7 +766,7 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.issue_2035 = 2035;
     // Issue #2094: unified StormLevel facade (Shape|Global|Both).
     s.storm_level = static_cast<std::int64_t>(current_storm_level());
-    // Issue #2114: reemit ↔ MutationBoundary handshake.
+    // Issue #2114 / #2205: reemit ↔ MutationBoundary handshake.
     s.reemit_outside_boundary_total =
         static_cast<std::int64_t>(reemit_outside_boundary_.load(std::memory_order_relaxed));
     s.reemit_soft_boundary_entered_total =
@@ -761,8 +776,12 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.reemit_boundary_policy =
         static_cast<std::int64_t>(reemit_boundary_policy_.load(std::memory_order_relaxed));
     s.reemit_deferred_pending = reemit_deferred_pending_.load(std::memory_order_relaxed) ? 1 : 0;
+    s.reemit_rejected_require_real_total =
+        static_cast<std::int64_t>(reemit_rejected_require_real_.load(std::memory_order_relaxed));
     s.schema_2114 = 2114;
     s.issue_2114 = 2114;
+    s.schema_2205 = 2205;
+    s.issue_2205 = 2205;
     // Issue #2236: StormIsolation mode + per-region storm trip counters.
     s.storm_isolation_mode = static_cast<std::int64_t>(storm_isolation_mode());
     s.deopt_storm_region_detected_total = static_cast<std::int64_t>(
@@ -841,14 +860,17 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->issue_2035 = s.issue_2035;
     // Issue #2094: unified StormLevel facade (uint8_t enum, copied as int64_t).
     out->storm_level = s.storm_level;
-    // Issue #2114
+    // Issue #2114 / #2205
     out->reemit_outside_boundary_total = s.reemit_outside_boundary_total;
     out->reemit_soft_boundary_entered_total = s.reemit_soft_boundary_entered_total;
     out->reemit_deferred_for_boundary_total = s.reemit_deferred_for_boundary_total;
     out->reemit_boundary_policy = s.reemit_boundary_policy;
     out->reemit_deferred_pending = s.reemit_deferred_pending;
+    out->reemit_rejected_require_real_total = s.reemit_rejected_require_real_total;
     out->schema_2114 = s.schema_2114;
     out->issue_2114 = s.issue_2114;
+    out->schema_2205 = s.schema_2205;
+    out->issue_2205 = s.issue_2205;
     // Issue #2236: StormIsolation mode + per-region storm trip counters.
     out->storm_isolation_mode = s.storm_isolation_mode;
     out->deopt_storm_region_detected_total = s.deopt_storm_region_detected_total;
@@ -978,7 +1000,13 @@ extern "C" int aura_hot_update_in_mutation_boundary_for_reemit(void) {
 
 extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy) {
     using P = aura::compiler::HotUpdateRegistry::ReemitBoundaryPolicy;
-    auto p = (policy == 1) ? P::Defer : P::SoftEnter;
+    P p = P::Defer; // production default (#2205)
+    if (policy == 0)
+        p = P::SoftEnter;
+    else if (policy == 2)
+        p = P::RequireRealBoundary;
+    else if (policy == 1)
+        p = P::Defer;
     aura::compiler::hot_update_registry().set_reemit_boundary_policy(p);
 }
 

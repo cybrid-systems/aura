@@ -8185,24 +8185,35 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cross_cow_provenance_enforced_total{0};
 };
 
+// Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header
+// cannot import modules — call weak C ABI (strong defs in ir_cache_pure.ixx).
+// When the pure module is not linked (light binaries), weak resolves to
+// nullptr and the adaptive feed is a no-op.
+extern "C" void aura_note_relower_fallback_for_adaptive(int reason) __attribute__((weak));
+extern "C" int aura_adaptive_thr_frozen_v_read(void) __attribute__((weak));
+extern "C" std::uint32_t aura_current_adaptive_partial_thr_v_read(void) __attribute__((weak));
+extern "C" std::uint64_t aura_adaptive_thr_bad_window_count_v_read(void) __attribute__((weak));
+
 // Issue #2193: record partial→full decision reason (last + per-reason totals).
 // Ok clears last-reason to success (mirror #2093 AotReloadFail::Ok).
 inline void note_relower_fallback(CompilerMetrics& m, RelowerFallbackReason r) noexcept {
     m.relower_last_fallback_reason.store(static_cast<std::uint8_t>(r), std::memory_order_relaxed);
-    // Issue #2248: feed the adaptive policy (closed-loop control
-    // from fallback-reason telemetry). Helper bumps
-    // adaptive_thr_current / raises_total / decays_total /
-    // bad_window_count / frozen counters itself.
-    note_relower_fallback_for_adaptive(r);
-    if (aura::compiler::adaptive_thr_frozen())
+    // Issue #2248: feed adaptive policy via C ABI (module-safe).
+    if (aura_note_relower_fallback_for_adaptive)
+        aura_note_relower_fallback_for_adaptive(static_cast<int>(r));
+    if (aura_adaptive_thr_frozen_v_read && aura_adaptive_thr_frozen_v_read())
         m.adaptive_thr_frozen.store(1, std::memory_order_relaxed);
     else
         m.adaptive_thr_frozen.store(0, std::memory_order_relaxed);
-    const auto cur = aura::compiler::current_adaptive_partial_thr();
-    m.adaptive_thr_current.store(static_cast<std::uint64_t>(cur) * 100, std::memory_order_relaxed);
-    m.adaptive_thr_bad_window_count.store(
-        aura::compiler::adaptive_thr_policy_singleton().bad_window_count,
-        std::memory_order_relaxed);
+    if (aura_current_adaptive_partial_thr_v_read) {
+        const auto cur = aura_current_adaptive_partial_thr_v_read();
+        m.adaptive_thr_current.store(static_cast<std::uint64_t>(cur) * 100,
+                                     std::memory_order_relaxed);
+    }
+    if (aura_adaptive_thr_bad_window_count_v_read) {
+        m.adaptive_thr_bad_window_count.store(aura_adaptive_thr_bad_window_count_v_read(),
+                                              std::memory_order_relaxed);
+    }
     switch (r) {
         case RelowerFallbackReason::Ok:
             m.relower_fallback_ok_total.fetch_add(1, std::memory_order_relaxed);
