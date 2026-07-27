@@ -47,7 +47,10 @@ public:
 
 // ── Constraint System ────────────────────────────────────
 export struct Constraint {
-    enum Kind { EQUAL, CONSISTENT };
+    // Issue #2195: SUBTYPE (lhs <: rhs) participates in solve_delta;
+    // INSTANCE reserved for phase 2 (optional higher-rank).
+    // Stable order: EQUAL=0, CONSISTENT=1, SUBTYPE=2 (do not reorder).
+    enum Kind { EQUAL, CONSISTENT, SUBTYPE };
     Kind kind;
     aura::core::TypeId lhs, rhs;
     // Issue #1529: delta blame provenance (0 = unset).

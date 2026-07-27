@@ -4369,6 +4369,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_unresolved_export_total{0};
     std::atomic<std::uint64_t> solve_delta_unresolved_constraints_total{0};
     std::atomic<std::uint64_t> solve_delta_timeout_unresolved_total{0};
+    // Issue #2195: SUBTYPE goal participation + last conflict kind export.
+    // last_conflict_goal_kind: Constraint::Kind as uint8 (0=EQUAL,1=CONSISTENT,2=SUBTYPE).
+    std::atomic<std::uint8_t> last_conflict_goal_kind{0};
+    std::atomic<std::uint64_t> subtype_goal_solve_total{0};
+    std::atomic<std::uint64_t> subtype_goal_conflict_total{0};
+    std::atomic<std::uint64_t> last_unresolved_goal_kind{0}; // first unresolved on TIMEOUT
     std::atomic<std::uint64_t> solve_delta_unresolved_last_count{0};
     std::atomic<std::uint64_t> solve_delta_unscanned_last{0};
     std::atomic<std::uint64_t> solve_delta_truncated_reverify_last{0};
