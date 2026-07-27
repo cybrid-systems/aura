@@ -2585,11 +2585,41 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->macro_provenance_rollback_success_total.load(std::memory_order_relaxed))
                   : 0;
+            // Issue #2235: cross-FlatAST clone hygiene gate metrics.
+            // - cross-flat-violation-total: mirrors the
+            //   file-level g_hygiene_violation_in_macro_expand_total
+            //   via the CompilerMetrics snapshot. Bumped when
+            //   ensure_cross_flat_expand_consistency's production
+            //   always-on validate post-restamp finds > 0 violations
+            //   on a cross-FlatAST clone_macro_body (replaces the
+            //   pre-#2235 `#ifndef NDEBUG` + abort path that was a
+            //   silent production-corruption risk for Agents that
+            //   materialize macros into a different workspace
+            //   FlatAST).
+            // - cross-flat-restamp-after-total: the existing #2019
+            //   macro_restamp_after_flat_total — the count of
+            //   restamp_after_expand calls on cross-flat clones. In
+            //   sandbox-strict mode, the forced second-pass restamp
+            //   bumps this an additional +1 per cross-flat clone
+            //   call (visible signal that strict mode took action).
+            const std::int64_t cross_flat_violation_total =
+                m ? static_cast<std::int64_t>(m->macro_hygiene_violation_in_macro_expand_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cross_flat_restamp_total =
+                m ? static_cast<std::int64_t>(
+                        m->macro_restamp_after_flat_total.load(std::memory_order_relaxed))
+                  : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"is-macro-introduced-consults", make_int(is_macro_introduced_consults)},
                 {"provenance-captured", make_int(provenance_captured)},
                 {"dirty-impact-on-macro-subtree", make_int(dirty_impact_on_macro_subtree)},
                 {"rollback-success", make_int(rollback_success)},
+                {"cross-flat-validate-wired", make_int(1)},
+                {"cross-flat-violation-total", make_int(cross_flat_violation_total)},
+                {"cross-flat-restamp-after-total", make_int(cross_flat_restamp_total)},
+                {"schema-2235", make_int(2235)},
+                {"issue-2235", make_int(2235)},
                 {"schema", make_int(735)},
             };
             return build_hash(kv);
