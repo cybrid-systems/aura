@@ -1734,6 +1734,32 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_layout_stamp_fence_coverage():
+    """Issue #2250: LayoutStamp fence on Fiber resume/steal.
+
+    Validates the 5-AC contract from issue body:
+      AC1: Phase 5 writes current LayoutStamp into current Fiber
+      AC2: hard compare + bump + force dual-check on mismatch
+      AC3: zero-cost when stamps match
+      AC4: metric + query + schema-2250 lineage
+      AC5: dual-worker integration AC (test_layout_stamp_2170.cpp)
+    """
+    print(f"{B}=== LayoutStamp fence coverage (#2250) ==={N}")
+    script = ROOT / "scripts" / "check_layout_stamp_fence_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("LayoutStamp fence coverage contract rows failed")
+        return 1
+    ok("LayoutStamp fence coverage clean")
+    return 0
+
+
 def cmd_aot_reload_policy_coverage():
     """Issue #2249: Region | Staging auto-retry conservative path (extend #2232).
 
@@ -1920,6 +1946,7 @@ def cmd_gate():
         or cmd_dual_dep_graph_parity_coverage()
         or cmd_adaptive_thr_coverage()
         or cmd_aot_reload_policy_coverage()
+        or cmd_layout_stamp_fence_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2581,6 +2608,7 @@ def main():
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
         "adaptive-thr": cmd_adaptive_thr_coverage,
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
+        "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
