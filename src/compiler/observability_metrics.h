@@ -206,6 +206,12 @@ struct CompilerMetrics {
     //     (forces full re-lower — AC1 guardrail)
     std::atomic<std::uint64_t> source_to_ir_inconsistency_total{0};
     std::atomic<std::uint64_t> source_to_ir_hard_fail_total{0};
+    // Issue #2247: dual dep_graph write-parity gate + hybrid cascade
+    //   - dual_dep_graph_parity_check_total: graphs_consistent invocations
+    //   - dual_dep_graph_parity_fail_total: rebuild_node_dep_graph_from_string
+    //     fired (Strict path forces all callers dirty; Off mode is soft)
+    std::atomic<std::uint64_t> dual_dep_graph_parity_check_total{0};
+    std::atomic<std::uint64_t> dual_dep_graph_parity_fail_total{0};
     // Issue #2032: dep_graph concurrent correctness + partial threshold.
     //   - dep_graph_edge_reject_stale_total: record_dependency rejected
     //     because mutation_epoch advanced while waiting for the lock

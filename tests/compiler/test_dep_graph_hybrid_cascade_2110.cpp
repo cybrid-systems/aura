@@ -282,6 +282,71 @@ static void ac2187_lock_order_and_source() {
 
 } // namespace
 
+// AC (Issue #2247): dual dep_graph write-parity gate + hybrid cascade
+// consistency (string ↔ NodeId). Source-cite the parity primitives +
+// strict toggle + 2 new metrics + 2 query keys + schema-2247.
+void ac2247_dual_dep_graph_parity_gate() {
+    std::println("\n--- AC #2247: dual dep_graph parity gate ---");
+    auto pure = read_file("src/compiler/dirty_propagation.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto svc = read_file("src/compiler/service.ixx");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    // Pure parity primitives
+    CHECK(pure.find("graphs_consistent") != std::string::npos, "graphs_consistent helper");
+    CHECK(pure.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+          "rebuild_node_dep_graph_from_string helper");
+    CHECK(pure.find("g_dual_dep_graph_parity_check_total_atomic") != std::string::npos,
+          "process atomic check counter");
+    CHECK(pure.find("g_dual_dep_graph_parity_fail_total_atomic") != std::string::npos,
+          "process atomic fail counter");
+    // Strict toggle + C-linkage
+    CHECK(pure.find("dual_dep_graph_strict_enabled") != std::string::npos, "Strict toggle");
+    CHECK(pure.find("aura_set_dual_dep_graph_strict") != std::string::npos, "C-linkage setter");
+    CHECK(pure.find("aura_dual_dep_graph_parity_check_v_read") != std::string::npos,
+          "C-linkage check v_read");
+    // 2 atomic counters in observability_metrics.h
+    CHECK(met.find("dual_dep_graph_parity_check_total{0}") != std::string::npos,
+          "check counter field");
+    CHECK(met.find("dual_dep_graph_parity_fail_total{0}") != std::string::npos,
+          "fail counter field");
+    // Wire-up in service.ixx (record_dependency chokepoint)
+    CHECK(svc.find("graphs_consistent(dep_graph_") != std::string::npos,
+          "parity gate wire-up at record_dependency");
+    CHECK(svc.find("dual_dep_graph_strict_enabled") != std::string::npos,
+          "strict toggle check in wire-up");
+    // Query surface (query:dirty-cascade-stats)
+    CHECK(q.find("dual-dep-graph-parity-check-total") != std::string::npos,
+          "query key: check-total");
+    CHECK(q.find("dual-dep-graph-parity-fail-total") != std::string::npos, "query key: fail-total");
+    CHECK(q.find("schema-2247") != std::string::npos, "schema-2247 lineage");
+    // Runtime: default Off (unit-test safe per AC2)
+    aura::compiler::dirty::set_dual_dep_graph_strict(0);
+    CHECK(!aura::compiler::dirty::dual_dep_graph_strict_enabled(), "default Off (AC2)");
+    // Pure helper smoke: build small string graph + matching node graph -> consistent
+    std::unordered_map<std::string, aura::compiler::dirty::FunctionDepEntry,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        str_dep;
+    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        name_to_slot;
+    name_to_slot["f"] = 0;
+    name_to_slot["g"] = 1;
+    str_dep["f"].called_by.push_back("g");
+    aura::compiler::dirty::DepGraph node_dep;
+    node_dep.add_edge(aura::compiler::dirty::encode_fn_node(0),
+                      aura::compiler::dirty::encode_fn_node(1));
+    CHECK(aura::compiler::dirty::graphs_consistent(str_dep, node_dep, name_to_slot),
+          "consistent graph returns true");
+    // Inject divergence: remove the node_dep edge -> inconsistent
+    node_dep.adj.clear();
+    CHECK(!aura::compiler::dirty::graphs_consistent(str_dep, node_dep, name_to_slot),
+          "inconsistent graph returns false (AC1)");
+    // Rebuild from string -> consistent again
+    aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep, str_dep, name_to_slot);
+    CHECK(aura::compiler::dirty::graphs_consistent(str_dep, node_dep, name_to_slot),
+          "consistent after rebuild (AC1 recovery)");
+}
+
 int main() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -294,6 +359,7 @@ int main() {
     ac2187_mutate_callee_call_site_block();
     ac2187_metrics_schema();
     ac2187_lock_order_and_source();
+    ac2247_dual_dep_graph_parity_gate();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

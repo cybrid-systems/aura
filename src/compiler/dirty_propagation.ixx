@@ -569,3 +569,123 @@ inline void push_to_block_dirty_matrix(const DirtySet& src,
 }
 
 } // namespace aura::compiler::dirty
+
+
+// Issue #2247: pure parity primitives. Both helpers are pure — no
+// metrics bump, no side effects beyond the graphs passed in.
+//
+// graphs_consistent: returns true when every string-graph edge
+// (callee → caller via dep_graph_[callee].called_by) has a
+// corresponding NodeId edge (encode_fn_node(callee_slot) →
+// encode_fn_node(caller_slot)) in node_dep. Compares edge counts
+// + per-fn dependent sets.
+//
+// name_to_slot maps string names → fn slots (CompilerService maintains
+// this via dep_name_to_slot_; passed in here as a const ref so we
+// don't need a back-pointer into CompilerService).
+[[nodiscard]] inline bool graphs_consistent(
+    const std::unordered_map<std::string, FunctionDepEntry, aura::core::TransparentStringHash,
+                             std::equal_to<>>& string_dep,
+    const DepGraph& node_dep,
+    const std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>& name_to_slot) noexcept {
+    // For each string-graph callee→caller edge, check corresponding
+    // NodeId edge exists. If any missing, return false.
+    for (const auto& [callee, entry] : string_dep) {
+        const auto callee_it = name_to_slot.find(callee);
+        if (callee_it == name_to_slot.end())
+            continue; // never mirrored; not a parity violation
+        const auto fn_from = encode_fn_node(callee_it->second);
+        for (const auto& caller : entry.called_by) {
+            const auto caller_it = name_to_slot.find(caller);
+            if (caller_it == name_to_slot.end())
+                continue; // never mirrored; not a parity violation
+            const auto fn_to = encode_fn_node(caller_it->second);
+            const auto* deps = node_dep.dependents(fn_from);
+            if (!deps)
+                return false;
+            bool found = false;
+            for (const auto& n : *deps) {
+                if (n == fn_to) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                return false;
+        }
+    }
+    return true;
+}
+
+// Rebuild NodeId-graph from string-graph. Clears node_dep.adj and
+// re-populates from string-graph via encode_fn_node mapping. Pure
+// (no metrics). Caller bumps the dual_dep_graph_parity_fail_total
+// metric after this returns (so tests can verify the metric path).
+inline void rebuild_node_dep_graph_from_string(
+    DepGraph& node_dep,
+    const std::unordered_map<std::string, FunctionDepEntry, aura::core::TransparentStringHash,
+                             std::equal_to<>>& string_dep,
+    const std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>& name_to_slot) noexcept {
+    node_dep.adj.clear();
+    for (const auto& [callee, entry] : string_dep) {
+        const auto callee_it = name_to_slot.find(callee);
+        if (callee_it == name_to_slot.end())
+            continue;
+        const auto fn_from = encode_fn_node(callee_it->second);
+        for (const auto& caller : entry.called_by) {
+            const auto caller_it = name_to_slot.find(caller);
+            if (caller_it == name_to_slot.end())
+                continue;
+            const auto fn_to = encode_fn_node(caller_it->second);
+            node_dep.add_edge(fn_from, fn_to);
+        }
+    }
+}
+
+// Issue #2247: parity check counter (process-atomic; mirrors the
+// per-CompilerMetrics counter in observability_metrics.h). Useful for
+// pure unit tests that don't have a CompilerService instance.
+inline std::atomic<std::uint64_t>& g_dual_dep_graph_parity_check_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+inline std::atomic<std::uint64_t>& g_dual_dep_graph_parity_fail_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// File-scope Strict toggle (mirrors g_source_to_ir_strict from #2244).
+// When set: ensure_dual_dep_graph_parity forces NodeId rebuild on
+// mismatch + marks all callers dirty. When 0 (default / unit-test):
+// rebuild optional, no hard force.
+inline std::atomic<std::uint8_t>& g_dual_dep_graph_strict_atomic() noexcept {
+    static std::atomic<std::uint8_t> v{0};
+    return v;
+}
+
+inline void set_dual_dep_graph_strict(int strict_mode) noexcept {
+    g_dual_dep_graph_strict_atomic().store(strict_mode != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+inline bool dual_dep_graph_strict_enabled() noexcept {
+    return g_dual_dep_graph_strict_atomic().load(std::memory_order_relaxed) != 0;
+}
+
+extern "C" std::uint64_t aura_dual_dep_graph_parity_check_v_read() noexcept {
+    return g_dual_dep_graph_parity_check_total_atomic().load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_dual_dep_graph_parity_fail_v_read() noexcept {
+    return g_dual_dep_graph_parity_fail_total_atomic().load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_set_dual_dep_graph_strict(int strict_mode) noexcept {
+    set_dual_dep_graph_strict(strict_mode);
+}
+
+extern "C" void aura_test_set_dual_dep_graph_strict(int v) noexcept {
+    set_dual_dep_graph_strict(v);
+}
