@@ -62,7 +62,7 @@ TARGET_BUDGET = 420
 # Raised 520→521 after #1907 (reflect/EDSL bridge public surface +1).
 # Raised 521→523 after #1914 (query:node-provenance + query:last-mutation-provenance
 # diagnostic hashes for AI hygiene root-cause; arg-taking, not engine:metrics-only).
-INTERIM_HARD_CEILING = 534  # bumped 530→534 for #2189 pin-stable-refs/unpin/with-pinned/pin-table-size
+INTERIM_HARD_CEILING = 535  # bumped 534→535 for #2214 tui:present-dirty
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
@@ -131,7 +131,7 @@ DOMAIN_STATUS: dict[str, str] = {
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "eda:": 13,  # #1968 — EDA vertical retired 4.4; budget kept as zero-count placeholder for legacy test expectations
-    "tui:": 24,  # #1967 + #2134 batch draw/fill/present; AURA_ENABLE_TUI
+    "tui:": 25,  # #1967 + #2134 batch + #2214 present-dirty; AURA_ENABLE_TUI
     "render3d:": 10,  # #1986 — voxel 3D EDSL surface; gated with AURA_ENABLE_TUI
     "auto-evolve-": 7,  # #1969 — self-evo AI vertical; AURA_ENABLE_AUTO_EVOLVE
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)

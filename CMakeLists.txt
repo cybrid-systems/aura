@@ -2379,6 +2379,11 @@ aura_add_issue_test(test_tree_walker_fallback_strict_2213)
 aura_issue_test_link_llvm_jit(test_tree_walker_fallback_strict_2213)
 add_dependencies(all_test_issue_targets test_tree_walker_fallback_strict_2213)
 
+# Issue #2214: tui:present-dirty differential zero-copy present.
+aura_add_issue_test(test_tui_present_dirty_2214)
+aura_issue_test_link_llvm_jit(test_tui_present_dirty_2214)
+add_dependencies(all_test_issue_targets test_tui_present_dirty_2214)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

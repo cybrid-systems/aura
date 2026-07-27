@@ -7970,6 +7970,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> tui_present_batch_skip_clean{0};
     std::atomic<std::uint64_t> tui_present_batch_dirty_cells{0};
     std::atomic<std::uint64_t> tui_present_batch_us_total{0};
+    // Issue #2214: tui:present-dirty (differential zero-copy present)
+    std::atomic<std::uint64_t> tui_present_dirty_total{0};         // #2214
+    std::atomic<std::uint64_t> tui_present_dirty_short_circuit{0}; // #2214
+    std::atomic<std::uint64_t> tui_present_dirty_partial_total{0}; // #2214
+    std::atomic<std::uint64_t> tui_present_dirty_cells_emitted{0}; // #2214
+    std::atomic<std::uint64_t> tui_present_dirty_bytes_total{0};   // #2214
     // #1333 primitives
     std::atomic<std::uint64_t> tui_primitives_active{1};
     // #1334–#1335 stdlib

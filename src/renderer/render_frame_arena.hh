@@ -227,7 +227,23 @@ struct LinearCellGrid {
 
     // Present takes ownership of the dirty region (move semantics).
     DirtyRegion& dirty_mut() noexcept { return dirty; }
+
+    // Issue #2214: process/thread active LinearCellGrid for tui:present-dirty.
+    // When non-null and valid(), present-dirty prefers this buffer over TUIRuntime.
+    // Tests / Agent glue set via set_active_linear_cell_grid; present clears dirty.
 };
+
+// Issue #2214: thread-local active LinearCellGrid pointer (non-owning).
+inline LinearCellGrid*& g_active_linear_cell_grid_ptr() noexcept {
+    static thread_local LinearCellGrid* p = nullptr;
+    return p;
+}
+inline void set_active_linear_cell_grid(LinearCellGrid* g) noexcept {
+    g_active_linear_cell_grid_ptr() = g;
+}
+[[nodiscard]] inline LinearCellGrid* active_linear_cell_grid() noexcept {
+    return g_active_linear_cell_grid_ptr();
+}
 
 // RAII: sample present wall-time into the frame histogram.
 struct RenderFrameTimer {

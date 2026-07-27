@@ -172,6 +172,7 @@ inline constexpr const char* kTrackedRenderPrims[] = {
     "tui:draw-batch",    // #2134
     "tui:fill-rect",     // #2134
     "tui:present-batch", // #2134
+    "tui:present-dirty", // #2214
     "tui:read-event",
     "+",
     "-",

@@ -12,6 +12,7 @@
 
 #include "tui/tui_input.hh"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -224,6 +225,51 @@ public:
             return;
         emit_diff(/*force=*/false);
         g_tui_present_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #2214: clear per-cell dirty flags without emitting ANSI
+    // (after present-dirty consumed the AABB via the batch path).
+    void clear_dirty_flags() noexcept {
+        if (!initialized_)
+            return;
+        for (auto& c : front_)
+            c.dirty = false;
+    }
+
+    // Issue #2214: compute inclusive dirty AABB from front_ dirty bits.
+    // Returns false if clean (no dirty cells).
+    [[nodiscard]] bool compute_dirty_aabb(std::uint32_t& x0, std::uint32_t& y0, std::uint32_t& x1,
+                                          std::uint32_t& y1) const noexcept {
+        if (!initialized_)
+            return false;
+        bool any = false;
+        std::uint32_t mx0 = 0, my0 = 0, mx1 = 0, my1 = 0;
+        for (int y = 0; y < rows_; ++y) {
+            for (int x = 0; x < cols_; ++x) {
+                const auto& c = front_[static_cast<std::size_t>(y * cols_ + x)];
+                if (!c.dirty)
+                    continue;
+                const auto ux = static_cast<std::uint32_t>(x);
+                const auto uy = static_cast<std::uint32_t>(y);
+                if (!any) {
+                    mx0 = mx1 = ux;
+                    my0 = my1 = uy;
+                    any = true;
+                } else {
+                    mx0 = std::min(mx0, ux);
+                    my0 = std::min(my0, uy);
+                    mx1 = std::max(mx1, ux);
+                    my1 = std::max(my1, uy);
+                }
+            }
+        }
+        if (!any)
+            return false;
+        x0 = mx0;
+        y0 = my0;
+        x1 = mx1;
+        y1 = my1;
+        return true;
     }
 
     void force_present() {

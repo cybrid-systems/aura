@@ -39,6 +39,14 @@
 //     hard invalidate of present/draw on the hot path.
 // Primary surface: query:render-stats schema-2051 (aggregates memory / JIT /
 // dirty / pin / mutate-cost). Drill-down siblings stamped on the same hash.
+//
+// ── Issue #2214: Prefer tui:present-dirty after sparse mutations ────────────
+// After soft dirty / set-body / cell writes on evolution-named defines:
+//   - Call (tui:present-dirty) or (tui:present-dirty x0 y0 x1 y1) instead of
+//     full (tui:present). Clean dirty AABB short-circuits (0 bytes).
+//   - LinearCellGrid.dirty is consumed when that grid is the active buffer.
+//   - Query: present-dirty-calls / present-dirty-short-circuit-rate-bp on
+//     query:render-stats schema-2214.
 
 #ifndef AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH
 #define AURA_COMPILER_RENDER_PRIM_TEMPLATE_HH

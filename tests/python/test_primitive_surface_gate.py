@@ -98,7 +98,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("tui:init"), "deferred")
         self.assertEqual(self.m.domain_status("tui:present"), "deferred")
         self.assertIn("tui:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["tui:"], 24)  # #2134 batch draw
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["tui:"], 25)  # #2134 batch + #2214 present-dirty
 
     def test_eda_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("eda:"), "deferred")

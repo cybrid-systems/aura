@@ -1570,6 +1570,27 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("tui-batch-draw-wired", 1);
             insert_kv("schema-2134", 2134);
             insert_kv("issue-2134", 2134);
+            // Issue #2214: tui:present-dirty differential path
+            insert_kv("present-dirty-calls", m ? load(m->tui_present_dirty_total) : 0);
+            insert_kv("tui-present-dirty-total", m ? load(m->tui_present_dirty_total) : 0);
+            insert_kv("present-dirty-short-circuit",
+                      m ? load(m->tui_present_dirty_short_circuit) : 0);
+            insert_kv("tui-present-dirty-short-circuit",
+                      m ? load(m->tui_present_dirty_short_circuit) : 0);
+            insert_kv("present-dirty-partial-total",
+                      m ? load(m->tui_present_dirty_partial_total) : 0);
+            insert_kv("present-dirty-cells-emitted",
+                      m ? load(m->tui_present_dirty_cells_emitted) : 0);
+            insert_kv("present-dirty-bytes-total", m ? load(m->tui_present_dirty_bytes_total) : 0);
+            {
+                const auto calls = m ? load(m->tui_present_dirty_total) : 0;
+                const auto skips = m ? load(m->tui_present_dirty_short_circuit) : 0;
+                const std::int64_t rate_bp = calls > 0 ? (skips * 10000) / calls : 0;
+                insert_kv("present-dirty-short-circuit-rate-bp", rate_bp);
+            }
+            insert_kv("present-dirty-wired", 1);
+            insert_kv("schema-2214", 2214);
+            insert_kv("issue-2214", 2214);
             // Issue #2135: default zero-copy / direct-arena present path
             {
                 auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
