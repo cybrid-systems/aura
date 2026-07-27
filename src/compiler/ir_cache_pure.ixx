@@ -28,6 +28,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <bit>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -898,6 +899,11 @@ inline std::atomic<std::uint64_t>& partial_relower_storm_forced_full_total_atomi
     static std::atomic<std::uint64_t> n{0};
     return n;
 }
+// Issue #2212: Shape-storm preferred partial decisions (wider dirty range).
+inline std::atomic<std::uint64_t>& partial_relower_under_shape_storm_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> n{0};
+    return n;
+}
 
 [[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
     return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
@@ -1077,6 +1083,8 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
     // Issue #2190: clear StormLevel partial-gate metrics.
     partial_relower_storm_gate_consult_total_atomic().store(0, std::memory_order_relaxed);
     partial_relower_storm_forced_full_total_atomic().store(0, std::memory_order_relaxed);
+    // Issue #2212: clear Shape-storm partial preference metric.
+    partial_relower_under_shape_storm_total_atomic().store(0, std::memory_order_relaxed);
     // Issue #2209: clear cascade depth / dirty_rate adapt signals.
     adaptive_last_cascade_depth_avg_milli_atomic().store(0, std::memory_order_relaxed);
     adaptive_dirty_rate_bp_atomic().store(0, std::memory_order_relaxed);
@@ -1188,22 +1196,56 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     return true;
 }
 
-// ── Issue #2190: StormLevel gate on partial vs full ──────────────
+// ── Issue #2190 / #2212: StormLevel gate on partial vs full ──────
 // HotUpdateRegistry::StormLevel (via aura_hot_update_current_storm_level):
 //   None=0, Shape=1, Global=2, Both=3.
 // When the Global bit is set (Global or Both), prefer full relower to
-// avoid partial-fail→full thrash under process-wide deopt storm.
-// Shape-only does NOT force full (align #2172 AC1).
-// set_partial_relower_threshold / env still apply; this is an
-// *additional* gate on top of #2032/#2112/#2127 threshold logic.
+// avoid partial-fail→full thrash under process-wide deopt storm (#2190).
+// Issue #2212: when the Shape bit is set (Shape or Both), prefer partial
+// for a wider dirty_count range (thr * 2, clamped) so shape-churn does
+// not amplify full-relower + mass deopt. Global still wins under Both
+// (force full after Shape widen). Global-only does NOT get partial
+// preference (AC2: reemit throttle only, existing #2014).
 //
 // Pure should_partial_relower remains threshold-only for unit tests.
 // Production cascade / DirtyAware / query surfaces use the storm-aware
 // helpers below (or consult_workload_adaptive_partial_ which applies
-// the same gate).
+// the same gates).
 
 [[nodiscard]] inline bool storm_level_has_global() noexcept {
     return (aura_hot_update_current_storm_level() & kStormLevelGlobal) != 0;
+}
+[[nodiscard]] inline bool storm_level_has_shape() noexcept {
+    return (aura_hot_update_current_storm_level() & kStormLevelShape) != 0;
+}
+
+// Issue #2212: effective thr under Shape storm (2× base, clamped).
+// Used by storm-aware helpers and workload adaptive preference.
+[[nodiscard]] inline std::size_t shape_storm_widened_threshold(std::size_t base_thr) noexcept {
+    if (base_thr == 0)
+        base_thr = kDefaultPartialRelowerThreshold;
+    // 2× prefer-partial window; clamp to adaptive max.
+    const auto doubled =
+        (base_thr > (std::numeric_limits<std::size_t>::max() / 2)) ? base_thr : base_thr * 2;
+    return clamp_partial_relower_threshold(doubled);
+}
+
+// Issue #2212: Shape-bit partial preference (before Global force-full).
+// Returns want_partial after optional widen. Bumps under-shape-storm
+// metric when Shape is active and the (possibly widened) decision is
+// partial. Does NOT apply Global gate.
+[[nodiscard]] inline bool prefer_partial_under_shape_storm(std::size_t dirty_count,
+                                                           bool want_partial_base) noexcept {
+    if (!storm_level_has_shape() || dirty_count == 0)
+        return want_partial_base;
+    const auto thr = get_partial_relower_threshold();
+    const auto wide = shape_storm_widened_threshold(thr);
+    bool want = want_partial_base;
+    if (dirty_count < wide)
+        want = true;
+    if (want)
+        partial_relower_under_shape_storm_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    return want;
 }
 
 // Apply Global-storm gate to a pre-storm partial decision.
@@ -1220,10 +1262,12 @@ apply_partial_relower_storm_gate(bool want_partial_without_storm) noexcept {
     return want_partial_without_storm;
 }
 
-// Drop-in production consult: threshold decision + StormLevel Global gate.
-// Shape-only leaves the pure threshold result intact.
+// Drop-in production consult: threshold + Shape widen (#2212) + Global
+// force-full (#2190). Shape-only widens partial window; Global wins.
 [[nodiscard]] inline bool should_partial_relower_storm_aware(std::size_t dirty_count) noexcept {
-    return apply_partial_relower_storm_gate(should_partial_relower(dirty_count));
+    const bool base = should_partial_relower(dirty_count);
+    const bool after_shape = prefer_partial_under_shape_storm(dirty_count, base);
+    return apply_partial_relower_storm_gate(after_shape);
 }
 
 // ── Issue #2127: workload / deopt / density adaptive threshold ──
@@ -1241,6 +1285,8 @@ inline constexpr std::uint32_t kAdaptiveReasonForced = 1u << 5;
 inline constexpr std::uint32_t kAdaptiveReasonPartial = 1u << 6;
 inline constexpr std::uint32_t kAdaptiveReasonFull = 1u << 7;
 inline constexpr std::uint32_t kAdaptiveReasonSkipClean = 1u << 8;
+// Issue #2212: Shape storm widened thr / forced partial preference.
+inline constexpr std::uint32_t kAdaptiveReasonShapeStormPartial = 1u << 9;
 
 struct AdaptiveRelowerPolicy {
     std::size_t base = kDefaultPartialRelowerThreshold;
@@ -1376,12 +1422,35 @@ inline void set_shape_stability_ratio(double r) noexcept {
     return g_shape_stability_ratio_atomic().load(std::memory_order_acquire);
 }
 
-// Issue #2190: workload adaptive + StormLevel Global force-full gate.
+// Apply #2212 Shape-storm partial preference to a workload decision
+// (widen effective thr to 2×, force want_partial when dirty < wide).
+// Call BEFORE Global force-full gate. Updates reason_bits + metric.
+inline void apply_shape_storm_partial_preference(AdaptiveRelowerDecision& d,
+                                                 std::size_t dirty_count) noexcept {
+    if (!storm_level_has_shape() || dirty_count == 0)
+        return;
+    const auto wide = shape_storm_widened_threshold(d.effective_threshold);
+    d.effective_threshold = wide;
+    if (dirty_count < wide) {
+        d.want_partial = true;
+        d.reason_bits |= kAdaptiveReasonShapeStormPartial;
+        d.reason_bits |= kAdaptiveReasonPartial;
+        d.reason_bits &= ~kAdaptiveReasonFull;
+        partial_relower_under_shape_storm_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        adaptive_effective_threshold_atomic().store(d.effective_threshold,
+                                                    std::memory_order_relaxed);
+        adaptive_last_reason_atomic().store(d.reason_bits, std::memory_order_relaxed);
+    }
+}
+
+// Issue #2190 + #2212: workload adaptive + Shape widen + Global force-full.
 [[nodiscard]] inline bool should_partial_relower_workload_storm_aware(
     std::size_t dirty_count, std::size_t total_blocks = 0, std::uint64_t deopt_window_count = 0,
     std::uint64_t deopt_storm_threshold = 0, bool deopt_storm_active = false) noexcept {
-    return apply_partial_relower_storm_gate(should_partial_relower_workload(
-        dirty_count, total_blocks, deopt_window_count, deopt_storm_threshold, deopt_storm_active));
+    auto d = decide_workload_adaptive_partial_relower(dirty_count, total_blocks, deopt_window_count,
+                                                      deopt_storm_threshold, deopt_storm_active);
+    apply_shape_storm_partial_preference(d, dirty_count);
+    return apply_partial_relower_storm_gate(d.want_partial);
 }
 
 // ── Issue #2248: Agent-driven adaptive relower threshold from

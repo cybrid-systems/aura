@@ -2369,6 +2369,11 @@ aura_add_issue_test(test_residual_gc_defer_assert_2211)
 aura_issue_test_link_llvm_jit(test_residual_gc_defer_assert_2211)
 add_dependencies(all_test_issue_targets test_residual_gc_defer_assert_2211)
 
+# Issue #2212: Shape-storm prefers partial relower (wider dirty window).
+aura_add_issue_test(test_shape_storm_partial_relower_2212)
+aura_issue_test_link_llvm_jit(test_shape_storm_partial_relower_2212)
+add_dependencies(all_test_issue_targets test_shape_storm_partial_relower_2212)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

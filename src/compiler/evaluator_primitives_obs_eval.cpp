@@ -6572,6 +6572,16 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
                                                         .load(std::memory_order_relaxed)))},
                 {"partial-relower-storm-gate-wired", make_int(1)},
+                // Issue #2212: Shape-storm prefers partial (wider dirty range)
+                {"partial_relower_under_shape_storm_total",
+                 make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"partial-relower-under-shape-storm-total",
+                 make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"shape-storm-partial-prefer-wired", make_int(1)},
+                {"schema-2212", make_int(2212)},
+                {"issue-2212", make_int(2212)},
                 // Issue #2244: Strict-mode hard-fail + rebuild on source_to_ir_map
                 {"source-to-ir-inconsistency-total",
                  make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
@@ -6722,6 +6732,16 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"partial-relower-storm-gate-wired", make_int(1)},
                 {"schema-2190", make_int(2190)},
                 {"issue-2190", make_int(2190)},
+                // Issue #2212: Shape-storm prefers partial (wider dirty range)
+                {"partial_relower_under_shape_storm_total",
+                 make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"partial-relower-under-shape-storm-total",
+                 make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
+                                                        .load(std::memory_order_relaxed)))},
+                {"shape-storm-partial-prefer-wired", make_int(1)},
+                {"schema-2212", make_int(2212)},
+                {"issue-2212", make_int(2212)},
                 // Issue #2209: cascade depth + dirty_rate fed into adaptive thr
                 {"cascade-depth-avg-x1000", make_int(static_cast<std::int64_t>(
                                                 adaptive_last_cascade_depth_avg_milli_atomic().load(
