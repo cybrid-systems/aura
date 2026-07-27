@@ -65,6 +65,15 @@ inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 inline constexpr int kFiberNativeKeepaliveIssue = 2159;
 // Default secondary drain window after request_cancel (#2082 preserved).
 inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
+// Issue #2227: hard-reclaim orphan deadline ceiling. The
+// orch join path computes the per-call hard_ms as
+// min(drain_ms * 8, kJoinDrainResidualHardMsDefault) so the
+// cooperative cancel has 8x the drain window before the
+// Scheduler reaps the fiber. 30s is the upper bound — long
+// enough to absorb a GC pause or short I/O stall without
+// reaping prematurely, short enough that production cancel
+// storms converge within a minute.
+inline constexpr std::uint64_t kJoinDrainResidualHardMsDefault = 30000;
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
 
@@ -128,6 +137,14 @@ struct OrchModuleStats {
     // Issue #2153: secondary drain after cancel on non-Ok join.
     // residual = fiber still !is_done() after drain window (cancelled-leaked).
     std::atomic<std::uint64_t> join_drain_residual_total{0};
+    // Issue #2227: hard-reclaim counter — bumped every time the
+    // orch join path observes a residual fiber and registers it
+    // for force-reclaim (Scheduler::note_orphan_fiber). The
+    // actual force-reap is driven by Scheduler::reap_orphans_now
+    // (driven by tests + scheduler tick). Reset-for-test helper
+    // (reset_orch_module_stats_for_test) clears both this and
+    // join_drain_residual_total together.
+    std::atomic<std::uint64_t> join_drain_residual_reclaim_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
     // Issue #2008: keepalive / liveness.
     std::atomic<std::uint64_t> keepalive_emitted_total{0};
@@ -706,6 +723,16 @@ join_keepalive_helper(AgentHandle& h,
 // Issue #2153: request_cancel + optional secondary join; bump residual if
 // the body is still live after the drain window (cooperative cancel only).
 // drain_ms=0 → cancel only (no secondary wait). Never runs on Ok path.
+//
+// Issue #2227: residual path now also drives the hard-reclaim protocol.
+// After the cooperative drain, !is_done() means the body didn't yield
+// / didn't poll is_cancel_requested(). We register the fiber with its
+// owner Scheduler for force-reclaim after a hard deadline, then bump
+// join_drain_residual_reclaim_total. The Scheduler's reap_orphans_now
+// (called by the IO thread tick + tests) drops the fiber from its
+// tracking maps and marks it reclaimed_ so existing joiners see
+// "logically done" via is_done(). Non-yielding bodies still leak
+// stack until they return — documented limitation, same as #2153.
 inline void cancel_and_drain_fiber(serve::Fiber* f, std::uint64_t drain_ms) noexcept {
     if (!f || f->is_done())
         return;
@@ -719,8 +746,20 @@ inline void cancel_and_drain_fiber(serve::Fiber* f, std::uint64_t drain_ms) noex
                                            .count());
         g_orch_module_stats.join_drain_us_total.fetch_add(us, std::memory_order_relaxed);
     }
-    if (!f->is_done())
+    if (!f->is_done()) {
         g_orch_module_stats.join_drain_residual_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* sched = f->owner_sched()) {
+            // Issue #2227: hard deadline = drain_ms * 8 (4x headroom
+            // over drain_ms so the cooperative cancel has a real
+            // chance, capped at kJoinDrainResidualHardMsDefault).
+            const std::uint64_t hard_ms = std::min<std::uint64_t>(
+                drain_ms > 0 ? drain_ms * 8 : kJoinDrainResidualHardMsDefault,
+                kJoinDrainResidualHardMsDefault);
+            sched->note_orphan_fiber(f, hard_ms);
+        }
+        g_orch_module_stats.join_drain_residual_reclaim_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    }
 }
 
 // Batch cancel+drain for not-yet-Done fibers (join_agents / AgentScope).
@@ -755,9 +794,27 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         if (f && !f->is_done())
             ++residual;
     }
-    if (residual > 0)
+    if (residual > 0) {
         g_orch_module_stats.join_drain_residual_total.fetch_add(residual,
                                                                 std::memory_order_relaxed);
+        // Issue #2227: batch hard-reclaim — register each residual
+        // fiber with its owner Scheduler. Bumps the reclaim counter
+        // once per fiber (matches the residual count for AgentScope
+        // / join_agents paths). Best-effort: fibers without an
+        // owner_sched (test / host-thread) are skipped.
+        const std::uint64_t hard_ms =
+            std::min<std::uint64_t>(drain_ms > 0 ? drain_ms * 8 : kJoinDrainResidualHardMsDefault,
+                                    kJoinDrainResidualHardMsDefault);
+        for (auto* f : not_done) {
+            if (!f || f->is_done())
+                continue;
+            if (auto* sched = f->owner_sched()) {
+                sched->note_orphan_fiber(f, hard_ms);
+            }
+            g_orch_module_stats.join_drain_residual_reclaim_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
 }
 
 // Join a single agent (Fiber::join) + Issue #1879 post-join provenance.

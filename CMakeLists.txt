@@ -2583,6 +2583,14 @@ add_dependencies(all_test_issue_targets test_isolation_stamp_resolve_2224)
 aura_add_issue_test(test_security_event_wal_replay_2225)
 aura_issue_test_link_llvm_jit(test_security_event_wal_replay_2225)
 add_dependencies(all_test_issue_targets test_security_event_wal_replay_2225)
+
+# Issue #2227: hard reclaim path for join drain residual fibers
+# (no leak after cancel+drain under non-yielding bodies). Fiber
+# back-pointer + Scheduler orphan tracking + orch/parallel wire-up +
+# query:orch-module-stats join-drain-residual-reclaim-total key.
+aura_add_issue_test(test_join_drain_reclaim_2227)
+aura_issue_test_link_llvm_jit(test_join_drain_reclaim_2227)
+add_dependencies(all_test_issue_targets test_join_drain_reclaim_2227)
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

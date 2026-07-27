@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 459 | Preferred destination suites |
-| **Total scanned** | **459** | |
+| `tests/core/test_*.cpp` | 460 | Preferred destination suites |
+| **Total scanned** | **460** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 50 | 50 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 129 | 129 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 43 | 43 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 44 | 44 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 26 | 26 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 45 | 45 | P2 — link-profile heavy; migrate AC smoke first |
@@ -358,6 +358,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_jit_macro_introduced_preserve.cpp`
 - `tests/compiler/test_jit_metrics.cpp`
 - `tests/compiler/test_jit_metrics_stub.cpp`
+- `tests/orch/test_join_drain_reclaim_2227.cpp`
 - `tests/serve/test_join_drain_timeout_2153.cpp`
 - `tests/compiler/test_layout_stamp_2170.cpp`
 - `tests/compiler/test_let_poly_solve_delta.cpp`
@@ -841,13 +842,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (43)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (44)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (43)
+#### domain/ (44)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
@@ -872,6 +873,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_inner_steal_starvation.cpp` (—) [domain_suite, theme_serve] — Issue #1445/#1492/#1633 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_issue_1992.cpp` (#1992) [domain_suite, theme_serve] — test_issue_1992.cpp — Issue #1992 (C-001): Fiber::mutation_stack_storage_
 - `tests/compiler/test_issues_809_817_batch.cpp` (#809) [batch_driver, domain_suite, theme_compiler] — test_issues_809_817_batch.cpp — Phase 1 close for Issues #809–#817.
+- `tests/orch/test_join_drain_reclaim_2227.cpp` (#2227) [domain_suite, theme_orch] — AC1: residual + reclaim counters bump when non-yielding body +
 - `tests/serve/test_join_drain_timeout_2153.cpp` (#2153) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
 - `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_orch_agent_mutation_boundary_2118.cpp` (#2118) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false

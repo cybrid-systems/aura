@@ -3410,6 +3410,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(
                           os.join_drain_residual_total.load(std::memory_order_relaxed)));
+            // Issue #2227: hard-reclaim counter — bumps every time the
+            // orch join path registers a residual fiber for force-reclaim
+            // (Scheduler::note_orphan_fiber). Paired with the residual
+            // counter (delta = residual-reclaim ≤ residual). Reset-for-test
+            // helper (reset_orch_stats) clears both together.
+            insert_kv("join-drain-residual-reclaim-total",
+                      static_cast<std::int64_t>(
+                          os.join_drain_residual_reclaim_total.load(std::memory_order_relaxed)));
             insert_kv("join-drain-us-total", static_cast<std::int64_t>(os.join_drain_us_total.load(
                                                  std::memory_order_relaxed)));
             insert_kv("join-drain-default-ms",
