@@ -8070,6 +8070,16 @@ struct CompilerMetrics {
     // mutation epoch (no new dirty since last pass). Mirrors the
     // epoch filter in solve_delta_impl + reverify_clean_constraints_for_touched.
     std::atomic<std::uint64_t> solve_delta_epoch_skip_total{0};
+    // Issue #2220: long-lived TypeChecker on Evaluator mutate path.
+    // typecheck_persistent_create_total — facade allocations
+    // typecheck_persistent_reuse_total — consecutive ensure hits
+    // typecheck_persistent_invalidate_total — set-code / registry wrap resets
+    // typecheck_persistent_cs_cache_hits — mirrored TypeChecker stats across calls
+    std::atomic<std::uint64_t> typecheck_persistent_create_total{0};
+    std::atomic<std::uint64_t> typecheck_persistent_reuse_total{0};
+    std::atomic<std::uint64_t> typecheck_persistent_invalidate_total{0};
+    std::atomic<std::uint64_t> typecheck_persistent_cs_cache_hits{0};
+    std::atomic<std::uint64_t> typecheck_persistent_wired{1};
 
     std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
     std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};

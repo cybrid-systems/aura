@@ -292,10 +292,12 @@ void* Evaluator::ensure_type_registry() {
 }
 
 Evaluator::~Evaluator() {
-    // Issue #2144 / #2180: tear down long-lived Guard-exit InferenceEngine
-    // and commit TypeChecker before type_registry_ / arenas are destroyed.
+    // Issue #2144 / #2180 / #2220: tear down long-lived Guard-exit
+    // InferenceEngine, commit TypeChecker, and persistent TypeChecker
+    // before type_registry_ / arenas are destroyed.
     destroy_guard_infer_engine();
     destroy_commit_type_checker();
+    destroy_persistent_typechecker();
 
     // Issue #1667: release process-wide PanicCheckpoint GC defer if this
     // Evaluator still holds the arm (save without commit/restore, or

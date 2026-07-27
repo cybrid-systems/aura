@@ -82,25 +82,39 @@ std::string Evaluator::run_typecheck_no_lock() {
         if (!workspace_flat_ || !workspace_pool_)
             return std::string("no workspace");
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
-        aura::compiler::TypeChecker tc(treg);
-        if (!declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                sig_map;
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                mod_src_map;
-            for (auto& [name, decl] : declared_type_sigs_) {
-                sig_map[name] = decl.type_str;
-                if (!decl.module_file.empty())
-                    mod_src_map[name] = decl.module_file;
+        // Issue #2220: prefer long-lived TypeChecker.
+        TypeChecker* tc_ptr = static_cast<TypeChecker*>(ensure_typechecker());
+        std::unique_ptr<TypeChecker> stack_tc;
+        if (!tc_ptr) {
+            stack_tc = std::make_unique<TypeChecker>(treg);
+            tc_ptr = stack_tc.get();
+            if (compiler_metrics_)
+                tc_ptr->set_metrics(compiler_metrics_);
+            if (!declared_type_sigs_.empty()) {
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    sig_map;
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    mod_src_map;
+                for (auto& [name, decl] : declared_type_sigs_) {
+                    sig_map[name] = decl.type_str;
+                    if (!decl.module_file.empty())
+                        mod_src_map[name] = decl.module_file;
+                }
+                tc_ptr->inject_type_sigs(sig_map, mod_src_map);
             }
-            tc.inject_type_sigs(sig_map, mod_src_map);
         }
+        auto& tc = *tc_ptr;
         aura::diag::DiagnosticCollector diag;
         auto result =
             tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
         workspace_flat_->clear_all_dirty();
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->typecheck_persistent_cs_cache_hits.store(tc.stats().cs_cache_hits,
+                                                        std::memory_order_relaxed);
+        }
         std::string out = "type: " + treg.format_type(result) + "\n";
         auto all_diags = diag.diagnostics();
         if (all_diags.empty()) {
@@ -135,21 +149,30 @@ bool Evaluator::run_typecheck_no_lock_bool() {
         if (!workspace_flat_ || !workspace_pool_)
             return true;
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
-        aura::compiler::TypeChecker tc(treg);
-        if (!declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                sig_map;
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                mod_src_map;
-            for (auto& [name, decl] : declared_type_sigs_) {
-                sig_map[name] = decl.type_str;
-                if (!decl.module_file.empty())
-                    mod_src_map[name] = decl.module_file;
+        // Issue #2220: prefer long-lived TypeChecker.
+        TypeChecker* tc_ptr = static_cast<TypeChecker*>(ensure_typechecker());
+        std::unique_ptr<TypeChecker> stack_tc;
+        if (!tc_ptr) {
+            stack_tc = std::make_unique<TypeChecker>(treg);
+            tc_ptr = stack_tc.get();
+            if (compiler_metrics_)
+                tc_ptr->set_metrics(compiler_metrics_);
+            if (!declared_type_sigs_.empty()) {
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    sig_map;
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    mod_src_map;
+                for (auto& [name, decl] : declared_type_sigs_) {
+                    sig_map[name] = decl.type_str;
+                    if (!decl.module_file.empty())
+                        mod_src_map[name] = decl.module_file;
+                }
+                tc_ptr->inject_type_sigs(sig_map, mod_src_map);
             }
-            tc.inject_type_sigs(sig_map, mod_src_map);
         }
+        auto& tc = *tc_ptr;
         aura::diag::DiagnosticCollector diag;
         tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
         // Issue #116: apply deferred coercions — the caller (fuzzer
@@ -163,9 +186,9 @@ bool Evaluator::run_typecheck_no_lock_bool() {
                 aura::compiler::apply_coercion_map(*workspace_flat_, cm, &dce_stats, &cm);
                 // Issue #1615: post-coercion linear revalidation.
                 if (compiler_metrics_) {
-                    auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+                    auto& treg2 = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
                     (void)aura::compiler::revalidate_linear_after_coercion(
-                        *workspace_flat_, *workspace_pool_, treg, cm, nullptr, compiler_metrics_);
+                        *workspace_flat_, *workspace_pool_, treg2, cm, nullptr, compiler_metrics_);
                 }
                 if (compiler_metrics_ && dce_stats.eliminated > 0) {
                     auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
@@ -175,6 +198,11 @@ bool Evaluator::run_typecheck_no_lock_bool() {
             }
         }
         workspace_flat_->clear_all_dirty();
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->typecheck_persistent_cs_cache_hits.store(tc.stats().cs_cache_hits,
+                                                        std::memory_order_relaxed);
+        }
         return diag.diagnostics().empty();
     } catch (const std::exception&) {
         // [SILENCE-PRIM-#1769] convert throw → fail for fuzzer loops.
@@ -207,25 +235,35 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         if (!workspace_flat_ || !workspace_pool_)
             return true;
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
-        aura::compiler::TypeChecker tc(treg);
+        // Issue #2220: long-lived TypeChecker — reuses solve_delta_cs_ / cs_cache_
+        // across multi-round Agent mutate (not a cold start each call).
+        TypeChecker* tc_ptr = static_cast<TypeChecker*>(ensure_typechecker());
+        std::unique_ptr<TypeChecker> stack_tc;
+        if (!tc_ptr) {
+            stack_tc = std::make_unique<TypeChecker>(treg);
+            tc_ptr = stack_tc.get();
+            if (compiler_metrics_)
+                tc_ptr->set_metrics(compiler_metrics_);
+            if (!declared_type_sigs_.empty()) {
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    sig_map;
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    mod_src_map;
+                for (auto& [name, decl] : declared_type_sigs_) {
+                    sig_map[name] = decl.type_str;
+                    if (!decl.module_file.empty())
+                        mod_src_map[name] = decl.module_file;
+                }
+                tc_ptr->inject_type_sigs(sig_map, mod_src_map);
+            }
+        }
+        auto& tc = *tc_ptr;
         // Issue #2219: Hard rejects match exhaustiveness diags (Warning or
         // TypeError). Do not force set_strict(true) at construction — apply
         // only on full recheck path below.
         const bool hard_gate = mutate_type_gate::is_hard();
-        if (!declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                sig_map;
-            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                               std::equal_to<>>
-                mod_src_map;
-            for (auto& [name, decl] : declared_type_sigs_) {
-                sig_map[name] = decl.type_str;
-                if (!decl.module_file.empty())
-                    mod_src_map[name] = decl.module_file;
-            }
-            tc.inject_type_sigs(sig_map, mod_src_map);
-        }
         aura::diag::DiagnosticCollector diag;
 
         const auto& log = workspace_flat_->all_mutations();
@@ -241,6 +279,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             const auto reinferred =
                 tc.infer_flat_partial(*workspace_flat_, *workspace_pool_, log.back(), diag);
             (void)reinferred;
+            // Issue #2180/#2220: stash partial CS for composite_txn_commit; with
+            // persistent TC the same solve_delta_cs_ is reused next call.
+            stash_partial_constraint_state(static_cast<void*>(&tc));
             // Issue #537: mirror per-call TypeChecker narrowing stats
             // into lifetime CompilerMetrics (same as CompilerService
             // typecheck / incremental_infer paths).
@@ -266,6 +307,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 m->and_or_join_uses_total.fetch_add(st.and_or_join_uses, std::memory_order_relaxed);
                 m->narrowing_dirty_recovery_total.fetch_add(st.narrowing_dirty_recovery,
                                                             std::memory_order_relaxed);
+                m->typecheck_persistent_cs_cache_hits.store(st.cs_cache_hits,
+                                                            std::memory_order_relaxed);
             }
         } else {
             if (compiler_metrics_)
@@ -285,6 +328,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                                                             std::memory_order_relaxed);
                 m->predicate_memo_partial_evictions_total.fetch_add(
                     st.predicate_memo_partial_evictions, std::memory_order_relaxed);
+                m->typecheck_persistent_cs_cache_hits.store(st.cs_cache_hits,
+                                                            std::memory_order_relaxed);
             }
         }
 
@@ -1035,7 +1080,12 @@ void Evaluator::destroy_guard_infer_engine() noexcept {
 
 // Issue #2180: long-lived TypeChecker for composite commit CS reuse.
 void Evaluator::destroy_commit_type_checker() noexcept {
-    if (commit_type_checker_opaque_) {
+    // If commit TC is an alias of the #2220 persistent TC, only null the
+    // commit pointer (persistent owns the heap object).
+    if (commit_type_checker_opaque_ &&
+        commit_type_checker_opaque_ == persistent_typechecker_opaque_) {
+        commit_type_checker_opaque_ = nullptr;
+    } else if (commit_type_checker_opaque_) {
         delete static_cast<TypeChecker*>(commit_type_checker_opaque_);
         commit_type_checker_opaque_ = nullptr;
     }
@@ -1045,6 +1095,92 @@ void Evaluator::destroy_commit_type_checker() noexcept {
     }
     commit_tc_registry_gen_ = 0;
     commit_cs_live_ = false;
+}
+
+// Issue #2220: long-lived TypeChecker for multi-round Agent mutate.
+void Evaluator::destroy_persistent_typechecker() noexcept {
+    if (persistent_typechecker_opaque_) {
+        // Drop commit alias first so we don't double-delete.
+        if (commit_type_checker_opaque_ == persistent_typechecker_opaque_) {
+            commit_type_checker_opaque_ = nullptr;
+            commit_cs_live_ = false;
+        }
+        delete static_cast<TypeChecker*>(persistent_typechecker_opaque_);
+        persistent_typechecker_opaque_ = nullptr;
+    }
+    persistent_tc_registry_gen_ = 0;
+    persistent_tc_workspace_gen_ = 0;
+}
+
+void Evaluator::invalidate_persistent_typechecker() noexcept {
+    if (!persistent_typechecker_opaque_ && !commit_type_checker_opaque_)
+        return;
+    destroy_persistent_typechecker();
+    // Also drop a non-aliased commit TC (legacy path).
+    destroy_commit_type_checker();
+    ++persistent_tc_invalidate_total_;
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->typecheck_persistent_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void* Evaluator::ensure_typechecker() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return nullptr;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        const auto ws_gen = workspace_flat_generation();
+        if (persistent_typechecker_opaque_ &&
+            (persistent_tc_registry_gen_ != reg_gen || persistent_tc_workspace_gen_ != ws_gen)) {
+            invalidate_persistent_typechecker();
+        }
+        if (!persistent_typechecker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            if (!declared_type_sigs_.empty()) {
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    sig_map;
+                std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                   std::equal_to<>>
+                    mod_src_map;
+                for (auto& [name, decl] : declared_type_sigs_) {
+                    sig_map[name] = decl.type_str;
+                    if (!decl.module_file.empty())
+                        mod_src_map[name] = decl.module_file;
+                }
+                tc->inject_type_sigs(sig_map, mod_src_map);
+            }
+            persistent_typechecker_opaque_ = tc;
+            persistent_tc_registry_gen_ = reg_gen;
+            persistent_tc_workspace_gen_ = ws_gen;
+            ++persistent_tc_create_total_;
+            if (compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                m->typecheck_persistent_create_total.fetch_add(1, std::memory_order_relaxed);
+                m->typecheck_persistent_wired.store(1, std::memory_order_relaxed);
+            }
+        } else {
+            ++persistent_tc_reuse_total_;
+            if (compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                m->typecheck_persistent_reuse_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        auto* tc = static_cast<TypeChecker*>(persistent_typechecker_opaque_);
+        if (compiler_metrics_)
+            tc->set_metrics(compiler_metrics_);
+        // Epoch for cs_cache_ / predicate memo invalidation (#168 / #2065).
+        tc->set_cache_epoch(defuse_version_.load(std::memory_order_relaxed));
+        return persistent_typechecker_opaque_;
+    } catch (...) {
+        // [SILENCE-PRIM] ensure is best-effort; callers fall back to stack TC.
+        return nullptr;
+    }
 }
 
 void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexcept {
@@ -1057,6 +1193,26 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
             return;
         auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
         const auto reg_gen = type_registry_generation();
+        // Issue #2220: when source is the persistent TypeChecker, alias it as
+        // the commit TC so composite_txn_commit solves the same CS (not empty).
+        if (type_checker_opaque == persistent_typechecker_opaque_) {
+            // Drop a non-aliased prior commit TC if any.
+            if (commit_type_checker_opaque_ &&
+                commit_type_checker_opaque_ != persistent_typechecker_opaque_) {
+                delete static_cast<TypeChecker*>(commit_type_checker_opaque_);
+            }
+            commit_type_checker_opaque_ = persistent_typechecker_opaque_;
+            commit_tc_registry_gen_ = reg_gen;
+            if (!commit_occurrence_vars_opaque_)
+                commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
+            auto* occ =
+                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+            *occ = src->last_occurrence_vars();
+            commit_cs_live_ = src->commit_cs_has_work() || src->last_partial_cs_live() ||
+                              src->constraint_system().is_dirty() ||
+                              src->constraint_system().touched_roots_size() > 0 || !occ->empty();
+            return;
+        }
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
             destroy_commit_type_checker();
         if (!commit_type_checker_opaque_) {

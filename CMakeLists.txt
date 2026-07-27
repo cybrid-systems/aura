@@ -2409,6 +2409,11 @@ aura_add_issue_test(test_mutate_type_gate_2219)
 aura_issue_test_link_llvm_jit(test_mutate_type_gate_2219)
 add_dependencies(all_test_issue_targets test_mutate_type_gate_2219)
 
+# Issue #2220: long-lived TypeChecker on Evaluator mutate path.
+aura_add_issue_test(test_persistent_typechecker_2220)
+aura_issue_test_link_llvm_jit(test_persistent_typechecker_2220)
+add_dependencies(all_test_issue_targets test_persistent_typechecker_2220)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
