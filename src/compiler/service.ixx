@@ -6480,6 +6480,72 @@ public:
         return gate_partial_soa_dirty_sync_(it->second);
     }
 
+    // Issue #2206 test: inject a stale source_to_ir_map entry (invalid block)
+    // so partial-path recovery is hard-testable. Also marks block 0 dirty so
+    // dirty_count > 0 and should_partial_relower remains true after recover
+    // when below threshold. Returns true when a desync was successfully injected.
+    bool inject_source_to_ir_map_desync_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end() || it->second.irs.empty())
+            return false;
+        auto& entry = it->second;
+        ensure_source_to_ir_map_(entry);
+        if (entry.source_to_ir_map.empty()) {
+            // Stamp a synthetic mapping if lower left the map empty.
+            rebuild_source_to_ir_map_from_irs(entry.irs, entry.source_to_ir_map);
+        }
+        if (entry.source_to_ir_map.empty()) {
+            // Force at least one reverse entry so corruption is observable.
+            entry.source_to_ir_map[1] = SourceIrLoc{/*fi*/ 0, /*bi*/ 0, /*ii*/ 0};
+        }
+        // Corrupt first map entry to an out-of-range block index.
+        auto mit = entry.source_to_ir_map.begin();
+        mit->second = SourceIrLoc{/*fi*/ 0, /*bi*/ 99, /*ii*/ 0};
+        // Keep a small dirty surface so partial stays eligible after recover.
+        if (entry.block_dirty_per_func_.empty())
+            entry.block_dirty_per_func_.resize(entry.irs.size());
+        if (entry.block_dirty_per_func_[0].empty())
+            entry.block_dirty_per_func_[0].assign(1, 0);
+        entry.block_dirty_per_func_[0][0] = 1;
+        entry.dirty = true;
+        return !source_to_ir_map_is_consistent(entry.irs, entry.source_to_ir_map);
+    }
+
+    // Issue #2206 test: run the same recover path as try_partial_invalidate_relower.
+    // Returns true when map is consistent after recovery (partial may continue).
+    [[nodiscard]] bool recover_source_to_ir_desync_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return true;
+        auto& entry = it->second;
+        if (source_to_ir_map_is_consistent(entry.irs, entry.source_to_ir_map))
+            return true;
+        const auto bad = count_source_to_ir_map_inconsistencies(entry.irs, entry.source_to_ir_map);
+        if (bad > 0)
+            metrics_.source_to_ir_map_inconsistency_total.fetch_add(bad, std::memory_order_relaxed);
+        std::vector<std::size_t> preferred;
+        preferred.reserve(entry.block_dirty_per_func_.size());
+        for (std::size_t fi = 0; fi < entry.block_dirty_per_func_.size(); ++fi) {
+            if (entry.func_dirty_block_count(fi) > 0)
+                preferred.push_back(fi);
+        }
+        auto rec = recover_source_to_ir_map_desync(entry.irs, entry.source_to_ir_map, preferred);
+        if (rec.funcs_patched > 0) {
+            metrics_.source_to_ir_desync_funcs_patched.fetch_add(
+                static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
+            metrics_.source_to_ir_map_patch_total.fetch_add(
+                static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
+        }
+        if (rec.used_full_rebuild)
+            metrics_.source_to_ir_map_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+        if (rec.recovered) {
+            metrics_.source_to_ir_desync_recovered_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.source_to_ir_map_consistent_checks_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+        return rec.recovered;
+    }
+
     // Get all cached defines' names (for the (eval-current) full-lower fallback).
     std::vector<std::string> list_cached_defines_v2() const {
         std::vector<std::string> out;

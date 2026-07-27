@@ -1051,15 +1051,45 @@ void CompilerService::invalidate_function(const std::string& name) {
         // gate_partial_soa_dirty_sync_ already notes DesyncForceFull (#2193).
         if (!gate_partial_soa_dirty_sync_(vit->second))
             return false;
-        // Issue #2045: inconsistent source_to_ir_map → prefer full.
+        // Issue #2206: aggressive source_to_ir_map desync recovery.
+        // Prefer per-function patch for the dirty set, then full map
+        // rebuild only if still inconsistent. Continue partial when
+        // recovered — never jump to full *relower* solely because of a
+        // prior reverse-index desync (closes "looks incremental but full").
+        // MapInconsistent fallback only if recovery itself fails.
         if (!source_to_ir_map_is_consistent(vit->second.irs, vit->second.source_to_ir_map)) {
             const auto bad = count_source_to_ir_map_inconsistencies(vit->second.irs,
                                                                     vit->second.source_to_ir_map);
             if (bad > 0)
                 metrics_.source_to_ir_map_inconsistency_total.fetch_add(bad,
                                                                         std::memory_order_relaxed);
-            note_fb(RelowerFallbackReason::MapInconsistent);
-            return false;
+            std::vector<std::size_t> preferred;
+            preferred.reserve(vit->second.block_dirty_per_func_.size());
+            for (std::size_t fi = 0; fi < vit->second.block_dirty_per_func_.size(); ++fi) {
+                if (vit->second.func_dirty_block_count(fi) > 0)
+                    preferred.push_back(fi);
+            }
+            auto rec = recover_source_to_ir_map_desync(vit->second.irs,
+                                                       vit->second.source_to_ir_map, preferred);
+            if (rec.funcs_patched > 0) {
+                metrics_.source_to_ir_desync_funcs_patched.fetch_add(
+                    static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
+                metrics_.source_to_ir_map_patch_total.fetch_add(
+                    static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
+            }
+            if (rec.used_full_rebuild) {
+                metrics_.source_to_ir_map_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (rec.recovered) {
+                metrics_.source_to_ir_desync_recovered_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                metrics_.source_to_ir_map_consistent_checks_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                // Recovered: keep going into adaptive/partial below.
+            } else {
+                note_fb(RelowerFallbackReason::MapInconsistent);
+                return false;
+            }
         }
         std::size_t total_blocks = 0;
         for (const auto& fb : vit->second.block_dirty_per_func_)

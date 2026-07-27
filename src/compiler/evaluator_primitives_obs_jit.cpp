@@ -864,6 +864,18 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"source-to-ir-map-consistency-wired", make_int(1)},
                 {"schema-2045", make_int(2045)},
                 {"issue-2045", make_int(2045)},
+                // Issue #2206: aggressive source_to_ir_map desync recovery
+                {"source_to_ir_desync_recovered_total",
+                 make_int(L(&CompilerMetrics::source_to_ir_desync_recovered_total))},
+                {"source-to-ir-desync-recovered-total",
+                 make_int(L(&CompilerMetrics::source_to_ir_desync_recovered_total))},
+                {"source_to_ir_desync_funcs_patched",
+                 make_int(L(&CompilerMetrics::source_to_ir_desync_funcs_patched))},
+                {"source-to-ir-desync-funcs-patched",
+                 make_int(L(&CompilerMetrics::source_to_ir_desync_funcs_patched))},
+                {"source-to-ir-desync-recovery-wired", make_int(1)},
+                {"schema-2206", make_int(2206)},
+                {"issue-2206", make_int(2206)},
                 // Issue #2109: instruction-level partial re-emit metrics
                 {"relower_partial_insts_saved_total",
                  make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
