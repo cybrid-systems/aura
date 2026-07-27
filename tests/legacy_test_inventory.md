@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 468 | Preferred destination suites |
-| **Total scanned** | **468** | |
+| `tests/core/test_*.cpp` | 469 | Preferred destination suites |
+| **Total scanned** | **469** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 132 | 132 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 47 | 47 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 10 | 10 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 26 | 26 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 27 | 27 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 46 | 46 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 107 | 107 | P2 — often thin schema probes; collapse into obs matrix |
@@ -388,6 +388,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_longrunning_infra_primitives.cpp`
 - `tests/compiler/test_longrunning_recovery_latency.cpp`
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp`
+- `tests/compiler/test_macro_cross_flat_hygiene_2235.cpp`
 - `tests/compiler/test_macro_fiber_hygiene.cpp`
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp`
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp`
@@ -928,13 +929,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (26)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (27)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (26)
+#### domain/ (27)
 
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
@@ -942,6 +943,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_ir_cache_v2.cpp` (—) [small, domain_suite, theme_reflect] — tests/test_ir_cache_v2.cpp
 - `tests/reflect/test_issue_178.cpp` (#178) [small, early_issue, domain_suite, theme_reflect] — test_issue_178.cpp — Issue #178 / #268: production NodeView
 - `tests/reflect/test_issue_178_reflect.cpp` (#178) [early_issue, domain_suite, theme_reflect] — Non-module TU: P2996 reflection (Issue #268).
+- `tests/compiler/test_macro_cross_flat_hygiene_2235.cpp` (#2235) [domain_suite, theme_compiler] — warning. Single-flat path stays zero-overhead (AC4 contract
 - `tests/compiler/test_macro_fiber_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2097 + FiberHygieneStats + get_fiber_hygiene_metrics
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp` (—) [domain_suite, theme_compiler] — Issue #1501/#1589/#1593/#1609/#1613 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2021; peak / in-flight atomics + snapshot helper

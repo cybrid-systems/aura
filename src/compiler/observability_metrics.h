@@ -7029,6 +7029,21 @@ struct CompilerMetrics {
     // (subtree-local coherence at expand exit + critical mutate
     // entry, scoped to the NodeId root rather than the full AST).
     std::atomic<std::uint64_t> macro_expand_mutate_restamp_total{0};
+    // Issue #2235: cross-FlatAST clone hygiene violation counter.
+    // Mirrors the file-level atomic
+    // `g_hygiene_violation_in_macro_expand_total` via
+    // `aura_macro_hygiene_snapshot_metrics` so the
+    // (query:macro-provenance-stats) primitive and (engine:metrics)
+    // can read the production always-validate rate without
+    // re-importing the macro_expansion module. Bumped when
+    // `ensure_cross_flat_expand_consistency` runs validate
+    // post-restamp and finds > 0 MacroIntroduced nodes missing the
+    // kMacroExpansion dirty bit (a corruption / drift case — the
+    // restamp helper SHOULD have re-set the bit; if it didn't, this
+    // counter captures the gap). Mirrors the macro_restamp_after_flat_total
+    // pattern (file-local atomic is the canonical source; this is the
+    // CompilerMetrics snapshot copy).
+    std::atomic<std::uint64_t> macro_hygiene_violation_in_macro_expand_total{0};
     // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
     // experimental rollback path). Bumped per successful unstamp.
     std::atomic<std::uint64_t> unstamp_macro_introduced_total{0};

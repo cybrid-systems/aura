@@ -1809,6 +1809,12 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_2169)
 aura_add_issue_test(test_macro_restamp_after_flat)
 aura_issue_test_link_llvm_jit(test_macro_restamp_after_flat)
 add_dependencies(all_test_issue_targets test_macro_restamp_after_flat)
+# Issue #2235: production-grade cross-FlatAST clone_macro_body
+# hygiene gate (always-on validate + sandbox-strict forced restamp;
+# replaces #2171 `#ifndef NDEBUG` + abort).
+aura_add_issue_test(test_macro_cross_flat_hygiene_2235)
+aura_issue_test_link_llvm_jit(test_macro_cross_flat_hygiene_2235)
+add_dependencies(all_test_issue_targets test_macro_cross_flat_hygiene_2235)
 # Issue #2096: per-cloned-subtree MacroIntroduced restamp stability
 # after expand in mutate paths (NodeId-rooted helper + counter + query surface).
 aura_add_issue_test(test_macro_intro_restamp)

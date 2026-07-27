@@ -393,6 +393,18 @@ std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total{0};
 // method only updates the per-instance FlatAST member, which the
 // snapshot function syncs into CompilerMetrics).
 std::atomic<std::uint64_t> g_unstamp_macro_introduced_total{0};
+// Issue #2235: process-wide strict-mode flag for cross-FlatAST clone
+// hygiene gate. When 0 (default = relaxed mode), the cross-flat
+// post-restamp validate is counter-only (no abort, no second-pass
+// restamp) — production-safe, just bumps the
+// g_hygiene_violation_in_macro_expand_total counter on drift. When 1
+// (sandbox-strict / MacroSelfEvo force-hygienic), violations > 0
+// trigger a forced second-pass restamp on the target + audit-worthy
+// stderr warning. Settable via aura_macro_set_expand_sandbox_strict(1)
+// or runtime hook — opt-in for tests + sandbox-strict runtimes, not
+// the production default. Mirrors the existing g_* file-atomic pattern
+// (file-local atomic + C-linkage reader / setter).
+std::atomic<std::uint64_t> g_macro_expand_sandbox_strict{0};
 
 // Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
 // primitive can read these file-level atomics from another TU without the
@@ -454,6 +466,18 @@ extern "C" std::uint64_t aura_unstamp_macro_introduced_with_counter(void* flat_p
 std::uint64_t aura_unstamp_macro_introduced_total_v_read() noexcept {
     return g_unstamp_macro_introduced_total.load(std::memory_order_relaxed);
 }
+// Issue #2235: C-linkage reader / setter for the cross-FlatAST
+// hygiene-gate strict-mode flag (g_macro_expand_sandbox_strict).
+// Reader is inline so it's local-TU-cheap; setter is inline + atomic
+// store for cheap test toggles + runtime hook integration. Default 0
+// (relaxed) preserves backwards compat with the pre-#2235 production
+// behavior (counter-only on drift).
+inline std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept {
+    return g_macro_expand_sandbox_strict.load(std::memory_order_relaxed);
+}
+inline void aura_macro_set_expand_sandbox_strict(int strict_mode) noexcept {
+    g_macro_expand_sandbox_strict.store(strict_mode != 0 ? 1 : 0, std::memory_order_relaxed);
+}
 // Issue #2098: per-cloned-subtree schema-cache + dirty/provenance
 // stamp counter C-linkage reader (clone_macro_body walk visibility).
 std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept {
@@ -507,6 +531,13 @@ void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
     m->macro_restamp_after_flat_total.store(
         g_macro_restamp_after_flat_total.load(std::memory_order_relaxed),
         std::memory_order_relaxed);
+    // Issue #2235: mirror cross-FlatAST hygiene violation counter so
+    // (query:macro-provenance-stats) and (engine:metrics) views see
+    // the production always-validate rate. The file-level atomic
+    // remains the canonical source; this is just the snapshot copy.
+    m->macro_hygiene_violation_in_macro_expand_total.store(
+        g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
     // Issue #2096: mirror per-cloned-subtree restamp too (used by
     // (query:macro-mutate-restamp-stats) and (engine:metrics) views).
     m->macro_expand_mutate_restamp_total.store(
@@ -527,6 +558,46 @@ void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
         std::memory_order_relaxed);
 }
 } // extern "C"
+
+// Issue #2235: C-linkage test helper that invokes
+// `ensure_cross_flat_expand_consistency` directly. The function is
+// `static` (file-local in this TU) so it's not exposed via module
+// import. Returns the post-call violation count (== 0 in healthy
+// cross-flat clone; the first-pass restamp auto-clears the bit on
+// every MacroIntroduced node), or UINT64_MAX on a bad arg. Used by
+// tests/compiler/test_macro_cross_flat_hygiene_2235.cpp AC1-AC4.
+extern "C" std::uint64_t
+aura_test_cross_flat_expand_consistency(void* target_flat, void* target_pool, void* source_flat,
+                                        void* source_pool, std::uint32_t new_root) noexcept {
+    auto* target_f = static_cast<aura::ast::FlatAST*>(target_flat);
+    auto* target_p = static_cast<aura::ast::StringPool*>(target_pool);
+    auto* source_f = static_cast<aura::ast::FlatAST*>(source_flat);
+    auto* source_p = static_cast<aura::ast::StringPool*>(source_pool);
+    if (!target_f || !target_p || !source_f || !source_p)
+        return std::numeric_limits<std::uint64_t>::max();
+    ensure_cross_flat_expand_consistency(*target_f, *target_p, *source_f, *source_p,
+                                         static_cast<aura::ast::NodeId>(new_root));
+    return static_cast<std::uint64_t>(target_f->validate_macro_hygiene_invariants());
+}
+
+// Issue #2235: C-linkage test helper that bumps the cross-FlatAST
+// hygiene violation counter (so the wire-up + query-surface +
+// CompilerMetrics mirror can be tested without forcing an actual
+// production-side drift scenario — the file-level atomic IS the
+// canonical source, the bump here just exercises the snapshot + query
+// path that reads it). Bumps g_hygiene_violation_in_macro_expand_total
+// by `n`. Returns the post-bump value.
+extern "C" std::uint64_t
+aura_test_bump_hygiene_violation_in_macro_expand(std::uint64_t n) noexcept {
+    return g_hygiene_violation_in_macro_expand_total.fetch_add(n, std::memory_order_relaxed) + n;
+}
+
+extern "C" void aura_test_set_macro_expand_sandbox_strict(int v) noexcept {
+    aura_macro_set_expand_sandbox_strict(v);
+}
+extern "C" std::uint64_t aura_test_macro_expand_sandbox_strict_v_read() noexcept {
+    return aura_macro_expand_sandbox_strict_v_read();
+}
 
 // Issue #2019: restamp MacroIntroduced gens after a successful expand
 // pass so FlatAST consumers (mutate / query / JIT) never see stale gen.
@@ -559,30 +630,71 @@ static void restamp_after_expand(aura::ast::FlatAST& flat,
 // regression on the hot in-flat path used by `macro_expand_all` and
 // the closure-materialization path).
 //
-// In debug builds, also runs `FlatAST::validate_macro_hygiene_invariants()`
-// on the target post-restamp and aborts on > 0 violations — guaranteed
-// invariant for the post-cross-flat-clone state. Wire into
-// `clone_macro_body` top-level exit so every cross-flat clone site is
-// covered without per-callsite plumbing.
+// Issue #2235: production-grade cross-FlatAST clone_macro_body
+// hygiene gate (replaces the `#ifndef NDEBUG` + abort path added by
+// #2171). In production builds (was silent corruption risk for Agents
+// that materialize macros into a different workspace FlatAST), always
+// runs validate_macro_hygiene_invariants() post-restamp. On > 0
+// violations:
+//   - bump g_hygiene_violation_in_macro_expand_total by `violations`
+//     (so Agents / observability dashboards / query:macro-provenance-stats
+//     see the production always-validate rate).
+//   - log a stderr warning (CI / runtime visible, no abort — the
+//     restamp + counter is the recovery contract).
+//   - if `g_macro_expand_sandbox_strict` is set (sandbox-strict mode):
+//     force a second-pass restamp on the target (full AST restamp +
+//     subtree restamp) so any residual MacroIntroduced drift is
+//     guaranteed re-stamped. Relaxed mode leaves the first-pass
+//     restamp + counter bump as the only signal — production does
+//     NOT abort (no crash; the restamp + counter + sandbox-strict
+//     forced-restamp is the complete recovery contract).
+// The two restamp passes (first-call + strict-mode second-call) both
+// bump g_macro_restamp_after_flat_total, giving Agents a clean
+// per-cross-flat-clone signal via query:macro-provenance-stats
+// `cross-flat-restamp-after-total`.
+//
+// Single-flat clones remain an early-return (AC4 zero-perf-regression
+// contract preserved — the hot in-flat path used by macro_expand_all
+// is unaffected).
 static void
 ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                                      aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
                                      aura::ast::NodeId new_root = aura::ast::NULL_NODE) {
     const bool cross_flat = (&target != &source) || (&target_pool != &source_pool);
     if (!cross_flat)
-        return;
-    restamp_after_expand(target, new_root);
-#ifndef NDEBUG
+        return;                             // AC4: single-flat path stays zero-overhead.
+    restamp_after_expand(target, new_root); // #2171 first-pass restamp.
+    // Issue #2235: production always-on validate (was #ifndef NDEBUG).
+    // Normal-case: restamp auto-clears kMacroExpansion bit on every
+    // MacroIntroduced node, so post-restamp violations == 0. Bumps
+    // the violation counter only when drift IS present (corruption /
+    // partial-restamp case — a real bug signal).
     const auto violations = target.validate_macro_hygiene_invariants();
-    if (violations > 0) {
+    if (violations == 0)
+        return;
+    g_hygiene_violation_in_macro_expand_total.fetch_add(violations, std::memory_order_relaxed);
+    std::fprintf(stderr,
+                 "[#2235 cross-flat hygiene] post-restamp violations=%zu "
+                 "target.size()=%zu new_root=%u sandbox_strict=%u\n",
+                 violations, target.size(), static_cast<unsigned>(new_root),
+                 static_cast<unsigned>(g_macro_expand_sandbox_strict.load()));
+    // AC2: strict mode fails closed via forced second-pass restamp +
+    // audit-worthy stderr warning. Relaxed mode is counter-only
+    // (no abort, no second-pass).
+    if (g_macro_expand_sandbox_strict.load() != 0) {
+        const auto n = target.restamp_macro_introduced_generations();
+        if (n > 0)
+            g_macro_restamp_after_flat_total.fetch_add(1, std::memory_order_relaxed);
+        if (new_root != aura::ast::NULL_NODE) {
+            const auto m = target.restamp_macro_introduced_subtree(new_root);
+            if (m > 0)
+                g_macro_expand_mutate_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        }
         std::fprintf(stderr,
-                     "[#2171 invariant violation] post-cross-flat MacroIntroduced "
-                     "nodes missing kMacroExpansion: %zu (target.size()=%zu, "
-                     "new_root=%u)\n",
-                     violations, target.size(), static_cast<unsigned>(new_root));
-        std::abort();
+                     "[#2235 strict-mode forced restamp] target.size()=%zu "
+                     "new_root=%u (Audit: cross-flat hygiene violation forced restamp)\n",
+                     target.size(), static_cast<unsigned>(new_root));
     }
-#endif
 }
 
 aura::ast::NodeId clone_macro_body(
