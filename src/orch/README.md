@@ -101,4 +101,53 @@ Rules (per Issue #2083 AC4 / #2161 AC5 / #2226):
 
 Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6 + #2161 watch_all).
 
+### `AgentFailurePolicy` (Issue #2229, supervision surface)
+
+`src/orch/agent_spawn.h` lifts the `FailurePolicy` (#2007) family
+into the long-lived agent supervision surface. `AgentScope::watch_all`
+takes an `AgentFailurePolicy` instead of the binary `StallPolicy`,
+turning "kill on stall" into recoverable multi-agent coordination.
+
+```cpp
+#include "orch/orch.h"   // pulls in agent_spawn.h + agent_scope.h
+
+aura::serve::Scheduler sched(2);
+aura::orch::AgentScope scope(sched);
+auto& h = scope.spawn({.name = "worker", .body = [] { /* ... */ },
+                       .keepalive_interval_ms = 50});
+
+// RestartN: on stall, stop helper → cancel body → join drain
+// (via #2227 hard-reclaim) → optional backoff → spawn replacement
+// under the same AgentSpec. Capped at max_restarts; circuit-like
+// consecutive_stall_limit forces Cancel after that.
+aura::orch::AgentFailurePolicy pol;
+pol.on_stall = aura::orch::AgentFailureAction::RestartN;
+pol.max_restarts = 3;
+pol.consecutive_stall_limit = 3;
+pol.restart_backoff_ms = 0;
+auto wr = scope.watch_all(/*stall_ms=*/100, pol);
+// wr.alive / stalled / done / closed / cancelled
+
+// Metrics (query:orch-module-stats):
+//   agent-restart-total             (re-spawns performed)
+//   agent-restart-exhausted-total    (max_restarts OR circuit-open)
+//   agent-consecutive-stall-total    (per-stall observation)
+//   schema-2229 / issue-2229 / agent-failure-policy-wired
+```
+
+Rules (per Issue #2229 AC2-AC3):
+1. **No** process-global registry (linter still forbids
+   `AgentRegistry` / `global_agent_registry` / `conduct_parallel`).
+2. RestartN is scoped to `attach_mailbox` / `keepalive_interval_ms > 0`
+   agents (long-lived). Short-lived batch work still uses
+   `serve::parallel_orch::parallel_intend` with the #2007
+   `FailurePolicy` family.
+3. `on_join_fail` is `ReportOnly` by default — the #2227 hard-reclaim
+   path already drives the fiber lifecycle after a non-Ok join; a
+   separate restart hook on `join_fail` is out of scope for #2229
+   (documented in `AgentFailurePolicy::on_join_fail`).
+4. Optional Phase C (`CircuitBreaker` mirror of #2007) is deferred
+   — the `consecutive_stall_limit` cap is the simpler version of
+   the same idea and ships in #2229.
+
 See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.md`](../../docs/wire-formats.md) §10.

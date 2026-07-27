@@ -77,8 +77,22 @@ public:
 
     // Spawn a new agent under this scope. Pushes the handle to the back;
     // reference remains valid until the scope is destroyed.
+    //
+    // Issue #2229: also stores a copy of the spec in specs_ so
+    // watch_all(stall_timeout_ms, AgentFailurePolicy) with
+    // on_stall == RestartN can re-spawn the body under the same
+    // AgentSpec / name rules. restart_counts_ / consecutive_stall_counts_
+    // are parallel vectors for per-handle supervision state.
     AgentHandle& spawn(AgentSpec spec) {
-        handles_.emplace_back(spawn_agent_with_mailbox(sched_, std::move(spec)));
+        handles_.emplace_back(spawn_agent_with_mailbox(sched_, spec));
+        // Copy the spec for re-spawn. AgentSpec's body is a
+        // std::function (cheap to copy; the body closure is shared
+        // by handle, so the new spawn reuses the same closure
+        // instance). specs_ / restart_counts_ / consecutive_stall_counts_
+        // stay aligned with handles_ via push_back in the same order.
+        specs_.push_back(spec);
+        restart_counts_.push_back(0);
+        consecutive_stall_counts_.push_back(0);
         return handles_.back();
     }
 
@@ -150,6 +164,98 @@ public:
                          cancel_on_stall ? StallPolicy::Cancel : StallPolicy::ReportOnly);
     }
 
+    // Issue #2229: full supervision policy surface. Replaces the
+    // binary StallPolicy with AgentFailureAction (ReportOnly /
+    // Cancel / RestartN) and adds a circuit-like consecutive-stall
+    // limit + optional restart backoff. RestartN path: stop helper
+    // → cancel body → join drain (via #2227 hard-reclaim) →
+    // optional backoff → spawn replacement under the same AgentSpec
+    // → replace handle in the scope vector → bump restart count.
+    // Once restart_counts_[i] >= max_restarts OR
+    // consecutive_stall_counts_[i] >= consecutive_stall_limit, the
+    // scope force-downgrades to Cancel (request_cancel already
+    // invoked by watch_agent_liveness with cancel_on_stall=true)
+    // and bumps agent_restart_exhausted_total. Default policy
+    // (Cancel / max_restarts=0 / consecutive_stall_limit=3) matches
+    // the pre-#2229 StallPolicy::Cancel behaviour for callers
+    // adopting AgentFailurePolicy incrementally.
+    [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms,
+                                             const AgentFailurePolicy& policy) {
+        ScopeWatchResult r;
+        // Map AgentFailureAction::ReportOnly / Cancel to the binary
+        // watch_agent_liveness cancel_on_stall flag. RestartN uses
+        // Cancel internally too (the re-spawn path runs after the
+        // existing cancel completes).
+        const bool cancel_on_stall = (policy.on_stall != AgentFailureAction::ReportOnly);
+        for (std::size_t i = 0; i < handles_.size(); ++i) {
+            auto& h = handles_[i];
+            auto wr = watch_agent_liveness(h, stall_timeout_ms, cancel_on_stall);
+            switch (wr.status) {
+                case KeepaliveWatchStatus::Alive:
+                    ++r.alive;
+                    // Reset consecutive_stall on healthy (fresh heartbeat).
+                    consecutive_stall_counts_[i] = 0;
+                    break;
+                case KeepaliveWatchStatus::Stalled:
+                    ++r.stalled;
+                    if (wr.cancelled)
+                        ++r.cancelled;
+                    ++consecutive_stall_counts_[i];
+                    g_orch_module_stats.agent_consecutive_stall_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // Decide between RestartN and the fallback Cancel /
+                    // ReportOnly per the policy + circuit-like cap.
+                    const bool circuit_open =
+                        consecutive_stall_counts_[i] >= policy.consecutive_stall_limit;
+                    const bool within_max_restarts = restart_counts_[i] < policy.max_restarts;
+                    const bool should_restart = (policy.on_stall == AgentFailureAction::RestartN) &&
+                                                !circuit_open && within_max_restarts;
+                    if (should_restart) {
+                        // Re-spawn path: stop helper, cancel body,
+                        // join drain (via #2227 hard-reclaim), optional
+                        // backoff, then spawn replacement under the
+                        // same AgentSpec and replace the handle.
+                        stop_keepalive_helper(h);
+                        if (h.fiber && !h.fiber->is_done()) {
+                            h.fiber->request_cancel();
+                            if (auto* sched = h.fiber->owner_sched()) {
+                                sched->note_orphan_fiber(h.fiber, /*hard_deadline_ms=*/50);
+                            }
+                        }
+                        if (policy.restart_backoff_ms > 0)
+                            fiber_sleep_ms(policy.restart_backoff_ms);
+                        // Spawn replacement under the same spec.
+                        handles_[i] = spawn_agent_with_mailbox(sched_, specs_[i]);
+                        // Reset per-handle supervision state.
+                        consecutive_stall_counts_[i] = 0;
+                        ++restart_counts_[i];
+                        g_orch_module_stats.agent_restart_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else if ((policy.on_stall == AgentFailureAction::RestartN) &&
+                               (!within_max_restarts || circuit_open)) {
+                        // Cancel path: request_cancel already invoked
+                        // by watch_agent_liveness (cancel_on_stall=true).
+                        // Bump exhausted on the max-restarts OR
+                        // circuit-open signal so Agent frameworks can
+                        // branch on the supervision outcome.
+                        g_orch_module_stats.agent_restart_exhausted_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    // ReportOnly path: nothing extra — aggregate count
+                    // already bumped via r.stalled.
+                    break;
+                case KeepaliveWatchStatus::Done:
+                    ++r.done;
+                    consecutive_stall_counts_[i] = 0;
+                    break;
+                case KeepaliveWatchStatus::Closed:
+                    ++r.closed;
+                    break;
+            }
+        }
+        return r;
+    }
+
     [[nodiscard]] std::size_t size() const noexcept { return handles_.size(); }
     [[nodiscard]] bool empty() const noexcept { return handles_.empty(); }
 
@@ -180,6 +286,16 @@ public:
 private:
     serve::Scheduler& sched_;
     std::vector<AgentHandle> handles_;
+    // Issue #2229: parallel vectors for the RestartN supervision
+    // policy. All three stay aligned with handles_ via push_back in
+    // spawn (same order). specs_ preserves the original AgentSpec
+    // for re-spawn under the same name / body / mailbox config;
+    // restart_counts_ / consecutive_stall_counts_ track per-handle
+    // supervision state for the circuit-like consecutive_stall_limit
+    // + max_restarts cap.
+    std::vector<AgentSpec> specs_;
+    std::vector<std::uint32_t> restart_counts_;
+    std::vector<std::uint32_t> consecutive_stall_counts_;
 };
 
 } // namespace aura::orch

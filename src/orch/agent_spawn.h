@@ -183,6 +183,14 @@ struct OrchModuleStats {
     // join_drain_residual_total together.
     std::atomic<std::uint64_t> join_drain_residual_reclaim_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
+    // Issue #2229: supervision policy metrics (parallel batch
+    // FailurePolicy #2007 + RestartN extension). Bumped by
+    // AgentScope::watch_all(AgentFailurePolicy) when on_stall ==
+    // RestartN, plus the circuit-like consecutive-stall cap and
+    // the exhausted-after-max-restarts signal.
+    std::atomic<std::uint64_t> agent_restart_total{0};
+    std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
+    std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
     // Issue #2008: keepalive / liveness.
     std::atomic<std::uint64_t> keepalive_emitted_total{0};
     std::atomic<std::uint64_t> stalled_agents_total{0};
@@ -1079,6 +1087,57 @@ struct KeepaliveWatchResult {
     bool cancelled = false; // true when cancel_on_stall fired request_cancel
     std::optional<serve::mf_mailbox::MailMessage> message;
 };
+
+// Issue #2229: supervision policy surface for long-lived agent
+// stall responses. Extends the existing StallPolicy (#2161,
+// ReportOnly + Cancel) with RestartN — re-spawn the body under
+// the same AgentSpec / name rules, capped at max_restarts with a
+// consecutive-stall circuit. Used by AgentScope::watch_all to
+// turn "kill on stall" into recoverable multi-agent coordination
+// (the issue's gap). Phase A: ReportOnly + Cancel (formalize).
+// Phase B: RestartN. Phase C: optional CircuitBreaker mirror of
+// #2007 deferred (follow-up).
+enum class AgentFailureAction : std::uint8_t {
+    ReportOnly = 0, // aggregate counts only; no cancel, no restart
+    Cancel = 1,     // request_cancel the stalled body + helper
+    RestartN = 2,   // re-spawn body under the same AgentSpec / name rules
+};
+
+struct AgentFailurePolicy {
+    // Response to a single stall observed in watch_all. Default
+    // Cancel matches the existing StallPolicy::Cancel behaviour
+    // (#2161) so callers adopting AgentFailurePolicy get the
+    // same out-of-the-box semantics.
+    AgentFailureAction on_stall = AgentFailureAction::Cancel;
+    // Response to a non-Ok join (Timeout / Cancelled) on the
+    // scope level. AC4: documented scope (currently ReportOnly
+    // only — the residual-reclaim path from #2227 handles the
+    // fiber lifecycle; a separate restart hook on join_fail is
+    // out of scope for #2229).
+    AgentFailureAction on_join_fail = AgentFailureAction::ReportOnly;
+    // RestartN cap. 0 = restart disabled (Cancel-only behaviour).
+    std::uint32_t max_restarts = 0;
+    // Circuit-like threshold: after this many consecutive
+    // observed stalls, the scope force-downgrades to Cancel
+    // even if on_stall == RestartN. Bumps
+    // agent_consecutive_stall_total once per stall observed.
+    std::uint32_t consecutive_stall_limit = 3;
+    // Optional backoff between cancel + join drain + respawn
+    // in RestartN path. 0 = no backoff (immediate respawn).
+    std::uint32_t restart_backoff_ms = 0;
+};
+
+// StallPolicy (#2161) is the binary ReportOnly / Cancel subset
+// preserved for callers that don't need the new RestartN surface.
+// Kept in agent_scope.h for backward compat.
+namespace agent_scope_compat {
+    // Map StallPolicy::ReportOnly / Cancel to the new AgentFailureAction
+    // enum (RestartN has no StallPolicy equivalent; callers wanting
+    // RestartN must use AgentFailurePolicy directly).
+    inline AgentFailureAction stall_to_failure_action(bool cancel_on_stall) noexcept {
+        return cancel_on_stall ? AgentFailureAction::Cancel : AgentFailureAction::ReportOnly;
+    }
+} // namespace agent_scope_compat
 
 // Wait up to stall_timeout_ms (default 2× keepalive_interval_ms) for a
 // keepalive. Prefers the shared last_keepalive clock (set by the helper
