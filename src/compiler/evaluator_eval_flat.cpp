@@ -7,6 +7,8 @@ module;
 #include "observability_metrics.h"
 #include "reflect/hygiene_validate.hh" // Issue #1611: MutationReflectHealth
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "compiler/value_tags.h"       // Issue #2259: pure tag hot path + metrics
+#include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
 
 module aura.compiler.evaluator;
 
@@ -340,6 +342,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // via the shared metrics pointer (set by service.ixx).
     // Issue #1918: EDSL apply_closure hot path uses EnvFrame SoA +
     // dual-epoch checks (no AoS pointer-chasing for live closures).
+    // Issue #2259: hot-path invariant probe (zero assert cost under NDEBUG);
+    // tag tests on args use pure is_* helpers (no classify atomics).
+    AURA_HOT_RECORD();
+    types::note_value_tag_hot_path();
     soa_view::record_edsl_apply_soa_path();
     if (compiler_metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);

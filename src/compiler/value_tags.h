@@ -503,9 +503,82 @@ inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     return classify_eval_value_tag(v) != EvalValueTag::Unknown;
 }
 
+// ── Issue #2259: zero-overhead pure tag tests (no atomics) ──────────
+//
+// classify_eval_value_tag() bumps process-wide counters — correct for
+// Agent dashboards, wrong for every is_int/is_string on the eval_flat /
+// IR arithmetic / apply hot path. These pure helpers share the same
+// control flow as classify_eval_value_tag_consteval (single low2 branch
+// + range refine) with zero atomic cost under NDEBUG contracts.
+//
+// Prefer these (or is_*/as_* in value.ixx which now route here) on
+// eval_flat / call-apply / ir_executor tight loops.
+[[nodiscard]] inline constexpr bool is_fixnum_hot(std::int64_t v) noexcept {
+    return classify_eval_value_tag_consteval(v) == EvalValueTag::Fixnum;
+}
+[[nodiscard]] inline constexpr bool is_ref_hot(std::int64_t v) noexcept {
+    return classify_eval_value_tag_consteval(v) == EvalValueTag::Ref;
+}
+[[nodiscard]] inline constexpr bool is_string_v2_hot(std::int64_t v) noexcept {
+    return classify_eval_value_tag_consteval(v) == EvalValueTag::StringV2;
+}
+[[nodiscard]] inline constexpr bool is_special_hot(std::int64_t v) noexcept {
+    return classify_eval_value_tag_consteval(v) == EvalValueTag::Special;
+}
+[[nodiscard]] inline constexpr bool is_float_hot(std::int64_t v) noexcept {
+    return classify_eval_value_tag_consteval(v) == EvalValueTag::Float;
+}
+// Single low2 extract — one branch predictor input for tagged dispatch.
+[[nodiscard]] inline constexpr std::uint8_t tag_low2_hot(std::int64_t v) noexcept {
+    return static_cast<std::uint8_t>(v & 3);
+}
+
+// AC4 metrics: hot-path untag / tag-test samples (as_* / explicit note).
+inline std::atomic<std::uint64_t> value_tag_hot_path_total{0};
+// Debug-only contract fails (AURA_CONTRACTS_OBSERVE / enforce path mirrors).
+inline std::atomic<std::uint64_t> value_tag_hot_contract_fail_total{0};
+// Tag stability feed for ShapeProfiler (#2259 goal 4).
+inline std::atomic<std::uint64_t> value_tag_stability_fixnum_total{0};
+inline std::atomic<std::uint64_t> value_tag_stability_ref_total{0};
+inline std::atomic<std::uint64_t> value_tag_stability_run_total{0};
+inline std::atomic<std::uint64_t> value_tag_hotpath_zero_overhead_wired{1};
+
+inline void note_value_tag_hot_path() noexcept {
+    value_tag_hot_path_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void note_value_tag_hot_contract_fail() noexcept {
+    value_tag_hot_contract_fail_total.fetch_add(1, std::memory_order_relaxed);
+    value_contract_violation_count.fetch_add(1, std::memory_order_relaxed);
+    aura::core::cpp26::record_contract_violation_hotpath();
+}
+
+// ShapeProfiler / speculative confidence: consecutive Fixnum or Ref
+// samples raise stability counters (fiber-local run length).
+inline void note_value_tag_stability(EvalValueTag tag) noexcept {
+    // Thread-local run tracking — no heap; cheap for multi-round AI mutate.
+    thread_local EvalValueTag prev = EvalValueTag::Unknown;
+    thread_local std::uint32_t run = 0;
+    if (tag == prev && (tag == EvalValueTag::Fixnum || tag == EvalValueTag::Ref)) {
+        ++run;
+        if (run >= 2) {
+            value_tag_stability_run_total.fetch_add(1, std::memory_order_relaxed);
+            if (tag == EvalValueTag::Fixnum)
+                value_tag_stability_fixnum_total.fetch_add(1, std::memory_order_relaxed);
+            else
+                value_tag_stability_ref_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
+        prev = tag;
+        run = 1;
+    }
+}
+
 // Issue #1622: coverage flag for schema 1622.
 inline std::atomic<std::uint64_t> value_dispatch_consteval_table_wired{1};
 inline std::atomic<std::uint64_t> value_dispatch_hotpath_contracts_wired{1};
+// Issue #2259: pure hot-path tag tests + as_* contracts.
+inline std::atomic<std::uint64_t> value_tag_hotpath_2259_wired{1};
 
 } // namespace aura::compiler::types
 

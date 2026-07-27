@@ -2434,6 +2434,11 @@ aura_add_issue_test(test_hot_pass_pure_wrap_2258)
 aura_issue_test_link_llvm_jit(test_hot_pass_pure_wrap_2258)
 add_dependencies(all_test_issue_targets test_hot_pass_pure_wrap_2258)
 
+# Issue #2259: 64-bit tagged Value hot-path contracts + zero-overhead dispatch.
+aura_add_issue_test(test_value_tag_hot_path_2259)
+aura_issue_test_link_llvm_jit(test_value_tag_hot_path_2259)
+add_dependencies(all_test_issue_targets test_value_tag_hot_path_2259)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

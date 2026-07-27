@@ -7477,8 +7477,32 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"classify-calls", make_int(classify_calls)},
                 {"consteval-table-wired", make_int(1)},
                 {"hotpath-contracts-wired", make_int(1)},
+                // Issue #2259: zero-overhead pure tag tests + hot as_* metrics
+                {"schema-2259", make_int(2259)},
+                {"issue-2259", make_int(2259)},
+                {"value-tag-hotpath-zero-overhead-wired",
+                 make_int(static_cast<std::int64_t>(types::value_tag_hotpath_zero_overhead_wired
+                                                        .load(std::memory_order_relaxed)))},
+                {"value-tag-hotpath-2259-wired",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_hotpath_2259_wired.load(std::memory_order_relaxed)))},
+                {"value-tag-hot-path-total",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_hot_path_total.load(std::memory_order_relaxed)))},
+                {"value-tag-hot-contract-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_hot_contract_fail_total.load(std::memory_order_relaxed)))},
+                {"value-tag-stability-fixnum-total",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_stability_fixnum_total.load(std::memory_order_relaxed)))},
+                {"value-tag-stability-ref-total",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_stability_ref_total.load(std::memory_order_relaxed)))},
+                {"value-tag-stability-run-total",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_stability_run_total.load(std::memory_order_relaxed)))},
                 {"issue", make_int(1622)},
-                {"schema", make_int(1622)}, // lineage 723|571
+                {"schema", make_int(1622)}, // lineage 723|571|#2259
             };
             return build_hash(kv);
         });

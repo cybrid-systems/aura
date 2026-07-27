@@ -565,9 +565,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         std::println(std::cerr, "{}", diag.format());
     };
 
+    // Issue #2259: pure is_* (no classify atomics) + contracted as_*.
+    // Fixnum path is the common case under pure arithmetic microbench.
     auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
         if (is_int(v))
-            return as_int(v);
+            return as_int(v); // AURA_HOT_CONTRACT elided under NDEBUG
         if (is_float(v))
             return static_cast<std::int64_t>(as_float(v));
         if (is_string(v)) {
@@ -638,6 +640,36 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             if (oclass == IROpcodeClass::Arith) {
                 auto& a = locals[ops[1]];
                 auto& b = locals[ops[2]];
+                // Issue #2259: pure tag tests (zero atomic) + dual-fixnum
+                // fast path — single expected branch for pure arithmetic.
+                const bool a_int = is_int(a);
+                const bool b_int = is_int(b);
+                if (a_int && b_int) {
+                    const auto ai = as_int(a);
+                    const auto bi = as_int(b);
+                    switch (instr.opcode) {
+                        case IROpcode::Add:
+                            locals[ops[0]] = make_int(ai + bi);
+                            break;
+                        case IROpcode::Sub:
+                            locals[ops[0]] = make_int(ai - bi);
+                            break;
+                        case IROpcode::Mul:
+                            locals[ops[0]] = make_int(ai * bi);
+                            break;
+                        case IROpcode::Div: {
+                            if (bi == 0)
+                                return std::unexpected(
+                                    Diagnostic{ErrorKind::DivisionByZero, "division by zero"}
+                                        .with_suggestion("use a non-zero denominator"));
+                            locals[ops[0]] = make_int(ai / bi);
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                    continue;
+                }
                 const bool fl = is_float(a) || is_float(b);
                 switch (instr.opcode) {
                     case IROpcode::Add:
