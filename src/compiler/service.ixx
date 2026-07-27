@@ -4913,6 +4913,8 @@ public:
         // the subsequent full path).
         if (desync1 > 0 || desync0 > 0) {
             metrics_.soa_dirty_desync_force_full_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2193: last-reason + per-reason counter for Agents.
+            note_relower_fallback(metrics_, RelowerFallbackReason::DesyncForceFull);
             return false;
         }
         // AC2: successful partial gate — desync must be 0.
@@ -6340,11 +6342,21 @@ public:
                                                                          std::memory_order_relaxed);
                         metrics_.incremental_partial_relower_total.fetch_add(
                             1, std::memory_order_relaxed);
+                        // Issue #2193 AC4: partial success clears last-reason to Ok.
+                        note_relower_fallback(metrics_, RelowerFallbackReason::Ok);
+                    } else {
+                        // Internal full-fallback inside relower_define_blocks.
+                        note_relower_fallback(metrics_, RelowerFallbackReason::Other);
+                        metrics_.incremental_full_fallback_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     }
+                } else {
+                    note_relower_fallback(metrics_, RelowerFallbackReason::RelowerReject);
                 }
             } else {
-                // Over threshold → full re-lower via relower_define_blocks
-                // (internal full-fallback path) still ok; record decision.
+                // Over threshold / storm → full re-lower; record reason (#2193).
+                note_relower_fallback(metrics_, RelowerFallbackReason::Threshold);
+                metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
                 if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded))
                     ++ok;
             }
