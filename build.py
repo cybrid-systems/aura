@@ -1734,6 +1734,33 @@ def cmd_incremental_soundness_prod_coverage():
     return 0
 
 
+def cmd_shape_storm_isolation_coverage():
+    """Issue #2257: ShapeProfiler versioning + deopt-storm isolation.
+
+    Validates the 5-AC contract from issue body:
+      AC1: shape_version advances on compact + storm enter
+      AC2: deopt rate stays bounded under HighMutation
+      AC3: query surface (shape-version + deopt-storm-isolations-total
+           + current-stability-ratio) + schema-2257 lineage
+      AC4: zero extra cost on cold/stable functions
+      AC5: integration with StormLevel facade
+    """
+    print(f"{B}=== shape profiler storm isolation coverage (#2257) ==={N}")
+    script = ROOT / "scripts" / "check_shape_storm_isolation_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("shape profiler storm isolation coverage contract rows failed")
+        return 1
+    ok("shape profiler storm isolation coverage clean")
+    return 0
+
+
 def cmd_arena_moving_compaction_coverage():
     """Issue #2256: production-default Moving compaction + LifetimePin hard contract.
 
@@ -2111,6 +2138,7 @@ def cmd_gate():
         or cmd_soa_single_source_of_truth_coverage()
         or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_arena_moving_compaction_coverage()
+        or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
     )
 
@@ -2779,6 +2807,7 @@ def main():
         "soa-single-source-of-truth": cmd_soa_single_source_of_truth_coverage,
         "layout-stamp-shape-version-fence": cmd_layout_stamp_shape_version_fence_coverage,
         "arena-moving-compaction": cmd_arena_moving_compaction_coverage,
+        "shape-storm-isolation": cmd_shape_storm_isolation_coverage,
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
