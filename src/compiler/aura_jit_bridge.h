@@ -194,6 +194,29 @@ extern "C" const char* aura_cross_workspace_reject_reason_string(std::uint8_t v)
 extern "C" void aura_test_set_last_cross_workspace_reject_reason(std::uint8_t v) noexcept;
 extern "C" void aura_test_reset_last_cross_workspace_reject_reason(void) noexcept;
 
+// Issue #2241: per-fiber hygiene violation budget (refine #2097
+// FiberHygieneStats). Agents / supervisors can throttle or deny
+// further expand on fibers that have accumulated more than `budget`
+// violations. Default 0 = unlimited (relaxed-by-default, matches
+// #2228 / #2235 / #2238 pattern). When non-zero, clone_macro_body
+// consults `aura_macro_self_evo_check_fiber_hygiene_budget(fiber_id)`
+// at top-level entry — returns 1 (deny) if `violations > budget`,
+// 0 (permit) otherwise. Denies bump the
+// `g_macro_self_evo_fiber_violation_deny_total` counter (lock-free
+// atomic) for Agent observability. Zero-cost fast path: budget == 0
+// or fiber_id == 0 returns 0 without acquiring the per-fiber map
+// lock. Set via AURA_MACRO_SELF_EVO_FIBER_VIOLATION_BUDGET env or
+// the setter below. All symbols are file-scope atomics in
+// src/compiler/macro_expansion.cpp (where the per-fiber map lives).
+extern "C" void aura_macro_self_evo_set_fiber_violation_budget(std::uint64_t budget) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_get_fiber_violation_budget(void) noexcept;
+extern "C" std::uint64_t aura_macro_self_evo_fiber_violation_deny_total_v_read(void) noexcept;
+extern "C" int aura_macro_self_evo_check_fiber_hygiene_budget(std::uint32_t fiber_id) noexcept;
+extern "C" std::uint64_t
+aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
+                                                int min_depth) noexcept;
+extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test(void) noexcept;
+
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
 // aura_set_aot_reload_auto_retry(0) for strict tests (#2093 counters).

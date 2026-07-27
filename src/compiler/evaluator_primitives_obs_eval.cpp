@@ -14545,11 +14545,36 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
             if (!a.empty() && is_int(a[0]))
                 fiber_id = static_cast<std::uint32_t>(as_int(a[0]));
             auto stats = aura::compiler::macro_exp::get_fiber_hygiene_metrics(fiber_id);
+            // Issue #2241: optional filter args for Agent throttling surface.
+            // args[0] = fiber_id (existing).
+            // args[1] = min-violations threshold (if > 0, filter mode active).
+            // args[2] = min-depth threshold (if > 0, filter mode active).
+            // When filter active, primitive scans the per-fiber map (via the
+            // C-linkage helper aura_macro_self_evo_count_fibers_meeting_filter
+            // — g_fiber_hygiene_mu is in an anonymous namespace and not visible
+            // from this TU) and reports the filtered-entries count. Zero-cost
+            // when neither filter is set: no map scan, helper not invoked.
+            std::uint64_t min_violations = 0;
+            int min_depth = 0;
+            if (a.size() >= 2 && is_int(a[1]))
+                min_violations = static_cast<std::uint64_t>(as_int(a[1]) > 0 ? as_int(a[1]) : 0);
+            if (a.size() >= 3 && is_int(a[2]))
+                min_depth = as_int(a[2]);
+            const bool filter_active = (min_violations > 0 || min_depth > 0);
+            const std::uint64_t filtered_entries =
+                filter_active
+                    ? aura::compiler::macro_exp::aura_macro_self_evo_count_fibers_meeting_filter(
+                          min_violations, min_depth)
+                    : 0ULL;
             // Inline FNV-based hash builder (mirrors closure-stats pattern at
             // line 13990+ — small + self-contained, no new helper dep).
+            // Issue #2241: bumped capacity from 32 to 64 to leave breathing
+            // room for the 6 new filter / budget keys (#2241 surface). 26
+            // existing keys + 6 new = 32 keys → 64 capacity is comfortably
+            // above the ~50% open-addressing load factor sweet spot.
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -14656,6 +14681,25 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                 {"self-evo-depth-clamp-total",
                  make_int(static_cast<std::int64_t>(
                      g_macro_self_evo_depth_clamp_total.load(std::memory_order_relaxed)))},
+                // Issue #2241: per-fiber violation budget surface + Agent
+                // filter view (refine #2097 FiberHygieneStats). Agents /
+                // supervisors can ask `query:macro-fiber-hygiene` with
+                // optional filter args (min-violations, min-depth) and
+                // get back the count of fibers exceeding those thresholds
+                // + the current budget + the deny counter. All values
+                // are atomic loads (zero allocation, safe for high-freq
+                // Agent polling). 26 existing keys + 6 new = 32 keys →
+                // 64-slot hash capacity gives ~50% load factor.
+                {"filter-mode", make_int(filter_active ? 1 : 0)},
+                {"min-violations-filter", make_int(static_cast<std::int64_t>(min_violations))},
+                {"min-depth-filter", make_int(static_cast<std::int64_t>(min_depth))},
+                {"filtered-entries", make_int(static_cast<std::int64_t>(filtered_entries))},
+                {"fiber-violation-budget",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_self_evo_fiber_violation_budget.load(std::memory_order_relaxed)))},
+                {"fiber-violation-deny-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_macro_self_evo_fiber_violation_deny_total.load(std::memory_order_relaxed)))},
             };
             return build_hash(kv);
         });

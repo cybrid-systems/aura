@@ -334,6 +334,17 @@ inline std::unordered_map<std::uint32_t, FiberHygieneStats> g_fiber_hygiene_map{
 inline std::atomic<std::uint64_t> g_fiber_hygiene_query_total{0};
 inline std::atomic<std::uint64_t> g_fiber_hygiene_violation_per_fiber_total{0};
 
+// Issue #2241: per-fiber hygiene violation budget. When non-zero, an
+// Agent / supervisor can deny further expand on fibers that have
+// accumulated more than `budget` violations — Agent-throttlable
+// surface (refine #2097 FiberHygieneStats). Default 0 = unlimited
+// (relaxed-by-default, matches #2228 / #2235 / #2238 pattern). Set
+// via AURA_MACRO_SELF_EVO_FIBER_VIOLATION_BUDGET env or
+// aura_macro_self_evo_set_fiber_violation_budget(n). Zero-cost early
+// out: a single atomic load + branch in clone_macro_body entry.
+inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_budget{0};
+inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_deny_total{0};
+
 inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     g_fiber_hygiene_map[fiber_id].depth = depth;
@@ -343,11 +354,17 @@ inline void bump_fiber_hygiene_on_violation(std::uint32_t fiber_id) noexcept {
     g_fiber_hygiene_map[fiber_id].violations += 1;
     g_fiber_hygiene_violation_per_fiber_total.fetch_add(1, std::memory_order_relaxed);
 }
-inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id) noexcept {
+inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id,
+                                       std::size_t name_map_size_snapshot = 0u) noexcept {
     // Issue #2097: on exit we don't remove the entry — keep last snapshot
     // for agent diagnostic. depth zeroed so re-entry bumps cleanly.
+    // Issue #2241: caller passes name_map->size() (or 0 if no name_map)
+    // so gensym_map_size reflects the live hygiene rename occupancy of
+    // this expand, not a placeholder zero. Bumped under the same lock
+    // as depth/violations so the snapshot is consistent.
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     g_fiber_hygiene_map[fiber_id].depth = 0;
+    g_fiber_hygiene_map[fiber_id].gensym_map_size = name_map_size_snapshot;
 }
 FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
     g_fiber_hygiene_query_total.fetch_add(1, std::memory_order_relaxed);
@@ -542,6 +559,77 @@ std::uint64_t aura_fiber_hygiene_query_total_v_read() noexcept {
 }
 std::uint64_t aura_fiber_hygiene_violation_per_fiber_total_v_read() noexcept {
     return g_fiber_hygiene_violation_per_fiber_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2241: per-fiber violation budget gate (refine #2097).
+// Default 0 = unlimited (production stays permissive until Agent /
+// supervisor explicitly enables throttling). Setter / getter are
+// simple file-scope atomic wrappers. The check helper reads the
+// per-fiber map under the existing `g_fiber_hygiene_mu` lock and
+// compares against the budget — bumps `g_macro_self_evo_fiber_violation_deny_total`
+// on deny. Test-only reset for hermetic test isolation.
+extern "C" void aura_macro_self_evo_set_fiber_violation_budget(std::uint64_t budget) noexcept {
+    g_macro_self_evo_fiber_violation_budget.store(budget, std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_macro_self_evo_get_fiber_violation_budget(void) noexcept {
+    return g_macro_self_evo_fiber_violation_budget.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_macro_self_evo_fiber_violation_deny_total_v_read(void) noexcept {
+    return g_macro_self_evo_fiber_violation_deny_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_test(void) noexcept {
+    g_macro_self_evo_fiber_violation_deny_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2241: check whether a fiber is allowed to expand given its
+// current accumulated violation count and the configured per-fiber
+// budget. Returns 1 if deny (budget > 0 AND violations > budget),
+// 0 if permit. Zero-cost fast path: budget == 0 or fiber_id == 0 →
+// permit without lock acquire. Slow path: shared lock the map,
+// compare, optionally bump the deny counter (lock-free atomic).
+extern "C" int aura_macro_self_evo_check_fiber_hygiene_budget(std::uint32_t fiber_id) noexcept {
+    const std::uint64_t budget =
+        g_macro_self_evo_fiber_violation_budget.load(std::memory_order_relaxed);
+    // Zero-cost early out: budget 0 = unlimited (relaxed-by-default).
+    // fiber_id 0 = no recorded fiber (defensive; bumpers skip fid=0).
+    if (budget == 0 || fiber_id == 0)
+        return 0;
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    auto it = g_fiber_hygiene_map.find(fiber_id);
+    if (it == g_fiber_hygiene_map.end())
+        return 0; // no recorded expand events → permit
+    if (it->second.violations > budget) {
+        g_macro_self_evo_fiber_violation_deny_total.fetch_add(1, std::memory_order_relaxed);
+        return 1;
+    }
+    return 0;
+}
+
+// Issue #2241: filtered map scan for `query:macro-fiber-hygiene` Agent
+// filter surface. Returns the count of fibers in the per-fiber map
+// whose accumulated `violations` >= `min_violations` AND `depth` >=
+// `min_depth` (zero threshold = no filter on that dimension). Used
+// by the primitive to populate the `filtered-entries` key so Agents
+// can ask "how many fibers in my workspace are noisy?" without
+// iterating the map themselves. C-linkage wrapper required because
+// `g_fiber_hygiene_mu` lives in an anonymous namespace and is not
+// visible across TUs (the primitive in evaluator_primitives_obs_eval.cpp
+// can read atomics via inline `extern` symbols but cannot lock this
+// mutex directly). Single lock acquire covers the full scan; the
+// resulting count is a snapshot under that lock (subsequent mutations
+// may already be in flight — best-effort observability, same contract
+// as the existing query counters).
+extern "C" std::uint64_t
+aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
+                                                int min_depth) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    std::uint64_t count = 0;
+    for (const auto& [fid, stats] : g_fiber_hygiene_map) {
+        (void)fid;
+        if (stats.violations >= min_violations && stats.depth >= min_depth)
+            ++count;
+    }
+    return count;
 }
 std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept {
     return g_macro_clone_concurrent_fiber_total.load(std::memory_order_relaxed);
@@ -799,8 +887,14 @@ aura::ast::NodeId clone_macro_body(
                 g_macro_clone_in_flight.fetch_sub(1, std::memory_order_relaxed);
                 // Issue #2097: zero per-fiber depth on exit (violations
                 // persist for agent diagnostic; depth re-bumps on entry).
-                if (captured_fiber_id != 0)
-                    bump_fiber_hygiene_on_exit(captured_fiber_id);
+                // Issue #2241: snapshot the live name_map occupancy so
+                // gensym_map_size reflects the rename footprint of this
+                // expand (not a placeholder zero). name_map is in scope
+                // as a clone_macro_body parameter.
+                if (captured_fiber_id != 0) {
+                    const std::size_t nm_size = name_map ? name_map->size() : 0u;
+                    bump_fiber_hygiene_on_exit(captured_fiber_id, nm_size);
+                }
             }
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
@@ -824,6 +918,27 @@ aura::ast::NodeId clone_macro_body(
             if (!chk.allowed) {
                 g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
                 // Signal denial to outer scope via depth sentinel.
+                s_effective_max_depth = -1;
+                return;
+            }
+            // Issue #2241: per-fiber hygiene violation budget gate
+            // (refine #2097 FiberHygieneStats). When the budget is
+            // non-zero AND the current fiber's recorded violations
+            // exceed it, deny further expand on this fiber. The
+            // helper bumps g_macro_self_evo_fiber_violation_deny_total
+            // on deny and reads the per-fiber map under g_fiber_hygiene_mu.
+            // Default budget=0 → unlimited (zero-cost early-out path
+            // inside the helper, no map lookup). Threads into the
+            // existing MacroSelfEvo sentinel machinery so the outer
+            // `if (top_cap_guard.denied())` check returns NULL_NODE
+            // without any new state.
+            const std::uint32_t cur_fid = aura_fiber_current_id();
+            if (aura_macro_self_evo_check_fiber_hygiene_budget(cur_fid) != 0) {
+                std::fprintf(stderr,
+                             "[#2241 MacroSelfEvo] clone_macro_body denied: "
+                             "fiber %u exceeded hygiene violation budget "
+                             "(no clone work performed)\n",
+                             cur_fid);
                 s_effective_max_depth = -1;
                 return;
             }
