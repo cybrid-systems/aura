@@ -77,6 +77,12 @@ export extern std::atomic<std::uint64_t> g_hygiene_tracer_depth_max;
 export extern std::atomic<std::uint64_t> g_macro_expansion_total;
 export extern std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total;
 export extern std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total;
+// Issue #2242 build cascade: pre-existing latent — these atomics were defined
+// inline in macro_expansion.cpp but not exported via the module interface, so
+// other TUs (e.g. evaluator_primitives_obs_eval.cpp) hit 'not declared' errors
+// after module BMI regeneration. Forward-declared here to fix the visibility.
+export extern std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_budget;
+export extern std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_deny_total;
 
 // Issue #2018 / #2169: rest-param gensyms (`__rest_<name>_<serial>`) applied
 // in clone_macro_body pre-scan / rename path. Process-wide serial for fiber

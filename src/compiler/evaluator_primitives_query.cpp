@@ -2669,6 +2669,195 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #2242: query:by-marker — per-marker MacroIntroduced composition
+    // stats (split out from query:hygiene-provenance-stats combined primitive).
+    // Schema **2242**. Exposes by-marker :where composition hits + workspace
+    // MacroIntroduced marker count for agent root-cause discovery.
+    ObservabilityPrims::register_stats_impl(
+        "query:by-marker", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            const std::uint64_t where_hits =
+                m ? m->by_marker_where_filter_hits.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+
+            insert_kv("by_marker_where_filter_hits", static_cast<std::int64_t>(where_hits));
+            insert_kv("by-marker-where-filter-hits", static_cast<std::int64_t>(where_hits));
+            insert_kv("macro_markers", static_cast<std::int64_t>(markers));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("by-marker-where-wired", 1);
+            insert_kv("schema", 2242);
+            insert_kv("issue", 2242);
+            insert_kv("active", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2242: query:node-provenance — per-node provenance query hit
+    // stats. Schema **2242**. Exposes provenance_query_total +
+    // stable_ref_provenance_query_total + macro_provenance_query_total
+    // so the per-fiber fiber pin + stable-ref provenance surfaces can
+    // diagnose AI self-evo misses at node resolution time.
+    ObservabilityPrims::register_stats_impl(
+        "query:node-provenance", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            // Auto-bump on each invocation so the counter monotonically
+            // tracks request rate, not just resolution success.
+            if (m)
+                m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
+
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            const std::uint64_t prov_total =
+                m ? m->provenance_query_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t stable_prov =
+                m ? m->stable_ref_provenance_query_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t macro_prov =
+                m ? m->macro_provenance_query_total.load(std::memory_order_relaxed) : 0;
+
+            insert_kv("provenance_query_total", static_cast<std::int64_t>(prov_total));
+            insert_kv("provenance-query-total", static_cast<std::int64_t>(prov_total));
+            insert_kv("stable_ref_provenance_query_total", static_cast<std::int64_t>(stable_prov));
+            insert_kv("stable-ref-provenance-queries", static_cast<std::int64_t>(stable_prov));
+            insert_kv("macro_provenance_query_total", static_cast<std::int64_t>(macro_prov));
+            insert_kv("macro-provenance-query-total", static_cast<std::int64_t>(macro_prov));
+            insert_kv("node-provenance-wired", 1);
+            insert_kv("schema", 2242);
+            insert_kv("issue", 2242);
+            insert_kv("active", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2242: query:last-mutation-provenance — last hygiene stamp
+    // provenance for agent root-cause. Schema **2242**. Exposes the most
+    // recent HygieneProvenanceStamp recorded by ProvenanceTracker along
+    // with the per-CompilerMetrics blame hints.
+    ObservabilityPrims::register_stats_impl(
+        "query:last-mutation-provenance",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
+            const std::uint64_t blame_node =
+                m ? static_cast<std::uint64_t>(m->last_hygiene_blame_node) : 0;
+            const std::uint64_t blame_mutation = m ? m->last_hygiene_blame_mutation : 0;
+
+            insert_kv("last_hygiene_node_id", static_cast<std::int64_t>(hs.node_id));
+            insert_kv("last-hygiene-node-id", static_cast<std::int64_t>(hs.node_id));
+            insert_kv("last_hygiene_tenant_id", static_cast<std::int64_t>(hs.tenant_id));
+            insert_kv("last-hygiene-tenant-id", static_cast<std::int64_t>(hs.tenant_id));
+            insert_kv("last_hygiene_mutation_id", static_cast<std::int64_t>(hs.source_mutation_id));
+            insert_kv("last-hygiene-mutation-id", static_cast<std::int64_t>(hs.source_mutation_id));
+            insert_kv("last_hygiene_fiber_id", static_cast<std::int64_t>(hs.fiber_id));
+            insert_kv("last-hygiene-fiber-id", static_cast<std::int64_t>(hs.fiber_id));
+            insert_kv("last_hygiene_seq", static_cast<std::int64_t>(hs.seq));
+            insert_kv("last-hygiene-seq", static_cast<std::int64_t>(hs.seq));
+            insert_kv("last_hygiene_blame_node", static_cast<std::int64_t>(blame_node));
+            insert_kv("last_hygiene_blame_mutation", static_cast<std::int64_t>(blame_mutation));
+            insert_kv("last-mutation-provenance-wired", 1);
+            insert_kv("schema", 2242);
+            insert_kv("issue", 2242);
+            insert_kv("active", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #1914: query:hygiene-provenance-stats — unified hygiene +
     // provenance diagnostics dashboard for AI self-evo root-cause.
     // Schema **1914**. Aggregates pattern hygiene filters, provenance
