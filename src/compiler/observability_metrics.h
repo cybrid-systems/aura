@@ -6370,6 +6370,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_auto_retry_total{0};
     std::atomic<std::uint64_t> aot_reload_auto_retry_success_total{0};
     std::atomic<std::uint64_t> aot_reload_auto_retry_exhausted_total{0};
+    // Issue #2232: reason-driven multi-round reload recovery policy
+    // metrics. `aot_reload_policy_attempt_total` counts every retry
+    // attempt (one per loop iteration in
+    // aura_reload_aot_module_for_eval); `aot_reload_fall_back_jit_only_total`
+    // counts exhausted windows where the policy directed the host
+    // to fall back to JIT (Version/Defuse/Env/Linear with
+    // fall_back_jit_only=true). Reset-for-test helper
+    // (reset_observability_metrics_for_test, if added) clears
+    // these together with the #2165 metrics.
+    std::atomic<std::uint64_t> aot_reload_policy_attempt_total{0};
+    std::atomic<std::uint64_t> aot_reload_fall_back_jit_only_total{0};
     // Issue #2179: cross-function instruction-level impact scope
     // counters (refine #2109). Increments when compute_impact_scope
     // discovers call-site instructions in callers via node_dep_graph_
