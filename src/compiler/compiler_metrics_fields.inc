@@ -1794,4 +1794,8 @@ AURA_COMPILER_METRICS_FIELD(avg_full_relower_cost_ns)
 AURA_COMPILER_METRICS_FIELD(partial_vs_full_win_ratio_bp)
 AURA_COMPILER_METRICS_FIELD(partial_relower_cost_samples)
 AURA_COMPILER_METRICS_FIELD(full_relower_cost_samples)
+// Issue #2279: production lock alarm counter — bumps on every post-mutate
+// typecheck entry while production_locked && mode == Soft. Mirrors
+// mutate_type_gate::soft_in_production_alarm_total.
+AURA_COMPILER_METRICS_FIELD(mutate_type_gate_soft_in_production_alarm_total)
 #undef AURA_COMPILER_METRICS_FIELD

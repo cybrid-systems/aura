@@ -5144,6 +5144,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutate_type_gate_hard_type_error_reject_total{0};
     std::atomic<std::uint64_t> mutate_type_gate_check_total{0};
     std::atomic<std::uint64_t> mutate_type_gate_mode{0};
+    // Issue #2279: production lock alarm counter. Bumps whenever a post-mutate
+    // typecheck entry runs while production_locked && mode == Soft (cumulative
+    // count of mutates under misconfiguration; aborts under
+    // AURA_HARD_TYPE_GATE_ABORT=1). Mirrors mutate_type_gate::
+    // soft_in_production_alarm_total.
+    std::atomic<std::uint64_t> mutate_type_gate_soft_in_production_alarm_total{0};
 
     // Issue #718: fine-grained per-block re-lower observability
     // counters for (query:incremental-relower-stats). These

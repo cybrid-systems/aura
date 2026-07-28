@@ -233,6 +233,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             gm->mutate_type_gate_mode.store(mutate_type_gate::is_hard() ? 1 : 0,
                                             std::memory_order_relaxed);
         }
+        // Issue #2279: production lock check on every post-mutate TC entry.
+        // Bumps soft_in_production_alarm_total when production_locked && Soft;
+        // optionally aborts under AURA_HARD_TYPE_GATE_ABORT=1. Idempotent —
+        // forensically the alarm counter is a cumulative count of mutates
+        // under misconfiguration (more useful than a one-shot boolean).
+        mutate_type_gate::check_soft_in_production_or_abort();
         if (!workspace_flat_ || !workspace_pool_)
             return true;
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());

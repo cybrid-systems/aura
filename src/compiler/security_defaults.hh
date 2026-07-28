@@ -332,10 +332,33 @@ inline void apply_production_security_defaults() noexcept {
     //     AURA_SANDBOX=off. AURA_PIPELINE_STRICT=0|allow|force-soa|1 overrides.
     apply_pipeline_strict_defaults(/*dev_sandbox_off=*/dev_off);
 
-    // 11) Issue #2219: post-mutate type gate — Hard under production so
-    //     Agents cannot treat soft-passed typecheck as success. Soft under
-    //     AURA_SANDBOX=off. AURA_MUTATE_TYPE_GATE=soft|hard overrides.
+    // 11) Issue #2219 + #2279: post-mutate type gate — Hard under production
+    //     so Agents cannot treat soft-passed typecheck as success. Soft under
+    //     AURA_SANDBOX=off. AURA_MUTATE_TYPE_GATE=soft|hard overrides (always
+    //     wins when set). Issue #2279 production lock contract:
+    //       - AURA_ALLOW_SOFT_TYPE_GATE=1 → explicit dev-only Soft escape
+    //         under production (sets mutate_type_gate::allow_soft_override;
+    //         alarm bumps on first mutate under lock).
+    //       - apply_production_security_defaults flips production_locked 0→1
+    //         AFTER apply_production_defaults, so any Soft under prod that
+    //         survived (env override + override allowed) bumps the alarm
+    //         counter on the next run_post_mutate_typecheck_no_lock.
+    //       - AURA_HARD_TYPE_GATE_ABORT=1 → process abort on Soft-in-prod
+    //         detection (fail-closed; canary).
     mutate_type_gate::apply_production_defaults(/*dev_sandbox_off=*/dev_off);
+    // Issue #2279: stamp the lock state. Locked iff production profile
+    // (sandbox != off). AURA_ALLOW_SOFT_TYPE_GATE does NOT unlock — it
+    // just allows the existing Soft mode to persist under the lock with
+    // a metric alarm (so a mis-deployed binary is observable, not silent).
+    mutate_type_gate::set_production_locked(!dev_off);
+    if (mutate_type_gate::production_locked() && !mutate_type_gate::is_hard()) {
+        // Preview alarm: Soft is set at apply-time and the lock just
+        // turned on. Bump the counter now so a mis-deployed binary is
+        // observable even before the first mutate. The runtime check
+        // in check_soft_in_production_or_abort (called from
+        // run_post_mutate_typecheck_no_lock) handles AURA_HARD_TYPE_GATE_ABORT.
+        mutate_type_gate::check_soft_in_production_or_abort();
+    }
 }
 
 } // namespace aura::compiler::security
