@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <functional>
@@ -12,6 +13,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "compiler/observability_metrics.h" // Issue #2262: g_partial_cs_* atomics
 
 export module aura.compiler.type_checker;
 
@@ -22,6 +24,13 @@ import aura.diag;
 import aura.compiler.coercion_map;
 
 namespace aura::compiler {
+
+// Issue #2262: process-wide partial-CS import counters (module-owned).
+// Must live in this module: infer_flat_partial bumps them from purview
+// and Clang attaches @aura.compiler.type_checker linkage. Consumers
+// import this module (or use TypeChecker::partial_cs_import_*()).
+export inline std::atomic<std::uint64_t> g_partial_cs_import_total{0};
+export inline std::atomic<std::uint64_t> g_partial_cs_import_skip_total{0};
 
 // ── Type Environment ─────────────────────────────────────
 export class TypeEnv {
@@ -1579,12 +1588,21 @@ export struct TypeChecker {
         return last_occurrence_vars_;
     }
     [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
-    // Issue #2180: solve_delta_cs_ after partial import (commit reuse).
+    // Issue #2180 / #2262: solve_delta_cs_ after partial import (commit reuse).
+    // True when the long-lived CS has dirty/touched/occurrence work after
+    // any infer_flat_partial (not only composite).
     [[nodiscard]] bool commit_cs_has_work() const noexcept {
         return last_partial_cs_live_ || solve_delta_cs_.is_dirty() ||
                solve_delta_cs_.touched_roots_size() > 0 ||
                solve_delta_cs_.occurrence_priority_roots_size() > 0 ||
-               !last_occurrence_vars_.empty();
+               solve_delta_cs_.let_poly_dirty_roots_size() > 0 || !last_occurrence_vars_.empty();
+    }
+    // Issue #2262: process-wide import counters (test/Agent surface).
+    [[nodiscard]] static std::uint64_t partial_cs_import_total() noexcept {
+        return g_partial_cs_import_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t partial_cs_import_skip_total() noexcept {
+        return g_partial_cs_import_skip_total.load(std::memory_order_relaxed);
     }
 
     // Issue #283 follow-up #5 / #627: bidirectional-mode opt-out.

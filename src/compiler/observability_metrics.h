@@ -14,6 +14,14 @@
 
 namespace aura::compiler {
 
+// Issue #2262: hard-empty-miss + wired flag are free process atomics
+// (defined in typed_mutation_audit_hooks.cpp). import_total / import_skip
+// live as export inline atomics on aura.compiler.type_checker — module
+// purview attaches @type_checker linkage, so they cannot share a plain
+// header definition with non-module TUs.
+extern std::atomic<std::uint64_t> g_partial_cs_hard_empty_miss_total;
+extern std::atomic<std::uint32_t> g_partial_cs_single_source_wired;
+
 // Issue #1797: consistent multi-field type-cache counter view.
 // Used by compile:type-cache-stats so hits/misses/stale/gen_saved
 // (and derived ratio_bp) are not mixed across concurrent typechecks.
@@ -8045,6 +8053,13 @@ struct CompilerMetrics {
     // #1336 Incremental TC: infer_flat_partial + solve_delta + dirty prune
     std::atomic<std::uint64_t> incremental_tc_selective_active{1};
     std::atomic<std::uint64_t> infer_flat_partial_selective_total{0};
+    // Issue #2262: partial CS import into long-lived solve_delta_cs_
+    // (single source of truth for all typed_mutate paths).
+    // Process-wide mirrors also live as free functions/atomics in
+    // type_checker.ixx (g_partial_cs_*); these are per-CompilerMetrics.
+    std::atomic<std::uint64_t> partial_cs_import_total{0};
+    std::atomic<std::uint64_t> partial_cs_import_skip_total{0};
+    std::atomic<std::uint64_t> partial_cs_hard_empty_miss_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
     // Issue #1528: O(delta) re-inference observability.

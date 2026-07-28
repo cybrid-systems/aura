@@ -1819,8 +1819,13 @@ void ConstraintSystem::clear() {
     first_free_var_ = 0;
 }
 
-// Issue #2180: absorb post-partial delta state into the long-lived
-// commit ConstraintSystem (composite_txn_commit reuse).
+// Issue #2180 / #2262: absorb post-partial delta state into the long-lived
+// TypeChecker::solve_delta_cs_ (single fact source for all typed_mutate /
+// composite_txn_commit paths — not a process-global singleton).
+//
+// Idempotent under multi-round import: dirty constraints are re-added via
+// add_delta (duplicate EQUAL work is cheap / solve-side deduped); root sets
+// are std::unordered_set unions. Safe to call after every infer_flat_partial.
 void ConstraintSystem::import_delta_marks_from(ConstraintSystem& src) {
     if (this == &src)
         return;
@@ -6415,6 +6420,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // No affected nodes — the mutation was a no-op (or
         // target_node + parent_id both null). Count as a
         // full cache hit (no re-inference needed).
+        // Issue #2262: no engine CS to import — skip metric.
+        g_partial_cs_import_skip_total.fetch_add(1, std::memory_order_relaxed);
+        last_partial_cs_live_ = commit_cs_has_work(); // retain prior live flag
         return 0;
     }
 
@@ -6799,11 +6807,18 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             ->post_mutate_narrow_consistency_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Issue #2180: import engine CS delta into solve_delta_cs_ + stash
-    // occurrence TypeIds so composite_txn_commit reuses non-empty state
-    // (not a greenfield TypeChecker).
+    // Issue #2180 / #2262: after EVERY successful infer_flat_partial,
+    // import engine CS delta into the long-lived solve_delta_cs_ and
+    // stash occurrence TypeIds. This is the single source of truth for
+    // non-composite typed_mutate AND composite_txn_commit — never leave
+    // solve_delta_cs_ empty after a partial that did real work.
     {
         solve_delta_cs_.import_delta_marks_from(engine.constraint_system());
+        g_partial_cs_import_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)->partial_cs_import_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         last_occurrence_vars_.clear();
         last_occurrence_vars_.reserve(occurrence_targets.size());
         std::unordered_set<std::uint32_t> seen_tid;
@@ -6817,8 +6832,12 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             t.index = raw;
             last_occurrence_vars_.push_back(t);
         }
-        // Also mark vars from engine occurrence-priority roots as occurrence
-        // vars when they look like TypeIds.
+        // Mark occurrence TypeIds as touched so the next
+        // solve_delta_occurrence on solve_delta_cs_ is not greenfield.
+        for (const auto& t : last_occurrence_vars_) {
+            if (t.valid())
+                solve_delta_cs_.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+        }
         last_partial_cs_live_ = solve_delta_cs_.is_dirty() ||
                                 solve_delta_cs_.touched_roots_size() > 0 ||
                                 solve_delta_cs_.occurrence_priority_roots_size() > 0 ||

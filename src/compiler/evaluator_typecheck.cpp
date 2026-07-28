@@ -665,6 +665,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     bool sdo_provenance_continuity = true;
     bool sdo_blame_complete = true;
     bool sdo_blame_nonvacuous = false;
+    bool partial_cs_hard_empty = false; // Issue #2262
     if (type_registry_ || commit_type_checker_opaque_) {
         try {
             ConstraintSystem* cs_ptr = nullptr;
@@ -680,6 +681,15 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     occ_span = *occ;
                 }
                 c.composite_commit_solve_reuse_hit_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2262: reuse with empty work is a hard miss under Full
+                // (silent SOLVED on empty CS is forbidden when partial expected).
+                if (!ctc->commit_cs_has_work() && txn_dirty()) {
+                    partial_cs_hard_empty = true;
+                    g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+                    c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+                }
             } else if (type_registry_) {
                 // Greenfield only when no partial was stashed (tests / no typecheck).
                 auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
@@ -688,6 +698,13 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     scratch_tc->set_metrics(compiler_metrics_);
                 cs_ptr = &scratch_tc->constraint_system();
                 c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2262: expected partial (txn dirty) but empty CS → hard miss.
+                if (txn_dirty()) {
+                    partial_cs_hard_empty = true;
+                    g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             if (cs_ptr) {
                 if (mutation_id != 0)
@@ -703,6 +720,12 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     c.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 cr.solve_ok = (sdo.status == SolveResult::SOLVED) && !sdo.truncated_reverify;
+                // Issue #2262: empty CS after expected partial is never clean SOLVED
+                // under Full/Strict (no silent greenfield success).
+                if (partial_cs_hard_empty &&
+                    (get_strategy() == AuditStrategy::Full || aura::core::sandbox::is_strict())) {
+                    cr.solve_ok = false;
+                }
                 if (!cr.solve_ok) {
                     c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
                     c.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
