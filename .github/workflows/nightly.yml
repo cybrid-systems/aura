@@ -17,7 +17,7 @@ jobs:
   fuzz-extended:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
@@ -72,7 +72,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 

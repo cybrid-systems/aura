@@ -78,14 +78,14 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -113,7 +113,7 @@ jobs:
       needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
       with:
@@ -122,7 +122,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -181,7 +181,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
@@ -206,7 +206,7 @@ jobs:
     needs: [asan-build]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
@@ -260,14 +260,14 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -290,14 +290,14 @@ jobs:
       needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
 
     - uses: actions/cache@v6
       with:
@@ -333,7 +333,7 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
@@ -343,7 +343,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -357,7 +357,7 @@ jobs:
     needs: [gate]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
     - uses: actions/checkout@v7
 
