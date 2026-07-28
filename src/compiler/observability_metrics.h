@@ -7539,9 +7539,25 @@ struct CompilerMetrics {
     // combined "any reason armed" cycles. Bumped by arm_defer when a
     // reason bit transitions 0 → set. Per-reason semantics preserved
     // for Agent dashboards (panic + ffi pin + future render pin).
-    std::atomic<std::uint64_t> gc_defer_arm_panic_total{0};         // #2088
-    std::atomic<std::uint64_t> gc_defer_arm_ffi_pin_total{0};       // #2088
-    std::atomic<std::uint64_t> gc_defer_arm_render_pin_total{0};    // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_panic_total{0};      // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_ffi_pin_total{0};    // #2088
+    std::atomic<std::uint64_t> gc_defer_arm_render_pin_total{0}; // #2088
+    // Issue #2270: pin-owner state machine transition counters.
+    //   - pin_owner_arena_total: transitions TO Arena (pin() ctor +
+    //     release_ffi() reset path).
+    //   - pin_owner_ffi_borrowed_total: transitions TO FfiBorrowed
+    //     (mark_ffi_handoff default).
+    //   - pin_owner_ffi_owned_total: transitions TO FfiOwned
+    //     (mark_ffi_owned full transfer path).
+    //   - render_pin_blocked_moving_total: bumped by Moving/Force
+    //     hard-mutex when live_pin_count > 0 AND any live pin is a
+    //     render pin (blocks_arena_reclaim() == true). Distinguishes
+    //     render-pin-caused Moving blocks from other (non-render)
+    //     pin-caused blocks for dashboards.
+    std::atomic<std::uint64_t> pin_owner_arena_total{0};            // #2270
+    std::atomic<std::uint64_t> pin_owner_ffi_borrowed_total{0};     // #2270
+    std::atomic<std::uint64_t> pin_owner_ffi_owned_total{0};        // #2270
+    std::atomic<std::uint64_t> render_pin_blocked_moving_total{0};  // #2270
     std::atomic<std::uint64_t> gc_defer_arm_mutation_hold_total{0}; // #2204
     std::atomic<std::uint64_t> gc_defer_any_total{0};               // #2088
     // Issue #1446: nested boundary + steal + GC compact re-pin telemetry.

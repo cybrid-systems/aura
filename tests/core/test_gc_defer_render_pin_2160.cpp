@@ -26,6 +26,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.arena;
+import aura.core.lifetime_pin; // Issue #2270: PinOwner + LifetimePin state machine.
 
 namespace {
 
@@ -64,6 +65,99 @@ void drain_render_pin() {
         aura::gc_hooks::release_render_pin_defer();
     while (aura::core::arena_policy::in_render_hotpath())
         aura::core::arena_policy::exit_render_hotpath();
+}
+
+// Issue #2270 AC1-AC5: PinOwner state machine for LifetimePin.
+// Replaces the bool ffi_handoff_ flag with three explicit states
+// (Arena | FfiBorrowed | FfiOwned) plus a None sentinel. Verifies
+// transitions, ffi_holds_ownership() (Borrowed OR Owned), and
+// blocks_arena_reclaim() (Owned only) — the latter is what Moving /
+// Force hard-mutex consults to block when render pins hold full
+// ownership of buffers.
+void ac2270_pin_owner_state(CompilerService& cs) {
+    std::println("\n--- AC #2270: PinOwner state machine ---");
+    auto lp = read_file("src/core/lifetime_pin.ixx");
+    auto ren = read_file("src/renderer/render_primitives.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_io.cpp");
+    // AC1: enum + new methods + move semantics.
+    CHECK(lp.find("enum class PinOwner") != std::string::npos, "AC1: PinOwner enum declared");
+    CHECK(lp.find("FfiBorrowed") != std::string::npos, "AC1: FfiBorrowed state declared");
+    CHECK(lp.find("FfiOwned") != std::string::npos, "AC1: FfiOwned state declared");
+    CHECK(lp.find("void mark_ffi_owned()") != std::string::npos, "AC1: mark_ffi_owned() method");
+    CHECK(lp.find("void release_ffi()") != std::string::npos, "AC1: release_ffi() method");
+    CHECK(lp.find("PinOwner owner()") != std::string::npos, "AC1: owner() getter");
+    CHECK(lp.find("ffi_holds_ownership()") != std::string::npos,
+          "AC1: ffi_holds_ownership() helper");
+    CHECK(lp.find("blocks_arena_reclaim()") != std::string::npos,
+          "AC1: blocks_arena_reclaim() helper");
+    CHECK(lp.find("owner_(o.owner_)") != std::string::npos, "AC1: move ctor transfers owner_");
+    CHECK(lp.find("o.owner_ = PinOwner::None") != std::string::npos,
+          "AC1: moved-from resets owner_ to None");
+    // AC2: PresentGuard RAII.
+    CHECK(ren.find("struct PresentGuard") != std::string::npos,
+          "AC2: PresentGuard struct in render_primitives.cpp");
+    CHECK(ren.find("pin.mark_ffi_handoff()") != std::string::npos,
+          "AC2: PresentGuard ctor marks FFI handoff (Borrowed default)");
+    CHECK(ren.find("pin.release_ffi()") != std::string::npos,
+          "AC2: PresentGuard dtor releases (idempotent)");
+    // AC3: Moving block counter + blocks_arena_reclaim() gate.
+    CHECK(obs.find("render_pin_blocked_moving_total{0}") != std::string::npos,
+          "AC3: render_pin_blocked_moving_total counter field");
+    CHECK(lp.find("blocks_arena_reclaim()") != std::string::npos,
+          "AC3: blocks_arena_reclaim() helper");
+    // AC4: query keys + schema-2270 lineage.
+    CHECK(obs.find("pin_owner_arena_total{0}") != std::string::npos,
+          "AC4: pin_owner_arena_total counter field");
+    CHECK(obs.find("pin_owner_ffi_borrowed_total{0}") != std::string::npos,
+          "AC4: pin_owner_ffi_borrowed_total counter field");
+    CHECK(obs.find("pin_owner_ffi_owned_total{0}") != std::string::npos,
+          "AC4: pin_owner_ffi_owned_total counter field");
+    CHECK(q.find("pin-owner-arena-transitions") != std::string::npos,
+          "AC4: pin-owner-arena-transitions query key");
+    CHECK(q.find("pin-owner-ffi-borrowed-transitions") != std::string::npos,
+          "AC4: pin-owner-ffi-borrowed-transitions query key");
+    CHECK(q.find("pin-owner-ffi-owned-transitions") != std::string::npos,
+          "AC4: pin-owner-ffi-owned-transitions query key");
+    CHECK(q.find("render-pin-blocked-moving-total") != std::string::npos,
+          "AC4: render-pin-blocked-moving-total query key");
+    CHECK(q.find("pin-owner-state-machine-wired") != std::string::npos,
+          "AC4: pin-owner-state-machine-wired sentinel");
+    CHECK(q.find("schema-2270") != std::string::npos, "AC4: schema-2270 lineage");
+    CHECK(q.find("issue-2270") != std::string::npos, "AC4: issue-2270 lineage");
+    // AC5: runtime smoke — verify PinOwner transitions + helpers.
+    {
+        // The LifetimePin class is in the aura.core.lifetime_pin module.
+        aura::LifetimePin pin;
+        int dummy_buf = 0;
+        pin.pin(&dummy_buf, 1, 0);
+        CHECK(pin.owner() == PinOwner::Arena, "AC5: pin() sets owner_ = Arena");
+        CHECK(!pin.ffi_holds_ownership(), "AC5: ffi_holds_ownership() == false under Arena");
+        CHECK(!pin.blocks_arena_reclaim(), "AC5: blocks_arena_reclaim() == false under Arena");
+        pin.mark_ffi_handoff();
+        CHECK(pin.owner() == PinOwner::FfiBorrowed, "AC5: mark_ffi_handoff() → FfiBorrowed");
+        CHECK(pin.ffi_holds_ownership(), "AC5: ffi_holds_ownership() == true under FfiBorrowed");
+        CHECK(!pin.blocks_arena_reclaim(),
+              "AC5: blocks_arena_reclaim() == false under FfiBorrowed");
+        pin.mark_ffi_owned();
+        CHECK(pin.owner() == PinOwner::FfiOwned, "AC5: mark_ffi_owned() → FfiOwned");
+        CHECK(pin.ffi_holds_ownership(), "AC5: ffi_holds_ownership() == true under FfiOwned");
+        CHECK(pin.blocks_arena_reclaim(), "AC5: blocks_arena_reclaim() == true under FfiOwned");
+        pin.release_ffi();
+        CHECK(pin.owner() == PinOwner::Arena, "AC5: release_ffi() → Arena");
+        CHECK(!pin.ffi_holds_ownership(),
+              "AC5: ffi_holds_ownership() == false after release_ffi()");
+        // Double-release safe (idempotent).
+        pin.release_ffi();
+        CHECK(pin.owner() == PinOwner::Arena, "AC5: double release_ffi() is a no-op");
+        // Move ctor transfers owner_.
+        pin.mark_ffi_owned();
+        CHECK(pin.owner() == PinOwner::FfiOwned, "AC5: pre-move state");
+        aura::LifetimePin moved(std::move(pin));
+        CHECK(moved.owner() == PinOwner::FfiOwned, "AC5: move ctor transfers owner_ (FfiOwned)");
+        CHECK(pin.owner() == PinOwner::None, "AC5: moved-from resets owner_ to None");
+    }
+    (void)cs;
 }
 
 } // namespace
@@ -233,6 +327,12 @@ int main() {
         CHECK(href(cs, "render-pin-bit") >= 0, "render-pin-bit key");
     }
 
+    drain_render_pin();
+    std::println("\n=== AC #2270: PinOwner state machine ===");
+    {
+        CompilerService cs;
+        ac2270_pin_owner_state(cs);
+    }
     drain_render_pin();
     std::println("\n=== #2160 RenderPin end-to-end: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

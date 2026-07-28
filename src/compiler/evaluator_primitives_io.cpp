@@ -1604,6 +1604,29 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("cellgrid-abi-wired", 1);
                 insert_kv("schema-2216", 2216);
                 insert_kv("issue-2216", 2216);
+                // Issue #2270: pin-owner state machine transitions
+                // (PinOwner: Arena | FfiBorrowed | FfiOwned) + Moving
+                // block counter. Read from g_lifetime_pin_stats
+                // (process-level stats) for the transition counts and
+                // from CompilerMetrics for the Moving block counter
+                // (per-class atomic).
+                {
+                    auto& ps = aptr::g_lifetime_pin_stats;
+                    insert_kv("pin-owner-arena-transitions",
+                              static_cast<std::int64_t>(ps.pin_owner_arena_transitions));
+                    insert_kv("pin-owner-ffi-borrowed-transitions",
+                              static_cast<std::int64_t>(ps.pin_owner_ffi_borrowed_transitions));
+                    insert_kv("pin-owner-ffi-owned-transitions",
+                              static_cast<std::int64_t>(ps.pin_owner_ffi_owned_transitions));
+                }
+                auto* mm = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+                insert_kv("render-pin-blocked-moving-total",
+                          mm ? static_cast<std::int64_t>(mm->render_pin_blocked_moving_total.load(
+                                   std::memory_order_relaxed))
+                             : 0);
+                insert_kv("pin-owner-state-machine-wired", 1);
+                insert_kv("schema-2270", 2270);
+                insert_kv("issue-2270", 2270);
             }
             // Issue #2135: default zero-copy / direct-arena present path
             {
