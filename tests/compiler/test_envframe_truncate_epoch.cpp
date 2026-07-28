@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #1889 — truncate/compact dual-epoch + Guard consistency
 // Issue #1842/#1889 (#1978 renamed): issue# moved from filename to header.
+// Issue #2268: EnvFrameRef use-site fence (close bare EnvFrame* across yield).
 //
 // AC1: truncate drops frames → bridge_epoch advances + metric
 // AC2: Closure with post-checkpoint env_id is is_bridge_stale after truncate
@@ -247,6 +248,119 @@ void ac2251_env_gen_fence(CompilerService& cs) {
     CHECK(fence_reject >= 0, "AC5: query:envframe-truncate-epoch-stats surfaces fence_reject");
 }
 
+// Issue #2268 AC1-AC5: EnvFrameRef use-site fence for EnvFrame.
+// Pairs env_frames_ index with env_gen_stamp at capture time so
+// accidental bare EnvFrame* use across yield / steal / compact
+// becomes hard. Refines #2251 env_gen fence with a use-site
+// handle (still_valid / use_site_check / resolve_if_valid) and a
+// fiber-local cache clear on refresh_after_fiber_migration.
+// AC1: EnvFrameRef struct in evaluator.ixx with still_valid /
+//      use_site_check / resolve_if_valid methods.
+// AC2: materialize_call_env_ref + lookup_by_symid_chain_ref
+//      overloads returning std::optional<EnvFrameRef>.
+// AC3: refresh_after_fiber_migration bumps
+//      envframe_cache_cleared_on_steal_total when fiber-local
+//      resume hints were populated.
+// AC4: env_gen_use_site_reject_total + envframe_cache_cleared_on_steal_total
+//      counters + query keys + schema-2268/issue-2268 lineage.
+// AC5: runtime smoke — hold Ref → force env_generation bump via
+//      truncate → use_site_check fails + counter bumped.
+void ac2268_use_site_fence(CompilerService& cs) {
+    std::println("\n--- AC #2268: EnvFrameRef use-site fence ---");
+    auto eval_ixx = read_file("src/compiler/evaluator.ixx");
+    auto env = read_file("src/compiler/evaluator_env.cpp");
+    auto mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    // AC1: EnvFrameRef struct + field shape + method declarations
+    CHECK(eval_ixx.find("struct EnvFrameRef") != std::string::npos,
+          "AC1: EnvFrameRef struct declared");
+    CHECK(eval_ixx.find("EnvId index = NULL_ENV_ID") != std::string::npos,
+          "AC1: EnvFrameRef::index field");
+    CHECK(eval_ixx.find("std::uint64_t env_gen_stamp = 0") != std::string::npos,
+          "AC1: EnvFrameRef::env_gen_stamp field");
+    CHECK(eval_ixx.find("bool still_valid(Evaluator const& ev) const noexcept") !=
+              std::string::npos,
+          "AC1: still_valid declared");
+    CHECK(eval_ixx.find("bool use_site_check(Evaluator const& ev) const noexcept") !=
+              std::string::npos,
+          "AC1: use_site_check declared");
+    CHECK(eval_ixx.find("resolve_if_valid(Evaluator const& ev) const noexcept") !=
+              std::string::npos,
+          "AC1: resolve_if_valid declared");
+    // AC1: method bodies in evaluator_env.cpp
+    CHECK(env.find("bool EnvFrameRef::still_valid(Evaluator const& ev) const noexcept") !=
+              std::string::npos,
+          "AC1: still_valid body");
+    CHECK(env.find("bool EnvFrameRef::use_site_check(Evaluator const& ev) const noexcept") !=
+              std::string::npos,
+          "AC1: use_site_check body");
+    CHECK(env.find("EnvFrameRef::resolve_if_valid(Evaluator const& ev) const noexcept") !=
+              std::string::npos,
+          "AC1: resolve_if_valid body");
+    CHECK(env.find("env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed)") !=
+              std::string::npos,
+          "AC1: use-site reject counter bumped on fail");
+    // AC2: Ref-returning overloads
+    CHECK(env.find("Evaluator::materialize_call_env_ref(const Closure& cl)") != std::string::npos,
+          "AC2: materialize_call_env_ref definition");
+    CHECK(env.find("Evaluator::lookup_by_symid_chain_ref(EnvId start, aura::ast::SymId s) const") !=
+              std::string::npos,
+          "AC2: lookup_by_symid_chain_ref definition");
+    // AC3: refresh_after_fiber_migration clears fiber-local cache + bumps counter
+    CHECK(mut.find("envframe_cache_cleared_on_steal_total.fetch_add") != std::string::npos,
+          "AC3: envframe_cache_cleared_on_steal_total bumped on steal refresh");
+    CHECK(mut.find("fiber->clear_resume_refresh_hints()") != std::string::npos,
+          "AC3: fiber-local EnvFrame cache cleared");
+    // AC4: counter fields + query keys + schema-2268/issue-2268
+    CHECK(met.find("env_gen_use_site_reject_total{0}") != std::string::npos,
+          "AC4: env_gen_use_site_reject_total counter field");
+    CHECK(met.find("envframe_cache_cleared_on_steal_total{0}") != std::string::npos,
+          "AC4: envframe_cache_cleared_on_steal_total counter field");
+    CHECK(q.find("env-gen-use-site-reject-total") != std::string::npos,
+          "AC4: env-gen-use-site-reject-total query key");
+    CHECK(q.find("env-gen-use-site-wired") != std::string::npos,
+          "AC4: env-gen-use-site-wired sentinel");
+    CHECK(q.find("envframe-cache-cleared-on-steal-total") != std::string::npos,
+          "AC4: envframe-cache-cleared-on-steal-total query key");
+    CHECK(q.find("envframe-cache-cleared-on-steal-wired") != std::string::npos,
+          "AC4: envframe-cache-cleared-on-steal-wired sentinel");
+    CHECK(q.find("schema-2268") != std::string::npos, "AC4: schema-2268 lineage");
+    CHECK(q.find("issue-2268") != std::string::npos, "AC4: issue-2268 lineage");
+    // AC5: runtime smoke — hold Ref → force env_generation bump → use-site fails
+    {
+        CompilerService local;
+        auto& ev = local.evaluator();
+        for (int i = 0; i < 3; ++i)
+            (void)ev.alloc_env_frame();
+        const std::size_t base = ev.env_frames_size();
+        ev.set_panic_safe_env_frames_size_for_test(base);
+        const auto target = ev.alloc_env_frame();
+        Closure cl;
+        cl.name = "ref-test";
+        cl.env_id = target;
+        cl.bridge_epoch = ev.current_bridge_epoch();
+        auto ref_opt = ev.materialize_call_env_ref(cl);
+        CHECK(ref_opt.has_value(), "AC5: materialize_call_env_ref acquired Ref");
+        if (ref_opt) {
+            const auto ref = *ref_opt;
+            CHECK(ref.still_valid(ev), "AC5: Ref still_valid before env_generation bump");
+            const auto r0 =
+                local.metrics().env_gen_use_site_reject_total.load(std::memory_order_relaxed);
+            // Force env_generation_ bump via truncate (bump path is
+            // inside truncate_env_frames_to_checkpoint — #2251).
+            (void)ev.alloc_env_frame();
+            (void)ev.alloc_env_frame();
+            (void)ev.truncate_env_frames_to_checkpoint();
+            CHECK(!ref.still_valid(ev), "AC5: Ref invalidated after env_generation bump");
+            CHECK(!ref.use_site_check(ev), "AC5: use_site_check returns false after bump");
+            const auto r1 =
+                local.metrics().env_gen_use_site_reject_total.load(std::memory_order_relaxed);
+            CHECK(r1 > r0, "AC5: env_gen_use_site_reject_total bumped by use_site_check");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -264,6 +378,10 @@ int main() {
         CompilerService cs;
         ac2251_env_gen_fence(cs);
     }
-    std::println("\n=== #1889 + #2251: {} passed, {} failed ===", g_passed, g_failed);
+    {
+        CompilerService cs;
+        ac2268_use_site_fence(cs);
+    }
+    std::println("\n=== #1889 + #2251 + #2268: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

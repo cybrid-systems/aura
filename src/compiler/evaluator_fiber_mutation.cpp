@@ -1763,8 +1763,23 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
         (void)transfer_and_revalidate_panic_checkpoint(fb_void);
 
     // 5) Clear one-shot resume hints after consumption.
-    if (fb_void != nullptr)
-        static_cast<aura::serve::Fiber*>(fb_void)->clear_resume_refresh_hints();
+    // Issue #2268: bump envframe_cache_cleared_on_steal_total when
+    // the fiber-local EnvFrame cache (resume_env_hint_) was
+    // actually populated at steal time (any non-zero hint). The
+    // counter only increments on a "real" clear so dashboards can
+    // distinguish clear-on-migrate from no-op hint clearing. Same
+    // shape as #2194 post-resume refresh; this is the use-site
+    // fence for fiber-local caches that hold a bare EnvFrame*
+    // (or env_id) across yield / steal windows.
+    if (fb_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
+        if (fiber->resume_env_hint() != 0 || fiber->resume_bridge_epoch_hint() != 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+                m->envframe_cache_cleared_on_steal_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        fiber->clear_resume_refresh_hints();
+    }
 }
 
 // Issue #1595: post Fiber::join linear ownership + StableNodeRef enforcement.

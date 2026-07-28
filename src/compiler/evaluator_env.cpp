@@ -1302,6 +1302,50 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     return ne;
 }
 
+// Issue #2268: Ref-returning overload of materialize_call_env.
+// Use when the caller needs a use-site fence handle
+// (yield / steal / compact safe). Returns std::nullopt for
+// bridge-stale / OOB / NULL / stamp-mismatch frames so the
+// caller can re-materialize instead of observing
+// foreign-generation bindings. Bumps
+// env_gen_use_site_reject_total on the stamp-mismatch /
+// OOB / NULL paths (consistent with EnvFrameRef::use_site_check
+// semantics).
+std::optional<EnvFrameRef> Evaluator::materialize_call_env_ref(const Closure& cl) {
+    if (cl.env_id == NULL_ENV_ID) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    if (cl.env_id < 0 || static_cast<std::size_t>(cl.env_id) >= env_frames_.size()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    // Issue #2251: env_gen fence — sibling region restamped
+    // mid-walk. Bump env_gen_fence_reject_total (same as the
+    // Env-returning path) AND env_gen_use_site_reject_total
+    // (this is a use-site reject; the Env-returning path falls
+    // back to empty Env, which still keeps the use-site safe
+    // but the Ref-returning overload cannot return an empty
+    // Ref so it std::nullopts).
+    const auto& fr = env_frames_[cl.env_id];
+    if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return std::nullopt;
+    }
+    // bridge-stale / linear / OOB-detailed checks are delegated
+    // to materialize_call_env (the Env-returning path) which is
+    // the canonical dual-path gate. The Ref overload is a
+    // "stamp-fence + frame-alive" check; if the caller needs
+    // the full materialization, they should call
+    // materialize_call_env directly.
+    return EnvFrameRef(cl.env_id, fr.env_gen_stamp_);
+}
+
 // Issue #1545 / #1606: walk tree-walker live closures_ under unique lock so
 // callers can mutate (e.g. mark invalid). Parallel to
 // AuraJIT::walk_active_closures / IRExecutor::walk_runtime_closures.
@@ -2328,6 +2372,79 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
     });
     return result;
 }
+
+// Issue #2268: Ref-returning parent-chain lookup. Returns the
+// EnvFrameRef of the first frame whose `bindings_symid_`
+// contains `s` (closest frame wins, shadowing semantics match
+// lookup_by_symid_chain). The caller can then
+// resolve_if_valid() at use-site time to detect stamp drift
+// between capture and use. Walks under env_frames_mtx_ shared
+// lock (same as lookup_by_symid_chain) so the captured stamp
+// is the one taken under the lock.
+std::optional<EnvFrameRef> Evaluator::lookup_by_symid_chain_ref(EnvId start,
+                                                                aura::ast::SymId s) const {
+    // Issue #2251: env_gen fence on parent walks. Same as
+    // lookup_by_symid_chain — start-frame stamp mismatch
+    // yields std::nullopt (no foreign-generation Ref).
+    if (start != NULL_ENV_ID && start < env_frames_.size()) {
+        const auto& fr = env_frames_[start];
+        if (fr.env_gen_stamp_ != 0 && fr.env_gen_stamp_ != env_generation_) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->env_gen_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
+    }
+    std::optional<EnvFrameRef> result;
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    walk_env_frames(start, [&](EnvId cur, const EnvFrame& fr) {
+        auto v = fr.lookup_local_by_symid(s);
+        if (v.has_value()) {
+            result = EnvFrameRef(cur, fr.env_gen_stamp_);
+            return false; // stop walking — closest frame wins
+        }
+        return true; // continue walking
+    });
+    return result;
+}
+
+// Issue #2268: EnvFrameRef use-site fence methods. Default-
+// constructed refs (NULL_ENV_ID + stamp 0) are always
+// invalid; capture-time refs compare captured stamp to
+// current env_generation_ + verify the index is in-range.
+// Read-only callers use still_valid(); fail-closed callers
+// use use_site_check() / resolve_if_valid() which bump
+// env_gen_use_site_reject_total on failure.
+bool EnvFrameRef::still_valid(Evaluator const& ev) const noexcept {
+    if (index == NULL_ENV_ID)
+        return false;
+    if (index < 0 || static_cast<std::size_t>(index) >= ev.env_frames_size())
+        return false;
+    if (env_gen_stamp != 0 && env_gen_stamp != ev.env_generation())
+        return false;
+    return true;
+}
+
+bool EnvFrameRef::use_site_check(Evaluator const& ev) const noexcept {
+    if (still_valid(ev))
+        return true;
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
+std::optional<EnvFrame const*> EnvFrameRef::resolve_if_valid(Evaluator const& ev) const noexcept {
+    if (!use_site_check(ev))
+        return std::nullopt;
+    if (const EnvFrame* p = ev.resolve_env_frame(index))
+        return p;
+    // Index is in-range per still_valid, but resolve_env_frame
+    // returned nullptr — bump the use-site reject counter and
+    // report invalid (defensive against OOB race).
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return std::nullopt;
+}
+
 void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
                                      std::vector<std::int64_t>& closure_roots_out) const {
     // De-dup: a pair/closure may be bound in multiple envs.

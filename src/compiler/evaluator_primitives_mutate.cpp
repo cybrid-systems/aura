@@ -6368,6 +6368,27 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("env-gen-fence-wired", 1);
             insert_kv("schema-2251", 2251);
             insert_kv("issue-2251", 2251);
+            // Issue #2268: EnvFrameRef use-site fence. Pairs
+            // env_frames_ index with env_gen_stamp at capture
+            // time so bare EnvFrame* use across yield / steal
+            // / compact becomes hard. env_gen_use_site_reject
+            // is bumped by EnvFrameRef::use_site_check /
+            // resolve_if_valid on stamp mismatch / OOB / NULL;
+            // envframe_cache_cleared_on_steal is bumped by
+            // refresh_after_fiber_migration when fiber-local
+            // resume hints were populated at steal time.
+            insert_kv("env-gen-use-site-reject-total",
+                      m ? static_cast<std::int64_t>(
+                              m->env_gen_use_site_reject_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("env-gen-use-site-wired", 1);
+            insert_kv("envframe-cache-cleared-on-steal-total",
+                      m ? static_cast<std::int64_t>(m->envframe_cache_cleared_on_steal_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("envframe-cache-cleared-on-steal-wired", 1);
+            insert_kv("schema-2268", 2268);
+            insert_kv("issue-2268", 2268);
             insert_kv("bridge-epoch-bump-on-truncate",
                       m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
                               std::memory_order_relaxed))

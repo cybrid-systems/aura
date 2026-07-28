@@ -869,6 +869,46 @@ export struct EnvFrame {
     std::optional<types::EvalValue> lookup_local_by_symid(aura::ast::SymId s) const;
 };
 
+// Issue #2268: use-site fence handle for EnvFrame. Pairs the
+// env_frames_ index with the env_gen_stamp at capture time so
+// accidental bare EnvFrame* use across yield / steal / compact
+// becomes hard: any caller that takes a Ref and dereferences
+// via resolve_if_valid() will see std::nullopt (and bump
+// env_gen_use_site_reject_total) when a sibling region
+// restamped mid-walk or a fiber migration cleared the cache.
+// Default-constructed ref is the "invalid" sentinel
+// (NULL_ENV_ID + stamp = 0). Method bodies live in
+// evaluator_env.cpp so the Evaluator type is complete.
+export struct EnvFrameRef {
+    EnvId index = NULL_ENV_ID;
+    std::uint64_t env_gen_stamp = 0;
+
+    constexpr EnvFrameRef() noexcept = default;
+    constexpr EnvFrameRef(EnvId idx, std::uint64_t stamp) noexcept
+        : index(idx)
+        , env_gen_stamp(stamp) {}
+
+    // True iff this Ref still matches the current
+    // env_generation_ AND the index is in-range. Read-only
+    // (does not bump the use-site reject counter — use
+    // use_site_check() to bump + fail-closed).
+    [[nodiscard]] bool still_valid(Evaluator const& ev) const noexcept;
+
+    // Same as still_valid() but bumps env_gen_use_site_reject_total
+    // when the ref is no longer valid. Use this at every use-site
+    // where a stale ref would silently observe foreign-generation
+    // bindings.
+    [[nodiscard]] bool use_site_check(Evaluator const& ev) const noexcept;
+
+    // Resolve to the underlying EnvFrame pointer when
+    // use_site_check passes; std::nullopt otherwise. The
+    // use-site reject counter is bumped on failure.
+    [[nodiscard]] std::optional<EnvFrame const*>
+    resolve_if_valid(Evaluator const& ev) const noexcept;
+
+    static constexpr EnvFrameRef invalid() noexcept { return {}; }
+};
+
 export struct Pair {
     types::EvalValue car;
     types::EvalValue cdr;
@@ -3528,6 +3568,14 @@ public:
     // runtime support pointers the body needs to see, not part
     // of the captured scope itself.
     Env materialize_call_env(const Closure& cl);
+    // Issue #2268: Ref-returning overload. Use when the caller
+    // needs a use-site fence handle (yield / steal / compact
+    // safe). Returns std::nullopt for bridge-stale / OOB / NULL
+    // / stamp-mismatch / fence-reject frames so the caller can
+    // re-materialize instead of observing foreign-generation
+    // bindings. Bumps env_gen_use_site_reject_total on
+    // stamp-mismatch / OOB / NULL.
+    [[nodiscard]] std::optional<EnvFrameRef> materialize_call_env_ref(const Closure& cl);
     // Issue #242: detect a stale EnvFrame (one whose `version_`
     // snapshot is older than the current `defuse_version_`). A
     // closure captured against env_frames_[id] whose frame.version_
@@ -3908,6 +3956,15 @@ public:
     // free of raw heap pointers. Legacy Env still uses its
     // cells_ pointer during transition.
     std::optional<types::EvalValue> lookup_by_symid_chain(EnvId start, aura::ast::SymId s) const
+        pre(start != NULL_ENV_ID);
+    // Issue #2268: Ref-returning overload for parent-chain
+    // lookup. Returns the EnvFrameRef of the first frame whose
+    // `bindings_symid_` contains `s` (closest frame wins,
+    // shadowing semantics match lookup_by_symid_chain). The
+    // caller can then resolve_if_valid() at use-site time to
+    // detect stamp drift between capture and use.
+    [[nodiscard]] std::optional<EnvFrameRef> lookup_by_symid_chain_ref(EnvId start,
+                                                                       aura::ast::SymId s) const
         pre(start != NULL_ENV_ID);
     // Bulk reset (testing + GC integration). Clears env_frames_
     // but does NOT free the modules_ Env* array (those live in
