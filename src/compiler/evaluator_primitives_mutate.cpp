@@ -6033,6 +6033,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("composite-commit-cs-reuse-wired", 1);
                 insert_kv("schema-2180", 2180);
                 insert_kv("issue-2180", 2180);
+                // Issue #2262: partial CS import (all typed_mutate paths)
+                insert_kv("partial-cs-import-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::TypeChecker::partial_cs_import_total()));
+                insert_kv("partial-cs-import-skip-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::TypeChecker::partial_cs_import_skip_total()));
+                insert_kv("partial-cs-hard-empty-miss-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_partial_cs_hard_empty_miss_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("partial-cs-single-source-wired", 1);
+                insert_kv("schema-2262", 2262);
+                insert_kv("issue-2262", 2262);
                 insert_kv("composite-txn-commit-wired", 1);
                 insert_kv("txn-dirty", ev.txn_dirty() ? 1 : 0);
                 insert_kv("schema-2105", 2105);

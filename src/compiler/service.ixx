@@ -8462,6 +8462,9 @@ public:
                                  ? static_cast<void*>(&per_defuse_index_tracker_)
                                  : nullptr;
         auto n = tc.infer_flat_partial(flat, pool, rec, diag, tracker_ptr2);
+        // Issue #2262: stash partial CS for all typed_mutate paths (not only
+        // incremental_infer / composite). Single long-lived fact source.
+        evaluator_.stash_partial_constraint_state(static_cast<void*>(&tc));
         metrics_.typecheck_cache_hits_total.fetch_add(tc.stats().cache_hits,
                                                       std::memory_order_relaxed);
         metrics_.typecheck_cache_misses_total.fetch_add(tc.stats().cache_misses,

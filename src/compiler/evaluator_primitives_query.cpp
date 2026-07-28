@@ -38,6 +38,7 @@ import aura.compiler.macro_expansion; // Issue #2020: hygiene atomics for Agent 
 import aura.compiler.pass_manager;
 import aura.compiler.dirty_propagation; // Issue #2191: type cone mirror metrics
 import aura.compiler.service;
+import aura.compiler.type_checker; // Issue #2262: partial_cs_import_* module atomics
 import aura.compiler.value;
 import aura.compiler.ir_cache_pure; // Issue #2257: current_shape_stability_ratio
 
@@ -74,6 +75,9 @@ extern "C" std::uint64_t aura_rollback_macro_introduced_total_v_read() noexcept;
 extern "C" std::uint64_t aura_rollback_strict_audited_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_expand_sandbox_strict_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_schema_cache_dirty_stamped_total_v_read() noexcept;
+// Issue #2239: rest-param nested qq + schema_cache rest stamping (macro_expansion.cpp).
+extern "C" std::uint64_t aura_macro_rest_param_nested_qq_hits_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_schema_cache_rest_stamped_total_v_read() noexcept;
 // Issue #2178 / #2240: cross-workspace hot-update reject (aura_jit_bridge.cpp).
 // File-scope: block-scope extern "C" is not reliable under -fmodules-ts.
 extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept;
@@ -6539,6 +6543,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   std::memory_order_relaxed)));
                 insert_kv("schema-2260", 2260);
                 insert_kv("issue-2260", 2260);
+            }
+            // Issue #2262: partial CS single source of truth
+            {
+                insert_kv("partial-cs-import-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::TypeChecker::partial_cs_import_total()));
+                insert_kv("partial-cs-import-skip-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::TypeChecker::partial_cs_import_skip_total()));
+                insert_kv("partial-cs-hard-empty-miss-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_partial_cs_hard_empty_miss_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "partial-cs-single-source-wired",
+                    static_cast<std::int64_t>(aura::compiler::g_partial_cs_single_source_wired.load(
+                        std::memory_order_relaxed)));
+                insert_kv("schema-2262", 2262);
+                insert_kv("issue-2262", 2262);
             }
             insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
             insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030
