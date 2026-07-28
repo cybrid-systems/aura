@@ -2,9 +2,9 @@
 ;; Issue #67 acceptance test: 1000+ module loads in serve-like pattern,
 ;; assert no arena growth.
 ;;
-;; Run:
-;;   ./build/aura < tests/multi_session_leak_test.aura
-;;   ASAN_OPTIONS=detect_leaks=1 ./build_asan/aura < tests/multi_session_leak_test.aura
+;; Run (prefer --load; stdin Repl is line-oriented and breaks multi-line forms):
+;;   ./build/aura --load tests/orch/multi_session_leak_test.aura
+;;   ASAN_OPTIONS=detect_leaks=1 ./build_asan/aura --load tests/orch/multi_session_leak_test.aura
 
 (require std/json all:)
 
