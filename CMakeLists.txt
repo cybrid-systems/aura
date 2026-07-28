@@ -2746,6 +2746,12 @@ aura_issue_test_link_llvm_jit(test_guard_exit_occurrence_refresh_2144)
 aura_add_issue_test(test_hard_gate_full_strict_2145)
 aura_issue_test_link_llvm_jit(test_hard_gate_full_strict_2145)
 
+# Issue #2281: Agent-visible TypedMutationAudit decision query (Sampled
+# vs hard-gate matrix) — pure decide() + query schema sentinels.
+aura_add_issue_test(test_typed_mutation_audit_decision_2281)
+aura_issue_test_link_llvm_jit(test_typed_mutation_audit_decision_2281)
+add_dependencies(all_test_issue_targets test_typed_mutation_audit_decision_2281)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)
