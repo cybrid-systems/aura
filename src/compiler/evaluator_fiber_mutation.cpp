@@ -785,6 +785,15 @@ void aura::compiler::Evaluator::on_arena_compact_hook() {
     // alone: that would re-fire recovery on every GC compact after any
     // historical mark_dirty and can re-register AOT slots under host
     // reemit fixtures (heap corruption under multi-AC tests).
+    // Issue #2273: steal-path observability — bumped on migration
+    // refresh BEFORE the drain so Agents can correlate "pending
+    // was observed on this steal" with "drain happened later".
+    // fb_void encodes the fiber_id (cast to int64_t for query).
+    const std::int64_t steal_fiber_id =
+        (fb_void != nullptr) ? static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(fb_void))
+                             : 0;
+    aura_hot_update_on_deferred_reemit_seen_on_steal(steal_fiber_id);
+
     if (mutation_boundary_depth() == 0 && aura_hot_update_has_deferred_reemit() != 0) {
         const auto cur = defuse_version_.load(std::memory_order_acquire);
         const auto dirty_n = workspace_flat_ ? workspace_flat_->mark_dirty_upward_call_count() : 0;
