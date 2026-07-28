@@ -279,8 +279,12 @@ EvalResult IRInterpreter::execute() {
                            .ex_depth_at_entry = ex_stack_.size()});
 
     while (!call_stack_.empty()) {
-        auto& frame = call_stack_.back();
-        auto result = run_function(*frame.func, frame.locals, frame.args);
+        // Issue #2292: snapshot frame fields before run_function / pop —
+        // a reference into call_stack_ dangles after pop_back().
+        const bool is_top = call_stack_.back().is_top_level;
+        const std::uint32_t result_slot = call_stack_.back().result_slot;
+        auto result = run_function(*call_stack_.back().func, call_stack_.back().locals,
+                                   call_stack_.back().args);
 
         if (std::holds_alternative<PendingCall>(result)) {
             // Issue #252: PendingCall is the "actual closure call"
@@ -312,18 +316,15 @@ EvalResult IRInterpreter::execute() {
             return eval_res;
         }
 
-        if (frame.is_top_level) {
+        if (is_top) {
             call_stack_.pop_back();
             return eval_res;
         }
 
         auto retval = *eval_res;
         call_stack_.pop_back();
-        if (!call_stack_.empty()) {
-            auto& caller_frame = call_stack_.back();
-            if (frame.result_slot < caller_frame.locals.size())
-                caller_frame.locals[frame.result_slot] = retval;
-        }
+        if (!call_stack_.empty() && result_slot < call_stack_.back().locals.size())
+            call_stack_.back().locals[result_slot] = retval;
     }
 
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
@@ -485,8 +486,11 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
                            .ex_depth_at_entry = ex_stack_.size()});
 
     while (!call_stack_.empty()) {
-        auto& frame = call_stack_.back();
-        auto result = run_function(*frame.func, frame.locals, frame.args);
+        // Issue #2292: snapshot before pop (see execute() above).
+        const bool is_top = call_stack_.back().is_top_level;
+        const std::uint32_t result_slot = call_stack_.back().result_slot;
+        auto result = run_function(*call_stack_.back().func, call_stack_.back().locals,
+                                   call_stack_.back().args);
 
         if (std::holds_alternative<PendingCall>(result)) {
             if (context_.metrics) {
@@ -512,18 +516,15 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             return eval_res;
         }
 
-        if (frame.is_top_level) {
+        if (is_top) {
             call_stack_.pop_back();
             return eval_res;
         }
 
         auto retval = *eval_res;
         call_stack_.pop_back();
-        if (!call_stack_.empty()) {
-            auto& caller_frame = call_stack_.back();
-            if (frame.result_slot < caller_frame.locals.size())
-                caller_frame.locals[frame.result_slot] = retval;
-        }
+        if (!call_stack_.empty() && result_slot < call_stack_.back().locals.size())
+            call_stack_.back().locals[result_slot] = retval;
     }
 
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
@@ -596,13 +597,35 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         return static_cast<double>(coerce_i(v));
     };
 
+    // Issue #2292: after a nested PendingCall returns, resume at the
+    // call site's block + instruction — not always entry_block with a
+    // sticky resume_instr applied to every subsequent block (that leaked
+    // the first completion's control flow / skipped Mul after recursive
+    // Call, so fact/sum returned the base-case value).
     std::uint32_t current = func.entry_block;
+    std::size_t resume_once = 0;
+    bool have_resume = false;
+    if (!call_stack_.empty()) {
+        auto& fr = call_stack_.back();
+        if (fr.current_block < func.blocks.size())
+            current = fr.current_block;
+        resume_once = fr.resume_instr;
+        have_resume = true;
+        // Clear frame resume so a later re-entry does not re-apply a stale
+        // offset. If resume_once >= block size, the for-loop is empty and we
+        // fall through (++current) — correct when Call was last in its block.
+        fr.resume_instr = 0;
+    }
 
     while (current < func.blocks.size()) {
         auto& block = func.blocks[current];
 
-        std::size_t resume_pos = call_stack_.empty() ? 0 : call_stack_.back().resume_instr;
-        std::size_t start_idx = (resume_pos < block.instructions.size()) ? resume_pos : 0;
+        std::size_t start_idx = 0;
+        if (have_resume) {
+            start_idx = resume_once;
+            have_resume = false;
+            resume_once = 0;
+        }
         for (std::size_t ii = start_idx; ii < block.instructions.size(); ++ii) {
             auto& instr = block.instructions[ii];
             auto& ops = instr.operands;
@@ -1385,8 +1408,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         for (auto& a : call_args)
                             all_args.push_back(a);
 
-                        if (!call_stack_.empty())
-                            call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
+                        // Issue #2292: stamp call-site block + next instr so
+                        // run_function resumes after the Call (not at entry).
+                        if (!call_stack_.empty()) {
+                            call_stack_.back().current_block = current;
+                            call_stack_.back().resume_instr =
+                                static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
+                        }
                         return PendingCall{&callee_func, std::move(all_args), ops[3]};
                     } else if (is_primitive(callee_val)) {
                         // Primitive function call — look up and invoke.
@@ -1552,8 +1580,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         for (auto& a : apply_args)
                             all_args.push_back(a);
 
-                        if (!call_stack_.empty())
-                            call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
+                        // Issue #2292: stamp call-site block + next instr (Apply).
+                        if (!call_stack_.empty()) {
+                            call_stack_.back().current_block = current;
+                            call_stack_.back().resume_instr =
+                                static_cast<std::size_t>(&instr - &block.instructions[0] + 1);
+                        }
                         return PendingCall{&callee_func, std::move(all_args), ops[2]};
                     } else {
                         locals[ops[2]] = closure_val;

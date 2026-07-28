@@ -89,8 +89,11 @@ export struct LoweringState {
 
     // Self-reference support: function name and its pre-allocated func_id
     // Used by cached define functions to emit correct MakeClosure for self-recursion.
+    // Issue #2292: self_func_id may legitimately be 0 (first function in the
+    // module after preclaim). Use self_func_active — never test id != 0 alone.
     std::string self_name;
     std::uint32_t self_func_id = 0;
+    bool self_func_active = false;
 
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;
