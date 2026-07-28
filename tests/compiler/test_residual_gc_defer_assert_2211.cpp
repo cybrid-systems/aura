@@ -7,6 +7,14 @@
 //        mutation_boundary_residual_defer_total and is cleared by best-effort.
 //   AC3: Existing #2120 / #2088 / #2086 contracts retained (source + schema).
 //   AC4: query:mutation-boundary-hold-stats schema-2211 + residual keys.
+//
+// Issue #2269 — production-default residual defer policy (clear vs hard).
+//   AC1: AURA_RESIDUAL_DEFER_POLICY=hard|clear|unset + legacy
+//        AURA_HARD_RESIDUAL_DEFER=1 → soft|clear|hard policy selection.
+//   AC2: Production default is clear (B) — not soft-only.
+//   AC3: Zero-cost success path (single relaxed load of reasons).
+//   AC4: 2 new counters + 5 new query keys + schema-2269 lineage.
+//   AC5: Runtime smoke — soft/clear branches + source-cite for hard.
 
 #include "test_harness.hpp"
 
@@ -186,7 +194,128 @@ static void ac4_query_schema_2211() {
           "observability field declared");
 }
 
-} // namespace
+// Issue #2269 AC1-AC5: production-default residual defer policy
+// (clear vs hard vs soft). Extends #2211 with a production path that
+// is NOT soft-only. Three policy branches:
+//   - Soft: AURA_SANDBOX=off (sandbox / unit tests). Legacy #2211.
+//   - Clear (default under production): forced clear + bump
+//     residual-defer-forced-clear-total.
+//   - Hard (AURA_RESIDUAL_DEFER_POLICY=hard or legacy
+//     AURA_HARD_RESIDUAL_DEFER=1): bump residual-defer-hard-fail-total
+//     + assert + std::abort() if non-debug.
+// AC1: env-driven policy selection (AURA_RESIDUAL_DEFER_POLICY +
+//      legacy AURA_HARD_RESIDUAL_DEFER).
+// AC2: production default is clear (B), not soft-only.
+// AC3: zero-cost success path (single relaxed load; residual != 0 skip).
+// AC4: 2 new counters + 5 new query keys + schema-2269 lineage.
+// AC5: runtime smoke — soft/clear branches + source-cite for hard.
+void ac2269_residual_defer_policy(CompilerService& cs) {
+    std::println("\n--- AC #2269: residual defer policy (soft | clear | hard) ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    // AC1: env-driven policy + residual-policy decision table.
+    CHECK(mb.find("AURA_RESIDUAL_DEFER_POLICY") != std::string::npos,
+          "AC1: AURA_RESIDUAL_DEFER_POLICY env var read");
+    CHECK(mb.find("AURA_HARD_RESIDUAL_DEFER") != std::string::npos,
+          "AC1: legacy AURA_HARD_RESIDUAL_DEFER backward-compat");
+    CHECK(mb.find("ResidualPolicy") != std::string::npos,
+          "AC1: ResidualPolicy enum {Soft, Clear, Hard}");
+    CHECK(mb.find("policy == ResidualPolicy::Hard") != std::string::npos,
+          "AC1: Hard branch (assert + abort)");
+    CHECK(mb.find("policy == ResidualPolicy::Clear") != std::string::npos,
+          "AC1: Clear branch (forced clear + metric)");
+    // AC2: production default is clear (B), not soft-only.
+    CHECK(mb.find("ResidualPolicy::Clear") != std::string::npos,
+          "AC2: Clear policy applied when dev_off==false + unset policy");
+    CHECK(mb.find("dev_off") != std::string::npos, "AC2: AURA_SANDBOX=off selects Soft");
+    // AC3: zero-cost success path — single relaxed load of reasons.
+    CHECK(mb.find("const auto residual = aura::gc_hooks::defer_reasons_snapshot()") !=
+              std::string::npos,
+          "AC3: single snapshot load");
+    CHECK(mb.find("if (residual != 0)") != std::string::npos,
+          "AC3: residual != 0 guards entire block (zero-cost on success)");
+    // AC4: counter fields + query keys + schema-2269 lineage.
+    CHECK(obs.find("mutation_boundary_residual_defer_forced_clear_total{0}") != std::string::npos,
+          "AC4: forced-clear counter field");
+    CHECK(obs.find("mutation_boundary_residual_defer_hard_fail_total{0}") != std::string::npos,
+          "AC4: hard-fail counter field");
+    CHECK(q.find("residual-defer-forced-clear-total") != std::string::npos,
+          "AC4: forced-clear query key");
+    CHECK(q.find("residual-defer-hard-fail-total") != std::string::npos,
+          "AC4: hard-fail query key");
+    CHECK(q.find("residual-defer-policy") != std::string::npos,
+          "AC4: residual-defer-policy query key (0=soft/1=clear/2=hard)");
+    CHECK(q.find("residual-defer-policy-wired") != std::string::npos,
+          "AC4: residual-defer-policy-wired sentinel");
+    CHECK(q.find("schema-2269") != std::string::npos, "AC4: schema-2269 lineage");
+    CHECK(q.find("issue-2269") != std::string::npos, "AC4: issue-2269 lineage");
+    // AC5: runtime smoke — soft (sandbox) + clear (production default).
+    {
+        // Soft branch: AURA_SANDBOX=off + inject residual → expect
+        // residual-defer-total bump but no forced-clear / hard-fail.
+        drain_known_defer();
+        const char* prev_sandbox = std::getenv("AURA_SANDBOX");
+        std::string prev_sandbox_str = prev_sandbox ? prev_sandbox : "";
+        ::setenv("AURA_SANDBOX", "off", 1);
+        // Unset policy so dev_off selects Soft deterministically.
+        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        CompilerService local;
+        auto& ev = local.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto r0 = m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed);
+        const auto fc0 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        const auto hf0 =
+            m->mutation_boundary_residual_defer_hard_fail_total.load(std::memory_order_relaxed);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            // Intentional residual (sandbox path: extra MutationHold arm).
+            aura::gc_hooks::arm_mutation_hold_defer();
+        }
+        const auto r1 = m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed);
+        const auto fc1 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        const auto hf1 =
+            m->mutation_boundary_residual_defer_hard_fail_total.load(std::memory_order_relaxed);
+        CHECK(r1 > r0, "AC5-soft: residual counter bumped");
+        CHECK(fc1 == fc0, "AC5-soft: forced-clear counter unchanged under soft policy");
+        CHECK(hf1 == hf0, "AC5-soft: hard-fail counter unchanged under soft policy");
+        // Restore env.
+        if (!prev_sandbox_str.empty())
+            ::setenv("AURA_SANDBOX", prev_sandbox_str.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        drain_known_defer();
+    }
+    {
+        // Clear branch: unset AURA_SANDBOX + unset policy → production
+        // default selects Clear. Inject residual → expect residual
+        // counter + forced-clear counter both bump, hard-fail unchanged.
+        drain_known_defer();
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::unsetenv("AURA_HARD_RESIDUAL_DEFER");
+        CompilerService local;
+        auto& ev = local.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto r0 = m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed);
+        const auto fc0 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            aura::gc_hooks::arm_mutation_hold_defer();
+        }
+        const auto r1 = m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed);
+        const auto fc1 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        CHECK(r1 > r0, "AC5-clear: residual counter bumped under production-default Clear");
+        CHECK(fc1 > fc0, "AC5-clear: forced-clear counter bumped under production-default Clear");
+        drain_known_defer();
+    }
+}
 
 int main() {
     std::println("=== Issue #2211: residual GC-defer assert at outermost Guard exit ===");
@@ -194,6 +323,12 @@ int main() {
     ac2_inject_residual_bumps_and_clears();
     ac3_lineage_retained();
     ac4_query_schema_2211();
+
+    std::println("\n=== AC #2269: production-default residual defer policy ===");
+    {
+        CompilerService cs;
+        ac2269_residual_defer_policy(cs);
+    }
 
     std::println("\n=== test_residual_gc_defer_assert_2211: {} passed, {} failed ===", g_passed,
                  g_failed);

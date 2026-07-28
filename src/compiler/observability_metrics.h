@@ -7458,6 +7458,20 @@ struct CompilerMetrics {
     // clear follows so AI sessions cannot accumulate orphan defer across steals.
     // Exposed via query:mutation-boundary-hold-stats schema-2211.
     std::atomic<std::uint64_t> mutation_boundary_residual_defer_total{0}; // #2211
+    // Issue #2269: production-default residual defer policy (forced clear
+    // path, #2269 AC1-B). Bumped when the residual defer check applies the
+    // forced-clear branch under AURA_RESIDUAL_DEFER_POLICY=clear or unset
+    // (production default). Pairs with mutation_boundary_residual_defer_
+    // hard_fail_total to distinguish 'cleared' from 'hard-failed' on the
+    // dashboards (avalanche of either is observable separately).
+    std::atomic<std::uint64_t> mutation_boundary_residual_defer_forced_clear_total{0}; // #2269
+    // Issue #2269: hard-fail path (AC1-A). Bumped when the residual defer
+    // check applies the hard-fail branch under AURA_RESIDUAL_DEFER_POLICY=
+    // hard (or legacy AURA_HARD_RESIDUAL_DEFER=1). Followed by std::abort()
+    // (or assert in debug) so this counter only increments on the doomed-
+    // to-crash path — dashboards should see this counter near zero in
+    // healthy production and an alert-worthy spike on regression.
+    std::atomic<std::uint64_t> mutation_boundary_residual_defer_hard_fail_total{0}; // #2269
     // Issue #2215: RenderFastExit (outermost success under render hotpath).
     // Skips Full TypedMutationAudit + full linear/dual-path; defers reemit.
     // Exposed via query:mutation-boundary-hold-stats schema-2215.

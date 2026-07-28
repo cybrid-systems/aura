@@ -5813,6 +5813,39 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"mutation_boundary_residual_defer_total",
                  make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
                 {"residual-defer-assert-wired", make_int(1)},
+                // Issue #2269: production-default residual defer policy
+                // (forced-clear or hard-fail). AC1-A/B decision table.
+                // AC1-A (hard) bumps residual-defer-hard-fail-total + abort;
+                // AC1-B (clear, production default) bumps
+                // residual-defer-forced-clear-total + clear_gc_defer_for_
+                // evaluator + release_mutation_hold_defer(). Soft (sandbox /
+                // unit) is the legacy #2211 path — only residual-defer-total
+                // bumps, no clear, no abort.
+                {"residual-defer-forced-clear-total",
+                 make_int(m ? load(m->mutation_boundary_residual_defer_forced_clear_total) : 0)},
+                {"residual-defer-hard-fail-total",
+                 make_int(m ? load(m->mutation_boundary_residual_defer_hard_fail_total) : 0)},
+                // Active policy under current process env (re-evaluated
+                // per insert_kv call). 0=soft, 1=clear, 2=hard. Lets
+                // dashboards distinguish A vs B vs legacy at a glance.
+                {"residual-defer-policy", make_int([]() -> std::int64_t {
+                     const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                     const bool dev_off =
+                         sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                     if (dev_off)
+                         return 0; // Soft
+                     const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                     const bool policy_hard_env =
+                         policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                     const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                     const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                     if (policy_hard_env || legacy_hard)
+                         return 2; // Hard
+                     return 1;     // Clear (production default)
+                 }())},
+                {"residual-defer-policy-wired", make_int(1)},
+                {"schema-2269", make_int(2269)},
+                {"issue-2269", make_int(2269)},
                 {"schema-2211", make_int(2211)},
                 {"issue-2211", make_int(2211)},
                 // Issue #2215: RenderFastExit (outermost success under render hotpath).
