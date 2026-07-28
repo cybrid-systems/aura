@@ -349,6 +349,14 @@ int main(int argc, char* argv[]) {
     static int dummy = (std::atexit(+[]() { aura_reset_runtime(); }), 0);
     (void)dummy;
 
+    // Issue (lyapunov-fact demo 2026-07-28): force line-buffered stdout
+    // so the REPL runner (which reads stdout one line at a time via
+    // readline + select with a 30s timeout) sees each response
+    // immediately when stdin is a long-running pipe. Default block
+    // buffering (when stdout is not a TTY) waits for buffer full or
+    // stdin EOF before flushing, so the runner times out.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+
     // Issue #2076 / #2053: production security defaults before any runtime:
     //   AURA_SANDBOX → Restricted (default) | off | strict
     //   AURA_MULTI_TENANT=1 → Strict
@@ -2630,8 +2638,15 @@ int main(int argc, char* argv[]) {
     aura::compiler::CompilerService cs;
     cs.set_session_id("default");
     aura::compiler::CompilerService::register_session("default", &cs);
-    // Interactive REPL if no args and stdin is a terminal (not piped)
-    bool interactive = (argc == 1 && ::isatty(STDIN_FILENO));
+    // Issue (lyapunov-fact demo 2026-07-28): use Repl for pipe mode too.
+    // The previous batch fallback (`buf << std::cin.rdbuf()`) blocked
+    // until stdin EOF, which never happens for the demo runner (it
+    // sends forms one at a time over a long-running subprocess PIPE
+    // and reads stdout incrementally). Repl::run() already uses C
+    // stdio fprintf + explicit fflush, so stdout flushes per line in
+    // pipe mode (line buffering via setvbuf at main() top). Banner is
+    // suppressed in non-TTY mode by Repl itself.
+    bool interactive = (argc == 1);
     if (interactive) {
         aura::Repl repl(cs);
         repl.run();

@@ -13607,7 +13607,11 @@ export inline std::string format_value(const types::EvalValue& v, std::span<cons
     if (types::is_hash(v))
         return std::format("<hash[{}]>", types::as_hash_idx(v));
     if (types::is_closure(v)) {
-        std::println("⚠ program returned an uncalled function");
+        // Issue (lyapunov-fact demo 2026-07-28): warning goes to stderr
+        // so it doesn't pollute stdout (which the REPL runner reads one
+        // line at a time via readline and desyncs if a warning appears
+        // before the actual value).
+        std::println(std::cerr, "⚠ program returned an uncalled function");
         return "#<procedure>";
     }
     if (types::is_cell(v))
