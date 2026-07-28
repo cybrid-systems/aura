@@ -144,10 +144,14 @@ struct aura_hot_update_registry_snapshot {
     // Issue #2236: StormIsolation mode + per-region storm counters.
     // MUST stay in lockstep with hot_update_registry.hh.
     std::int64_t storm_isolation_mode;
+    std::int64_t deopt_storm_region_overflow_total; // #2274
     std::int64_t deopt_storm_region_detected_total;
     std::int64_t deopt_storm_region_last_id;
     std::int64_t schema_2236;
     std::int64_t issue_2236;
+    // Issue #2273: steal-path observability fields.
+    std::int64_t reemit_deferred_seen_on_steal_total;
+    std::int64_t reemit_deferred_seen_on_steal_last_fiber_id;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }

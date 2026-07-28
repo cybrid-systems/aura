@@ -981,7 +981,18 @@ extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(v
     return g_cross_workspace_hot_update_rejected_total.load(std::memory_order_relaxed);
 }
 
-// Issue #2275: cow_gen accessors (C ABI for cross-TU host wiring).
+// Issue #2275: process-level workspace cow_gen atoms. Eval tables
+// are simple (eval_ptr -> expected cow_gen) — single atomic per
+// common case; multi-eval extension can grow into a hash if needed.
+// Live workspace cow_gen is bumped on each densify + workspace
+// gen restamp; reload attempts compare eval-captured cow_gen
+// against this to detect cross-COW drift without opening a
+// migration write path.
+// Storage defined BEFORE the accessors below so they can use it
+// without forward declarations.
+static std::atomic<std::uint64_t> g_expected_cow_gen_per_eval{0};
+static std::atomic<std::uint64_t> g_live_workspace_cow_gen{0};
+
 extern "C" void aura_set_aot_expected_cow_gen_for_eval(void* eval_ptr, std::uint64_t gen) noexcept {
     // Minimal single-slot implementation: stores expected cow_gen for the
     // single most-recent eval pointer (sufficient for #2275 observability;
@@ -1022,8 +1033,8 @@ static std::atomic<std::uint8_t> g_last_cross_workspace_reject_reason{0};
 // gen restamp; reload attempts compare eval-captured cow_gen
 // against this to detect cross-COW drift without opening a
 // migration write path.
-static std::atomic<std::uint64_t> g_expected_cow_gen_per_eval{0};
-static std::atomic<std::uint64_t> g_live_workspace_cow_gen{0};
+// NOTE: storage forward-declared above (before aura_set_aot_expected_cow_gen_for_eval)
+// so the accessors below can use it. (Old definition here was removed.)
 
 extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept {
     return g_last_cross_workspace_reject_reason.load(std::memory_order_relaxed);

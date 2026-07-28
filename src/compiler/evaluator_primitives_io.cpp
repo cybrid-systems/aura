@@ -25,6 +25,7 @@ module;
 #include "security_capabilities.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
+#include "core/lifetime_pin.hh" // g_lifetime_pin_stats() for owner-transition counts
 #include "git_ctx.h"
 #include "compiler/ffi_hot_path.hh"
 #include "compiler/frame_budget.hh"    // #2137
@@ -1611,7 +1612,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 // from CompilerMetrics for the Moving block counter
                 // (per-class atomic).
                 {
-                    auto& ps = aptr::g_lifetime_pin_stats;
+                    auto& ps = aura::core::lifetime::g_lifetime_pin_stats();
                     insert_kv("pin-owner-arena-transitions",
                               static_cast<std::int64_t>(ps.pin_owner_arena_transitions));
                     insert_kv("pin-owner-ffi-borrowed-transitions",

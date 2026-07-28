@@ -1316,7 +1316,7 @@ extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint6
     if (cid_env_gen != 0 && cid_env_gen != live_env_gen) {
         // Bump mismatch counter via the C ABI (per-class atomic,
         // not file-scope — keeps observability on the metrics path).
-        extern "C" void aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n);
+        // (Forward decl lives in aura_jit_bridge.h — already in scope here.)
         aura_bump_closure_capture_env_gen_mismatch_total(1);
         return 0;
     }

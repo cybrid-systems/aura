@@ -42,3 +42,6 @@ tests/__pycache__/
 MEMORY.md
 memory.md
 memory/*.md
+
+# transient build artifact (empty file from a prior compile attempt)
+/main

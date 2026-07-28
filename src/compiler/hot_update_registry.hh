@@ -396,10 +396,14 @@ public:
         // all per-region windows (cumulative). Last region id that
         // tripped is in deopt_storm_region_last_id.
         std::int64_t storm_isolation_mode = 0;
+        std::int64_t deopt_storm_region_overflow_total = 0;
         std::int64_t deopt_storm_region_detected_total = 0;
         std::int64_t deopt_storm_region_last_id = 0;
         std::int64_t schema_2236 = 2236;
         std::int64_t issue_2236 = 2236;
+        // Issue #2273: steal-path observability fields.
+        std::int64_t reemit_deferred_seen_on_steal_total = 0;
+        std::int64_t reemit_deferred_seen_on_steal_last_fiber_id = 0;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -657,6 +661,8 @@ void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* ou
 // Issue #2014: C entry points for deopt feed / throttle / config.
 void aura_hot_update_note_deopt(void);
 int aura_hot_update_should_throttle_reemit(void);
+// Issue #2273: steal-path observability C entry point.
+void aura_hot_update_on_deferred_reemit_seen_on_steal(std::int64_t fiber_id);
 // Issue #2132: region/priority-aware throttle (1 = skip reemit).
 int aura_hot_update_should_throttle_reemit_for_region(std::uint64_t region_or_priority);
 void aura_hot_update_set_critical_region_mask(std::uint64_t mask);
