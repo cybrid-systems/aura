@@ -101,6 +101,11 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> adt_invariant_fail{0};
     std::atomic<std::uint64_t> adt_exhaustiveness_sites_checked_total{0};
     std::atomic<std::uint64_t> adt_non_exhaustive_sites_total{0};
+    // Issue #2264: hard-gate suite ADT exhaustiveness process metrics
+    // (named per issue contract; refine #2223).
+    std::atomic<std::uint64_t> adt_exhaustiveness_audit_total{0};
+    std::atomic<std::uint64_t> adt_exhaustiveness_fail_total{0};
+    std::atomic<std::uint32_t> adt_exhaustiveness_hard_gate_wired{1};
     std::atomic<std::uint64_t> invariant_violations_caught{0};
     std::atomic<std::uint64_t> invariant_all_pass{0};
     // Issue #1894 AC metric names (aliases of invariant suite + contextual gate).
@@ -630,17 +635,25 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
     else
         g_typed_mutation_audit_counters.provenance_invariant_fail.fetch_add(
             1, std::memory_order_relaxed);
-    // Issue #2223: ADT exhaustiveness dimension.
+    // Issue #2223 / #2264: ADT exhaustiveness dimension.
     if (r.adt_ok)
         g_typed_mutation_audit_counters.adt_invariant_ok.fetch_add(1, std::memory_order_relaxed);
     else
         g_typed_mutation_audit_counters.adt_invariant_fail.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2264: one audit sample that exercised ADT exhaustiveness (or inject).
+    if (r.adt_sites_checked > 0 || r.adt_match_sites_present || !r.adt_ok)
+        g_typed_mutation_audit_counters.adt_exhaustiveness_audit_total.fetch_add(
+            1, std::memory_order_relaxed);
     if (r.adt_sites_checked > 0)
         g_typed_mutation_audit_counters.adt_exhaustiveness_sites_checked_total.fetch_add(
             r.adt_sites_checked, std::memory_order_relaxed);
     if (r.adt_non_exhaustive > 0)
         g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.fetch_add(
             r.adt_non_exhaustive, std::memory_order_relaxed);
+    // Issue #2264: fail total once per audit when adt_ok is false.
+    if (!r.adt_ok)
+        g_typed_mutation_audit_counters.adt_exhaustiveness_fail_total.fetch_add(
+            1, std::memory_order_relaxed);
     // Issue #1884: correlate with last TypePropagation / DCE / memo snapshot.
     correlate_invariant_with_type_system(r);
     if (r.all_ok()) {
@@ -768,6 +781,10 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.store(0,
                                                                          std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_exhaustiveness_audit_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_exhaustiveness_fail_total.store(0,
+                                                                        std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_violations_caught.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_all_pass.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.store(

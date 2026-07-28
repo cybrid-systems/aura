@@ -555,6 +555,11 @@ export struct LiveCompactResult {
     // bumps moving_compact_pin_contract_fail_total + suppresses success metrics
     // when this is false. Default true (no Moving = contract trivially held).
     bool pin_contract_held = true;
+    // Issue #2267: RootRemapPass counters (StableNodeRef + Closure captures).
+    std::size_t root_remap_stable_ref_total = 0;
+    std::size_t root_remap_stable_ref_fail_total = 0;
+    std::size_t root_remap_closure_capture_total = 0;
+    std::size_t root_remap_closure_capture_fail_total = 0;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
@@ -1806,27 +1811,24 @@ private:
         (void)decision.frag_threshold_used;
     }
 
+    // Issue #2267: RootRemapPass invoker — copies the root_remap_ callback
+    // under root_remap_mtx_ and invokes outside the lock (same pattern as
+    // invoke_layout_change_). Passes densify old→new object_remap + new gen.
+    void invoke_root_remap_callback_() noexcept {
+        RootRemapCallback cb_copy;
+        {
+            std::lock_guard<std::mutex> lock(root_remap_mtx_);
+            if (!root_remap_)
+                return;
+            cb_copy = root_remap_;
+        }
+        if (cb_copy)
+            cb_copy(arena_id_, generation_.load(std::memory_order_relaxed), last_object_remap_);
+    }
+
     void invoke_compact_hook_() {
         std::function<void()> hook_copy;
         {
-            // Issue #2267: RootRemapPass invoker — copies the root_remap_ callback
-            // under root_remap_mtx_ and invokes outside the lock (same pattern as
-            // invoke_layout_change_ below). Reads the densify's old→new object_remap
-            // by reference (the ArenaGroup is the source of truth for last_object_remap_).
-            void invoke_root_remap_callback_() noexcept {
-                RootRemapCallback cb_copy;
-                {
-                    std::lock_guard<std::mutex> lock(root_remap_mtx_);
-                    if (!root_remap_)
-                        return;
-                    cb_copy = root_remap_;
-                }
-                if (cb_copy)
-                    cb_copy(arena_id_, last_object_remap_
-                                           ? last_object_remap_
-                                           : *(new std::unordered_map<void*, void*>{}));
-            }
-
             // Issue #1989: copy under hook_mtx_, invoke outside the lock so
             // a hook that re-enters ASTArena (or any code that takes the
             // same lock in the future) doesn't deadlock. set_on_compact_hook /
@@ -1897,6 +1899,9 @@ private:
     // invoke_layout_change_() copies under lock and fires outside.
     mutable std::mutex on_layout_change_mtx_;
     LiveCompactLayoutChangeCallback on_layout_change_;
+    // Issue #2267: RootRemapPass callback (StableNodeRef + Closure captures).
+    mutable std::mutex root_remap_mtx_;
+    RootRemapCallback root_remap_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.
     mutable std::shared_mutex owner_mtx_;

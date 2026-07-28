@@ -3239,6 +3239,9 @@ public:
     // Issue #2108: inject a live Moved linear root so composite commit /
     // invariant audit tests can force cross-batch escape hard-block.
     void inject_cross_batch_linear_escape_for_test() noexcept;
+    // Issue #2264: force adt_ok=false on next invariant audit (test seam).
+    void inject_adt_non_exhaustive_for_test() noexcept;
+    void clear_adt_non_exhaustive_inject_for_test() noexcept;
     // Issue #2108: hard-block helper (Moved live roots + AST escape).
     // Returns true if escape detected; sets r.linear_ok / cross_batch flags.
     bool hard_block_cross_batch_linear_escape(typed_audit::InvariantAuditResult& r) noexcept;
@@ -4908,6 +4911,8 @@ private:
     std::atomic<std::uint32_t> txn_dirty_{0};
     // Issue #2145: Strict sandbox — deny further mutate after hard-gate fail.
     std::atomic<std::uint32_t> strict_mutate_hold_{0};
+    // Issue #2264: test inject — next run_typed_mutation_invariant_audit fails adt_ok.
+    std::atomic<std::uint32_t> inject_adt_non_exhaustive_{0};
     // Issue #1612: refresh_stale_macro_frames invocation count.
     std::atomic<std::uint64_t> macro_refresh_invoke_count_{0};
     // Issue #439: safepoint wait time (sum of all

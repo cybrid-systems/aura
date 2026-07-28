@@ -8702,6 +8702,21 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("adt-exhaustiveness-audit-wired", 1);
             insert_kv("schema-2223", 2223);
             insert_kv("issue-2223", 2223);
+            // Issue #2264: hard-gate suite ADT exhaustiveness metrics
+            insert_kv("adt-exhaustiveness-audit-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.adt_exhaustiveness_audit_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("adt-exhaustiveness-fail-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.adt_exhaustiveness_fail_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("adt-exhaustiveness-hard-gate-wired",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.adt_exhaustiveness_hard_gate_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2264", 2264);
+            insert_kv("issue-2264", 2264);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
