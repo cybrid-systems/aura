@@ -6876,6 +6876,9 @@ public:
             if (lc.invalidates_pins) {
                 m->arena_live_compact_gen_restamps_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2265 Phase 3: remap honors under Moving densify.
+            m->arena_live_compact_remapped_pins_total.fetch_add(lc.remapped_pins,
+                                                                std::memory_order_relaxed);
         }
     }
 
@@ -6912,6 +6915,9 @@ public:
             if (lc.invalidates_pins) {
                 m->arena_live_compact_gen_restamps_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2265 Phase 3: remap honors under Moving densify.
+            m->arena_live_compact_remapped_pins_total.fetch_add(lc.remapped_pins,
+                                                                std::memory_order_relaxed);
         }
         return lc;
     }

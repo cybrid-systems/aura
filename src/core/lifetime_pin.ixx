@@ -5,6 +5,12 @@
 // hotpath soft-gate and arms g_ffi_pin_defer_depth so compact/GC cannot
 // reclaim the buffer mid-write (see present_batch_impl).
 //
+// Phase 3 (#2265): add real pointer remap for Moving densify. The pin
+// tracks an object address; if the densify site relocates the tracked
+// object, the pin's ptr_ must follow or downstream FFI reads UAF. Soft
+// and Force paths don't move objects, so remap is Moving-only and
+// never touches the non-moving hot path.
+//
 // Phase 2 surfaces:
 //   - Real pointer + generation stamp storage per pin (ptr_, gen_, arena_id_).
 //   - validate(cur_gen, cur_arena_id) → bool: false after compact invalidates.
@@ -13,12 +19,15 @@
 //     observed gen bump — useful for MutationBoundaryGuard dtor wiring
 //     where the boundary itself doesn't bump gen, only compact_sweep does).
 //   - unpin_on_compact(): pin dead (buffer reclaimed), ptr nulled.
+//   - remap(new_ptr, new_gen): Phase 3 (#2265) — densify rewrote the
+//     pointee; pin updates ptr_ (and gen when new_gen != 0) to track the
+//     new address without going through unpin+repin. Bumps remap counter.
 //   - Active registry (function-static vector + mutex) so compact hooks
 //     can iterate all live LifetimePin instances tied to an arena and
-//     restamp / invalidate them in one pass (no per-pin coordination).
-//   - Two new stats counters: invalidations, restamps (Phase 1 retained
-//     pins, unpins, ffi_handoffs).
-//   - kLifetimePinPhase bumps from 1 to 2.
+//     restamp / invalidate / remap them in one pass (no per-pin coordination).
+//   - Three new stats counters: invalidations, restamps, remaps
+//     (Phase 1 retained pins, unpins, ffi_handoffs).
+//   - kLifetimePinPhase bumps from 2 to 3.
 //   - mark_ffi_handoff stays as the handoff signal (counter + bool flag on
 //     the pin for downstream FFI consumers to consult ownership state).
 //
@@ -28,7 +37,7 @@
 //     a lock. The worst case is a stale read returning false-negative
 //     ("invalid" when actually still valid) — which is safe (FFI just
 //     recreates the pin post-compact, no UAF). False-positive is not
-//     possible because restamp/unpin_on_compact are serialized by the
+//     possible because restamp/unpin_on_compact/rmap are serialized by the
 //     registry mutex.
 
 module;
@@ -39,7 +48,7 @@ import std;
 
 export namespace aura::core::lifetime {
 
-inline constexpr int kLifetimePinPhase = 2;
+inline constexpr int kLifetimePinPhase = 3;
 
 struct LifetimePinStats {
     std::uint64_t pins = 0;
@@ -47,6 +56,14 @@ struct LifetimePinStats {
     std::uint64_t ffi_handoffs = 0;
     std::uint64_t invalidations = 0; // Phase 2: compact reclaimed buffer
     std::uint64_t restamps = 0;      // Phase 2: compact bumped gen, pin still valid
+    // Issue #2265 Phase 3: Moving densify remapped ptr_ to a new address
+    // while keeping gen/arena intact. Bumps per-pin when remap() succeeds.
+    std::uint64_t remaps = 0;
+    // Issue #2265 Phase 3: Moving densify expected a pin remap (old_ptr in
+    // last_object_remap_) but no matching pin was in the registry.
+    // Indicates stale ptr_ or pin destroyed between relocate + remap walk.
+    // Agent-visible counter so dashboards can flag orphaned remap entries.
+    std::uint64_t remap_misses = 0;
     // Issue #2085: validate() detected gen drift between the pin's stored
     // gen_ and the caller's cur_gen (or arena_id mismatch). Bumps when
     // `validate(cur_gen, cur_arena_id)` returns false for reasons other
@@ -184,6 +201,21 @@ public:
         ++g_lifetime_pin_stats.invalidations;
     }
 
+    // Compact hook (Phase 3 / #2265): Moving densify rewrote the
+    // pointee to a new address. Update ptr_ (and gen when new_gen != 0)
+    // to follow the move WITHOUT going through unpin+repin. arena_id is
+    // unchanged (densify keeps the arena boundary). FFI consumers that
+    // cached `ptr()` see the new address on next call; `validate(...)`
+    // continues to succeed against the new gen. Bumps remaps counter.
+    void remap(void* new_ptr, std::uint64_t new_gen = 0) noexcept {
+        if (!new_ptr)
+            return; // fail closed: do not null an existing pin's ptr_
+        ptr_ = new_ptr;
+        if (new_gen != 0)
+            gen_ = new_gen;
+        ++g_lifetime_pin_stats.remaps;
+    }
+
     // FFI handoff signal. Phase 1: counter bump only. Phase 2: also flips
     // an internal flag so downstream consumers (e.g. ffi_hot batch dispatch)
     // can consult ownership transfer state without re-querying the caller.
@@ -235,6 +267,54 @@ inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcep
     return n;
 }
 
+// Issue #2265: Moving densify walks `last_object_remap_` (built by
+// relocate_tracked_objects_for_moving_) and remaps every live pin whose
+// ptr_ matches the old address. Pins not present in the registry
+// (stale ptr_ or destroyed between relocate + remap walk) bump
+// `remap_misses` so dashboards can flag orphaned remap entries.
+// arena_id_filter (0 = any arena) narrows the walk to one arena.
+// O(pin_count); only called on Moving densify success path (AC3
+// zero-cost guarantee holds for Soft/Force / no-compact).
+// Returns (remapped_count, miss_count).
+struct RemapResult {
+    std::size_t remapped = 0;
+    std::size_t misses = 0;
+};
+inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uint64_t new_gen = 0,
+                                          std::uint64_t arena_id_filter = 0) noexcept {
+    RemapResult out{};
+    if (!old_ptr || !new_ptr)
+        return out;
+    std::lock_guard<std::mutex> lock(pin_registry_mtx());
+    auto& reg = pin_registry();
+    for (auto* p : reg) {
+        if (!p || !p->pinned())
+            continue;
+        if (arena_id_filter != 0 && p->arena_id() != arena_id_filter)
+            continue;
+        if (p->ptr() != old_ptr) {
+            // No match: bump miss only if this pin's arena IS the filter
+            // (otherwise the pin belongs to a different arena entirely
+            // and isn't a candidate for this remap).
+            if (arena_id_filter != 0 && p->arena_id() == arena_id_filter)
+                ++g_lifetime_pin_stats.remap_misses;
+            continue;
+        }
+        p->remap(new_ptr, new_gen);
+        ++out.remapped;
+    }
+    return out;
+}
+
+// Aggregate stats convenience (Phase 3): # remap calls invoked across
+// the registry. Useful for tests + observability snapshots.
+inline std::uint64_t lifetime_pin_remap_total() noexcept {
+    return g_lifetime_pin_stats.remaps;
+}
+inline std::uint64_t lifetime_pin_remap_miss_total() noexcept {
+    return g_lifetime_pin_stats.remap_misses;
+}
+
 // Total live pins (for tests + observability).
 inline std::size_t live_pin_count() noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -270,8 +350,9 @@ inline bool verify_pins_under_moving_compact() noexcept {
     for (auto* p : reg) {
         if (!p || !p->pinned())
             continue;
-        // Per-pin contract: caller must have called
-        // p->remap_if_moved() before compact completes. The pin
+        // Per-pin contract: caller (Moving densify) must have called
+        // remap_pins_pointing_to(old, new, new_gen) for every (old, neu)
+        // pair in last_object_remap_ BEFORE this verification. The pin
         // itself remains valid (it was set up at capture time); the
         // pointee is verified at unpin time. Here we just count
         // honored pins.

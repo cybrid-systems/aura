@@ -2570,6 +2570,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_live_compact_freelist_hits_total{0};
     std::atomic<std::uint64_t> arena_live_compact_gen_restamps_total{0};
     std::atomic<std::uint64_t> arena_live_compact_invalidated_pins_total{0};
+    // Issue #2265 Phase 3: # LifetimePin remaps honored under Moving densify.
+    std::atomic<std::uint64_t> arena_live_compact_remapped_pins_total{0};
     // Issue #1521: ShapeProfiler versioning + Arena compact synergy.
     std::atomic<std::uint64_t> shape_inval_on_compact_triggered_total{0};
     std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};

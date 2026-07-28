@@ -311,6 +311,75 @@ int main() {
               "blocked key");
     }
 
+    // ── AC_M5: #2265 Phase 3 — LifetimePin::remap + remap_pins_pointing_to ──
+    {
+        std::println("\n--- AC_M5 positive: pin arena object → remap on Moving ---");
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(100, 200, 300, 400);
+        auto* p1 = arena.create<Pod16>(101, 201, 301, 401);
+        auto* p2 = arena.create<Pod16>(102, 202, 302, 402);
+        CHECK(p0 && p1 && p2, "AC_M5: arena objects created");
+        void* old0 = p0;
+        void* old1 = p1;
+        void* old2 = p2;
+        const auto gen0 = arena.generation();
+
+        LifetimePin pin;
+        pin.pin(old0, gen0, arena.arena_id());
+        CHECK(pin.pinned(), "AC_M5: pin attached");
+        CHECK(pin.ptr() == old0, "AC_M5: pin.ptr() pre-Moving");
+        CHECK(pin.validate(gen0, arena.arena_id()), "AC_M5: validate pre-Moving");
+
+        const auto remapped_before = aura::core::lifetime::lifetime_pin_remap_total();
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.moved_live_objects, "AC_M5: Moving densified arena objects");
+        CHECK(r.remapped_pins > 0, "AC_M5: LiveCompactResult.remapped_pins > 0");
+
+        // After Moving: pin.ptr() must follow the remap (if old0 was densified).
+        void* new0 = arena.resolve_object_remap(old0);
+        if (new0 != nullptr) {
+            CHECK(pin.ptr() == new0, "AC_M5: pin.ptr() follows remap (old → new)");
+            CHECK(pin.gen() == arena.generation(), "AC_M5: pin.gen() bumped to new gen");
+            CHECK(pin.validate(arena.generation(), arena.arena_id()),
+                  "AC_M5: validate succeeds against new gen + new ptr");
+            CHECK(static_cast<Pod16*>(new0)->a == 100 && static_cast<Pod16*>(new0)->b == 200,
+                  "AC_M5: payload intact after remap");
+        }
+        CHECK(aura::core::lifetime::lifetime_pin_remap_total() > remapped_before,
+              "AC_M5: process-wide remap counter bumped");
+    }
+    {
+        std::println("\n--- AC_M5 negative: pin non-arena addr → invalidate ---");
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        // Allocate arena objects so densify has work to do (Moving
+        // would otherwise bail on preconditions).
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        (void)p0;
+        (void)p1;
+        (void)p2;
+
+        // Pin a LOCAL buffer (NOT an arena object). Its address will NOT
+        // be in last_object_remap_ values after Moving, so the wire-up's
+        // selective-invalidate pass should nullify it.
+        Pod16 local{100, 200, 300, 400};
+        LifetimePin pin;
+        pin.pin(&local, arena.generation(), arena.arena_id());
+        CHECK(pin.pinned(), "AC_M5: local pin attached");
+        CHECK(pin.ptr() == &local, "AC_M5: pin.ptr() == &local pre-Moving");
+
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.moved_live_objects, "AC_M5: Moving densified arena objects");
+
+        // Local pin's ptr was NOT in any remap entry → invalidate.
+        CHECK(!pin.pinned(), "AC_M5: non-arena pin invalidated after Moving");
+        CHECK(!pin.validate(arena.generation(), arena.arena_id()),
+              "AC_M5: validate fails after invalidate");
+    }
+
     // ── Source contract ──
     {
         const auto ar = read_file("src/core/arena.ixx");

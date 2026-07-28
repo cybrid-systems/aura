@@ -1858,6 +1858,38 @@ def cmd_arena_moving_compaction_coverage():
     return 0
 
 
+def cmd_lifetime_pin_remap_coverage():
+    """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
+
+    Validates the 5-AC contract from issue body:
+      AC1: LifetimePin::remap() + lifetime::remap_pins_pointing_to() API
+      AC2: wire at densify site (after relocate_tracked_objects_for_moving_
+           fills last_object_remap_, remap every (old, neu) pair BEFORE gen restamp)
+      AC3: zero-cost happy path (no registry walk on Soft/Force)
+      AC4: lifetime_pin_remap_total + lifetime_pin_remap_miss_total counters
+           + CompilerMetrics.arena_live_compact_remapped_pins_total mirror +
+           query:arena-live-compact-stats surfaces remapped-pins-total key +
+           schema-2265 / issue-2265 lineage (additive, no schema break)
+      AC5: tests/core/test_moving_compact_2166.cpp — pin → Moving →
+           validate(cur_gen, arena_id) succeeds AND ptr() equals the densified
+           address; negative pin (non-arena address) → invalidate after Moving
+    """
+    print(f"{B}=== LifetimePin Phase 3 remap coverage (#2265) ==={N}")
+    script = ROOT / "scripts" / "check_lifetime_pin_remap_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("LifetimePin Phase 3 remap coverage contract rows failed")
+        return 1
+    ok("LifetimePin Phase 3 remap coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2209,6 +2241,7 @@ def cmd_gate():
         or cmd_soa_single_source_of_truth_coverage()
         or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_arena_moving_compaction_coverage()
+        or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
         or cmd_register_render_hot_prim_coverage()
