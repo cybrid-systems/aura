@@ -96,3 +96,10 @@ src/compiler/evaluator_primitives_eda.cpp
 src/compiler/evaluator_primitives_compile.cpp
 src/compiler/evaluator_primitives_mutate.cpp
 src/compiler/evaluator_primitives_stdlib_review.cpp
+
+# Build cascade fix (commit ae3b2e7a): pre-existing dirty-tree build errors.
+# No behavior change — only namespace typo, missing parens, missing struct
+# fields, missing local vars, missing include. Test binding not applicable
+# since no new primitive surface is introduced.
+src/compiler/evaluator_primitives_io.cpp
+src/compiler/evaluator_primitives_obs_eval.cpp

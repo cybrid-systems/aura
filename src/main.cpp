@@ -1198,20 +1198,6 @@ int main(int argc, char* argv[]) {
                 // ── Plain S-expression (backward compatible) ────────
                 auto& cs = sessions[active_session];
                 aura::messaging::g_current_compiler_service = &cs;
-                auto alloc = cs.arena().allocator();
-                aura::ast::StringPool pool(alloc);
-                aura::ast::FlatAST flat(alloc);
-
-                auto pr = aura::parser::parse_to_flat(line, flat, pool);
-                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                    std::println("{{\"status\":\"parse-error\",\"input\":\"{}\"}}",
-                                 json_escape(line));
-                    continue;
-                }
-                flat.root = pr.root;
-                aura::core::TypeRegistry tr;
-                flat.resolve_type_ids(tr, pool);
-
                 auto r = cs.eval(line);
                 if (r) {
                     std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
@@ -1221,26 +1207,11 @@ int main(int argc, char* argv[]) {
                     std::println(
                         "{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
                         static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
-
-                    // Auto-fix
-                    aura::compiler::AutoFixEngine fixer(flat, pool);
-                    fixer.add_error_fix(d.kind);
-                    auto patches = fixer.run_all();
-                    if (patches > 0) {
-                        std::println("{{\"status\":\"fix\",\"patches\":{}}}", patches);
-                        auto mod = aura::compiler::lower_to_ir(flat, pool, cs.arena());
-                        aura::compiler::Primitives prims;
-                        aura::compiler::IRContext ctx(prims);
-                        aura::compiler::IRInterpreter interp(mod, ctx);
-                        auto fixed = interp.execute();
-                        if (fixed) {
-                            std::println("{{\"status\":\"fixed\",\"value\":\"{}\"}}",
-                                         aura::compiler::types::format_value(*fixed));
-                        } else {
-                            std::println("{{\"status\":\"fix-fail\",\"msg\":\"{}\"}}",
-                                         json_escape(fixed.error().message));
-                        }
-                    }
+                    // Auto-fix path removed: it depended on the per-eval
+                    // `flat` / `pool` (now produced by cs.eval internally).
+                    // Without them, lower_to_ir / AutoFixEngine have no
+                    // FlatAST to operate on. Surfacing the error directly
+                    // is sufficient for the --serve JSON protocol.
                 }
             }
         }

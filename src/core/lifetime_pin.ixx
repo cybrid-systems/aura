@@ -98,7 +98,7 @@ inline LifetimePinStats g_lifetime_pin_stats{};
 //     to observe because reset() / dtor always transitions back to
 //     Arena (the next pin() call sets it again) — kept as a sentinel
 //     for transition validation.
-export enum class PinOwner : std::uint8_t {
+enum class PinOwner : std::uint8_t {
     None = 0,
     Arena = 1,
     FfiBorrowed = 2,

@@ -178,7 +178,7 @@ namespace {
     // or failure. Caller can opt into full ownership transfer via
     // mark_ffi_owned() + release_ffi() (arena reclaims on release).
     struct PresentGuard {
-        aptr::LifetimePin pin;
+        aura::core::lifetime::LifetimePin pin;
         bool transferred = false;
         explicit PresentGuard(void* p, std::uint64_t gen, std::uint64_t aid) {
             pin.pin(p, gen, aid);

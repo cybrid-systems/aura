@@ -789,6 +789,7 @@ void aura::compiler::Evaluator::on_arena_compact_hook() {
     // refresh BEFORE the drain so Agents can correlate "pending
     // was observed on this steal" with "drain happened later".
     // fb_void encodes the fiber_id (cast to int64_t for query).
+    void* fb_void = g_current_fiber_void;
     const std::int64_t steal_fiber_id =
         (fb_void != nullptr) ? static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(fb_void))
                              : 0;

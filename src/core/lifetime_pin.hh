@@ -23,6 +23,11 @@ struct LifetimePinStats {
     std::uint64_t ffi_handoffs = 0;
     std::uint64_t invalidations = 0;
     std::uint64_t restamps = 0;
+    // Issue #2270: PinOwner transition counters (mark_ffi_handoff /
+    // mark_ffi_owned / release_ffi bump these on each transition).
+    std::uint64_t pin_owner_arena_transitions = 0;
+    std::uint64_t pin_owner_ffi_borrowed_transitions = 0;
+    std::uint64_t pin_owner_ffi_owned_transitions = 0;
 };
 
 inline LifetimePinStats& g_lifetime_pin_stats() noexcept {
@@ -157,6 +162,12 @@ public:
         ++g_lifetime_pin_stats().ffi_handoffs;
     }
     [[nodiscard]] bool ffi_handoff() const noexcept { return ffi_handoff_; }
+
+    // Issue #2270: ownership transfer / release methods (also defined
+    // in lifetime_pin.ixx — mirrored here so non-module TU callers like
+    // render_primitives.cpp can use them via this header).
+    void mark_ffi_owned() noexcept;
+    void release_ffi() noexcept;
 
 private:
     void* ptr_ = nullptr;
