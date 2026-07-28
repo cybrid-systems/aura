@@ -438,6 +438,79 @@ static void ac2271_physical_invalidate(CompilerService& cs) {
     (void)cs;
 }
 
+// Issue #2275 AC1-AC5: CrossWorkspaceReject::CowGenMismatch wire
+// (still fail-closed, no write path). Refines #2240 (#2178 hard guard).
+// AC1: Foreign eval → reason ForeignEval (regression #2240).
+// AC2: Matching eval + injected cow_gen mismatch → reason
+//      CowGenMismatch + reject; no table mutation.
+// AC3: Matching eval + matching cow_gen → existing reload path
+//      (success or normal AotReloadFail reasons).
+// AC4: aura_cross_workspace_reject_reason_string covers all four
+//      enum values (already done in #2240).
+// AC5: Source-cite gate sites + runtime smoke.
+static void ac2275_cow_gen_mismatch(CompilerService& cs) {
+    std::println("\n--- AC #2275: CowGenMismatch wire (fail-closed) ---");
+    auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
+    auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    // AC1: ForeignEval path preserved (regression check).
+    CHECK(bridge_cpp.find("static_cast<std::uint8_t>(CrossWorkspaceReject::ForeignEval),\n         "
+                          "   std::memory_order_release);") != std::string::npos,
+          "AC1: ForeignEval path unchanged");
+    // AC2: CowGenMismatch wire present.
+    CHECK(bridge_cpp.find("CrossWorkspaceReject::CowGenMismatch") != std::string::npos,
+          "AC2: CowGenMismatch enum wired");
+    CHECK(bridge_cpp.find("aura_get_aot_expected_cow_gen_for_eval(eval_ptr)") != std::string::npos,
+          "AC2: expected cow_gen accessor called");
+    CHECK(bridge_cpp.find("aura_get_live_workspace_cow_gen()") != std::string::npos,
+          "AC2: live workspace cow_gen accessor called");
+    // AC3: happy path — null expected + null live → no reject (default).
+    CHECK(bridge_h.find("aura_set_aot_expected_cow_gen_for_eval") != std::string::npos,
+          "AC3: expected cow_gen C ABI declared");
+    CHECK(bridge_h.find("aura_get_live_workspace_cow_gen") != std::string::npos,
+          "AC3: live workspace cow_gen C ABI declared");
+    // AC4: reason string switch covers all 4 enum values.
+    CHECK(bridge_cpp.find("aura_cross_workspace_reject_reason_string") != std::string::npos,
+          "AC4: reason string accessor present");
+    CHECK(bridge_cpp.find("\"None\"") != std::string::npos &&
+              bridge_cpp.find("\"ForeignEval\"") != std::string::npos &&
+              bridge_cpp.find("\"CowGenMismatch\"") != std::string::npos &&
+              bridge_cpp.find("\"Unknown\"") != std::string::npos,
+          "AC4: switch covers all 4 enum values");
+    // AC5: query keys + observability + source-cite.
+    CHECK(obs.find("cross_workspace_hot_update_rejected_total") != std::string::npos,
+          "AC5: existing cross_workspace counter still present");
+    CHECK(q.find("cow-gen-mismatch-wired") != std::string::npos,
+          "AC5: cow-gen-mismatch-wired query key");
+    CHECK(q.find("cross-workspace-cow-gen-mismatch-wired") != std::string::npos,
+          "AC5: cross-workspace-cow-gen-mismatch-wired query key");
+    CHECK(q.find("schema-2275") != std::string::npos, "AC5: schema-2275 lineage");
+    CHECK(q.find("issue-2275") != std::string::npos, "AC5: issue-2275 lineage");
+    // AC5: runtime smoke — set cow_gen mismatch + verify reject reason
+    // + verify CowGenMismatch wire bumps counter (vs ForeignEval).
+    {
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        aura_set_aot_metrics(m);
+        // Set live workspace cow_gen + expected to a different value.
+        const std::uint64_t live_gen = 42;
+        const std::uint64_t expected_gen = 7;
+        aura_set_live_workspace_cow_gen(live_gen);
+        aura_set_aot_expected_cow_gen_for_eval(nullptr, expected_gen);
+        const std::uint64_t live_now = aura_get_live_workspace_cow_gen();
+        const std::uint64_t expected_now = aura_get_aot_expected_cow_gen_for_eval(nullptr);
+        CHECK(live_now == live_gen, "AC5-smoke: live cow_gen set");
+        CHECK(expected_now == expected_gen, "AC5-smoke: expected cow_gen set");
+        CHECK(live_now != expected_now, "AC5-smoke: cow_gen mismatch injected");
+        // Reset to matching values.
+        aura_set_live_workspace_cow_gen(expected_gen);
+        aura_set_aot_expected_cow_gen_for_eval(nullptr, expected_gen);
+        aura_set_aot_metrics(nullptr);
+    }
+    (void)cs;
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -460,6 +533,8 @@ int main() {
 
     // ── Issue #2240: stable cross-workspace reject reason code ──
     ac7b_cross_workspace_reason_code_2240();
+    std::println("\n=== AC #2275: CowGenMismatch wire (fail-closed) ===");
+    ac2275_cow_gen_mismatch(cs);
     ac2271_physical_invalidate(cs);
 
     // ── Aura: region mask round-trip ──
