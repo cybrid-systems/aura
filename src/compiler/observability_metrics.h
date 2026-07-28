@@ -568,6 +568,13 @@ struct CompilerMetrics {
     // pair measures the **capture state** rebind outcome.
     std::atomic<std::uint64_t> closure_capture_remount_ok_total{0};
     std::atomic<std::uint64_t> closure_capture_remount_fail_total{0};
+    // Issue #2272: env_generation mismatch counter (PRIMARY env axis
+    // in aura_remount_closure_captures). Distinct from the legacy
+    // remount_fail_total (which still counts defuse-only failures).
+    // Pair them on dashboards to distinguish "env_gen drift" from
+    // "defuse drift" under compact_env_frames + RegionExclusive
+    // writers.
+    std::atomic<std::uint64_t> closure_capture_env_gen_mismatch_total{0}; // #2272
     // Issue #2043: atomic linear+GC invalidation window under mutate_mtx_.
     //   - linear_gc_window_finalize_total: times finalize_linear_gc_invalidation_window_ ran
     //   - linear_ownership_epoch_bumps_total: linear_ownership_epoch advances

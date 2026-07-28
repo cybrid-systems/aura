@@ -103,6 +103,10 @@ void aura_bump_live_closure_must_deopt_kept_total(std::uint64_t n);
 // epoch_restamp_total which only stamps func_id.
 void aura_bump_closure_capture_remount_ok_total(std::uint64_t n);
 void aura_bump_closure_capture_remount_fail_total(std::uint64_t n);
+// Issue #2272: env_generation mismatch counter (PRIMARY env axis in
+// aura_remount_closure_captures). Distinct from the legacy
+// remount_fail_total (which still counts defuse-only failures).
+void aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n);
 // Issue #2234: post-reemit / post-compact env_frame + linear capture
 // remount hook. Reads the closure's stamped g_closure_defuse_versions
 // + g_closure_linear_state (captured at closure create / re-stamp)
@@ -357,6 +361,13 @@ bool aura_aot_mangle_version_is_stale_ex(const char* mangled, std::uint64_t expe
 // registration sites read these via aura_get_aot_live_* and stamp
 // the `_eN_lN` suffix without importing the C++20 module.
 void aura_set_aot_live_env_frame_version(std::uint64_t v);
+// Issue #2272: per-closure env_generation stamp accessors (C ABI for
+// bridge + runtime). Stamped at alloc from aura_get_aot_live_env_frame
+// _version() (host mirror). Restamped on reemit restamp. Read by
+// aura_remount_closure_captures as the PRIMARY env axis (legacy defuse
+// is secondary). cid<0 / OOB returns 0 (legacy convention).
+void aura_closure_set_env_gen(std::int64_t closure_id, std::uint64_t gen);
+std::uint64_t aura_closure_get_env_gen(std::int64_t closure_id);
 std::uint64_t aura_get_aot_live_env_frame_version(void);
 void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v);
 std::uint8_t aura_get_aot_live_linear_state_fingerprint(void);

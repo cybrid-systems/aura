@@ -1977,6 +1977,15 @@ public:
             return m->closure_capture_remount_fail_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2272: env_generation mismatch counter accessor
+    // (PRIMARY env axis in aura_remount_closure_captures). Distinct
+    // from remount_fail_total so dashboards can distinguish
+    // "env_gen drift" from "defuse drift".
+    [[nodiscard]] std::uint64_t get_closure_capture_env_gen_mismatch_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->closure_capture_env_gen_mismatch_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     void bump_aot_live_closure_refresh_on_mutation_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
