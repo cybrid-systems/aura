@@ -6141,6 +6141,50 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence_goal_stale_drop_total", occurrence_goal_stale_drop);
             insert_kv("schema-2278", 2278);
             insert_kv("issue-2278", 2278);
+            // Issue #2281: Agent-visible TypedMutationAudit decision query.
+            // Exposes the current strategy / sample_ratio / production_defaults
+            // state + a representative decide() result for inputs
+            // (mid=1, nodes=1, linear=false, strict=false, match=false) —
+            // the typical "skip" path under Sampled. Agent can call
+            // decide() directly with custom inputs to predict force-rollback.
+            // Schema-2281 additive (aligns with #2222 LinearEnforce).
+            {
+                using aura::compiler::typed_audit::decide;
+                const auto d = decide(/*mid=*/1, /*nodes=*/1,
+                                      /*linear=*/false, /*strict=*/false,
+                                      /*match=*/false);
+                insert_kv("audit-decision-strategy", d.strategy);
+                insert_kv("audit-decision-sample-ratio", d.sample_ratio);
+                insert_kv("audit-decision-production-defaults", d.production_defaults ? 1 : 0);
+                insert_kv("audit-decision-would-audit", d.would_audit ? 1 : 0);
+                insert_kv("audit-decision-would-hard-gate", d.would_hard_gate ? 1 : 0);
+                // force_reason → int mapping (documented in typed_mutation_audit.h):
+                //   0=off 1=full 2=linear 3=match-sites 4=nodes
+                //   5=production-nodes 6=sampled-hit 7=sampled-skip 8=strict
+                std::int64_t reason_int = -1;
+                if (d.force_reason == "off")
+                    reason_int = 0;
+                else if (d.force_reason == "full")
+                    reason_int = 1;
+                else if (d.force_reason == "linear")
+                    reason_int = 2;
+                else if (d.force_reason == "match-sites")
+                    reason_int = 3;
+                else if (d.force_reason == "nodes")
+                    reason_int = 4;
+                else if (d.force_reason == "production-nodes")
+                    reason_int = 5;
+                else if (d.force_reason == "sampled-hit")
+                    reason_int = 6;
+                else if (d.force_reason == "sampled-skip")
+                    reason_int = 7;
+                else if (d.force_reason == "strict")
+                    reason_int = 8;
+                insert_kv("audit-decision-force-reason", reason_int);
+                insert_kv("audit-decision-wired", 1);
+                insert_kv("schema-2281", 2281);
+                insert_kv("issue-2281", 2281);
+            }
             // Issue #2220: long-lived TypeChecker on Evaluator mutate path.
             {
                 const std::int64_t tc_create =

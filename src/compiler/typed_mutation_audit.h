@@ -327,6 +327,94 @@ inline void apply_dev_audit_defaults() noexcept {
     return linear_ops_present || match_sites_present || nodes_changed >= force_n;
 }
 
+// Issue #2281: Agent-visible pure decision primitive. Mirrors
+// should_audit_contextual + requires_invariant_hard_gate for any
+// hypothetical (mid, nodes, linear, strict, match_sites) tuple so
+// Agents can predict force-rollback / under-sample without scraping
+// multiple schema counters. PURE: no counter bumps, no side effects.
+//
+// Decision table (AC5 — aligns with #2222 LinearEnforce decision table):
+//   ┌──────────┬─────────┬───────┬────────┬─────────┬────────────────────────┐
+//   │ Strategy │ Linear  │ Nodes │ Strict │ Match   │ would_audit / hard_gate │
+//   │          │         │       │        │         │ force_reason           │
+//   ├──────────┼─────────┼───────┼────────┼─────────┼─────────────────────────┤
+//   │ Off      │ -       │ -     │ -      │ -       │ false / false / "off"  │
+//   │ Full     │ -       │ -     │ -      │ -       │ true  / true  / "full"  │
+//   │ Sampled  │ true    │ -     │ -      │ -       │ true  / true  / "linear"│
+//   │ Sampled  │ -       │ >=N   │ -      │ -       │ true  / true  / "nodes" │
+//   │ Sampled  │ -       │ -     │ -      │ true    │ true  / true  /         │
+//   │          │         │       │        │         │ "match-sites"          │
+//   │ Sampled  │ -       │ -     │ true   │ -       │ *hit / true / "strict"  │
+//   │ Sampled  │ -       │ <N    │ false  │ false   │ *hit / false /          │
+//   │          │         │       │        │         │ "sampled-hit"|"skip"    │
+//   └──────────┴─────────┴───────┴────────┴─────────┴──────────────────────────┘
+//   N = kAuditForceNodesChanged (8) in dev or
+//   kAuditForceNodesChangedProduction (1) under production_defaults.
+//   *hit = depends on sample_hit = (ratio <= 1) || (mid % ratio == 0).
+//
+// The `decide` function is the canonical Agent-visible query.
+// `evaluator_primitives_query.cpp` exposes it via
+// `query:typed-mutation-audit-decision` keys (schema-2281, issue-2281,
+// audit-decision-wired, audit-decision-strategy, audit-decision-sample-ratio,
+// audit-decision-production-defaults, audit-decision-would-audit,
+// audit-decision-would-hard-gate, audit-decision-force-reason).
+struct AuditDecision {
+    bool would_audit = false;
+    bool would_hard_gate = false;
+    std::string_view force_reason = "off";
+    int strategy = 0; // 0=Off, 1=Sampled, 2=Full
+    int sample_ratio = 1;
+    bool production_defaults = false;
+};
+
+inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_changed,
+                            bool linear_ops_present, bool strict_sandbox,
+                            bool match_sites_present = false) noexcept {
+    AuditDecision d;
+    d.strategy = static_cast<int>(get_strategy());
+    d.sample_ratio = static_cast<int>(get_sample_ratio());
+    d.production_defaults = production_defaults_active();
+
+    // Off: no audit, no hard gate.
+    if (d.strategy == static_cast<int>(AuditStrategy::Off)) {
+        d.force_reason = "off";
+        return d;
+    }
+    // Full: always audit, always hard gate.
+    if (d.strategy == static_cast<int>(AuditStrategy::Full)) {
+        d.would_audit = true;
+        d.would_hard_gate = true;
+        d.force_reason = "full";
+        return d;
+    }
+    // Sampled: contextual decisions.
+    const auto force_n =
+        d.production_defaults ? kAuditForceNodesChangedProduction : kAuditForceNodesChanged;
+    const bool context_force =
+        linear_ops_present || match_sites_present || nodes_changed >= force_n;
+    const bool sample_hit =
+        (d.sample_ratio <= 1) || (mutation_id % static_cast<std::uint64_t>(d.sample_ratio)) == 0;
+
+    d.would_audit = context_force || sample_hit;
+    d.would_hard_gate = strict_sandbox || context_force;
+
+    // force_reason: priority order (most specific first).
+    if (strict_sandbox) {
+        d.force_reason = "strict";
+    } else if (linear_ops_present) {
+        d.force_reason = "linear";
+    } else if (match_sites_present) {
+        d.force_reason = "match-sites";
+    } else if (nodes_changed >= force_n) {
+        d.force_reason = d.production_defaults ? "production-nodes" : "nodes";
+    } else if (d.would_audit) {
+        d.force_reason = "sampled-hit";
+    } else {
+        d.force_reason = "sampled-skip";
+    }
+    return d;
+}
+
 // Issue #2145: Agent-stable deny reason (mirror #2076 format_deny_reason shape).
 // Shape: "invariant-denied: <kind> tenant=<id> op=<op>"
 [[nodiscard]] inline std::string
