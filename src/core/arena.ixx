@@ -536,15 +536,49 @@ export struct LiveCompactResult {
     bool force_blocked_by_envframe_guard = false;
     // Issue #2166: Moving preconditions failed or feature flag off.
     bool moving_blocked_precondition = false;
+    // Issue #2266: #2266 AC2 — Moving pin-or-remap contract verification result.
+    // true = all live pins for arena_id_ were honored (remapped or invalidated);
+    // false = at least one pin still points at an old densified address (the
+    // remap walk missed it). Driver (Phase 5 in evaluator_mutation_boundary.cpp)
+    // bumps moving_compact_pin_contract_fail_total + suppresses success metrics
+    // when this is false. Default true (no Moving = contract trivially held).
+    bool pin_contract_held = true;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
                !force_blocked_by_pin && !force_blocked_by_envframe_guard &&
-               !moving_blocked_precondition && objects_moved == 0;
+               !moving_blocked_precondition && objects_moved == 0 && pin_contract_held;
     }
-    [[nodiscard]] bool force_blocked() const noexcept {
-        return force_blocked_by_pin || force_blocked_by_envframe_guard;
+};
+
+// Issue #2266: aggregated result of ArenaGroup::compact_all_moving_pinned().
+// Aggregates bytes_reclaimed_total + pin_contract_held across all module
+// arenas so the driver (Phase 5 in evaluator_mutation_boundary.cpp) can
+// inspect the pin contract in one place. Aggregated contract is the
+// logical AND of all per-arena pin_contract_held flags (any failure fails
+// the whole result).
+export struct AdaptiveCompactResult {
+    std::size_t bytes_reclaimed_total = 0;
+    // true = every per-arena Moving compact honored all its live pins (each
+    // arena's remap walk succeeded, or no pins existed for that arena).
+    // false = at least one arena had a pin still pointing at an old densified
+    // address after the remap walk (the remap missed it). The driver bumps
+    // moving_compact_pin_contract_fail_total + suppresses success metrics
+    // when this is false. Default true (no Moving = contract trivially held).
+    bool pin_contract_held = true;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return bytes_reclaimed_total == 0 && pin_contract_held;
     }
+};
+
+[[nodiscard]] bool empty() const noexcept {
+    return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated && !force_blocked_by_pin &&
+           !force_blocked_by_envframe_guard && !moving_blocked_precondition && objects_moved == 0;
+}
+[[nodiscard]] bool force_blocked() const noexcept {
+    return force_blocked_by_pin || force_blocked_by_envframe_guard;
+}
 };
 
 // Issue #2089: optional layout-change callback hook. Fires on each
@@ -1226,6 +1260,25 @@ public:
                 new_addrs.reserve(last_object_remap_.size() * 2);
                 for (const auto& [old_ptr, new_ptr] : last_object_remap_)
                     new_addrs.insert(new_ptr);
+            }
+            // Issue #2266 AC1 — verify pin-or-remap hard contract. After the
+            // remap walk + selective invalidate, every live pin for arena_id_
+            // must either: (a) have been remapped to a new address (ptr_ no
+            // longer in last_object_remap_'s keys), or (b) been invalidated
+            // (ptr_ == nullptr). If any pin still has ptr_ in last_object_remap_'s
+            // keys (= old densified addresses), the remap missed it → fail closed.
+            // This is the #2266 fail-closed change (previously always-true observe-only).
+            if (result.moved_live_objects && !last_object_remap_.empty()) {
+                std::unordered_set<void*> old_addrs;
+                old_addrs.reserve(last_object_remap_.size());
+                for (const auto& [old_ptr, new_ptr] : last_object_remap_)
+                    old_addrs.insert(old_ptr);
+                const bool contract_held =
+                    aura::core::lifetime::verify_pins_under_moving_compact(arena_id_, old_addrs);
+                result.pin_contract_held = contract_held;
+                // Note: verify_pins_under_moving_compact already bumps
+                // g_moving_compact_pin_contract_fail_total on failure (single
+                // counter source-of-truth in lifetime_pin.ixx).
             }
             std::size_t invalidated = 0;
             {
@@ -2325,6 +2378,29 @@ private:
         for (const auto& name : names)
             total += adaptive_compact_unlocked_(name);
         return total;
+    }
+
+    // Issue #2266: per-arena Moving densify + pin-contract verification.
+    // Returns aggregated result across all module arenas so the driver
+    // (evaluator_mutation_boundary.cpp Phase 5) can check pin_contract_held
+    // + suppress success metrics on contract failure. Same per-arena
+    // pre-snapshot as adaptive_compact_all_unlocked_ to avoid map
+    // re-entry invalidation during live_compact.
+    [[nodiscard]] AdaptiveCompactResult compact_all_moving_pinned() noexcept {
+        AdaptiveCompactResult out;
+        std::vector<std::string> names;
+        names.reserve(arenas_.size());
+        for (const auto& [name, _] : arenas_)
+            names.push_back(name);
+        for (const auto& name : names) {
+            auto it = arenas_.find(name);
+            if (it == arenas_.end())
+                continue;
+            const auto r = it->second->live_compact(LiveCompactMode::Moving);
+            out.bytes_reclaimed_total += r.bytes_reclaimed;
+            out.pin_contract_held = out.pin_contract_held && r.pin_contract_held;
+        }
+        return out;
     }
 };
 

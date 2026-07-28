@@ -1890,6 +1890,44 @@ def cmd_lifetime_pin_remap_coverage():
     return 0
 
 
+def cmd_moving_pin_contract_fail_closed_coverage():
+    """Issue #2266: LifetimePin Phase 4 — verify_pins_under_moving_compact must fail-closed.
+
+    Validates the 5-AC contract from issue body:
+      AC1: Semantics — verify_pins_under_moving_compact(arena_id, old_addresses)
+           returns false if any live pin's ptr_ appears as a key in the densify's
+           old→new map AND ptr_ was not updated (and not invalidated). Returns
+           true when all such pins were honored or no pins / empty remap.
+      AC2: Driver behavior — Outermost Phase 5 / compact driver on false →
+           bump moving_compact_pin_contract_fail_total, do not publish success
+           metrics as if contract held; optional env AURA_MOVING_PIN_CONTRACT=hard
+           forces hard-fail vs soft metric (default hard under production security
+           defaults).
+      AC3: Zero-cost happy path — not called from allocation hot path; only
+           compact / Phase 5 driver (preserve #2256 AC3).
+      AC4: Observability — moving_compact_pin_contract_fail_total counter
+           (process + optional CompilerMetrics) + query key + schema-2266 /
+           issue-2266 / moving-pin-contract-wired lineage on
+           query:arena-live-compact-stats.
+      AC5: Tests — positive (pin → Moving → remap → contract held) + negative
+           (pin not remapped → verify returns false + counter bumps).
+    """
+    print(f"{B}=== Moving pin contract fail-closed coverage (#2266) ==={N}")
+    script = ROOT / "scripts" / "check_moving_pin_contract_fail_closed_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("Moving pin contract fail-closed coverage contract rows failed")
+        return 1
+    ok("Moving pin contract fail-closed coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2241,6 +2279,7 @@ def cmd_gate():
         or cmd_soa_single_source_of_truth_coverage()
         or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_arena_moving_compaction_coverage()
+        or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

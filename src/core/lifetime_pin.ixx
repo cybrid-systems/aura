@@ -315,6 +315,13 @@ inline std::uint64_t lifetime_pin_remap_miss_total() noexcept {
     return g_lifetime_pin_stats.remap_misses;
 }
 
+// Issue #2266: # Moving compact runs where verify_pins_under_moving_compact
+// fail-closed returned false. Mirrors the process-level atomic for tests +
+// observability snapshots.
+inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
+    return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
+}
+
 // Total live pins (for tests + observability).
 inline std::size_t live_pin_count() noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -336,13 +343,29 @@ inline std::atomic<std::uint64_t> g_moving_compact_pin_hits_total{0};
 inline std::atomic<std::uint64_t> g_moving_compact_remap_us_total{0};
 inline std::atomic<std::uint64_t> g_moving_compact_count_total{0};
 inline std::atomic<std::uint64_t> g_moving_compact_bytes_reclaimed_total{0};
+// Issue #2266: # Moving compact runs where a live pin still pointed at an
+// old densified address after the remap walk (i.e., the remap walked the
+// registry but missed this pin). Bumped by verify_pins_under_moving_compact
+// when it returns false. Production gates on this counter to detect silent
+// pin-or-remap contract violations under sustained AI multi-round self-mod.
+inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
 
 // Hard-contract verification: under Moving compact, every live pin
 // must be honored (return true if honored, false if compact must yield).
 // Cost model: O(pin_count). The AC3 zero-cost guarantee holds when
 // no Moving compact runs (the function is never called from the
 // production hot path — only from the compact driver).
-inline bool verify_pins_under_moving_compact() noexcept {
+//
+// Issue #2266: previously this function ALWAYS returned true (observe-only).
+// It now fail-closes if any pin for `arena_id` still has `ptr_` that
+// appears as a key in the densify's `old_addresses` set (meaning the
+// remap walked the registry but missed this pin). The caller (Moving
+// densify site in arena.ixx) passes the set of `last_object_remap_` keys
+// (the OLD addresses that were just densified) so the check is exact:
+// if any pin still points at an old address, the remap missed it.
+inline bool
+verify_pins_under_moving_compact(std::uint64_t arena_id,
+                                 const std::unordered_set<void*>& old_addresses) noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
     auto& reg = pin_registry();
     const auto t0 = std::chrono::steady_clock::now();
@@ -350,12 +373,23 @@ inline bool verify_pins_under_moving_compact() noexcept {
     for (auto* p : reg) {
         if (!p || !p->pinned())
             continue;
-        // Per-pin contract: caller (Moving densify) must have called
-        // remap_pins_pointing_to(old, new, new_gen) for every (old, neu)
-        // pair in last_object_remap_ BEFORE this verification. The pin
-        // itself remains valid (it was set up at capture time); the
-        // pointee is verified at unpin time. Here we just count
-        // honored pins.
+        if (arena_id != 0 && p->arena_id() != arena_id)
+            continue;
+        // Contract: pin's ptr_ must NOT be in old_addresses (it was either
+        // remapped to a new address, or invalidated). If pin still points
+        // at an old address, the remap walk missed it → fail closed.
+        if (old_addresses.count(p->ptr()) > 0) {
+            g_moving_compact_pin_contract_fail_total.fetch_add(1, std::memory_order_relaxed);
+            // Still record the time + honored count for observability.
+            g_moving_compact_pin_hits_total.fetch_add(honored, std::memory_order_relaxed);
+            g_moving_compact_remap_us_total.fetch_add(
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count()),
+                std::memory_order_relaxed);
+            g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
         ++honored;
     }
     const auto t1 = std::chrono::steady_clock::now();

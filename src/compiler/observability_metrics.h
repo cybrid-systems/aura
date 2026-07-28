@@ -2572,6 +2572,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_live_compact_invalidated_pins_total{0};
     // Issue #2265 Phase 3: # LifetimePin remaps honored under Moving densify.
     std::atomic<std::uint64_t> arena_live_compact_remapped_pins_total{0};
+    // Issue #2266: # Moving compact runs where verify_pins_under_moving_compact
+    // fail-closed returned false (a pin still pointed at an old densified
+    // address after the remap walk). Bumped by Phase 5 driver in
+    // evaluator_mutation_boundary.cpp on contract failure.
+    std::atomic<std::uint64_t> moving_compact_pin_contract_fail_total{0};
     // Issue #1521: ShapeProfiler versioning + Arena compact synergy.
     std::atomic<std::uint64_t> shape_inval_on_compact_triggered_total{0};
     std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};

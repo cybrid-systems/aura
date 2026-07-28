@@ -1721,6 +1721,13 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("remapped-pins-total",
                       static_cast<std::int64_t>(m->arena_live_compact_remapped_pins_total.load(
                           std::memory_order_relaxed)));
+            // Issue #2266: # Moving compact runs where the pin-or-remap contract
+            // failed (a live pin still pointed at an old densified address after
+            // the remap walk). Surfaced for Agent dashboards to flag false-safety
+            // regressions under sustained AI multi-round self-mod + Moving.
+            insert_kv("moving-compact-pin-contract-fail-total",
+                      static_cast<std::int64_t>(m->moving_compact_pin_contract_fail_total.load(
+                          std::memory_order_relaxed)));
             insert_kv("schema", 2166);
             // Issue #2157: Force hard-mutex blocked counters (process-wide).
             insert_kv(
@@ -1762,6 +1769,13 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2265", 2265);
             insert_kv("issue-2265", 2265);
             insert_kv("lifetime-pin-remap-wired", 1);
+            // Issue #2266: verify_pins_under_moving_compact fail-closed change.
+            // Schema additive — no break. Driver (Phase 5 in
+            // evaluator_mutation_boundary.cpp) gates success metrics + bumps
+            // moving-compact-pin-contract-fail-total on contract failure.
+            insert_kv("schema-2266", 2266);
+            insert_kv("issue-2266", 2266);
+            insert_kv("moving-pin-contract-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
