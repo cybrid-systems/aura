@@ -134,59 +134,104 @@ struct DepGraph {
     }
 };
 
-// ── DirtySet: bitset-backed dirty flags ────────────────────────
+// ── DirtySet: dense bitset + sparse set for tagged hybrid NodeIds ─
+//
+// Issue #2110/#2187/#2191 encode fn / block-dep / ast-dep nodes with
+// high tag bits (e.g. encode_fn_node(1) → 0x80000001). Using those as
+// dense bitset indices would allocate ~2^31 bits (~256 MiB) and spend
+// seconds in memset / dirty_nodes() scans — the root of CI "hangs" on
+// every mutate:rebind (mark_define_dirty → hybrid_node_cascade_).
+//
+// Dense path: low AST / local-block ids (no high tags, < kMaxDenseSize).
+// Sparse path: any tagged hybrid id or id >= kMaxDenseSize.
 struct DirtySet {
     std::vector<bool> bits;
+    std::unordered_set<NodeId> sparse;
+
+    // Cap dense growth (~128 KiB for vector<bool>). Above this, mark()
+    // uses sparse storage so a single bad id cannot multi-GB allocate.
+    static constexpr std::size_t kMaxDenseSize = 1u << 20; // 1M nodes
+
+    // bit31=fn, bit30=block-dep, bit29=ast-dep (see encode_* below).
+    static constexpr NodeId kHybridTagMask = 0xE0000000u;
+
+    [[nodiscard]] static bool uses_sparse(NodeId id) noexcept {
+        return (id & kHybridTagMask) != 0 || static_cast<std::size_t>(id) >= kMaxDenseSize;
+    }
 
     void ensure(std::size_t n) {
+        if (n > kMaxDenseSize)
+            return; // refuse multi-GB growth; caller should use sparse
         if (bits.size() < n)
             bits.resize(n, false);
     }
 
     void mark(NodeId id) {
+        if (uses_sparse(id)) {
+            sparse.insert(id);
+            ++g_dirty_propagation_stats.marks;
+            return;
+        }
         ensure(static_cast<std::size_t>(id) + 1);
         bits[id] = true;
         ++g_dirty_propagation_stats.marks;
     }
 
     // Issue #1575: non-stats peek for bridges / cascade internals.
-    [[nodiscard]] bool is_dirty(NodeId id) const noexcept { return id < bits.size() && bits[id]; }
+    [[nodiscard]] bool is_dirty(NodeId id) const noexcept {
+        if (uses_sparse(id))
+            return sparse.contains(id);
+        return id < bits.size() && bits[id];
+    }
 
     // Issue #1206 pairwise API — kept for backward compat.
     // Issue #1575: counts as deprecated manual use; prefer cascade_mark_dirty.
+    // Historical semantics: set target dirty when from dirty; only bump
+    // propagations (not marks).
     [[deprecated("Issue #1575: prefer cascade_mark_dirty / propagate_closure with DepGraph")]]
     void propagate(NodeId from, NodeId to) {
         manual_propagate_deprecated_count.fetch_add(1, std::memory_order_relaxed);
-        ensure(static_cast<std::size_t>(std::max(from, to)) + 1);
-        if (bits[from]) {
+        if (!is_dirty(from))
+            return;
+        if (uses_sparse(to)) {
+            sparse.insert(to);
+        } else {
+            ensure(static_cast<std::size_t>(to) + 1);
             bits[to] = true;
-            ++g_dirty_propagation_stats.propagations;
         }
+        ++g_dirty_propagation_stats.propagations;
     }
 
     // Non-deprecated internal pairwise used by cascade (does not bump
     // manual_propagate_deprecated_count).
     void propagate_edge(NodeId from, NodeId to) {
-        ensure(static_cast<std::size_t>(std::max(from, to)) + 1);
-        if (bits[from]) {
+        if (!is_dirty(from))
+            return;
+        if (uses_sparse(to)) {
+            sparse.insert(to);
+        } else {
+            ensure(static_cast<std::size_t>(to) + 1);
             bits[to] = true;
-            ++g_dirty_propagation_stats.propagations;
         }
+        ++g_dirty_propagation_stats.propagations;
     }
 
     [[nodiscard]] bool query(NodeId id) {
         ++g_dirty_propagation_stats.queries;
-        if (id >= bits.size() || !bits[id]) {
+        if (!is_dirty(id)) {
             ++g_dirty_propagation_stats.clean_hits;
             return false;
         }
         return true;
     }
 
-    void clear() { bits.assign(bits.size(), false); }
+    void clear() {
+        bits.assign(bits.size(), false);
+        sparse.clear();
+    }
 
     [[nodiscard]] std::size_t dirty_count() const noexcept {
-        std::size_t n = 0;
+        std::size_t n = sparse.size();
         for (std::size_t i = 0; i < bits.size(); ++i)
             if (bits[i])
                 ++n;
@@ -194,11 +239,15 @@ struct DirtySet {
     }
 
     // Collect all currently-dirty node ids (for tests / dashboards).
+    // O(|dense dirty| + |sparse|) — never O(max NodeId).
     [[nodiscard]] std::vector<NodeId> dirty_nodes() const {
         std::vector<NodeId> out;
+        out.reserve(sparse.size() + 16);
         for (std::size_t i = 0; i < bits.size(); ++i)
             if (bits[i])
                 out.push_back(static_cast<NodeId>(i));
+        for (NodeId id : sparse)
+            out.push_back(id);
         return out;
     }
 };
@@ -366,6 +415,8 @@ inline void push_to_global(const DirtySet& src) {
         if (src.bits[i])
             g_global_dirty.mark(static_cast<NodeId>(i));
     }
+    for (NodeId id : src.sparse)
+        g_global_dirty.mark(id);
 }
 
 // Convenience: copy g_global_dirty into dest (OR-merge).
@@ -374,6 +425,8 @@ inline void pull_from_global(DirtySet& dest) {
         if (g_global_dirty.bits[i])
             dest.mark(static_cast<NodeId>(i));
     }
+    for (NodeId id : g_global_dirty.sparse)
+        dest.mark(id);
 }
 
 // Encode (func_idx, block_idx) into a dense NodeId space for bridges.

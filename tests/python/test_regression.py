@@ -14,9 +14,25 @@ from regression_cases import load_regression_cases
 REPO = Path(__file__).resolve().parents[2]  # #1932 repo root
 
 
-def run(code, timeout=10):
-    r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout)
-    return r.stdout.strip(), r.stderr.strip(), r.returncode
+def run(code, timeout=30):
+    """Run a single Aura snippet.
+
+    Default timeout 30s (was 10s). Multi-mutate / dep-chain cases can
+    spend several seconds in typecheck+cascade under load; a hard 10s
+    raised uncaught TimeoutExpired and aborted the whole p0 suite mid-run.
+    """
+    try:
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+    except subprocess.TimeoutExpired as e:
+        # Surface as a failed case instead of killing the suite.
+        out = (e.stdout or b"" if isinstance(e.stdout, (bytes, bytearray)) else e.stdout) or ""
+        err = (e.stderr or b"" if isinstance(e.stderr, (bytes, bytearray)) else e.stderr) or ""
+        if isinstance(out, (bytes, bytearray)):
+            out = out.decode("utf-8", errors="replace")
+        if isinstance(err, (bytes, bytearray)):
+            err = err.decode("utf-8", errors="replace")
+        return (out or "").strip(), ((err or "") + f"\n[TIMEOUT after {timeout}s]").strip(), 124
 
 
 # Regression cases live in tests/fixtures/regression/*.json (#1962)
@@ -708,8 +724,15 @@ for case in load_regression_cases():
     if name in KNOWN_SKIP:
         print(f"  ↷  {name}: SKIPPED — {KNOWN_SKIP[name]}")
         continue
-    out, err, rc = run(code)
+    try:
+        out, err, rc = run(code)
+    except Exception as e:  # defensive: never abort the whole suite mid-loop
+        print(f"  ❌ {name}: harness exception: {e}")
+        failed += 1
+        continue
     ok = True
+    if rc == 124:
+        ok = False  # timeout
     if expect_out:
         if expect_out.startswith("(") and expect_out.endswith(")"):
             # Parenthesized output: exact match
