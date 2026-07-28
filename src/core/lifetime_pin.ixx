@@ -315,6 +315,16 @@ inline std::uint64_t lifetime_pin_remap_miss_total() noexcept {
     return g_lifetime_pin_stats.remap_misses;
 }
 
+// Issue #2266: # Moving compact runs where verify_pins_under_moving_compact
+// fail-closed returned false. Mirrors the process-level atomic for tests +
+// observability snapshots.
+// Issue #2268 fixup: declaration moved up from below (was line 355 in
+// #2266) so the inline reader function (mergebot's #2263 added a second
+// definition after the atomics block; we keep that one and drop the
+// pre-atomics duplicate that would otherwise clash with it) sees the
+// atomic without an ODR-use-before-declaration error in C++20 module
+// compilation.
+inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
 // Total live pins (for tests + observability).
 inline std::size_t live_pin_count() noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -341,14 +351,10 @@ inline std::atomic<std::uint64_t> g_moving_compact_bytes_reclaimed_total{0};
 // registry but missed this pin). Bumped by verify_pins_under_moving_compact
 // when it returns false. Production gates on this counter to detect silent
 // pin-or-remap contract violations under sustained AI multi-round self-mod.
-inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
-
-// Issue #2266: # Moving compact runs where verify_pins_under_moving_compact
-// fail-closed returned false. Mirrors the process-level atomic for tests +
-// observability snapshots. Declared after the atomics above.
-inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
-    return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
-}
+// Moved up from below (was line 351 in #2266) so the inline reader
+// lifetime_pin_contract_fail_total() declared earlier in the file
+// can see the atomic without an ODR-use-before-declaration error
+// (#2268 fixup).
 
 // Hard-contract verification: under Moving compact, every live pin
 // must be honored (return true if honored, false if compact must yield).

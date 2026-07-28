@@ -594,6 +594,22 @@ struct CompilerMetrics {
     // bridge-stale path) so no foreign-generation bindings are
     // silently used under concurrent region writers.
     std::atomic<std::uint64_t> env_gen_fence_reject_total{0};
+    // Issue #2268: use-site fence for EnvFrameRef. Bumped by
+    // EnvFrameRef::use_site_check / resolve_if_valid when the
+    // captured stamp no longer matches the current
+    // env_generation_ (or the index is OOB / NULL_ENV_ID). Use
+    // this to observe how often a stored Ref across
+    // yield / steal / compact would have silently observed a
+    // foreign-generation EnvFrame.
+    std::atomic<std::uint64_t> env_gen_use_site_reject_total{0};
+    // Issue #2268: bumped by refresh_after_fiber_migration when
+    // the LayoutStamp mismatch path forces a clear of
+    // fiber-local EnvFrame caches (Fiber::resume_env_hint_ +
+    // resume_bridge_epoch_hint_ via clear_resume_refresh_hints).
+    // Pair with env_gen_use_site_reject_total to distinguish
+    // "cache cleared on migrate" from "stale ref rejected on
+    // use".
+    std::atomic<std::uint64_t> envframe_cache_cleared_on_steal_total{0};
     // Issue #1948: MutationBoundaryGuard violation tracking for env
     // compaction paths (compact_env_frames + truncate_env_frames_to_checkpoint).
     //   - mutation_boundary_violation_on_env_compact_total: # of times

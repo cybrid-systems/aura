@@ -1784,6 +1784,9 @@ add_dependencies(all_test_issue_targets test_terminal_domain_batch)
 aura_add_issue_test(test_envframe_epoch_batch)
 aura_issue_test_link_llvm_jit(test_envframe_epoch_batch)
 add_dependencies(all_test_issue_targets test_envframe_epoch_batch)
+aura_add_issue_test(test_envframe_truncate_epoch)
+aura_issue_test_link_llvm_jit(test_envframe_truncate_epoch)
+add_dependencies(all_test_issue_targets test_envframe_truncate_epoch)
 
 # tests/reflect/ hygiene consolidation (R3 renamed edsl → reflect).
 # Prefer extending these over new test_edsl_* / test_reflect_* singles.
