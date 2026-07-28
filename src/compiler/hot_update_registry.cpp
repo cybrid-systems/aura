@@ -293,6 +293,15 @@ HotUpdateRegistry::StormIsolation HotUpdateRegistry::storm_isolation_mode() cons
     return static_cast<StormIsolation>(storm_isolation_mode_.load(std::memory_order_relaxed));
 }
 
+// Issue #2274: cap overflow bumper + getter impls.
+void HotUpdateRegistry::bump_deopt_storm_region_overflow_total() noexcept {
+    deopt_storm_region_overflow_total_.fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::deopt_storm_region_overflow_total() const noexcept {
+    return deopt_storm_region_overflow_total_.load(std::memory_order_relaxed);
+}
+
 std::uint64_t HotUpdateRegistry::storm_isolation_region_count() const noexcept {
     std::lock_guard<std::mutex> lock(region_windows_mtx_);
     return static_cast<std::uint64_t>(region_windows_.size());
@@ -392,6 +401,8 @@ void HotUpdateRegistry::on_stale_deopt(std::uint64_t region) noexcept {
     auto it = region_windows_.find(region);
     if (it == region_windows_.end()) {
         if (region_windows_.size() >= kStormIsolationRegionCap) {
+            // Issue #2274: cap overflow counter (Agent-visible fallback to global).
+            bump_deopt_storm_region_overflow_total();
             // Overflow: skip per-region entry (cap); callers use Global path.
             return;
         }
@@ -797,6 +808,9 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.issue_2208 = 2208;
     // Issue #2236: StormIsolation mode + per-region storm trip counters.
     s.storm_isolation_mode = static_cast<std::int64_t>(storm_isolation_mode());
+    // Issue #2274: cap overflow counter snapshot.
+    s.deopt_storm_region_overflow_total = static_cast<std::int64_t>(
+        deopt_storm_region_overflow_total_.load(std::memory_order_relaxed));
     s.deopt_storm_region_detected_total = static_cast<std::int64_t>(
         deopt_storm_region_detected_total_.load(std::memory_order_relaxed));
     s.deopt_storm_region_last_id =
@@ -888,6 +902,8 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->issue_2208 = s.issue_2208;
     // Issue #2236: StormIsolation mode + per-region storm trip counters.
     out->storm_isolation_mode = s.storm_isolation_mode;
+    // Issue #2274: cap overflow counter in snapshot.
+    out->deopt_storm_region_overflow_total = s.deopt_storm_region_overflow_total;
     out->deopt_storm_region_detected_total = s.deopt_storm_region_detected_total;
     out->deopt_storm_region_last_id = s.deopt_storm_region_last_id;
     out->schema_2236 = s.schema_2236;
@@ -945,6 +961,15 @@ extern "C" int aura_get_storm_isolation_mode(void) noexcept {
     return static_cast<int>(aura::compiler::hot_update_registry().storm_isolation_mode());
 }
 
+// Issue #2274: cap overflow C ABI.
+extern "C" void aura_bump_deopt_storm_region_overflow_total(void) {
+    aura::compiler::hot_update_registry().bump_deopt_storm_region_overflow_total();
+}
+
+extern "C" std::uint64_t aura_get_deopt_storm_region_overflow_total(void) {
+    return aura::compiler::hot_update_registry().deopt_storm_region_overflow_total();
+}
+
 // Issue #2236: env resolver for AURA_STORM_ISOLATION. Reads at call
 // time (no global cache) so runtime hosts can change the env without
 // restarting. Accepts: "global" / "" (default), "region" / "per-region",
@@ -958,6 +983,13 @@ extern "C" void aura_apply_storm_isolation_env(void) noexcept {
             mode = aura::compiler::HotUpdateRegistry::StormIsolation::PerRegion;
         else if (std::strcmp(env, "eval") == 0 || std::strcmp(env, "per-eval") == 0)
             mode = aura::compiler::HotUpdateRegistry::StormIsolation::PerEval;
+    }
+    // Issue #2274: production default — if AURA_STORM_ISOLATION is unset
+    // AND the host is multi-eval (aot_state_map_size > 1), auto-select
+    // PerRegion to prevent cross-eval deopt storm cross-contamination.
+    // Single-workspace MVP stays Global. env opt-in overrides this.
+    if (env == nullptr && aura_aot_state_map_size() > 1) {
+        mode = aura::compiler::HotUpdateRegistry::StormIsolation::PerRegion;
     }
     aura::compiler::hot_update_registry().set_storm_isolation_mode(mode);
 }

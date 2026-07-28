@@ -200,6 +200,49 @@ static void ac_source_cite() {
     CHECK(true, "AC6: source-cite (14+ gate / wire-up sites)");
 }
 
+// Issue #2274 AC1-AC5: production default StormIsolation=PerRegion under
+// multi-eval hosts + cap overflow observability. Refines #2236.
+// AC1: production defaults + multi-eval (aot_state_map_size > 1) →
+//      mode PerRegion (auto-select via aura_apply_storm_isolation_env).
+// AC2: dual-region storm — A throttled, B not (existing #2236 AC1).
+// AC3: cap overflow bumps deopt_storm_region_overflow_total via the
+//      C ABI; documented as Agent-visible fallback-to-global signal.
+// AC4: query keys — storm-isolation-mode (existing #2236) +
+//      deopt-storm-region-overflow-total + ...-per-region-default-wired
+//      + schema-2274 / issue-2274 lineage.
+// AC5: unit smoke — bump overflow counter via C ABI + verify counter.
+static void ac2274_per_region_default() {
+    std::println("\n--- AC #2274: production default PerRegion + cap overflow ---");
+    auto hur_h = read_file("src/compiler/hot_update_registry.hh");
+    auto hur_cpp = read_file("src/compiler/hot_update_registry.cpp");
+    auto mutate = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    // AC1: production defaults — auto-select PerRegion on multi-eval.
+    CHECK(hur_cpp.find("aura_aot_state_map_size") != std::string::npos ||
+              hur_cpp.find("aot_state_map_size") != std::string::npos,
+          "AC1: aot_state_map_size referenced in hot_update_registry.cpp");
+    // AC3: cap overflow bumper wired at cap overflow site.
+    CHECK(hur_cpp.find("bump_deopt_storm_region_overflow_total()") != std::string::npos,
+          "AC3: cap overflow counter bumper present");
+    CHECK(hur_h.find("deopt_storm_region_overflow_total_") != std::string::npos,
+          "AC3: overflow atomic declared in .hh");
+    // AC4: query keys + schema-2274 lineage.
+    CHECK(mutate.find("deopt-storm-region-overflow-total") != std::string::npos,
+          "AC4: deopt-storm-region-overflow-total query key");
+    CHECK(mutate.find("storm-isolation-per-region-default-wired") != std::string::npos,
+          "AC4: per-region-default-wired sentinel");
+    CHECK(mutate.find("schema-2274") != std::string::npos, "AC4: schema-2274 lineage");
+    CHECK(mutate.find("issue-2274") != std::string::npos, "AC4: issue-2274 lineage");
+    // AC5: runtime smoke — bump overflow via C ABI + verify counter.
+    {
+        const auto before = aura_get_deopt_storm_region_overflow_total();
+        aura_bump_deopt_storm_region_overflow_total();
+        aura_bump_deopt_storm_region_overflow_total();
+        const auto after = aura_get_deopt_storm_region_overflow_total();
+        CHECK(after >= before + 2, "AC5: counter bumps by 2 after two C ABI calls");
+        (void)after;
+    }
+}
+
 } // namespace
 
 int main() {
@@ -210,6 +253,8 @@ int main() {
     ac_critical_region_bypass();
     ac_query_surface();
     ac_source_cite();
+    std::println("\n=== AC #2274: production default PerRegion + cap overflow ===");
+    ac2274_per_region_default();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

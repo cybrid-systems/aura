@@ -6780,6 +6780,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("storm-isolation-wired", 1);
             insert_kv("schema-2236", snap.schema_2236 != 0 ? snap.schema_2236 : 2236);
             insert_kv("issue-2236", snap.issue_2236 != 0 ? snap.issue_2236 : 2236);
+            // Issue #2274: cap overflow counter + production-default PerRegion lineage.
+            insert_kv("deopt-storm-region-overflow-total", snap.deopt_storm_region_overflow_total);
+            insert_kv("storm-isolation-per-region-default-wired", 1);
+            insert_kv("schema-2274", 2274);
+            insert_kv("issue-2274", 2274);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -194,6 +194,13 @@ public:
     // region_windows_). Used by tests + Agent dashboards to verify the
     // bounded cap is respected.
     [[nodiscard]] std::uint64_t storm_isolation_region_count() const noexcept;
+
+
+    // Issue #2274: cap overflow bumper + getter.
+
+    void bump_deopt_storm_region_overflow_total() noexcept;
+
+    [[nodiscard]] std::uint64_t deopt_storm_region_overflow_total() const noexcept;
     // Last region id that tripped a per-region storm. 0 when no region
     // has tripped (default). Read via the snapshot as
     // deopt_storm_region_last_id.
@@ -520,6 +527,13 @@ private:
         std::atomic<bool> hard_throttled_{false};
     };
     std::atomic<std::uint8_t> storm_isolation_mode_{0}; // StormIsolation enum
+    // Issue #2274: cap overflow counter — bumped when region_windows_.size()
+
+    // >= kStormIsolationRegionCap on insert. Lets Agents distinguish "many
+
+    // regions observed" from "cap exceeded — fell back to global".
+
+    std::atomic<std::uint64_t> deopt_storm_region_overflow_total_{0};
     mutable std::mutex region_windows_mtx_;
     // unique_ptr: RegionWindow holds atomics (non-copyable/movable).
     std::unordered_map<std::uint64_t, std::unique_ptr<RegionWindow>> region_windows_;
@@ -632,6 +646,8 @@ struct aura_hot_update_registry_snapshot {
     // this shadow struct is missing any of them, the writes overflow
     // and corrupt adjacent stack/heap (stack canary smashes).
     std::int64_t storm_isolation_mode;
+    // Issue #2274: cap overflow counter (production overflow bumps).
+    std::int64_t deopt_storm_region_overflow_total;
     std::int64_t deopt_storm_region_detected_total;
     std::int64_t deopt_storm_region_last_id;
     std::int64_t schema_2236;
