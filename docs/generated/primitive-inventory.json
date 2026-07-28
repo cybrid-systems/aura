@@ -3,12 +3,12 @@
     "compile": 23,
     "engine": 8,
     "mutate": 4,
-    "other": 420,
+    "other": 412,
     "query": 53,
     "stats-like": 2,
     "workspace": 24
   },
-  "count": 534,
+  "count": 526,
   "frozen_count": 448,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -460,7 +460,7 @@
     "vector-ref",
     "vector-set!"
   ],
-  "interim_hard_ceiling": 534,
+  "interim_hard_ceiling": 535,
   "names": [
     "*allow-macro-inline*",
     "_agent:list",
@@ -917,12 +917,7 @@
     "terminal:present",
     "terminal:present-delta",
     "thread_pool:enqueue",
-    "tui:cell",
-    "tui:clear",
-    "tui:draw-batch",
     "tui:enable-mouse",
-    "tui:fill-rect",
-    "tui:frame-ansi",
     "tui:get-cell",
     "tui:hide-cursor",
     "tui:init",
@@ -931,8 +926,6 @@
     "tui:is-raw-mode",
     "tui:mouse",
     "tui:pixel",
-    "tui:present",
-    "tui:present-batch",
     "tui:raw-mode-off",
     "tui:raw-mode-on",
     "tui:read-event",
@@ -994,8 +987,7 @@
     "workspace:unlock",
     "write",
     "write-file",
-    "ws:try-mutation",
-    "\u2026"
+    "ws:try-mutation"
   ],
   "public_stats_via_add": 2,
   "schema": 2,
