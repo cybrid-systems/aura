@@ -13466,6 +13466,24 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"issue-2249", make_int(2249)},
             {"schema-2232", make_int(2232)},
             {"issue-2232", make_int(2232)},
+            // Issue #2271: physical invalidate of generation-behind
+            // AOT slots on fall_back_jit_only exhaustion (close #2232
+            // follow-up). Slot + call counters bumped inside
+            // aura_aot_invalidate_all_stale_slots_for_eval; surfaced
+            // here for Agent dashboards to detect table bloat /
+            // sustained re-mod load.
+            {"aot-reload-fall-back-slot-invalidate-total",
+             make_int(m ? static_cast<std::int64_t>(m->aot_reload_fall_back_slot_invalidate_total
+                                                        .load(std::memory_order_relaxed))
+                        : 0)},
+            {"aot-reload-fall-back-slot-invalidate-calls-total",
+             make_int(m ? static_cast<std::int64_t>(
+                              m->aot_reload_fall_back_slot_invalidate_calls_total.load(
+                                  std::memory_order_relaxed))
+                        : 0)},
+            {"aot-reload-fall-back-slot-invalidate-wired", make_int(1)},
+            {"schema-2271", make_int(2271)},
+            {"issue-2271", make_int(2271)},
             {"reload-policy-wired", make_int(1)},
             {"issue-2165", make_int(2165)},
             // Issue #2046: joint AOT/JIT region versioning after invalidate

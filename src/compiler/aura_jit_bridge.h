@@ -486,6 +486,19 @@ std::uint64_t aura_jit_closure_stale_deopt_total(void);
 std::uint64_t aura_jit_closure_safe_fallbacks(void);
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
+// Issue #2271: physically invalidate generation-behind AOT slots
+// (close #2232 follow-up). For each slot in g_aot_func_slots whose
+// table_generation != aura_aot_func_table_epoch(), set fn_ptr empty
+// (atomic_store 0) + reset table_generation to 0. After this call:
+//   - aura_aot_probe_fn_ptr(id) returns 0 for any stale id (safety
+//     net + zero-native-hit, not just probe-reject).
+//   - aot_reload_fall_back_slot_invalidate_total bumps by slot count.
+//   - aot_reload_fall_back_slot_invalidate_calls_total bumps by 1.
+// eval_ptr is reserved for future per-eval table filtering (#2271
+// ships process-default behavior; eval-scoped table is follow-up).
+// Does NOT dlclose prior modules — refcount / handle lifetime stays
+// #2012.
+[[nodiscard]] std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_ptr);
 
 // Issue #1522: register AuraJIT* so bridge can notify fn_trackers_ batch_deopt
 // without a C++ module import. Host (CompilerService ctor) calls set;
