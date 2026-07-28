@@ -219,11 +219,16 @@ jobs:
     - name: Restore executable bit
       run: chmod +x build_asan/aura build_asan/test_ir
 
+    # Path: tests/orch/ after R9 layout (was tests/multi_session_leak_test.aura).
+    # Use --load so multi-line forms work (stdin Repl is line-oriented and
+    # breaks define/if across lines → false FAIL + missing ✅ PASS).
     - name: Multi-session leak test
+      env:
+        AURA_SANDBOX: "off"
       run: |
         set +e
         ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1:exitcode=42 \
-          timeout 120 ./build_asan/aura < tests/multi_session_leak_test.aura \
+          timeout 180 ./build_asan/aura --load tests/orch/multi_session_leak_test.aura \
           > /tmp/asan-multi-session.log 2>&1
         rc=$?
         set -e
@@ -243,6 +248,7 @@ jobs:
     - name: Run unit tests (test_ir) under ASAN
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
+        AURA_SANDBOX: "off"
       run: |
         python3 build.py --sanitizer=asan test unit
         echo "✓ unit tests clean under ASAN"
@@ -250,6 +256,7 @@ jobs:
     - name: Run emit-binary suite (bash) under ASAN
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
+        AURA_SANDBOX: "off"
       run: |
         AURA=$(pwd)/build_asan/aura bash tests/run-tests.sh
         echo "✓ emit-binary suite clean under ASAN"
