@@ -15,6 +15,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "compiler/typed_mutation_audit.h" // Issue #2277: typed_audit namespace + g_typed_mutation_audit_counters (C++20 modules do NOT transit .ixx purview includes to .cpp impl units, so include directly here).
 
 module aura.compiler.type_checker;
 import std;
@@ -1734,9 +1735,47 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     unresolved_out->push_back(constraints_[idx]);
             }
         }
-        return SolveResult::TIMEOUT;
+        // Issue #2277 AC1: under production defaults a delta TIMEOUT is
+        // escalated to a one-shot full fixpoint (Option A). If the full
+        // solve still does not reach SOLVED, the caller must treat the
+        // call as failed — never as half-solved. Sandbox/dev stays a pure
+        // pass-through (full_solve_total unchanged, TIMEOUT propagates
+        // with the worklist as #2107 unresolved export — AC3).
+        return escalate_if_production(SolveResult::TIMEOUT, unresolved_out);
     }
     return SolveResult::SOLVED;
+}
+
+// Issue #2277: production-default TIMEOUT escalation (Option A — issue body).
+// If `prior` is SolveResult::TIMEOUT AND production_defaults_active(),
+// attempt one-shot full fixpoint (this->solve(unresolved_out)); if still
+// not SOLVED the caller MUST treat the call as failed (no half-solved
+// ship). Under sandbox/dev this is a pure no-op pass-through, preserving
+// #2107's soft TIMEOUT + unresolved-export path (AC3 invariant). Bumps
+// TypedMutationAuditCounters::delta_timeout_full_solve_total on each
+// escalation attempt and delta_timeout_reject_total when full solve did
+// not reach SOLVED (+ per-CompilerMetrics mirror when metrics_ is wired).
+SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
+                                                     std::vector<Constraint>* unresolved_out) {
+    if (prior != SolveResult::TIMEOUT)
+        return prior;
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return prior;
+    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    c.delta_timeout_full_solve_total.fetch_add(1, std::memory_order_relaxed);
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)->delta_timeout_full_solve_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    SolveResult full = solve(unresolved_out);
+    if (full != SolveResult::SOLVED) {
+        c.delta_timeout_reject_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)->delta_timeout_reject_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    return full;
 }
 
 // Issue #1414: hash helpers for solved_delta_cache_ in

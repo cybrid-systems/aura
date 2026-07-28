@@ -1092,6 +1092,11 @@ struct CompilerMetrics {
     //     unify) detected a cross-delta CONFLICT
     std::atomic<std::uint64_t> delta_conflict_reverify_total{0};
     std::atomic<std::uint64_t> delta_conflict_detected_total{0};
+    // Issue #2277: production-default TIMEOUT escalation metrics
+    // (mirrored in TypedMutationAuditCounters:delta_timeout_*_total).
+    // Query handler mirrors these via per-CompilerMetrics::delta_timeout_*.
+    std::atomic<std::uint64_t> delta_timeout_full_solve_total{0};
+    std::atomic<std::uint64_t> delta_timeout_reject_total{0};
     // Issue #690: constraint typed-mutation reverify + blame completeness.
     //   - reverify_truncated_total: clean-constraint reverify scans that
     //     hit the dynamic scan cap before checking all candidates
