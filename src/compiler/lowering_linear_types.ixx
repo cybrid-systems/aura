@@ -52,4 +52,9 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
 // Issue #1339: process-wide MoveOp elision counter.
 [[nodiscard]] std::uint64_t linear_move_elided_total() noexcept;
 
+// Issue #2263: escape-summary MoveOp counters live in
+// ownership_escape_lowering_gate.h (g_linear_move_elision_blocked_escape_total,
+// g_linear_lowering_escape_summary_hit_total) — plain header so query
+// and tests share storage without module cycles.
+
 } // namespace aura::compiler

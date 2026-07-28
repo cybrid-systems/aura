@@ -13,7 +13,8 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "compiler/observability_metrics.h" // Issue #2262: g_partial_cs_* atomics
+#include "compiler/observability_metrics.h"          // Issue #2262: g_partial_cs_* atomics
+#include "compiler/ownership_escape_lowering_gate.h" // Issue #2263
 
 export module aura.compiler.type_checker;
 
@@ -679,10 +680,14 @@ export struct LinearEscapeAnalysisResult {
     std::size_t dirty_revalidate_hits = 0;
     std::size_t escape_while_borrowed = 0;
     std::size_t escape_after_move = 0;
+    // Issue #2263: binding names that must not elide MoveOp at lower.
+    std::unordered_set<std::string> escape_after_move_bindings;
+    std::unordered_set<std::string> escape_while_borrowed_bindings;
 };
 
 // Issue #1875: compact escape summary for IR consumers after
 // post-mutation OwnershipEnv validation (dirty + full paths).
+// Issue #2263: published to ownership_escape_lowering_gate for MoveOp.
 export struct OwnershipEscapeSummary {
     std::size_t dirty_bindings = 0;
     std::size_t escape_sites = 0;
@@ -690,6 +695,15 @@ export struct OwnershipEscapeSummary {
     bool full_pass_ran = false;
     bool dirty_pass_ran = false;
     LinearEscapeAnalysisResult escape;
+
+    // True when binding is known escape-after-move or escape-while-borrowed.
+    [[nodiscard]] bool blocks_move_elision(std::string_view name) const {
+        if (name.empty())
+            return false;
+        const std::string key(name);
+        return escape.escape_after_move_bindings.count(key) > 0 ||
+               escape.escape_while_borrowed_bindings.count(key) > 0;
+    }
 };
 
 // Walk dirty linear bindings and report escape-related ownership

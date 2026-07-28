@@ -24,7 +24,8 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
 #include "jit_typed_mutation_stats.h"
-#include "typed_mutation_audit.h" // Issue #1894: AC metric counters
+#include "typed_mutation_audit.h"                    // Issue #1894: AC metric counters
+#include "compiler/ownership_escape_lowering_gate.h" // Issue #2263
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
@@ -52,6 +53,7 @@ import aura.core.arena;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
+import aura.compiler.lowering_linear_types; // Issue #2263: linear_move_elided_total
 
 // Hoisted from evaluator_primitives_obs_jit_00..14.cpp
 extern "C" {
@@ -9848,6 +9850,20 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 863);
+            // Issue #2263: MoveOp elision gated by OwnershipEscapeSummary
+            insert_kv("linear-move-elision-blocked-escape-total",
+                      static_cast<std::int64_t>(g_linear_move_elision_blocked_escape_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("linear-lowering-escape-summary-hit-total",
+                      static_cast<std::int64_t>(g_linear_lowering_escape_summary_hit_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("linear-escape-move-gate-wired",
+                      static_cast<std::int64_t>(
+                          g_linear_escape_move_gate_wired.load(std::memory_order_relaxed)));
+            insert_kv("linear-move-elided-total",
+                      static_cast<std::int64_t>(linear_move_elided_total()));
+            insert_kv("schema-2263", 2263);
+            insert_kv("issue-2263", 2263);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

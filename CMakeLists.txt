@@ -2462,6 +2462,11 @@ aura_add_issue_test(test_partial_cs_single_source_2262)
 aura_issue_test_link_llvm_jit(test_partial_cs_single_source_2262)
 add_dependencies(all_test_issue_targets test_partial_cs_single_source_2262)
 
+# Issue #2263: OwnershipEscapeSummary → MoveOp elision gate at lowering.
+aura_add_issue_test(test_escape_move_elision_gate_2263)
+aura_issue_test_link_llvm_jit(test_escape_move_elision_gate_2263)
+add_dependencies(all_test_issue_targets test_escape_move_elision_gate_2263)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 
