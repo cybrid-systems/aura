@@ -1309,6 +1309,53 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
 }
 
+// Issue #2271: physically invalidate generation-behind AOT slots
+// (close #2232 follow-up). After this call, every prior non-null
+// slot probes as 0 via aura_aot_probe_fn_ptr — defense in depth on
+// top of the existing aot_stale_probe_hard_reject_total safety net.
+//
+// Semantics:
+//   - For each g_aot_func_slots[i] where fn_ptr != 0 AND
+//     table_generation != aura_aot_func_table_epoch(): set fn_ptr
+//     empty (atomic_store 0) + reset table_generation to 0.
+//   - eval_ptr reserved for future per-eval table filtering (#2271
+//     ships process-default behavior; eval-scoped is follow-up).
+//   - Does NOT dlclose prior modules — refcount / handle lifetime
+//     stays #2012.
+//   - Bumps aot_reload_fall_back_slot_invalidate_total by slot
+//     count + aot_reload_fall_back_slot_invalidate_calls_total by 1.
+extern "C" std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_ptr) {
+    (void)eval_ptr; // #2271: process-default AotState (per-eval is follow-up).
+    const auto cur_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+    std::size_t invalidated = 0;
+    for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
+        auto& slot = g_aot_func_slots[i];
+        // Only touch slots that actually had a live fn_ptr — empty
+        // slots are already generation-clean (register cleans them
+        // atomically with fn_ptr load).
+        const auto prev_fn = slot.fn_ptr.load(std::memory_order_acquire);
+        if (prev_fn == 0)
+            continue;
+        const auto slot_gen = slot.table_generation.load(std::memory_order_acquire);
+        if (slot_gen == cur_epoch)
+            continue;
+        // Physically clear: zero fn_ptr + reset generation. Order:
+        // fn_ptr first (release), then generation (release) so a
+        // concurrent probe sees null fn_ptr before noticing the
+        // generation drift — matches the safety net behavior in
+        // aura_aot_probe_fn_ptr.
+        slot.fn_ptr.store(0, std::memory_order_release);
+        slot.table_generation.store(0, std::memory_order_release);
+        ++invalidated;
+    }
+    if (auto* m = aot_metrics()) {
+        m->aot_reload_fall_back_slot_invalidate_total.fetch_add(invalidated,
+                                                                std::memory_order_relaxed);
+        m->aot_reload_fall_back_slot_invalidate_calls_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return invalidated;
+}
+
 // Issue #1905: bridge hook for live closure refresh on mutated define.
 // Called from Evaluator::flush_mutation_boundary outermost exit path
 // (Step 2 of #1905 plan). Bumps:
@@ -2352,6 +2399,14 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         if (aot_metrics())
             aot_metrics()->aot_reload_fall_back_jit_only_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+        // Issue #2271: physically invalidate generation-behind slots
+        // + joint-bump table epoch (#2046). After this, every prior
+        // non-null slot probes as 0 via aura_aot_probe_fn_ptr (zero-
+        // native-hit, not just probe-reject). Slot + call counters
+        // bumped inside the helper. eval_ptr is the affected eval
+        // (nullptr = process-default AotState).
+        (void)aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr);
+        aura_aot_bump_func_table_epoch();
     }
     // Issue #2249: Region/Staging exhausted counter (AC4).
     if (aot_metrics() && (reason == AotReloadFail::Region || reason == AotReloadFail::Staging))

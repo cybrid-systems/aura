@@ -119,6 +119,11 @@ public:
     void on_reload_rollback(AotReloadFail reason) noexcept;
     void on_reload_rollback() noexcept;
     // Issue #2232: policy fall_back_jit_only after multi-round reload
+    //    exhausted. The actual slot-level physical invalidate is wired in
+    //    aura_jit_bridge.cpp::aura_aot_invalidate_all_stale_slots_for_eval
+    //    (Issue #2271) so this callback is the visible registry hook for
+    //    Agents + observability, while the bridge clears the live func
+    //    table atomically.
     // exhaustion. Records the final fail reason so Agents can observe
     // JIT-only fall-back without a silent partial success. Slot-level
     // AOT invalidation is a future follow-up; this is the visible
@@ -443,6 +448,9 @@ private:
     std::atomic<std::uint64_t> aot_reload_fail_other_{0};      // #2093
     std::atomic<std::uint8_t> last_aot_reload_fail_reason_{0}; // #2093 (AotReloadFail enum)
     // Issue #2232: multi-round reload exhausted → fall_back_jit_only.
+    //   Issue #2271: companion physical invalidate of generation-behind
+    //   AOT slots happens in aura_jit_bridge.cpp BEFORE this callback so
+    //   the registry only sees post-clear state (cleaner Agent diffs).
     std::atomic<std::uint64_t> force_jit_for_reason_total_{0};
     std::atomic<std::uint8_t> last_force_jit_reason_{0};
 

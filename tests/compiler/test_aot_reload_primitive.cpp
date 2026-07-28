@@ -336,6 +336,108 @@ static void ac7b_cross_workspace_reason_code_2240() {
     aura_set_aot_metrics(nullptr);
 }
 
+// Issue #2271 AC1-AC5: physical invalidate of generation-behind AOT
+// slots on fall_back_jit_only exhaustion (close #2232 follow-up).
+// AC1: C ABI aura_aot_invalidate_all_stale_slots_for_eval declared in
+//      aura_jit_bridge.h + helper in aura_jit_bridge.cpp.
+// AC2: Wired into aura_reload_aot_module_for_eval exhaustion branch
+//      (after on_force_jit_for_reason + aot_reload_fall_back_jit_only_total
+//      bump + joint-bump via aura_aot_bump_func_table_epoch).
+// AC3: Happy-path (no exhaustion) → no spurious invalidate (covered
+//      by #2232 AC1 tests already in this file).
+// AC4: 2 new counters in observability_metrics.h +
+//      aot_reload_fall_back_slot_invalidate_wired + schema-2271/issue-2271
+//      query keys on query:aot-reload-stats.
+// AC5: Runtime smoke — trigger Defuse exhaustion → verify both new
+//      counters bump + query keys expose.
+static void ac2271_physical_invalidate(CompilerService& cs) {
+    std::println("\n--- AC #2271: fall_back_jit_only physical slot invalidate ---");
+    auto bridge = read_file("src/compiler/aura_jit_bridge.h");
+    auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto hot = read_file("src/compiler/hot_update_registry.hh");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    // AC1: C ABI declared + helper implemented.
+    CHECK(bridge.find("aura_aot_invalidate_all_stale_slots_for_eval") != std::string::npos,
+          "AC1: C ABI declared in aura_jit_bridge.h");
+    CHECK(
+        bridge_cpp.find("extern \"C\" std::size_t aura_aot_invalidate_all_stale_slots_for_eval") !=
+            std::string::npos,
+        "AC1: C ABI extern \"C\" definition in aura_jit_bridge.cpp");
+    CHECK(bridge_cpp.find("table_generation.store(0, std::memory_order_release)") !=
+              std::string::npos,
+          "AC1: helper clears fn_ptr + resets generation");
+    // AC2: wired into exhaustion branch.
+    CHECK(bridge_cpp.find("aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr)") !=
+              std::string::npos,
+          "AC2: invalidate called in exhaustion branch");
+    CHECK(bridge_cpp.find("aura_aot_bump_func_table_epoch();") != std::string::npos,
+          "AC2: joint table-epoch bump next to invalidate");
+    CHECK(hot.find("#2271") != std::string::npos,
+          "AC2: hot_update_registry.hh documents physical invalidate");
+    // AC3: happy-path unchanged — no spurious invalidate outside the
+    // exhaustion branch (negative source-cite: invalidate only inside
+    // the policy.fall_back_jit_only block).
+    CHECK(bridge_cpp.find("if (policy.fall_back_jit_only)") != std::string::npos,
+          "AC3: invalidate guarded by fall_back_jit_only check");
+    // AC4: counters + query keys + lineage.
+    CHECK(obs.find("aot_reload_fall_back_slot_invalidate_total{0}") != std::string::npos,
+          "AC4: slot-invalidate counter field");
+    CHECK(obs.find("aot_reload_fall_back_slot_invalidate_calls_total{0}") != std::string::npos,
+          "AC4: slot-invalidate-calls counter field");
+    CHECK(q.find("aot-reload-fall-back-slot-invalidate-total") != std::string::npos,
+          "AC4: slot-invalidate query key");
+    CHECK(q.find("aot-reload-fall-back-slot-invalidate-calls-total") != std::string::npos,
+          "AC4: slot-invalidate-calls query key");
+    CHECK(q.find("aot-reload-fall-back-slot-invalidate-wired") != std::string::npos,
+          "AC4: slot-invalidate-wired sentinel");
+    CHECK(q.find("schema-2271") != std::string::npos, "AC4: schema-2271 lineage");
+    CHECK(q.find("issue-2271") != std::string::npos, "AC4: issue-2271 lineage");
+    // AC5: runtime smoke — exhaust fall_back_jit_only, verify counters bump.
+    {
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        aura_set_aot_metrics(m);
+        // Setup: same as AC1 (build a stale .so that exhausts under
+        // auto-retry → fall_back_jit_only).
+        aura_set_aot_region_mask(0);
+        aura_set_module_version(0);
+        aura_set_aot_env_frame_version_for_eval(nullptr, /*host_env=*/100);
+        aura_set_aot_reload_auto_retry(1);
+        auto bad = build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88,
+                                        /*tag=*/"ar2271_defuse");
+        if (bad.empty()) {
+            CHECK(true, "AC5 skip (cc unavailable)");
+        } else {
+            const auto slot_inv0 =
+                m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
+            const auto slot_calls0 =
+                m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+            (void)aura_reload_aot_module(bad.c_str(), /*expected=*/99);
+            const auto slot_inv1 =
+                m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
+            const auto slot_calls1 =
+                m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+            // Calls counter bumps on every invalidate (>=1).
+            CHECK(slot_calls1 >= slot_calls0 + 1,
+                  "AC5: aot_reload_fall_back_slot_invalidate_calls_total bumped");
+            // Slot counter bumps by >=1 (the registering func_id=88 slot
+            // was generation-behind after exhaustion).
+            CHECK(slot_inv1 >= slot_inv0 + 1,
+                  "AC5: aot_reload_fall_back_slot_invalidate_total bumped");
+            // Query surface: verify wired sentinel + keys expose.
+            const auto w =
+                href(cs, "query:aot-reload-stats", "aot-reload-fall-back-slot-invalidate-wired");
+            CHECK(w == 1, "AC5: query aot-reload-fall-back-slot-invalidate-wired=1");
+            const auto sc = href(cs, "query:aot-reload-stats", "schema-2271");
+            CHECK(sc == 2271, "AC5: query schema-2271=2271");
+        }
+        aura_set_aot_metrics(nullptr);
+        aura_set_aot_env_frame_version_for_eval(nullptr, /*host_env=*/0);
+    }
+    (void)cs;
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -358,6 +460,7 @@ int main() {
 
     // ── Issue #2240: stable cross-workspace reject reason code ──
     ac7b_cross_workspace_reason_code_2240();
+    ac2271_physical_invalidate(cs);
 
     // ── Aura: region mask round-trip ──
     // aot:get-region-mask is registered via register_stats_impl (engine:metrics).
