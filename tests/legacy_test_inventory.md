@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 520 | Preferred destination suites |
-| **Total scanned** | **520** | |
+| `tests/core/test_*.cpp` | 521 | Preferred destination suites |
+| **Total scanned** | **521** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 29 | 29 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 56 | 56 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 112 | 112 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 113 | 113 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 31 | 31 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -252,6 +252,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dead_coercion_batch.cpp`
 - `tests/compiler/test_dead_coercion_elim.cpp`
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp`
+- `tests/compiler/test_dead_coercion_layered_2282.cpp`
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp`
 - `tests/compiler/test_defuse_version_closed_loop.cpp`
 - `tests/core/test_dep_graph_concurrent.cpp`
@@ -1145,13 +1146,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (112)
+### `observability` — Observability / metrics / query:*-stats (113)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (112)
+#### domain/ (113)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
@@ -1172,6 +1173,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_cpp26_contracts_hotpath.cpp` (—) [domain_suite, theme_core] — Issue #1321/#1519/#1620/#742 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dead_coercion_elim.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2066 — DeadCoercionElimination IR-layer CastOp elision test.
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_dead_coercion_elision_narrow_batch.cpp — dead_coercion_elision_narrow pair
+- `tests/compiler/test_dead_coercion_layered_2282.cpp` (#2282) [domain_suite, theme_compiler] — test_dead_coercion_layered_2282.cpp
 - `tests/compiler/test_defuse_version_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #189/#417/#419/#456 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dispatch_required_effects_2152.cpp` (#2152) [domain_suite, theme_compiler] — AC1: Prim with required_effects=Mutate, no body check → deny under
 - `tests/compiler/test_dual_path_desync_hard_fail_2116.cpp` (#2116) [domain_suite, theme_compiler] — AC1: inject desync → hard path; metric++; materialize bindings empty
