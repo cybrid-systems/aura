@@ -223,6 +223,15 @@ extern "C" void aura_bump_closure_capture_remount_fail_total(std::uint64_t n) {
     }
 }
 
+// Issue #2272: env_generation mismatch counter (PRIMARY env axis).
+// Distinct from closure_capture_remount_fail_total so dashboards can
+// distinguish "env_gen drift" from "defuse drift".
+extern "C" void aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->closure_capture_env_gen_mismatch_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2234: aura_closure_has_env_or_linear_captures /
 // aura_remount_closure_captures live in aura_jit_runtime.cpp
 // (they need file-static g_closure_* tables). Declarations remain

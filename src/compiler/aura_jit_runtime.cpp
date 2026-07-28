@@ -853,6 +853,11 @@ static std::vector<std::uint8_t> g_closure_must_deopt;
 // Issue #2129: per-closure linear_ownership aggregate (0=Untracked).
 // Stamped at alloc from host fingerprint; dual-checked on call.
 static std::vector<std::uint8_t> g_closure_linear_state;
+// Issue #2272: per-closure env_generation stamp (real env-frame
+// generation axis per #2251, NOT the defuse proxy). Stamped at alloc
+// from host env mirror + restamped on reemit restamp. aura_remount_
+// closure_captures consults this as PRIMARY (defuse remains secondary).
+static std::vector<std::uint64_t> g_closure_env_gen;
 
 // Issue #2092: process-global toggle for the legacy name-fallback
 // path in aura_remap_live_closures_after_reemit. Off by default
@@ -1030,15 +1035,46 @@ extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
 }
 
 // Issue #1508: stamp dual provenance (table epoch + defuse) at alloc.
+// Issue #2272: also stamp env_generation from the host mirror so the
+// PRIMARY env axis in aura_remount_closure_captures catches compact /
+// RegionExclusive writer drift.
 static void stamp_closure_provenance_locked(size_t cid) {
     const std::uint64_t bridge = aura_aot_func_table_epoch();
     const std::uint64_t defuse = aura_get_aot_defuse_version();
+    const std::uint64_t env_gen = aura_get_aot_live_env_frame_version();
     if (cid >= g_closure_bridge_epochs.size())
         g_closure_bridge_epochs.resize(cid + 1, 0);
     if (cid >= g_closure_defuse_versions.size())
         g_closure_defuse_versions.resize(cid + 1, 0);
+    if (cid >= g_closure_env_gen.size())
+        g_closure_env_gen.resize(cid + 1, 0);
     g_closure_bridge_epochs[cid] = bridge;
     g_closure_defuse_versions[cid] = defuse;
+    g_closure_env_gen[cid] = env_gen;
+}
+
+// Issue #2272: per-closure env_generation setter (used by restamp
+// on reemit + alloc). cid<0 / OOB is a no-op (returns 0 for OOB read).
+extern "C" void aura_closure_set_env_gen(std::int64_t closure_id, std::uint64_t gen) {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (cid >= g_closure_env_gen.size())
+        g_closure_env_gen.resize(g_closure_func_ids.size(), 0);
+    g_closure_env_gen[cid] = gen;
+}
+
+extern "C" std::uint64_t aura_closure_get_env_gen(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_env_gen.size())
+        return 0;
+    return g_closure_env_gen[cid];
 }
 
 // Issue #1709: func_ids is the canonical "slot allocated" length; envs
@@ -1252,12 +1288,19 @@ extern "C" int aura_closure_has_env_or_linear_captures(std::int64_t closure_id) 
     const bool has_env =
         cid < g_closure_defuse_versions.size() && g_closure_defuse_versions[cid] != 0;
     const bool has_linear = cid < g_closure_linear_state.size() && g_closure_linear_state[cid] != 0;
-    return (has_env || has_linear) ? 1 : 0;
+    // Issue #2272: env_gen counts as an env capture (real env-frame
+    // generation axis). Without this, newly-stamped closures skip
+    // remount entirely even when env_gen differs from live.
+    const bool has_env_gen = cid < g_closure_env_gen.size() && g_closure_env_gen[cid] != 0;
+    return (has_env || has_env_gen || has_linear) ? 1 : 0;
 }
 
-// Issue #2234: post-reemit / post-compact env_frame + linear capture
-// remount consistency gate. Returns 1 when captures match live
-// generation; 0 → caller sets MustDeopt.
+// Issue #2234 + #2272: post-reemit / post-compact env_frame + linear
+// capture remount consistency gate. #2272 promotes env_gen to the
+// PRIMARY env axis (live_env_gen vs cid_env_gen); the legacy defuse
+// proxy remains a secondary check (for transition period + #2091
+// host mirror parity). Returns 1 when captures match live; 0 → caller
+// sets MustDeopt + bumps closure_capture_env_gen_mismatch_total.
 extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
                                              std::uint8_t linear_fp) {
     if (closure_id < 0)
@@ -1268,6 +1311,15 @@ extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint6
         return 0;
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
         return 0;
+    // Issue #2272 PRIMARY axis: env_generation_ stamp vs live.
+    const auto cid_env_gen = cid < g_closure_env_gen.size() ? g_closure_env_gen[cid] : 0;
+    if (cid_env_gen != 0 && cid_env_gen != live_env_gen) {
+        // Bump mismatch counter via the C ABI (per-class atomic,
+        // not file-scope — keeps observability on the metrics path).
+        extern "C" void aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n);
+        aura_bump_closure_capture_env_gen_mismatch_total(1);
+        return 0;
+    }
     const auto cid_defuse =
         cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
     const auto cid_linear = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;

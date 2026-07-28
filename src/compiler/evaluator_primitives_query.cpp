@@ -12528,6 +12528,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(capture_remount_ok));
             insert_kv("closure-capture-remount-fail-total",
                       static_cast<std::int64_t>(capture_remount_fail));
+            // Issue #2272: env_generation PRIMARY axis counter
+            // (distinct from remount-fail-total). Pairs with
+            // remount-fail-total on dashboards to distinguish
+            // "env_gen drift" from "defuse drift".
+            insert_kv(
+                "closure-capture-env-gen-mismatch-total",
+                qev ? static_cast<std::int64_t>(qev->get_closure_capture_env_gen_mismatch_total())
+                    : 0);
+            insert_kv("closure-capture-env-gen-wired", 1);
+            insert_kv("schema-2272", 2272);
+            insert_kv("issue-2272", 2272);
             insert_kv("schema-2234", 2234);
             insert_kv("issue-2234", 2234);
             insert_kv("capture-remount-wired", 1);
