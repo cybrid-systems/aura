@@ -1551,8 +1551,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
         // Issue #2256 + #2257: trigger Moving compaction after
         // outermost Guard exit (post-publish). Honors the pin-or-
-        // remap hard contract: verify_pins_under_moving_compact()
-        // bumps pin_hits + remap_us accumulators + records compact_count.
+        // remap hard contract: compact_all_moving_pinned() (issue #2266)
+        // returns AdaptiveCompactResult with bytes_reclaimed_total +
+        // pin_contract_held (verify_pins_under_moving_compact() is now
+        // fail-closed and runs inside live_compact(Moving) per arena).
         // The compact path also bumps shape_version via
         // ShapeProfiler::on_arena_compact (per #2255/#2256); deopt-
         // storm enter (per #2257) bumps the same file-scope atomic
@@ -1561,19 +1563,48 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // enter → adaptive partial-relower threshold widens).
         // moving_compact_enabled lives in aura::ast (arena.ixx);
         // pin verify in aura::core::lifetime (lifetime_pin.ixx).
+        bool pin_contract_held = true; // #2266 — default true (no Moving = contract held)
         if (aura::ast::moving_compact_enabled()) {
-            const auto reclaimed =
-                ev_->arena_group_ ? ev_->arena_group_->adaptive_compact_all() : 0;
-            if (reclaimed > 0) {
+            const auto compact_r = ev_->arena_group_
+                                       ? ev_->arena_group_->compact_all_moving_pinned()
+                                       : aura::ast::AdaptiveCompactResult{};
+            if (compact_r.bytes_reclaimed_total > 0) {
                 if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                     mm->arena_compact_deopt_triggered_total.fetch_add(
-                        static_cast<std::uint64_t>(reclaimed), std::memory_order_relaxed);
+                        static_cast<std::uint64_t>(compact_r.bytes_reclaimed_total),
+                        std::memory_order_relaxed);
             }
-            (void)aura::core::lifetime::verify_pins_under_moving_compact();
+            pin_contract_held = compact_r.pin_contract_held;
+            if (!pin_contract_held) {
+                // Issue #2266 AC2: contract failed — bump fail counter + do not
+                // publish success metrics as if contract held. Optional env
+                // AURA_MOVING_PIN_CONTRACT=hard forces hard-fail (default
+                // hard under production security defaults per #2256 / #2266).
+                if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    mm->moving_compact_pin_contract_fail_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                const char* contract_env = std::getenv("AURA_MOVING_PIN_CONTRACT");
+                const bool hard_fail =
+                    (contract_env != nullptr && std::string(contract_env) == "hard");
+                if (hard_fail) {
+                    std::fprintf(stderr, "[#2266] Moving pin contract failed under "
+                                         "AURA_MOVING_PIN_CONTRACT=hard — aborting\n");
+                    std::abort();
+                }
+                // Soft mode: log + continue (do not publish success metrics below).
+                std::fprintf(stderr, "[#2266] Moving pin contract failed (soft mode) — "
+                                     "suppressing success metrics\n");
+            }
         }
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-            m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
-            m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2266 AC2: do NOT publish success metrics if pin contract failed.
+        // (Gated on pin_contract_held — false suppresses outermost_exit_phase5_unlock
+        // + outermost_exit_order_complete so Agents see the contract miss, not a
+        // false success.)
+        if (pin_contract_held) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
+                m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     } else {
         // Nested: depth_slot-- (outermost deferred this to phase 5).

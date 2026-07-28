@@ -380,6 +380,68 @@ int main() {
               "AC_M5: validate fails after invalidate");
     }
 
+    // ── AC_M6: #2266 — verify_pins_under_moving_compact fail-closed ──
+    {
+        std::println("\n--- AC_M6 positive: pin contract held after remap ---");
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(7, 8, 9, 10);
+        auto* p1 = arena.create<Pod16>(17, 18, 19, 20);
+        auto* p2 = arena.create<Pod16>(27, 28, 29, 30);
+        (void)p0;
+        (void)p1;
+        (void)p2;
+
+        const auto before = aura::core::lifetime::lifetime_pin_contract_fail_total();
+
+        LifetimePin pin;
+        pin.pin(p0, arena.generation(), arena.arena_id());
+        CHECK(pin.pinned(), "AC_M6: pin attached");
+
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.moved_live_objects, "AC_M6: Moving densified");
+        CHECK(r.pin_contract_held,
+              "AC_M6: LiveCompactResult.pin_contract_held = true (pin was remapped in-place)");
+        CHECK(aura::core::lifetime::lifetime_pin_contract_fail_total() == before,
+              "AC_M6: lifetime_pin_contract_fail_total not bumped (contract held)");
+
+        void* new0 = arena.resolve_object_remap(p0);
+        if (new0 != nullptr) {
+            CHECK(pin.ptr() == new0, "AC_M6: pin.ptr() follows remap");
+            CHECK(pin.validate(arena.generation(), arena.arena_id()),
+                  "AC_M6: validate succeeds after remap");
+        }
+    }
+    {
+        std::println("\n--- AC_M6 negative: pin contract fail-closed ---");
+        // Simulate the contract-fail path by directly calling the verify
+        // function with a pin whose ptr_ is in the old_addresses set (i.e.,
+        // a pin that was supposed to be remapped but wasn't). This is the
+        // fail-closed guarantee introduced in #2266 (previously the verify
+        // function always returned true — observe-only).
+        const std::uint64_t before = aura::core::lifetime::lifetime_pin_contract_fail_total();
+        // Pin a fake "old address" (a stack buffer is fine — verify walks
+        // the pin registry, not arena internals, so any pinned ptr that
+        // matches the old_addresses set will trigger the contract fail).
+        int dummy = 0;
+        void* fake_old = &dummy;
+        LifetimePin pin;
+        pin.pin(fake_old, /*gen=*/0, /*arena_id=*/0);
+        CHECK(pin.pinned(), "AC_M6: fake pin attached at fake_old");
+        // Build old_addresses set containing the pin's ptr.
+        std::unordered_set<void*> old_addrs;
+        old_addrs.insert(fake_old);
+        // Call verify directly — should return false (contract fail).
+        const bool ok = aura::core::lifetime::verify_pins_under_moving_compact(
+            /*arena_id=*/0, old_addrs);
+        CHECK(!ok, "AC_M6: verify_pins_under_moving_compact returns false when pin's ptr_ is in "
+                   "old_addresses");
+        // Counter must have bumped.
+        const std::uint64_t after = aura::core::lifetime::lifetime_pin_contract_fail_total();
+        CHECK(after == before + 1,
+              "AC_M6: lifetime_pin_contract_fail_total bumped by 1 on contract fail");
+    }
+
     // ── Source contract ──
     {
         const auto ar = read_file("src/core/arena.ixx");

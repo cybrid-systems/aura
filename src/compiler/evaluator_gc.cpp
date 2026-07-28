@@ -1079,6 +1079,9 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         // Issue #2265 Phase 3: remap honors under Moving densify.
         m->arena_live_compact_remapped_pins_total.fetch_add(lc.remapped_pins,
                                                             std::memory_order_relaxed);
+        // Issue #2266: pin contract fail-closed (verify returned false).
+        m->moving_compact_pin_contract_fail_total.fetch_add(lc.pin_contract_held ? 0 : 1,
+                                                            std::memory_order_relaxed);
     }
 
     return result;
