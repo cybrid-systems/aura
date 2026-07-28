@@ -6741,6 +6741,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       snap.reemit_deferred_for_boundary_total);
             insert_kv("reemit-boundary-policy", snap.reemit_boundary_policy);
             insert_kv("reemit-deferred-pending", snap.reemit_deferred_pending);
+            // Issue #2273: steal-path observability fields (Agents
+            // correlate "pending" with "stuck on a stolen fiber").
+            insert_kv("reemit-deferred-seen-on-steal-total",
+                      snap.reemit_deferred_seen_on_steal_total);
+            insert_kv("reemit-deferred-seen-on-steal-last-fiber-id",
+                      snap.reemit_deferred_seen_on_steal_last_fiber_id);
+            insert_kv("schema-2273", 2273);
+            insert_kv("issue-2273", 2273);
             // AC5 docs sentinels: SoftEnter=0, Defer=1, RequireReal=2
             insert_kv("reemit-handshake-policy-soft-enter", 0);
             insert_kv("reemit-handshake-policy-defer", 1);

@@ -535,6 +535,12 @@ bool HotUpdateRegistry::has_deferred_reemit() const noexcept {
     return reemit_deferred_pending_.load(std::memory_order_acquire);
 }
 
+// Issue #2273: steal-path observability bumper.
+void HotUpdateRegistry::on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) noexcept {
+    reemit_deferred_seen_on_steal_total_.fetch_add(1, std::memory_order_relaxed);
+    reemit_deferred_seen_on_steal_last_fiber_id_.store(fiber_id, std::memory_order_relaxed);
+}
+
 std::uint64_t HotUpdateRegistry::take_deferred_reemit_version() noexcept {
     if (!reemit_deferred_pending_.exchange(false, std::memory_order_acq_rel))
         return 0;
@@ -776,6 +782,11 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.reemit_boundary_policy =
         static_cast<std::int64_t>(reemit_boundary_policy_.load(std::memory_order_relaxed));
     s.reemit_deferred_pending = reemit_deferred_pending_.load(std::memory_order_relaxed) ? 1 : 0;
+    // Issue #2273: steal-path observability fields.
+    s.reemit_deferred_seen_on_steal_total = static_cast<std::int64_t>(
+        reemit_deferred_seen_on_steal_total_.load(std::memory_order_relaxed));
+    s.reemit_deferred_seen_on_steal_last_fiber_id =
+        reemit_deferred_seen_on_steal_last_fiber_id_.load(std::memory_order_relaxed);
     s.reemit_rejected_require_real_total =
         static_cast<std::int64_t>(reemit_rejected_require_real_.load(std::memory_order_relaxed));
     s.schema_2114 = 2114;
@@ -1028,4 +1039,9 @@ extern "C" int aura_hot_update_soft_reemit_boundary_active(void) {
 
 extern "C" int aura_hot_update_has_deferred_reemit(void) {
     return aura::compiler::hot_update_registry().has_deferred_reemit() ? 1 : 0;
+}
+
+// Issue #2273: C ABI bumper for steal-path observability.
+extern "C" void aura_hot_update_on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) {
+    aura::compiler::hot_update_registry().on_deferred_reemit_seen_on_steal(fiber_id);
 }

@@ -258,6 +258,11 @@ public:
     // Defer pending reemit (policy=Defer). Flushed by boundary exit.
     void defer_reemit_for_boundary(std::uint64_t defuse_version) noexcept;
     [[nodiscard]] bool has_deferred_reemit() const noexcept;
+    // Issue #2273: bump steal-path counter (lazy — callers check
+    // has_deferred_reemit() FIRST, single relaxed load on the common
+    // path). Caller passes the migrating fiber_id so dashboards can
+    // correlate "pending" with "which fiber stole it".
+    void on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) noexcept;
     // Returns pending version and clears deferred flag. 0 if none.
     [[nodiscard]] std::uint64_t take_deferred_reemit_version() noexcept;
     void reset_reemit_boundary_handshake_for_test() noexcept;
@@ -488,6 +493,15 @@ private:
     std::atomic<std::uint64_t> reemit_outside_boundary_{0};
     std::atomic<std::uint64_t> reemit_soft_boundary_entered_{0};
     std::atomic<std::uint64_t> reemit_deferred_for_boundary_{0};
+    // Issue #2273: steal-path observability — bumped by
+    // on_deferred_reemit_seen_on_steal when refresh_after_fiber_migration
+    // (or steal-complete) observes a pending deferred reemit. Lets
+    // Agents correlate "pending" with "stuck on a stolen fiber".
+    std::atomic<std::uint64_t> reemit_deferred_seen_on_steal_total_{0};
+    // Issue #2273: last fiber_id that observed deferred pending on
+    // steal. 0 = never seen (or pre-#2273). Process-global atomic so
+    // cross-worker steals are visible without per-worker aggregation.
+    std::atomic<std::int64_t> reemit_deferred_seen_on_steal_last_fiber_id_{0};
     std::atomic<std::uint64_t> reemit_rejected_require_real_{0}; // #2205
     std::atomic<bool> reemit_deferred_pending_{false};
     std::atomic<std::uint64_t> reemit_deferred_version_{0};
@@ -602,6 +616,9 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t reemit_deferred_for_boundary_total;
     std::int64_t reemit_boundary_policy;
     std::int64_t reemit_deferred_pending;
+    // Issue #2273: steal-path observability fields.
+    std::int64_t reemit_deferred_seen_on_steal_total;
+    std::int64_t reemit_deferred_seen_on_steal_last_fiber_id;
     std::int64_t reemit_rejected_require_real_total; // #2205
     std::int64_t schema_2114;
     std::int64_t issue_2114;
