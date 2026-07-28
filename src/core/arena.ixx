@@ -147,6 +147,9 @@ export struct ArenaStats {
     std::size_t live_compact_freelist_hits_total = 0;
     std::size_t live_compact_gen_restamps_total = 0;
     std::size_t live_compact_invalidated_pins_total = 0;
+    // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
+    // new address under Moving densify (preserve vs invalidate policy).
+    std::size_t live_compact_remapped_pins_total = 0;
     // Issue #2157: Force blocked by live pin / EnvFrameLifetimeGuard hold.
     std::size_t force_compact_blocked_by_pin = 0;
     std::size_t force_compact_blocked_by_envframe_guard = 0;
@@ -206,6 +209,7 @@ export struct ArenaStats {
         live_compact_freelist_hits_total += other.live_compact_freelist_hits_total;
         live_compact_gen_restamps_total += other.live_compact_gen_restamps_total;
         live_compact_invalidated_pins_total += other.live_compact_invalidated_pins_total;
+        live_compact_remapped_pins_total += other.live_compact_remapped_pins_total;
         force_compact_blocked_by_pin += other.force_compact_blocked_by_pin;
         force_compact_blocked_by_envframe_guard += other.force_compact_blocked_by_envframe_guard;
         live_compact_moving_count += other.live_compact_moving_count;
@@ -1193,14 +1197,52 @@ public:
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
 
-        // ── Generation restamp + LifetimePin invalidation ──
+        // ── Generation restamp + LifetimePin remap + invalidation ──
         // Moving always restamps when any object moved (even if freelist quiet).
+        // Issue #2265 Phase 3: remap live pins to follow densified addresses
+        // BEFORE layout-change callbacks. Remapped pins keep valid; non-remapped
+        // pins are still invalidated (existing fail-closed policy). The remap
+        // pass is Moving-only — Soft/Force paths skip it (AC3 zero-cost).
         if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {
             result.new_gen = generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
             result.invalidates_pins = true;
             ++stats_.live_compact_gen_restamps_total;
-            const std::size_t invalidated =
-                aura::core::lifetime::invalidate_all_pins_for_arena(arena_id_);
+            std::size_t remapped_pins = 0;
+            if (result.moved_live_objects && !last_object_remap_.empty()) {
+                for (const auto& [old_ptr, new_ptr] : last_object_remap_) {
+                    const auto rr = aura::core::lifetime::remap_pins_pointing_to(
+                        old_ptr, new_ptr, result.new_gen, arena_id_);
+                    remapped_pins += rr.remapped;
+                }
+                stats_.live_compact_remapped_pins_total += remapped_pins;
+                result.remapped_pins = remapped_pins;
+            }
+            // Build set of new addresses for O(1) skip during invalidate pass.
+            // Remapped pins have ptr_ == value in last_object_remap_; non-remapped
+            // pins have ptr_ NOT in last_object_remap_'s values. Invalidate the
+            // latter so dangling pointers fail closed (validate returns false).
+            std::unordered_set<void*> new_addrs;
+            if (result.moved_live_objects) {
+                new_addrs.reserve(last_object_remap_.size() * 2);
+                for (const auto& [old_ptr, new_ptr] : last_object_remap_)
+                    new_addrs.insert(new_ptr);
+            }
+            std::size_t invalidated = 0;
+            {
+                std::lock_guard<std::mutex> lock(aura::core::lifetime::pin_registry_mtx());
+                auto& reg = aura::core::lifetime::pin_registry();
+                for (auto* p : reg) {
+                    if (!p || !p->pinned())
+                        continue;
+                    if (p->arena_id() != arena_id_)
+                        continue;
+                    // Skip remapped pins (their ptr_ is in new_addrs).
+                    if (new_addrs.count(p->ptr()) > 0)
+                        continue;
+                    p->unpin_on_compact();
+                    ++invalidated;
+                }
+            }
             stats_.live_compact_invalidated_pins_total += invalidated;
             invoke_layout_change_(result.new_gen);
         }
@@ -1291,6 +1333,11 @@ public:
     }
     [[nodiscard]] std::uint64_t live_compact_invalidated_pins_total_relaxed() const noexcept {
         return static_cast<std::uint64_t>(stats_.live_compact_invalidated_pins_total);
+    }
+    // Issue #2265 Phase 3: per-arena LifetimePin remap counter (mirrors
+    // process-wide g_lifetime_pin_remap_total for per-arena observability).
+    [[nodiscard]] std::uint64_t live_compact_remapped_pins_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_remapped_pins_total);
     }
 
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that

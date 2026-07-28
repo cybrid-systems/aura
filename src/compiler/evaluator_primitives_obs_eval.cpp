@@ -1716,6 +1716,11 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("freelist-hits-total", static_cast<std::int64_t>(hits));
             insert_kv("gen-restamps-total", static_cast<std::int64_t>(restamps));
             insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
+            // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
+            // new address under Moving densify (preserved + gen-bumped vs invalidated).
+            insert_kv("remapped-pins-total",
+                      static_cast<std::int64_t>(m->arena_live_compact_remapped_pins_total.load(
+                          std::memory_order_relaxed)));
             insert_kv("schema", 2166);
             // Issue #2157: Force hard-mutex blocked counters (process-wide).
             insert_kv(
@@ -1752,6 +1757,11 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2166", aura::ast::kMovingCompactIssue);
             insert_kv("issue-2166", aura::ast::kMovingCompactIssue);
             insert_kv("moving-compact-wired", 1);
+            // Issue #2265 Phase 3: LifetimePin::remap() + remap_pins_pointing_to()
+            // wire-up at densify site. Schema additive — no break.
+            insert_kv("schema-2265", 2265);
+            insert_kv("issue-2265", 2265);
+            insert_kv("lifetime-pin-remap-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
