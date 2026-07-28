@@ -630,6 +630,14 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
     return escape;
 }
 
+// Issue #2264: force non-exhaustive ADT result on next invariant audit.
+void Evaluator::inject_adt_non_exhaustive_for_test() noexcept {
+    inject_adt_non_exhaustive_.store(1, std::memory_order_relaxed);
+}
+void Evaluator::clear_adt_non_exhaustive_inject_for_test() noexcept {
+    inject_adt_non_exhaustive_.store(0, std::memory_order_relaxed);
+}
+
 void Evaluator::inject_cross_batch_linear_escape_for_test() noexcept {
     std::unique_lock<std::shared_mutex> lock(env_frames_mtx_);
     if (env_frames_.empty())
@@ -996,15 +1004,23 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
     r.provenance_ok = post_mutation_reflect_validate();
 
-    // ── Issue #2223: ADT match exhaustiveness in workspace match sites ──
+    // ── Issue #2223 / #2264: ADT match exhaustiveness in workspace match sites ──
     // Soft post-mutate TC may filter "missing constructor" TypeErrors;
     // the invariant suite still requires exhaustive matches under Full
     // so composite / hard-gate paths cannot ship non-exhaustive ADT self-mod.
+    // Soft/Sampled without hard-gate does not force-rollback solely for ADT
+    // (finish_mutate_hard_gate / boundary only deny when hard_gate).
     r.adt_ok = true;
     r.adt_match_sites_present = false;
     r.adt_sites_checked = 0;
     r.adt_non_exhaustive = 0;
-    if (flat && pool && reg) {
+    // Issue #2264 test seam: inject non-exhaustive before real walk.
+    if (inject_adt_non_exhaustive_.exchange(0, std::memory_order_relaxed) != 0) {
+        r.adt_ok = false;
+        r.adt_match_sites_present = true;
+        r.adt_sites_checked = 1;
+        r.adt_non_exhaustive = 1;
+    } else if (flat && pool && reg) {
         try {
             const auto n = flat->size();
             for (aura::ast::NodeId id = 0; id < n; ++id) {

@@ -1667,7 +1667,8 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
         "query:arena-live-compact-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t soft_count = 0, force_count = 0, reclaimed = 0, hits = 0, restamps = 0,
                           invalidated = 0, moving_count = 0, objects_moved = 0, moving_blocked = 0,
-                          remapped_pins = 0, pin_contract_fail = 0;
+                          remapped_pins = 0, pin_contract_fail = 0, root_remap_sr = 0,
+                          root_remap_sr_fail = 0, root_remap_cc = 0, root_remap_cc_fail = 0;
             if (ev.compiler_metrics()) {
                 auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
                 soft_count = m->arena_live_compact_soft_count.load(std::memory_order_relaxed);
@@ -1686,6 +1687,12 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     m->arena_live_compact_remapped_pins_total.load(std::memory_order_relaxed);
                 pin_contract_fail =
                     m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
+                root_remap_sr = m->root_remap_stable_ref_total.load(std::memory_order_relaxed);
+                root_remap_sr_fail =
+                    m->root_remap_stable_ref_fail_total.load(std::memory_order_relaxed);
+                root_remap_cc = m->root_remap_closure_capture_total.load(std::memory_order_relaxed);
+                root_remap_cc_fail =
+                    m->root_remap_closure_capture_fail_total.load(std::memory_order_relaxed);
             }
             // Capacity 64: schema-2004 + #2157 Force + #2166 Moving densify.
             auto* ht = FlatHashTable::create(64);
@@ -1768,18 +1775,12 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("moving-compact-wired", 1);
             // Issue #2267: RootRemapPass per-arena counters (mirrors the
             // process-level g_root_remap_* atomics for query visibility).
-            insert_kv("root-remap-stable-ref-total",
-                      static_cast<std::int64_t>(
-                          m->root_remap_stable_ref_total.load(std::memory_order_relaxed)));
+            insert_kv("root-remap-stable-ref-total", static_cast<std::int64_t>(root_remap_sr));
             insert_kv("root-remap-stable-ref-fail-total",
-                      static_cast<std::int64_t>(
-                          m->root_remap_stable_ref_fail_total.load(std::memory_order_relaxed)));
-            insert_kv("root-remap-closure-capture-total",
-                      static_cast<std::int64_t>(
-                          m->root_remap_closure_capture_total.load(std::memory_order_relaxed)));
+                      static_cast<std::int64_t>(root_remap_sr_fail));
+            insert_kv("root-remap-closure-capture-total", static_cast<std::int64_t>(root_remap_cc));
             insert_kv("root-remap-closure-capture-fail-total",
-                      static_cast<std::int64_t>(m->root_remap_closure_capture_fail_total.load(
-                          std::memory_order_relaxed)));
+                      static_cast<std::int64_t>(root_remap_cc_fail));
             // Issue #2265 Phase 3: LifetimePin::remap() + remap_pins_pointing_to()
             // wire-up at densify site. Schema additive — no break.
             insert_kv("schema-2265", 2265);

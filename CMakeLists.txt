@@ -2440,6 +2440,11 @@ aura_add_issue_test(test_adt_exhaustiveness_audit_2223)
 aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit_2223)
 add_dependencies(all_test_issue_targets test_adt_exhaustiveness_audit_2223)
 
+# Issue #2264: ADT exhaustiveness hard-gate suite (refine #2223 / #2145).
+aura_add_issue_test(test_adt_hard_gate_exhaustiveness_2264)
+aura_issue_test_link_llvm_jit(test_adt_hard_gate_exhaustiveness_2264)
+add_dependencies(all_test_issue_targets test_adt_hard_gate_exhaustiveness_2264)
+
 # Issue #2258: HotPassDodCompliant + pure Wrap for incremental/dirty passes.
 aura_add_issue_test(test_hot_pass_pure_wrap_2258)
 aura_issue_test_link_llvm_jit(test_hot_pass_pure_wrap_2258)
