@@ -172,6 +172,31 @@ namespace {
         return n;
     }
 
+    // Issue #2270: PresentGuard RAII for the CellGrid / present_batch path.
+    // Pins the buffer on entry (marks FfiBorrowed by default — FFI may read,
+    // arena still owns), and releases on scope exit regardless of success
+    // or failure. Caller can opt into full ownership transfer via
+    // mark_ffi_owned() + release_ffi() (arena reclaims on release).
+    struct PresentGuard {
+        aptr::LifetimePin pin;
+        bool transferred = false;
+        explicit PresentGuard(void* p, std::uint64_t gen, std::uint64_t aid) {
+            pin.pin(p, gen, aid);
+            pin.mark_ffi_handoff(); // Issue #2270: FfiBorrowed default.
+        }
+        ~PresentGuard() {
+            // Idempotent: release_ffi() resets owner_ → Arena even if a
+            // previous mark_ffi_owned() already moved it. dtor of LifetimePin
+            // also resets to None.
+            pin.release_ffi();
+        }
+        // Move-only (LifetimePin is move-only).
+        PresentGuard(const PresentGuard&) = delete;
+        PresentGuard& operator=(const PresentGuard&) = delete;
+        PresentGuard(PresentGuard&&) = default;
+        PresentGuard& operator=(PresentGuard&&) = default;
+    };
+
     std::int64_t present_batch_impl(const FramebufferSoA& fb, DirtyRegion& dirty, int fd,
                                     std::string* out_opt,
                                     aura::core::zero_copy::FrameBumpArena* arena_opt) {

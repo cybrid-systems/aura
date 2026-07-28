@@ -70,9 +70,40 @@ struct LifetimePinStats {
     // than ptr being null. Agent-visible counter so dashboards can flag
     // long-held pins that drifted across a Force live_compact cycle.
     std::uint64_t gen_mismatch_total = 0;
+    // Issue #2270: pin-owner state machine transition counters. Appended
+    // to the existing process-level stats struct so the query surface can
+    // read all pin stats from one location (g_lifetime_pin_stats). These
+    // are process-level non-atomic counters — same trade-off as the
+    // existing fields (stats-only, monotonic, relaxed reads OK). For
+    // high-frequency FFI handoff paths, the per-class atomic in
+    // CompilerMetrics (observability_metrics.h) is the source of truth;
+    // these mirror for parity with the other LifetimePinStats fields.
+    std::uint64_t pin_owner_arena_transitions = 0;        // #2270
+    std::uint64_t pin_owner_ffi_borrowed_transitions = 0; // #2270
+    std::uint64_t pin_owner_ffi_owned_transitions = 0;    // #2270
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};
+
+// Issue #2270: explicit pin ownership state machine. The pre-#2270
+// ffi_handoff_ flag (bool) was a single signal; #2270 splits it into
+// three explicit states so callers / dashboards can distinguish:
+//   - Arena (default after pin() / reset()): arena owns the buffer,
+//     Moving + Force + reclaim are all safe.
+//   - FfiBorrowed: FFI may read, arena still owns the buffer. FFI
+//     must NOT mutate; Moving allowed (arena still owns).
+//   - FfiOwned: ownership transferred to FFI; arena must NOT reclaim
+//     until return. Moving / Force / reclaim blocked until Released.
+//   - None: transient — pin was released; no live owner. Hard-impossible
+//     to observe because reset() / dtor always transitions back to
+//     Arena (the next pin() call sets it again) — kept as a sentinel
+//     for transition validation.
+export enum class PinOwner : std::uint8_t {
+    None = 0,
+    Arena = 1,
+    FfiBorrowed = 2,
+    FfiOwned = 3,
+};
 
 class LifetimePin;
 
@@ -93,7 +124,9 @@ public:
     LifetimePin() noexcept {
         std::lock_guard<std::mutex> lock(pin_registry_mtx());
         pin_registry().push_back(this);
+        owner_ = PinOwner::Arena; // Issue #2270: default Arena on pin().
         ++g_lifetime_pin_stats.pins;
+        ++g_lifetime_pin_stats.pin_owner_arena_transitions;
     }
     ~LifetimePin() noexcept {
         std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -101,6 +134,7 @@ public:
         auto it = std::find(reg.begin(), reg.end(), this);
         if (it != reg.end())
             reg.erase(it);
+        owner_ = PinOwner::None; // Issue #2270: terminal None on dtor.
         ++g_lifetime_pin_stats.unpins;
     }
     LifetimePin(const LifetimePin&) = delete;
@@ -110,11 +144,13 @@ public:
         : ptr_(o.ptr_)
         , gen_(o.gen_)
         , arena_id_(o.arena_id_)
-        , ffi_handoff_(o.ffi_handoff_) {
+        , ffi_handoff_(o.ffi_handoff_)
+        , owner_(o.owner_) { // Issue #2270: transfer ownership state.
         o.ptr_ = nullptr;
         o.gen_ = 0;
         o.arena_id_ = 0;
         o.ffi_handoff_ = false;
+        o.owner_ = PinOwner::None; // Issue #2270: moved-from resets to None.
         std::lock_guard<std::mutex> lock(pin_registry_mtx());
         auto& reg = pin_registry();
         auto it = std::find(reg.begin(), reg.end(), &o);
@@ -129,10 +165,12 @@ public:
             gen_ = o.gen_;
             arena_id_ = o.arena_id_;
             ffi_handoff_ = o.ffi_handoff_;
+            owner_ = o.owner_; // Issue #2270: transfer ownership state.
             o.ptr_ = nullptr;
             o.gen_ = 0;
             o.arena_id_ = 0;
             o.ffi_handoff_ = false;
+            o.owner_ = PinOwner::None; // Issue #2270: reset moved-from.
             std::lock_guard<std::mutex> lock(pin_registry_mtx());
             auto& reg = pin_registry();
             auto it = std::find(reg.begin(), reg.end(), &o);
@@ -222,14 +260,50 @@ public:
     void mark_ffi_handoff() noexcept {
         ffi_handoff_ = true;
         ++g_lifetime_pin_stats.ffi_handoffs;
+        // Issue #2270: default to Borrowed (FFI may read, arena still
+        // owns). Callers wanting full transfer must call mark_ffi_owned().
+        owner_ = PinOwner::FfiBorrowed;
+        ++g_lifetime_pin_stats.pin_owner_ffi_borrowed_transitions;
+    }
+    // Issue #2270: full ownership transfer (FFI may read + mutate;
+    // arena must NOT reclaim until release_ffi() / dtor).
+    void mark_ffi_owned() noexcept {
+        ffi_handoff_ = true;
+        ++g_lifetime_pin_stats.ffi_handoffs;
+        owner_ = PinOwner::FfiOwned;
+        ++g_lifetime_pin_stats.pin_owner_ffi_owned_transitions;
+    }
+    // Issue #2270: explicit release back to Arena (FFI returned the
+    // buffer; arena reclaims ownership). Safe to call from FFI's
+    // reclaim path. Idempotent — second call is a no-op.
+    void release_ffi() noexcept {
+        ffi_handoff_ = false;
+        owner_ = PinOwner::Arena;
+        ++g_lifetime_pin_stats.pin_owner_arena_transitions;
     }
     [[nodiscard]] bool ffi_handoff() const noexcept { return ffi_handoff_; }
+    // Issue #2270: state-machine accessor (replaces ad-hoc bool checks).
+    [[nodiscard]] PinOwner owner() const noexcept { return owner_; }
+    // Issue #2270: true iff FFI holds any form of ownership
+    // (Borrowed OR Owned). Used by dashboards / observability.
+    [[nodiscard]] bool ffi_holds_ownership() const noexcept {
+        return owner_ == PinOwner::FfiBorrowed || owner_ == PinOwner::FfiOwned;
+    }
+    // Issue #2270: true iff arena must NOT reclaim (FFI has full
+    // ownership). Used by Moving / Force hard-mutex to distinguish
+    // render pins blocking Moving from Borrowed pins that don't.
+    [[nodiscard]] bool blocks_arena_reclaim() const noexcept {
+        return owner_ == PinOwner::FfiOwned;
+    }
 
 private:
     void* ptr_ = nullptr;
     std::uint64_t gen_ = 0;
     std::uint64_t arena_id_ = 0;
     bool ffi_handoff_ = false;
+    // Issue #2270: owner state machine. Default Arena (set in ctor).
+    // Updated by mark_ffi_handoff / mark_ffi_owned / release_ffi / dtor.
+    PinOwner owner_ = PinOwner::Arena;
 };
 
 // Restamp every live LifetimePin tied to `arena_id`. arena_id == 0
