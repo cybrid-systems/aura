@@ -2452,6 +2452,11 @@ aura_add_issue_test(test_boundary_solve_hard_gate_2260)
 aura_issue_test_link_llvm_jit(test_boundary_solve_hard_gate_2260)
 add_dependencies(all_test_issue_targets test_boundary_solve_hard_gate_2260)
 
+# Issue #2261: ban weak mutation-id provenance under Sampled; never stamp into IR.
+aura_add_issue_test(test_coercion_ban_weak_ir_2261)
+aura_issue_test_link_llvm_jit(test_coercion_ban_weak_ir_2261)
+add_dependencies(all_test_issue_targets test_coercion_ban_weak_ir_2261)
+
 aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
 add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
 

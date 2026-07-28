@@ -99,7 +99,8 @@ static void ac1_fast_path_no_walk() {
 
     CoercionMap map;
     // Both provenance fields set at add (true mutation id, not weak).
-    map.add(call, 0, lit, /*type_tag=*/1, /*type_id=*/1, 0, 0,
+    // Call child 0 = callee, child 1 = first arg.
+    map.add(call, /*child_index=*/1, lit, /*type_tag=*/1, /*type_id=*/1, 0, 0,
             /*predicate_cond_node=*/77, /*source_mutation_id=*/9001);
 
     const auto walks0 = g_coercion_provenance_chain_walk_total.load();
@@ -126,7 +127,7 @@ static void ac2_strict_weak_not_complete() {
     // No mutation log, no stamps.
 
     CoercionMap map;
-    map.add(call, 0, lit, 1, 1, 0, 0); // empty provenance
+    map.add(call, /*child_index=*/1, lit, 1, 1, 0, 0); // empty provenance
 
     const auto complete0 = g_coercion_provenance_complete_total.load();
     const auto miss0 = g_coercion_provenance_miss_total.load();
@@ -150,30 +151,44 @@ static void ac2_strict_weak_not_complete() {
 }
 
 static void ac3_soft_forensic_stamps() {
-    std::println("\n--- AC3: Off/Sampled still get forensic stamps ---");
+    // Issue #2261 refined #2147 AC3: Sampled no longer stamps weak/sentinel
+    // into IR (skips insert). Off soft may stamp sentinel only (no weak mid).
+    std::println("\n--- AC3: Off soft sentinel; Sampled skips incomplete insert (#2261) ---");
     reset_for_test();
-    set_strategy(AuditStrategy::Sampled);
     set_mode(SandboxMode::Off);
     clear_coercion_active_mutation_context();
 
-    StringPool pool;
-    aura::ast::NodeId lit = 0, call = 0;
-    auto flat = make_tiny_flat(pool, lit, call);
-
-    CoercionMap map;
-    map.add(call, 0, lit, 1, 1, 0, 0);
-
-    const auto sent0 = g_coercion_provenance_sentinel_total.load();
-    const auto weak0 = g_coercion_provenance_weak_id_total.load();
-    const auto walks0 = g_coercion_provenance_chain_walk_total.load();
-    (void)apply_coercion_map(flat, map);
-
-    CHECK(g_coercion_provenance_chain_walk_total.load() > walks0, "walk ran on soft incomplete");
-    CHECK(g_coercion_provenance_sentinel_total.load() > sent0 ||
-              g_coercion_provenance_weak_id_total.load() > weak0 ||
-              g_coercion_provenance_complete_total.load() > 0,
-          "forensic stamp or recovery (sentinel/weak/complete)");
-    CHECK(kCoercionProvenanceSentinelBase == 0xC0E50000u, "sentinel base retained");
+    // Sampled: incomplete → skip insert, no weak mid on tree.
+    {
+        set_strategy(AuditStrategy::Sampled);
+        StringPool pool;
+        aura::ast::NodeId lit = 0, call = 0;
+        auto flat = make_tiny_flat(pool, lit, call);
+        const auto size0 = flat.size();
+        CoercionMap map;
+        map.add(call, /*child_index=*/1, lit, 1, 1, 0, 0);
+        const auto walks0 = g_coercion_provenance_chain_walk_total.load();
+        const auto n = apply_coercion_map(flat, map);
+        CHECK(g_coercion_provenance_chain_walk_total.load() > walks0,
+              "walk ran Sampled incomplete");
+        CHECK(n == 0, "Sampled incomplete: no CoercionNode insert");
+        CHECK(flat.size() == size0, "Sampled incomplete: AST size unchanged");
+        CHECK(flat.get(call).child(1) == lit, "Sampled incomplete: arg not rewritten");
+    }
+    // Off soft: may insert with sentinel; never weak mid as provenance.
+    {
+        set_strategy(AuditStrategy::Off);
+        StringPool pool;
+        aura::ast::NodeId lit = 0, call = 0;
+        auto flat = make_tiny_flat(pool, lit, call);
+        CoercionMap map;
+        map.add(call, /*child_index=*/1, lit, 1, 1, 0, 0);
+        const auto sent0 = g_coercion_provenance_sentinel_total.load();
+        (void)apply_coercion_map(flat, map);
+        CHECK(g_coercion_provenance_sentinel_total.load() > sent0 || flat.size() > 0,
+              "Off soft: sentinel and/or apply ran");
+        CHECK(kCoercionProvenanceSentinelBase == 0xC0E50000u, "sentinel base retained");
+    }
 }
 
 static void ac4_identity_elision_skips_prov() {
@@ -189,7 +204,7 @@ static void ac4_identity_elision_skips_prov() {
     flat.set_type(lit, 42);
 
     CoercionMap map;
-    map.add(call, 0, lit, 1, /*type_id=*/42, 0, 0); // identity
+    map.add(call, /*child_index=*/1, lit, 1, /*type_id=*/42, 0, 0); // identity
 
     const auto walks0 = g_coercion_provenance_chain_walk_total.load();
     const auto fast0 = g_coercion_provenance_fast_path_total.load();

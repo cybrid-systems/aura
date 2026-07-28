@@ -6313,6 +6313,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-provenance-reject-production-wired", 1);
             insert_kv("schema-2185", 2185);
             insert_kv("issue-2185", 2185);
+            // Issue #2261: Sampled ban weak mid / no CoercionNode pretend stamps
+            {
+                const std::int64_t sampled_rej = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_provenance_sampled_reject_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("coercion-provenance-sampled-reject-total", sampled_rej);
+                insert_kv("coercion_provenance_sampled_reject_total", sampled_rej);
+                insert_kv("coercion-provenance-ban-weak-ir-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_coercion_provenance_ban_weak_ir_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-2261", 2261);
+                insert_kv("issue-2261", 2261);
+            }
             // Issue #2221: blame-complete optional hard gate on composite commit
             {
                 const std::int64_t blame_rej = static_cast<std::int64_t>(
