@@ -5,12 +5,20 @@
 #include "../src/compiler/spec_jit_controller.h"
 #include "../src/compiler/shape.h"
 #include "../src/compiler/shape_profiler.h"
+#include "../src/compiler/aura_jit.h"
 
 #include <cstdio>
 #include <iostream>
 #include <print>
 #include <string>
 using namespace aura::compiler::shape;
+
+// Issue #2276 AC4: metric accessor declared `extern "C"` in
+// src/compiler/spec_jit_controller.cpp (mirrors the
+// aura_specjit_*_total_v_read pattern used by other g_*_total
+// counters in that TU). Declared here for direct read access
+// from the test.
+extern "C" std::uint64_t aura_specjit_shape_version_miss_total_v_read(void);
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -44,6 +52,17 @@ struct MockSpecJIT {
     uint32_t last_local_count = 0;
     uint32_t last_arg_count = 0;
 };
+
+// ── Issue #2276 AC5: file-scope ScalarFn stubs (function ptr targets) ─
+// Defined at file scope (not in block) because block-scope function
+// definitions are not allowed in standard C++. Used as the fn_ptr
+// argument to SpecJITController::install_specialization.
+static int64_t spec_jit_2276_stub_fn_a(int64_t*, uint32_t) {
+    return 1;
+}
+static int64_t spec_jit_2276_stub_fn_b(int64_t*, uint32_t) {
+    return 2;
+}
 
 int main() {
     // ═══════════════════════════════════════════════════════════
@@ -269,11 +288,68 @@ int main() {
     // Section 4: SpecJITController — cache management
     // ═══════════════════════════════════════════════════════════
 
-    // ── 4a: has_specialization on empty controller ──────────
+    // ── 4a-4h: Issue #2276 cache miss on shape_version bump ─
+    // AC1: install → storm bump → get/has miss
+    // AC2: re-install after storm → get/has hit (fresh version)
+    // AC4: specjit_shape_version_miss_total counter bumped on miss
+    // Source-cite (src/compiler/spec_jit_controller.cpp):
+    //   has_specialization        — version mismatch → return false + bump counter
+    //   get_specialized          — version mismatch → return nullptr + bump counter
+    //   install_specialization   — stamps entry.version = current_global_shape_version()
+    //   bump_shape_version_on_storm_enter (src/compiler/shape_profiler.h:66)
     {
-        // Can't instantiate without AuraJIT, but the logic is simple.
-        // We test via the header-only codegen utility functions.
-        TEST("SpecJITController not tested (needs AuraJIT)", true);
+        aura::jit::AuraJIT jit;
+        SpecJITController ctl(jit);
+        constexpr aura::jit::ScalarFn kFnA = &spec_jit_2276_stub_fn_a;
+        constexpr aura::jit::ScalarFn kFnB = &spec_jit_2276_stub_fn_b;
+        constexpr ShapeID kShape = SHAPE_INT;
+
+        // 4a: empty ctl — both lookups miss
+        TEST("4a: empty ctl has_specialization=false", !ctl.has_specialization("add", kShape));
+        TEST("4a: empty ctl get_specialized=nullptr",
+             ctl.get_specialized("add", kShape) == nullptr);
+
+        // 4b: install → hit (entry stamped with current version)
+        ctl.install_specialization("add", kShape, kFnA);
+        TEST("4b: post-install has=true", ctl.has_specialization("add", kShape));
+        TEST("4b: post-install get=kFnA", ctl.get_specialized("add", kShape) == kFnA);
+
+        // 4c: bump_shape_version_on_storm_enter → miss (AC1 + AC4)
+        const auto miss_pre_storm = aura_specjit_shape_version_miss_total_v_read();
+        bump_shape_version_on_storm_enter();
+        TEST("4c: post-storm has=false (AC1)", !ctl.has_specialization("add", kShape));
+        TEST("4c: post-storm get=nullptr (AC1)", ctl.get_specialized("add", kShape) == nullptr);
+        const auto miss_post_storm = aura_specjit_shape_version_miss_total_v_read();
+        TEST("4c: miss counter bumped (>=miss_pre_storm+2)", miss_post_storm >= miss_pre_storm + 2);
+
+        // 4d: re-install with current version → hit (AC2)
+        ctl.install_specialization("add", kShape, kFnB);
+        TEST("4d: re-install has=true (AC2)", ctl.has_specialization("add", kShape));
+        TEST("4d: re-install get=kFnB (AC2)", ctl.get_specialized("add", kShape) == kFnB);
+
+        // 4e: 2nd storm bump → miss again
+        bump_shape_version_on_storm_enter();
+        TEST("4e: 2nd storm has=false", !ctl.has_specialization("add", kShape));
+        TEST("4e: 2nd storm get=nullptr", ctl.get_specialized("add", kShape) == nullptr);
+
+        // 4f: null fn rejected (Issue #986 invariant — no null placeholders)
+        ctl.install_specialization("null_fn", kShape, nullptr);
+        TEST("4f: null install = no entry created",
+             !ctl.has_specialization("null_fn", kShape) &&
+                 ctl.get_specialized("null_fn", kShape) == nullptr);
+
+        // 4g: distinct fn_names don't cross-contaminate
+        ctl.install_specialization("fn1", kShape, kFnA);
+        ctl.install_specialization("fn2", kShape, kFnB);
+        TEST("4g: fn1=fnA, fn2=fnB isolated", ctl.get_specialized("fn1", kShape) == kFnA &&
+                                                  ctl.get_specialized("fn2", kShape) == kFnB);
+
+        // 4h: invalidate clears entries regardless of stamp
+        ctl.install_specialization("clear_me", kShape, kFnA);
+        ctl.invalidate("clear_me");
+        TEST("4h: invalidate clears has + get",
+             !ctl.has_specialization("clear_me", kShape) &&
+                 ctl.get_specialized("clear_me", kShape) == nullptr);
     }
 
     // ═══════════════════════════════════════════════════════════

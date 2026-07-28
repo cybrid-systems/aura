@@ -3,6 +3,7 @@
 // Phase 2: L1 type specialization (#53 Shape-based Speculative JIT)
 //
 #include "spec_jit_controller.h"
+#include "shape_profiler.h" // Issue #2276: current_global_shape_version()
 #include "value_tags.h"
 #include <algorithm>
 #include <atomic>
@@ -109,6 +110,19 @@ static std::atomic<std::uint64_t> g_specjit_conservative_due_to_shape_storm_tota
 
 extern "C" std::uint64_t aura_specjit_conservative_due_to_shape_storm_total_v_read(void) {
     return g_specjit_conservative_due_to_shape_storm_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2276 AC4: count version mismatches in get_specialized /
+// has_specialization (entry stamped with shape_version != current
+// process-global shape_version = miss). Bumped on every cache miss
+// caused by a shape-version bump (deopt-storm enter per #2257).
+// Read by the Agent dashboard via aura_specjit_shape_version_miss_total_v_read
+// below; the C-linkage wrapper mirrors the pattern used by other
+// g_*_total counters in this file.
+static std::atomic<std::uint64_t> g_specjit_shape_version_miss_total{0};
+
+extern "C" std::uint64_t aura_specjit_shape_version_miss_total_v_read(void) {
+    return g_specjit_shape_version_miss_total.load(std::memory_order_relaxed);
 }
 
 SpecJITController::SpecJITController(aura::jit::AuraJIT& jit)
@@ -220,9 +234,20 @@ bool SpecJITController::has_specialization(const std::string& fn_name, ShapeID s
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
         return false;
+    // Issue #2276: stale entry whose stamped version != current
+    // process-global shape_version = cache miss. Bumps the
+    // specjit_shape_version_miss_total counter so the Agent
+    // dashboard can observe how often the storm-driven version
+    // invalidation path triggers.
+    const auto cur_ver = current_global_shape_version();
     for (auto& e : it->second) {
-        if (e.shape == shape && e.fn_ptr != nullptr)
+        if (e.shape == shape && e.fn_ptr != nullptr) {
+            if (e.version != cur_ver) {
+                g_specjit_shape_version_miss_total.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
             return true;
+        }
     }
     return false;
 }
@@ -232,11 +257,45 @@ aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_nam
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
         return nullptr;
+    // Issue #2276: version check — see has_specialization above
+    // for the rationale. Returns nullptr on version mismatch so the
+    // caller falls back to the generic (non-specialized) path.
+    const auto cur_ver = current_global_shape_version();
     for (auto& e : it->second) {
-        if (e.shape == shape && e.fn_ptr != nullptr)
+        if (e.shape == shape && e.fn_ptr != nullptr) {
+            if (e.version != cur_ver) {
+                g_specjit_shape_version_miss_total.fetch_add(1, std::memory_order_relaxed);
+                return nullptr;
+            }
             return e.fn_ptr;
+        }
     }
     return nullptr;
+}
+
+// Issue #2276: install a successful specialization. Stamps the
+// entry with current_global_shape_version() so subsequent get / has
+// can detect stale entries after a deopt-storm-driven version bump
+// (bump_shape_version_on_storm_enter). Update-existing path refreshes
+// the version stamp + last_used; new path creates a SpecEntry with
+// the current version. Null fn_ptr is rejected (Issue #986 invariant:
+// no null placeholders kept in specializations_).
+void SpecJITController::install_specialization(const std::string& fn_name, ShapeID shape,
+                                               aura::jit::ScalarFn fn_ptr) {
+    if (!fn_ptr)
+        return;
+    auto& entries = specializations_[fn_name];
+    const auto cur_ver = current_global_shape_version();
+    for (auto& e : entries) {
+        if (e.shape == shape) {
+            e.fn_ptr = fn_ptr;
+            e.version = static_cast<std::uint32_t>(cur_ver);
+            e.last_used = ++access_clock_;
+            return;
+        }
+    }
+    entries.push_back(
+        SpecEntry{shape, fn_ptr, static_cast<std::uint32_t>(cur_ver), ++access_clock_});
 }
 
 void SpecJITController::invalidate(const std::string& fn_name) {
