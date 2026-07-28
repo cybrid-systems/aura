@@ -2340,6 +2340,20 @@ public:
                 ir_value_cell_bindings_[std::string(name)] = ci;
                 return *const_val;
             }
+            // Issue #2213 follow-up (lyapunov-fact demo 2026-07-28):
+            // Quote body is literal data — IR lowering + try_const_eval may
+            // not handle it cleanly, but tree-walker's eval_flat returns the
+            // quoted value natively. Skip the gate below (which is for bodies
+            // that genuinely need tree-walker fallback) and go straight to
+            // tree-walker for env persistence. Without this, `(define X
+            // (quote ...))` hits the value-define HardError and Aura REPL
+            // reports to stderr (runner reads stdout only) → 30s timeout.
+            if (body_node.tag == aura::ast::NodeTag::Quote) {
+                auto result =
+                    evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+                user_bindings_.insert(std::string(name));
+                return result;
+            }
             // Issue #2213: value-define tree-walker fallback is also gated.
             // Body needed walker or IR bind failed — under Forbidden hard-fail;
             // under ForceSoa skip silent walker (no silent SoA abandonment).
@@ -7082,6 +7096,16 @@ public:
                 if (needs_fallback || id == aura::ast::NULL_NODE || id >= f.size())
                     return;
                 auto nv = f.get(id);
+                // Issue #2213 follow-up (lyapunov-fact demo 2026-07-28):
+                // `(define X (quote ...))` body is literal data, never
+                // evaluated at runtime. Walking into Quote's children
+                // and analyzing free variables (e.g. `fact` inside the
+                // quoted define form) spuriously trips needs_fallback,
+                // which under strict pipeline (Forbidden) returns
+                // HardError and hangs Aura REPL on the first form. Skip
+                // the entire Quote subtree — its contents are not code.
+                if (nv.tag == aura::ast::NodeTag::Quote)
+                    return;
                 if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
                     auto callee_id = nv.child(0);
                     if (callee_id < f.size()) {
