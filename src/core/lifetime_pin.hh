@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "layout_stamp.hh" // Issue #2170: LayoutStamp validate overload
@@ -215,6 +216,110 @@ inline std::size_t live_pin_count() noexcept {
         if (p && p->pinned())
             ++n;
     return n;
+}
+
+// Issue #2280: epoch-scoped linear pin contract (header form for
+// non-module TUs). Live linear objects (linear_rt::Owned|Borrowed|
+// MutBorrowed) must be registered as pin roots at LinearWrap
+// materialization time and unregistered at Move consume / Drop time.
+// verify_linear_pins_under_moving_compact checks every live linear
+// root against old_addresses and bumps linear_pin_miss_total on miss.
+//
+// Mirrors the inline definitions in lifetime_pin.ixx (module form).
+// The `inline` keyword on the variables + functions allows multiple
+// definitions across translation units (header consumers + module
+// consumers) without ODR violations.
+inline std::atomic<std::uint64_t> g_linear_pin_total{0};
+inline std::atomic<std::uint64_t> g_linear_unpin_total{0};
+inline std::atomic<std::uint64_t> g_linear_pin_miss_total{0};
+
+inline std::unordered_set<void*>& linear_roots() {
+    static std::unordered_set<void*> s;
+    return s;
+}
+inline std::mutex& linear_roots_mtx() {
+    static std::mutex m;
+    return m;
+}
+
+struct LinearRootSnapshot {
+    std::uint64_t pin_total = 0;
+    std::uint64_t unpin_total = 0;
+    std::uint64_t pin_miss_total = 0;
+    std::size_t live_count = 0;
+};
+
+inline void pin_linear_root(void* obj) noexcept {
+    if (!obj)
+        return;
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    linear_roots().insert(obj);
+    g_linear_pin_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void unpin_linear_root(void* obj) noexcept {
+    if (!obj)
+        return;
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    linear_roots().erase(obj);
+    g_linear_unpin_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline LinearRootSnapshot linear_root_snapshot() noexcept {
+    LinearRootSnapshot s;
+    s.pin_total = g_linear_pin_total.load(std::memory_order_relaxed);
+    s.unpin_total = g_linear_unpin_total.load(std::memory_order_relaxed);
+    s.pin_miss_total = g_linear_pin_miss_total.load(std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    s.live_count = linear_roots().size();
+    return s;
+}
+
+inline void reset_linear_roots_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    linear_roots().clear();
+    g_linear_pin_total.store(0, std::memory_order_relaxed);
+    g_linear_unpin_total.store(0, std::memory_order_relaxed);
+    g_linear_pin_miss_total.store(0, std::memory_order_relaxed);
+}
+
+inline bool
+verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_addresses) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    auto& roots = linear_roots();
+    if (roots.empty())
+        return true; // AC3: no linear pins → no extra atomics
+    for (auto* root : roots) {
+        if (old_addresses.count(root) > 0) {
+            g_linear_pin_miss_total.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+    return true;
+}
+
+// Issue #2280: wrapper — checks both arena pins AND linear roots under
+// Moving compact. Returns false if either check fails. Mirrors the
+// inline definition in lifetime_pin.ixx (module form).
+inline bool
+verify_pins_under_moving_compact(std::uint64_t arena_id,
+                                 const std::unordered_set<void*>& old_addresses) noexcept {
+    // Arena check first.
+    {
+        std::lock_guard<std::mutex> lock(pin_registry_mtx());
+        auto& reg = pin_registry();
+        for (auto* p : reg) {
+            if (!p || !p->pinned())
+                continue;
+            if (arena_id != 0 && p->arena_id() != arena_id)
+                continue;
+            if (old_addresses.count(p->ptr()) > 0) {
+                return false; // arena pin miss
+            }
+        }
+    }
+    // Linear check second (separate mutex; no deadlock risk).
+    return verify_linear_pins_under_moving_compact(old_addresses);
 }
 
 } // namespace aura::core::lifetime
