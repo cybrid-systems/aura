@@ -41,9 +41,11 @@ inline std::array<std::atomic<std::uint64_t>, 16> opt_pass_runs_by_kind{};
 
 // Issue #2025: IR dead-coercion pipeline counters (AST elision lives in
 // coercion_map.ixx as g_dead_coercion_ast_elided_total). Combined on
-// query:optimization-passes-stats as dead-coercion-layered-total.
+// query:dead-coercion-layered-stats as dead-coercion-layered-total
+// (Issue #2282 AC1: one Agent-facing key = sum of three components).
 // Issue #2106: layered story = AST elision + IR CastOp elision + dirty-cone
 // early-out (dead_coercion_dirty_cone_skips) + cascade_skip_subtree_total.
+// Keep inside opt_registry namespace (already exported at line 17). No `export` needed.
 inline std::atomic<std::uint64_t> dead_coercion_ir_elided_total{0};
 inline std::atomic<std::uint64_t> dead_coercion_ir_narrow_evidence_hits{0};
 inline std::atomic<std::uint64_t> dead_coercion_pipeline_runs_total{0};

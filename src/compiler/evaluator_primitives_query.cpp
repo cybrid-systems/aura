@@ -36,6 +36,7 @@ import aura.compiler.coercion_map; // Issue #2024: provenance completeness count
 import aura.compiler.ir;
 import aura.compiler.macro_expansion; // Issue #2020: hygiene atomics for Agent diagnostics
 import aura.compiler.pass_manager;
+import aura.compiler.optimization_passes; // Issue #2282: dead_coercion_ir_elided_total + dirty_cone atomics
 import aura.compiler.dirty_propagation; // Issue #2191: type cone mirror metrics
 import aura.compiler.service;
 import aura.compiler.type_checker; // Issue #2262: partial_cs_import_* module atomics
@@ -6785,6 +6786,74 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("zerooverhead-wins", static_cast<std::int64_t>(win));
             insert_kv("dead-coercion-total", static_cast<std::int64_t>(total));
             insert_kv("dead-coercion-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2282: query:dead-coercion-layered-stats. Hash view of the
+    // 3 layered dead-coercion elision sources (AST identity + IR CastOp DCE
+    // + dirty-cone early-out), so Agents can compute "this mutate removed
+    // N Casts" without joining multiple schemas:
+    //   - dead-coercion-layered-total: ast_elided + ir_elided + dirty_cone_skips
+    //   - ast-elided: g_dead_coercion_ast_elided_total (#1425 / #2025)
+    //   - ir-elided: dead_coercion_ir_elided_total (#2025 / #2066)
+    //   - dirty-cone-skips: dead_coercion_dirty_cone_skips (#2106)
+    //   - ir-narrow-evidence-hits: dead_coercion_ir_narrow_evidence_hits
+    //   - pipeline-runs-total: dead_coercion_pipeline_runs_total
+    // Components stay individually queryable for additive schema lineage (AC4).
+    ObservabilityPrims::register_stats_impl(
+        "query:dead-coercion-layered-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t ast_elided =
+                ::aura::compiler::g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed);
+            const std::uint64_t ir_elided =
+                ::aura::compiler::opt_registry::dead_coercion_ir_elided_total.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t dirty_cone_skips =
+                ::aura::compiler::opt_registry::dead_coercion_dirty_cone_skips.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t narrow_evidence =
+                ::aura::compiler::opt_registry::dead_coercion_ir_narrow_evidence_hits.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t pipeline_runs =
+                ::aura::compiler::opt_registry::dead_coercion_pipeline_runs_total.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t layered_total = ast_elided + ir_elided + dirty_cone_skips;
+            insert_kv("dead-coercion-layered-total", static_cast<std::int64_t>(layered_total));
+            insert_kv("ast-elided", static_cast<std::int64_t>(ast_elided));
+            insert_kv("ir-elided", static_cast<std::int64_t>(ir_elided));
+            insert_kv("dirty-cone-skips", static_cast<std::int64_t>(dirty_cone_skips));
+            insert_kv("ir-narrow-evidence-hits", static_cast<std::int64_t>(narrow_evidence));
+            insert_kv("pipeline-runs-total", static_cast<std::int64_t>(pipeline_runs));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

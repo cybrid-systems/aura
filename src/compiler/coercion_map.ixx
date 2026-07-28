@@ -105,6 +105,8 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_sampled_reject_to
 export inline std::atomic<std::uint32_t> g_coercion_provenance_ban_weak_ir_wired{1};
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
+// Issue #2282: combined on query:dead-coercion-layered-stats as the
+// `ast-elided` component (see optimization_passes.ixx for ir-elided + dirty-cone-skips).
 export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_total{0};
 
 // Issue #2102 / #2185: provenance-miss policy atomics + helpers live in
