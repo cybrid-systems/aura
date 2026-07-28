@@ -213,6 +213,17 @@ static std::uint32_t lower_flat_expr(
         }
         case NodeTag::Variable: {
             auto name = pool.resolve(v.sym_id);
+            // Issue #2292: self-recursion must emit MakeClosure(self_func_id)
+            // BEFORE outer Define's Cell binding is consulted. Otherwise the
+            // body captures a cell that is empty in a fresh IRInterpreter
+            // (call-site re-lower of (fact N)), and Call returns 0.
+            // Note: self_func_id may be 0 — use self_func_active, not id != 0.
+            if (state.self_func_active && !state.self_name.empty() &&
+                std::string(name) == state.self_name) {
+                auto slot = state.alloc_local();
+                state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
+                return slot;
+            }
             // Look up in scope chain
             for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
                 auto found = it->find(std::string(name));
@@ -358,10 +369,8 @@ static std::uint32_t lower_flat_expr(
                     return slot;
                 }
             }
-            // Self-reference: function being defined calls itself by name.
-            // When the lambda has been pre-allocated in the module, emit
-            // MakeClosure with the correct func_id instead of ConstI64 0.
-            if (state.self_func_id != 0 && std::string(name) == state.self_name) {
+            // Self-reference fallback (primary path is at Variable entry — #2292).
+            if (state.self_func_active && std::string(name) == state.self_name) {
                 auto slot = state.alloc_local();
                 state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
                 return slot;
@@ -1099,9 +1108,13 @@ static std::uint32_t lower_flat_expr(
                 FreeVarWalker{flat, pool, free_set, bound}.walk(v.child(0));
             }
 
-            // Filter to only vars actually in scope
+            // Filter to only vars actually in scope.
+            // Issue #2292: exclude self_name — self-recursion uses
+            // MakeClosure(self_func_id), not a free-var cell capture.
             std::vector<std::string> free_vars;
             for (auto& fv : free_set) {
+                if (!state.self_name.empty() && fv == state.self_name)
+                    continue;
                 bool in_scope = false;
                 for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
                     if (it->find(fv) != it->end()) {
@@ -1144,6 +1157,23 @@ static std::uint32_t lower_flat_expr(
             auto saved_env_slot = state.env_slot;
             auto saved_fv_map = std::move(state.free_var_map);
             auto saved_self_func_id = state.self_func_id;
+            auto saved_self_func_active = state.self_func_active;
+
+            // Issue #2292: pre-allocate function id so self-references inside
+            // the body can emit MakeClosure(self_func_id) before add_function.
+            // Only claim when this is the define's own lambda (self_name set and
+            // no outer self_func active yet). Nested lambdas keep the outer id.
+            // self_func_id may be 0 — track with self_func_active.
+            std::optional<std::uint32_t> preclaimed_fid;
+            if (!state.self_name.empty() && !state.self_func_active) {
+                IRFunction placeholder;
+                placeholder.name = "__self_placeholder__";
+                placeholder.entry_block = 0;
+                placeholder.blocks.push_back({0, {}, {}});
+                preclaimed_fid = state.module.add_function(std::move(placeholder));
+                state.self_func_id = *preclaimed_fid;
+                state.self_func_active = true;
+            }
 
             state.cur_func = &func;
             state.cur_block = 0;
@@ -1203,13 +1233,24 @@ static std::uint32_t lower_flat_expr(
             state.env_slot = saved_env_slot;
             state.free_var_map = std::move(saved_fv_map);
             state.self_func_id = saved_self_func_id;
+            state.self_func_active = saved_self_func_active;
 
             func.free_vars = free_vars;
             if (!state.current_flat)
                 std::println("DEBUG: current_flat NULL at lambda bridge data");
             if (!state.current_pool)
                 std::println("DEBUG: current_pool NULL at lambda bridge data");
-            auto fid = state.module.add_function(std::move(func));
+            std::uint32_t fid;
+            if (preclaimed_fid) {
+                // Issue #2292: replace the self-placeholder in place.
+                func.id = *preclaimed_fid;
+                state.module.functions[*preclaimed_fid] = std::move(func);
+                fid = *preclaimed_fid;
+                if (state.module.closure_bridge.size() <= fid)
+                    state.module.closure_bridge.resize(fid + 1);
+            } else {
+                fid = state.module.add_function(std::move(func));
+            }
             // Issue #246: propagate the SyntaxMarker from the
             // source Lambda node into the IRFunction. The
             // inliner consults this to apply macro-hygiene

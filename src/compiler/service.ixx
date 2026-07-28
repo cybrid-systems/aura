@@ -2559,7 +2559,28 @@ public:
                     }
                 }
             }
+            // Issue #2292: self-recursive MakeClosure (func_id == enclosing
+            // function) is correct in the IR interpreter but currently
+            // infinite-loops in the LLVM JIT. Force IR for those modules.
+            // AURA_FORCE_IR=1 also skips JIT for diagnosis.
             if (!skip_jit) {
+                for (const auto& jf : ir_mod.functions) {
+                    for (const auto& jb : jf.blocks) {
+                        for (const auto& ji : jb.instructions) {
+                            if (ji.opcode == aura::ir::IROpcode::MakeClosure &&
+                                ji.operands.size() > 1 && ji.operands[1] == jf.id) {
+                                skip_jit = true;
+                                break;
+                            }
+                        }
+                        if (skip_jit)
+                            break;
+                    }
+                    if (skip_jit)
+                        break;
+                }
+            }
+            if (!skip_jit && !std::getenv("AURA_FORCE_IR")) {
                 auto jit_result = try_jit_execute(ir_mod, &last_escape_maps_);
                 if (jit_result) {
                     record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
