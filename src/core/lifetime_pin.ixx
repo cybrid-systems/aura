@@ -430,6 +430,13 @@ inline std::atomic<std::uint64_t> g_moving_compact_bytes_reclaimed_total{0};
 // can see the atomic without an ODR-use-before-declaration error
 // (#2268 fixup).
 
+// Issue #2280: forward declaration — verify_pins_under_moving_compact
+// (defined below) calls verify_linear_pins_under_moving_compact
+// (defined further below). Declare the latter here so the wrapper
+// resolves the name without an ODR-use-before-declaration error.
+inline bool
+verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_addresses) noexcept;
+
 // Hard-contract verification: under Moving compact, every live pin
 // must be honored (return true if honored, false if compact must yield).
 // Cost model: O(pin_count). The AC3 zero-cost guarantee holds when
@@ -443,41 +450,176 @@ inline std::atomic<std::uint64_t> g_moving_compact_bytes_reclaimed_total{0};
 // densify site in arena.ixx) passes the set of `last_object_remap_` keys
 // (the OLD addresses that were just densified) so the check is exact:
 // if any pin still points at an old address, the remap missed it.
+//
+// Issue #2280: this function also verifies the *linear* pin contract
+// (verify_linear_pins_under_moving_compact below). Live linear roots
+// (linear_rt::Owned|Borrowed|MutBorrowed) must be either remapped to
+// a new address or removed from the linear_roots registry before the
+// Moving compact is allowed to proceed. The combined result is
+// returned: if either check fails, the compact must yield.
 inline bool
 verify_pins_under_moving_compact(std::uint64_t arena_id,
                                  const std::unordered_set<void*>& old_addresses) noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
+    // Arena check first (cheaper, most linear roots are not under
+    // Moving compact — typical Agent mutate keeps linear in a
+    // dedicated arena not the densify set).
+    const bool arena_ok = [&]() noexcept {
+        std::lock_guard<std::mutex> lock(pin_registry_mtx());
+        auto& reg = pin_registry();
+        const auto t0 = std::chrono::steady_clock::now();
+        std::uint64_t honored = 0;
+        for (auto* p : reg) {
+            if (!p || !p->pinned())
+                continue;
+            if (arena_id != 0 && p->arena_id() != arena_id)
+                continue;
+            // Contract: pin's ptr_ must NOT be in old_addresses (it was either
+            // remapped to a new address, or invalidated). If pin still points
+            // at an old address, the remap walk missed it → fail closed.
+            if (old_addresses.count(p->ptr()) > 0) {
+                g_moving_compact_pin_contract_fail_total.fetch_add(1, std::memory_order_relaxed);
+                g_moving_compact_pin_hits_total.fetch_add(honored, std::memory_order_relaxed);
+                g_moving_compact_remap_us_total.fetch_add(
+                    static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count()),
+                    std::memory_order_relaxed);
+                g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            ++honored;
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        g_moving_compact_pin_hits_total.fetch_add(honored, std::memory_order_relaxed);
+        g_moving_compact_remap_us_total.fetch_add(static_cast<std::uint64_t>(us),
+                                                  std::memory_order_relaxed);
+        g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }();
+    if (!arena_ok)
+        return false;
+    // Issue #2280: linear pin check (separate mutex; no deadlock risk
+    // because we already released pin_registry_mtx()).
+    return verify_linear_pins_under_moving_compact(old_addresses);
+}
+
+// Issue #2280: epoch-scoped linear pin contract. Live linear objects
+// (linear_rt::Owned|Borrowed|MutBorrowed) must be registered as pin
+// roots at LinearWrap materialization time and unregistered at Move
+// consume / Drop time. verify_pins_under_moving_compact extends to
+// check that every live linear root is either remapped to a new
+// address (in the densify's old_addresses → must have a new mapping)
+// or no longer present in the linear_roots registry (Drop/Move
+// consume ran). If a live linear root is still in old_addresses after
+// the remap walk, the compact missed it → bump linear_pin_miss_total
+// + fail closed (the arena caller's verify_pins_under_moving_compact
+// will yield the compact).
+//
+// Design: a simple registry (unordered_set<void*>) tracks live linear
+// roots. pin_linear_root / unpin_linear_root are inline free functions
+// callable from the JIT lowering (aura_jit.cpp OpLinearWrap/OpMoveOp/
+// OpDropOp) and the env frame binding paths (evaluator_env.cpp).
+// verify_linear_pins_under_moving_compact iterates the registry and
+// checks each root.
+//
+// AC3 (zero extra atomics when no linear pins): the linear_roots
+// registry is a no-op when empty (early-return below), and the
+// linear pin check is O(linear_root_count), not O(all pins).
+inline std::atomic<std::uint64_t> g_linear_pin_total{0};
+inline std::atomic<std::uint64_t> g_linear_unpin_total{0};
+inline std::atomic<std::uint64_t> g_linear_pin_miss_total{0};
+
+// Registry of live linear roots (addresses that must survive Moving
+// compact). Function-static so it's process-wide and accessible from
+// inline free functions. Mutex-guarded for thread safety.
+inline std::unordered_set<void*>& linear_roots() {
+    static std::unordered_set<void*> s;
+    return s;
+}
+inline std::mutex& linear_roots_mtx() {
+    static std::mutex m;
+    return m;
+}
+
+// Pin a live linear root. Adds to the registry + bumps counter.
+// Called from OpLinearWrap runtime execution (aura_jit.cpp) and from
+// env frame binding paths when a slot transitions to
+// linear_rt::Owned|Borrowed|MutBorrowed.
+inline void pin_linear_root(void* obj) noexcept {
+    if (!obj)
+        return;
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    linear_roots().insert(obj);
+    g_linear_pin_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Unpin a live linear root (on Move consume / Drop). Removes from
+// the registry + bumps counter.
+inline void unpin_linear_root(void* obj) noexcept {
+    if (!obj)
+        return;
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    linear_roots().erase(obj);
+    g_linear_unpin_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Snapshot for tests + observability.
+struct LinearRootSnapshot {
+    std::uint64_t pin_total = 0;
+    std::uint64_t unpin_total = 0;
+    std::uint64_t pin_miss_total = 0;
+    std::size_t live_count = 0;
+};
+inline LinearRootSnapshot linear_root_snapshot() noexcept {
+    LinearRootSnapshot s;
+    s.pin_total = g_linear_pin_total.load(std::memory_order_relaxed);
+    s.unpin_total = g_linear_unpin_total.load(std::memory_order_relaxed);
+    s.pin_miss_total = g_linear_pin_miss_total.load(std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    s.live_count = linear_roots().size();
+    return s;
+}
+
+// Reset for tests only. Production leaves linear_roots alone (the
+// live linear bindings are the source of truth).
+inline void reset_linear_roots_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    linear_roots().clear();
+    g_linear_pin_total.store(0, std::memory_order_relaxed);
+    g_linear_unpin_total.store(0, std::memory_order_relaxed);
+    g_linear_pin_miss_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2280: linear pin check under Moving compact. Returns true if
+// every live linear root is either remapped (not in old_addresses) or
+// already removed from the registry. Bumps g_linear_pin_miss_total on
+// miss. AC3: empty linear_roots() → no atomic ops, O(1) early-return.
+inline bool
+verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_addresses) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    auto& roots = linear_roots();
+    if (roots.empty())
+        return true; // AC3: no linear pins → no extra atomics
     const auto t0 = std::chrono::steady_clock::now();
     std::uint64_t honored = 0;
-    for (auto* p : reg) {
-        if (!p || !p->pinned())
-            continue;
-        if (arena_id != 0 && p->arena_id() != arena_id)
-            continue;
-        // Contract: pin's ptr_ must NOT be in old_addresses (it was either
-        // remapped to a new address, or invalidated). If pin still points
-        // at an old address, the remap walk missed it → fail closed.
-        if (old_addresses.count(p->ptr()) > 0) {
-            g_moving_compact_pin_contract_fail_total.fetch_add(1, std::memory_order_relaxed);
-            // Still record the time + honored count for observability.
-            g_moving_compact_pin_hits_total.fetch_add(honored, std::memory_order_relaxed);
-            g_moving_compact_remap_us_total.fetch_add(
-                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now() - t0)
-                                               .count()),
-                std::memory_order_relaxed);
-            g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+    for (auto* root : roots) {
+        // Contract: live linear root must NOT be in old_addresses (it
+        // was either remapped to a new address, or the binding was
+        // dropped/moved). If a live linear root is still in
+        // old_addresses, the Moving densify missed it → fail closed.
+        if (old_addresses.count(root) > 0) {
+            g_linear_pin_miss_total.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
         ++honored;
     }
-    const auto t1 = std::chrono::steady_clock::now();
-    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    g_moving_compact_pin_hits_total.fetch_add(honored, std::memory_order_relaxed);
-    g_moving_compact_remap_us_total.fetch_add(static_cast<std::uint64_t>(us),
-                                              std::memory_order_relaxed);
-    g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
+    // No atomics bumped on the happy path (AC3: honored count is
+    // for tests, not a per-run counter — the existing arena check
+    // already records g_moving_compact_count_total via the wrapper).
+    (void)t0;
+    (void)honored;
     return true;
 }
 

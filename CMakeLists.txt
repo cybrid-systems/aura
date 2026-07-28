@@ -2267,6 +2267,13 @@ aura_add_issue_test(test_linear_escape_commit_hardblock_2108)
 aura_issue_test_link_llvm_jit(test_linear_escape_commit_hardblock_2108)
 add_dependencies(all_test_issue_targets test_linear_escape_commit_hardblock_2108)
 
+# Issue #2280: epoch-scoped linear pin contract (linear alloc pins;
+# Drop/Move consume unpins; verify_pins_under_moving_compact extends
+# to check live linear roots; metric linear_pin_miss_total).
+aura_add_issue_test(test_linear_pin_moving_compact_2280)
+aura_issue_test_link_llvm_jit(test_linear_pin_moving_compact_2280)
+add_dependencies(all_test_issue_targets test_linear_pin_moving_compact_2280)
+
 # Issue #2109: instruction-level impact + partial re-emit.
 aura_add_issue_test(test_instruction_level_impact_partial_2109)
 aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial_2109)
