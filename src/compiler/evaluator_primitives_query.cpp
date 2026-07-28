@@ -6182,6 +6182,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("mutate-type-gate-wired", 1);
                 insert_kv("schema-2219", 2219);
                 insert_kv("issue-2219", 2219);
+                // Issue #2279: production lock state + soft-override opt-out
+                // + alarm counter. Mirrors mutate_type_gate::Snapshot fields
+                // (production_locked, soft_override_allowed,
+                // soft_in_production_alarm_total) and the
+                // CompilerMetrics::mutate_type_gate_soft_in_production_alarm_total
+                // per-instance mirror. Schema-2279 additive.
+                insert_kv("mutate-type-gate-production-locked", mtg.production_locked);
+                insert_kv("mutate_type_gate_production_locked", mtg.production_locked);
+                insert_kv("mutate-type-gate-soft-override-allowed", mtg.soft_override_allowed);
+                insert_kv("mutate_type_gate_soft_override_allowed", mtg.soft_override_allowed);
+                insert_kv("mutate-type-gate-soft-in-production-alarm-total",
+                          static_cast<std::int64_t>(mtg.soft_in_production_alarm_total));
+                const std::int64_t alarm_metrics_mirror =
+                    m ? static_cast<std::int64_t>(
+                            m->mutate_type_gate_soft_in_production_alarm_total.load(
+                                std::memory_order_relaxed))
+                      : 0;
+                insert_kv("mutate_type_gate_soft_in_production_alarm_total", alarm_metrics_mirror);
+                insert_kv("mutate-type-gate-lock-wired", 1);
+                insert_kv("schema-2279", 2279);
+                insert_kv("issue-2279", 2279);
             }
             // Issue #2191: type affected cone ↔ dirty::DepGraph cascade unify.
             {
