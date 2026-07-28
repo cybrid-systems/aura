@@ -1082,6 +1082,18 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         // Issue #2266: pin contract fail-closed (verify returned false).
         m->moving_compact_pin_contract_fail_total.fetch_add(lc.pin_contract_held ? 0 : 1,
                                                             std::memory_order_relaxed);
+        // Issue #2267: RootRemapPass per-arena counters (mirrors ArenaStats).
+        m->root_remap_stable_ref_total.fetch_add(
+            static_cast<std::uint64_t>(lc.root_remap_stable_ref_total), std::memory_order_relaxed);
+        m->root_remap_stable_ref_fail_total.fetch_add(
+            static_cast<std::uint64_t>(lc.root_remap_stable_ref_fail_total),
+            std::memory_order_relaxed);
+        m->root_remap_closure_capture_total.fetch_add(
+            static_cast<std::uint64_t>(lc.root_remap_closure_capture_total),
+            std::memory_order_relaxed);
+        m->root_remap_closure_capture_fail_total.fetch_add(
+            static_cast<std::uint64_t>(lc.root_remap_closure_capture_fail_total),
+            std::memory_order_relaxed);
     }
 
     return result;

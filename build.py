@@ -1928,6 +1928,44 @@ def cmd_moving_pin_contract_fail_closed_coverage():
     return 0
 
 
+def cmd_root_remap_pass_coverage():
+    """Issue #2267: RootRemapPass minimal slice — StableNodeRef + Closure
+    captures after Moving densify.
+
+    Validates the 5-AC contract from issue body:
+      AC1: Pass surface — RootRemapCallback typedef in src/core/arena.ixx
+           with set_root_remap_callback + take_root_remap_callback methods
+           + invoke_root_remap_callback caller in live_compact Moving branch.
+      AC2: StableNodeRef remap — happy path: pin + Moving →
+           root_remap_stable_ref_total increments; root_remap_stable_ref_fail_total
+           stays at 0.
+      AC3: Closure capture remap — same as AC2 for root_remap_closure_capture_total
+           + root_remap_closure_capture_fail_total.
+      AC4: Observability — root_remap_stable_ref_total / _fail_total and
+           root_remap_closure_capture_total / _fail_total CompilerMetrics
+           atomics + mirror at the 3 sync points (evaluator_gc.cpp + both
+           evaluator.ixx sites) + query:compact-stats extension with new keys
+           + schema-2267 / issue-2267 / root-remap-pass-wired lineage.
+      AC5: Tests — tests/compiler/test_root_remap_pass_2267.cpp covers
+           AC1 source gate + AC5 positive (per-call counters bump via
+           thread_local CompilerMetrics).
+    """
+    print(f"{B}=== RootRemapPass minimal slice coverage (#2267) ==={N}")
+    script = ROOT / "scripts" / "check_root_remap_pass_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("RootRemapPass minimal slice coverage contract rows failed")
+        return 1
+    ok("RootRemapPass minimal slice coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2280,6 +2318,7 @@ def cmd_gate():
         or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_arena_moving_compaction_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
+        or cmd_root_remap_pass_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
