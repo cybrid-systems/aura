@@ -315,13 +315,6 @@ inline std::uint64_t lifetime_pin_remap_miss_total() noexcept {
     return g_lifetime_pin_stats.remap_misses;
 }
 
-// Issue #2266: # Moving compact runs where verify_pins_under_moving_compact
-// fail-closed returned false. Mirrors the process-level atomic for tests +
-// observability snapshots.
-inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
-    return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
-}
-
 // Total live pins (for tests + observability).
 inline std::size_t live_pin_count() noexcept {
     std::lock_guard<std::mutex> lock(pin_registry_mtx());
@@ -349,6 +342,13 @@ inline std::atomic<std::uint64_t> g_moving_compact_bytes_reclaimed_total{0};
 // when it returns false. Production gates on this counter to detect silent
 // pin-or-remap contract violations under sustained AI multi-round self-mod.
 inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
+
+// Issue #2266: # Moving compact runs where verify_pins_under_moving_compact
+// fail-closed returned false. Mirrors the process-level atomic for tests +
+// observability snapshots. Declared after the atomics above.
+inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
+    return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
+}
 
 // Hard-contract verification: under Moving compact, every live pin
 // must be honored (return true if honored, false if compact must yield).

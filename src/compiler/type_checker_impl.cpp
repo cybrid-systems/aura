@@ -35,6 +35,7 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 // pointer, but the fetch_add on the atomic needs the
 // full type.
 #include "observability_metrics.h"
+#include "ownership_escape_lowering_gate.h" // Issue #2263: set_escape_move_elision_gate
 // Issue #1872: shared LRU victim helper for predicate_memo_ overflow.
 #include "bounded_lru.h"
 // Issue #1877: last hygiene provenance stamp for truncated blame frames.
@@ -7000,10 +7001,13 @@ bool analyze_linear_escape_for_dirty(const FlatAST& flat, const StringPool& pool
         notes_out.push_back(
             {id, std::string(kind) + ": " + name + " is " + tmp.state_name(st), kind});
         all_pass = false;
-        if (std::string_view(kind) == "escape-while-borrowed")
+        if (std::string_view(kind) == "escape-while-borrowed") {
             ++out.escape_while_borrowed;
-        else if (std::string_view(kind) == "escape-after-move")
+            out.escape_while_borrowed_bindings.insert(name); // Issue #2263
+        } else if (std::string_view(kind) == "escape-after-move") {
             ++out.escape_after_move;
+            out.escape_after_move_bindings.insert(name); // Issue #2263
+        }
         ++out.escape_sites;
     };
 
@@ -8116,6 +8120,21 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
         esc_summary.dirty_pass_ran = true;
         esc_summary.dirty_bindings = linear_bindings.size();
         const auto notes_before = notes_out.size();
+        // Issue #2263: capture escape analysis into summary for Move elision
+        // (validate_ownership also runs escape analysis; we re-run to fill
+        // binding sets without changing validate_ownership's signature).
+        {
+            LinearEscapeAnalysisResult esc;
+            std::vector<OwnershipNote> esc_notes;
+            (void)analyze_linear_escape_for_dirty(flat, pool, flat.root, linear_bindings, esc_notes,
+                                                  esc);
+            esc_summary.escape = std::move(esc);
+            esc_summary.escape_sites = esc_summary.escape.escape_sites;
+            // Merge escape notes only when ownership walk would not; the
+            // full validate_ownership below appends the same kinds — skip
+            // duplicate notes from this capture pass.
+            (void)esc_notes;
+        }
         const bool ownership_pass =
             OwnershipEnv::validate_ownership(flat, pool, flat.root, linear_bindings, notes_out);
         std::vector<OwnershipNote> ownership_notes;
@@ -8168,7 +8187,31 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
         m->linear_post_mutation_validation_hit_rate.store(checks > 0 ? (hits * 100u) / checks : 0,
                                                           std::memory_order_relaxed);
     }
-    (void)esc_summary;
+    // Issue #2263: publish escape summary for lowering MoveOp elision gate.
+    // Active when a dirty or full linear pass ran (null summary = legacy).
+    if (ran_linear_validation || esc_summary.dirty_pass_ran || esc_summary.full_pass_ran) {
+        std::unordered_set<std::string> blocked;
+        for (const auto& n : esc_summary.escape.escape_after_move_bindings)
+            blocked.insert(n);
+        for (const auto& n : esc_summary.escape.escape_while_borrowed_bindings)
+            blocked.insert(n);
+        // Also harvest kind-tagged ownership notes from this check.
+        for (const auto& note : notes_out) {
+            if (note.kind == "escape-after-move" || note.kind == "escape-while-borrowed") {
+                // message: "escape-*: <name> is <state>"
+                auto pos = note.message.find(": ");
+                if (pos != std::string::npos) {
+                    auto rest = note.message.substr(pos + 2);
+                    auto sp = rest.find(' ');
+                    if (sp != std::string::npos)
+                        blocked.insert(rest.substr(0, sp));
+                    else if (!rest.empty())
+                        blocked.insert(rest);
+                }
+            }
+        }
+        set_escape_move_elision_gate(true, blocked);
+    }
 
     // Issue #1615: dirty Coercion nodes → post-coercion linear reval +
     // narrow_evidence accounting (closes linear/coercion blind spot).

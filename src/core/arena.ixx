@@ -546,6 +546,8 @@ export struct LiveCompactResult {
     bool force_blocked_by_envframe_guard = false;
     // Issue #2166: Moving preconditions failed or feature flag off.
     bool moving_blocked_precondition = false;
+    // Issue #2265: # pins remapped during Moving densify (0 on Soft/Force).
+    std::size_t remapped_pins = 0;
     // Issue #2266: #2266 AC2 — Moving pin-or-remap contract verification result.
     // true = all live pins for arena_id_ were honored (remapped or invalidated);
     // false = at least one pin still points at an old densified address (the
@@ -558,6 +560,9 @@ export struct LiveCompactResult {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
                !force_blocked_by_pin && !force_blocked_by_envframe_guard &&
                !moving_blocked_precondition && objects_moved == 0 && pin_contract_held;
+    }
+    [[nodiscard]] bool force_blocked() const noexcept {
+        return force_blocked_by_pin || force_blocked_by_envframe_guard;
     }
 };
 
@@ -580,15 +585,6 @@ export struct AdaptiveCompactResult {
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed_total == 0 && pin_contract_held;
     }
-};
-
-[[nodiscard]] bool empty() const noexcept {
-    return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated && !force_blocked_by_pin &&
-           !force_blocked_by_envframe_guard && !moving_blocked_precondition && objects_moved == 0;
-}
-[[nodiscard]] bool force_blocked() const noexcept {
-    return force_blocked_by_pin || force_blocked_by_envframe_guard;
-}
 };
 
 // Issue #2089: optional layout-change callback hook. Fires on each
@@ -2456,6 +2452,7 @@ private:
         return total;
     }
 
+public:
     // Issue #2266: per-arena Moving densify + pin-contract verification.
     // Returns aggregated result across all module arenas so the driver
     // (evaluator_mutation_boundary.cpp Phase 5) can check pin_contract_held

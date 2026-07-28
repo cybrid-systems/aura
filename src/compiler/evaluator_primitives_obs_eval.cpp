@@ -1666,7 +1666,8 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:arena-live-compact-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t soft_count = 0, force_count = 0, reclaimed = 0, hits = 0, restamps = 0,
-                          invalidated = 0, moving_count = 0, objects_moved = 0, moving_blocked = 0;
+                          invalidated = 0, moving_count = 0, objects_moved = 0, moving_blocked = 0,
+                          remapped_pins = 0, pin_contract_fail = 0;
             if (ev.compiler_metrics()) {
                 auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
                 soft_count = m->arena_live_compact_soft_count.load(std::memory_order_relaxed);
@@ -1681,6 +1682,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 objects_moved = m->arena_objects_moved_total.load(std::memory_order_relaxed);
                 moving_blocked =
                     m->arena_moving_blocked_precondition_total.load(std::memory_order_relaxed);
+                remapped_pins =
+                    m->arena_live_compact_remapped_pins_total.load(std::memory_order_relaxed);
+                pin_contract_fail =
+                    m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
             }
             // Capacity 64: schema-2004 + #2157 Force + #2166 Moving densify.
             auto* ht = FlatHashTable::create(64);
@@ -1718,16 +1723,13 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
             // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
             // new address under Moving densify (preserved + gen-bumped vs invalidated).
-            insert_kv("remapped-pins-total",
-                      static_cast<std::int64_t>(m->arena_live_compact_remapped_pins_total.load(
-                          std::memory_order_relaxed)));
+            insert_kv("remapped-pins-total", static_cast<std::int64_t>(remapped_pins));
             // Issue #2266: # Moving compact runs where the pin-or-remap contract
             // failed (a live pin still pointed at an old densified address after
             // the remap walk). Surfaced for Agent dashboards to flag false-safety
             // regressions under sustained AI multi-round self-mod + Moving.
             insert_kv("moving-compact-pin-contract-fail-total",
-                      static_cast<std::int64_t>(m->moving_compact_pin_contract_fail_total.load(
-                          std::memory_order_relaxed)));
+                      static_cast<std::int64_t>(pin_contract_fail));
             insert_kv("schema", 2166);
             // Issue #2157: Force hard-mutex blocked counters (process-wide).
             insert_kv(

@@ -20,6 +20,9 @@ module;
 
 #include <atomic>
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include "compiler/ownership_escape_lowering_gate.h" // Issue #2263
 
 module aura.compiler.lowering_linear_types;
 import std;
@@ -57,9 +60,40 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
             // state==1). Stamping Moved=4 was wrong — that is the post
             // state after a successful move, and caused m4-linear-move
             // to always fail the state-machine gate.
-            // #1339: do not elide MoveOp based on narrow_evidence (type
-            // narrowing ≠ escape analysis). Keep MoveOp for ownership IR.
+            //
+            // Issue #2263: when OwnershipEscapeSummary is published
+            // (post_mutation_invariant_check), consult the escape gate:
+            //   - binding in escape-after-move / escape-while-borrowed
+            //     → do NOT elide; emit MoveOp; bump blocked counter
+            //   - clean owned binding under active summary → elide
+            //   - no summary (null) → legacy always emit MoveOp
+            // #1339 still forbids elision based on narrow_evidence alone.
             auto inner = lower_inner(v.child(0));
+            std::string binding_name;
+            if (!v.children.empty()) {
+                const auto cid = v.child(0);
+                if (cid != aura::ast::NULL_NODE && cid < flat.size()) {
+                    auto cv = flat.get(cid);
+                    if (cv.tag == aura::ast::NodeTag::Variable &&
+                        cv.sym_id != aura::ast::INVALID_SYM) {
+                        binding_name = std::string(pool.resolve(cv.sym_id));
+                    }
+                }
+            }
+            if (escape_move_elision_gate_active()) {
+                g_linear_lowering_escape_summary_hit_total.fetch_add(1, std::memory_order_relaxed);
+                if (!binding_name.empty() && escape_blocks_move_elision(binding_name)) {
+                    g_linear_move_elision_blocked_escape_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    // Fall through: emit MoveOp (escape-aware block).
+                } else if (!binding_name.empty()) {
+                    // Clean dirty binding under active summary → elide.
+                    g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
+                    ++state.linear_move_elided;
+                    return inner;
+                }
+                // Non-variable under active gate: conservative emit.
+            }
             auto slot = state.alloc_local();
             const auto narrow = state.current_narrowing_evidence;
             state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 1, 0, narrow, slot, inner);
