@@ -6121,6 +6121,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("delta-timeout-hard-gate-wired", 1);
             insert_kv("schema-2277", 2277);
             insert_kv("issue-2277", 2277);
+            // Issue #2278: epoch-scoped OccurrenceGoal table metrics.
+            //   - occurrence-goal-replay-total: live goals replayed into
+            //     solve_delta priority on each solve_delta_occurrence
+            //     call (AC1 — survives clear_blame_context).
+            //   - occurrence-goal-stale-drop-total: goals dropped by
+            //     prune_occurrence_goals on cache_epoch_ advance (AC2).
+            const std::int64_t occurrence_goal_replay =
+                m ? static_cast<std::int64_t>(
+                        m->occurrence_goal_replay_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t occurrence_goal_stale_drop =
+                m ? static_cast<std::int64_t>(
+                        m->occurrence_goal_stale_drop_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("occurrence-goal-replay-total", occurrence_goal_replay);
+            insert_kv("occurrence_goal_replay_total", occurrence_goal_replay);
+            insert_kv("occurrence-goal-stale-drop-total", occurrence_goal_stale_drop);
+            insert_kv("occurrence_goal_stale_drop_total", occurrence_goal_stale_drop);
+            insert_kv("schema-2278", 2278);
+            insert_kv("issue-2278", 2278);
             // Issue #2220: long-lived TypeChecker on Evaluator mutate path.
             {
                 const std::int64_t tc_create =

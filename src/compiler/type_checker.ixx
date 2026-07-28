@@ -145,6 +145,25 @@ export enum class SolveResult : std::uint8_t {
     TIMEOUT = 2,
 };
 
+// Issue #2278: epoch-scoped OccurrenceGoal table — replaces
+// retained_*-only cross-delta stitch with durable replayable
+// records that survive `clear_blame_context` (AC1: live goals
+// still feed solve_delta priority on the next delta after a
+// clear). `epoch` tags the MutationBoundary / TypeChecker cache
+// epoch at the time the narrowing applied; goals with
+// `epoch < current_cache_epoch` are pruned by `prune_occurrence_goals`
+// (no cross-workspace-reset leak — AC2). `refined` is the concrete
+// type the var was narrowed to at apply time, so the replay
+// path can re-validate the narrowing without re-deriving from
+// Union-Find bindings (which may have moved under further unify).
+export struct OccurrenceGoal {
+    aura::core::TypeId var{};
+    aura::core::TypeId refined{};
+    std::uint32_t predicate_cond_node = 0;
+    std::uint64_t source_mutation_id = 0;
+    std::uint64_t epoch = 0;
+};
+
 export class ConstraintSystem {
     aura::core::TypeRegistry& reg_;
     std::vector<Constraint> constraints_;
@@ -197,6 +216,11 @@ export class ConstraintSystem {
     // Issue #745: Union-Find roots from Occurrence-narrowed vars —
     // boosted in effective_reverify_limit + priority scan order.
     std::unordered_set<std::uint32_t> occurrence_priority_roots_;
+    // Issue #2278: epoch-scoped live table of narrowing goals.
+    // Survives `clear_blame_context` (unlike occurrence_priority_roots_
+    // which is delta-time only). `note_occurrence_goal` appends on
+    // narrowing apply; `prune_occurrence_goals` drops `epoch < min`.
+    std::vector<OccurrenceGoal> occurrence_goals_;
     // Issue #1617: Union-Find roots tied to Let-Polymorphism
     // generalization / instantiation sites. Priority between
     // occurrence (4) and plain touched (1); targeted reverify
@@ -212,6 +236,12 @@ export class ConstraintSystem {
     // collect_clean_for_root check this set to skip already-processed
     // roots (bump solve_delta_epoch_skip_total for observability).
     std::unordered_set<std::uint32_t> processed_roots_this_epoch_;
+    // Issue #2278: current cache epoch (0 = untagged sentinel — pruning
+    // never touches goals stamped at epoch 0, preserving backward
+    // compat for tests / paths that don't thread an explicit epoch).
+    // InferenceEngine::set_cache_epoch advances this and prunes
+    // occurrence_goals_ with `epoch > 0 && epoch < new_epoch`.
+    std::uint64_t current_epoch_ = 0;
 
 public:
     // Issue #2065: clear the processed-roots set so roots from prior
@@ -481,6 +511,34 @@ public:
     [[nodiscard]] std::size_t occurrence_priority_roots_size() const noexcept {
         return occurrence_priority_roots_.size();
     }
+    // Issue #2278: epoch-scoped OccurrenceGoal table API.
+    //   - note_occurrence_goal: append (var, refined, pred, mut, epoch)
+    //     on narrowing apply. `epoch` is the CS-internal current_epoch_
+    //     (set by InferenceEngine::set_cache_epoch). Goals with
+    //     epoch == 0 are treated as untagged sentinels and never
+    //     pruned (preserves backward compat for tests that don't
+    //     thread an explicit epoch).
+    //   - prune_occurrence_goals: drop goals with `epoch > 0 &&
+    //     epoch < min_epoch` (stale after cache advance). Bumps
+    //     occurrence_goal_stale_drop_total metric. Returns the
+    //     count of dropped goals.
+    //   - occurrence_goals_size / occurrence_goals_for_test: read-only
+    //     accessors for tests + Agent diagnostics.
+    //   - set_current_epoch / current_epoch: InferenceEngine pushes
+    //     the new cache_epoch_ here on advance; mark_touched_on_delta
+    //     reads it when stamping occurrence_goals_.
+    void note_occurrence_goal(aura::core::TypeId var, aura::core::TypeId refined,
+                              std::uint32_t predicate_cond_node, std::uint64_t source_mutation_id,
+                              std::uint64_t epoch) noexcept;
+    [[nodiscard]] std::size_t prune_occurrence_goals(std::uint64_t min_epoch) noexcept;
+    [[nodiscard]] std::size_t occurrence_goals_size() const noexcept {
+        return occurrence_goals_.size();
+    }
+    [[nodiscard]] const std::vector<OccurrenceGoal>& occurrence_goals_for_test() const noexcept {
+        return occurrence_goals_;
+    }
+    void set_current_epoch(std::uint64_t epoch) noexcept { current_epoch_ = epoch; }
+    [[nodiscard]] std::uint64_t current_epoch() const noexcept { return current_epoch_; }
     // Issue #1871: size of pending full-solve root backlog.
     [[nodiscard]] std::size_t pending_full_solve_roots_size() const noexcept {
         return pending_full_solve_roots_.size();
@@ -830,8 +888,18 @@ public:
         // Issue #2065: when the epoch advances, clear ConstraintSystem's
         // processed_roots_this_epoch_ so roots from prior epochs can be
         // re-collected by collect_for_root (InferenceEngine owns cs_).
-        if (epoch != cache_epoch_)
+        if (epoch != cache_epoch_) {
             cs_.clear_processed_roots_this_epoch();
+            // Issue #2278: tag the new epoch + prune stale
+            // OccurrenceGoal entries (epoch > 0 && epoch < new_epoch).
+            // Untagged goals (epoch == 0) survive — they predate the
+            // epoch-aware path or were recorded from a CS context
+            // that never set current_epoch_. Replay path in
+            // solve_delta_occurrence pulls live goals back into the
+            // priority worklist (AC1: survives clear_blame_context).
+            cs_.set_current_epoch(epoch);
+            cs_.prune_occurrence_goals(epoch);
+        }
         cache_epoch_ = epoch;
     }
     // Issue #258: forward the metrics pointer to the

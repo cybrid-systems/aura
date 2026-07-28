@@ -277,8 +277,49 @@ void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow)
     if (!occurrence_narrow)
         return;
     const auto rep = union_find_rep_index(var);
-    if (rep != UINT32_MAX)
+    if (rep != UINT32_MAX) {
         occurrence_priority_roots_.insert(rep);
+        // Issue #2278: append OccurrenceGoal record (epoch-tagged
+        // for AC2 prune; survives clear_blame_context for AC1).
+        // `refined` reads binding_[rep] at apply time — the concrete
+        // type the var was narrowed to, replayable across deltas
+        // even when Union-Find moves under further unify. pred/mut
+        // come from the active context (active_predicate_cond_node_
+        // may be 0 after a clear_blame_context — that's fine, the
+        // goal still anchors var + refined for the replay path).
+        note_occurrence_goal(var, binding_[rep], active_predicate_cond_node_, active_mutation_id_,
+                             current_epoch_);
+    }
+}
+
+void ConstraintSystem::note_occurrence_goal(TypeId var, TypeId refined, std::uint32_t pred,
+                                            std::uint64_t mut, std::uint64_t epoch) noexcept {
+    OccurrenceGoal g;
+    g.var = var;
+    g.refined = refined;
+    g.predicate_cond_node = pred;
+    g.source_mutation_id = mut;
+    g.epoch = epoch;
+    occurrence_goals_.push_back(g);
+}
+
+std::size_t ConstraintSystem::prune_occurrence_goals(std::uint64_t min_epoch) noexcept {
+    if (min_epoch == 0)
+        return 0; // sentinel: don't touch untagged goals (preserves
+                  // backward compat for tests / paths that never
+                  // set current_epoch_).
+    const auto before = occurrence_goals_.size();
+    occurrence_goals_.erase(std::remove_if(occurrence_goals_.begin(), occurrence_goals_.end(),
+                                           [min_epoch](const OccurrenceGoal& g) {
+                                               return g.epoch > 0 && g.epoch < min_epoch;
+                                           }),
+                            occurrence_goals_.end());
+    const auto dropped = before - occurrence_goals_.size();
+    if (dropped > 0 && metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->occurrence_goal_stale_drop_total.fetch_add(dropped, std::memory_order_relaxed);
+    }
+    return dropped;
 }
 
 void ConstraintSystem::mark_let_poly_dirty(TypeId var) {
@@ -1890,6 +1931,13 @@ void ConstraintSystem::import_delta_marks_from(ConstraintSystem& src) {
         let_poly_dirty_roots_.insert(r);
     for (auto r : src.touched_roots_)
         touched_roots_.insert(r);
+    // Issue #2278: replay live OccurrenceGoal records so the
+    // post-partial CS still feeds solve_delta_occurrence priority
+    // after clear_blame_context (AC1). Goals with epoch == 0 are
+    // untagged sentinels and survive prune; tagged goals (epoch > 0)
+    // survive only while current_epoch_ hasn't advanced past them.
+    for (const auto& g : src.occurrence_goals_)
+        occurrence_goals_.push_back(g);
 } // ═══════════════════════════════════════════════════════════
 // InferenceEngine
 // ═══════════════════════════════════════════════════════════
@@ -8587,6 +8635,29 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     for (const auto t : occurrence_vars) {
         if (t.valid())
             cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+    }
+    // Issue #2278 (AC1): replay live OccurrenceGoal records into the
+    // priority worklist so goals recorded on a prior delta still feed
+    // solve_delta after clear_blame_context. Goals with
+    // `epoch > 0 && epoch < cs.current_epoch()` are stale (pruned
+    // defensively even if prune_occurrence_goals wasn't called yet);
+    // untagged goals (epoch == 0) are always live. We call
+    // mark_touched_on_delta (not note_occurrence_goal) so the goal
+    // isn't double-recorded; we just re-inject occurrence_priority_roots_.
+    {
+        const auto& goals = cs.occurrence_goals_for_test();
+        std::size_t replayed = 0;
+        const auto cur_epoch = cs.current_epoch();
+        for (const auto& goal : goals) {
+            if (!goal.var.valid())
+                continue;
+            if (goal.epoch > 0 && goal.epoch < cur_epoch)
+                continue; // stale — prune_occurrence_goals covers it
+            cs.mark_touched_on_delta(goal.var, /*occurrence_narrow=*/true);
+            ++replayed;
+        }
+        if (replayed > 0 && m)
+            m->occurrence_goal_replay_total.fetch_add(replayed, std::memory_order_relaxed);
     }
     SolveDeltaOccurrenceResult r;
     // Issue #2107: always collect unresolved into the result so Agents

@@ -1113,6 +1113,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> constraint_blame_chain_length_total{0};
     std::atomic<std::uint64_t> cross_delta_blame_incomplete_total{0};
     std::atomic<std::uint64_t> constraint_blame_chain_rich_complete_total{0};
+    // Issue #2278: epoch-scoped OccurrenceGoal table metrics.
+    //   - occurrence_goal_replay_total: live goals replayed into
+    //     solve_delta priority worklist on each solve_delta_occurrence
+    //     call (AC1 — durable across clear_blame_context).
+    //   - occurrence_goal_stale_drop_total: goals dropped by
+    //     prune_occurrence_goals on cache_epoch_ advance (AC2).
+    // Schema-2278 — additive, mirrors the on-CS record set.
+    std::atomic<std::uint64_t> occurrence_goal_replay_total{0};
+    std::atomic<std::uint64_t> occurrence_goal_stale_drop_total{0};
     // Issue #1873: derived completeness rate (0–100) =
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.
