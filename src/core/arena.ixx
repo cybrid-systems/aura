@@ -150,6 +150,12 @@ export struct ArenaStats {
     // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
     // new address under Moving densify (preserve vs invalidate policy).
     std::size_t live_compact_remapped_pins_total = 0;
+    // Issue #2267: RootRemapPass per-arena counters (mirrors process-level
+    // atomics g_root_remap_* in src/compiler/observability_metrics.h).
+    std::size_t root_remap_stable_ref_total = 0;
+    std::size_t root_remap_stable_ref_fail_total = 0;
+    std::size_t root_remap_closure_capture_total = 0;
+    std::size_t root_remap_closure_capture_fail_total = 0;
     // Issue #2157: Force blocked by live pin / EnvFrameLifetimeGuard hold.
     std::size_t force_compact_blocked_by_pin = 0;
     std::size_t force_compact_blocked_by_envframe_guard = 0;
@@ -210,6 +216,10 @@ export struct ArenaStats {
         live_compact_gen_restamps_total += other.live_compact_gen_restamps_total;
         live_compact_invalidated_pins_total += other.live_compact_invalidated_pins_total;
         live_compact_remapped_pins_total += other.live_compact_remapped_pins_total;
+        root_remap_stable_ref_total += other.root_remap_stable_ref_total;
+        root_remap_stable_ref_fail_total += other.root_remap_stable_ref_fail_total;
+        root_remap_closure_capture_total += other.root_remap_closure_capture_total;
+        root_remap_closure_capture_fail_total += other.root_remap_closure_capture_fail_total;
         force_compact_blocked_by_pin += other.force_compact_blocked_by_pin;
         force_compact_blocked_by_envframe_guard += other.force_compact_blocked_by_envframe_guard;
         live_compact_moving_count += other.live_compact_moving_count;
@@ -590,6 +600,15 @@ export struct AdaptiveCompactResult {
 using LiveCompactLayoutChangeCallback =
     std::function<void(std::uint64_t arena_id, std::uint64_t new_gen)>;
 
+// Issue #2267: RootRemapPass minimal slice — non-pin root rewrite
+// (StableNodeRef live set + Closure capture cells) after Moving densify.
+// Receives the densify's old→new object_remap + new_gen. The pass lives in
+// src/compiler/ (needs Evaluator / closure layout) with a type-erased
+// entry from the layout-change callback to avoid core→compiler cycle
+// (same pattern as PanicCheckpointHost / EnvFrameLifetimeHost).
+using RootRemapCallback = std::function<void(std::uint64_t arena_id, std::uint64_t new_gen,
+                                             std::unordered_map<void*, void*> const& object_remap)>;
+
 // Module-internal counter used by ASTArena constructors to mint stable per-arena
 // ids. LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
 // invalidation to the specific arena that bumped its generation, instead of
@@ -735,6 +754,22 @@ public:
     [[nodiscard]] bool has_on_layout_change() const noexcept {
         std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
         return static_cast<bool>(on_layout_change_);
+    }
+    // Issue #2267: RootRemapPass install + invoke. The compiler installs a
+    // callback that scans StableNodeRef live set + Closure capture cells
+    // and rewrites them via the old→new object_remap. Concurrent set/take
+    // is serialized via root_remap_mtx_ (same pattern as on_layout_change_mtx_).
+    void set_root_remap_callback(RootRemapCallback cb) {
+        std::lock_guard<std::mutex> lock(root_remap_mtx_);
+        root_remap_ = std::move(cb);
+    }
+    [[nodiscard]] RootRemapCallback take_root_remap_callback() {
+        std::lock_guard<std::mutex> lock(root_remap_mtx_);
+        return std::move(root_remap_);
+    }
+    [[nodiscard]] bool has_root_remap_callback() const noexcept {
+        std::lock_guard<std::mutex> lock(root_remap_mtx_);
+        return static_cast<bool>(root_remap_);
     }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
@@ -1298,6 +1333,16 @@ public:
             }
             stats_.live_compact_invalidated_pins_total += invalidated;
             invoke_layout_change_(result.new_gen);
+            // Issue #2267: RootRemapPass — fires AFTER LiveCompactLayoutChangeCallback
+            // (which only invalidates pins). Reads the densify's old→new
+            // object_remap_ + new_gen. The compiler-installed callback scans
+            // StableNodeRef live set + Closure capture cells and rewrites
+            // them via resolve_object_remap. Fail-closed: any live root
+            // that cannot be remapped bumps root_remap_*_fail_total.
+            // Issue #2267: only fires for Moving densify (moved_live_objects).
+            if (result.moved_live_objects && !last_object_remap_.empty()) {
+                invoke_root_remap_callback_();
+            }
         }
 
         invoke_compact_hook_with_deopt_();
@@ -1391,6 +1436,19 @@ public:
     // process-wide g_lifetime_pin_remap_total for per-arena observability).
     [[nodiscard]] std::uint64_t live_compact_remapped_pins_total_relaxed() const noexcept {
         return static_cast<std::uint64_t>(stats_.live_compact_remapped_pins_total);
+    }
+    // Issue #2267: per-arena RootRemapPass counters (mirrors process atomics).
+    [[nodiscard]] std::uint64_t root_remap_stable_ref_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.root_remap_stable_ref_total);
+    }
+    [[nodiscard]] std::uint64_t root_remap_stable_ref_fail_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.root_remap_stable_ref_fail_total);
+    }
+    [[nodiscard]] std::uint64_t root_remap_closure_capture_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.root_remap_closure_capture_total);
+    }
+    [[nodiscard]] std::uint64_t root_remap_closure_capture_fail_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.root_remap_closure_capture_fail_total);
     }
 
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
@@ -1755,6 +1813,24 @@ private:
     void invoke_compact_hook_() {
         std::function<void()> hook_copy;
         {
+            // Issue #2267: RootRemapPass invoker — copies the root_remap_ callback
+            // under root_remap_mtx_ and invokes outside the lock (same pattern as
+            // invoke_layout_change_ below). Reads the densify's old→new object_remap
+            // by reference (the ArenaGroup is the source of truth for last_object_remap_).
+            void invoke_root_remap_callback_() noexcept {
+                RootRemapCallback cb_copy;
+                {
+                    std::lock_guard<std::mutex> lock(root_remap_mtx_);
+                    if (!root_remap_)
+                        return;
+                    cb_copy = root_remap_;
+                }
+                if (cb_copy)
+                    cb_copy(arena_id_, last_object_remap_
+                                           ? last_object_remap_
+                                           : *(new std::unordered_map<void*, void*>{}));
+            }
+
             // Issue #1989: copy under hook_mtx_, invoke outside the lock so
             // a hook that re-enters ASTArena (or any code that takes the
             // same lock in the future) doesn't deadlock. set_on_compact_hook /

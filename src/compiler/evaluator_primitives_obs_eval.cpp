@@ -1764,6 +1764,20 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2166", aura::ast::kMovingCompactIssue);
             insert_kv("issue-2166", aura::ast::kMovingCompactIssue);
             insert_kv("moving-compact-wired", 1);
+            // Issue #2267: RootRemapPass per-arena counters (mirrors the
+            // process-level g_root_remap_* atomics for query visibility).
+            insert_kv("root-remap-stable-ref-total",
+                      static_cast<std::int64_t>(
+                          m->root_remap_stable_ref_total.load(std::memory_order_relaxed)));
+            insert_kv("root-remap-stable-ref-fail-total",
+                      static_cast<std::int64_t>(
+                          m->root_remap_stable_ref_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("root-remap-closure-capture-total",
+                      static_cast<std::int64_t>(
+                          m->root_remap_closure_capture_total.load(std::memory_order_relaxed)));
+            insert_kv("root-remap-closure-capture-fail-total",
+                      static_cast<std::int64_t>(m->root_remap_closure_capture_fail_total.load(
+                          std::memory_order_relaxed)));
             // Issue #2265 Phase 3: LifetimePin::remap() + remap_pins_pointing_to()
             // wire-up at densify site. Schema additive — no break.
             insert_kv("schema-2265", 2265);
@@ -1776,6 +1790,14 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2266", 2266);
             insert_kv("issue-2266", 2266);
             insert_kv("moving-pin-contract-wired", 1);
+            // Issue #2267: RootRemapPass minimal slice — StableNodeRef + Closure
+            // captures under Moving densify. Schema additive — no break.
+            // Driver (Phase 5 in evaluator_mutation_boundary.cpp) fires the
+            // pass via the RootRemapCallback installed in arena.ixx; per-arena
+            // RootRemapPass counters are merged into the global atomics above.
+            insert_kv("schema-2267", 2267);
+            insert_kv("issue-2267", 2267);
+            insert_kv("root-remap-pass-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
