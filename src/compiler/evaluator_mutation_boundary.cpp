@@ -1485,25 +1485,77 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // accumulate orphan defer across steals. Fail/partial-recovery paths
         // intentionally leave checkpoint+defer armed — skip residual assert.
         if (success) {
+            // AC3: zero-cost success path — single relaxed load of
+            // defer_reasons_snapshot(); if zero, skip the entire
+            // residual block (no extra clears / bumps / abort probes).
             const auto residual = aura::gc_hooks::defer_reasons_snapshot();
             if (residual != 0) {
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                     m->mutation_boundary_residual_defer_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-                if (const char* e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
-                    e && e[0] != '\0' && e[0] != '0') {
+                // Issue #2269: production-default policy.
+                // AURA_RESIDUAL_DEFER_POLICY=hard | clear | unset
+                // (unset defaults to 'clear' under production security
+                // defaults, 'soft' under AURA_SANDBOX=off).
+                // Legacy AURA_HARD_RESIDUAL_DEFER=1 still maps to hard
+                // for backward compat (kept so pre-#2269 deploys keep
+                // their hard-fail behavior).
+                const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                const bool policy_hard_env =
+                    policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const bool dev_off =
+                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                // Default under production security defaults: clear
+                // (B path — availability-friendly). Sandbox / unit
+                // tests: soft (legacy behavior).
+                enum class ResidualPolicy { Soft, Clear, Hard };
+                ResidualPolicy policy = ResidualPolicy::Soft;
+                if (dev_off) {
+                    policy = ResidualPolicy::Soft;
+                } else if (policy_hard_env || legacy_hard) {
+                    policy = ResidualPolicy::Hard;
+                } else {
+                    // unset AURA_RESIDUAL_DEFER_POLICY + production
+                    // security defaults active → clear (B).
+                    policy = ResidualPolicy::Clear;
+                }
+                if (policy == ResidualPolicy::Hard) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        m->mutation_boundary_residual_defer_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     // Hard mode: fail closed so sticky defer never ships silent.
-                    assert(residual == 0 &&
-                           "Issue #2211: residual GcDeferReason after outermost success");
-                    // NDEBUG strips assert — still abort when hard mode requested.
+                    assert(residual == 0 && "Issue #2211/#2269: residual GcDeferReason after "
+                                            "outermost success (hard policy)");
+                    // NDEBUG strips assert — still abort when hard policy requested.
                     if (aura::gc_hooks::defer_reasons_snapshot() != 0)
                         std::abort();
+                } else if (policy == ResidualPolicy::Clear) {
+                    // AC1-B: forced clear — this-evaluator panic
+                    // table + unbalanced MutationHold re-release, then
+                    // bump the forced-clear counter. Long AI sessions
+                    // cannot accumulate orphan defer across steals.
+                    const auto cleared =
+                        aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
+                    if (aura::gc_hooks::mutation_hold_defer_active())
+                        aura::gc_hooks::release_mutation_hold_defer();
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        if (cleared > 0)
+                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                                cleared, std::memory_order_relaxed);
+                        else
+                            // Bumped even when cleared==0 (MutationHold
+                            // re-release may have been the only path)
+                            // so dashboards see one bump per residual
+                            // detection.
+                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
                 }
-                // Best-effort clear: this-evaluator panic table + unbalanced
-                // MutationHold re-release (extra arm inject / steal orphan).
-                (void)aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
-                if (aura::gc_hooks::mutation_hold_defer_active())
-                    aura::gc_hooks::release_mutation_hold_defer();
+                // Soft (sandbox / unit tests): no clear, no abort, just
+                // the residual metric bump above. Legacy #2211 behavior.
             }
         }
         // Issue #2184: clear fiber-local held mirror after outermost exit.
