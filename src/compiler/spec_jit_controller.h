@@ -43,6 +43,17 @@ public:
     // Get the specialized function pointer.
     aura::jit::ScalarFn get_specialized(const std::string& fn_name, ShapeID shape) const;
 
+    // Issue #2276: install a successful specialization. The entry is
+    // stamped with the current process-global shape_version (see
+    // shape_profiler.h current_global_shape_version). get_specialized /
+    // has_specialization treat an entry whose stamped version != the
+    // current shape_version as a miss and return null/false, so after
+    // a deopt-storm enter (bump_shape_version_on_storm_enter) the
+    // generation-behind specialized code is no longer served until
+    // install_specialization is called again with a fresh version.
+    void install_specialization(const std::string& fn_name, ShapeID shape,
+                                aura::jit::ScalarFn fn_ptr);
+
     // Invalidate all specializations for a function.
     void invalidate(const std::string& fn_name);
 
