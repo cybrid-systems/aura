@@ -981,6 +981,28 @@ extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(v
     return g_cross_workspace_hot_update_rejected_total.load(std::memory_order_relaxed);
 }
 
+// Issue #2275: cow_gen accessors (C ABI for cross-TU host wiring).
+extern "C" void aura_set_aot_expected_cow_gen_for_eval(void* eval_ptr, std::uint64_t gen) noexcept {
+    // Minimal single-slot implementation: stores expected cow_gen for the
+    // single most-recent eval pointer (sufficient for #2275 observability;
+    // multi-eval tracking can grow into a hash if needed later).
+    g_expected_cow_gen_per_eval.store(gen, std::memory_order_release);
+    (void)eval_ptr;
+}
+
+extern "C" std::uint64_t aura_get_aot_expected_cow_gen_for_eval(void* eval_ptr) noexcept {
+    (void)eval_ptr;
+    return g_expected_cow_gen_per_eval.load(std::memory_order_acquire);
+}
+
+extern "C" void aura_set_live_workspace_cow_gen(std::uint64_t gen) noexcept {
+    g_live_workspace_cow_gen.store(gen, std::memory_order_release);
+}
+
+extern "C" std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept {
+    return g_live_workspace_cow_gen.load(std::memory_order_acquire);
+}
+
 // Issue #2240: stable last reject reason for cross-workspace / cross-COW
 // hot-update (refine #2178). Stored as uint8_t (CrossWorkspaceReject
 // enum) for C ABI stability. Thread-safe lock-free read. Default
@@ -993,6 +1015,15 @@ extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(v
 // the guard site; Unknown is defensive — bumps if a future reject
 // path forgets to set a specific reason).
 static std::atomic<std::uint8_t> g_last_cross_workspace_reject_reason{0};
+// Issue #2275: process-level workspace cow_gen atoms. Eval tables
+// are simple (eval_ptr -> expected cow_gen) — single atomic per
+// common case; multi-eval extension can grow into a hash if needed.
+// Live workspace cow_gen is bumped on each densify + workspace
+// gen restamp; reload attempts compare eval-captured cow_gen
+// against this to detect cross-COW drift without opening a
+// migration write path.
+static std::atomic<std::uint64_t> g_expected_cow_gen_per_eval{0};
+static std::atomic<std::uint64_t> g_live_workspace_cow_gen{0};
 
 extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept {
     return g_last_cross_workspace_reject_reason.load(std::memory_order_relaxed);
@@ -2143,6 +2174,25 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
         aura_cross_workspace_hot_update_rejected_increment();
         g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Other),
                                         std::memory_order_release);
+        // Issue #2275: same-process, diverged COW generation (CowGenMismatch)
+        // — distinct from ForeignEval. The cross_workspace_hot_update_
+        // rejected counter is shared (both reasons bump the same counter)
+        // but the reason string distinguishes them for Agent recovery policy.
+        const std::uint64_t expected_cow_gen_2275 =
+            aura_get_aot_expected_cow_gen_for_eval(eval_ptr);
+        const std::uint64_t live_cow_gen_2275 = aura_get_live_workspace_cow_gen();
+        if (expected_cow_gen_2275 != 0 && expected_cow_gen_2275 != live_cow_gen_2275) {
+            g_last_cross_workspace_reject_reason.store(
+                static_cast<std::uint8_t>(CrossWorkspaceReject::CowGenMismatch),
+                std::memory_order_release);
+            aura_cross_workspace_hot_update_rejected_increment();
+            g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Other),
+                                            std::memory_order_release);
+            aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+                /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
+                "cross-COW cow_gen mismatch");
+            return false;
+        }
         // Issue #1882: audit the rejected cross-workspace attempt so Agent
         // diagnostics can attribute the failure to the right eval context.
         aura::compiler::typed_audit::capture_aot_hotupdate_audit(

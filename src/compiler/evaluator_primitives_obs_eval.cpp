@@ -13462,10 +13462,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-region-staging-exhausted-total",
              make_int(static_cast<std::int64_t>(region_staging_exhausted))},
             {"aot-reload-region-staging-policy-wired", make_int(1)},
-            {"schema-2249", make_int(2249)},
-            {"issue-2249", make_int(2249)},
-            {"schema-2232", make_int(2232)},
-            {"issue-2232", make_int(2232)},
+            {"schema-2249", make_int(2249)}, {"issue-2249", make_int(2249)},
+            {"schema-2232", make_int(2232)}, {"issue-2232", make_int(2232)},
             // Issue #2271: physical invalidate of generation-behind
             // AOT slots on fall_back_jit_only exhaustion (close #2232
             // follow-up). Slot + call counters bumped inside
@@ -13483,7 +13481,13 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                         : 0)},
             {"aot-reload-fall-back-slot-invalidate-wired", make_int(1)},
             {"schema-2271", make_int(2271)},
-            {"issue-2271", make_int(2271)},
+            {"issue-2271
+             // Issue #2275: CowGenMismatch wire + lineage.
+             insert_kv("cow-gen-mismatch-wired", 1);
+        insert_kv("cross-workspace-cow-gen-mismatch-wired", 1);
+        insert_kv("schema-2275", 2275);
+        insert_kv("issue-2275", 2275);
+        ", make_int(2271)},
             {"reload-policy-wired", make_int(1)},
             {"issue-2165", make_int(2165)},
             // Issue #2046: joint AOT/JIT region versioning after invalidate
@@ -13498,8 +13502,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(cascade_joint))},
             {"aot_cascade_region_stale_names_total",
              make_int(static_cast<std::int64_t>(cascade_names))},
-            {"aot-jit-joint-versioning-wired", make_int(1)},
-            {"schema-2046", make_int(2046)},
+            {"aot-jit-joint-versioning-wired", make_int(1)}, {"schema-2046", make_int(2046)},
             {"issue-2046", make_int(2046)},
             // Issue #2095: default-LLVM incremental reemit fail
             // observability + env-gated postmortem keep-fail hook.
@@ -13510,93 +13513,91 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reemit-keep-fail-enabled",
              make_int(static_cast<std::int64_t>(keep_fail_enabled))},
             {"aot-reemit-keep-fail-debug-dir", make_string(kfdd_idx)},
-            {"schema-2095", make_int(2095)},
-            {"issue-2095", make_int(2095)},
+            {"schema-2095", make_int(2095)}, {"issue-2095", make_int(2095)},
+        };
+        return build_hash(kv);
+});
+
+// Issue #2095: default-LLVM reemit observability. Surfaces the
+// per-reason fail counter + the env-gated postmortem hook so the
+// Agent can branch on whether failed .o are kept for inspection
+// (lineage 2095 — pipeline-phase, >= 5 fields).
+ObservabilityPrims::register_stats_impl(
+    "query:aot-incremental-reemit-stats", [&ev](const auto&) -> EvalValue {
+        std::uint64_t success = 0;
+        std::uint64_t fail = 0;
+        std::uint64_t stale_hard_reject = 0;
+        int keep_enabled = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            success = m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
+            fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
+            // Issue #2252: hard-reject when AOT slot table_generation != live epoch.
+            stale_hard_reject =
+                m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed);
+        }
+        keep_enabled = ::aura_reemit_keep_fail_enabled();
+        constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
+        auto dd_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(kDebugDir);
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
+            {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
+            {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
+            {"aot-reemit-keep-fail-debug-dir", make_string(dd_idx)},
+            // Issue #2252: hard-reject native execution when AOT
+            // slot table_generation != live epoch. Dedicated
+            // counter (distinct from aot_slot_stale_reject_total /
+            // aot_forced_recompile_on_mismatch_total) so dashboards
+            // can isolate the zero-native-hit guarantee signal.
+            {"aot-stale-probe-hard-reject-total",
+             make_int(static_cast<std::int64_t>(stale_hard_reject))},
+            {"aot-stale-probe-hard-reject-wired", make_int(1)},
+            {"aot-incremental-reemit-stats-lineage", make_int(2095)},
+            {"schema-2252", make_int(2252)},
+            {"issue-2252", make_int(2252)},
         };
         return build_hash(kv);
     });
-
-    // Issue #2095: default-LLVM reemit observability. Surfaces the
-    // per-reason fail counter + the env-gated postmortem hook so the
-    // Agent can branch on whether failed .o are kept for inspection
-    // (lineage 2095 — pipeline-phase, >= 5 fields).
-    ObservabilityPrims::register_stats_impl(
-        "query:aot-incremental-reemit-stats", [&ev](const auto&) -> EvalValue {
-            std::uint64_t success = 0;
-            std::uint64_t fail = 0;
-            std::uint64_t stale_hard_reject = 0;
-            int keep_enabled = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-                success = m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
-                fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
-                // Issue #2252: hard-reject when AOT slot table_generation != live epoch.
-                stale_hard_reject =
-                    m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed);
-            }
-            keep_enabled = ::aura_reemit_keep_fail_enabled();
-            constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
-            auto dd_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(kDebugDir);
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
-                    }
-                }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
-                {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
-                {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
-                {"aot-reemit-keep-fail-debug-dir", make_string(dd_idx)},
-                // Issue #2252: hard-reject native execution when AOT
-                // slot table_generation != live epoch. Dedicated
-                // counter (distinct from aot_slot_stale_reject_total /
-                // aot_forced_recompile_on_mismatch_total) so dashboards
-                // can isolate the zero-native-hit guarantee signal.
-                {"aot-stale-probe-hard-reject-total",
-                 make_int(static_cast<std::int64_t>(stale_hard_reject))},
-                {"aot-stale-probe-hard-reject-wired", make_int(1)},
-                {"aot-incremental-reemit-stats-lineage", make_int(2095)},
-                {"schema-2252", make_int(2252)},
-                {"issue-2252", make_int(2252)},
-            };
-            return build_hash(kv);
-        });
 }
 
 // Issue #909 part 92 (orig lines 10618-10682)
