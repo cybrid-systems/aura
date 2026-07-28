@@ -6099,6 +6099,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2104", 2104);
             insert_kv("issue-2104", 2104);
             insert_kv("schema-2068", 2068);
+            // Issue #2277: production-default TIMEOUT escalation (Option A).
+            // delta-timeout-full-solve-total — every full-solve attempt after
+            //     production-default delta TIMEOUT (regardless of result).
+            // delta-timeout-reject-total — full-solve did NOT reach SOLVED,
+            //     caller MUST reject (no half-solved ship).
+            // delta-timeout-hard-gate-wired — sentinel: 1 when escalation is
+            //     wired into the solve path (per-CompilerMetrics mirror).
+            const std::int64_t delta_timeout_full_solve =
+                m ? static_cast<std::int64_t>(
+                        m->delta_timeout_full_solve_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t delta_timeout_reject =
+                m ? static_cast<std::int64_t>(
+                        m->delta_timeout_reject_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("delta-timeout-full-solve-total", delta_timeout_full_solve);
+            insert_kv("delta_timeout_full_solve_total", delta_timeout_full_solve);
+            insert_kv("delta-timeout-reject-total", delta_timeout_reject);
+            insert_kv("delta_timeout_reject_total", delta_timeout_reject);
+            insert_kv("delta-timeout-hard-gate-wired", 1);
+            insert_kv("schema-2277", 2277);
+            insert_kv("issue-2277", 2277);
             // Issue #2220: long-lived TypeChecker on Evaluator mutate path.
             {
                 const std::int64_t tc_create =

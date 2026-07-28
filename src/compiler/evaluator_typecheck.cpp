@@ -727,7 +727,11 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 if (sdo.truncated_reverify) {
                     c.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                cr.solve_ok = (sdo.status == SolveResult::SOLVED) && !sdo.truncated_reverify;
+                // Issue #2277 AC1: under production defaults a delta TIMEOUT is
+                // escalated to a one-shot full fixpoint (Option A). If still not
+                // SOLVED, solve_ok stays false here — never half-solved ship.
+                auto post_escalate = cs_ptr->escalate_if_production(sdo.status, &unresolved);
+                cr.solve_ok = (post_escalate == SolveResult::SOLVED) && !sdo.truncated_reverify;
                 // Issue #2262: empty CS after expected partial is never clean SOLVED
                 // under Full/Strict (no silent greenfield success).
                 if (partial_cs_hard_empty &&
@@ -872,7 +876,12 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     if (sdo2.truncated_reverify)
                         c.boundary_solve_truncated_seen_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-                    cr.solve_ok = (sdo2.status == SolveResult::SOLVED) && !sdo2.truncated_reverify;
+                    // Issue #2277 AC1: same production-default escalation on the
+                    // partial-recovery re-solve path. If escalate returns
+                    // TIMEOUT, solve_ok remains false (no half-solved ship).
+                    auto post_escalate2 = cs.escalate_if_production(sdo2.status, nullptr);
+                    cr.solve_ok =
+                        (post_escalate2 == SolveResult::SOLVED) && !sdo2.truncated_reverify;
                     if (!cr.solve_ok)
                         c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
                 } catch (...) {

@@ -15,6 +15,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/observability_metrics.h"          // Issue #2262: g_partial_cs_* atomics
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2263
+#include "compiler/typed_mutation_audit.h" // Issue #2277: TypedMutationAuditCounters delta_timeout_*
 
 export module aura.compiler.type_checker;
 
@@ -321,6 +322,18 @@ public:
     void* metrics_ = nullptr;
 
     void set_metrics(void* m) { metrics_ = m; }
+    // Issue #2277: production-default TIMEOUT escalation (Option A — Issue body).
+    // If `prior` is SolveResult::TIMEOUT AND production_defaults_active(),
+    // attempt one-shot full fixpoint (this->solve(unresolved_out)); if still
+    // not SOLVED, the caller MUST treat the result as failed (no half-solved
+    // ship under production defaults). Always returns a SolveResult; bumps
+    // TypedMutationAuditCounters::delta_timeout_full_solve_total on each
+    // escalation attempt and delta_timeout_reject_total when full solve did
+    // not reach SOLVED. Under sandbox/dev (production_defaults_active()==false)
+    // this is a pure no-op pass-through, preserving the soft TIMEOUT + #2107
+    // unresolved-export path (AC3 invariant).
+    SolveResult escalate_if_production(SolveResult prior,
+                                       std::vector<Constraint>* unresolved_out = nullptr);
     // Issue #2107: synthetic over-limit for Agent tests — next solve_delta
     // returns TIMEOUT with the built worklist as unresolved (no process).
     // Auto-clears after one call. Production code must leave this false.

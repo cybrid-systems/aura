@@ -130,6 +130,14 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> boundary_solve_force_rollback_total{0};
     std::atomic<std::uint64_t> boundary_solve_truncated_seen_total{0};
     std::atomic<std::uint32_t> boundary_solve_hard_gate_wired{1};
+    // Issue #2277: production-default TIMEOUT escalation (Option A — full-solve attempt).
+    // delta_timeout_full_solve_total — every full-solve attempt made after
+    //     production-default solve_delta TIMEOUT (regardless of final result).
+    // delta_timeout_reject_total — full-solve did NOT reach SOLVED under production
+    //     defaults; caller MUST treat solve as failed (no half-solved ship).
+    std::atomic<std::uint64_t> delta_timeout_full_solve_total{0};
+    std::atomic<std::uint64_t> delta_timeout_reject_total{0};
+    std::atomic<std::uint32_t> delta_timeout_hard_gate_wired{1};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
     std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
     std::atomic<std::uint64_t> aot_hotupdate_audits{0};

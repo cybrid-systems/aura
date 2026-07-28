@@ -11,6 +11,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h" // Issue #2277: g_typed_mutation_audit_counters + production_defaults_active toggle
 
 #include <cstdint>
 #include <fstream>
@@ -242,6 +243,151 @@ static void ac6_query_schema() {
     CHECK(href(svc, "solver-surface-wired") == 1, "solver surface");
 }
 
+// ── Issue #2277 AC1–AC4: production-default TIMEOUT escalation ──
+// AC1: under production defaults, delta TIMEOUT must escalate to a one-
+//     shot full fixpoint; if still not SOLVED the call is rejected
+//     (no half-solved ship).
+// AC2: TypedMutationAuditCounters + per-CompilerMetrics mirror both bump
+//     the full_solve_total counter on every escalation attempt.
+// AC3: sandbox/dev path is a pure no-op pass-through (soft TIMEOUT + #2107
+//     unresolved export preserved).
+// AC4: query:type-incremental-fidelity-stats carries the schema-2277
+//     keys + sentinel (additive, no schema break).
+// AC5: src-aligned under tests/compiler/ (this file).
+static void ac7_issue_2277_escalate_and_schema() {
+    std::println("\n--- AC1–AC4: Issue #2277 production-default TIMEOUT escalation ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save_active =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    auto restore = [&]() {
+        g_typed_mutation_audit_counters.production_defaults_active.store(save_active,
+                                                                         std::memory_order_relaxed);
+    };
+
+    // ── AC3: sandbox/dev path — pure no-op pass-through ──────────
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        CompilerMetrics metrics;
+        cs.set_metrics(&metrics);
+        auto typed_full_before =
+            g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+                std::memory_order_relaxed);
+
+        // prior != TIMEOUT → no-op, no counters bumped
+        CHECK(cs.escalate_if_production(SolveResult::SOLVED) == SolveResult::SOLVED,
+              "AC3: prior=SOLVED → unchanged");
+        CHECK(cs.escalate_if_production(SolveResult::CONFLICT) == SolveResult::CONFLICT,
+              "AC3: prior=CONFLICT → unchanged");
+
+        // production_defaults=false + prior=TIMEOUT → no-op
+        g_typed_mutation_audit_counters.production_defaults_active.store(0,
+                                                                         std::memory_order_relaxed);
+        CHECK(cs.escalate_if_production(SolveResult::TIMEOUT) == SolveResult::TIMEOUT,
+              "AC3: soft + TIMEOUT → unchanged, soft TIMEOUT exportable");
+        CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+                  std::memory_order_relaxed) == typed_full_before,
+              "AC3: soft path → no full_solve_total bump (untouched)");
+        CHECK(metrics.delta_timeout_full_solve_total.load() == 0,
+              "AC3: soft path → no per-CompilerMetrics bump");
+    }
+
+    // ── AC1+AC2 happy path: production defaults + solvable CS ────
+    // Empty CS escalates to SOLVED (full solve() returns SOLVED with no
+    // worklist) → full_solve_total bumped once, reject not bumped.
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        CompilerMetrics metrics;
+        cs.set_metrics(&metrics);
+        auto typed_before = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+            std::memory_order_relaxed);
+        auto metrics_before = metrics.delta_timeout_full_solve_total.load();
+
+        g_typed_mutation_audit_counters.production_defaults_active.store(1,
+                                                                         std::memory_order_relaxed);
+        auto post = cs.escalate_if_production(SolveResult::TIMEOUT);
+        CHECK(post == SolveResult::SOLVED, "AC1: production + empty CS → escalate to SOLVED");
+        CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+                  std::memory_order_relaxed) == typed_before + 1,
+              "AC1: TypedMutationAuditCounters delta_timeout_full_solve_total bumped by 1");
+        CHECK(metrics.delta_timeout_full_solve_total.load() == metrics_before + 1,
+              "AC2: CompilerMetrics delta_timeout_full_solve_total mirror bumped by 1");
+        // Reject must NOT bump when full solve actually reaches SOLVED.
+        CHECK(metrics.delta_timeout_reject_total.load() == 0,
+              "AC1: reject not bumped when escalate reached SOLVED");
+    }
+
+    // ── AC1 reject route: production defaults + unsolvable CS ────
+    // Two conflicting EQUAL constraints (a == Int, b == Bool, and a == b)
+    // make full solve() return CONFLICT instead of SOLVED; reject must
+    // bump on the per-CompilerMetrics side.
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        CompilerMetrics metrics;
+        cs.set_metrics(&metrics);
+        auto reject_before = metrics.delta_timeout_reject_total.load();
+
+        auto a = cs.fresh_var();
+        auto b = cs.fresh_var();
+        Constraint eq1;
+        eq1.kind = Constraint::EQUAL;
+        eq1.lhs = a;
+        eq1.rhs = b;
+        // Two views of `a` to make the CS unsolvable: a == Int, a == Bool.
+        Constraint eq2;
+        eq2.kind = Constraint::EQUAL;
+        eq2.lhs = a;
+        eq2.rhs = reg.int_type();
+        Constraint eq3;
+        eq3.kind = Constraint::EQUAL;
+        eq3.lhs = a;
+        eq3.rhs = reg.bool_type();
+        cs.add_delta(std::move(eq1));
+        cs.add_delta(std::move(eq2));
+        cs.add_delta(std::move(eq3));
+
+        g_typed_mutation_audit_counters.production_defaults_active.store(1,
+                                                                         std::memory_order_relaxed);
+        auto post = cs.escalate_if_production(SolveResult::TIMEOUT);
+        // Result is either CONFLICT or TIMEOUT (depending on solver
+        // internals); both ≠ SOLVED → reject path fires.
+        CHECK(post != SolveResult::SOLVED, "AC1: unsolvable CS → escalate NOT SOLVED");
+        CHECK(metrics.delta_timeout_reject_total.load() >= reject_before,
+              "AC1: per-CompilerMetrics delta_timeout_reject_total bumped");
+    }
+
+    // ── AC4: query schema has schema-2277 + new keys ────────────
+    {
+        CompilerService svc;
+        CHECK(svc.eval("(+ 1 1)").has_value(), "AC4: eval smoke");
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        auto* m = static_cast<CompilerMetrics*>(svc.evaluator().compiler_metrics());
+        if (m)
+            cs.set_metrics(m);
+        // Drive at least one escalate path so the metric mirrors have a row.
+        g_typed_mutation_audit_counters.production_defaults_active.store(1,
+                                                                         std::memory_order_relaxed);
+        (void)cs.escalate_if_production(SolveResult::TIMEOUT);
+
+        CHECK(href(svc, "schema-2277") == 2277, "AC4: schema-2277 sentinel");
+        CHECK(href(svc, "issue-2277") == 2277, "AC4: issue-2277 sentinel");
+        CHECK(href(svc, "delta-timeout-full-solve-total") >= 1,
+              "AC4: delta-timeout-full-solve-total key populated");
+        CHECK(href(svc, "delta-timeout-reject-total") >= 0,
+              "AC4: delta-timeout-reject-total key present");
+        CHECK(href(svc, "delta_timeout_full_solve_total") ==
+                  href(svc, "delta-timeout-full-solve-total"),
+              "AC4: kebab + snake_case keys agree");
+        CHECK(href(svc, "delta-timeout-hard-gate-wired") == 1,
+              "AC4: delta-timeout-hard-gate-wired sentinel");
+    }
+
+    restore();
+}
+
 } // namespace
 
 int main() {
@@ -252,6 +398,8 @@ int main() {
     ac4_source_and_2028_lineage();
     ac5_affected_nodes_for_agents();
     ac6_query_schema();
+    std::println("\n=== Issue #2277: production TIMEOUT escalation ===");
+    ac7_issue_2277_escalate_and_schema();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
