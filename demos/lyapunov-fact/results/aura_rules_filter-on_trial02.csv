@@ -1,7 +1,3 @@
 step,V,test_fail,recursive_residual,node_count,energy,rejected,in_S,action,extra
-0,10.0,1,0,0,0.0,False,False,init,
-1,10.0,1,0,0,0.0,False,False,fix-correctness,
-2,10.0,1,0,0,0.0,False,False,fix-correctness,
-3,10.0,1,0,0,0.0,False,False,fix-correctness,
-4,10.0,1,0,0,0.0,False,False,fix-correctness,
-5,10.0,1,0,0,0.0,False,False,fix-correctness,
+0,3.7,0,1,17.0,0.0,False,False,init,
+1,2.7500000000000004,0,0,24.0,0.35000000000000003,False,True,remove-recursion,delta=-0.950

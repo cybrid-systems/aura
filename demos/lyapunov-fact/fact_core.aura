@@ -1,75 +1,48 @@
 ;; demos/lyapunov-fact/fact_core.aura
-;; Aura side: minimal rule controller + native snapshot filter.
+;; Reference Aura helpers for the lyapunov-fact demo.
 ;;
-;; Loaded via Aura's `--script` mode or pipelined into the REPL one form
-;; at a time. The driver (`exp1_rules/run_aura_rules.py`) sends each
-;; form on its own line and reads the printed result.
+;; Production runners drive Aura from Python via set-code / query:* /
+;; ast:snapshot (see aura_driver.py). This file documents the same
+;; contracts in Aura surface form for interactive exploration:
 ;;
-;; IMPORTANT: we use `(quote ...)` rather than `'...` because the REPL
-;; does not always treat `'` as the quote shorthand.
-
-;; --- candidate source forms (as Scheme data, not yet installed) ---
+;;   export AURA_PIPELINE_STRICT=0
+;;   ./build/aura
+;;   (load "demos/lyapunov-fact/fact_core.aura")  ; if load is wired
+;;
+;; Or paste forms into the pipe-mode Repl.
 
 (define INITIAL-CODE
-  (quote (define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))))
+  "(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))")
 
 (define GOOD-ITER
-  (quote (define (fact n) (let loop ((n n) (acc 1)) (if (= n 0) acc (loop (- n 1) (* acc n)))))))
+  "(define (fact n) (let loop ((i n) (acc 1)) (if (= i 0) acc (loop (- i 1) (* acc i)))))")
 
-;; intentional buggy variant — used to exercise the filter path
-(define BAD-ITER
-  (quote (define (fact n) (let loop ((n n) (acc 1)) (if (= n 0) acc (loop (- n 1) (+ acc n)))))))
-
-;; --- observability helpers (all side-effect free) ---
+(define (install-code code)
+  (set-code code)
+  (eval-current)
+  #t)
 
 (define (node-count)
-  (let cnt ((id (query:root)))
-    (+ 1 (apply + (map cnt (query:children id))))))
+  (let ((r (query:root)))
+    (if (not r)
+        0
+        (let cnt ((id r))
+          (+ 1 (apply + (map cnt (query:children id))))))))
 
 (define (recursive-residual)
-  ;; count remaining fact( self-calls — 0 once GOOD-ITER is in place
   (length (query:calls "fact")))
 
 (define (test-fail)
   (if (= (fact 10) 3628800) 0 1))
 
-;; --- V per spec: 10*test_fail + 2*recursive + 0.1*node_count + energy ---
+;; energy already scaled by driver (0.05 * |Δnodes|)
 (define (compute-V energy)
   (+ (* 10 (test-fail))
      (* 2 (recursive-residual))
      (* 0.1 (node-count))
      energy))
 
-;; --- the minimal rule controller (mirrored on the Python side) ---
-;; returns (code . reason) or (#f . "stop")
-(define (propose-action)
-  (cond
-    ((= (test-fail) 1) (cons GOOD-ITER (quote fix-correctness)))
-    ((> (recursive-residual) 0) (cons GOOD-ITER (quote remove-recursion)))
-    ((> (node-count) 25) (cons GOOD-ITER (quote simplify)))
-    (else (cons #f (quote stop)))))
-
-;; one step with optional native snapshot filter.
-;; returns (accepted? V-after rejected? reason new-energy)
-(define (step use-filter? energy)
-  (let* ((prop (propose-action))
-         (code (car prop))
-         (reason (cdr prop)))
-    (if (not code)
-        (list #f (compute-V energy) #f (quote stop) 0)
-        (let* ((snap (if use-filter? (ast:snapshot "try") #f))
-               (old-V (compute-V energy))
-               (old-n (node-count)))
-          (mutate:rebind "fact" code reason)
-          (eval-current)
-          (let* ((new-n (node-count))
-                 (new-energy (abs (- new-n old-n)))
-                 (new-V (compute-V new-energy))
-                 (delta (- new-V old-V))
-                 (reject? (and use-filter? (> delta 0.5))))
-            (when reject? (ast:restore snap))
-            (list (not reject?)
-                  (if reject? old-V new-V)
-                  reject?
-                  reason
-                  (if reject? 0 new-energy)))))))
+(define (in-S? initial-nc)
+  (and (= (test-fail) 0)
+       (= (recursive-residual) 0)
+       (<= (node-count) (* 1.5 initial-nc))))

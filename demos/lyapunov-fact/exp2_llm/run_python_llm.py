@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Experiment 2: Python side — LLM controller + external filter.
-
-Mirrors `exp2_llm/run_aura_llm.py`: same env vars, same LLM, same
-prompt shape, same threshold. The only difference is the execution
-model: Python uses whole-function replacement + a deepcopy-based
-external filter. The candidate code is eval()'d in a fresh namespace
-to compute V before deciding accept/reject.
-"""
+"""Experiment 2: Python — LLM controller + external ΔV filter."""
 
 from __future__ import annotations
 
@@ -17,12 +10,15 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent.parent
+ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
 from common import (  # noqa: E402
+    FILTER_DELTA_V,
+    TEST_VALUE,
     StepRecord,
     V_value,
+    energy_of,
     in_S,
     llm_chat,
     save_trajectory,
@@ -36,13 +32,12 @@ def fact(n):
 """
 
 SYSTEM_PROMPT = (
-    "You are a Python refactorer. Given a recursive `fact` definition that "
-    "currently fails tests or uses recursion, return a new Python function "
-    "`def fact(n): ...` that is correct AND iterative (no self-call). "
-    "Output only the function definition — no markdown, no commentary."
+    "You are a Python refactorer. Given a recursive `fact` that fails tests "
+    "or uses recursion, return a correct iterative `def fact(n): ...` only — "
+    "no markdown, no commentary."
 )
 
-USER_PROMPT_TMPL = (
+USER_TMPL = (
     "Current code:\n{code}\n\n"
     "V components: test_fail={tf}, recursive_residual={rr}, node_count={nc}, energy={e}\n"
     "Goal: test_fail==0 AND recursive_residual==0 AND node_count<=1.3*initial.\n"
@@ -50,15 +45,10 @@ USER_PROMPT_TMPL = (
 )
 
 
-# --- Python-side observability (mirrors exp1) --------------------------
-
-TEST_VALUE = 3628800
-
-
 def _exec_fact(code: str, n: int = 10) -> int | None:
     ns: dict = {}
     try:
-        exec(compile(code, "<trial>", "exec"), ns)
+        exec(compile(code, "<trial>", "exec"), ns, ns)
     except Exception:
         return None
     fn = ns.get("fact")
@@ -75,132 +65,142 @@ def test_fail(code: str) -> int:
 
 
 def recursive_residual(code: str) -> int:
-    return code.count("fact(") - 1
+    return max(0, code.count("fact(") - 1)
 
 
-def node_count(code: str) -> int:
+def node_count(code: str) -> float:
     try:
-        tree = ast.parse(code)
+        return float(sum(1 for _ in ast.walk(ast.parse(code))))
     except SyntaxError:
         return float("inf")
-    return float(sum(1 for _ in ast.walk(tree)))
 
 
-def V(code: str, energy: float) -> float:
-    return V_value(test_fail(code), recursive_residual(code), node_count(code), energy)
-
-
-# --- the LLM controller -----------------------------------------------
+def measure(code: str, energy: float):
+    tf, rr, nc = test_fail(code), recursive_residual(code), node_count(code)
+    return tf, rr, nc, V_value(tf, rr, nc, energy)
 
 
 def llm_propose(code: str) -> tuple[str | None, str, str]:
-    """Return (new_code, reason, extra). code is the full new def fact."""
-    user = USER_PROMPT_TMPL.format(
-        code=code,
-        tf=test_fail(code),
-        rr=recursive_residual(code),
-        nc=node_count(code),
-        e=0.0,
+    tf, rr, nc, _ = measure(code, 0.0)
+    text = llm_chat(
+        USER_TMPL.format(code=code, tf=tf, rr=rr, nc=nc, e=0.0),
+        system=SYSTEM_PROMPT,
     )
-    text = llm_chat(user, system=SYSTEM_PROMPT)
-    text = text.strip()
-    text = re.sub(r"^```(?:python)?\s*\n", "", text)
-    text = re.sub(r"\n```\s*$", "", text)
-    if not text.startswith("def fact"):
-        return None, "llm-bad-output", "no-def-prefix"
+    if "def fact" not in text:
+        return None, "llm-bad-output", "no-def"
+    idx = text.find("def fact")
+    text = text[idx:].strip()
+    # keep only the first top-level def (drop trailing chatter)
+    m = re.search(r"(?ms)^def fact\b.*?(?=^def |\Z)", text)
+    if m:
+        text = m.group(0).strip()
+    try:
+        ast.parse(text)
+    except SyntaxError as exc:
+        return None, "llm-bad-syntax", str(exc)[:60]
     return text, "llm-refactor", "ok"
-
-
-# --- one trial --------------------------------------------------------
 
 
 def run_trial(use_filter: bool, max_steps: int = 10) -> list[StepRecord]:
     code = INITIAL_CODE
     energy = 0.0
-    initial_nc = node_count(code)
-    records: list[StepRecord] = []
-    cur_tf, cur_rr, cur_nc = test_fail(code), recursive_residual(code), int(node_count(code))
-    records.append(
+    tf, rr, nc, v = measure(code, energy)
+    initial_nc = nc
+    records = [
         StepRecord(
             step=0,
-            V=V_value(cur_tf, cur_rr, cur_nc, energy),
-            test_fail=cur_tf,
-            recursive_residual=cur_rr,
-            node_count=cur_nc,
+            V=v,
+            test_fail=tf,
+            recursive_residual=rr,
+            node_count=nc,
             energy=energy,
             rejected=False,
-            in_S=in_S(cur_tf, cur_rr, cur_nc, initial_nc),
+            in_S=in_S(tf, rr, nc, initial_nc),
             action="init",
-            extra=f"initial_nc={initial_nc}",
         )
-    )
+    ]
     for step in range(1, max_steps + 1):
         new_code, action, extra = llm_propose(code)
         if new_code is None:
+            tf, rr, nc, v = measure(code, energy)
             records.append(
                 StepRecord(
                     step=step,
-                    V=V(code, energy),
-                    test_fail=cur_tf,
-                    recursive_residual=cur_rr,
-                    node_count=cur_nc,
+                    V=v,
+                    test_fail=tf,
+                    recursive_residual=rr,
+                    node_count=nc,
                     energy=energy,
                     rejected=False,
-                    in_S=in_S(cur_tf, cur_rr, cur_nc, initial_nc),
+                    in_S=in_S(tf, rr, nc, initial_nc),
                     action=action,
                     extra=extra,
                 )
             )
             break
-        old_v = V(code, energy)
-        # external filter: evaluate the candidate in a fresh namespace
-        cand_tf = test_fail(new_code)
-        cand_rr = recursive_residual(new_code)
-        cand_nc = int(node_count(new_code))
-        cand_energy = abs(cand_nc - cur_nc)
-        cand_v = V_value(cand_tf, cand_rr, cand_nc, cand_energy)
+        old_v = v
+        new_nc = node_count(new_code)
+        if new_nc == float("inf"):
+            records.append(
+                StepRecord(
+                    step=step,
+                    V=old_v,
+                    test_fail=tf,
+                    recursive_residual=rr,
+                    node_count=nc,
+                    energy=energy,
+                    rejected=True,
+                    in_S=in_S(tf, rr, nc, initial_nc),
+                    action="llm-invalid-ast",
+                    extra=extra,
+                )
+            )
+            continue
+        cand_energy = energy_of(nc, new_nc)
+        ctf, crr, cnc, cand_v = measure(new_code, cand_energy)
         delta = cand_v - old_v
-        rejected = use_filter and delta > 0.5
+        rejected = use_filter and delta > FILTER_DELTA_V
         if not rejected:
-            code = new_code
-            energy = cand_energy
-            cur_tf, cur_rr, cur_nc, cur_v = cand_tf, cand_rr, cand_nc, cand_v
+            code, energy = new_code, cand_energy
+            tf, rr, nc, v = ctf, crr, cnc, cand_v
         records.append(
             StepRecord(
                 step=step,
-                V=cur_v,
-                test_fail=cur_tf,
-                recursive_residual=cur_rr,
-                node_count=cur_nc,
+                V=v,
+                test_fail=tf,
+                recursive_residual=rr,
+                node_count=nc,
                 energy=energy,
                 rejected=rejected,
-                in_S=in_S(cur_tf, cur_rr, cur_nc, initial_nc),
+                in_S=in_S(tf, rr, nc, initial_nc),
                 action=action,
-                extra=extra,
+                extra=f"{extra};delta={delta:.3f}",
             )
         )
-        if in_S(cur_tf, cur_rr, cur_nc, initial_nc):
+        if in_S(tf, rr, nc, initial_nc):
             break
     return records
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--filter", choices=["on", "off"], default="on")
-    parser.add_argument("--trials", type=int, default=20)
+    parser.add_argument("--trials", type=int, default=10)
     parser.add_argument("--max-steps", type=int, default=10)
     args = parser.parse_args()
-
     for trial in range(args.trials):
         try:
             traj = run_trial(use_filter=(args.filter == "on"), max_steps=args.max_steps)
         except Exception as exc:
-            print(f"!! trial {trial} failed: {exc}")
+            print(f"!! trial {trial} failed: {exc}", flush=True)
             traj = []
         save_trajectory(traj, f"python_llm_filter-{args.filter}_trial{trial:02d}")
+        last = traj[-1] if traj else None
         print(
             f"python llm filter={args.filter} trial={trial:02d} "
-            f"steps={len(traj)} last_V={traj[-1].V if traj else float('nan'):.3f}"
+            f"steps={len(traj)} last_V={last.V if last else float('nan'):.3f} "
+            f"in_S={last.in_S if last else False}",
+            flush=True,
         )
     return 0
 

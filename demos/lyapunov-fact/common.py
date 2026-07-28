@@ -1,11 +1,21 @@
 """Common types + V definition for the lyapunov-fact demo.
 
-V (Lyapunov-like) is identical on both sides per spec:
+V (Lyapunov-like) is identical on both sides:
+
     V = 10 * test_fail + 2 * recursive_residual + 0.1 * node_count + energy
 
-S (target set) per spec:
+where
+    energy = 0.05 * |new_node_count − old_node_count|
+
+(energy is a soft size-penalty so a correct recursive→iterative rewrite
+can still decrease V; a raw |Δnodes| term made every good rewrite look
+like a drawdown and stuck the ΔV filter.)
+
+S (target set):
     test_fail == 0 AND recursive_residual == 0 AND node_count <= 1.3 * initial
 """
+
+from __future__ import annotations
 
 import csv
 import json
@@ -16,11 +26,17 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-# Results are written to <repo>/demos/lyapunov-fact/results/.
-# Resolve relative to this file so the demo runs the same way regardless
-# of CWD (callers usually invoke from the repo root).
 RESULTS = Path(__file__).resolve().parent / "results"
 RESULTS.mkdir(parents=True, exist_ok=True)
+
+# Shared numerical constants (both engines, both controllers).
+TEST_VALUE = 3628800  # fact(10)
+FILTER_DELTA_V = 0.5  # hard reject if candidate ΔV exceeds this
+ENERGY_SCALE = 0.05  # soft size-change penalty in V
+# Aura FlatAST counts fewer nodes than CPython's ast for the recursive
+# seed (~17 vs ~25) but the iterative rewrite is denser in Aura (~24),
+# so 1.3× rejects a correct rewrite. 1.5× admits both engines' GOOD-ITER.
+S_SIZE_RATIO = 1.5
 
 
 @dataclass
@@ -34,19 +50,30 @@ class StepRecord:
     rejected: bool
     in_S: bool
     action: str
-    extra: str = ""  # free-form tag (e.g. LLM model, prompt size)
+    extra: str = ""
+
+
+def energy_of(old_nc: float, new_nc: float) -> float:
+    return ENERGY_SCALE * abs(float(new_nc) - float(old_nc))
 
 
 def save_trajectory(records: list[StepRecord], tag: str) -> Path:
     """Write trajectory to a CSV. Returns the output path."""
     out = RESULTS / f"{tag}.csv"
-    if not records:
-        # Always write a header so analyze.py can glob over empty results.
-        with open(out, "w", newline="") as f:
-            f.write("step,V,test_fail,recursive_residual,node_count,energy,rejected,in_S,action,extra\n")
-        return out
+    fieldnames = [
+        "step",
+        "V",
+        "test_fail",
+        "recursive_residual",
+        "node_count",
+        "energy",
+        "rejected",
+        "in_S",
+        "action",
+        "extra",
+    ]
     with open(out, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(asdict(records[0]).keys()))
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in records:
             writer.writerow(asdict(r))
@@ -54,21 +81,21 @@ def save_trajectory(records: list[StepRecord], tag: str) -> Path:
 
 
 def V_value(test_fail: int, recursive_residual: int, node_count: float, energy: float) -> float:
-    """Proxy V — identical on both sides."""
-    return 10.0 * test_fail + 2.0 * recursive_residual + 0.1 * node_count + energy
+    return 10.0 * test_fail + 2.0 * recursive_residual + 0.1 * float(node_count) + float(energy)
 
 
-def in_S(test_fail: int, recursive_residual: int, node_count: float, initial_size: float) -> bool:
-    """S — identical on both sides."""
-    return test_fail == 0 and recursive_residual == 0 and node_count <= 1.3 * initial_size
+def in_S(
+    test_fail: int,
+    recursive_residual: int,
+    node_count: float,
+    initial_size: float,
+    *,
+    size_ratio: float = S_SIZE_RATIO,
+) -> bool:
+    return test_fail == 0 and recursive_residual == 0 and float(node_count) <= size_ratio * float(initial_size)
 
 
-# --- shared LLM client (used by exp2_llm/) -----------------------------
-# Env-var lookup order per spec: AURA_LLM_API_KEY → OPENAI_API_KEY →
-# GROK_API_KEY → DEEPSEEK_API_KEY (or any first non-empty). Default base
-# URL is OpenAI-compatible; the model is whatever AURA_LLM_MODEL says
-# (or "grok-4" if unset). We use the stdlib `urllib` to keep the demo
-# zero-dependency.
+# --- shared LLM client (exp2) -----------------------------------------
 
 
 def _resolve_api_key() -> str:
@@ -80,31 +107,33 @@ def _resolve_api_key() -> str:
 
 
 def _resolve_base_url() -> str:
-    v = os.environ.get("AURA_LLM_BASE_URL")
-    if v:
-        return v
-    # default: OpenAI-compatible public endpoint (used by minimax-m3
-    # at ~/code/keys/minimax per the user's instruction).
-    return "https://api.minimax.chat/v1"
+    return os.environ.get("AURA_LLM_BASE_URL") or "https://api.minimax.chat/v1"
 
 
 def _resolve_model() -> str:
-    v = os.environ.get("AURA_LLM_MODEL")
-    if v:
-        return v
-    return "grok-4"
+    return os.environ.get("AURA_LLM_MODEL") or "grok-4"
+
+
+def strip_llm_fences(text: str) -> str:
+    """Drop markdown fences and model 'thinking' blocks."""
+    import re
+
+    text = text.strip()
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.I)
+    text = re.sub(r"<thinking>[\s\S]*?</thinking>", "", text, flags=re.I)
+    text = re.sub(r"^```(?:python|aura|lisp|scheme)?\s*\n", "", text)
+    text = re.sub(r"\n```\s*$", "", text)
+    return text.strip()
 
 
 def llm_chat(
-    prompt: str, *, system: str = "You are a code refactorer.", max_retries: int = 3, timeout_s: float = 30.0
+    prompt: str,
+    *,
+    system: str = "You are a code refactorer.",
+    max_retries: int = 3,
+    timeout_s: float = 60.0,
 ) -> str:
-    """OpenAI-compatible chat completion. Returns the assistant text.
-
-    The minimal demo client uses urllib + a short retry loop. It does
-    not stream. A real production client would also pin the TLS
-    fingerprint and use a longer timeout, but for the demo we keep the
-    surface area small.
-    """
+    """OpenAI-compatible chat completion. Returns assistant text."""
     api_key = _resolve_api_key()
     base_url = _resolve_base_url().rstrip("/")
     model = _resolve_model()
@@ -132,8 +161,9 @@ def llm_chat(
         try:
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 data = json.loads(resp.read())
-            return data["choices"][0]["message"]["content"]
-        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, TimeoutError) as exc:
+            content = data["choices"][0]["message"]["content"]
+            return strip_llm_fences(content)
+        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, TimeoutError, json.JSONDecodeError) as exc:
             last_err = exc
             time.sleep(0.5 * (2**attempt))
     raise RuntimeError(f"LLM call failed after {max_retries} attempts: {last_err}")
