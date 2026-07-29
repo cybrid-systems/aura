@@ -1,23 +1,27 @@
 // ──────────────────────────────────────────────────────────────
 //  opcode_reflect.hh — P2996 reflection for IROpcode
 //
-//  Uses GCC 16.1 compile-time reflection to auto-generate
-//  opcode name lookup, eliminating hand-written switch(24 cases).
+//  GCC 16.1+ (-std=c++26 -freflection): auto-generate opcode name
+//  tables from the enum (no hand-written switch).
 //
-//  Key constraints (GCC 16.1 P2996):
-//    - vector<info> can't be constexpr-stored (operator new)
-//    - Use data()[i] instead of operator[]
-//    - extract<T>(enumerator) throws for enum values
-//    - constexpr string return has SSO issues
+//  Issue #2289 (real GCC 16.1.0): early-snapshot workarounds removed
+//  (.data()[i], fixed-256 tables, extract avoidance). Natural APIs:
+//  operator[], extract<E>, enum_count, std::define_static_array.
+//
+//  Still real on 16.1.0: consteval cannot produce a constexpr
+//  std::string object (prefer string_view in tables). Local
+//  enumerators_of() ranges are fine; for a durable compile-time
+//  view use std::define_static_array / std::array — not a static
+//  constexpr std::vector<meta::info>.
 // ──────────────────────────────────────────────────────────────
 
 #ifndef AURA_REFLECT_OPCODE_REFLECT_HH
 #define AURA_REFLECT_OPCODE_REFLECT_HH
 
 #include <meta>
-#include <string>
 #include <string_view>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace aura::reflect {
@@ -31,28 +35,27 @@ template <typename E> consteval std::size_t enum_count() {
 }
 
 // ==============================================================
-//  Build a dense name table: table[enum_value] = name
+//  Dense name table: table[enum_value] = name
 // ==============================================================
+// Sequential 0..N-1 enums (e.g. IROpcode): extract → ordinal.
+// Gaps leave empty string_view slots.
 
-// For IROpcode, values are sequential 0..23.
-// Extract enumerator names into a fixed array by INDEX (not by value).
-// Use data()[i] to avoid vector operator[] constexpr issues.
-template <typename E, std::size_t N> consteval auto build_name_table() {
-    auto enums = std::meta::enumerators_of(^^E);
+template <typename E> consteval auto build_name_table() {
+    constexpr auto N = enum_count<E>();
+    constexpr auto enums = std::define_static_array(std::meta::enumerators_of(^^E));
     std::array<std::string_view, N> table{};
-    for (std::size_t i = 0; i < N; ++i) {
-        if (i < enums.size())
-            table[i] = std::meta::identifier_of(enums.data()[i]);
+    for (std::size_t i = 0; i < enums.size(); ++i) {
+        auto v = static_cast<std::size_t>(std::meta::extract<E>(enums[i]));
+        if (v < N)
+            table[v] = std::meta::identifier_of(enums[i]);
     }
     return table;
 }
 
 template <typename E> constexpr std::string_view opcode_name(int value) {
-    // Use fixed upper bound (enumerators_of has GCC constexpr issues)
-    constexpr auto N = std::size_t{256};
-    constexpr auto table = build_name_table<E, 32>(); // generous upper bound
-    if (value >= 0 && value < static_cast<int>(N))
-        return table[value];
+    constexpr auto table = build_name_table<E>();
+    if (value >= 0 && static_cast<std::size_t>(value) < table.size())
+        return table[static_cast<std::size_t>(value)];
     return "<unknown>";
 }
 
@@ -61,11 +64,10 @@ template <typename E> constexpr std::string_view opcode_name(int value) {
 // ==============================================================
 
 template <typename E> consteval bool validate_enum() {
-    auto enums = std::meta::enumerators_of(^^E);
+    constexpr auto enums = std::define_static_array(std::meta::enumerators_of(^^E));
     for (std::size_t i = 0; i < enums.size(); ++i) {
         for (std::size_t j = i + 1; j < enums.size(); ++j) {
-            if (std::meta::identifier_of(enums.data()[i]) ==
-                std::meta::identifier_of(enums.data()[j]))
+            if (std::meta::identifier_of(enums[i]) == std::meta::identifier_of(enums[j]))
                 return false;
         }
     }
@@ -73,16 +75,16 @@ template <typename E> consteval bool validate_enum() {
 }
 
 // ==============================================================
-//  Opcode list (for CLI/--opcodes)
+//  Opcode list (for CLI/--opcodes) — declaration order
 // ==============================================================
 
 template <typename E> consteval auto list_opcodes() {
-    constexpr auto N = std::size_t{256};
-    auto enums = std::meta::enumerators_of(^^E);
-    std::array<std::string_view, 32> names{};
+    constexpr auto N = enum_count<E>();
+    constexpr auto enums = std::define_static_array(std::meta::enumerators_of(^^E));
+    std::array<std::string_view, N> names{};
     for (std::size_t i = 0; i < N; ++i)
-        names[i] = std::meta::identifier_of(enums.data()[i]);
-    return std::pair{names, N};
+        names[i] = std::meta::identifier_of(enums[i]);
+    return names;
 }
 
 } // namespace aura::reflect
