@@ -1,11 +1,9 @@
 // ir_reflect_serialize.cpp — P2996 reflection-based IR serialization
 //
-// Compiled with -freflection (GCC 16+). Mirrors the IR struct layouts from
-// aura.compiler.ir module for compile-time reflection access.
-//
-// Added to aura-reflect library (not the module build).
-// Exposes C-linkage functions for use from cache_impl.cpp.
-// Replaces the hand-written IR serialization.
+// aura-reflect isolation (Issue #2290): non-module TU, -freflection.
+// Cannot `import aura.compiler.ir` here — GCC 16.1.0 still conflicts
+// when mixing import std / Aura modules with <meta>. Mirror layouts
+// MUST stay in sync with ir.ixx; validate via opcode_reflect.
 
 #include <cstdint>
 #include <cstddef>
@@ -14,6 +12,7 @@
 #include <array>
 #include <cstring>
 #include "reflect/reflect.hh"
+#include "reflect/opcode_reflect.hh"
 
 // Mirror structs — layouts MUST match aura.compiler.ir module.
 namespace aura::ir {
@@ -74,6 +73,12 @@ enum class IROpcode : std::uint8_t {
     GuardShape,
     TopCellLoad,
 };
+
+// Keep in sync with kIROpcodeCount in ir.ixx (54).
+static_assert(aura::reflect::enum_count<IROpcode>() == 54);
+static_assert(aura::reflect::validate_enum<IROpcode>());
+static_assert(aura::reflect::opcode_name<IROpcode>(0) == "Nop");
+static_assert(aura::reflect::opcode_name<IROpcode>(53) == "TopCellLoad");
 
 enum class Region : std::uint8_t {
     Default = 0,
