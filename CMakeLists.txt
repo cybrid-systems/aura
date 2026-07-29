@@ -1379,6 +1379,15 @@ target_compile_options(test_ast_pod_reflect_b3 PRIVATE -freflection -Wall
 target_compile_features(test_ast_pod_reflect_b3 PUBLIC cxx_std_26)
 target_link_libraries(test_ast_pod_reflect_b3 PRIVATE stdc++)
 add_test(NAME test_ast_pod_reflect_b3_verification COMMAND ./test_ast_pod_reflect_b3)
+
+# Wave C1: generic enum_name_table across domain enums.
+add_executable(test_enum_name_table_c1 tests/reflect/test_enum_name_table_c1.cpp)
+target_include_directories(test_enum_name_table_c1 PRIVATE src)
+target_compile_options(test_enum_name_table_c1 PRIVATE -freflection -Wall
+                       -Wno-sign-compare -Wno-unused-local-typedefs)
+target_compile_features(test_enum_name_table_c1 PUBLIC cxx_std_26)
+target_link_libraries(test_enum_name_table_c1 PRIVATE stdc++)
+add_test(NAME test_enum_name_table_c1_verification COMMAND ./test_enum_name_table_c1)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
