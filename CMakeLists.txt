@@ -1500,6 +1500,9 @@ aura_issue_test_link_llvm_jit(test_gc_defer_render_pin_2160)
 # Issue #2166: opt-in LiveCompactMode::Moving densify + object_remap_.
 aura_add_issue_test(test_moving_compact_2166)
 aura_issue_test_link_llvm_jit(test_moving_compact_2166)
+# Issue #2298: non-render general object pin-or-remap (GeneralObjectPin / pin_or_fail).
+aura_add_issue_test(test_general_object_pin_2298)
+aura_issue_test_link_llvm_jit(test_general_object_pin_2298)
 # Issue #2294 / #2267: RootRemapPass real Stable-object + Closure capture rewrite.
 aura_add_issue_test(test_root_remap_pass_2267)
 aura_issue_test_link_llvm_jit(test_root_remap_pass_2267)
@@ -2393,6 +2396,8 @@ add_dependencies(all_test_issue_targets test_linear_escape_commit_hardblock_2108
 aura_add_issue_test(test_linear_pin_moving_compact_2280)
 aura_issue_test_link_llvm_jit(test_linear_pin_moving_compact_2280)
 add_dependencies(all_test_issue_targets test_linear_pin_moving_compact_2280)
+# Issue #2298: general object pin-or-remap (registered near #2166 above).
+add_dependencies(all_test_issue_targets test_general_object_pin_2298)
 # Issue #2294: RootRemapPass real rewrite (registered near #2166 above).
 add_dependencies(all_test_issue_targets test_root_remap_pass_2267)
 
