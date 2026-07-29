@@ -2765,6 +2765,13 @@ aura_add_issue_test(test_type_dep_partial_merge_2283)
 aura_issue_test_link_llvm_jit(test_type_dep_partial_merge_2283)
 add_dependencies(all_test_issue_targets test_type_dep_partial_merge_2283)
 
+# Issue #2284: Agent-first-class TIMEOUT repair surface (structured unresolved_affected_nodes).
+# Publish site on every TIMEOUT / hard-reject (#2277 parity) + 8 new atomics + 1 additive
+# query primitive (hash with 7 fixed fields + 16 capped NodeId slots).
+aura_add_issue_test(test_type_timeout_repair_2284)
+aura_issue_test_link_llvm_jit(test_type_timeout_repair_2284)
+add_dependencies(all_test_issue_targets test_type_timeout_repair_2284)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)

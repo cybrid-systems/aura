@@ -667,6 +667,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                             m->typed_mutation_full_force_rollback_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                        // Issue #2284: publish boundary hard-reject signal on the
+                        // repair surface. The typecheck path already published the
+                        // detailed unresolved_affected_nodes data; we only update
+                        // the status + publish_total here to avoid clobbering the
+                        // repair set with an empty boundary-only snapshot.
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                            constexpr std::uint64_t kHardRejectStatus = 99;
+                            m->type_repair_last_timeout_status.store(kHardRejectStatus,
+                                                                     std::memory_order_relaxed);
+                            m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
+                        }
                         // Agent-visible deny reason (#2145 / #2076 shape).
                         std::string_view deny_kind = "invariant";
                         if (first.cross_batch_linear_escape)
