@@ -27,6 +27,7 @@ module;
 #include "core/persistent_child_vector.hh"
 #include "core/cpp26_contract_stats.h"
 #include "core/provenance_tracker.hh" // #2125: maybe_stamp_stable_ref_isolation_tenant
+#include "reflect/node_tag_names.hh"  // Wave B1: shared NodeTag names
 #include <contracts>
 #include <shared_mutex>
 
@@ -545,65 +546,67 @@ export struct NodeMeta {
     bool has_params;             // has param list (Lambda)
 };
 
-// Tag-to-metadata mapping, indexed by `tag - 1`.
-// Tags must be sequential starting from 1 (LiteralInt = 0x01).
-// Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 35> kNodeMeta = {{
-    {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true, false, false},       // 0x01
-    {NodeTag::Variable, "Variable", 0, false, true, false, false, false},           // 0x02
-    {NodeTag::Call, "Call", 1, true, false, false, false, false},                   // 0x03
-    {NodeTag::IfExpr, "IfExpr", 3, false, false, false, false, false},              // 0x04
-    {NodeTag::Lambda, "Lambda", 1, false, false, false, false, true},               // 0x05
-    {NodeTag::Let, "Let", 2, false, true, false, false, false},                     // 0x06
-    {NodeTag::LetRec, "LetRec", 2, false, true, false, false, false},               // 0x07
-    {NodeTag::Define, "Define", 1, false, true, false, false, false},               // 0x08
-    {NodeTag::Begin, "Begin", 0, true, false, false, false, false},                 // 0x09
-    {NodeTag::Set, "Set", 1, false, true, false, false, false},                     // 0x0A
-    {NodeTag::Quote, "Quote", 1, false, false, false, false, false},                // 0x0B
-    {NodeTag::LiteralInt, "<gap>", 0, false, false, false, false, false},           // 0x0C (gap)
-    {NodeTag::LiteralString, "LiteralString", 0, false, true, false, false, false}, // 0x0D
-    {NodeTag::LiteralInt, "<gap>", 0, false, false, false, false,
-     false}, // 0x0E (MacroDef — Expr* only)
-    {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true, false, false, false}, // 0x0F
-    {NodeTag::Coercion, "Coercion", 1, false, true, false, false, false},             // 0x10
-    {NodeTag::LiteralFloat, "LiteralFloat", 0, false, false, false, true, false},     // 0x11
-    {NodeTag::Pair, "Pair", 2, false, false, false, false, false},                    // 0x12
-    {NodeTag::LiteralInt, "<gap>", 0, false, false, false, false, false},             // 0x13 (gap)
-    {NodeTag::DefineModule, "DefineModule", 0, true, false, false, false, false},     // 0x14
-    {NodeTag::Export, "Export", 0, true, false, false, false, false},                 // 0x15
-    {NodeTag::Linear, "Linear", 1, false, false, false, false, false},                // 0x16
-    {NodeTag::Move, "Move", 1, false, false, false, false, false},                    // 0x17
-    {NodeTag::Borrow, "Borrow", 1, false, false, false, false, false},                // 0x18
-    {NodeTag::MutBorrow, "MutBorrow", 1, false, false, false, false, false},          // 0x19
-    {NodeTag::Drop, "Drop", 1, false, false, false, false, false},                    // 0x1A
-    // Issue #310: SV structural tags. Same shape as
-    // DefineModule/Export (0 fixed children, var_children,
-    // no per-node flags) — the structural payload (interface
-    // name + port list / modport name + port directions)
-    // will be populated via side-tables when the builder
-    // methods land in a follow-up.
-    {NodeTag::Interface, "Interface", 0, true, false, false, false, false},   // 0x1B
-    {NodeTag::Modport, "Modport", 0, true, false, false, false, false},       // 0x1C
-    {NodeTag::Property, "Property", 1, false, true, false, false, false},     // 0x1D
-    {NodeTag::Sequence, "Sequence", 1, false, true, false, false, false},     // 0x1E
-    {NodeTag::Assert, "Assert", 1, false, true, false, false, false},         // 0x1F
-    {NodeTag::Covergroup, "Covergroup", 0, true, false, false, false, false}, // 0x20
-    {NodeTag::Coverpoint, "Coverpoint", 0, true, false, false, false, false}, // 0x21
-    {NodeTag::Constraint, "Constraint", 0, true, false, false, false, false}, // 0x22
-    {NodeTag::Class, "Class", 0, true, false, false, false, false},           // 0x23
+// Tag-to-metadata mapping, indexed by `tag - 1` for tag in [0x01,0x23].
+// Names: kNodeTagNames (Wave B1). Only 0x0C is a true hole.
+export constexpr std::array<NodeMeta, kNodeTagNameCount> kNodeMeta = {{
+    {NodeTag::LiteralInt, kNodeTagNames[0], 0, false, false, true, false, false},
+    {NodeTag::Variable, kNodeTagNames[1], 0, false, true, false, false, false},
+    {NodeTag::Call, kNodeTagNames[2], 1, true, false, false, false, false},
+    {NodeTag::IfExpr, kNodeTagNames[3], 3, false, false, false, false, false},
+    {NodeTag::Lambda, kNodeTagNames[4], 1, false, false, false, false, true},
+    {NodeTag::Let, kNodeTagNames[5], 2, false, true, false, false, false},
+    {NodeTag::LetRec, kNodeTagNames[6], 2, false, true, false, false, false},
+    {NodeTag::Define, kNodeTagNames[7], 1, false, true, false, false, false},
+    {NodeTag::Begin, kNodeTagNames[8], 0, true, false, false, false, false},
+    {NodeTag::Set, kNodeTagNames[9], 1, false, true, false, false, false},
+    {NodeTag::Quote, kNodeTagNames[10], 1, false, false, false, false, false},
+    {NodeTag::LiteralInt, kNodeTagNames[11], 0, false, false, false, false, false}, // 0x0C gap
+    {NodeTag::LiteralString, kNodeTagNames[12], 0, false, true, false, false, false},
+    // MacroDef was mis-labeled as gap; real tag 0x0E (flags stay minimal).
+    {NodeTag::MacroDef, kNodeTagNames[13], 0, false, true, false, false, false},
+    {NodeTag::TypeAnnotation, kNodeTagNames[14], 1, false, true, false, false, false},
+    {NodeTag::Coercion, kNodeTagNames[15], 1, false, true, false, false, false},
+    {NodeTag::LiteralFloat, kNodeTagNames[16], 0, false, false, false, true, false},
+    {NodeTag::Pair, kNodeTagNames[17], 2, false, false, false, false, false},
+    // DefineType was mis-labeled as gap; real tag 0x13.
+    {NodeTag::DefineType, kNodeTagNames[18], 0, false, true, false, false, false},
+    {NodeTag::DefineModule, kNodeTagNames[19], 0, true, false, false, false, false},
+    {NodeTag::Export, kNodeTagNames[20], 0, true, false, false, false, false},
+    {NodeTag::Linear, kNodeTagNames[21], 1, false, false, false, false, false},
+    {NodeTag::Move, kNodeTagNames[22], 1, false, false, false, false, false},
+    {NodeTag::Borrow, kNodeTagNames[23], 1, false, false, false, false, false},
+    {NodeTag::MutBorrow, kNodeTagNames[24], 1, false, false, false, false, false},
+    {NodeTag::Drop, kNodeTagNames[25], 1, false, false, false, false, false},
+    {NodeTag::Interface, kNodeTagNames[26], 0, true, false, false, false, false},
+    {NodeTag::Modport, kNodeTagNames[27], 0, true, false, false, false, false},
+    {NodeTag::Property, kNodeTagNames[28], 1, false, true, false, false, false},
+    {NodeTag::Sequence, kNodeTagNames[29], 1, false, true, false, false, false},
+    {NodeTag::Assert, kNodeTagNames[30], 1, false, true, false, false, false},
+    {NodeTag::Covergroup, kNodeTagNames[31], 0, true, false, false, false, false},
+    {NodeTag::Coverpoint, kNodeTagNames[32], 0, true, false, false, false, false},
+    {NodeTag::Constraint, kNodeTagNames[33], 0, true, false, false, false, false},
+    {NodeTag::Class, kNodeTagNames[34], 0, true, false, false, false, false},
 }};
-
 
 export constexpr const NodeMeta& meta(NodeTag tag) {
     return kNodeMeta[static_cast<std::size_t>(tag) - 1];
 }
 
-// Compile-time validation: check known entries, skip gap sentinels
+// Compile-time validation: shape flags + name table anchors
 consteval bool validate_node_meta() {
-    // Gap entries (0x0C, 0x0E in tag space → indices 11, 13)
-    if (kNodeMeta[11].name != "<gap>")
+    if (kNodeMeta.size() != kNodeTagNameCount)
         return false;
-    if (kNodeMeta[13].name != "<gap>")
+    // Sole true hole in the tag space
+    if (kNodeMeta[kNodeTagGapIndex].name != "<gap>")
+        return false;
+    if (kNodeMeta[kNodeTagGapIndex].name.data() != kNodeTagNames[kNodeTagGapIndex].data())
+        return false;
+    // Real tags formerly mis-marked as gaps
+    if (meta(NodeTag::MacroDef).name != "MacroDef" ||
+        meta(NodeTag::MacroDef).tag != NodeTag::MacroDef)
+        return false;
+    if (meta(NodeTag::DefineType).name != "DefineType" ||
+        meta(NodeTag::DefineType).tag != NodeTag::DefineType)
         return false;
     if (meta(NodeTag::LiteralInt).name != "LiteralInt")
         return false;
@@ -626,6 +629,9 @@ consteval bool validate_node_meta() {
     if (meta(NodeTag::LiteralFloat).name != "LiteralFloat")
         return false;
     if (meta(NodeTag::LiteralFloat).has_float != true)
+        return false;
+    // Name pointers alias shared table
+    if (meta(NodeTag::Call).name.data() != kNodeTagNames[2].data())
         return false;
     return true;
 }
