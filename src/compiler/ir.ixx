@@ -201,33 +201,25 @@ export inline constexpr IROpcodeClass opcode_class(IROpcode op) noexcept {
 }
 
 
-// ── Issue #217 Cycle 3: IR types are reflection-ready ────────
+// ── Phase 4 reflection (#2291): pure-POD IR wire path ────────
 //
-// The IR types below (IRInstruction, OpcodeInfo, BasicBlock,
-// IRFunction, IRModule) are plain POD structs that the
-// C++26 P2996 reflection (reflect_members<T>()) sees
-// automatically — no explicit REFLECT_MEMBERS annotation
-// is required. The reflection-driven serialization
-// (auto_serialize<T>(buf, obj) / auto_deserialize<T>(buf,
-// pos)) works for these types out of the box.
+// IRInstruction / flat headers serialize via P2996 helpers in
+// the aura-reflect TU (cannot mix import aura.compiler.ir with
+// <meta> on GCC 16.1.0 — see #2290):
 //
-// The migration scope per the issue body is:
-//   1. Add a serialization path that uses auto_serialize
-//      (currently the IR types are in-memory only; no
-//      hand-written serializers exist in this file).
-//   2. Replace the kOpcodeInfo[] table with a reflection-
-//      driven dispatch table (Cycle 4 of #217).
-//   3. Replace any AST type hand-written serializers
-//      in src/core/ast.ixx with auto_serialize
-//      (separate issue).
+//   src/reflect/ir_pod_reflect.hh     — POD mirrors + pattern
+//   src/compiler/ir_reflect_serialize.cpp — C ABI + module dump
+//   tests/reflect/test_ir_pod_phase4_2291.cpp
 //
-// The test in tests/test_issue_217.cpp verifies the
-// reflection infrastructure works for IR-shaped types
-// using local copies of these definitions (Cycle 1
-// pilot) + a Roundtrip test on the real types via
-// import (Test 8 — deferred to a future cycle because
-// the test target's module imports currently conflict
-// with arena.ixx's gc_hooks.h).
+// Pattern for the next type batch:
+//   1. Keep the type POD (arithmetic / enum / std::array).
+//   2. auto_serialize / auto_deserialize / auto_validate / to_json
+//      only — no field-by-field write loops.
+//   3. Mirror under ir_pod until module+meta isolation lifts.
+//
+// Nested containers (BasicBlock, IRFunction, IRModule) still use
+// recursive bin_write in aura-reflect. kOpcodeInfo names stay
+// hand tables for now; OpcodeArity POD covers numeric meta.
 
 export struct IRInstruction {
     IROpcode opcode;
