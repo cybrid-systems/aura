@@ -27,7 +27,6 @@ template <typename T> consteval const char* validate_node() {
         return "must have at least one member (tag)";
 
     // First member must be NodeTag (enum)
-    // GCC 16.1.0: operator[] on meta ranges is fine (#2289).
     auto first = members[0];
     auto first_type = type_of(first);
     if (!is_enum_type(first_type))
