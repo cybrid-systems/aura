@@ -59,6 +59,17 @@ extern "C" void aura_jit_note_native_macro_preserved(uint8_t marker, uint32_t pr
 extern "C" uint8_t aura_jit_fn_source_marker(int64_t func_id);
 extern "C" uint32_t aura_jit_fn_provenance(int64_t func_id);
 
+// Issue #2293: linear pin/unpin runtime bridges — extern "C"
+// forwarders defined in aura_jit_runtime.cpp that cast uint64 →
+// void* and delegate to aura::core::lifetime::{pin,unpin}_linear_root.
+// The JIT lowering in declare_runtime() emits Function::Create decls
+// for these symbols and ORC's reg() call (below) wires their
+// addresses. Forward declarations here so the reg() call site can
+// take the function address without aura_jit_runtime.cpp's
+// lifetime_pin.hh include leaking into this TU.
+extern "C" void aura_jit_pin_linear_root(std::uint64_t obj_id) noexcept;
+extern "C" void aura_jit_unpin_linear_root(std::uint64_t obj_id) noexcept;
+
 namespace aura::jit {
 
 // PrimId values (must match ir.ixx PrimId enum order)
@@ -301,6 +312,18 @@ struct LLVMBuilder {
     llvm::Function* fn_drop_cell = nullptr;
     llvm::Function* fn_drop_closure = nullptr;
     llvm::Function* fn_drop_value = nullptr;
+    // Issue #2293: linear pin/unpin runtime bridges. OpLinearWrap
+    // emits a CreateCall to fn_pin_linear_root after storing the
+    // wrapped value into inst.ops[0]; OpMoveOp and OpDropOp emit
+    // CreateCall to fn_unpin_linear_root before / after their
+    // existing drop machinery. This wires the AOT JIT lowering
+    // path into the lifetime_pin epoch-scoped linear pin contract
+    // (see src/core/lifetime_pin.{hh,ixx}) so that
+    // verify_linear_pins_under_moving_compact sees live linear
+    // roots registered from JIT'd code, not just the runtime-side
+    // registry fed by set_linear_ownership_state.
+    llvm::Function* fn_pin_linear_root = nullptr;
+    llvm::Function* fn_unpin_linear_root = nullptr;
     // Issue #170 Phase 1 / item #2: try/catch runtime bridges.
     // The exception stack is thread-local in aura_jit_runtime.cpp;
     // OpRaise reads the top frame's handler_block + payload_slot
@@ -507,6 +530,23 @@ struct LLVMBuilder {
         fn_drop_closure =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_drop_closure", mod);
+
+        // Issue #2293: linear pin/unpin bridges — thin extern "C"
+        // forwarders in aura_jit_runtime.cpp that cast uint64 →
+        // void* and delegate to aura::core::lifetime::pin_linear_root
+        // / unpin_linear_root. The void-arg signature matches the
+        // drop_closure / drop_pair / drop_cell pattern (single i64
+        // payload). The runtime helper early-returns on null, so
+        // AC3 zero-cost (empty registry) is preserved at the JIT
+        // emit level (no IR bloat on the hot path beyond one call
+        // instruction per wrap/move/drop, which is dead-code-elim'd
+        // by LLVM when the inline pin_linear_root returns early).
+        fn_pin_linear_root = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
+                                                    llvm::Function::ExternalLinkage,
+                                                    "aura_jit_pin_linear_root", mod);
+        fn_unpin_linear_root = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {i64}, false), llvm::Function::ExternalLinkage,
+            "aura_jit_unpin_linear_root", mod);
 
         // Issue #170 Phase 1 / item #2: try/catch exception stack
         // bridges. aura_exception_push/pop manage the LIFO stack;
@@ -1289,11 +1329,32 @@ struct LLVMBuilder {
                 //     no-ops (compile-time concepts, pass through)
                 //   DropOp = actually calls drop functions
 
-            case OpLinearWrap:
+            case OpLinearWrap: {
+                // Issue #1535 / #1917: dual-epoch fence before wrap
+                // (prevents UAF on post-mutate linear values). The
+                // epoch check also runs #740 post-invalidate metrics
+                // when linear_ownership_state != 0.
+                //
+                // Issue #2293: register the wrapped value as a
+                // linear pin root so verify_linear_pins_under_moving_compact
+                // sees live linear roots from JIT'd code. Pin call
+                // is placed AFTER the store + epoch fence end so
+                // the runtime-side check observes the wrapped
+                // value, not the stale pre-store value.
+                if (metrics)
+                    metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
+                auto fb = begin_linear_epoch_fence();
+                auto wrap_val = load(inst.ops[1]);
+                store(inst.ops[0], wrap_val);
+                end_linear_epoch_fence(fb);
+                irb->CreateCall(llvm::FunctionCallee(fn_pin_linear_root),
+                                llvm::ArrayRef<llvm::Value*>{wrap_val});
+                return true;
+            }
             case OpBorrowOp:
             case OpMutBorrowOp:
             case OpRefCountOp: {
-                // Issue #1535 / #1917: dual-epoch fence before borrow / wrap
+                // Issue #1535 / #1917: dual-epoch fence before borrow
                 // (prevents UAF on post-mutate linear values). The
                 // epoch check also runs #740 post-invalidate metrics
                 // when linear_ownership_state != 0.
@@ -1307,16 +1368,32 @@ struct LLVMBuilder {
             case OpMoveOp: {
                 // Issue #1535 / #1917: check epoch before zeroing source
                 // (prevents use-after-move after mid-op mutate).
+                //
+                // Issue #2293: unpin the source slot before
+                // invalidation so verify_linear_pins_under_moving_compact
+                // doesn't see a stale root registered by a prior
+                // OpLinearWrap on the source slot. The runtime
+                // unpin helper is idempotent (no-op for unknown
+                // roots) so this is safe even if the source slot
+                // was never wrapped (e.g. moved from a non-linear
+                // register slot).
                 if (metrics)
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                 auto fb = begin_linear_epoch_fence();
+                auto src_val = load(inst.ops[1]);
                 // Issue #106: source invalidation. After a
                 // MoveOp the source slot is zeroed so a later
                 // DropOp on the source is a no-op (the runtime's
                 // drop helpers all bounds-check or check the
                 // IS_PAIR low-bit tag, and 0 fails both).
-                auto val = load(inst.ops[1]);
-                store(inst.ops[0], val);
+                store(inst.ops[0], src_val);
+                // Unpin source BEFORE zeroing so the unpin sees
+                // the original wrapped value (the inline
+                // unpin_linear_root early-returns on null, but
+                // we still want the registry hit for the actual
+                // root, not a synthesized 0).
+                irb->CreateCall(llvm::FunctionCallee(fn_unpin_linear_root),
+                                llvm::ArrayRef<llvm::Value*>{src_val});
                 store(inst.ops[1], c64(0)); // source invalidated
                 end_linear_epoch_fence(fb);
                 return true;
@@ -1324,6 +1401,14 @@ struct LLVMBuilder {
             case OpDropOp: {
                 // Issue #1535 / #1917: check epoch before drop (prevents
                 // double-free of stale/invalidated linear values).
+                //
+                // Issue #2293: unpin the value being dropped AFTER
+                // the drop helpers run (so the unpin sees the same
+                // value the drops saw) so verify_linear_pins_under_moving_compact
+                // no longer holds the dead root. The runtime unpin
+                // helper early-returns on null, so dropping a
+                // never-wrapped value (inst.ops[0] == 0) is a
+                // no-op (no registry hit, no counter bump).
                 if (metrics)
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                 auto fb = begin_linear_epoch_fence();
@@ -1333,6 +1418,8 @@ struct LLVMBuilder {
                 irb->CreateCall(llvm::FunctionCallee(fn_drop_cell),
                                 llvm::ArrayRef<llvm::Value*>{val});
                 irb->CreateCall(llvm::FunctionCallee(fn_drop_closure),
+                                llvm::ArrayRef<llvm::Value*>{val});
+                irb->CreateCall(llvm::FunctionCallee(fn_unpin_linear_root),
                                 llvm::ArrayRef<llvm::Value*>{val});
                 end_linear_epoch_fence(fb);
                 return true;
@@ -2775,6 +2862,15 @@ struct AuraJIT::Impl {
         reg("aura_drop_pair", (void*)aura_drop_pair);
         reg("aura_drop_cell", (void*)aura_drop_cell);
         reg("aura_drop_closure", (void*)aura_drop_closure);
+        // Issue #2293: linear pin/unpin bridges — extern "C"
+        // forwarders defined in aura_jit_runtime.cpp that delegate
+        // to aura::core::lifetime::{pin,unpin}_linear_root. ORC
+        // registration is required because the JIT lowering emits
+        // direct CreateCall to these symbols (not C++ member
+        // functions), so the resolver must know their addresses
+        // before the AOT module is linked.
+        reg("aura_jit_pin_linear_root", (void*)aura_jit_pin_linear_root);
+        reg("aura_jit_unpin_linear_root", (void*)aura_jit_unpin_linear_root);
         reg("aura_arena_push", (void*)aura_arena_push);
         reg("aura_arena_pop", (void*)aura_arena_pop);
         reg("aura_arena_offset", (void*)aura_arena_offset);
