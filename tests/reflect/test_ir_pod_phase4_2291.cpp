@@ -135,30 +135,26 @@ int main() {
     check(aura::reflect::opcode_name<IROpcode>(static_cast<int>(IROpcode::Add)) == "Add",
           "opcode_name Add");
 
-    // ── CacheHeader (auto_serialize for scalars; C array gap) ─
-    // magic[8] is a C array → MemberKind::Other today (not
-    // std::array); auto_serialize skips it intentionally until
-    // a later phase promotes it to std::array<char,8> or adds a
-    // C-array MemberKind. Round-trip covers numeric fields only.
+    // ── CacheHeader (Wave A2: C array magic[8] as Array) ─────
     constexpr auto cm = aura::reflect::reflect_members<CacheHeader>();
     static_assert(cm.size() == 12);
     check(cm[5].name == "magic", "cache magic member name");
-    check(cm[5].kind == aura::reflect::MemberKind::Other ||
-              cm[5].kind == aura::reflect::MemberKind::Unknown ||
-              cm[5].kind == aura::reflect::MemberKind::Array,
-          "cache magic kind known");
+    check(cm[5].kind == aura::reflect::MemberKind::Array, "cache magic is Array");
+    check(cm[5].elem_size == 1 && cm[5].array_len == 8, "cache magic 8x char");
     CacheHeader ch{};
     std::memcpy(ch.magic, "AURACACH", 8);
     ch.version = 4;
     ch.num_nodes = 1;
     ch.node_offset = 72;
     auto cs = aura::reflect::auto_serialize(ch);
+    check(cs.size() == sizeof(CacheHeader), "cache ser size == 72");
     auto cb = aura::reflect::auto_deserialize<CacheHeader>(cs);
     check(cb.version == 4 && cb.num_nodes == 1, "cache header rt scalars");
     check(cb.node_offset == 72, "cache node_offset rt");
+    check(std::memcmp(cb.magic, "AURACACH", 8) == 0, "cache magic rt");
     check(aura::reflect::auto_validate(ch), "cache auto_validate");
-    // Semantic validate (magic/version) on the live object.
     check(cache_validate_header(&ch) == 0, "cache_validate_header ok");
+    check(cache_validate_header(&cb) == 0, "validate after deserialize");
     CacheHeader ch_bad = ch;
     ch_bad.version = 99;
     check(cache_validate_header(&ch_bad) == -2, "cache reject bad version");

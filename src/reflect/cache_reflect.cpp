@@ -1,6 +1,7 @@
 // cache_reflect.cpp — Non-module, -freflection (aura-reflect).
-// Phase 4 (#2291): CacheHeader serialize/deserialize/validate via
-// auto_serialize / auto_deserialize / auto_validate — no field loops.
+// Phase 4 (#2291) + Wave A2: CacheHeader via auto_serialize /
+// auto_deserialize / auto_validate. C array magic[8] is MemberKind::Array
+// so wire size == sizeof(CacheHeader) (72) and matches mmap load.
 
 #include "reflect/reflect.hh"
 #include "reflect/cache_format.h"

@@ -165,6 +165,13 @@ consteval MemberKind classify_type(std::meta::info type) {
         return MemberKind::Int64;
     }
 
+    // C array T[N] (e.g. CacheHeader::magic[8]) — Wave A2.
+    // Previously fell through to Unknown and was skipped by
+    // auto_serialize, so on-disk headers were 64 B while mmap
+    // load treats the first 72 B as CacheHeader.
+    if (is_array_type(type))
+        return MemberKind::Array;
+
     // std::array / std::vector / std::span via template_of equality.
     // GCC 16.1.0 (#2289): template_of(^^std::array<T,N>) ==
     // template_of(^^std::array<U,M>) works; no display_string needed.
@@ -200,19 +207,27 @@ consteval MemberKind classify_type(std::meta::info type) {
     return MemberKind::Unknown;
 }
 
-// Get element type size for std::array<T,N> / std::vector<T>
+// Get element type size for C array T[N] / std::array / std::vector / span
 consteval std::size_t elem_size_of(std::meta::info type) {
     using namespace std::meta;
-    // For std::array/vector, the first template arg is T
+    // Wave A2: C array T[N]
+    if (is_array_type(type))
+        return size_of(remove_extent(type));
+    // std::array/vector/span: first template arg is T
     auto args = template_arguments_of(type);
     if (args.empty())
         return 0;
     return size_of(args[0]);
 }
 
-// Get array length for std::array<T,N>
+// Get array length for C array T[N] or std::array<T,N>
 consteval std::size_t array_size_of(std::meta::info type) {
     using namespace std::meta;
+    // Wave A2: extent = sizeof(T[N]) / sizeof(T)
+    if (is_array_type(type)) {
+        auto es = size_of(remove_extent(type));
+        return es ? size_of(type) / es : 0;
+    }
     auto args = template_arguments_of(type);
     if (args.size() < 2)
         return 0;
