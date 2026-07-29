@@ -6,19 +6,16 @@
 //  No field-by-field write loops.
 //
 //  Migration pattern for the next batch:
-//    1. Define a flat POD (arithmetic / enum / std::array only;
-//       no virtuals, no non-public state, no module-private types).
-//    2. Keep layout in sync with ir.ixx (or share the real type
-//       once #2290 isolation lifts).
-//    3. Serialize:   auto_serialize(obj)
-//       Deserialize: auto_deserialize<T>(bytes)
-//       Validate:    auto_validate(obj) + any semantic checks
-//       Inspect:     to_json(obj)
-//    4. Round-trip test under -freflection (see
-//       tests/reflect/test_ir_pod_phase4_2291.cpp).
+//    1. Flat POD (arithmetic / enum / std::array; no virtuals,
+//       no private SoA, prefer std::array over C arrays).
+//    2. Keep layout in sync with ir.ixx (mirror until a type can
+//       live in a non-import-std -freflection TU without std module).
+//    3. Serialize/validate/inspect only via auto_serialize /
+//       auto_deserialize / auto_validate / to_json.
+//    4. Round-trip under -freflection (test_ir_pod_phase4_2291.cpp).
 //
-//  Non-goals here: nested containers as primary types, full AST,
-//  or removing aura-reflect isolation.
+//  Non-goals: nested containers as primary types, full AST SoA,
+//  or dropping aura-reflect while business TUs still import std.
 // ──────────────────────────────────────────────────────────────
 
 #ifndef AURA_REFLECT_IR_POD_REFLECT_HH

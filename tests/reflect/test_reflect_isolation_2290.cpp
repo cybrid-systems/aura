@@ -1,13 +1,13 @@
-// Issue #2290: aura-reflect isolation re-test on real GCC 16.1.0.
+// Issue #2290: P2996 placement smoke (g++ 16.1.0).
 //
-// Positive path (this TU): non-module + -freflection + reflect.hh.
-// Documented negative paths (still fail on 16.1.0 — do not regress):
-//   1) import std;  #include <meta>           → std redefinition errors
-//   2) import std;  #include "reflect/reflect.hh" → same
-//   3) import std; import aura.reflect;       → GMF/<meta> vs std module clash
-//
-// Isolation policy: P2996 bodies stay in aura-reflect or non-module
-// -freflection TUs; module TUs call them via C ABI / split TU when needed.
+// Positive (this TU): no `import std`, -freflection + reflect.hh → OK.
+// Negative (do not regress; fail with hard errors, not silent ICE):
+//   1) same TU: import std + #include <meta> / reflect.hh (either order)
+//   2) import std + import meta-bearing module + use reflect/consteval API
+// Not a ban on "any module file": GMF may include <meta> and compile;
+// Aura partitions still isolate because they all import std.
+// Policy: P2996 bodies in aura-reflect / non-import-std -freflection TUs;
+// import-std code uses C ABI or meta-free headers (hygiene_validate.hh).
 
 #include <array>
 #include <cstddef>

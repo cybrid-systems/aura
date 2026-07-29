@@ -1,18 +1,14 @@
 #pragma once
 
-// Issue #178 / #268 / #2290 — C ABI between the module TU (real NodeView)
-// and the non-module reflect TU (P2996 + reflect.hh).
+// Issue #178 / #268 / #2290 — C ABI: module side (real NodeView) ↔
+// non-import-std reflect TU (P2996 + reflect.hh).
 //
-// GCC 16.1.0 re-test: same TU cannot mix `import std` / `import
-// aura.core.ast` with `#include "reflect/reflect.hh"` (<meta>) —
-// hard std redefinition / header conflicts (not a silent ICE).
-// Split remains required:
-//   - test_issue_178.cpp          (module side, drives NodeView)
-//   - test_issue_178_reflect.cpp  (reflect side, implements these entry points)
-//
-// Include from the reflect TU only (after <cstdint>/<cstddef>).
-// The module TU re-declares these by hand — #include under
-// CXX_MODULE_STD + import std conflicts (GCC 16.1).
+// g++ 16.1.0: hard limit is import std + <meta>/reflect.hh in one TU
+// (redefinition / header conflicts). Split remains required:
+//   - test_issue_178.cpp         — import std / aura.core.ast
+//   - test_issue_178_reflect.cpp — -freflection, implements entries
+// Include this header from the reflect TU only. Module TU redeclares
+// by hand (include after import std also fights CXX_MODULE_STD).
 
 #include <cstddef>
 #include <cstdint>
