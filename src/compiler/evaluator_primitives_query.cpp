@@ -7057,6 +7057,64 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(castop + type_prop + narrow + win));
         });
 
+    // Issue #2287: query:castop-density-stats. Hash view of the Dynamic
+    // CastOp density budget + Agent annotation hint surface. Non-blocking
+    // hint — when last_castop_density_bp > castop_density_budget_bp, the
+    // Agent sees castop-annotation-hint=1 and can prefer annotations over
+    // blind Dynamic. density = 10000 * castop_emitted / max(1, insts);
+    // budget is env AURA_CASTOP_DENSITY_BUDGET_BP (default 1500 = 15%).
+    // Additive to #2282 layered stats (uses residual emitted, not elided).
+    ObservabilityPrims::register_stats_impl(
+        "query:castop-density-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* __qev_ = Evaluator::get_query_evaluator();
+            const auto* m =
+                __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
+            if (!m)
+                return make_int(0);
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t dens = m->last_castop_density_bp.load(std::memory_order_relaxed);
+            const std::uint64_t budget =
+                m->castop_density_budget_bp.load(std::memory_order_relaxed);
+            const std::uint64_t over_budget =
+                m->castop_density_over_budget_total.load(std::memory_order_relaxed);
+            insert_kv("castop-density-bp", static_cast<std::int64_t>(dens));
+            insert_kv("castop-density-budget-bp", static_cast<std::int64_t>(budget));
+            insert_kv("castop-density-over-budget-total", static_cast<std::int64_t>(over_budget));
+            // Agent hint: 1 when last density exceeds budget, else 0. Soft
+            // (non-blocking) — #2108 hard-block stays unchanged.
+            insert_kv("castop-annotation-hint", dens > budget ? 1 : 0);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #574: query:coercion-elim-stats. Returns the sum of
     // 4 coercion elimination observability counters:
     //   - coercion_castop_emitted_total (total CastOps from lowering)

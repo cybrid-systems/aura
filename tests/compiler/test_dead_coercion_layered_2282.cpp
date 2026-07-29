@@ -7,10 +7,24 @@
 // AC2 + AC4). Narrowing + mutate fixture drives the layered total up monotonically
 // (AC3). Comment alignment in optimization_passes.ixx + coercion_map.ixx mirrors
 // the live keys (AC5).
+//
+// Issue #2287: Dynamic CastOp density budget + Agent annotation hint.
+// Non-blocking hint — when last density (10000 * castop_emitted / max(1, insts))
+// exceeds the configured budget (env AURA_CASTOP_DENSITY_BUDGET_BP, default
+// 1500 = 15%), the Agent sees castop-annotation-hint=1 and can prefer
+// annotations over blind Dynamic. Schema-additive to #2282 (uses residual
+// emitted, not elided — orthogonal to layered elision total).
+//   AC6: density query primitive resolves with castop-density-bp / -budget-bp.
+//   AC7: castop-annotation-hint flips 0/1 based on density vs budget.
+//   AC8: schema additive — #2282 layered + #629 coercion-zerooverhead still resolve.
+//   AC9: castop-density-over-budget-total counter exposed.
+//   AC10: source wiring #2287 (service_dirty density calc + env var + query prim).
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
+#include <fstream>
 #include <string>
 
 import std;
@@ -26,6 +40,7 @@ import aura.compiler.value;
 
 namespace aura_dead_coercion_layered_2282 {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::ir::IRFunction;
 using aura::ir::IRModule;
@@ -146,10 +161,106 @@ namespace _2282_detail {
 
 } // namespace _2282_detail
 
+// ---------------------------------------------------------------------------
+// Issue #2287: 5 ACs (AC6–AC10)
+// ---------------------------------------------------------------------------
+namespace _2287_detail {
+
+    static std::int64_t query_density_field(CompilerService& cs, const char* field) {
+        auto r =
+            cs.eval(std::string("(hash-ref (engine:metrics \"query:castop-density-stats\") \"") +
+                    field + "\")");
+        if (!r)
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    }
+
+    static bool density_returns_hash(CompilerService& cs) {
+        auto r = cs.eval("(engine:metrics \"query:castop-density-stats\")");
+        return r && aura::compiler::types::is_hash(*r);
+    }
+
+    static std::string read_file(const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    }
+
+    static void run_2287_density() {
+        std::println("\n=== Issue #2287: CastOp density budget + Agent hint ===");
+
+        // AC6: density query primitive resolves + has expected keys
+        std::println("\n--- AC6: density query primitive ---");
+        CompilerService cs;
+        CompilerMetrics metrics;
+        cs.evaluator().set_compiler_metrics(&metrics);
+        // Set known values for the keys.
+        metrics.castop_density_budget_bp.store(1500, std::memory_order_relaxed);
+        metrics.last_castop_density_bp.store(800, std::memory_order_relaxed);
+        metrics.castop_density_over_budget_total.store(0, std::memory_order_relaxed);
+
+        CHECK(density_returns_hash(cs), "AC6: query:castop-density-stats returns hash");
+        CHECK(query_density_field(cs, "castop-density-bp") == 800,
+              "AC6: castop-density-bp reflects last_castop_density_bp");
+        CHECK(query_density_field(cs, "castop-density-budget-bp") == 1500,
+              "AC6: castop-density-budget-bp reflects store");
+
+        // AC7: annotation hint flips 0/1 based on density vs budget
+        std::println("\n--- AC7: annotation hint ---");
+        // density=800 < budget=1500 → hint=0
+        CHECK(query_density_field(cs, "castop-annotation-hint") == 0,
+              "AC7: hint=0 when density < budget");
+        // density=2000 > budget=1500 → hint=1
+        metrics.last_castop_density_bp.store(2000, std::memory_order_relaxed);
+        CHECK(query_density_field(cs, "castop-annotation-hint") == 1,
+              "AC7: hint=1 when density > budget");
+
+        // AC8: schema additive — #2282 layered + #629 coercion-zerooverhead still resolve
+        std::println("\n--- AC8: schema additive ---");
+        auto layered = cs.eval("(engine:metrics \"query:dead-coercion-layered-stats\")");
+        CHECK(layered && aura::compiler::types::is_hash(*layered),
+              "AC8: #2282 layered query still resolves");
+        auto zeroovh = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
+        CHECK(zeroovh && aura::compiler::types::is_int(*zeroovh),
+              "AC8: #629 coercion-zerooverhead still resolves (int)");
+
+        // AC9: over-budget counter exposed
+        std::println("\n--- AC9: over-budget counter exposed ---");
+        metrics.castop_density_over_budget_total.store(5, std::memory_order_relaxed);
+        CHECK(query_density_field(cs, "castop-density-over-budget-total") == 5,
+              "AC9: counter reflects castop_density_over_budget_total");
+
+        // AC10: source wiring #2287
+        std::println("\n--- AC10: source wiring #2287 ---");
+        auto sd = read_file("src/compiler/service_dirty.cpp");
+        CHECK(sd.find("Issue #2287") != std::string::npos, "AC10: service_dirty.cpp cites #2287");
+        CHECK(sd.find("castop_density_over_budget_total") != std::string::npos,
+              "AC10: density calc bumps over-budget counter");
+        CHECK(sd.find("AURA_CASTOP_DENSITY_BUDGET_BP") != std::string::npos,
+              "AC10: env var AURA_CASTOP_DENSITY_BUDGET_BP read");
+        auto om = read_file("src/compiler/observability_metrics.h");
+        CHECK(om.find("castop_density_over_budget_total") != std::string::npos,
+              "AC10: metric field defined");
+        auto q_file = read_file("src/compiler/evaluator_primitives_query.cpp");
+        CHECK(q_file.find("query:castop-density-stats") != std::string::npos,
+              "AC10: query primitive defined");
+        CHECK(q_file.find("castop-annotation-hint") != std::string::npos,
+              "AC10: castop-annotation-hint key in query");
+    }
+
+} // namespace _2287_detail
+
 } // namespace aura_dead_coercion_layered_2282
 
 int main() {
-    std::println("=== Issue #2282: unified dead-coercion layered counter ===");
+    std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
+    aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
     return RUN_ALL_TESTS();
 }
