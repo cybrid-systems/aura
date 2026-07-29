@@ -400,15 +400,21 @@ endif()
 
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
-# ── Separate compilation for std::meta reflection ───────────────
-# cache_reflect.cpp needs -freflection, can't be in the module build.
-# observability_json.cpp is in the same library for linker convenience
-# (it doesn't use reflect directly; hand-rolled JSON to keep GCC 16
-# compat).
+# ── aura-reflect: P2996 isolation (Issue #2290, GCC 16.1.0) ─────
+# Re-test on real g++ 16.1.0 (2026-07-29):
+#   PASS  non-module TU + -freflection + #include "reflect/reflect.hh"
+#   FAIL  same TU: `import std;` then #include <meta> / reflect.hh
+#         → hard redefinition of std entities (c++config / type_traits /
+#         pthreadtypes), not a silent ICE. GMF-based `export module`
+#         that includes <meta> still conflicts when a consumer also
+#         `import std` or pulls the same C headers.
+# Policy: keep pure -freflection TUs in this static lib, outside the
+# main CXX_MODULE_STD graph. Do NOT put non-reflection sources here.
+# Header-only helpers stay in reflect.hh; module wrapper is aura.reflect
+# (src/reflect/reflect.ixx) for future consumers once the conflict lifts.
 add_library(aura-reflect STATIC
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
-    src/compiler/observability_json.cpp
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura-reflect PRIVATE -freflection)
@@ -417,6 +423,11 @@ target_link_libraries(aura-reflect PRIVATE stdc++)
 
 # Link reflect into aura
 target_link_libraries(aura PRIVATE aura-reflect)
+
+# observability_json.cpp: hand-rolled JSON, no -freflection / <meta>.
+# Was incorrectly bundled into aura-reflect for linker convenience;
+# lives with other non-module aura sources (#2290 isolation reduction).
+target_sources(aura PRIVATE src/compiler/observability_json.cpp)
 
 
 
@@ -679,7 +690,9 @@ add_library(aura_test_objects STATIC
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp)
+    src/compiler/lowering_linear_types_impl.cpp
+    # Issue #2290: non-reflection JSON (was wrongly in aura-reflect)
+    src/compiler/observability_json.cpp)
 set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 # .cpp impls require .ixx BMIs from the same module set the helper
 # wires for each test_issue_* target. Add them here so the static
@@ -1295,6 +1308,15 @@ target_compile_options(test_opcode_reflect_2289 PRIVATE -freflection -Wall
 target_compile_features(test_opcode_reflect_2289 PUBLIC cxx_std_26)
 target_link_libraries(test_opcode_reflect_2289 PRIVATE stdc++)
 add_test(NAME test_opcode_reflect_2289_verification COMMAND ./test_opcode_reflect_2289)
+
+# Issue #2290: document + exercise aura-reflect isolation (non-module -freflection).
+add_executable(test_reflect_isolation_2290 tests/reflect/test_reflect_isolation_2290.cpp)
+target_include_directories(test_reflect_isolation_2290 PRIVATE src)
+target_compile_options(test_reflect_isolation_2290 PRIVATE -freflection -Wall
+                       -Wno-sign-compare -Wno-unused-local-typedefs)
+target_compile_features(test_reflect_isolation_2290 PUBLIC cxx_std_26)
+target_link_libraries(test_reflect_isolation_2290 PRIVATE stdc++)
+add_test(NAME test_reflect_isolation_2290_verification COMMAND ./test_reflect_isolation_2290)
 # Issue #268 / #178: production NodeView roundtrip (split TU) — edsl_hygiene theme.
 # Relocated tests/issues/ → tests/edsl/ (wave 59 / #1957). Soft surface also in
 # test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection

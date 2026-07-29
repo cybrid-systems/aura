@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 524 | Preferred destination suites |
-| **Total scanned** | **524** | |
+| `tests/core/test_*.cpp` | 525 | Preferred destination suites |
+| **Total scanned** | **525** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 155 | 155 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 11 | 11 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 30 | 30 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 31 | 31 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 56 | 56 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 116 | 116 | P2 — often thin schema probes; collapse into obs matrix |
@@ -534,6 +534,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_reflect_batch.cpp`
 - `tests/reflect/test_reflect_hygiene_agent_diagnostics.cpp`
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp`
+- `tests/reflect/test_reflect_isolation_2290.cpp`
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp`
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp`
 - `tests/compiler/test_region_priority_deopt_throttle_2132.cpp`
@@ -1015,13 +1016,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (30)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (31)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (30)
+#### domain/ (31)
 
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
@@ -1046,6 +1047,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_reflect_batch.cpp
 - `tests/reflect/test_reflect_hygiene_agent_diagnostics.cpp` (—) [domain_suite, theme_reflect] — reflect:provenance-blame for expand → diagnose → mutate closed loops.
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_hygiene_unit_batch.cpp — consolidated edsl hygiene drivers
+- `tests/reflect/test_reflect_isolation_2290.cpp` (#2290) [small, domain_suite, theme_reflect] — Issue #2290: aura-reflect isolation re-test on real GCC 16.1.0.
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_macro_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_rest_param_hygiene_2169.cpp` (#2169) [domain_suite, theme_compiler] — AC1: source cites #2169; always gensym rest; process serial

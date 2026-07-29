@@ -12,10 +12,9 @@
 // fixed (fn/expected/actual/generic_block for deopt events).
 // For more complex event types, extend the dispatcher below.
 //
-// For --evo-explain (Iter 3), the JSON serialization of
-// CompilerSnapshot is done in observability_json.cpp (a
-// non-module TU compiled with -freflection). Module TU's
-// call the `snapshot_to_json()` function below.
+// For --evo-explain (Iter 3), JSON serialization of CompilerSnapshot
+// is in observability_json.cpp (non-module, hand-rolled — no
+// -freflection; Issue #2290). Module TUs call snapshot_to_json().
 //
 // Usage:
 //   log_event_deopt("foo", 1, 4, 7);
