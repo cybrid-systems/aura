@@ -77,6 +77,7 @@ import aura.compiler.adt_runtime; // Step 2.3 wiring (exact FFI pattern)
 import aura.diag;
 import aura.compiler.value;
 import aura.compiler.evaluator_pure;
+import aura.compiler.root_remap_pass; // Issue #2294: RootRemapPass install
 
 namespace aura::compiler {
 
@@ -1431,6 +1432,9 @@ public:
         if (arena_ && switching) {
             arena_->clear_arena_owner();
             arena_->set_on_compact_hook({});
+            // Issue #2294: drop RootRemapPass callback with the prior arena
+            // (mirrors compact-hook clear — avoids UAF into dead Evaluator).
+            arena_->set_root_remap_callback({});
         }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
@@ -1452,6 +1456,15 @@ public:
                         prior();
                     this->on_arena_compact_hook();
                 });
+            }
+            // Issue #2294: install RootRemapPass on first claim / switch so
+            // Moving densify rewrites registered stable-object + closure
+            // capture slots. Idempotent set_arena(same): leave existing
+            // callback if already wired (tests may override).
+            if (switching || !arena_->has_root_remap_callback()) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    set_root_remap_pass_test_metrics(m);
+                arena_->set_root_remap_callback(make_root_remap_arena_callback());
             }
             // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before

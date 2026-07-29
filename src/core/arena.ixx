@@ -601,14 +601,18 @@ export struct AdaptiveCompactResult {
 using LiveCompactLayoutChangeCallback =
     std::function<void(std::uint64_t arena_id, std::uint64_t new_gen)>;
 
-// Issue #2267: RootRemapPass minimal slice — non-pin root rewrite
-// (StableNodeRef live set + Closure capture cells) after Moving densify.
-// Receives the densify's old→new object_remap + new_gen. The pass lives in
-// src/compiler/ (needs Evaluator / closure layout) with a type-erased
-// entry from the layout-change callback to avoid core→compiler cycle
-// (same pattern as PanicCheckpointHost / EnvFrameLifetimeHost).
-using RootRemapCallback = std::function<void(std::uint64_t arena_id, std::uint64_t new_gen,
-                                             std::unordered_map<void*, void*> const& object_remap)>;
+// Issue #2267 / #2294: RootRemapPass — non-pin root rewrite (stable-object
+// slots + Closure capture cells) after Moving densify. Receives densify
+// old→new object_remap + new_gen + out-params for per-call stats that
+// live_compact writes into LiveCompactResult / ArenaStats. The pass lives
+// in src/compiler/ (needs Evaluator / capture layout) with a type-erased
+// entry to avoid core→compiler cycle (same pattern as PanicCheckpointHost
+// / EnvFrameLifetimeHost). Out-params keep the typedef free of compiler types.
+using RootRemapCallback = std::function<void(
+    std::uint64_t arena_id, std::uint64_t new_gen,
+    std::unordered_map<void*, void*> const& object_remap, std::size_t& out_stable_ref_total,
+    std::size_t& out_stable_ref_fail_total, std::size_t& out_closure_capture_total,
+    std::size_t& out_closure_capture_fail_total)>;
 
 // Module-internal counter used by ASTArena constructors to mint stable per-arena
 // ids. LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
@@ -1334,15 +1338,15 @@ public:
             }
             stats_.live_compact_invalidated_pins_total += invalidated;
             invoke_layout_change_(result.new_gen);
-            // Issue #2267: RootRemapPass — fires AFTER LiveCompactLayoutChangeCallback
-            // (which only invalidates pins). Reads the densify's old→new
-            // object_remap_ + new_gen. The compiler-installed callback scans
-            // StableNodeRef live set + Closure capture cells and rewrites
-            // them via resolve_object_remap. Fail-closed: any live root
-            // that cannot be remapped bumps root_remap_*_fail_total.
-            // Issue #2267: only fires for Moving densify (moved_live_objects).
+            // Issue #2267 / #2294: RootRemapPass — fires AFTER
+            // LiveCompactLayoutChangeCallback (pin invalidate). Reads densify
+            // old→new object_remap_ + new_gen. Compiler-installed callback
+            // rewrites registered stable-object + closure-capture slots.
+            // Fail-closed: unmapped densify candidates bump *_fail_total.
+            // Only fires for Moving densify (moved_live_objects + non-empty
+            // remap). Stats write back into LiveCompactResult + ArenaStats.
             if (result.moved_live_objects && !last_object_remap_.empty()) {
-                invoke_root_remap_callback_();
+                invoke_root_remap_callback_(result);
             }
         }
 
@@ -1811,10 +1815,11 @@ private:
         (void)decision.frag_threshold_used;
     }
 
-    // Issue #2267: RootRemapPass invoker — copies the root_remap_ callback
-    // under root_remap_mtx_ and invokes outside the lock (same pattern as
-    // invoke_layout_change_). Passes densify old→new object_remap + new gen.
-    void invoke_root_remap_callback_() noexcept {
+    // Issue #2267 / #2294: RootRemapPass invoker — copies the root_remap_
+    // callback under root_remap_mtx_ and invokes outside the lock (same
+    // pattern as invoke_layout_change_). Passes densify old→new object_remap
+    // + new gen; writes per-call stats into result + ArenaStats.
+    void invoke_root_remap_callback_(LiveCompactResult& result) noexcept {
         RootRemapCallback cb_copy;
         {
             std::lock_guard<std::mutex> lock(root_remap_mtx_);
@@ -1822,8 +1827,19 @@ private:
                 return;
             cb_copy = root_remap_;
         }
-        if (cb_copy)
-            cb_copy(arena_id_, generation_.load(std::memory_order_relaxed), last_object_remap_);
+        if (!cb_copy)
+            return;
+        std::size_t sr = 0, sr_fail = 0, cc = 0, cc_fail = 0;
+        cb_copy(arena_id_, generation_.load(std::memory_order_relaxed), last_object_remap_, sr,
+                sr_fail, cc, cc_fail);
+        result.root_remap_stable_ref_total += sr;
+        result.root_remap_stable_ref_fail_total += sr_fail;
+        result.root_remap_closure_capture_total += cc;
+        result.root_remap_closure_capture_fail_total += cc_fail;
+        stats_.root_remap_stable_ref_total += sr;
+        stats_.root_remap_stable_ref_fail_total += sr_fail;
+        stats_.root_remap_closure_capture_total += cc;
+        stats_.root_remap_closure_capture_fail_total += cc_fail;
     }
 
     void invoke_compact_hook_() {

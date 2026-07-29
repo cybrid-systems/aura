@@ -1769,7 +1769,7 @@
     {
       "file": "tests/compiler/test_root_remap_pass_2267.cpp",
       "category": "unit",
-      "reason": "Issue #2267 — RootRemapPass minimal slice (StableNodeRef + Closure",
+      "reason": "Issue #2294 / #2267 — RootRemapPass real Stable-object + Closure",
       "issue": null
     },
     {

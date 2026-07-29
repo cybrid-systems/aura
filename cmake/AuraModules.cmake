@@ -30,6 +30,8 @@ set(AURA_CXX_MODULE_CORE
 )
 
 set(AURA_CXX_MODULE_COMPILER
+    # Issue #2294 / #2267: RootRemapPass before evaluator (evaluator imports it).
+    src/compiler/root_remap_pass.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/macro_expansion.ixx

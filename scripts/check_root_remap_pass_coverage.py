@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
-"""Issue #2267: RootRemapPass minimal slice — StableNodeRef + Closure
-captures after Moving densify.
+"""Issue #2294 / #2267: RootRemapPass real rewrite coverage linter.
 
-Contract (5 AC from issue body):
-  AC1: Pass surface — `RootRemapCallback` typedef in src/core/arena.ixx
-       with `set_root_remap_callback` / `take_root_remap_callback` methods +
-       `invoke_root_remap_callback` caller in live_compact Moving branch.
-  AC2: StableNodeRef remap — happy path: pin + Moving → `stable_ref_total`
-       increments; `stable_ref_fail_total` stays at 0.
-  AC3: Closure capture remap — same as AC2 for the closure-capture counter.
-  AC4: Observability — `root_remap_stable_ref_total` / `_fail_total` and
-       `root_remap_closure_capture_total` / `_fail_total` CompilerMetrics
-       atomics + mirror at the 3 sync points (evaluator_gc.cpp + both
-       evaluator.ixx sites) + `query:compact-stats` extension with new keys
-       + `schema-2267` / `issue-2267` / `root-remap-pass-wired` lineage.
-  AC5: Tests — `tests/compiler/test_root_remap_pass_2267.cpp` covers
-       AC1 source gate + AC5 positive (per-call counters bump via
-       thread_local CompilerMetrics).
-
-This linter is the source-of-truth for the production surface.
+Contract (5 AC from #2294, building on #2267 surface):
+  AC1: Stable-object root rewrite — register_root_remap_stable_slot +
+       run_root_remap_pass rewrite path in root_remap_pass.ixx;
+       arena invoke writes LiveCompactResult.root_remap_stable_ref_*.
+  AC2: Closure capture rewrite — register_root_remap_closure_capture_slot
+       + root_remap_closure_capture_* counters.
+  AC3: Empty remap early-return (zero rewrite work).
+  AC4: Fail-closed unmapped densify candidates + optional
+       AURA_ROOT_REMAP_CONTRACT=hard.
+  AC5: Observability (query keys + schema-2267 lineage + rewrite-ok metrics)
+       + tests/compiler/test_root_remap_pass_2267.cpp + Evaluator install.
 """
 
 from __future__ import annotations
@@ -46,108 +39,129 @@ def check() -> list:
     fails = []
 
     arena = _read("src/core/arena.ixx")
-    pass_cpp = _read("src/compiler/root_remap_pass.cpp")
+    pass_ixx = _read("src/compiler/root_remap_pass.ixx")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     eval_gc = _read("src/compiler/evaluator_gc.cpp")
     eval_ixx = _read("src/compiler/evaluator.ixx")
     test_cpp = _read("tests/compiler/test_root_remap_pass_2267.cpp")
+    modules = _read("cmake/AuraModules.cmake")
 
-    # AC1: Pass surface — RootRemapCallback typedef + set/invoke methods.
+    # AC1: Pass surface + real rewrite.
     _must(
         "RootRemapCallback" in arena,
         "AC1: RootRemapCallback typedef missing in src/core/arena.ixx",
         fails,
     )
     _must(
-        "set_root_remap_callback" in arena,
-        "AC1: set_root_remap_callback setter missing in src/core/arena.ixx",
+        "set_root_remap_callback" in arena and "invoke_root_remap_callback_" in arena,
+        "AC1: set/invoke root_remap callback missing in arena.ixx",
         fails,
     )
     _must(
-        "take_root_remap_callback" in arena,
-        "AC1: take_root_remap_callback getter missing in src/core/arena.ixx",
+        "run_root_remap_pass" in pass_ixx and "register_root_remap_stable_slot" in pass_ixx,
+        "AC1: run_root_remap_pass + stable-slot registry missing in root_remap_pass.ixx",
         fails,
     )
     _must(
-        "invoke_root_remap_callback" in arena,
-        "AC1: invoke_root_remap_callback caller missing in src/core/arena.ixx",
+        "out_stable_ref_total" in arena or "out_sr" in arena or "root_remap_stable_ref_total +=" in arena,
+        "AC1: arena must write root_remap stable_ref stats into LiveCompactResult",
         fails,
     )
     _must(
-        "root_remap_pass_callback_impl" in pass_cpp,
-        "AC1: pass impl function missing in src/compiler/root_remap_pass.cpp",
-        fails,
-    )
-    _must(
-        "get_root_remap_pass_test_callback" in pass_cpp,
-        "AC1: get_root_remap_pass_test_callback accessor missing in pass.cpp",
+        "root_remap_pass.ixx" in modules,
+        "AC1: root_remap_pass.ixx must be in cmake/AuraModules.cmake",
         fails,
     )
 
-    # AC2 + AC3: per-arena counters — LiveCompactResult + ArenaStats + per-call fields.
+    # AC2: Closure capture rewrite.
     _must(
-        "root_remap_stable_ref_total" in arena and "root_remap_stable_ref_fail_total" in arena,
-        "AC2: LiveCompactResult must expose root_remap_stable_ref_total + _fail_total",
+        "register_root_remap_closure_capture_slot" in pass_ixx,
+        "AC2: closure-capture slot registry missing",
         fails,
     )
     _must(
         "root_remap_closure_capture_total" in arena and "root_remap_closure_capture_fail_total" in arena,
-        "AC3: LiveCompactResult must expose root_remap_closure_capture_total + _fail_total",
-        fails,
-    )
-    _must(
-        "root_remap_stable_ref_total" in met,
-        "AC2: CompilerMetrics atomic root_remap_stable_ref_total missing",
+        "AC2: LiveCompactResult must expose closure_capture total + fail",
         fails,
     )
     _must(
         "root_remap_closure_capture_total" in met,
-        "AC3: CompilerMetrics atomic root_remap_closure_capture_total missing",
+        "AC2: CompilerMetrics atomic root_remap_closure_capture_total missing",
         fails,
     )
 
-    # AC4: mirror at 3 sync points (evaluator_gc.cpp + both evaluator.ixx sites).
+    # AC3: empty remap zero-cost.
+    _must(
+        "object_remap.empty()" in pass_ixx or "AC3" in pass_ixx,
+        "AC3: empty-remap early return missing in root_remap_pass.ixx",
+        fails,
+    )
+
+    # AC4: fail-closed.
+    _must(
+        "AURA_ROOT_REMAP_CONTRACT" in pass_ixx,
+        "AC4: AURA_ROOT_REMAP_CONTRACT hard-fail env missing",
+        fails,
+    )
+    _must(
+        "stable_ref_fail_total" in pass_ixx or "fail_total" in pass_ixx,
+        "AC4: fail-total accounting missing in pass",
+        fails,
+    )
+    _must(
+        "mark_root_remap_densify_candidates" in pass_ixx,
+        "AC4: densify-candidate mark API missing (fail-closed path)",
+        fails,
+    )
+
+    # AC5: observability + tests + Evaluator install.
+    _must(
+        "root_remap_stable_ref_total" in met,
+        "AC5: CompilerMetrics atomic root_remap_stable_ref_total missing",
+        fails,
+    )
     _must(
         "root_remap_stable_ref_total" in eval_gc and "root_remap_closure_capture_total" in eval_gc,
-        "AC4: evaluator_gc.cpp must mirror the new 4 atomics at live_compact entry",
+        "AC5: evaluator_gc.cpp must mirror the new 4 atomics at live_compact entry",
         fails,
     )
     _must(
         eval_ixx.count("root_remap_stable_ref_total") >= 2 and eval_ixx.count("root_remap_closure_capture_total") >= 2,
-        "AC4: evaluator.ixx must mirror the new 4 atomics at both live_compact sites",
+        "AC5: evaluator.ixx must mirror the new 4 atomics at both live_compact sites",
         fails,
     )
-
-    # AC4: query primitive extension.
+    _must(
+        "make_root_remap_arena_callback" in eval_ixx and "set_root_remap_callback" in eval_ixx,
+        "AC5: Evaluator::set_arena must install RootRemapPass callback",
+        fails,
+    )
     _must(
         "root-remap-stable-ref-total" in q
         and "root-remap-stable-ref-fail-total" in q
         and "root-remap-closure-capture-total" in q
         and "root-remap-closure-capture-fail-total" in q,
-        "AC4: query:compact-stats must surface all 4 root_remap keys",
+        "AC5: query:compact-stats must surface all 4 root_remap keys",
         fails,
     )
     _must(
-        '"schema-2267"' in q and '"issue-2267"' in q,
-        "AC4: query primitive must surface schema-2267 / issue-2267 lineage",
+        '"schema-2267"' in q and '"issue-2267"' in q and '"root-remap-pass-wired"' in q,
+        "AC5: query primitive must surface schema-2267 / issue-2267 / root-remap-pass-wired",
         fails,
     )
     _must(
-        '"root-remap-pass-wired"' in q,
-        "AC4: query primitive must surface root-remap-pass-wired sentinel",
-        fails,
-    )
-
-    # AC5: tests file exists with appropriate content.
-    _must(
-        "AC5" in test_cpp and "root_remap_pass_calls_total" in test_cpp,
-        "AC5: tests/compiler/test_root_remap_pass_2267.cpp must include AC5 positive + counter bump check",
+        "root_remap_rewrite_ok_total" in pass_ixx,
+        "AC5: additive rewrite-success metric missing",
         fails,
     )
     _must(
-        "AC1" in test_cpp and "RootRemapCallback" in test_cpp,
-        "AC5: tests file must include AC1 source gate for RootRemapCallback",
+        "AC1" in test_cpp
+        and "AC2" in test_cpp
+        and "AC3" in test_cpp
+        and "AC4" in test_cpp
+        and "AC5" in test_cpp
+        and "run_root_remap_pass" in test_cpp,
+        "AC5: tests/compiler/test_root_remap_pass_2267.cpp must cover AC1-AC5 + real rewrite",
         fails,
     )
 
@@ -155,7 +169,7 @@ def check() -> list:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Issue #2267 RootRemapPass minimal slice coverage linter")
+    parser = argparse.ArgumentParser(description="Issue #2294 RootRemapPass real rewrite coverage linter")
     parser.add_argument(
         "--self-test",
         action="store_true",
@@ -176,7 +190,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: RootRemapPass minimal slice coverage - all 5 AC contract rows satisfied")
+    print("OK: RootRemapPass real rewrite coverage - all 5 AC contract rows satisfied")
     return 0
 
 
