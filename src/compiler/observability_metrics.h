@@ -8,6 +8,7 @@
 #define AURA_COMPILER_OBSERVABILITY_METRICS_H
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -8207,6 +8208,28 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> typecheck_persistent_invalidate_total{0};
     std::atomic<std::uint64_t> typecheck_persistent_cs_cache_hits{0};
     std::atomic<std::uint64_t> typecheck_persistent_wired{1};
+    // Issue #2284: Agent-first-class TIMEOUT repair surface (structured
+    // unresolved_affected_nodes). On SolveResult::TIMEOUT or hard-reject
+    // after full-solve failure, publish a durable repair payload so
+    // Agents can self-repair without parsing free-form diagnostics.
+    //   - type_repair_last_timeout_status: last SolveResult::Status (0=SOLVED,
+    //     1=CONFLICT, 2=TIMEOUT, ...)
+    //   - type_repair_last_unresolved_count: size of sdo.unresolved
+    //   - type_repair_last_unresolved_aff_nodes_count: capped size of
+    //     unresolved_affected_nodes (capped at kTypeRepairAffNodesCap=16)
+    //   - type_repair_last_unresolved_aff_node_N: individual NodeId slot
+    //   - type_repair_last_truncated_reverify: last sdo.truncated_reverify
+    //   - type_repair_last_blame_complete: last blame.is_complete()
+    //   - type_repair_publish_total: counter of publish calls
+    //   - type_repair_wired: sentinel (=1)
+    std::atomic<std::uint64_t> type_repair_last_timeout_status{0};
+    std::atomic<std::uint64_t> type_repair_last_unresolved_count{0};
+    std::atomic<std::uint64_t> type_repair_last_unresolved_aff_nodes_count{0};
+    std::array<std::atomic<std::uint64_t>, 16> type_repair_last_unresolved_aff_nodes{};
+    std::atomic<std::uint64_t> type_repair_last_truncated_reverify{0};
+    std::atomic<std::uint64_t> type_repair_last_blame_complete{0};
+    std::atomic<std::uint64_t> type_repair_publish_total{0};
+    std::atomic<std::uint64_t> type_repair_wired{1};
 
     std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
     std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};

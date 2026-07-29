@@ -6747,6 +6747,105 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #2284: query:type-timeout-repair-stats. Hash view of the
+    // Agent-first-class TIMEOUT repair surface (structured unresolved_
+    // affected_nodes). On SolveResult::TIMEOUT or hard-reject after full-
+    // solve failure, the publish site (evaluator_typecheck.cpp:post-solve,
+    // evaluator_mutation_boundary.cpp:hard-reject) captures the status +
+    // unresolved_count + unresolved_affected_nodes (capped at 16) +
+    // truncated_reverify + blame_complete on a durable Agent surface.
+    //   - type-timeout-repair-last-status: last SolveResult::Status (0=SOLVED,
+    //     1=CONFLICT, 2=TIMEOUT, 99=hard-reject boundary)
+    //   - type-timeout-repair-last-unresolved-count: size of sdo.unresolved
+    //   - type-timeout-repair-last-unresolved-aff-nodes-count: capped size
+    //     of unresolved_affected_nodes (capped at 16)
+    //   - type-timeout-repair-last-unresolved-aff-node-N: individual NodeId
+    //     slot (N=0..15) for the Agent repair set
+    //   - type-timeout-repair-last-truncated-reverify: last sdo.truncated_reverify
+    //   - type-timeout-repair-last-blame-complete: last blame.is_complete()
+    //   - type-timeout-repair-publish-total: counter of publish calls
+    //   - type-timeout-repair-wired: sentinel (=1)
+    //   - schema == 2284 (lineage 2284)
+    ObservabilityPrims::register_stats_impl(
+        "query:type-timeout-repair-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::int64_t last_status =
+                m ? static_cast<std::int64_t>(
+                        m->type_repair_last_timeout_status.load(std::memory_order_relaxed))
+                  : 0;
+            const std::uint64_t last_unresolved_count =
+                m ? m->type_repair_last_unresolved_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t last_unresolved_aff_nodes_count =
+                m ? m->type_repair_last_unresolved_aff_nodes_count.load(std::memory_order_relaxed)
+                  : 0;
+            const std::int64_t last_truncated_reverify =
+                m ? static_cast<std::int64_t>(
+                        m->type_repair_last_truncated_reverify.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t last_blame_complete =
+                m ? static_cast<std::int64_t>(
+                        m->type_repair_last_blame_complete.load(std::memory_order_relaxed))
+                  : 0;
+            const std::uint64_t publish_total =
+                m ? m->type_repair_publish_total.load(std::memory_order_relaxed) : 0;
+            insert_kv("type-timeout-repair-last-status", last_status);
+            insert_kv("type-timeout-repair-last-unresolved-count",
+                      static_cast<std::int64_t>(last_unresolved_count));
+            insert_kv("type-timeout-repair-last-unresolved-aff-nodes-count",
+                      static_cast<std::int64_t>(last_unresolved_aff_nodes_count));
+            insert_kv("type-timeout-repair-last-truncated-reverify", last_truncated_reverify);
+            insert_kv("type-timeout-repair-last-blame-complete", last_blame_complete);
+            insert_kv("type-timeout-repair-publish-total",
+                      static_cast<std::int64_t>(publish_total));
+            insert_kv("type-timeout-repair-wired", 1);
+            char field_buf[64];
+            for (std::size_t i = 0; i < 16; ++i) {
+                const std::uint64_t node_id =
+                    m ? m->type_repair_last_unresolved_aff_nodes[i].load(std::memory_order_relaxed)
+                      : 0;
+                std::snprintf(field_buf, sizeof(field_buf),
+                              "type-timeout-repair-last-unresolved-aff-node-%zu", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(node_id));
+            }
+            insert_kv("schema", 2284);
+            insert_kv("issue", 2284);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #305: query:type-propagation-stats. Returns the
     // sum of 4 TypeId/TypeScheme propagation observability
     // counters from the shared CompilerMetrics struct (EDA

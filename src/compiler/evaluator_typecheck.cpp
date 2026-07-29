@@ -744,20 +744,44 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     (get_strategy() == AuditStrategy::Full || aura::core::sandbox::is_strict())) {
                     cr.solve_ok = false;
                 }
+                // Issue #2284: compute blame_complete before the publish site
+                // so we can capture it on the repair surface.
+                const auto& blame = cs_ptr->last_blame_chain();
+                const bool blame_complete = blame.is_complete();
                 if (!cr.solve_ok) {
                     c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
                     c.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
-                    // Keep unresolved visible for Agent repair (#2107 / #2260 AC4).
-                    (void)sdo.unresolved_affected_nodes;
-                    (void)unresolved;
+                    // Issue #2284: publish the timeout repair surface so Agents
+                    // can self-repair without parsing free-form diagnostics.
+                    // (Captures sdo.unresolved + unresolved_affected_nodes +
+                    // truncated_reverify + blame_complete.) CompiledMetrics*
+                    // fetched from this->compiler_metrics_ (member).
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->type_repair_last_timeout_status.store(
+                            static_cast<std::uint64_t>(sdo.status), std::memory_order_relaxed);
+                        m->type_repair_last_unresolved_count.store(sdo.unresolved.size(),
+                                                                   std::memory_order_relaxed);
+                        const std::size_t cap = std::min(sdo.unresolved_affected_nodes.size(),
+                                                         static_cast<std::size_t>(16));
+                        m->type_repair_last_unresolved_aff_nodes_count.store(
+                            cap, std::memory_order_relaxed);
+                        for (std::size_t i = 0; i < cap; ++i) {
+                            m->type_repair_last_unresolved_aff_nodes[i].store(
+                                sdo.unresolved_affected_nodes[i], std::memory_order_relaxed);
+                        }
+                        m->type_repair_last_truncated_reverify.store(
+                            sdo.truncated_reverify ? 1u : 0u, std::memory_order_relaxed);
+                        m->type_repair_last_blame_complete.store(blame_complete ? 1u : 0u,
+                                                                 std::memory_order_relaxed);
+                        m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
+                    }
                 }
                 // Issue #2221: blame-complete surface after solve_delta_occurrence.
                 // Vacuous empty greenfield (no frames, no roots) is exempt so
                 // test/no-typecheck commits stay green; non-vacuous incomplete
                 // chains are observe-counted and hard-reject under require-on.
-                const auto& blame = cs_ptr->last_blame_chain();
                 sdo_provenance_continuity = sdo.provenance_continuity;
-                sdo_blame_complete = blame.is_complete();
+                sdo_blame_complete = blame_complete;
                 sdo_blame_nonvacuous = reuse || !blame.frames.empty() || blame.complete ||
                                        blame.partial || sdo.touched_roots > 0 ||
                                        sdo.occurrence_priority_roots > 0 || sdo.let_poly_roots > 0;
