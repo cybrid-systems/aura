@@ -6707,6 +6707,12 @@ struct CompilerMetrics {
     // slots" (sustained re-mod load) on dashboards.
     std::atomic<std::uint64_t> aot_reload_fall_back_slot_invalidate_total{0};       // #2271
     std::atomic<std::uint64_t> aot_reload_fall_back_slot_invalidate_calls_total{0}; // #2271
+    // Issue #2299: per-eval physical invalidate observability.
+    //   - last_eval: last eval_ptr (as u64) passed to invalidate (0 = null/process-default).
+    //   - per_eval_calls_total: invalidate invocations with non-null eval_ptr.
+    std::atomic<std::uint64_t> aot_reload_fall_back_slot_invalidate_last_eval{0}; // #2299
+    std::atomic<std::uint64_t> aot_reload_fall_back_slot_invalidate_per_eval_calls_total{
+        0}; // #2299
     // Issue #2179: cross-function instruction-level impact scope
     // counters (refine #2109). Increments when compute_impact_scope
     // discovers call-site instructions in callers via node_dep_graph_

@@ -90,6 +90,8 @@ def main() -> int:
         "AC5",
         test,
     )
+    must("query:aot-stats", "AC5", test)
+    must("aura_aot_invalidate_all_stale_slots_for_eval(nullptr)", "AC5", test)
 
     if failures:
         for f in failures:

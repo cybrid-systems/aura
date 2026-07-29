@@ -121,9 +121,9 @@ public:
     // Issue #2232: policy fall_back_jit_only after multi-round reload
     //    exhausted. The actual slot-level physical invalidate is wired in
     //    aura_jit_bridge.cpp::aura_aot_invalidate_all_stale_slots_for_eval
-    //    (Issue #2271) so this callback is the visible registry hook for
-    //    Agents + observability, while the bridge clears the live func
-    //    table atomically.
+    //    (Issue #2271 / #2299 per-eval filter) so this callback is the
+    //    visible registry hook for Agents + observability, while the
+    //    bridge clears matching live func-table slots atomically.
     // exhaustion. Records the final fail reason so Agents can observe
     // JIT-only fall-back without a silent partial success. Slot-level
     // AOT invalidation is a future follow-up; this is the visible
