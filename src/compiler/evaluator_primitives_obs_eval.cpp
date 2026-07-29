@@ -1786,6 +1786,21 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2265", 2265);
             insert_kv("issue-2265", 2265);
             insert_kv("lifetime-pin-remap-wired", 1);
+            // Issue #2298: non-render general object pin-or-remap protocol.
+            {
+                using aura::core::lifetime::g_lifetime_pin_stats;
+                insert_kv("general-object-pin-total",
+                          static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_total));
+                insert_kv("general-object-pin-validate-fail-total",
+                          static_cast<std::int64_t>(
+                              g_lifetime_pin_stats.general_object_pin_validate_fail_total));
+                insert_kv("general-object-pin-remap-ok-total",
+                          static_cast<std::int64_t>(
+                              g_lifetime_pin_stats.general_object_pin_remap_ok_total));
+                insert_kv("general-object-pin-wired", 1);
+                insert_kv("schema-2298", 2298);
+                insert_kv("issue-2298", 2298);
+            }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in
             // evaluator_mutation_boundary.cpp) gates success metrics + bumps

@@ -2016,6 +2016,25 @@ def cmd_capture_cell_remap_coverage():
     return 0
 
 
+def cmd_general_object_pin_coverage():
+    """Issue #2298: non-render general object pin-or-remap protocol.
+
+    Validates pin_or_fail / GeneralObjectPin, fail-closed validate counters,
+    PinOwner retained, Soft zero remap, inventory + query schema-2298.
+    """
+    print(f"{B}=== general object pin-or-remap coverage (#2298) ==={N}")
+    script = ROOT / "scripts" / "check_general_object_pin_2298.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("general object pin-or-remap coverage contract rows failed")
+        return 1
+    ok("general object pin-or-remap coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2372,6 +2391,7 @@ def cmd_gate():
         or cmd_envframe_ownership_transfer_coverage()
         or cmd_residual_gc_defer_multi_eval_coverage()
         or cmd_capture_cell_remap_coverage()
+        or cmd_general_object_pin_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

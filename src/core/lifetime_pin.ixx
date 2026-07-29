@@ -49,6 +49,25 @@ import std;
 export namespace aura::core::lifetime {
 
 inline constexpr int kLifetimePinPhase = 3;
+// Issue #2298: general (non-render) object pin-or-remap protocol issue stamp.
+inline constexpr int kGeneralObjectPinIssue = 2298;
+
+// ── Object class × required protocol inventory (#2298 AC5) ────────────
+// | Class                         | Protocol                          |
+// | AST nodes / StableNodeRef     | generation + StableNodeRef fence  |
+// | EnvFrame SoA / EnvFrameRef    | env_gen fence (#2268) + transfer  |
+// |                               | (#2295); not LifetimePin          |
+// | Closure captures (AOT)        | env_gen remount (#2272) + densify |
+// |                               | cell remap (#2297) / RootRemap    |
+// | Render / FFI present buffers  | LifetimePin + PinOwner (#2265/    |
+// |                               | #2270) + PresentGuard / RenderPin |
+// | Linear roots (Move/Drop)      | pin_linear_root (#2280)           |
+// | Intermediate general buffers  | pin_or_fail / GeneralObjectPin    |
+// | (mutate/agent/scratch create) | (#2298) — pin-or-remap under      |
+// |                               | Moving densify                    |
+// Soft/Force do not relocate create objects → zero remap work (AC4).
+// Prefer RootRemapPass (#2294) for densify-tracked roots already in
+// object_remap; LifetimePin for external / cross-boundary consumers.
 
 struct LifetimePinStats {
     std::uint64_t pins = 0;
@@ -81,6 +100,10 @@ struct LifetimePinStats {
     std::uint64_t pin_owner_arena_transitions = 0;        // #2270
     std::uint64_t pin_owner_ffi_borrowed_transitions = 0; // #2270
     std::uint64_t pin_owner_ffi_owned_transitions = 0;    // #2270
+    // Issue #2298: non-render general object pin-or-remap protocol.
+    std::uint64_t general_object_pin_total = 0;               // pin_or_fail / GeneralObjectPin::pin
+    std::uint64_t general_object_pin_validate_fail_total = 0; // validate failed
+    std::uint64_t general_object_pin_remap_ok_total = 0;      // validate ok after Moving densify
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};
@@ -603,6 +626,66 @@ inline void reset_linear_roots_for_test() noexcept {
     g_linear_unpin_total.store(0, std::memory_order_relaxed);
     g_linear_pin_miss_total.store(0, std::memory_order_relaxed);
 }
+
+// ── Issue #2298: pin-or-fail for non-render general objects ─────────
+// Fail-closed pin of a densify-tracked create object (or any cross-
+// boundary buffer that is neither EnvFrame-fenced nor Render/FFI).
+// Returns false if p is null (does not pin). Bumps general_object_pin_total.
+inline bool pin_or_fail(LifetimePin& pin, void* p, std::uint64_t gen,
+                        std::uint64_t arena_id = 0) noexcept {
+    if (!p)
+        return false;
+    pin.pin(p, gen, arena_id);
+    ++g_lifetime_pin_stats.general_object_pin_total;
+    return true;
+}
+
+// Validate a general-object pin after compact / densify. On success after
+// Moving densify (gen advanced), bumps general_object_pin_remap_ok_total
+// when the pin is still live (ptr remapped or address-stable). On fail
+// bumps general_object_pin_validate_fail_total (AC2 fail-closed).
+inline bool validate_general_object(const LifetimePin& pin, std::uint64_t cur_gen,
+                                    std::uint64_t cur_arena_id = 0,
+                                    bool count_remap_ok = false) noexcept {
+    if (!pin.validate(cur_gen, cur_arena_id)) {
+        ++g_lifetime_pin_stats.general_object_pin_validate_fail_total;
+        return false;
+    }
+    if (count_remap_ok)
+        ++g_lifetime_pin_stats.general_object_pin_remap_ok_total;
+    return true;
+}
+
+// RAII helper for non-render intermediate buffers (mutate/agent/scratch).
+// Uses LifetimePin under the hood so Moving densify remaps via the
+// existing pin registry (#2265). Not for AST nodes (use StableNodeRef).
+class GeneralObjectPin {
+public:
+    GeneralObjectPin() = default;
+    ~GeneralObjectPin() = default;
+    GeneralObjectPin(const GeneralObjectPin&) = delete;
+    GeneralObjectPin& operator=(const GeneralObjectPin&) = delete;
+    GeneralObjectPin(GeneralObjectPin&&) = default;
+    GeneralObjectPin& operator=(GeneralObjectPin&&) = default;
+
+    // Pin buffer; returns false on null. Arena ownership (not FFI).
+    bool pin(void* p, std::uint64_t gen, std::uint64_t arena_id = 0) noexcept {
+        return pin_or_fail(pin_, p, gen, arena_id);
+    }
+
+    [[nodiscard]] bool validate(std::uint64_t cur_gen, std::uint64_t cur_arena_id = 0,
+                                bool count_remap_ok = false) const noexcept {
+        return validate_general_object(pin_, cur_gen, cur_arena_id, count_remap_ok);
+    }
+
+    [[nodiscard]] void* ptr() const noexcept { return pin_.ptr(); }
+    [[nodiscard]] bool pinned() const noexcept { return pin_.pinned(); }
+    [[nodiscard]] LifetimePin& raw() noexcept { return pin_; }
+    [[nodiscard]] const LifetimePin& raw() const noexcept { return pin_; }
+
+private:
+    LifetimePin pin_;
+};
 
 // Issue #2280: linear pin check under Moving compact. Returns true if
 // every live linear root is either remapped (not in old_addresses) or
