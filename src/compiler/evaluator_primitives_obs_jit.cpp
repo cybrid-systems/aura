@@ -8619,7 +8619,8 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                         m->typed_mut_audit_savings_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t active = 1;
-            auto* ht = FlatHashTable::create(48) /* #1141 / #1894 / #2053 */;
+            auto* ht = FlatHashTable::create(
+                64) /* #1141 / #1894 / #2053 — #2288 added 3 keys (table was full at 48) */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8717,6 +8718,20 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                               std::memory_order_relaxed)));
             insert_kv("schema-2264", 2264);
             insert_kv("issue-2264", 2264);
+            // Issue #2288: partial-infer selective ADT exhaustiveness counter
+            // (infer_flat_partial main path — earlier signal than Full audit).
+            // Reads from CompilerMetrics (per-Evaluator counter, not free
+            // process storage like the #2223/#2264 keys above).
+            const std::int64_t partial_non_exh =
+                m ? static_cast<std::int64_t>(
+                        m->adt_partial_non_exhaustive_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("adt-partial-non-exhaustive-total", partial_non_exh);
+            insert_kv("schema-2288", 2288);
+            insert_kv("issue-2288", 2288);
+            // Issue #2288: bump hash table 16 → 32 — query was full at 16
+            // (13 existing + 3 new = 16); open-addressing insert_kv silently
+            // dropped late keys (issue-2288 in AC7).
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

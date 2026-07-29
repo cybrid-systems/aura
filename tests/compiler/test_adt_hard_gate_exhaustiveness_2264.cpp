@@ -12,6 +12,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <fstream>
@@ -25,6 +26,7 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
@@ -182,15 +184,62 @@ static void ac5_schema_source() {
     CHECK(tc.find("check_match_exhaustiveness") != std::string::npos, "hard-gate suite checks");
 }
 
+// Issue #2288: AC6–AC8 — selective ADT exhaustiveness on infer_flat_partial
+// main path (earlier signal than Full audit). Partial-infer counter bumps
+// when non-exhaustive match is detected during the partial-infer sweep,
+// BEFORE Full audit sampling closes the window. Schema-additive to #2264.
+static void ac6_partial_non_exhaustive_counter() {
+    std::println("\n--- AC6: adt_partial_non_exhaustive_total counter exposed ---");
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+    // Set known value to verify the query surface reads from this CounterMetrics
+    // (not the free-process g_typed_mutation_audit_counters used by #2223/#2264).
+    metrics.adt_partial_non_exhaustive_total.store(7, std::memory_order_relaxed);
+    const auto v = audit_stats(cs, "adt-partial-non-exhaustive-total");
+    CHECK(v == 7, "AC6: counter exposed via query:typed-mutation-audit-stats");
+}
+
+static void ac7_schema_2288() {
+    std::println("\n--- AC7: schema-2288 + issue-2288 keys ---");
+    CompilerService cs;
+    CHECK(audit_stats(cs, "schema-2288") == 2288, "AC7: schema-2288 key");
+    CHECK(audit_stats(cs, "issue-2288") == 2288, "AC7: issue-2288 key");
+}
+
+static void ac8_source_wiring() {
+    std::println("\n--- AC8: source wiring #2288 ---");
+    auto tc = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tc.find("Issue #2288") != std::string::npos, "AC8: type_checker_impl.cpp cites #2288");
+    CHECK(tc.find("adt_partial_non_exhaustive_total") != std::string::npos,
+          "AC8: counter bump wired in infer_flat_partial");
+    CHECK(tc.find("bump_partial_counter") != std::string::npos,
+          "AC8: partial counter flag in recheck_match_exhaustiveness_in_dirty_scope");
+    auto om = read_file("src/compiler/observability_metrics.h");
+    CHECK(om.find("adt_partial_non_exhaustive_total") != std::string::npos,
+          "AC8: counter field defined");
+    auto inc = read_file("src/compiler/compiler_metrics_fields.inc");
+    CHECK(inc.find("adt_partial_non_exhaustive_total") != std::string::npos,
+          "AC8: .inc has the counter");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("Issue #2288") != std::string::npos, "AC8: query cites #2288");
+    CHECK(q.find("schema-2288") != std::string::npos, "AC8: schema-2288 in query surface");
+    CHECK(q.find("adt-partial-non-exhaustive-total") != std::string::npos,
+          "AC8: counter key in query surface");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2264: ADT exhaustiveness hard-gate suite ===");
+    std::println("=== Issue #2264 / #2288: ADT exhaustiveness hard-gate + partial-infer ===");
     ac1_full_hard_gate_fails();
     ac2_exhaustive_ok();
     ac3_soft_no_hard_gate();
     ac4_defaults();
     ac5_schema_source();
+    ac6_partial_non_exhaustive_counter();
+    ac7_schema_2288();
+    ac8_source_wiring();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
