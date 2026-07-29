@@ -35,6 +35,7 @@ module;
 #include "basis_points.h"
 #include "serve/fiber.h"
 #include "core/gc_hooks.h"
+#include "core/lifetime_contract.h" // Issue #2300
 #include "core/resource_quota.hh"
 #include "compiler/pipeline_policy.hh" // Issue #2213 tree-walker fallback policy
 #include <limits>
@@ -50,6 +51,8 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.arena;
+import aura.core.lifetime_pin;
+import aura.core.envframe_lifetime;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
@@ -10903,6 +10906,90 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gc_defer_orphan_cleared_on_steal_total",
                       static_cast<std::int64_t>(
                           aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2300: query:lifetime-contract-snapshot — single pure Agent
+    // surface for pin / linear / EnvFrame / GC-defer / residual contract.
+    // Aggregates existing subsystem counters; no side effects (pure read).
+    // Formula for lifetime-contract-ok documented in lifetime_contract.h.
+    ObservabilityPrims::register_stats_impl(
+        "query:lifetime-contract-snapshot", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const auto linear = aura::core::lifetime::linear_root_snapshot();
+            const std::uint64_t residual_hard =
+                m ? m->mutation_boundary_residual_defer_hard_fail_total.load(
+                        std::memory_order_relaxed)
+                  : 0;
+            // Prefer arena live moving pref when available; env fallback is
+            // inside residual/moving helpers for policy keys.
+            const int moving_on = aura::ast::moving_compact_enabled();
+            const auto snap = aura::core::lifetime_contract::make_lifetime_contract_snapshot(
+                static_cast<std::uint64_t>(aura::core::lifetime::live_pin_count()),
+                static_cast<std::uint64_t>(linear.live_count),
+                aura::core::envframe_lifetime::active_guard_depth(),
+                aura::gc_hooks::defer_reasons_snapshot(),
+                aura::core::lifetime::lifetime_pin_contract_fail_total(), linear.pin_miss_total,
+                residual_hard, aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total(),
+                aura::core::lifetime_contract::residual_defer_policy_from_env(), moving_on);
+
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("lifetime-pin-live-count",
+                      static_cast<std::int64_t>(snap.lifetime_pin_live_count));
+            insert_kv("linear-pin-live-count",
+                      static_cast<std::int64_t>(snap.linear_pin_live_count));
+            insert_kv("envframe-active-guard-depth",
+                      static_cast<std::int64_t>(snap.envframe_active_guard_depth));
+            insert_kv("gc-defer-reasons-mask",
+                      static_cast<std::int64_t>(snap.gc_defer_reasons_mask));
+            insert_kv("residual-defer-policy", snap.residual_defer_policy);
+            insert_kv("moving-compact-enabled", snap.moving_compact_enabled);
+            insert_kv("moving-pin-contract-fail-total",
+                      static_cast<std::int64_t>(snap.moving_pin_contract_fail_total));
+            insert_kv("linear-pin-miss-total",
+                      static_cast<std::int64_t>(snap.linear_pin_miss_total));
+            insert_kv("residual-defer-hard-fail-total",
+                      static_cast<std::int64_t>(snap.residual_defer_hard_fail_total));
+            insert_kv("gc-defer-orphan-cleared-on-steal-total",
+                      static_cast<std::int64_t>(snap.gc_defer_orphan_cleared_on_steal_total));
+            insert_kv("lifetime-contract-ok", snap.ok ? 1 : 0);
+            insert_kv("force-reason-code", static_cast<std::int64_t>(snap.force_reason_code));
+            // force-reason string → stable code already exposed; Agents map
+            // 0=none 1=pin-miss 2=linear-miss 3=residual 4=defer-orphan.
+            insert_kv("lifetime-contract-wired", 1);
+            insert_kv("schema-2300", 2300);
+            insert_kv("issue-2300", static_cast<std::int64_t>(
+                                        aura::core::lifetime_contract::kLifetimeContractIssue));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -2910,6 +2910,10 @@ aura_issue_test_link_llvm_jit(test_hard_gate_full_strict_2145)
 aura_add_issue_test(test_typed_mutation_audit_decision_2281)
 aura_issue_test_link_llvm_jit(test_typed_mutation_audit_decision_2281)
 add_dependencies(all_test_issue_targets test_typed_mutation_audit_decision_2281)
+# Issue #2300: query:lifetime-contract-snapshot pure Agent surface.
+aura_add_issue_test(test_lifetime_contract_snapshot_2300)
+aura_issue_test_link_llvm_jit(test_lifetime_contract_snapshot_2300)
+add_dependencies(all_test_issue_targets test_lifetime_contract_snapshot_2300)
 
 # Issue #2282: unified dead-coercion layered counter (AST elide + IR DCE + dirty-cone skip).
 # Single Agent-facing key (dead-coercion-layered-total) + 5 individually queryable components.
