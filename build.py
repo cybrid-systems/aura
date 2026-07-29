@@ -1955,6 +1955,29 @@ def cmd_root_remap_pass_coverage():
     return 0
 
 
+def cmd_envframe_ownership_transfer_coverage():
+    """Issue #2295: EnvFrame ownership transfer protocol (transfer_to / drop).
+
+    Validates the 5-AC contract from #2295:
+      AC1: EnvFrameRef::transfer_to / drop API + metrics.
+      AC2: refresh_after_fiber_migration wires transfer / drop.
+      AC3: Happy path keeps ownership atomics at 0 (unit test).
+      AC4: hold_gen_mismatch surface retained.
+      AC5: Query keys + schema-2295 + tests extension.
+    """
+    print(f"{B}=== EnvFrame ownership transfer coverage (#2295) ==={N}")
+    script = ROOT / "scripts" / "check_envframe_ownership_transfer_2295.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("EnvFrame ownership transfer coverage contract rows failed")
+        return 1
+    ok("EnvFrame ownership transfer coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2308,6 +2331,7 @@ def cmd_gate():
         or cmd_arena_moving_compaction_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
+        or cmd_envframe_ownership_transfer_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

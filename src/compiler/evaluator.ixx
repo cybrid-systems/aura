@@ -907,6 +907,23 @@ export struct EnvFrameRef {
     [[nodiscard]] std::optional<EnvFrame const*>
     resolve_if_valid(Evaluator const& ev) const noexcept;
 
+    // Issue #2295: ownership transfer protocol (linear Move/Drop
+    // analogue for EnvFrameRef). Prefer transfer over silent
+    // generation bump when a live Ref is held across steal /
+    // truncate sites.
+    //
+    // transfer_to: restamp dst from current env_generation_,
+    // move index, clear *this to invalid. Dual-path consistency
+    // on the live frame when in-range. Bumps
+    // envframe_ownership_transfer_total.
+    //
+    // drop: tombstone *this, bump envframe_ownership_drop_total,
+    // run a skip-freed ownership scan; when the Ref was already
+    // stale, also bumps env_gen_use_site_reject_total (AC1).
+    [[nodiscard]] bool has_ownership() const noexcept { return index != NULL_ENV_ID; }
+    void transfer_to(Evaluator& ev, EnvFrameRef& dst) noexcept;
+    void drop(Evaluator& ev) noexcept;
+
     static constexpr EnvFrameRef invalid() noexcept { return {}; }
 };
 

@@ -6343,8 +6343,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // schema-1955 is the re-audit refine of #1927 (same AC surface).
     ObservabilityPrims::register_stats_impl(
         "query:envframe-truncate-epoch-stats", [&ev](const auto&) -> EvalValue {
-            // Power-of-2 capacity; #1927/#1955 AC keys (create(32) headroom).
-            auto* ht = FlatHashTable::create(32);
+            // Power-of-2 capacity; #1927/#1955/#2268/#2295 AC keys (~40).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6405,6 +6405,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("envframe-cache-cleared-on-steal-wired", 1);
             insert_kv("schema-2268", 2268);
             insert_kv("issue-2268", 2268);
+            // Issue #2295: EnvFrame ownership transfer protocol (beyond gen fence).
+            // transfer_to restamps dst + clears src; drop tombstones + scan.
+            // Happy path keeps both totals at 0 (AC3).
+            insert_kv("envframe-ownership-transfer-total",
+                      m ? static_cast<std::int64_t>(
+                              m->envframe_ownership_transfer_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("envframe-ownership-drop-total",
+                      m ? static_cast<std::int64_t>(
+                              m->envframe_ownership_drop_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("envframe-ownership-transfer-wired", 1);
+            insert_kv("envframe-ownership-drop-wired", 1);
+            insert_kv("schema-2295", 2295);
+            insert_kv("issue-2295", 2295);
             insert_kv("bridge-epoch-bump-on-truncate",
                       m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
                               std::memory_order_relaxed))

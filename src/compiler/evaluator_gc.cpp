@@ -712,6 +712,11 @@ Evaluator::enforce_linear_post_failure(std::uint8_t path) noexcept {
 // ctx back to Evaluator* (always set by the wire-up sites) and forwards.
 void Evaluator::run_envframe_lifetime_guard(
     aura::core::envframe_lifetime::EnvFrameLifetimeSite site) noexcept {
+    // Issue #2003 / #2164: mandatory skip-freed scan on Guard exit.
+    // Issue #2295: same scan is the ownership-exit companion for
+    // BoundaryExit / FiberSteal / CompactSweep sites (transfer_to /
+    // drop on resume path covers live EnvFrameRef; Guard exit covers
+    // any residual dual-path linear captures).
     scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->envframe_lifetime_guard_runs_total.fetch_add(1, std::memory_order_relaxed);

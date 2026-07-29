@@ -618,6 +618,14 @@ struct CompilerMetrics {
     // "cache cleared on migrate" from "stale ref rejected on
     // use".
     std::atomic<std::uint64_t> envframe_cache_cleared_on_steal_total{0};
+    // Issue #2295: EnvFrame ownership transfer protocol (beyond gen fence).
+    //   - envframe_ownership_transfer_total: EnvFrameRef::transfer_to
+    //     restamped a live index into dst and cleared the source.
+    //   - envframe_ownership_drop_total: EnvFrameRef::drop tombstoned a
+    //     held Ref (truncate / steal / explicit caller drop).
+    // Happy path (no truncate/steal) keeps both at 0 (AC3).
+    std::atomic<std::uint64_t> envframe_ownership_transfer_total{0};
+    std::atomic<std::uint64_t> envframe_ownership_drop_total{0};
     // Issue #1948: MutationBoundaryGuard violation tracking for env
     // compaction paths (compact_env_frames + truncate_env_frames_to_checkpoint).
     //   - mutation_boundary_violation_on_env_compact_total: # of times

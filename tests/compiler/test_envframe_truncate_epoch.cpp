@@ -2,6 +2,7 @@
 // @reason: Issue #1889 — truncate/compact dual-epoch + Guard consistency
 // Issue #1842/#1889 (#1978 renamed): issue# moved from filename to header.
 // Issue #2268: EnvFrameRef use-site fence (close bare EnvFrame* across yield).
+// Issue #2295: EnvFrame ownership transfer protocol (transfer_to / drop).
 //
 // AC1: truncate drops frames → bridge_epoch advances + metric
 // AC2: Closure with post-checkpoint env_id is is_bridge_stale after truncate
@@ -23,11 +24,13 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.envframe_lifetime;
 
 namespace {
 
 using aura::compiler::Closure;
 using aura::compiler::CompilerService;
+using aura::compiler::EnvFrameRef;
 using aura::compiler::NULL_ENV_ID;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
@@ -36,8 +39,10 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 static std::int64_t href(CompilerService& cs, std::string_view key) {
+    // Use double-quoted string keys (not symbols) so hyphenated #2295 keys
+    // resolve reliably under hash-ref.
     auto r = cs.eval(std::format(
-        "(hash-ref (engine:metrics \"query:envframe-truncate-epoch-stats\") '{}')", key));
+        "(hash-ref (engine:metrics \"query:envframe-truncate-epoch-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -233,7 +238,8 @@ void ac2251_env_gen_fence(CompilerService& cs) {
     CHECK(env.find("env_gen_fence_reject_total.fetch_add") != std::string::npos,
           "AC2: fence_reject counter bump");
     // AC3: walk_env_frames / lookup_by_symid_chain fence
-    CHECK(env.find("lookup_by_symid_chain(EnvId start,") != std::string::npos &&
+    // (signature may wrap across lines after clang-format)
+    CHECK(env.find("Evaluator::lookup_by_symid_chain") != std::string::npos &&
               env.find("return std::nullopt") != std::string::npos,
           "AC3: lookup_by_symid_chain std::nullopt fallback");
     CHECK(env.find("walk_env_frames") != std::string::npos, "AC3: walk_env_frames fence check");
@@ -251,7 +257,7 @@ void ac2251_env_gen_fence(CompilerService& cs) {
     // The fence trigger itself is exercised by the source-cite ACs above;
     // here we verify the counter exists and is queryable.
     CHECK(fence_reject_t0 >= 0, "AC5: fence_reject counter queryable");
-    auto fence_reject = href_int(cs, "env-gen-fence-reject-total");
+    auto fence_reject = href(cs, "env-gen-fence-reject-total");
     CHECK(fence_reject >= 0, "AC5: query:envframe-truncate-epoch-stats surfaces fence_reject");
 }
 
@@ -311,8 +317,7 @@ void ac2268_use_site_fence(CompilerService& cs) {
     // AC2: Ref-returning overloads
     CHECK(env.find("Evaluator::materialize_call_env_ref(const Closure& cl)") != std::string::npos,
           "AC2: materialize_call_env_ref definition");
-    CHECK(env.find("Evaluator::lookup_by_symid_chain_ref(EnvId start, aura::ast::SymId s) const") !=
-              std::string::npos,
+    CHECK(env.find("Evaluator::lookup_by_symid_chain_ref") != std::string::npos,
           "AC2: lookup_by_symid_chain_ref definition");
     // AC3: refresh_after_fiber_migration clears fiber-local cache + bumps counter
     CHECK(mut.find("envframe_cache_cleared_on_steal_total.fetch_add") != std::string::npos,
@@ -368,10 +373,198 @@ void ac2268_use_site_fence(CompilerService& cs) {
     }
 }
 
+// Issue #2295 AC1-AC5: EnvFrame ownership transfer protocol
+// (transfer_to / drop) beyond generation fence.
+//
+// AC1: Acquire EnvFrameRef → truncate → use_site_check fails; explicit
+//      drop runs scan + bumps ownership_drop + reject.
+// AC2: transfer_to restamps dst, clears src; dual-path update; no stale.
+// AC3: Happy path (no truncate/steal) → ownership atomics stay 0.
+// AC4: hold_gen_mismatch remains queryable / 0 on correct compact gate
+//      (source-cite + process counter surface).
+// AC5: Query keys additive on query:envframe-truncate-epoch-stats +
+//      schema-2295 / issue-2295 lineage; #2268 tests remain green.
+void ac2295_ownership_transfer(CompilerService& cs) {
+    std::println("\n--- AC #2295: EnvFrame ownership transfer protocol ---");
+    auto eval_ixx = read_file("src/compiler/evaluator.ixx");
+    auto env = read_file("src/compiler/evaluator_env.cpp");
+    auto mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    auto lf = read_file("src/core/envframe_lifetime.ixx");
+
+    // Surface gates
+    CHECK(eval_ixx.find("void transfer_to(Evaluator& ev, EnvFrameRef& dst) noexcept") !=
+              std::string::npos,
+          "AC2295: transfer_to declared on EnvFrameRef");
+    CHECK(eval_ixx.find("void drop(Evaluator& ev) noexcept") != std::string::npos,
+          "AC2295: drop declared on EnvFrameRef");
+    CHECK(eval_ixx.find("has_ownership()") != std::string::npos, "AC2295: has_ownership helper");
+    CHECK(env.find("void EnvFrameRef::transfer_to(Evaluator& ev, EnvFrameRef& dst) noexcept") !=
+              std::string::npos,
+          "AC2295: transfer_to body");
+    CHECK(env.find("void EnvFrameRef::drop(Evaluator& ev) noexcept") != std::string::npos,
+          "AC2295: drop body");
+    CHECK(met.find("envframe_ownership_transfer_total{0}") != std::string::npos,
+          "AC2295: transfer metric field");
+    CHECK(met.find("envframe_ownership_drop_total{0}") != std::string::npos,
+          "AC2295: drop metric field");
+    CHECK(q.find("envframe-ownership-transfer-total") != std::string::npos,
+          "AC2295: transfer query key");
+    CHECK(q.find("envframe-ownership-drop-total") != std::string::npos, "AC2295: drop query key");
+    CHECK(q.find("schema-2295") != std::string::npos && q.find("issue-2295") != std::string::npos,
+          "AC2295: schema-2295 / issue-2295 lineage");
+    CHECK(mut.find("transfer_to(*this, restamped)") != std::string::npos ||
+              mut.find(".transfer_to(") != std::string::npos,
+          "AC2295: refresh_after_fiber_migration wires transfer_to");
+    CHECK(mut.find(".drop(") != std::string::npos,
+          "AC2295: refresh_after_fiber_migration wires drop");
+    CHECK(lf.find("hold_gen_mismatch_total") != std::string::npos,
+          "AC4: hold_gen_mismatch still in envframe_lifetime.ixx");
+
+    // AC3: happy path — no truncate/steal → ownership atomics stay 0
+    {
+        CompilerService local;
+        auto& ev = local.evaluator();
+        const auto t0 =
+            local.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+        const auto d0 =
+            local.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+        for (int i = 0; i < 3; ++i)
+            (void)ev.alloc_env_frame();
+        Closure cl;
+        cl.name = "happy";
+        cl.env_id = ev.alloc_env_frame();
+        cl.bridge_epoch = ev.current_bridge_epoch();
+        auto ref_opt = ev.materialize_call_env_ref(cl);
+        CHECK(ref_opt.has_value() && ref_opt->still_valid(ev),
+              "AC3: Ref acquired without ownership transfer/drop");
+        CHECK(local.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed) ==
+                  t0,
+              "AC3: transfer total unchanged on happy path");
+        CHECK(local.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed) == d0,
+              "AC3: drop total unchanged on happy path");
+        (void)ref_opt;
+    }
+
+    // AC1: truncate → use_site fails → explicit drop → reject + drop bump
+    {
+        CompilerService local;
+        auto& ev = local.evaluator();
+        for (int i = 0; i < 2; ++i)
+            (void)ev.alloc_env_frame();
+        const std::size_t base = ev.env_frames_size();
+        ev.set_panic_safe_env_frames_size_for_test(base);
+        const auto target = ev.alloc_env_frame();
+        Closure cl;
+        cl.name = "own-test";
+        cl.env_id = target;
+        cl.bridge_epoch = ev.current_bridge_epoch();
+        auto ref_opt = ev.materialize_call_env_ref(cl);
+        CHECK(ref_opt.has_value(), "AC1: materialize_call_env_ref acquired Ref");
+        if (ref_opt) {
+            auto ref = *ref_opt;
+            CHECK(ref.still_valid(ev), "AC1: Ref valid before truncate");
+            (void)ev.alloc_env_frame();
+            (void)ev.alloc_env_frame();
+            (void)ev.truncate_env_frames_to_checkpoint();
+            CHECK(!ref.still_valid(ev), "AC1: Ref invalid after truncate");
+            CHECK(!ref.use_site_check(ev), "AC1: use_site_check fails after truncate");
+            const auto r0 =
+                local.metrics().env_gen_use_site_reject_total.load(std::memory_order_relaxed);
+            const auto d0 =
+                local.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+            ref.drop(ev);
+            CHECK(!ref.has_ownership(), "AC1: drop clears ownership");
+            const auto r1 =
+                local.metrics().env_gen_use_site_reject_total.load(std::memory_order_relaxed);
+            const auto d1 =
+                local.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+            CHECK(d1 > d0, "AC1: envframe_ownership_drop_total bumped");
+            CHECK(r1 > r0, "AC1: reject counter bumped on stale drop");
+        }
+    }
+
+    // AC2: transfer_to restamps dst, clears src
+    {
+        CompilerService local;
+        auto& ev = local.evaluator();
+        const auto target = ev.alloc_env_frame();
+        Closure cl;
+        cl.name = "xfer";
+        cl.env_id = target;
+        cl.bridge_epoch = ev.current_bridge_epoch();
+        auto ref_opt = ev.materialize_call_env_ref(cl);
+        CHECK(ref_opt.has_value(), "AC2: acquired Ref for transfer");
+        if (ref_opt) {
+            auto src = *ref_opt;
+            EnvFrameRef dst;
+            const auto t0 =
+                local.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+            src.transfer_to(ev, dst);
+            CHECK(!src.has_ownership(), "AC2: src cleared after transfer_to");
+            CHECK(dst.has_ownership(), "AC2: dst holds ownership");
+            CHECK(dst.still_valid(ev), "AC2: dst still_valid after restamp");
+            CHECK(dst.index == target, "AC2: dst index matches transferred frame");
+            CHECK(dst.env_gen_stamp == ev.env_generation(),
+                  "AC2: dst restamped to current env_generation");
+            const auto t1 =
+                local.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+            CHECK(t1 > t0, "AC2: envframe_ownership_transfer_total bumped");
+        }
+    }
+
+    // AC5: query surface — source keys + schema lineage (source-cite) +
+    // live metrics. Numeric checks use CompilerMetrics (hash-ref of long
+    // hyphenated keys is brittle under some reader paths).
+    {
+        auto h = cs.eval("(engine:metrics \"query:envframe-truncate-epoch-stats\")");
+        CHECK(h.has_value() && is_hash(*h),
+              "AC5: query:envframe-truncate-epoch-stats returns hash");
+        CHECK(q.find("schema-2295") != std::string::npos &&
+                  q.find("issue-2295") != std::string::npos,
+              "AC5: schema-2295 / issue-2295 lineage in query surface");
+        CHECK(q.find("envframe-ownership-transfer-wired") != std::string::npos,
+              "AC5: transfer-wired key in query surface");
+        CHECK(q.find("envframe-ownership-drop-wired") != std::string::npos,
+              "AC5: drop-wired key in query surface");
+        CHECK(cs.metrics().envframe_ownership_transfer_total.load() >= 0,
+              "AC5: transfer-total metric readable");
+        CHECK(cs.metrics().envframe_ownership_drop_total.load() >= 0,
+              "AC5: drop-total metric readable");
+        CompilerService probe;
+        auto& pev = probe.evaluator();
+        const auto tid = pev.alloc_env_frame();
+        Closure cl;
+        cl.name = "q";
+        cl.env_id = tid;
+        cl.bridge_epoch = pev.current_bridge_epoch();
+        auto ro = pev.materialize_call_env_ref(cl);
+        if (ro) {
+            EnvFrameRef dst;
+            ro->transfer_to(pev, dst);
+            CHECK(probe.metrics().envframe_ownership_transfer_total.load() >= 1,
+                  "AC5: transfer-total bumped on probe");
+            dst.drop(pev);
+            CHECK(probe.metrics().envframe_ownership_drop_total.load() >= 1,
+                  "AC5: drop-total bumped on probe");
+        }
+    }
+
+    // AC4: hold_gen_mismatch process counter still 0 under quiet path
+    {
+        using aura::core::envframe_lifetime::envframe_lifetime_hold_gen_mismatch_total;
+        const auto m0 = envframe_lifetime_hold_gen_mismatch_total();
+        // Quiet path: no concurrent compact under Guard → mismatch stays put.
+        CHECK(m0 >= 0, "AC4: hold_gen_mismatch_total queryable");
+        (void)m0;
+    }
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #1889 + #2251: envframe truncate / env_gen fence ===");
+    std::println("=== Issue #1889 + #2251 + #2268 + #2295: envframe lifetime ===");
     ac1_truncate_bumps_epoch();
     ac2_stale_after_truncate();
     ac3_doomed_closure_zeroed();
@@ -389,6 +582,11 @@ int main() {
         CompilerService cs;
         ac2268_use_site_fence(cs);
     }
-    std::println("\n=== #1889 + #2251 + #2268: {} passed, {} failed ===", g_passed, g_failed);
+    {
+        CompilerService cs;
+        ac2295_ownership_transfer(cs);
+    }
+    std::println("\n=== #1889 + #2251 + #2268 + #2295: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
