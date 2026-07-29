@@ -7952,7 +7952,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_jit_deopt_applied{0};
     std::atomic<std::uint64_t> render_jit_deopt_throttled{0};
     std::atomic<std::uint64_t> render_jit_aot_prefer_hits{0};
-    std::atomic<std::uint64_t> render_deopt_throttle_window_ms{500};
+    // Issue #2329: default raised from 500ms to 30000ms so the safe
+    // fallback in bump_render_jit_deopt_throttled() (evaluator.ixx:7511)
+    // actually takes effect. Previous default of 500ms meant raw_ms > 0
+    // was always true, the fallback never fired, and AC5 of
+    // test_render_critical_hotswap_2050 saw ~16 applies over a 48s test
+    // (the throttle window was effectively 500ms not 30000ms).
+    std::atomic<std::uint64_t> render_deopt_throttle_window_ms{30000};
     // Issue #1563: AOT/hot preference hit rate in basis points (0..10000).
     std::atomic<std::uint64_t> render_aot_hit_rate_bp{0};
     std::atomic<std::uint64_t> render_critical_meta_count{0};

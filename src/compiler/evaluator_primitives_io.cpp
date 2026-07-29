@@ -1866,7 +1866,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("closed-loop-rounds", m ? load(m->render_closed_loop_rounds_total) : 0);
             insert_kv("closed-loop-stable", m ? load(m->render_closed_loop_stable_total) : 0);
             insert_kv("closed-loop-improve", m ? load(m->render_closed_loop_improve_total) : 0);
-            insert_kv("throttle-window-ms", m ? load(m->render_deopt_throttle_window_ms) : 500);
+            insert_kv("throttle-window-ms", m ? load(m->render_deopt_throttle_window_ms) : 30000);
             insert_kv("render-critical-protect-wired", 1);
             insert_kv("schema-2051", 2051);
             insert_kv("issue-2051", 2051);
@@ -2016,7 +2016,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto applied = m ? load(m->render_jit_deopt_applied) : 0;
             const auto throttled = m ? load(m->render_jit_deopt_throttled) : 0;
             const auto aot = m ? load(m->render_jit_aot_prefer_hits) : 0;
-            const auto window = m ? load(m->render_deopt_throttle_window_ms) : 500;
+            const auto window = m ? load(m->render_deopt_throttle_window_ms) : 30000;
             const auto fallback = m ? load(m->jit_fallback_to_interpreter_total) : 0;
             // AOT hit rate in basis points: aot / (aot + applied) * 10000
             const auto denom = aot + applied;

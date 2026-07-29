@@ -56,7 +56,10 @@ int main() {
         CHECK(href(cs, "schema-2050") == 2050, "schema-2050");
         CHECK(href(cs, "issue-2050") == 2050, "issue-2050");
         CHECK(href(cs, "render-critical-protect-wired") == 1, "protect wired");
-        CHECK(href(cs, "window-ms") == 500, "default throttle window 500ms");
+        // Issue #2329: default raised from 500ms to 30000ms so the
+        // evaluator fallback actually takes effect. See observability_metrics.h
+        // (render_deopt_throttle_window_ms{30000}) and evaluator.ixx:7511.
+        CHECK(href(cs, "window-ms") == 30000, "default throttle window 30000ms (issue #2329)");
         // Counters present (non-negative; may be process-shared)
         for (const char* k :
              {"render-critical-define-dirty-total", "render-critical-deopt-throttled-total",

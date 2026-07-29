@@ -1526,7 +1526,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"render-jit-aot-prefer-hits",
                  make_int(m ? load_u64(m, m->render_jit_aot_prefer_hits) : 0)},
                 {"render-deopt-throttle-window-ms",
-                 make_int(m ? load_u64(m, m->render_deopt_throttle_window_ms) : 500)},
+                 make_int(m ? load_u64(m, m->render_deopt_throttle_window_ms) : 30000)},
                 // #1317
                 {"render-primitive-meta",
                  make_int(m ? load_u64(m, m->render_primitive_meta_active) : 1)},
