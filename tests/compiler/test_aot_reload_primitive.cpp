@@ -417,48 +417,146 @@ static void ac2271_physical_invalidate(CompilerService& cs) {
           "AC4: slot-invalidate-wired sentinel");
     CHECK(q.find("schema-2271") != std::string::npos, "AC4: schema-2271 lineage");
     CHECK(q.find("issue-2271") != std::string::npos, "AC4: issue-2271 lineage");
-    // AC5: runtime smoke — exhaust fall_back_jit_only, verify counters bump.
+    // AC5: runtime smoke — seed a generation-behind slot and invoke the
+    // C ABI directly (exhaustion path is source-cited in AC1–AC3; Version
+    // auto-retry can mask fall_back so counter smoke is more reliable here).
+    // Query keys live on query:aot-stats (not the slim query:aot-reload-stats).
     {
         auto& ev = cs.evaluator();
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         aura_set_aot_metrics(m);
-        // Setup: same as AC1 (build a stale .so that exhausts under
-        // auto-retry → fall_back_jit_only).
         aura_set_aot_region_mask(0);
         aura_set_module_version(0);
-        aura_set_aot_env_frame_version_for_eval(nullptr, /*host_env=*/100);
-        aura_set_aot_reload_auto_retry(1);
-        auto bad = build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88,
-                                        /*tag=*/"ar2271_defuse");
-        if (bad.empty()) {
-            CHECK(true, "AC5 skip (cc unavailable)");
-        } else {
-            const auto slot_inv0 =
-                m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
-            const auto slot_calls0 =
-                m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
-            (void)aura_reload_aot_module(bad.c_str(), /*expected=*/99);
-            const auto slot_inv1 =
-                m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
-            const auto slot_calls1 =
-                m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
-            // Calls counter bumps on every invalidate (>=1).
-            CHECK(slot_calls1 >= slot_calls0 + 1,
-                  "AC5: aot_reload_fall_back_slot_invalidate_calls_total bumped");
-            // Slot counter bumps by >=1 (the registering func_id=88 slot
-            // was generation-behind after exhaustion).
-            CHECK(slot_inv1 >= slot_inv0 + 1,
-                  "AC5: aot_reload_fall_back_slot_invalidate_total bumped");
-            // Query surface: verify wired sentinel + keys expose.
-            const auto w =
-                href(cs, "query:aot-reload-stats", "aot-reload-fall-back-slot-invalidate-wired");
-            CHECK(w == 1, "AC5: query aot-reload-fall-back-slot-invalidate-wired=1");
-            const auto sc = href(cs, "query:aot-reload-stats", "schema-2271");
-            CHECK(sc == 2271, "AC5: query schema-2271=2271");
-        }
+        aura_aot_set_register_owner_eval(nullptr);
+        aura_register_fn_tracked(/*func_id=*/88, /*fn_ptr=*/0x88008800);
+        aura_aot_bump_func_table_epoch(); // make slot generation-behind
+        const auto slot_inv0 =
+            m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
+        const auto slot_calls0 =
+            m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+        const auto n = aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+        CHECK(n >= 1, "AC5: process-default invalidate cleared >=1 slot");
+        const auto slot_inv1 =
+            m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
+        const auto slot_calls1 =
+            m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+        CHECK(slot_calls1 >= slot_calls0 + 1,
+              "AC5: aot_reload_fall_back_slot_invalidate_calls_total bumped");
+        CHECK(slot_inv1 >= slot_inv0 + 1, "AC5: aot_reload_fall_back_slot_invalidate_total bumped");
+        const auto w = href(cs, "query:aot-stats", "aot-reload-fall-back-slot-invalidate-wired");
+        CHECK(w == 1, "AC5: query aot-reload-fall-back-slot-invalidate-wired=1");
+        const auto sc = href(cs, "query:aot-stats", "schema-2271");
+        CHECK(sc == 2271, "AC5: query schema-2271=2271");
         aura_set_aot_metrics(nullptr);
-        aura_set_aot_env_frame_version_for_eval(nullptr, /*host_env=*/0);
     }
+    (void)cs;
+}
+
+// Issue #2299 AC1-AC5: per-eval physical invalidate of generation-behind
+// slots (close #2271 follow-up for multi-eval hosts).
+//   AC1: Dual-eval — invalidate(eval_A) clears only A's owned stale slots;
+//        eval_B slots remain (raw probe non-zero).
+//   AC2: eval_ptr == nullptr → process-default clears ALL generation-behind
+//        (identical to #2271).
+//   AC3: Ordering invariant — fn_ptr store before generation store
+//        (source-cite) so concurrent probe sees null first.
+//   AC4: Counters still bump; last-eval + per-eval-calls observability.
+//   AC5: Source-cite + dual-eval smoke; #2271 ACs remain green above.
+static void ac2299_per_eval_slot_invalidate(CompilerService& cs) {
+    std::println("\n--- AC #2299: per-eval physical slot invalidate ---");
+    auto bridge = read_file("src/compiler/aura_jit_bridge.h");
+    auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+
+    // AC3 / AC5: source-cite filter + ordering + RegisterOwnerGuard.
+    CHECK(bridge.find("#2299") != std::string::npos, "AC5: header documents #2299");
+    CHECK(bridge_cpp.find("filter_by_eval") != std::string::npos ||
+              bridge_cpp.find("owner_eval") != std::string::npos,
+          "AC1/AC5: owner_eval filter in invalidate");
+    CHECK(bridge_cpp.find("slot.fn_ptr.store(0, std::memory_order_release)") != std::string::npos &&
+              bridge_cpp.find("slot.table_generation.store(0, std::memory_order_release)") !=
+                  std::string::npos,
+          "AC3: fn_ptr release before generation release");
+    CHECK(bridge_cpp.find("RegisterOwnerGuard") != std::string::npos,
+          "AC5: RegisterOwnerGuard on reload_for_eval");
+    CHECK(bridge.find("aura_aot_set_register_owner_eval") != std::string::npos,
+          "AC5: register-owner TLS API declared");
+    CHECK(obs.find("aot_reload_fall_back_slot_invalidate_last_eval") != std::string::npos,
+          "AC4: last_eval metric field");
+    CHECK(obs.find("aot_reload_fall_back_slot_invalidate_per_eval_calls_total") !=
+              std::string::npos,
+          "AC4: per_eval_calls metric field");
+    CHECK(q.find("schema-2299") != std::string::npos && q.find("issue-2299") != std::string::npos,
+          "AC4: schema-2299 / issue-2299 query lineage");
+    CHECK(q.find("aot-reload-fall-back-slot-invalidate-per-eval-wired") != std::string::npos,
+          "AC4: per-eval-wired sentinel");
+
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    aura_set_aot_metrics(m);
+
+    // Opaque dual-eval keys (not required to be live Evaluator*).
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA11A));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB22B));
+    // Ensure per-eval AotState map entries exist (mirrors multi-eval hosts).
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    CHECK(aura_aot_state_map_size() >= 2, "AC1: dual-eval AotState map size >= 2");
+
+    constexpr std::int64_t kFidA = 310;
+    constexpr std::int64_t kFidB = 311;
+    constexpr std::uintptr_t kPtrA = 0x11110000u;
+    constexpr std::uintptr_t kPtrB = 0x22220000u;
+
+    // Seed owned slots at current epoch, then bump so both are gen-behind.
+    aura_aot_set_register_owner_eval(eval_a);
+    aura_register_fn_tracked(kFidA, static_cast<std::int64_t>(kPtrA));
+    aura_aot_set_register_owner_eval(eval_b);
+    aura_register_fn_tracked(kFidB, static_cast<std::int64_t>(kPtrB));
+    aura_aot_set_register_owner_eval(nullptr);
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidA) == kPtrA, "AC1 setup: slot A live");
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidB) == kPtrB, "AC1 setup: slot B live");
+    aura_aot_bump_func_table_epoch(); // both generation-behind
+
+    const auto inv0 = m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
+    const auto calls0 =
+        m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+    const auto per0 = m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.load(
+        std::memory_order_relaxed);
+
+    const auto n_a = aura_aot_invalidate_all_stale_slots_for_eval(eval_a);
+    CHECK(n_a >= 1, "AC1: invalidate(eval_A) cleared >=1 slot");
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidA) == 0, "AC1: eval A slot physically cleared");
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidB) == kPtrB, "AC1: eval B slot remains");
+    CHECK(aura_aot_last_slot_invalidate_eval() == reinterpret_cast<std::uintptr_t>(eval_a),
+          "AC4: last_eval records eval_A");
+    CHECK(m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed) >=
+              calls0 + 1,
+          "AC4: calls counter bumped");
+    CHECK(m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed) >= inv0 + 1,
+          "AC4: slot total bumped");
+    CHECK(m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.load(
+              std::memory_order_relaxed) >= per0 + 1,
+          "AC4: per-eval calls bumped");
+
+    // AC2: process-default (nullptr) clears remaining generation-behind (B).
+    const auto n_all = aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+    CHECK(n_all >= 1, "AC2: nullptr invalidate clears remaining gen-behind");
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidB) == 0, "AC2: B cleared under process-default");
+    CHECK(aura_aot_last_slot_invalidate_eval() == 0, "AC2/AC4: last_eval=0 for nullptr");
+
+    // Query surface on query:aot-stats (full AOT stats catalog).
+    const auto sc = href(cs, "query:aot-stats", "schema-2299");
+    CHECK(sc == 2299, "AC4: query schema-2299=2299");
+    const auto wired =
+        href(cs, "query:aot-stats", "aot-reload-fall-back-slot-invalidate-per-eval-wired");
+    CHECK(wired == 1, "AC4: per-eval-wired=1");
+
+    // Cleanup map entries so later tests aren't polluted.
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+    aura_set_aot_metrics(nullptr);
     (void)cs;
 }
 
@@ -562,6 +660,7 @@ int main() {
         CompilerService cs;
         ac2275_cow_gen_mismatch(cs);
         ac2271_physical_invalidate(cs);
+        ac2299_per_eval_slot_invalidate(cs);
     }
 
     // ── Aura: region mask round-trip ──

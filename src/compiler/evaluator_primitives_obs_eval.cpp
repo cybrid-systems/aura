@@ -13344,10 +13344,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         // Issue #2232: multi-round policy attempt + JIT-only fall-back.
         std::uint64_t auto_retry_policy_attempt = 0;
         std::uint64_t auto_retry_fall_back_jit = 0;
-        std::uint64_t region_staging_retry = 0;        // #2249
-        std::uint64_t region_staging_exhausted = 0;    // #2249
-        std::uint64_t slot_invalidate_total = 0;       // #2271
-        std::uint64_t slot_invalidate_calls_total = 0; // #2271
+        std::uint64_t region_staging_retry = 0;           // #2249
+        std::uint64_t region_staging_exhausted = 0;       // #2249
+        std::uint64_t slot_invalidate_total = 0;          // #2271
+        std::uint64_t slot_invalidate_calls_total = 0;    // #2271
+        std::uint64_t slot_invalidate_last_eval = 0;      // #2299
+        std::uint64_t slot_invalidate_per_eval_calls = 0; // #2299
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
@@ -13386,6 +13388,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
             slot_invalidate_calls_total =
                 m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+            // Issue #2299: last-eval + per-eval call counters.
+            slot_invalidate_last_eval =
+                m->aot_reload_fall_back_slot_invalidate_last_eval.load(std::memory_order_relaxed);
+            slot_invalidate_per_eval_calls =
+                m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.load(
+                    std::memory_order_relaxed);
         }
         // Issue #2094: read the unified StormLevel facade OUTSIDE the
         // metrics if-block since aura_hot_update_current_storm_level() is
@@ -13394,8 +13402,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         // ev.compiler_metrics_ was null — agents still want the live value).
         storm_level = static_cast<std::uint64_t>(::aura_hot_update_current_storm_level());
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Capacity 64: #2046/#2093/#2095/#2165 keys (power-of-2 probe).
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: #2046/#2093/#2095/#2165/#2271/#2299 keys
+            // (power-of-2 probe; 64 was >80% load after #2299).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -13523,6 +13532,14 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-fall-back-slot-invalidate-wired", make_int(1)},
             {"schema-2271", make_int(2271)},
             {"issue-2271", make_int(2271)},
+            // Issue #2299: per-eval physical invalidate filter + last-eval.
+            {"aot-reload-fall-back-slot-invalidate-last-eval",
+             make_int(static_cast<std::int64_t>(slot_invalidate_last_eval))},
+            {"aot-reload-fall-back-slot-invalidate-per-eval-calls-total",
+             make_int(static_cast<std::int64_t>(slot_invalidate_per_eval_calls))},
+            {"aot-reload-fall-back-slot-invalidate-per-eval-wired", make_int(1)},
+            {"schema-2299", make_int(2299)},
+            {"issue-2299", make_int(2299)},
             // Issue #2275 wiring shipped in commit d0a6509f as a separate
             // primitive (`query:cross-workspace-reject-stats`); the dirty
             // tree had it stranded mid-string here. Removed.

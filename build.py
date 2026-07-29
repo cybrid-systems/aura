@@ -2035,6 +2035,25 @@ def cmd_general_object_pin_coverage():
     return 0
 
 
+def cmd_aot_per_eval_slot_invalidate_coverage():
+    """Issue #2299: per-eval physical invalidate of generation-behind AOT slots.
+
+    Validates owner_eval filter, nullptr process-default, ordering invariant,
+    last-eval / per-eval counters + schema-2299, RegisterOwnerGuard.
+    """
+    print(f"{B}=== per-eval AOT slot invalidate coverage (#2299) ==={N}")
+    script = ROOT / "scripts" / "check_aot_per_eval_slot_invalidate_2299.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("per-eval AOT slot invalidate coverage contract rows failed")
+        return 1
+    ok("per-eval AOT slot invalidate coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2392,6 +2411,7 @@ def cmd_gate():
         or cmd_residual_gc_defer_multi_eval_coverage()
         or cmd_capture_cell_remap_coverage()
         or cmd_general_object_pin_coverage()
+        or cmd_aot_per_eval_slot_invalidate_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

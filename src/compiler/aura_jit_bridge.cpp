@@ -902,12 +902,21 @@ struct AotFuncSlot {
     std::atomic<std::uintptr_t> fn_ptr{0};
     std::atomic<std::uint64_t> grace_refcount{0};
     std::atomic<std::uint64_t> table_generation{0};
+    // Issue #2299: owning Evaluator* (or opaque host key) stamped at
+    // register time. 0 = process-default / unowned. Per-eval physical
+    // invalidate only clears slots matching the requested eval_ptr.
+    std::atomic<std::uintptr_t> owner_eval{0};
 };
 
 AotFuncSlot g_aot_func_slots[kMaxAotFuncs];
 std::atomic<std::uint64_t> g_aot_table_epoch{1};
 // Issue #971: count silent drops when func_id >= kMaxAotFuncs.
 std::atomic<std::uint64_t> g_aot_register_dropped{0};
+// Issue #2299: TLS owner for aura_register_fn_tracked (and staging apply).
+// Reloads install via RegisterOwnerGuard; tests may set directly.
+thread_local void* g_aot_register_owner_eval = nullptr;
+// Last eval_ptr observed by aura_aot_invalidate_all_stale_slots_for_eval.
+std::atomic<std::uintptr_t> g_aot_last_slot_invalidate_eval{0};
 
 // Issue #2012: staging table for atomic reload. While staging is
 // active, aura_register_fn_tracked writes here instead of live slots
@@ -929,6 +938,7 @@ void clear_aot_staging() noexcept {
 
 void apply_aot_staging_to_live() noexcept {
     const std::uint64_t epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+    const auto owner = reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval);
     for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
         if (!g_aot_staging[i].written)
             continue;
@@ -939,6 +949,8 @@ void apply_aot_staging_to_live() noexcept {
             slot.grace_refcount.fetch_add(1, std::memory_order_relaxed);
         // Stamp pre-commit epoch; commit_func_table_swap advances generation domain.
         slot.table_generation.store(epoch, std::memory_order_relaxed);
+        // Issue #2299: stamp owner for per-eval invalidate filtering.
+        slot.owner_eval.store(owner, std::memory_order_relaxed);
     }
 }
 
@@ -1246,6 +1258,21 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
         slot.grace_refcount.fetch_add(1, std::memory_order_relaxed);
     slot.table_generation.store(g_aot_table_epoch.load(std::memory_order_acquire),
                                 std::memory_order_relaxed);
+    // Issue #2299: stamp owning eval (0 when process-default / unset).
+    slot.owner_eval.store(reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval),
+                          std::memory_order_relaxed);
+}
+
+extern "C" void aura_aot_set_register_owner_eval(void* eval_ptr) {
+    g_aot_register_owner_eval = eval_ptr;
+}
+
+extern "C" void* aura_aot_get_register_owner_eval(void) {
+    return g_aot_register_owner_eval;
+}
+
+extern "C" std::uintptr_t aura_aot_last_slot_invalidate_eval(void) {
+    return g_aot_last_slot_invalidate_eval.load(std::memory_order_acquire);
 }
 
 extern "C" std::uint64_t aura_aot_register_dropped_count(void) {
@@ -1372,24 +1399,31 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
 }
 
-// Issue #2271: physically invalidate generation-behind AOT slots
-// (close #2232 follow-up). After this call, every prior non-null
-// slot probes as 0 via aura_aot_probe_fn_ptr — defense in depth on
-// top of the existing aot_stale_probe_hard_reject_total safety net.
+// Issue #2271 / #2299: physically invalidate generation-behind AOT slots
+// (close #2232 / #2271 follow-up). After this call, matching prior
+// non-null slots probe as 0 via aura_aot_probe_fn_ptr — defense in
+// depth on top of the existing aot_stale_probe_hard_reject_total net.
 //
 // Semantics:
 //   - For each g_aot_func_slots[i] where fn_ptr != 0 AND
-//     table_generation != aura_aot_func_table_epoch(): set fn_ptr
-//     empty (atomic_store 0) + reset table_generation to 0.
-//   - eval_ptr reserved for future per-eval table filtering (#2271
-//     ships process-default behavior; eval-scoped is follow-up).
+//     table_generation != aura_aot_func_table_epoch() [AND, when
+//     eval_ptr != nullptr, owner_eval == eval_ptr]: set fn_ptr empty
+//     (atomic_store 0) + reset table_generation to 0 + clear owner.
+//   - eval_ptr == nullptr: process-default — clear ALL generation-
+//     behind slots (#2271 / #2299 AC2 back-compat).
+//   - eval_ptr != nullptr: only clear slots owned by that eval
+//     (#2299 AC1 dual-eval isolation).
 //   - Does NOT dlclose prior modules — refcount / handle lifetime
 //     stays #2012.
 //   - Bumps aot_reload_fall_back_slot_invalidate_total by slot
 //     count + aot_reload_fall_back_slot_invalidate_calls_total by 1.
+//   - Records last eval_ptr for Agent dashboards (#2299 AC4).
 extern "C" std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_ptr) {
-    (void)eval_ptr; // #2271: process-default AotState (per-eval is follow-up).
+    g_aot_last_slot_invalidate_eval.store(reinterpret_cast<std::uintptr_t>(eval_ptr),
+                                          std::memory_order_release);
     const auto cur_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+    const bool filter_by_eval = (eval_ptr != nullptr);
+    const auto want_owner = reinterpret_cast<std::uintptr_t>(eval_ptr);
     std::size_t invalidated = 0;
     for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
         auto& slot = g_aot_func_slots[i];
@@ -1402,19 +1436,32 @@ extern "C" std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_p
         const auto slot_gen = slot.table_generation.load(std::memory_order_acquire);
         if (slot_gen == cur_epoch)
             continue;
+        // Issue #2299 AC1: multi-eval filter — skip foreign / unowned.
+        if (filter_by_eval) {
+            const auto owner = slot.owner_eval.load(std::memory_order_acquire);
+            if (owner != want_owner)
+                continue;
+        }
         // Physically clear: zero fn_ptr + reset generation. Order:
         // fn_ptr first (release), then generation (release) so a
         // concurrent probe sees null fn_ptr before noticing the
         // generation drift — matches the safety net behavior in
-        // aura_aot_probe_fn_ptr.
+        // aura_aot_probe_fn_ptr (#2299 AC3 ordering invariant).
         slot.fn_ptr.store(0, std::memory_order_release);
         slot.table_generation.store(0, std::memory_order_release);
+        slot.owner_eval.store(0, std::memory_order_release);
         ++invalidated;
     }
     if (auto* m = aot_metrics()) {
         m->aot_reload_fall_back_slot_invalidate_total.fetch_add(invalidated,
                                                                 std::memory_order_relaxed);
         m->aot_reload_fall_back_slot_invalidate_calls_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2299 AC4: last-eval observability (pointer as u64).
+        m->aot_reload_fall_back_slot_invalidate_last_eval.store(
+            reinterpret_cast<std::uint64_t>(eval_ptr), std::memory_order_relaxed);
+        if (filter_by_eval)
+            m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.fetch_add(
+                1, std::memory_order_relaxed);
     }
     return invalidated;
 }
@@ -2401,6 +2448,19 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
 extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
                                                 std::uint64_t version) {
     thread_local int t_auto_retry_depth = 0;
+    // Issue #2299: stamp slot ownership for any register_fn_tracked /
+    // staging apply performed under this reload so later per-eval
+    // physical invalidate only clears this eval's generation-behind slots.
+    struct RegisterOwnerGuard {
+        void* prev;
+        explicit RegisterOwnerGuard(void* e) noexcept
+            : prev(g_aot_register_owner_eval) {
+            g_aot_register_owner_eval = e;
+        }
+        ~RegisterOwnerGuard() noexcept { g_aot_register_owner_eval = prev; }
+        RegisterOwnerGuard(const RegisterOwnerGuard&) = delete;
+        RegisterOwnerGuard& operator=(const RegisterOwnerGuard&) = delete;
+    } owner_guard(eval_ptr);
 
     const bool ok1 = aura_reload_aot_module_for_eval_once(eval_ptr, path, version);
     if (ok1)

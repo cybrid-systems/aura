@@ -512,19 +512,34 @@ std::uint64_t aura_jit_closure_stale_deopt_total(void);
 std::uint64_t aura_jit_closure_safe_fallbacks(void);
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
-// Issue #2271: physically invalidate generation-behind AOT slots
-// (close #2232 follow-up). For each slot in g_aot_func_slots whose
+// Issue #2271 / #2299: physically invalidate generation-behind AOT slots
+// (close #2232 / #2271 follow-up). For each slot in g_aot_func_slots whose
 // table_generation != aura_aot_func_table_epoch(), set fn_ptr empty
-// (atomic_store 0) + reset table_generation to 0. After this call:
+// (atomic_store 0) + reset table_generation to 0 + clear owner stamp.
+// After this call:
 //   - aura_aot_probe_fn_ptr(id) returns 0 for any stale id (safety
 //     net + zero-native-hit, not just probe-reject).
 //   - aot_reload_fall_back_slot_invalidate_total bumps by slot count.
 //   - aot_reload_fall_back_slot_invalidate_calls_total bumps by 1.
-// eval_ptr is reserved for future per-eval table filtering (#2271
-// ships process-default behavior; eval-scoped table is follow-up).
+// Issue #2299: eval_ptr filters ownership (multi-eval hosts):
+//   - eval_ptr == nullptr → process-default: clear ALL generation-behind
+//     slots (identical to #2271 single-workspace behavior).
+//   - eval_ptr != nullptr → clear only generation-behind slots whose
+//     owner stamp equals eval_ptr (foreign / unowned slots remain).
+// Order preserved: fn_ptr release → generation release (AC3).
 // Does NOT dlclose prior modules — refcount / handle lifetime stays
 // #2012.
 [[nodiscard]] std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_ptr);
+
+// Issue #2299: TLS stamp for aura_register_fn_tracked ownership.
+// Hosts / tests set this before registration so multi-eval invalidate
+// can filter by owner. nullptr = process-default (unowned) slots.
+// Reloads via aura_reload_aot_module_for_eval install this automatically.
+void aura_aot_set_register_owner_eval(void* eval_ptr);
+void* aura_aot_get_register_owner_eval(void);
+// Last eval_ptr passed to aura_aot_invalidate_all_stale_slots_for_eval
+// (0 when never called / cleared). Agent dashboard observability.
+std::uintptr_t aura_aot_last_slot_invalidate_eval(void);
 
 // Issue #1522: register AuraJIT* so bridge can notify fn_trackers_ batch_deopt
 // without a C++ module import. Host (CompilerService ctor) calls set;
