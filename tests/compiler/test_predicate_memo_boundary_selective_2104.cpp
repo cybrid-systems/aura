@@ -8,6 +8,13 @@
 //   AC4: #2068 helpers + existing occurrence/memo lineage still green (source)
 //   AC5: tests under tests/compiler/ (this file)
 //   AC6: source wiring (infer_flat_partial + boundary comment + schema-2104)
+//
+// Issue #2285 Phase 2 — selective invalidate from FULL affected set
+// (broader than target_node subtree; covers type_dep additions from #2283).
+//
+//   AC7: Phase 2 wire-up fires after mutate:rebind → boundary selective bumped
+//   AC8: schema-2285 + issue-2285 keys in query surface
+//   AC9: source wiring #2285 (affected_names + guard_affected_names)
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -213,16 +220,74 @@ static void ac6_source_wiring() {
           "metrics field");
 }
 
+// Issue #2285 Phase 2: AC7-AC9 — selective invalidate from FULL affected set
+// (broader than target_node subtree; covers type_dep additions from #2283).
+static void ac7_phase2_full_affected() {
+    std::println("\n--- AC7: #2285 Phase 2 — selective from FULL affected set ---");
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+    // Two independent If predicates; mutate only f (captures x) → g's
+    // memo entry (captures y) stays cached (selective path).
+    CHECK(cs.eval("(set-code \"(define (f x) (if (number? x) (+ x 1) 0))"
+                  "(define (g y) (if (string? y) 1 0)) (f 1) (g \\\"a\\\")\")")
+              .has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(typecheck-current)");
+    const auto sel0 = metrics.predicate_memo_selective_invalidate_total.load();
+    const auto boundary0 = metrics.predicate_memo_boundary_selective_total.load();
+    auto reb = cs.eval("(mutate:rebind \"f\" "
+                       "\"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+                       "\"issue-2285\")");
+    CHECK(reb.has_value(), "mutate:rebind f");
+    (void)cs.eval("(typecheck-current)");
+    (void)cs.eval("(eval-current)");
+    // Phase 2 wire-up collects names from FULL affected (includes f's
+    // variable nodes + any type_dep additions) and calls selective.
+    CHECK(metrics.predicate_memo_boundary_selective_total.load() >= boundary0,
+          "Phase 2 boundary selective non-decreasing");
+    CHECK(metrics.predicate_memo_selective_invalidate_total.load() >= sel0,
+          "Phase 2 selective total non-decreasing");
+}
+
+static void ac8_schema_2285() {
+    std::println("\n--- AC8: schema-2285 + issue-2285 in query surface ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"1\")").has_value(), "set-code");
+    (void)cs.eval("(typecheck-current)");
+    CHECK(href(cs, "schema-2285") == 2285, "schema-2285 key");
+    CHECK(href(cs, "issue-2285") == 2285, "issue-2285 key");
+}
+
+static void ac9_phase2_source_wiring() {
+    std::println("\n--- AC9: source wiring #2285 ---");
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(!impl.empty() && impl.find("Issue #2285") != std::string::npos, "impl cites #2285");
+    CHECK(impl.find("affected_names") != std::string::npos,
+          "affected_names collection in infer_flat_partial");
+    CHECK(!etc.empty() && etc.find("Issue #2285") != std::string::npos,
+          "evaluator_typecheck cites #2285");
+    CHECK(etc.find("guard_affected_names") != std::string::npos,
+          "guard_affected_names collection in Guard exit refresh");
+    CHECK(!q.empty() && q.find("schema-2285") != std::string::npos, "query surface schema-2285");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2104: predicate-memo boundary selective wire ===");
+    std::println("=== Issue #2104 / #2285 Phase 2: predicate-memo selective wire ===");
     ac1_selective_drop();
     ac2_post_mutate_query();
     ac3_empty_dirty();
     ac4_lineage_source();
     ac5_tests_location();
     ac6_source_wiring();
+    ac7_phase2_full_affected();
+    ac8_schema_2285();
+    ac9_phase2_source_wiring();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

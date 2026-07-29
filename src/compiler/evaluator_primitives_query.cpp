@@ -6099,6 +6099,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         : 1);
             insert_kv("schema-2104", 2104);
             insert_kv("issue-2104", 2104);
+            // Issue #2285 Phase 2: selective invalidate from FULL affected set
+            // (broader than target_node subtree; covers type_dep additions).
+            insert_kv("schema-2285", 2285);
+            insert_kv("issue-2285", 2285);
             insert_kv("schema-2068", 2068);
             // Issue #2277: production-default TIMEOUT escalation (Option A).
             // delta-timeout-full-solve-total — every full-solve attempt after
