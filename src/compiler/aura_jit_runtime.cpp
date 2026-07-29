@@ -1,6 +1,10 @@
 // aura_jit_runtime.cpp — JIT runtime functions for closure/cell/pair/prim ops
 // These are compiled as regular C++ and registered in the ORC JIT as symbols.
 
+#include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
+
+#include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Issue #173: stable-id type aliases (Phase 2 of #145 workstream 2)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -347,6 +351,38 @@ extern "C" uint64_t aura_jit_macro_introduced_deopt() {
 // Issue #2100: register/unregister service-side AST restore after deopt.
 extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept) {
     g_macro_deopt_restore_fn.store(fn, std::memory_order_release);
+}
+
+// Issue #2293: linear pin/unpin runtime bridges for the AOT JIT
+// path. The JIT lowering in aura_jit.cpp emits direct CreateCall to
+// these symbols at OpLinearWrap (pin) / OpMoveOp + OpDropOp
+// (unpin). The bridges are thin forwarders into
+// aura::core::lifetime::{pin,unpin}_linear_root so the
+// verify_linear_pins_under_moving_compact check (called from the
+// Moving densify fail-closed contract) sees live linear roots
+// registered from the AOT JIT path, not just the runtime-side
+// registry fed by set_linear_ownership_state.
+//
+// AC3 zero-cost preserved: the underlying inline pin_linear_root /
+// unpin_linear_root early-return when the obj is null (no atomic
+// bump, no registry lock acquired). The JIT emit sites only call
+// the bridges with a non-null wrapped value (the loaded value
+// from inst.ops[1] for OpLinearWrap, etc.), so the AC3 zero-cost
+// is preserved for the runtime-side-only call path; the JIT
+// call sites always go through to the registry.
+//
+// The i64 payload is reinterpret_cast to void* via uintptr_t to
+// match the lifetime_pin module's void*-keyed registry. The same
+// trick is used by drop_pair / drop_cell / drop_closure for the
+// pair/cell/closure raw pointer handling.
+extern "C" void aura_jit_pin_linear_root(std::uint64_t obj_id) noexcept {
+    aura::core::lifetime::pin_linear_root(
+        reinterpret_cast<void*>(static_cast<std::uintptr_t>(obj_id)));
+}
+
+extern "C" void aura_jit_unpin_linear_root(std::uint64_t obj_id) noexcept {
+    aura::core::lifetime::unpin_linear_root(
+        reinterpret_cast<void*>(static_cast<std::uintptr_t>(obj_id)));
 }
 
 // Issue #2100: note deopt round-trip for a func_id side-table entry.

@@ -1,6 +1,9 @@
 // @category: unit
 // @reason: Issue #2280 — epoch-scoped OccurrenceGoal table (epoch-scoped
-// linear pin contract).
+// linear pin contract). Issue #2293 — AOT JIT path registers linear
+// pin/unpin at wrap+drop so verify_linear_pins_under_moving_compact
+// sees real linear roots, not just the runtime-side registry fed by
+// set_linear_ownership_state.
 //
 //   AC1: Linear alloc pins; Drop/Move consume unpins (observable counters).
 //   AC2: Moving compact with live linear + missing pin → fail/metric under
@@ -9,14 +12,18 @@
 //   AC4: Chaos `mutate×steal×GC` (#2202 lineage) + `AURA_ARENA_MOVING_COMPACT=1`
 //        green under Strict.
 //   AC5: Schema keys on arena/linear stats; additive.
+//   AC6: AOT JIT runtime bridges (aura_jit_pin_linear_root /
+//        aura_jit_unpin_linear_root) populate / drain the same
+//        registry as the inline API — end-to-end cast uint64 →
+//        void* → inline pin/unpin path verified.
 //
 //   Test scope: direct CS unit tests for the lifetime_pin linear API
 //   (pin_linear_root / unpin_linear_root / verify_linear_pins_under_moving_compact
 //   + snapshot + reset). The verify_pins_under_moving_compact extension is
 //   exercised end-to-end with both arena pins and linear roots. Runtime
-//   wire-up in aura_jit.cpp (OpLinearWrap/OpMoveOp/OpDropOp) is a follow-up
-//   (the inline API is fully callable from the JIT lowering; production
-//   CI is gated on the fail-closed verify check, not the wire-up).
+//   wire-up in aura_jit.cpp (OpLinearWrap/OpMoveOp/OpDropOp) shipped
+//   in #2293 (this commit) — AC6 verifies the runtime bridges the
+//   JIT calls into behave identically to the inline API.
 
 #include "test_harness.hpp"
 
@@ -45,6 +52,18 @@ using aura::core::lifetime::verify_linear_pins_under_moving_compact;
 using aura::core::lifetime::verify_pins_under_moving_compact;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Issue #2293: AOT JIT runtime bridges (declared extern "C" in
+// aura_jit_runtime.cpp). The JIT lowering in aura_jit.cpp emits
+// direct CreateCall to these symbols at OpLinearWrap / OpMoveOp /
+// OpDropOp. We exercise them here at the unit level — the
+// end-to-end JIT-invocation path is covered by the per-issue test
+// suites that drive LinearWrap/Move/Drop sequences through the
+// CS eval path. The bridge signatures take uint64_t (the JIT
+// emits i64), cast to void* via uintptr_t internally before
+// delegating to the inline pin_linear_root / unpin_linear_root.
+extern "C" void aura_jit_pin_linear_root(std::uint64_t obj_id) noexcept;
+extern "C" void aura_jit_unpin_linear_root(std::uint64_t obj_id) noexcept;
 
 namespace {
 
@@ -244,6 +263,81 @@ int main() {
             old_addresses.insert(kOldAddr2);
             CHECK(verify_linear_pins_under_moving_compact(old_addresses),
                   "AC4.3: empty registry + old addresses → true (vacuous)");
+        }
+    }
+
+    // ── AC6: AOT JIT runtime bridges — Issue #2293 ──
+    // The bridges declared in aura_jit_runtime.cpp (extern "C"
+    // forwarders into the inline pin_linear_root / unpin_linear_root)
+    // must populate / drain the same registry the inline API does, so
+    // verify_linear_pins_under_moving_compact observes a uniform view
+    // regardless of which call site registered the root.
+    {
+        std::println(
+            "\n--- AC6: aura_jit_pin_linear_root / aura_jit_unpin_linear_root bridges ---");
+        reset_linear_roots_for_test();
+        const auto pin_before = g_linear_pin_total.load();
+        const auto unpin_before = g_linear_unpin_total.load();
+
+        // Pin two distinct roots via the runtime bridge (uint64 → void* cast path).
+        aura_jit_pin_linear_root(reinterpret_cast<std::uint64_t>(kRootA));
+        aura_jit_pin_linear_root(reinterpret_cast<std::uint64_t>(kRootB));
+        CHECK(g_linear_pin_total.load() == pin_before + 2,
+              "AC6.1: pin bridge bumps pin_total by 2");
+        CHECK(linear_root_snapshot().live_count == 2,
+              "AC6.2: bridge pin populates registry (live_count == 2)");
+        {
+            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            auto& roots = aura::core::lifetime::linear_roots();
+            CHECK(roots.count(kRootA) == 1, "AC6.3: RootA registered via bridge");
+            CHECK(roots.count(kRootB) == 1, "AC6.4: RootB registered via bridge");
+        }
+
+        // Unpin RootA via the runtime bridge; verify counter + registry.
+        aura_jit_unpin_linear_root(reinterpret_cast<std::uint64_t>(kRootA));
+        CHECK(g_linear_unpin_total.load() == unpin_before + 1,
+              "AC6.5: unpin bridge bumps unpin_total by 1");
+        CHECK(linear_root_snapshot().live_count == 1,
+              "AC6.6: bridge unpin removes RootA from registry");
+        {
+            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            auto& roots = aura::core::lifetime::linear_roots();
+            CHECK(roots.count(kRootA) == 0, "AC6.7: RootA removed via bridge unpin");
+            CHECK(roots.count(kRootB) == 1, "AC6.8: RootB still registered");
+        }
+
+        // Round-trip: bridge-unpin RootB → empty registry, no miss counter bump.
+        const auto miss_before = g_linear_pin_miss_total.load();
+        aura_jit_unpin_linear_root(reinterpret_cast<std::uint64_t>(kRootB));
+        CHECK(linear_root_snapshot().live_count == 0,
+              "AC6.9: full pin→unpin round-trip drains registry");
+        CHECK(g_linear_pin_miss_total.load() == miss_before,
+              "AC6.10: bridge unpin does not bump pin_miss_total");
+
+        // AC3 zero-cost preservation: null payload → both bridges early-return.
+        const auto pin_before_null = g_linear_pin_total.load();
+        const auto unpin_before_null = g_linear_unpin_total.load();
+        aura_jit_pin_linear_root(0);
+        aura_jit_unpin_linear_root(0);
+        CHECK(g_linear_pin_total.load() == pin_before_null,
+              "AC6.11: pin bridge on null → no bump (AC3 zero-cost)");
+        CHECK(g_linear_unpin_total.load() == unpin_before_null,
+              "AC6.12: unpin bridge on null → no bump");
+
+        // Mixed: inline pin + bridge unpin → registry consistency (the JIT
+        // emit sites may legitimately produce this interleaving via
+        // inlining / DCE of redundant bridge calls).
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootA);
+        pin_linear_root(kRootB);
+        aura_jit_unpin_linear_root(reinterpret_cast<std::uint64_t>(kRootA));
+        CHECK(linear_root_snapshot().live_count == 1,
+              "AC6.13: inline pin + bridge unpin interleaves correctly");
+        {
+            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            auto& roots = aura::core::lifetime::linear_roots();
+            CHECK(roots.count(kRootA) == 0, "AC6.14: RootA drained via bridge");
+            CHECK(roots.count(kRootB) == 1, "AC6.15: RootB remains via inline pin");
         }
     }
 

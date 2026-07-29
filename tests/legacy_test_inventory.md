@@ -1019,7 +1019,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_escape_commit_hardblock_2108.cpp` (#2108) [domain_suite, theme_compiler] — AC1: Cross-batch escape → commit fails; blocked + escape counters
 - `tests/compiler/test_linear_ownership_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_ownership_batch.cpp
 - `tests/compiler/test_linear_ownership_occurrence_predicate_mutate.cpp` (—) [domain_suite, theme_compiler] — test_linear_ownership_occurrence_predicate_mutate.cpp — Issue #747:
-- `tests/compiler/test_linear_pin_moving_compact_2280.cpp` (#2280) [domain_suite, theme_compiler] — linear pin contract).
+- `tests/compiler/test_linear_pin_moving_compact_2280.cpp` (#2280) [domain_suite, theme_compiler] — linear pin contract). Issue #2293 — AOT JIT path registers linear
 - `tests/compiler/test_linear_runtime_violation.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2067 — Linear Ownership runtime enforcement test.
 - `tests/compiler/test_linear_state_stamp_apply_2129.cpp` (#2129) [domain_suite, theme_compiler] — AC1: mangle_aot_name stamps _lN when linear_state != 0 (host tracks)
 - `tests/core/test_pcv_unique_hotpath_2058.cpp` (#2058) [domain_suite, theme_core] — AC1: cow_set unique → in-place (no new storage, use_count stays 1)
