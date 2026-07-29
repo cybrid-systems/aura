@@ -1357,6 +1357,17 @@ template <typename T> void to_json_impl(std::string& out, const T& val) {
         }
         out += ']';
 
+    } else if constexpr (std::is_array_v<T>) {
+        // Wave B2: C arrays (e.g. FlatInstruction::ops[4])
+        out += '[';
+        constexpr std::size_t extent = std::extent_v<T>;
+        for (std::size_t i = 0; i < extent; ++i) {
+            if (i > 0)
+                out += ',';
+            to_json_impl(out, val[i]);
+        }
+        out += ']';
+
     } else if constexpr (std::is_pointer_v<T> || std::is_null_pointer_v<T>) {
         out += "null";
 
