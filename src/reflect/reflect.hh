@@ -165,17 +165,16 @@ consteval MemberKind classify_type(std::meta::info type) {
         return MemberKind::Int64;
     }
 
-    // std::array<T,N> / std::vector<T> / std::span<T,N> detection
-    // via display_string. Residual on GCC 16.1.0 (#2289): comparing
-    // template_of(type) with is_same_type still fails for these
-    // specializations; display_string remains the stable path.
+    // std::array / std::vector / std::span via template_of equality.
+    // GCC 16.1.0 (#2289): template_of(^^std::array<T,N>) ==
+    // template_of(^^std::array<U,M>) works; no display_string needed.
     if (is_class_type(type) && has_template_arguments(type)) {
-        auto str = display_string_of(type);
-        if (str.starts_with("std::array"))
+        auto tmpl = template_of(type);
+        if (tmpl == template_of(^^std::array<int, 1>))
             return MemberKind::Array;
-        if (str.starts_with("std::vector"))
+        if (tmpl == template_of(^^std::vector<int>))
             return MemberKind::Vector;
-        if (str.starts_with("std::span"))
+        if (tmpl == template_of(^^std::span<int>))
             return MemberKind::Span;
     }
 
@@ -208,7 +207,6 @@ consteval std::size_t elem_size_of(std::meta::info type) {
     auto args = template_arguments_of(type);
     if (args.empty())
         return 0;
-    // GCC 16.1.0: operator[] works on meta ranges (#2289); no .data()[i]
     return size_of(args[0]);
 }
 
