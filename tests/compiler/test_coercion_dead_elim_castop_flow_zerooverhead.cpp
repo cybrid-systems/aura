@@ -202,7 +202,8 @@ static void test_coercion_map_apply_round_trip() {
     auto callee_var = flat->add_variable(callee_sym);
     auto arg0 = flat->add_literal(42);
     auto arg1 = flat->add_literal(2);
-    auto call_id = flat->add_call(callee_var, {arg0, arg1});
+    const aura::ast::NodeId __call_args[] = {arg0, arg1};
+    auto call_id = flat->add_call(callee_var, std::span<const aura::ast::NodeId>{__call_args});
     flat->root = call_id;
 
     aura::compiler::CoercionMap cm;

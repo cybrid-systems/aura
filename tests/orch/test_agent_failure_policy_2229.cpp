@@ -40,6 +40,7 @@
 //                                       new keys + schema-2229
 
 #include "test_harness.hpp"
+#include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"

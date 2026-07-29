@@ -35,6 +35,7 @@ import aura.compiler.value;
 // cstddef entity is std::size_t only). Use std::size_t explicitly
 // throughout -- avoids "size_t was not declared" cascading errors
 // when the extern "C" accessor declaration below is parsed.
+using std::int64_t;
 using std::size_t;
 
 // Forward declarations instead of #include "runtime_shared.h". Including
@@ -80,11 +81,11 @@ void check_true(bool cond, const char* label) {
 // evaluated value as int64_t. Returns 0 on eval error.
 int64_t eval_i64(aura::compiler::CompilerService& cs, const std::string& expr) {
     auto r = cs.eval(expr);
-    if (!r.ok()) {
-        std::println("  eval failed for {}: {}", expr, r.error());
+    if (!r.has_value()) {
+        std::println("  eval failed for {}: kind={}", expr, static_cast<int>(r.error().kind));
         return 0;
     }
-    return r.value().as_int();
+    return as_int(r.value());
 }
 
 } // namespace

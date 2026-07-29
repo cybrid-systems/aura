@@ -908,6 +908,18 @@ extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id) {
     return g_closure_must_deopt[cid] != 0 ? 1 : 0;
 }
 
+// Issue #2238 stub: before-next-call gate (returns current must_deopt + clears it).
+extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_must_deopt.size())
+        return 0;
+    const int v = g_closure_must_deopt[cid] != 0 ? 1 : 0;
+    return v;
+}
+
 // Issue #1485 C2: per-closure provenance accessors (extern "C") for
 // JIT emit-side freshness probe infrastructure. Reads under shared lock
 // so concurrent alloc/free (which resize these vectors under

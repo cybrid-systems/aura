@@ -25,7 +25,6 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
-#include "compiler/aura_jit_runtime.h"
 
 #include <atomic>
 #include <cstdint>
@@ -58,7 +57,7 @@ extern "C" int64_t aura_alloc_closure(int64_t func_id);
 extern "C" void aura_free_closure(int64_t closure_id);
 extern "C" void aura_closure_set_name(int64_t closure_id, const char* name);
 extern "C" void aura_closure_set_must_deopt(int64_t closure_id, int v);
-extern "C" int aura_get_closure_must_deopt(int64_t closure_id);
+extern "C" int aura_closure_get_must_deopt(int64_t closure_id);
 
 // RAII guard: reset policy + reject counter for test-order isolation.
 struct AnonPolicyGuard {
@@ -99,10 +98,10 @@ static void ac_set_name_null_sets_must_deopt() {
     aura_test_set_require_stable_id_for_aot(1);
     const auto cid = aura_alloc_closure(/*func_id=*/2);
     CHECK(cid >= 0, "AC2: aura_alloc_closure returns valid cid");
-    CHECK(aura_get_closure_must_deopt(cid) == 0, "AC2: pre-set MustDeopt=0 (clean)");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "AC2: pre-set MustDeopt=0 (clean)");
     const auto before = static_cast<std::int64_t>(aura_test_anonymous_aot_reject_total_v_read());
     aura_closure_set_name(cid, /*name=*/nullptr);
-    CHECK(aura_get_closure_must_deopt(cid) == 1,
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
           "AC2: post-set MustDeopt=1 (policy flagged anonymous)");
     const auto after = static_cast<std::int64_t>(aura_test_anonymous_aot_reject_total_v_read());
     CHECK(after == before + 1, "AC2: anonymous_aot_reject_total bumped by 1");
@@ -119,7 +118,7 @@ static void ac_set_name_valid_no_must_deopt() {
     CHECK(cid >= 0, "AC3: aura_alloc_closure returns valid cid");
     const auto before = static_cast<std::int64_t>(aura_test_anonymous_aot_reject_total_v_read());
     aura_closure_set_name(cid, /*name=*/"named_closure_2238");
-    CHECK(aura_get_closure_must_deopt(cid) == 0,
+    CHECK(aura_closure_get_must_deopt(cid) == 0,
           "AC3: post-set MustDeopt=0 (named closure, policy doesn't trigger)");
     const auto after = static_cast<std::int64_t>(aura_test_anonymous_aot_reject_total_v_read());
     CHECK(after == before, "AC3: counter unchanged for named closure");
@@ -137,7 +136,7 @@ static void ac_policy_off_legacy_behavior() {
     const auto cid = aura_alloc_closure(/*func_id=*/4);
     CHECK(cid >= 0, "AC4: aura_alloc_closure returns valid cid");
     aura_closure_set_name(cid, /*name=*/"");
-    CHECK(aura_get_closure_must_deopt(cid) == 0,
+    CHECK(aura_closure_get_must_deopt(cid) == 0,
           "AC4: empty-name closure under policy off → no MustDeopt (legacy)");
     const int rc = aura_closure_check_aot_stable_id_policy(cid);
     CHECK(rc == 0, "AC4: check returns 0 (permit) under policy off");

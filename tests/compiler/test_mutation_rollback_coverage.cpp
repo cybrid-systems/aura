@@ -90,7 +90,7 @@ static void test_structural_insert_rollback() {
     aura::ast::FlatAST flat(alloc);
     auto fn = flat.add_variable(pool.intern("+"));
     auto lit = flat.add_literal(1);
-    auto root = flat.add_call(fn, {lit});
+    auto root = flat.add_call(fn, std::span{&lit, 1});
     flat.root = root;
     ev.set_workspace_flat(&flat);
     ev.set_workspace_pool(&pool);

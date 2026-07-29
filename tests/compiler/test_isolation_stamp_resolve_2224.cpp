@@ -13,6 +13,7 @@
 //        (isolation-deny vs stale-ref vs no-workspace)
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
@@ -36,6 +37,7 @@ using aura::ast::FlatAST;
 using aura::ast::NodeId;
 using aura::ast::NodeView;
 using aura::ast::NULL_NODE;
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::compiler::types::as_int;

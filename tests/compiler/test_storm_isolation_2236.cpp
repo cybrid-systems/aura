@@ -21,6 +21,14 @@
 #include <cstdint>
 #include <print>
 
+
+// C-linkage decls from src/compiler/hot_update_registry.cpp (Issue #2236).
+extern "C" {
+extern "C" std::uint64_t aura_get_deopt_storm_region_overflow_total(void);
+extern "C" void aura_bump_deopt_storm_region_overflow_total(void);
+}
+
+
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
@@ -31,6 +39,17 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::HotUpdateRegistry;
 using aura::test::g_failed;
+
+static std::string read_file(const char* path) {
+    const std::string rel(path);
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 using aura::test::g_passed;
 
 // C-linkage declarations (Issue #2236). Declared extern "C" to

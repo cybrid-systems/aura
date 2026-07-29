@@ -46,6 +46,15 @@
 #include <unordered_map>
 #include <vector>
 
+
+// Forward decls for test access (declared in src/compiler/macro_expansion.cpp).
+namespace aura::compiler::macro_exp {
+extern std::atomic<std::uint64_t> g_macro_expand_sandbox_strict;
+extern std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total;
+extern std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total;
+} // namespace aura::compiler::macro_exp
+
+
 import std;
 import aura.core.ast;
 import aura.compiler.macro_expansion;
@@ -75,12 +84,15 @@ using NameMap = std::unordered_map<std::string, std::string, aura::core::Transpa
                                    std::equal_to<>>;
 
 static std::string read_file(const char* path) {
-    for (const auto* p : {path, std::string("../") + path, std::string("../../") + path}) {
-        std::ifstream in(p);
-        if (!in)
-            continue;
+    std::ifstream in(path);
+    if (in)
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    }
+    std::ifstream in2(std::string("../") + path);
+    if (in2)
+        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+    std::ifstream in3(std::string("../../") + path);
+    if (in3)
+        return std::string((std::istreambuf_iterator<char>(in3)), std::istreambuf_iterator<char>());
     return {};
 }
 
@@ -153,7 +165,7 @@ static void ac2_stamp_rest_param_hygiene_via_expand() {
     auto rest = sp.intern("rest");
     auto xv = src.add_variable(x);
     auto rv = src.add_variable(rest);
-    auto lam = src.add_lambda({x, rest}, rv, /*dotted=*/true);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x, rest}, rv, /*dotted=*/true);
     src.set_schema_cache(lam, /*tid=*/7777);
     // Add a synthetic body_id that points to the Lambda; the helper
     // walks from the freshly allocated list_call.
@@ -172,7 +184,8 @@ static void ac2_stamp_rest_param_hygiene_via_expand() {
     auto a1 = target.add_variable(tp.intern("a"));
     auto a2 = target.add_variable(tp.intern("b"));
     auto a3 = target.add_variable(tp.intern("c"));
-    auto list_call = target.add_call(list_var, {a1, a2, a3});
+    const std::array<aura::ast::NodeId, 3> __list_args = {a1, a2, a3};
+    auto list_call = target.add_call(list_var, std::span<const aura::ast::NodeId>{__list_args});
     // mark list_call as MacroIntroduced for hygiene
     target.set_marker(list_call, SyntaxMarker::MacroIntroduced);
 
@@ -231,9 +244,10 @@ static void ac3_pre_scan_qq_aware() {
     auto rv = src.add_variable(rest);
     auto av = src.add_variable(a);
     // Inner dotted Lambda
-    auto inner_lam = src.add_lambda({a, rest}, rv, /*dotted=*/true);
+    auto inner_lam = src.add_lambda(std::vector<aura::ast::SymId>{a, rest}, rv, /*dotted=*/true);
     // Wrap in a qq Call: (quasiquote (lambda (a . rest) ...))
-    auto qq_call = src.add_call(qq_var, {inner_lam});
+    const aura::ast::NodeId __qq_args[] = {inner_lam};
+    auto qq_call = src.add_call(qq_var, std::span<const aura::ast::NodeId>{__qq_args});
     src.set_schema_cache(qq_call, /*tid=*/8888);
 
     // Build a target flat + pool
@@ -352,7 +366,7 @@ static void ac6_no_regression_non_dotted() {
     auto x = sp.intern("x");
     auto y = sp.intern("y");
     auto xv = src.add_variable(x);
-    auto lam = src.add_lambda({x, y}, xv, /*dotted=*/false);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x, y}, xv, /*dotted=*/false);
     src.set_schema_cache(lam, /*tid=*/1234);
 
     FlatAST target;

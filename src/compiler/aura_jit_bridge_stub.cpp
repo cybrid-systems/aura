@@ -656,3 +656,12 @@ extern "C" __attribute__((weak)) int
 aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_marker*/) {
     return 0;
 }
+
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_epoch_restamp_total(std::uint64_t /*n*/) {}
+extern "C" __attribute__((weak)) void
+aura_bump_closure_capture_remount_ok_total(std::uint64_t /*n*/) {}
+extern "C" __attribute__((weak)) void
+aura_bump_closure_capture_remount_fail_total(std::uint64_t /*n*/) {}
+extern "C" __attribute__((weak)) void
+aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t /*n*/) {}

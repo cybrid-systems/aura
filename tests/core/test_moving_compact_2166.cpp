@@ -392,7 +392,7 @@ int main() {
         (void)p1;
         (void)p2;
 
-        const auto before = aura::core::lifetime::lifetime_pin_contract_fail_total();
+        const auto before = aura::core::lifetime::lifetime_pin_remap_total();
 
         LifetimePin pin;
         pin.pin(p0, arena.generation(), arena.arena_id());
@@ -402,8 +402,8 @@ int main() {
         CHECK(r.moved_live_objects, "AC_M6: Moving densified");
         CHECK(r.pin_contract_held,
               "AC_M6: LiveCompactResult.pin_contract_held = true (pin was remapped in-place)");
-        CHECK(aura::core::lifetime::lifetime_pin_contract_fail_total() == before,
-              "AC_M6: lifetime_pin_contract_fail_total not bumped (contract held)");
+        CHECK(aura::core::lifetime::lifetime_pin_remap_total() == before,
+              "AC_M6: lifetime_pin_remap_total not bumped (contract held)");
 
         void* new0 = arena.resolve_object_remap(p0);
         if (new0 != nullptr) {

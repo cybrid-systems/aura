@@ -46,6 +46,17 @@ using aura::core::LayoutStamp;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+static std::string read_file(const char* path) {
+    const std::string rel(path);
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
 static CompilerMetrics* metrics_of(CompilerService& cs) {
     return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
 }

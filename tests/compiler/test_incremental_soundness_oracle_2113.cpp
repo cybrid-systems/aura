@@ -52,6 +52,7 @@ using aura::compiler::inject_soundness_under_dirty_for_test;
 using aura::compiler::ir_equivalent;
 using aura::compiler::ir_function_equivalent;
 using aura::compiler::note_recent_partial_fallback_pct_for_test;
+using aura::compiler::recent_full_fallback_rate_high;
 using aura::compiler::reset_incremental_soundness_for_test;
 using aura::compiler::set_incremental_soundness_mode;
 using aura::compiler::should_sample_soundness_prod;

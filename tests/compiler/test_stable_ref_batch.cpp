@@ -375,6 +375,9 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_424_detail
 
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     aura::compiler::CompilerService cs;
     aura_527_detail::run_matrix(cs);
@@ -382,3 +385,5 @@ int main() {
     aura_424_detail::run_matrix(cs);
     return RUN_ALL_TESTS();
 }
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

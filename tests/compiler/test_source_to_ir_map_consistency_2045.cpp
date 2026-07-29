@@ -45,6 +45,7 @@ using aura::compiler::rebuild_source_to_ir_map_from_irs;
 using aura::compiler::source_to_ir_map_is_consistent;
 using aura::compiler::SourceIrLoc;
 using aura::compiler::SourceToIrMap;
+using aura::compiler::SourceToIrStrictMode;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;

@@ -37,6 +37,7 @@
 //                                       request/response)" section
 
 #include "test_harness.hpp"
+#include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
 
@@ -66,11 +67,11 @@ using aura::orch::agent_ask;
 using aura::orch::AgentHandle;
 using aura::orch::AgentSpec;
 using aura::orch::AskResult;
-using aura::orch::Fiber;
 using aura::orch::g_orch_module_stats;
-using aura::orch::SchedRunner;
-using aura::orch::Scheduler;
 using aura::orch::spawn_agent_with_mailbox;
+using aura::serve::Fiber;
+using aura::serve::SchedRunner;
+using aura::serve::Scheduler;
 using aura::serve::mf_mailbox::MailMessage;
 using aura::serve::mf_mailbox::MailPriority;
 using aura::serve::mf_mailbox::MultiFiberMailbox;

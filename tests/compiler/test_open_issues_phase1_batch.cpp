@@ -154,7 +154,12 @@ int aura_issue_open_issues_phase1_batch_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     return aura_issue_open_issues_phase1_batch_run();
 }
 #endif
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

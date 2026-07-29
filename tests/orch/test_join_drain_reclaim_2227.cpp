@@ -40,6 +40,7 @@
 //                                       join-drain-residual-reclaim-total
 
 #include "test_harness.hpp"
+#include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
@@ -191,7 +192,7 @@ int main() {
             g_orch_module_stats.join_drain_residual_total.load(std::memory_order_relaxed);
         const auto reclaim_before =
             g_orch_module_stats.join_drain_residual_reclaim_total.load(std::memory_order_relaxed);
-        aura::orch::cancel_and_drain_fibers(std::span<serve::Fiber* const>(fibers),
+        aura::orch::cancel_and_drain_fibers(std::span<aura::serve::Fiber* const>(fibers),
                                             /*drain_ms=*/50);
 
         const auto residual_after =

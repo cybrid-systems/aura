@@ -226,17 +226,19 @@ int main() {
         CHECK(href(cs, "query:render-evolution-stats", "closed-loop-rounds") >= 1,
               "evolution sees rounds");
         CHECK(href(cs, "query:render-evolution-stats", "safe-mutate-window-ms") ==
-                  kRenderSafeMutateWindowMs,
+                  aura::compiler::kRenderSafeMutateWindowMs,
               "safe window on evolution stats");
     }
 
     // ── AC7: template contract constants ──
     {
         std::println("--- AC7: template contract ---");
-        CHECK(kRenderAgentClosedLoopIssue == 2051, "kRenderAgentClosedLoopIssue");
-        CHECK(kRenderSafeMutateWindowMs == 500, "kRenderSafeMutateWindowMs");
-        CHECK(aura_is_render_evolution_name("draw-frame"), "draw-frame is evolution");
-        CHECK(!aura_is_render_evolution_name("plain-math"), "plain-math not evolution");
+        CHECK(aura::compiler::kRenderAgentClosedLoopIssue == 2051, "kRenderAgentClosedLoopIssue");
+        CHECK(aura::compiler::kRenderSafeMutateWindowMs == 500, "kRenderSafeMutateWindowMs");
+        CHECK(aura::compiler::aura_is_render_evolution_name("draw-frame"),
+              "draw-frame is evolution");
+        CHECK(!aura::compiler::aura_is_render_evolution_name("plain-math"),
+              "plain-math not evolution");
     }
 
     std::println("\n#2051 render agent closed-loop: {} passed, {} failed", g_passed, g_failed);

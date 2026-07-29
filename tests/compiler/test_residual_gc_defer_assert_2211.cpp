@@ -317,6 +317,8 @@ void ac2269_residual_defer_policy(CompilerService& cs) {
     }
 }
 
+} // namespace
+
 int main() {
     std::println("=== Issue #2211: residual GC-defer assert at outermost Guard exit ===");
     ac1_normal_success_no_residual();

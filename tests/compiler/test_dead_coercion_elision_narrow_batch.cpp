@@ -390,6 +390,9 @@ static void ac1925_8_type_tag() {
 
 } // namespace
 
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     std::println("=== dead_coercion_elision_narrow pair: #799 (evidence) + #1925 (mutation) ===\n");
     ac799_1_schema();
@@ -411,3 +414,5 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

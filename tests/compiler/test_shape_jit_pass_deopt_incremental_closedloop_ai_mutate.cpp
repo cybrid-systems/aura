@@ -130,7 +130,12 @@ int aura_issue_shape_jit_pass_deopt_incremental_closedloop_ai_mutate_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     return aura_issue_shape_jit_pass_deopt_incremental_closedloop_ai_mutate_run();
 }
 #endif
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

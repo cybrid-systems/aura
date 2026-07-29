@@ -30,6 +30,17 @@
 #include <string_view>
 #include <unordered_map>
 
+
+// Forward decls for test access (declared in src/compiler/macro_expansion.cpp).
+namespace aura::compiler::macro_exp {
+extern std::atomic<std::uint64_t> g_macro_expand_sandbox_strict;
+extern std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total;
+extern std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total;
+extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;
+extern std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total;
+} // namespace aura::compiler::macro_exp
+
+
 import std;
 import aura.core.ast;
 import aura.compiler.evaluator;
@@ -254,7 +265,7 @@ static void ac_query() {
 static void ac_source_cite() {
     std::println("\n--- AC7: #2235 source-cite (gate / wire-up sites) ---");
     std::println("  src/compiler/macro_expansion.cpp:390-401");
-    std::println("    g_macro_expand_sandbox_strict{0} file-level atomic");
+    std::println("    g_macro_expand_sandbox_strict{{0}} file-level atomic");
     std::println("  src/compiler/macro_expansion.cpp:460-471");
     std::println("    aura_macro_expand_sandbox_strict_v_read + "
                  "aura_macro_set_expand_sandbox_strict C-linkage");
@@ -268,7 +279,7 @@ static void ac_source_cite() {
     std::println("    aura_test_cross_flat_expand_consistency + "
                  "aura_test_bump_hygiene_violation_in_macro_expand C-linkage test helpers");
     std::println("  src/compiler/observability_metrics.h:7032-7050");
-    std::println("    macro_hygiene_violation_in_macro_expand_total{0} CompilerMetrics field");
+    std::println("    macro_hygiene_violation_in_macro_expand_total{{0}} CompilerMetrics field");
     std::println("  src/compiler/evaluator_primitives_obs_jit.cpp:2595-2635");
     std::println("    query:macro-provenance-stats new keys (cross-flat-violation-total etc.)");
     std::println("  CMakeLists.txt:1813-1815");

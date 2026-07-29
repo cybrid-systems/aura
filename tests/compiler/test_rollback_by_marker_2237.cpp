@@ -21,7 +21,6 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
-#include "compiler/macro_expansion.h"
 
 #include <atomic>
 #include <cstdint>

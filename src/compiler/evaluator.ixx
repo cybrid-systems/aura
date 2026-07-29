@@ -6155,6 +6155,15 @@ public:
     [[nodiscard]] std::uint64_t get_provenance_mismatch() const noexcept {
         return provenance_mismatch_.load(std::memory_order_relaxed);
     }
+    // Test-injection setters (use only from unit tests; bypasses
+    // normal bump_* path so tests can pre-load a specific counter
+    // value before exercising the path under test).
+    void set_fiber_stale_ref_count_for_test(std::uint64_t v) const noexcept {
+        fiber_stale_ref_count_.store(v, std::memory_order_relaxed);
+    }
+    void set_provenance_mismatch_for_test(std::uint64_t v) const noexcept {
+        provenance_mismatch_.store(v, std::memory_order_relaxed);
+    }
     void bump_cross_cow_invalidations() const noexcept {
         cross_cow_invalidations_.fetch_add(1, std::memory_order_relaxed);
         bump_edsl_cow_stable_ref_remap();
@@ -6181,6 +6190,12 @@ public:
     }
     [[nodiscard]] std::uint64_t get_passes_skipped_type_dirty() const noexcept {
         return passes_skipped_type_dirty_.load(std::memory_order_relaxed);
+    }
+    void set_cross_delta_conflicts_caught_for_test(std::uint64_t v) const noexcept {
+        cross_delta_conflicts_caught_.store(v, std::memory_order_relaxed);
+    }
+    void set_passes_skipped_type_dirty_for_test(std::uint64_t v) const noexcept {
+        passes_skipped_type_dirty_.store(v, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_touched_roots_size() const noexcept {
         return touched_roots_size_.load(std::memory_order_relaxed);
