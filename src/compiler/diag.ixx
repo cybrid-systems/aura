@@ -9,6 +9,7 @@ module;
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "reflect/diag_error_kind_names.hh"
 
 export module aura.diag;
 import std;
@@ -65,41 +66,18 @@ export struct BlameInfo {
     std::string phase = "compile"; // "compile" | "runtime"
 };
 
-// Convert ErrorKind to human-readable string
+// Convert ErrorKind to human-readable string (display phrases table).
+// Identifiers: kDiagErrorKindIdents (P2996-aligned). Wave C1 wire.
 export constexpr std::string_view kind_name(ErrorKind k) {
-    switch (k) {
-        case ErrorKind::ParseError:
-            return "parse error";
-        case ErrorKind::UnexpectedToken:
-            return "unexpected token";
-        case ErrorKind::UnterminatedSExpr:
-            return "unterminated s-expr";
-        case ErrorKind::UnboundVariable:
-            return "unbound variable";
-        case ErrorKind::DivisionByZero:
-            return "division by zero";
-        case ErrorKind::InvalidClosure:
-            return "invalid closure";
-        case ErrorKind::ArityMismatch:
-            return "arity mismatch";
-        case ErrorKind::TypeError:
-            return "type error";
-        case ErrorKind::IRCorruption:
-            return "IR corruption";
-        case ErrorKind::IRNoReturn:
-            return "no return";
-        case ErrorKind::InternalError:
-            return "internal error";
-        case ErrorKind::OutOfMemory:
-            return "out of memory";
-        case ErrorKind::Note:
-            return "note";
-        case ErrorKind::UncaughtException:
-            return "uncaught exception";
-        case ErrorKind::Warning:
-            return "warning";
-    }
-    return "unknown";
+    return diag_error_kind_display(static_cast<std::size_t>(k));
+}
+
+export constexpr std::string_view kind_ident(ErrorKind k) {
+    return diag_error_kind_ident(static_cast<std::size_t>(k));
+}
+
+export constexpr std::string_view party_name(BlameParty p) {
+    return blame_party_name(static_cast<std::size_t>(p));
 }
 
 // Source location (line/column, 1-indexed)
@@ -177,31 +155,15 @@ export struct Diagnostic {
 
         // Blame info (design §6.3)
         if (blame) {
-            const char* party_str = "?";
-            switch (blame->party) {
-                case BlameParty::Caller:
-                    party_str = "caller";
-                    break;
-                case BlameParty::Annotation:
-                    party_str = "annotation";
-                    break;
-                case BlameParty::Implicit:
-                    party_str = "implicit";
-                    break;
-                case BlameParty::System:
-                    party_str = "system";
-                    break;
-                case BlameParty::Narrowing:
-                    // Issue #342: narrowing blame. The
-                    // annotation_src carries the
-                    // predicate name (e.g. "number?")
-                    // and the source cond NodeId
-                    // (encoded as a string). The
-                    // formatter appends both to the
-                    // diagnostic output.
-                    party_str = "narrowing";
-                    break;
-            }
+            // Display party in lowercase (historical format strings).
+            // Issue #342: Narrowing — annotation_src carries predicate + cond NodeId.
+            auto party_ident = party_name(blame->party);
+            std::string party_str(party_ident);
+            for (char& c : party_str)
+                if (c >= 'A' && c <= 'Z')
+                    c = static_cast<char>(c - 'A' + 'a');
+            if (party_str == "unknown")
+                party_str = "?";
             out += std::format("\n  blamed: {} ({})", party_str, blame->phase);
             if (!blame->annotation_src.empty())
                 out += std::format("\n  annotation: {}", blame->annotation_src);
