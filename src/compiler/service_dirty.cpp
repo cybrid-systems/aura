@@ -1272,6 +1272,31 @@ void CompilerService::invalidate_function(const std::string& name) {
             metrics_.irsoa_cache_miss_reduction.fetch_add(clean_skipped, std::memory_order_relaxed);
         }
 
+        // Issue #2287: CastOp density budget check (after lower +
+        // DeadCoercionPass). density = 10000 * castop_emitted / max(1, insts).
+        // If density > budget_bp, bump castop_density_over_budget_total and
+        // expose castop-annotation-hint=1 on the query surface. Non-blocking
+        // Agent guidance (#2282 layered elision handles the actual elision).
+        // Budget is env AURA_CASTOP_DENSITY_BUDGET_BP (default 1500 = 15%).
+        {
+            const auto emitted =
+                metrics_.coercion_castop_emitted_total.load(std::memory_order_relaxed);
+            const auto insts = metrics_.soa_instructions_visited.load(std::memory_order_relaxed);
+            const auto dens = (emitted * 10000ULL) / std::max<std::uint64_t>(1ULL, insts);
+            std::uint64_t budget = 1500ULL;
+            if (const char* env = std::getenv("AURA_CASTOP_DENSITY_BUDGET_BP")) {
+                char* end = nullptr;
+                const unsigned long val = std::strtoull(env, &end, 10);
+                if (end != env && val > 0)
+                    budget = static_cast<std::uint64_t>(val);
+            }
+            metrics_.castop_density_budget_bp.store(budget, std::memory_order_relaxed);
+            metrics_.last_castop_density_bp.store(dens, std::memory_order_relaxed);
+            if (dens > budget) {
+                metrics_.castop_density_over_budget_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
         // Issue #2045: update ir_cache_v2_ (not only v1) so source_to_ir_map
         // is rebuilt against the new IR layout after cascade full re-lower.
         // store_define_v2 rebuilds the map + dual-emit SoA and runs the

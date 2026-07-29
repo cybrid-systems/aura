@@ -770,6 +770,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> coercion_type_prop_hits_total{0};
     std::atomic<std::uint64_t> coercion_narrow_evidence_hits_total{0};
     std::atomic<std::uint64_t> coercion_zerooverhead_win_total{0};
+    // Issue #2287: Dynamic CastOp density budget + Agent annotation hint.
+    //   - castop_density_over_budget_total: bumps when last computed
+    //     density (10000 * castop_emitted / max(1, insts)) exceeds the
+    //     configured budget (env AURA_CASTOP_DENSITY_BUDGET_BP, default
+    //     1500 = 15%) after lower / post-mutate pipeline. Non-blocking
+    //     hint — Agents see castop-annotation-hint=1 on the query surface
+    //     to prefer annotations over blind Dynamic.
+    //   - last_castop_density_bp: most recent density in basis points
+    //   - castop_density_budget_bp: current budget in basis points
+    //   (read from env at each computation; cheap integer parse)
+    std::atomic<std::uint64_t> castop_density_over_budget_total{0};
+    std::atomic<std::uint64_t> last_castop_density_bp{0};
+    std::atomic<std::uint64_t> castop_density_budget_bp{1500};
     // Issue #691: CoercionMap + NarrowingRecord provenance linkage.
     //   - coercion_post_narrow_elim_opportunities_total: deferred
     //     coercions recorded with narrowing evidence/provenance
