@@ -125,6 +125,18 @@ int main() {
     // (the static PairSlotCleanup destructor at process exit + sibling
     // bridge-hook pushes cannot race the wrapped push_back).
     //
+    // Issue #2333: CompilerService::eval() holds eval_mutex_ across
+    // the full parse+typecheck+eval pipeline (recursive_mutex,
+    // service.ixx:1937) for cross-thread race #3/#4/#5 protection.
+    // Sharing one CompilerService across 4 threads serializes 1000
+    // eval calls into single-threaded execution (~700ms/call observed
+    // with full parse+typecheck+eval pipeline), pushing AC3 well past
+    // the 90s timeout. Fix: give each worker its own CompilerService.
+    // The B-024 lock intent is preserved -- g_owned_pair_slots_ is
+    // process-global, and aura_lock_workspace_write() around its
+    // push_back (src/compiler/ir_executor_impl.cpp + aura_jit_runtime.cpp)
+    // is exercised 1000 times across 4 independent workers.
+    //
     // Note: we avoid std::vector<std::thread> here because GCC 16's C++20
     // std module implementation does not export the implementation-detail
     // member _M_realloc_append (vector.tcc), so emplace_back on a
@@ -135,7 +147,10 @@ int main() {
     {
         const size_t before = aura_g_owned_pair_slots_size();
         std::atomic<int> errors{0};
-        auto worker = [&cs, &errors](int thread_id) {
+        auto worker = [&errors](int thread_id) {
+            // Per-thread CompilerService (issue #2333 fix: avoids
+            // eval_mutex_ serialization across 4 threads on one service).
+            aura::compiler::CompilerService cs;
             for (int i = 0; i < 250; ++i) {
                 // Use distinct (thread_id, i) keys so all threads
                 // produce distinct pairs (avoids car/cdr collisions
