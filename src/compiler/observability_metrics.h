@@ -1235,6 +1235,12 @@ struct CompilerMetrics {
     //     match produced a Warning or TypeError diagnostic
     std::atomic<std::uint64_t> adt_exhaustiveness_checked_total{0};
     std::atomic<std::uint64_t> non_exhaustive_match_diagnostics_total{0};
+    // Issue #2288: selective ADT exhaustiveness on infer_flat_partial main
+    // path (earlier signal than audit-only). Bumps every time a non-exhaustive
+    // match is detected during the partial-infer sweep, BEFORE Full audit
+    // (#2264) catches it under Full. Distinct from adt_non_exhaustive_caught_total
+    // (which counts Full-audit catches).
+    std::atomic<std::uint64_t> adt_partial_non_exhaustive_total{0};
     // Issue #693: Hardware backend SV commercial closed-loop.
     std::atomic<std::uint64_t> hardware_backend_hook_calls_total{0};
     std::atomic<std::uint64_t> commercial_reemits_total{0};

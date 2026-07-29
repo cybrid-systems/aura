@@ -6886,6 +6886,37 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             renarrow_roots.push_back(id);
         (void)selective_adt_guardshape_renarrow(flat, pool, types, renarrow_roots, metrics_);
     }
+    // Issue #2288: selective ADT exhaustiveness on infer_flat_partial main
+    // path (earlier signal than Full audit). Inline implementation — can't
+    // call recheck_match_exhaustiveness_in_dirty_scope (function-local static
+    // inside post_mutation_invariant_check). Iterates match nodes in the
+    // partial-renarrow roots (affected + occurrence_targets) and bumps
+    // adt_partial_non_exhaustive_total for each non-exhaustive site, so
+    // Agents see ADT holes before audit sampling closes the window. Soft
+    // policy by default — bumps counter; Hard MutateTypeGate alignment
+    // (#2219) is upstream of this site. Zero cost when no match sites in
+    // dirty scope (flat.has_match_info(id) bails per node).
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        for (auto nid : affected) {
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                continue;
+            if (!flat.has_match_info(nid))
+                continue;
+            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
+            if (!exh.missing_constructors.empty())
+                m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        for (auto nid : occurrence_targets) {
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                continue;
+            if (!flat.has_match_info(nid))
+                continue;
+            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
+            if (!exh.missing_constructors.empty())
+                m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
 
@@ -7840,7 +7871,8 @@ namespace {
     // (including nested matches — each match is its own let node).
     static void recheck_match_exhaustiveness_in_dirty_scope(
         FlatAST& flat, const StringPool& pool, TypeRegistry& reg, const std::vector<NodeId>& nodes,
-        const MutationRecord& rec, std::vector<OwnershipNote>& notes_out, void* metrics) {
+        const MutationRecord& rec, std::vector<OwnershipNote>& notes_out, void* metrics,
+        bool bump_partial_counter = false) {
         auto* m = static_cast<CompilerMetrics*>(metrics);
         for (auto id : nodes) {
             if (id == NULL_NODE || id >= flat.size())
@@ -7878,6 +7910,12 @@ namespace {
                     m->adt_non_exhaustive_caught_total.fetch_add(1, std::memory_order_relaxed);
                     m->non_exhaustive_match_diagnostics_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+                    // Issue #2288: partial-infer sweep signal — bumped only when
+                    // called from infer_flat_partial (bump_partial_counter=true),
+                    // distinct from the post-mutation-invariant Full-audit path.
+                    // Agents see the hole BEFORE audit sampling closes the window.
+                    if (bump_partial_counter)
+                        m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 OwnershipNote note;
                 note.node = id;
