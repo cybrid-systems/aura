@@ -27,7 +27,8 @@ template <typename T> consteval const char* validate_node() {
         return "must have at least one member (tag)";
 
     // First member must be NodeTag (enum)
-    auto first = members.data()[0];
+    // GCC 16.1.0: operator[] on meta ranges is fine (#2289).
+    auto first = members[0];
     auto first_type = type_of(first);
     if (!is_enum_type(first_type))
         return "first member must be NodeTag enum";
@@ -36,7 +37,7 @@ template <typename T> consteval const char* validate_node() {
 
     // Remaining members must be ABF-serializable types
     for (std::size_t i = 1; i < members.size(); ++i) {
-        auto m = members.data()[i];
+        auto m = members[i];
         auto t = type_of(m);
         auto type_disp = display_string_of(t);
 

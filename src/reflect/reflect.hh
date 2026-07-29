@@ -166,8 +166,9 @@ consteval MemberKind classify_type(std::meta::info type) {
     }
 
     // std::array<T,N> / std::vector<T> / std::span<T,N> detection
-    // via display_string (template_of + is_same_type has
-    // issues with GCC 16.1)
+    // via display_string. Residual on GCC 16.1.0 (#2289): comparing
+    // template_of(type) with is_same_type still fails for these
+    // specializations; display_string remains the stable path.
     if (is_class_type(type) && has_template_arguments(type)) {
         auto str = display_string_of(type);
         if (str.starts_with("std::array"))
@@ -207,8 +208,8 @@ consteval std::size_t elem_size_of(std::meta::info type) {
     auto args = template_arguments_of(type);
     if (args.empty())
         return 0;
-    // static_assert(is_type(args[0]), "first template arg should be a type");
-    return size_of(args.data()[0]);
+    // GCC 16.1.0: operator[] works on meta ranges (#2289); no .data()[i]
+    return size_of(args[0]);
 }
 
 // Get array length for std::array<T,N>
@@ -217,9 +218,7 @@ consteval std::size_t array_size_of(std::meta::info type) {
     auto args = template_arguments_of(type);
     if (args.size() < 2)
         return 0;
-    // static_assert(is_value(args.data()[1]), "second template arg should be a value");
-    // Use extract to get the value as size_t
-    return static_cast<std::size_t>(extract<std::size_t>(args.data()[1]));
+    return static_cast<std::size_t>(extract<std::size_t>(args[1]));
 }
 
 // ── Member reflection ─────────────────────────────────────────
