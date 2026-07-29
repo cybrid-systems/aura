@@ -1317,6 +1317,15 @@ target_compile_options(test_reflect_isolation_2290 PRIVATE -freflection -Wall
 target_compile_features(test_reflect_isolation_2290 PUBLIC cxx_std_26)
 target_link_libraries(test_reflect_isolation_2290 PRIVATE stdc++)
 add_test(NAME test_reflect_isolation_2290_verification COMMAND ./test_reflect_isolation_2290)
+
+# Issue #2291: Phase 4 pure-POD IR types (auto_serialize / validate).
+add_executable(test_ir_pod_phase4_2291 tests/reflect/test_ir_pod_phase4_2291.cpp)
+target_include_directories(test_ir_pod_phase4_2291 PRIVATE src)
+target_compile_options(test_ir_pod_phase4_2291 PRIVATE -freflection -Wall
+                       -Wno-sign-compare -Wno-unused-local-typedefs)
+target_compile_features(test_ir_pod_phase4_2291 PUBLIC cxx_std_26)
+target_link_libraries(test_ir_pod_phase4_2291 PRIVATE aura-reflect stdc++)
+add_test(NAME test_ir_pod_phase4_2291_verification COMMAND ./test_ir_pod_phase4_2291)
 # Issue #268 / #178: production NodeView roundtrip (split TU) — edsl_hygiene theme.
 # Relocated tests/issues/ → tests/edsl/ (wave 59 / #1957). Soft surface also in
 # test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection
