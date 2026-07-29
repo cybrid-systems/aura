@@ -15,6 +15,13 @@
 //   AC3: Zero-cost success path (single relaxed load of reasons).
 //   AC4: 2 new counters + 5 new query keys + schema-2269 lineage.
 //   AC5: Runtime smoke — soft/clear branches + source-cite for hard.
+//
+// Issue #2296 — harden Phase-5 residual Clear + multi-eval orphan steal.
+//   AC1: Outermost success with residual Panic → Clear forces depth 0 + bit clear.
+//   AC2: Two Evaluators; clear orphan from A; B hold unaffected; bits consistent.
+//   AC3: Zero residual happy path → single load, no clear work.
+//   AC4: Hard/Soft unchanged (#2269).
+//   AC5: Query correlation keys + decision table + source-cite.
 
 #include "test_harness.hpp"
 
@@ -317,6 +324,190 @@ void ac2269_residual_defer_policy(CompilerService& cs) {
     }
 }
 
+// Issue #2296 AC1-AC5: Phase-5 residual Clear + multi-eval orphan window.
+void ac2296_multi_eval_residual_clear(CompilerService& cs) {
+    std::println("\n--- AC #2296: multi-eval residual Clear + steal orphan harden ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto gh = read_file("src/core/gc_hooks.h");
+    auto mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+
+    // AC5 surface gates
+    CHECK(gh.find("force_clear_all_gc_defer_for_evaluator") != std::string::npos,
+          "AC5: force_clear_all_gc_defer_for_evaluator in gc_hooks.h");
+    CHECK(gh.find("reconcile_gc_defer_bits_after_clear") != std::string::npos,
+          "AC5: reconcile_gc_defer_bits_after_clear helper");
+    CHECK(mb.find("force_clear_all_gc_defer_for_evaluator") != std::string::npos,
+          "AC5: Phase 5 Clear uses force_clear_all");
+    CHECK(mb.find("Decision table") != std::string::npos,
+          "AC5: decision table documented in Phase 5");
+    CHECK(mut.find("reconcile_gc_defer_bits_after_clear") != std::string::npos,
+          "AC5: steal path reconciles bits after orphan clear");
+    CHECK(obs.find("mutation_boundary_residual_defer_bit_reconcile_total{0}") != std::string::npos,
+          "AC5: bit-reconcile CompilerMetrics field");
+    CHECK(q.find("residual-defer-bit-reconcile-total") != std::string::npos,
+          "AC5: residual-defer-bit-reconcile-total query key");
+    CHECK(q.find("gc-defer-orphan-cleared-on-steal-total") != std::string::npos,
+          "AC5: orphan-cleared-on-steal on hold-stats surface");
+    CHECK(q.find("gc-defer-table-overflow-total") != std::string::npos,
+          "AC5: table-overflow correlation key");
+    CHECK(q.find("schema-2296") != std::string::npos && q.find("issue-2296") != std::string::npos,
+          "AC5: schema-2296 / issue-2296 lineage");
+    CHECK(q.find("residual-defer-multi-eval-wired") != std::string::npos,
+          "AC5: residual-defer-multi-eval-wired sentinel");
+
+    // AC3: happy path — no residual, no clear work (counter unchanged)
+    {
+        drain_known_defer();
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        CompilerService local;
+        auto& ev = local.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto fc0 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        const auto r0 = m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            CHECK(ok, "AC3: guard acquired");
+        }
+        CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0, "AC3: snapshot still 0");
+        CHECK(m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed) == r0,
+              "AC3: residual total unchanged (zero residual path)");
+        CHECK(m->mutation_boundary_residual_defer_forced_clear_total.load(
+                  std::memory_order_relaxed) == fc0,
+              "AC3: forced-clear unchanged on happy path");
+        drain_known_defer();
+    }
+
+    // AC1: residual Panic → Clear forces depth 0 + bit clear + counters.
+    // (a) force_clear_all drains table-backed panic for this eval.
+    // (b) Phase-5 Clear on sticky Panic bit (depth already 0, multi-eval lag)
+    //     still enters residual block and reconciles the bit.
+    {
+        drain_known_defer();
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        ::unsetenv("AURA_HARD_RESIDUAL_DEFER");
+        CompilerService local;
+        auto& ev = local.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        // (a) unit force_clear_all
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(static_cast<void*>(&ev));
+        CHECK(aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(&ev)),
+              "AC1a: panic armed for this eval");
+        const auto fr =
+            aura::gc_hooks::force_clear_all_gc_defer_for_evaluator(static_cast<void*>(&ev));
+        CHECK(fr.panic_depth_cleared > 0, "AC1a: force_clear drained table depth");
+        CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(&ev)),
+              "AC1a: no residual panic-defer after force_clear");
+        CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0, "AC1a: process panic depth 0");
+        CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+               static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) == 0,
+              "AC1a: Panic bit clear after force_clear");
+        // (b) sticky bit residual through Phase-5 Clear (Phase3 does not
+        // clear — no per-eval table entry; only process bit stuck).
+        const auto fc0 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        (void)aura::gc_hooks::arm_defer(aura::gc_hooks::GcDeferReason::Panic);
+        CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+               static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) != 0,
+              "AC1b: sticky Panic bit set before Guard");
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            // No per-eval panic arm — residual after hold release is Panic bit.
+        }
+        CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+               static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) == 0,
+              "AC1b: Panic bit clear after Phase-5 Clear reconcile");
+        CHECK(m->mutation_boundary_residual_defer_forced_clear_total.load(
+                  std::memory_order_relaxed) > fc0,
+              "AC1b: forced-clear counter bumped on sticky residual");
+        drain_known_defer();
+    }
+
+    // AC2: two Evaluators — clear A orphan; B hold unaffected; bits consistent
+    {
+        drain_known_defer();
+        CompilerService a;
+        CompilerService b;
+        auto& eva = a.evaluator();
+        auto& evb = b.evaluator();
+        // Arm panic only on A; arm mutation hold for B (process-wide).
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(static_cast<void*>(&eva));
+        aura::gc_hooks::arm_mutation_hold_defer();
+        CHECK(aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(&eva)),
+              "AC2: A has panic defer");
+        CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(&evb)),
+              "AC2: B has no panic table entry");
+        CHECK(aura::gc_hooks::mutation_hold_defer_active(), "AC2: MutationHold active (B path)");
+        // Simulate steal orphan clear for A.
+        const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(&eva));
+        const auto recon = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+        CHECK(cleared > 0, "AC2: A orphan panic depth cleared");
+        CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(&eva)),
+              "AC2: A panic table empty after clear");
+        CHECK(aura::gc_hooks::mutation_hold_defer_active(),
+              "AC2: B/process MutationHold unaffected by A's panic clear");
+        // Panic bit must be clear when depth is 0 (reconcile or clear path).
+        CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0, "AC2: process panic depth 0");
+        CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+               static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) == 0,
+              "AC2: Panic bit consistent with depth 0");
+        (void)recon;
+        // Force bit reconcile path: if depth 0 but bit stuck, reconcile fixes.
+        // Inject lag: re-arm panic process bit without depth (via arm_defer only).
+        (void)aura::gc_hooks::arm_defer(aura::gc_hooks::GcDeferReason::Panic);
+        CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+               static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) != 0,
+              "AC2: injected sticky Panic bit");
+        const auto fixed = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+        CHECK(fixed >= 1, "AC2: reconcile cleared sticky Panic bit when depth==0");
+        CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+               static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic)) == 0,
+              "AC2: Panic bit clear after reconcile");
+        drain_known_defer();
+    }
+
+    // AC4: Soft still metric-only; Hard still aborts (source-cite only for hard)
+    {
+        CHECK(mb.find("policy == ResidualPolicy::Hard") != std::string::npos,
+              "AC4: Hard branch retained");
+        CHECK(mb.find("std::abort()") != std::string::npos, "AC4: Hard abort retained");
+        CHECK(mb.find("AURA_SANDBOX") != std::string::npos, "AC4: Soft via AURA_SANDBOX retained");
+        // Soft smoke (same as #2269): residual bumps, no forced clear
+        drain_known_defer();
+        ::setenv("AURA_SANDBOX", "off", 1);
+        ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+        CompilerService local;
+        auto& ev = local.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto fc0 =
+            m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            aura::gc_hooks::arm_mutation_hold_defer();
+        }
+        CHECK(m->mutation_boundary_residual_defer_forced_clear_total.load(
+                  std::memory_order_relaxed) == fc0,
+              "AC4-soft: forced-clear unchanged");
+        ::unsetenv("AURA_SANDBOX");
+        drain_known_defer();
+    }
+
+    // AC5: query surface returns hash (keys source-cited above)
+    {
+        auto h = cs.eval("(engine:metrics \"query:mutation-boundary-hold-stats\")");
+        CHECK(h.has_value(), "AC5: mutation-boundary-hold-stats returns value");
+        CHECK(cs.metrics().mutation_boundary_residual_defer_bit_reconcile_total.load() >= 0,
+              "AC5: bit-reconcile metric readable");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -330,6 +521,12 @@ int main() {
     {
         CompilerService cs;
         ac2269_residual_defer_policy(cs);
+    }
+
+    std::println("\n=== AC #2296: multi-eval residual Clear + steal orphan harden ===");
+    {
+        CompilerService cs;
+        ac2296_multi_eval_residual_clear(cs);
     }
 
     std::println("\n=== test_residual_gc_defer_assert_2211: {} passed, {} failed ===", g_passed,

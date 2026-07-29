@@ -1489,12 +1489,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // (strict force-fail) still reaches here via dtor — bit always
         // released. Nested guards never armed so never release here.
         aura::gc_hooks::release_mutation_hold_defer();
-        // Issue #2211: residual GcDeferReason assert after residual drain
-        // (phase3 panic clear + phase5 MutationHold release). Production soft
-        // (metric only); AURA_HARD_RESIDUAL_DEFER hard-fails. Best-effort clear
-        // of known residual for this evaluator so long AI sessions cannot
-        // accumulate orphan defer across steals. Fail/partial-recovery paths
-        // intentionally leave checkpoint+defer armed — skip residual assert.
+        // Issue #2211 / #2269 / #2296: residual GcDeferReason policy after
+        // residual drain (phase3 panic clear + phase5 MutationHold release).
+        //
+        // ── Decision table (Soft / Clear / Hard × single vs multi-eval) ──
+        // | Policy | Env select                         | Residual≠0 action              |
+        // Multi-eval note                          | | Soft   | AURA_SANDBOX=off | metric only
+        // (legacy #2211)     | no clear; test/sandbox                   | | Clear  | production
+        // default (unset policy)  | force_clear_all_for_eval + hold | panic table + bit reconcile
+        // (#2296)      | | Hard   | AURA_RESIDUAL_DEFER_POLICY=hard or  | hard-fail metric + abort
+        // | same as single; fail closed              | |        | AURA_HARD_RESIDUAL_DEFER=1 | | |
+        // Happy path (residual==0): single relaxed snapshot load, zero clear work (AC3).
+        // Fail/partial-recovery paths intentionally leave checkpoint+defer armed.
         if (success) {
             // AC3: zero-cost success path — single relaxed load of
             // defer_reasons_snapshot(); if zero, skip the entire
@@ -1544,25 +1550,24 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     if (aura::gc_hooks::defer_reasons_snapshot() != 0)
                         std::abort();
                 } else if (policy == ResidualPolicy::Clear) {
-                    // AC1-B: forced clear — this-evaluator panic
-                    // table + unbalanced MutationHold re-release, then
-                    // bump the forced-clear counter. Long AI sessions
-                    // cannot accumulate orphan defer across steals.
-                    const auto cleared =
-                        aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
+                    // Issue #2296 AC1: force_clear_all_for_eval — panic table
+                    // + process depth + bit reconcile (multi-eval lag safe).
+                    // MutationHold re-release is process-wide (not per-eval).
+                    const auto fr = aura::gc_hooks::force_clear_all_gc_defer_for_evaluator(
+                        static_cast<void*>(ev_));
                     if (aura::gc_hooks::mutation_hold_defer_active())
                         aura::gc_hooks::release_mutation_hold_defer();
+                    // Final reconcile after hold release (hold bit ≠ Panic).
+                    const auto extra = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
                     if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                        if (cleared > 0)
-                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
-                                cleared, std::memory_order_relaxed);
-                        else
-                            // Bumped even when cleared==0 (MutationHold
-                            // re-release may have been the only path)
-                            // so dashboards see one bump per residual
-                            // detection.
-                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
-                                1, std::memory_order_relaxed);
+                        const auto n = (fr.panic_depth_cleared > 0)
+                                           ? static_cast<std::uint64_t>(fr.panic_depth_cleared)
+                                           : 1u;
+                        m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                            n, std::memory_order_relaxed);
+                        if (fr.bits_reconciled + extra > 0)
+                            m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
+                                fr.bits_reconciled + extra, std::memory_order_relaxed);
                     }
                 }
                 // Soft (sandbox / unit tests): no clear, no abort, just

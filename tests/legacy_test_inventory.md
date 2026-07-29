@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-07-29 by `scripts/inventory_legacy_tests.py`
+**Generated:** 2026-07-30 by `scripts/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -913,7 +913,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_ai_native_template.cpp` (—) [domain_suite, theme_renderer] — Issue #1677 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_critical_hotswap_2050.cpp` (#2050) [domain_suite, theme_renderer] — AC1: schema-2050 keys on query:render-jit-stability-stats
 - `tests/renderer/test_render_mutation_checkpoint.cpp` (—) [domain_suite, theme_renderer] — test_render_mutation_checkpoint.cpp — Issue #1355: lightweight mutation in render hot path
-- `tests/compiler/test_residual_gc_defer_assert_2211.cpp` (#2211) [domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0
+- `tests/compiler/test_residual_gc_defer_assert_2211.cpp` (#2211) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0
 - `tests/compiler/test_security_audit_trail_2075.cpp` (#2075) [domain_suite, theme_compiler] — Issue #2075 — unified SecurityEvent schema + default-on mutation/effect audit WAL.
 - `tests/compiler/test_security_audit_unify_2054.cpp` (#2054) [domain_suite, theme_compiler] — AC1: check_and_record_effect allow + deny both append SecurityEvent
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp — Issue #744:

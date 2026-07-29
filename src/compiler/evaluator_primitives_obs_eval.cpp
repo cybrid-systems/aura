@@ -5846,6 +5846,24 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"residual-defer-policy-wired", make_int(1)},
                 {"schema-2269", make_int(2269)},
                 {"issue-2269", make_int(2269)},
+                // Issue #2296: multi-eval residual Clear + steal orphan window.
+                // Correlate forced-clear vs orphan-cleared-on-steal vs
+                // arm-rejected-overflow vs bit-reconcile on one surface.
+                {"residual-defer-bit-reconcile-total",
+                 make_int(m ? load(m->mutation_boundary_residual_defer_bit_reconcile_total) : 0)},
+                {"gc-defer-bit-reconcile-total",
+                 make_int(
+                     static_cast<std::int64_t>(aura::gc_hooks::gc_defer_bit_reconcile_total()))},
+                {"gc-defer-orphan-cleared-on-steal-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()))},
+                {"gc-defer-table-overflow-total",
+                 make_int(static_cast<std::int64_t>(aura::gc_hooks::g_gc_defer_table_overflow_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"residual-defer-multi-eval-wired", make_int(1)},
+                {"force-clear-all-gc-defer-wired", make_int(1)},
+                {"schema-2296", make_int(2296)},
+                {"issue-2296", make_int(2296)},
                 {"schema-2211", make_int(2211)},
                 {"issue-2211", make_int(2211)},
                 // Issue #2215: RenderFastExit (outermost success under render hotpath).

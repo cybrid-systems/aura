@@ -1978,6 +1978,25 @@ def cmd_envframe_ownership_transfer_coverage():
     return 0
 
 
+def cmd_residual_gc_defer_multi_eval_coverage():
+    """Issue #2296: Phase-5 residual Clear + multi-eval orphan steal harden.
+
+    Validates AC1–AC5: force_clear_all, bit reconcile on steal, zero-cost
+    happy path, Hard/Soft retained, query correlation + decision table.
+    """
+    print(f"{B}=== residual multi-eval Clear harden coverage (#2296) ==={N}")
+    script = ROOT / "scripts" / "check_residual_gc_defer_multi_eval_2296.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual multi-eval Clear harden coverage contract rows failed")
+        return 1
+    ok("residual multi-eval Clear harden coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2332,6 +2351,7 @@ def cmd_gate():
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
+        or cmd_residual_gc_defer_multi_eval_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
