@@ -1929,28 +1929,17 @@ def cmd_moving_pin_contract_fail_closed_coverage():
 
 
 def cmd_root_remap_pass_coverage():
-    """Issue #2267: RootRemapPass minimal slice — StableNodeRef + Closure
-    captures after Moving densify.
+    """Issue #2294 / #2267: RootRemapPass real rewrite — Stable-object roots +
+    Closure capture cells after Moving densify.
 
-    Validates the 5-AC contract from issue body:
-      AC1: Pass surface — RootRemapCallback typedef in src/core/arena.ixx
-           with set_root_remap_callback + take_root_remap_callback methods
-           + invoke_root_remap_callback caller in live_compact Moving branch.
-      AC2: StableNodeRef remap — happy path: pin + Moving →
-           root_remap_stable_ref_total increments; root_remap_stable_ref_fail_total
-           stays at 0.
-      AC3: Closure capture remap — same as AC2 for root_remap_closure_capture_total
-           + root_remap_closure_capture_fail_total.
-      AC4: Observability — root_remap_stable_ref_total / _fail_total and
-           root_remap_closure_capture_total / _fail_total CompilerMetrics
-           atomics + mirror at the 3 sync points (evaluator_gc.cpp + both
-           evaluator.ixx sites) + query:compact-stats extension with new keys
-           + schema-2267 / issue-2267 / root-remap-pass-wired lineage.
-      AC5: Tests — tests/compiler/test_root_remap_pass_2267.cpp covers
-           AC1 source gate + AC5 positive (per-call counters bump via
-           thread_local CompilerMetrics).
+    Validates the 5-AC contract from #2294:
+      AC1: Stable-object root rewrite + arena stats writeback.
+      AC2: Closure capture rewrite + counters.
+      AC3: Empty remap / Soft-only zero rewrite work.
+      AC4: Fail-closed unmapped densify candidates + AURA_ROOT_REMAP_CONTRACT.
+      AC5: Observability + Evaluator install + tests AC1-AC5.
     """
-    print(f"{B}=== RootRemapPass minimal slice coverage (#2267) ==={N}")
+    print(f"{B}=== RootRemapPass real rewrite coverage (#2294/#2267) ==={N}")
     script = ROOT / "scripts" / "check_root_remap_pass_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
@@ -1960,9 +1949,9 @@ def cmd_root_remap_pass_coverage():
         cwd=ROOT,
     )
     if r.returncode != 0:
-        fail("RootRemapPass minimal slice coverage contract rows failed")
+        fail("RootRemapPass real rewrite coverage contract rows failed")
         return 1
-    ok("RootRemapPass minimal slice coverage clean")
+    ok("RootRemapPass real rewrite coverage clean")
     return 0
 
 

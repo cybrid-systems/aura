@@ -327,6 +327,7 @@ Evaluator::~Evaluator() {
         if (arena_) {
             arena_->clear_arena_owner();
             arena_->set_on_compact_hook({});
+            arena_->set_root_remap_callback({}); // Issue #2294
             arena_ = nullptr;
         }
         if (temp_arena_) {
