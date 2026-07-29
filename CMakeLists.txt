@@ -1361,6 +1361,15 @@ target_compile_options(test_node_tag_align_b1 PRIVATE -freflection -Wall
 target_compile_features(test_node_tag_align_b1 PUBLIC cxx_std_26)
 target_link_libraries(test_node_tag_align_b1 PRIVATE stdc++)
 add_test(NAME test_node_tag_align_b1_verification COMMAND ./test_node_tag_align_b1)
+
+# Wave B2: FlatInstruction auto_serialize + IR overlap mapping.
+add_executable(test_flat_instr_reflect_b2 tests/reflect/test_flat_instr_reflect_b2.cpp)
+target_include_directories(test_flat_instr_reflect_b2 PRIVATE src)
+target_compile_options(test_flat_instr_reflect_b2 PRIVATE -freflection -Wall
+                       -Wno-sign-compare -Wno-unused-local-typedefs)
+target_compile_features(test_flat_instr_reflect_b2 PUBLIC cxx_std_26)
+target_link_libraries(test_flat_instr_reflect_b2 PRIVATE stdc++)
+add_test(NAME test_flat_instr_reflect_b2_verification COMMAND ./test_flat_instr_reflect_b2)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
