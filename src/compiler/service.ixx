@@ -1161,6 +1161,25 @@ public:
         evaluator_.set_hot_swap_fn([this](const std::string& name, const std::string& new_source) {
             return hot_swap_function_impl(name, new_source);
         });
+
+        // Issue #2301: wire SpecJIT as a deopt-storm listener.
+        // HotUpdateRegistry::notify_deopt_storm_locked fans out
+        // to storm_listeners_ while eval_mutex_ is held (the
+        // notify_deopt_storm path lives on the eval thread under
+        // the same higher-level lock). The lambda captures
+        // `this` and calls spec_jit_.on_deopt_storm() which
+        // clear()s the spec cache + bumps the per-controller +
+        // process-global storm-clear counters. The passive
+        // shape_version miss in #2276 still applies defense-in-
+        // depth for entries re-installed mid-storm; the proactive
+        // clear frees generation-behind entries that would
+        // otherwise linger until natural access or capacity
+        // eviction (#985), wasting memory under sustained AI
+        // mutation storms.
+        hot_update_registry().register_storm_listener(
+            [this](std::uint64_t /*deopts_in_window*/, std::uint64_t /*window_ms*/) noexcept {
+                spec_jit_.on_deopt_storm();
+            });
     }
 
     // ── Hot-swap implementation (Issue #97 Action 1) ───────────

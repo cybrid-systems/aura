@@ -125,6 +125,21 @@ extern "C" std::uint64_t aura_specjit_shape_version_miss_total_v_read(void) {
     return g_specjit_shape_version_miss_total.load(std::memory_order_relaxed);
 }
 
+// Issue #2301: process-global storm-clear counter. Bumped every
+// time the storm listener wired up by CompilerService (see
+// service.ixx constructor body) fires the SpecJIT on_deopt_storm
+// entry point — which calls clear() + bumps both this counter
+// and the per-controller storm_clear_count_ accessor. Mirrors the
+// g_specjit_shape_version_miss_total C-linkage reader pattern;
+// observed via aura_specjit_storm_clear_total_v_read by the Agent
+// dashboard via the existing spec_jit / shape_profiler stats
+// surface (additive query key path).
+static std::atomic<std::uint64_t> g_specjit_storm_clear_total{0};
+
+extern "C" std::uint64_t aura_specjit_storm_clear_total_v_read(void) {
+    return g_specjit_storm_clear_total.load(std::memory_order_relaxed);
+}
+
 SpecJITController::SpecJITController(aura::jit::AuraJIT& jit)
     : jit_(jit) {}
 
@@ -311,6 +326,30 @@ void SpecJITController::clear() {
     specializations_.clear();
     global_version_ = 0;
     access_clock_ = 0;
+}
+
+// Issue #2301: storm listener entry point. Called by the
+// HotUpdateRegistry storm listener wired up in
+// CompilerService (service.ixx) constructor body — when
+// notify_deopt_storm_locked fires, the lambda calls
+// ctl.on_deopt_storm() which clears the spec cache and
+// bumps the storm-clear counter. The passive shape_version
+// miss in #2276 remains as defense-in-depth for entries
+// re-installed mid-storm (clear is destructive but the
+// storm-driven bump_shape_version_on_storm_enter already
+// invalidated the version stamps at #2257).
+//
+// Order matters: clear() must run BEFORE the counter bump
+// so observers see a drained cache + a bumped counter (not
+// a bumped counter that raced ahead of the clear on a
+// concurrent reader). Both bumps are atomic relaxed
+// (single-writer from the eval thread + atomic increment
+// on the process-global) so no additional memory barrier
+// is needed.
+void SpecJITController::on_deopt_storm() noexcept {
+    clear();
+    storm_clear_count_.fetch_add(1, std::memory_order_relaxed);
+    g_specjit_storm_clear_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #170 Phase 2 / item #1: deopt signal for the shape

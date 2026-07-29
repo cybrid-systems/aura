@@ -6,6 +6,7 @@
 #ifndef AURA_COMPILER_SPEC_JIT_CONTROLLER_H
 #define AURA_COMPILER_SPEC_JIT_CONTROLLER_H
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -67,6 +68,31 @@ public:
         return specializations_.size();
     }
     [[nodiscard]] std::uint64_t eviction_count() const noexcept { return evictions_; }
+
+    // Issue #2301: storm listener entry point. Wired up in
+    // CompilerService (service.ixx) constructor — when the
+    // HotUpdateRegistry fires notify_deopt_storm_locked, the
+    // SpecJIT cache is proactively cleared to free generation-behind
+    // specialized entries that would otherwise linger until natural
+    // access or capacity eviction (#985). The passive shape_version
+    // miss in #2276 still applies defense-in-depth for any entries
+    // re-installed mid-storm. Calls clear() (which empties
+    // specializations_ + resets global_version_ + access_clock_)
+    // and bumps the per-controller storm-clear counter.
+    //
+    // Thread safety: the storm listener fires from the eval thread
+    // while eval_mutex_ is held (see service.ixx where the lambda
+    // is registered), so clear() vs concurrent get_specialized /
+    // has_specialization / install_specialization from the same
+    // CompilerService instance are serialized by the higher-level
+    // lock. Cross-instance safety is not guaranteed — SpecJITController
+    // is owned by a single CompilerService. The counter is a relaxed
+    // atomic (mirrors g_specjit_shape_version_miss_total pattern),
+    // safe under concurrent reads.
+    void on_deopt_storm() noexcept;
+    [[nodiscard]] std::uint64_t storm_clear_count() const noexcept {
+        return storm_clear_count_.load(std::memory_order_relaxed);
+    }
 
     // Issue #170 Phase 2 / item #1: deopt signal.
     //
@@ -140,6 +166,11 @@ private:
     std::size_t max_specializations_ = 2048; // Issue #985
     std::uint64_t access_clock_ = 0;
     std::uint64_t evictions_ = 0;
+    // Issue #2301: per-controller storm-clear counter. Relaxed
+    // atomic (mirror of g_specjit_shape_version_miss_total pattern).
+    // Bumped in on_deopt_storm() alongside the process-global
+    // g_specjit_storm_clear_total.
+    std::atomic<std::uint64_t> storm_clear_count_{0};
 };
 
 // ── Runtime shape guard helper ────────────────────────────────
