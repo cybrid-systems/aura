@@ -2054,6 +2054,25 @@ def cmd_aot_per_eval_slot_invalidate_coverage():
     return 0
 
 
+def cmd_lifetime_contract_snapshot_coverage():
+    """Issue #2300: query:lifetime-contract-snapshot pure Agent surface.
+
+    Validates pure make_lifetime_contract_snapshot formula, MutationHold +
+    linear live counts, force_reason priority, schema-2300 additive keys.
+    """
+    print(f"{B}=== lifetime-contract-snapshot coverage (#2300) ==={N}")
+    script = ROOT / "scripts" / "check_lifetime_contract_snapshot_2300.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("lifetime-contract-snapshot coverage contract rows failed")
+        return 1
+    ok("lifetime-contract-snapshot coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2412,6 +2431,7 @@ def cmd_gate():
         or cmd_capture_cell_remap_coverage()
         or cmd_general_object_pin_coverage()
         or cmd_aot_per_eval_slot_invalidate_coverage()
+        or cmd_lifetime_contract_snapshot_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
