@@ -1286,6 +1286,15 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # test_issue_217 folded into edsl batch (wave 57 / #1957)
 # aura_add_issue_test_reflect_standalone(test_issue_217)
 
+# Issue #2289: GCC 16.1 early-snapshot reflection workaround cleanup.
+# Header-only smoke (opcode_reflect + to_json); no module / aura_test_objects.
+add_executable(test_opcode_reflect_2289 tests/reflect/test_opcode_reflect_2289.cpp)
+target_include_directories(test_opcode_reflect_2289 PRIVATE src)
+target_compile_options(test_opcode_reflect_2289 PRIVATE -freflection -Wall
+                       -Wno-sign-compare -Wno-unused-local-typedefs)
+target_compile_features(test_opcode_reflect_2289 PUBLIC cxx_std_26)
+target_link_libraries(test_opcode_reflect_2289 PRIVATE stdc++)
+add_test(NAME test_opcode_reflect_2289_verification COMMAND ./test_opcode_reflect_2289)
 # Issue #268 / #178: production NodeView roundtrip (split TU) — edsl_hygiene theme.
 # Relocated tests/issues/ → tests/edsl/ (wave 59 / #1957). Soft surface also in
 # test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection

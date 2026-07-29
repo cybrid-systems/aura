@@ -165,16 +165,16 @@ consteval MemberKind classify_type(std::meta::info type) {
         return MemberKind::Int64;
     }
 
-    // std::array<T,N> / std::vector<T> / std::span<T,N> detection
-    // via display_string (template_of + is_same_type has
-    // issues with GCC 16.1)
+    // std::array / std::vector / std::span via template_of equality.
+    // GCC 16.1.0 (#2289): template_of(^^std::array<T,N>) ==
+    // template_of(^^std::array<U,M>) works; no display_string needed.
     if (is_class_type(type) && has_template_arguments(type)) {
-        auto str = display_string_of(type);
-        if (str.starts_with("std::array"))
+        auto tmpl = template_of(type);
+        if (tmpl == template_of(^^std::array<int, 1>))
             return MemberKind::Array;
-        if (str.starts_with("std::vector"))
+        if (tmpl == template_of(^^std::vector<int>))
             return MemberKind::Vector;
-        if (str.starts_with("std::span"))
+        if (tmpl == template_of(^^std::span<int>))
             return MemberKind::Span;
     }
 
@@ -207,8 +207,7 @@ consteval std::size_t elem_size_of(std::meta::info type) {
     auto args = template_arguments_of(type);
     if (args.empty())
         return 0;
-    // static_assert(is_type(args[0]), "first template arg should be a type");
-    return size_of(args.data()[0]);
+    return size_of(args[0]);
 }
 
 // Get array length for std::array<T,N>
@@ -217,9 +216,7 @@ consteval std::size_t array_size_of(std::meta::info type) {
     auto args = template_arguments_of(type);
     if (args.size() < 2)
         return 0;
-    // static_assert(is_value(args.data()[1]), "second template arg should be a value");
-    // Use extract to get the value as size_t
-    return static_cast<std::size_t>(extract<std::size_t>(args.data()[1]));
+    return static_cast<std::size_t>(extract<std::size_t>(args[1]));
 }
 
 // ── Member reflection ─────────────────────────────────────────
