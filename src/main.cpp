@@ -2646,7 +2646,27 @@ int main(int argc, char* argv[]) {
     // stdio fprintf + explicit fflush, so stdout flushes per line in
     // pipe mode (line buffering via setvbuf at main() top). Banner is
     // suppressed in non-TTY mode by Repl itself.
-    bool interactive = (argc == 1);
+    //
+    // Issue #2322: `bool interactive = (argc == 1)` was true for any
+    // no-arg invocation, including piped stdin from CI harnesses.
+    // Repl's pipe path reads stdin one line at a time via
+    // `std::getline`, which silently breaks multi-line expressions
+    // like `(define (loop n acc) ...body on next line...)` — only the
+    // first line is fed to the parser, the rest are parsed as
+    // separate (incomplete) S-expressions, and the failure cascades
+    // into "unbound variable" errors on subsequent lines + REPL
+    // swallowing eval failures (returns 0 instead of 1).
+    //
+    // Fix: only enter Repl when stdin is actually a TTY. When stdin
+    // is piped, fall through to the pipe-mode handler below, which
+    // reads the entire input, splits balanced S-expressions via paren
+    // depth tracking, evaluates each, and returns 1 on the first eval
+    // failure (line 2817). This restores correct behavior for
+    //   - issue_135_define_loop_n_acc (expected '5150')
+    //   - issue_135_define_sum_0_define (expected '210')
+    //   - err_unbound × 4 (expected exit 1)
+    // while preserving interactive TTY behavior unchanged.
+    bool interactive = (argc == 1) && ::isatty(STDIN_FILENO);
     if (interactive) {
         aura::Repl repl(cs);
         repl.run();
