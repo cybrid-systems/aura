@@ -123,6 +123,21 @@ int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_en
 // compact paths use this to skip the remount call when no captures
 // exist (AC4 zero overhead hot path).
 int aura_closure_has_env_or_linear_captures(std::int64_t closure_id);
+
+// Issue #2297: densify-time object_remap context for structural
+// capture-cell remount (defense-in-depth after env_gen PRIMARY).
+// Published by RootRemapPass / Moving densify; consulted by
+// aura_remount_closure_captures after fingerprint OK. Empty / null
+// → zero extra work (AC3). Parallel olds/news arrays of length n.
+void aura_set_densify_object_remap(const void* const* olds, const void* const* news, std::size_t n);
+void aura_clear_densify_object_remap(void);
+// Optional densify-candidate overlay (fail-closed when a capture cell
+// points at a densified-away address with no remap entry).
+void aura_set_densify_candidates(const void* const* cands, std::size_t n);
+void aura_clear_densify_candidates(void);
+// Issue #2297: structural capture-cell remap metrics.
+void aura_bump_closure_capture_cell_remap_ok_total(std::uint64_t n);
+void aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n);
 

@@ -15,6 +15,9 @@
 module;
 
 #include "observability_metrics.h"
+// Issue #2297: publish densify object_remap for structural capture remount
+// (aura_remount_closure_captures defense-in-depth after densify).
+#include "aura_jit_bridge.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -205,6 +208,9 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
             std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
             return root_remap_detail::extra_densify_candidates().empty();
         }()) {
+        // Issue #2297: clear densify context when densify did not produce a map.
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
         return stats;
     }
 
@@ -221,6 +227,25 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
     for (const auto& [old_ptr, neu] : object_remap) {
         (void)neu;
         densify_keys.insert(old_ptr);
+    }
+
+    // Issue #2297: publish densify object_remap for later remount
+    // structural walk (closures that outlived densify without a
+    // registered RootRemap slot still get defense-in-depth rewrite).
+    if (!object_remap.empty()) {
+        std::vector<const void*> olds;
+        std::vector<const void*> news;
+        olds.reserve(object_remap.size());
+        news.reserve(object_remap.size());
+        for (const auto& [old_ptr, neu] : object_remap) {
+            olds.push_back(old_ptr);
+            news.push_back(neu);
+        }
+        aura_set_densify_object_remap(olds.data(), news.data(), olds.size());
+        if (!densify_keys.empty()) {
+            std::vector<const void*> cands(densify_keys.begin(), densify_keys.end());
+            aura_set_densify_candidates(cands.data(), cands.size());
+        }
     }
 
     for (void** slot : stable_copy) {
