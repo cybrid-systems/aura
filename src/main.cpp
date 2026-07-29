@@ -2629,7 +2629,7 @@ int main(int argc, char* argv[]) {
         auto _ = cs.eval_ir(input);
         auto snap = cs.snapshot();
         // Issue #62 Iter 3: dump the snapshot via the helper in
-        // observability_json.cpp (hand-rolled JSON; no -freflection).
+        // observability_json.cpp → to_json (aura-reflect / Wave A1).
         std::println("{}", snapshot_to_json(snap));
         return 0;
     }

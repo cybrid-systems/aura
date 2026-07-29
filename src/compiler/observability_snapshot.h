@@ -1,9 +1,7 @@
 // observability_snapshot.h — POD snapshot of observability state
-// (Issue #62 Iter 3). The atomic fields in CompilerMetrics are
-// not reflect-friendly (the framework's template only handles
-// built-in types). The snapshot is a plain-POD copy, populated
-// on demand by CompilerService::snapshot(). Then auto_to_json
-// serializes it cleanly.
+// (Issue #62 Iter 3). CompilerMetrics atomics are not reflected;
+// snapshot() loads them into this POD. JSON is aura::reflect::to_json
+// in observability_json.cpp (aura-reflect, -freflection; Wave A1).
 
 #ifndef AURA_COMPILER_OBSERVABILITY_SNAPSHOT_H
 #define AURA_COMPILER_OBSERVABILITY_SNAPSHOT_H
