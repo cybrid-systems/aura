@@ -7531,6 +7531,10 @@ struct CompilerMetrics {
     // hard_fail_total to distinguish 'cleared' from 'hard-failed' on the
     // dashboards (avalanche of either is observable separately).
     std::atomic<std::uint64_t> mutation_boundary_residual_defer_forced_clear_total{0}; // #2269
+    // Issue #2296: process-wide bit-vs-depth reconcile after Phase-5 Clear
+    // or steal orphan clear (Panic bit still set while depth==0 under
+    // multi-eval lag). Pairs with g_gc_defer_bit_reconcile_total.
+    std::atomic<std::uint64_t> mutation_boundary_residual_defer_bit_reconcile_total{0}; // #2296
     // Issue #2269: hard-fail path (AC1-A). Bumped when the residual defer
     // check applies the hard-fail branch under AURA_RESIDUAL_DEFER_POLICY=
     // hard (or legacy AURA_HARD_RESIDUAL_DEFER=1). Followed by std::abort()

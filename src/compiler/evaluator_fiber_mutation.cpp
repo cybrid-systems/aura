@@ -2191,7 +2191,10 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     }
 
     if (prev_eval_id != nullptr) {
+        // Issue #2203 / #2296: orphan clear + explicit bit reconcile so
+        // multi-eval Panic bit tracks process depth after steal (AC2).
         const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(prev_eval_id);
+        const auto reconciled = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
         if (cleared > 0) {
             aura::gc_hooks::g_gc_defer_orphan_cleared_on_steal_total.fetch_add(
                 cleared, std::memory_order_relaxed);
@@ -2203,11 +2206,18 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                     m->gc_defer_orphan_cleared_on_steal_total.fetch_add(cleared,
                                                                         std::memory_order_relaxed);
                     m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+                    if (reconciled > 0)
+                        m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
+                            reconciled, std::memory_order_relaxed);
                 }
             }
         } else if (auto* ev = evaluator_for_scheduler_hooks()) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                 m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+                if (reconciled > 0)
+                    m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
+                        reconciled, std::memory_order_relaxed);
+            }
         }
     } else if (auto* ev = evaluator_for_scheduler_hooks()) {
         if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))

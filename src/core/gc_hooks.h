@@ -770,6 +770,48 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     return cleared;
 }
 
+// Issue #2296: process-wide bit-vs-depth reconcile after per-eval clear.
+// Multi-eval + high-frequency steal can leave the Panic bit set while
+// process depth has already drained to 0 (arm/release race lag). Returns
+// the number of bits force-cleared (0 = already consistent).
+inline std::atomic<std::uint64_t> g_gc_defer_bit_reconcile_total{0};
+[[nodiscard]] inline std::uint64_t gc_defer_bit_reconcile_total() noexcept {
+    return g_gc_defer_bit_reconcile_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint32_t reconcile_gc_defer_bits_after_clear() noexcept {
+    std::uint32_t fixed = 0;
+    // Panic bit must track process-wide panic depth.
+    if (g_gc_defer_pending_panic_depth.load(std::memory_order_acquire) == 0) {
+        const auto mask = g_gc_defer_reasons.load(std::memory_order_acquire);
+        if ((mask & static_cast<std::uint32_t>(GcDeferReason::Panic)) != 0) {
+            (void)release_defer(GcDeferReason::Panic);
+            g_gc_defer_bit_reconcile_total.fetch_add(1, std::memory_order_relaxed);
+            ++fixed;
+        }
+    }
+    return fixed;
+}
+
+// Issue #2296: Phase-5 Clear / multi-eval force-clear for one evaluator.
+// Clears per-eval panic table + process depth, then reconciles the
+// process-wide bitmask. MutationHold is process-wide (not per-eval) —
+// caller re-releases hold separately when this eval owned the residual.
+struct ForceClearGcDeferResult {
+    std::uint32_t panic_depth_cleared = 0;
+    std::uint32_t bits_reconciled = 0;
+};
+
+[[nodiscard]] inline ForceClearGcDeferResult
+force_clear_all_gc_defer_for_evaluator(void* evaluator_id) noexcept {
+    ForceClearGcDeferResult r{};
+    r.panic_depth_cleared = clear_gc_defer_for_evaluator(evaluator_id);
+    // Always reconcile even when cleared==0: multi-eval lag can leave
+    // Panic bit set after another evaluator already drained depth.
+    r.bits_reconciled = reconcile_gc_defer_bits_after_clear();
+    return r;
+}
+
 [[nodiscard]] inline std::uint32_t gc_defer_pending_panic_depth() noexcept {
     return g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
 }
