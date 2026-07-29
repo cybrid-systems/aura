@@ -12,6 +12,7 @@ module;
 #include <utility>
 #include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "reflect/opcode_display_names.hh" // Wave A3: shared IROpcode display names
 
 export module aura.compiler.ir;
 import std;
@@ -211,8 +212,8 @@ export inline constexpr IROpcodeClass opcode_class(IROpcode op) noexcept {
 //   tests/reflect/test_ir_pod_phase4_2291.cpp
 //
 // Next types: same POD + auto_serialize pattern; C ABI back to
-// module code. Nested IRModule still bin_write; kOpcodeInfo names
-// hand table for now (names can align with opcode_reflect).
+// module code. Nested IRModule still bin_write. Display names live
+// in opcode_display_names.hh (Wave A3); arity stays in kOpcodeInfo.
 
 export struct IRInstruction {
     IROpcode opcode;
@@ -285,84 +286,72 @@ export struct OpcodeInfo {
     bool has_result_slot;       // true if operands[0] is the result slot
 };
 
+// Wave A3: .name from kIrOpcodeDisplayNames; arity/has_result stay here.
 export constexpr OpcodeInfo kOpcodeInfo[] = {
-    // 0  Nop
-    {"nop", 0, false},
-    // 1-4  Data
-    {"const-i64", 1, true}, // ConstI64
-    {"const-f64", 1, true}, // ConstF64
-    {"local", 2, true},     // Local: result, src
-    {"arg", 2, true},       // Arg: result, arg_slot
-    // 5-8  Arithmetic
-    {"add", 3, true}, // Add: result, a, b
-    {"sub", 3, true},
-    {"mul", 3, true},
-    {"div", 3, true},
-    // 9-13  Comparison
-    {"eq", 3, true}, // Eq: result, a, b
-    {"lt", 3, true},
-    {"gt", 3, true},
-    {"le", 3, true},
-    {"ge", 3, true},
-    // 14-16  Logic
-    {"and", 3, true}, // And: result, a, b
-    {"or", 3, true},
-    {"not", 2, true}, // Not: result, a
-    // 17-18  Control flow
-    {"branch", 3, false}, // Branch: cond, true_block, false_block
-    {"jump", 1, false},   // Jump: target_block
-    // 19-20
-    {"call", 4, false},   // Call: callee, arg_base, arg_count, result
-    {"return", 1, false}, // Return: value
-    // 21-24  Closures
-    {"make-closure", 3, true}, // MakeClosure: result, func_id, env_size
-    {"capture", 3, false},     // Capture: closure, env_idx, var
-    {"capture-ref", 3, false}, // CaptureRef: closure, env_idx, cell
-    {"apply", 4, false},       // Apply: closure, arg_base, arg_count, result
-    // 25-27  Mutable cells
-    {"new-cell", 1, true},  // NewCell: result
-    {"cell-set", 2, false}, // CellSet: cell, value
-    {"cell-get", 2, true},  // CellGet: result, cell
-    // 28  Type coercion
-    {"cast", 3, true}, // CastOp: result, value, type_tag
-    // 29  String
-    {"const-string", 2, true}, // ConstString: result, string_index
-    // 30-31  Primitive
-    {"prim-call", 3, true}, // PrimCall: prim_id, packed_args, result
-    {"primitive", 2, true}, // Primitive: result, slot_index
-    // 32-33  Constants
-    {"const-bool", 2, true}, // ConstBool: result, value
-    {"const-void", 1, true}, // ConstVoid: result
-    // 34-36  Pair
-    {"make-pair", 3, true}, // MakePair: result, car, cdr
-    {"car", 2, true},       // Car: result, pair
-    {"cdr", 2, true},       // Cdr: result, pair
-    // 37-38  Error handling
-    {"raise", 2, true},    // Raise: result, cause
-    {"is-error", 2, true}, // IsError: result, value
-    // Issue #124: try/catch exception support
-    {"try-begin", 1, false}, // TryBegin: handler_block (no result)
-    {"try-end", 1, true},    // TryEnd: result_slot (pop frame, value)
-    // 39-41  Hash operations (inline, avoids PrimCall dispatch)
-    {"hash-ref", 3, true},    // HashRef: result, hash, key
-    {"hash-set", 3, true},    // HashSet: void, hash, keyval
-    {"hash-remove", 3, true}, // HashRemove: void, hash, key
-    // 42-47  M4 Linear ownership
-    {"linear-wrap", 2, true},   // LinearWrap: result, inner
-    {"move-op", 2, true},       // MoveOp: result, inner
-    {"borrow-op", 2, true},     // BorrowOp: result, inner
-    {"mut-borrow-op", 2, true}, // MutBorrowOp: result, inner
-    {"drop-op", 1, false},      // DropOp: inner (no result)
-    {"ref-count-op", 3, true},  // RefCountOp: result, inner, inc/dec
-    {"arena-push", 2, true},    // ArenaPush: result, size
-    {"arena-pop", 1, false},    // ArenaPop: saved_offset (no result)
-    // Issue #61 Iter 2: GuardShape. result + arg + expected + generic_block.
-    {"guard-shape", 4, true}, // GuardShape: result, arg, expected, generic
-    // Issue #272 Cycle 3
-    {"top-cell-load", 2, true}, // TopCellLoad: result, cell_index
+    {kIrOpcodeDisplayNames[0], 0, false},  // Nop
+    {kIrOpcodeDisplayNames[1], 1, true},   // ConstI64
+    {kIrOpcodeDisplayNames[2], 1, true},   // ConstF64
+    {kIrOpcodeDisplayNames[3], 2, true},   // Local
+    {kIrOpcodeDisplayNames[4], 2, true},   // Arg
+    {kIrOpcodeDisplayNames[5], 3, true},   // Add
+    {kIrOpcodeDisplayNames[6], 3, true},   // Sub
+    {kIrOpcodeDisplayNames[7], 3, true},   // Mul
+    {kIrOpcodeDisplayNames[8], 3, true},   // Div
+    {kIrOpcodeDisplayNames[9], 3, true},   // Eq
+    {kIrOpcodeDisplayNames[10], 3, true},  // Lt
+    {kIrOpcodeDisplayNames[11], 3, true},  // Gt
+    {kIrOpcodeDisplayNames[12], 3, true},  // Le
+    {kIrOpcodeDisplayNames[13], 3, true},  // Ge
+    {kIrOpcodeDisplayNames[14], 3, true},  // And
+    {kIrOpcodeDisplayNames[15], 3, true},  // Or
+    {kIrOpcodeDisplayNames[16], 2, true},  // Not
+    {kIrOpcodeDisplayNames[17], 3, false}, // Branch
+    {kIrOpcodeDisplayNames[18], 1, false}, // Jump
+    {kIrOpcodeDisplayNames[19], 4, false}, // Call
+    {kIrOpcodeDisplayNames[20], 1, false}, // Return
+    {kIrOpcodeDisplayNames[21], 3, true},  // MakeClosure
+    {kIrOpcodeDisplayNames[22], 3, false}, // Capture
+    {kIrOpcodeDisplayNames[23], 3, false}, // CaptureRef
+    {kIrOpcodeDisplayNames[24], 4, false}, // Apply
+    {kIrOpcodeDisplayNames[25], 1, true},  // NewCell
+    {kIrOpcodeDisplayNames[26], 2, false}, // CellSet
+    {kIrOpcodeDisplayNames[27], 2, true},  // CellGet
+    {kIrOpcodeDisplayNames[28], 3, true},  // CastOp
+    {kIrOpcodeDisplayNames[29], 2, true},  // ConstString
+    {kIrOpcodeDisplayNames[30], 3, true},  // PrimCall
+    {kIrOpcodeDisplayNames[31], 2, true},  // Primitive
+    {kIrOpcodeDisplayNames[32], 2, true},  // ConstBool
+    {kIrOpcodeDisplayNames[33], 1, true},  // ConstVoid
+    {kIrOpcodeDisplayNames[34], 3, true},  // MakePair
+    {kIrOpcodeDisplayNames[35], 2, true},  // Car
+    {kIrOpcodeDisplayNames[36], 2, true},  // Cdr
+    {kIrOpcodeDisplayNames[37], 2, true},  // Raise
+    {kIrOpcodeDisplayNames[38], 2, true},  // IsError
+    {kIrOpcodeDisplayNames[39], 1, false}, // TryBegin
+    {kIrOpcodeDisplayNames[40], 1, true},  // TryEnd
+    {kIrOpcodeDisplayNames[41], 3, true},  // HashRef
+    {kIrOpcodeDisplayNames[42], 3, true},  // HashSet
+    {kIrOpcodeDisplayNames[43], 3, true},  // HashRemove
+    {kIrOpcodeDisplayNames[44], 2, true},  // LinearWrap
+    {kIrOpcodeDisplayNames[45], 2, true},  // MoveOp
+    {kIrOpcodeDisplayNames[46], 2, true},  // BorrowOp
+    {kIrOpcodeDisplayNames[47], 2, true},  // MutBorrowOp
+    {kIrOpcodeDisplayNames[48], 1, false}, // DropOp
+    {kIrOpcodeDisplayNames[49], 3, true},  // RefCountOp
+    {kIrOpcodeDisplayNames[50], 2, true},  // ArenaPush
+    {kIrOpcodeDisplayNames[51], 1, false}, // ArenaPop
+    {kIrOpcodeDisplayNames[52], 4, true},  // GuardShape
+    {kIrOpcodeDisplayNames[53], 2, true},  // TopCellLoad
 };
 
-static_assert(std::size(kOpcodeInfo) == 54, "kOpcodeInfo must have exactly one entry per IROpcode");
+static_assert(std::size(kOpcodeInfo) == kIrOpcodeDisplayNameCount,
+              "kOpcodeInfo must match kIrOpcodeDisplayNames");
+static_assert(std::size(kOpcodeInfo) == kIROpcodeCount,
+              "kOpcodeInfo must have exactly one entry per IROpcode");
+// Name pointers must alias the shared table (no drift).
+static_assert(kOpcodeInfo[0].name.data() == kIrOpcodeDisplayNames[0].data());
+static_assert(kOpcodeInfo[28].name == "cast");
+static_assert(kOpcodeInfo[53].name == "top-cell-load");
 
 // Helper: look up opcode info by IROpcode enum value
 export inline const OpcodeInfo* lookup_opcode(IROpcode op) {

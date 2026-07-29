@@ -1343,6 +1343,15 @@ target_compile_options(test_cache_header_magic_a2 PRIVATE -freflection -Wall
 target_compile_features(test_cache_header_magic_a2 PUBLIC cxx_std_26)
 target_link_libraries(test_cache_header_magic_a2 PRIVATE aura-reflect stdc++)
 add_test(NAME test_cache_header_magic_a2_verification COMMAND ./test_cache_header_magic_a2)
+
+# Wave A3: IROpcode P2996 idents ↔ kIrOpcodeDisplayNames / kOpcodeInfo.
+add_executable(test_opcode_info_align_a3 tests/reflect/test_opcode_info_align_a3.cpp)
+target_include_directories(test_opcode_info_align_a3 PRIVATE src)
+target_compile_options(test_opcode_info_align_a3 PRIVATE -freflection -Wall
+                       -Wno-sign-compare -Wno-unused-local-typedefs)
+target_compile_features(test_opcode_info_align_a3 PUBLIC cxx_std_26)
+target_link_libraries(test_opcode_info_align_a3 PRIVATE stdc++)
+add_test(NAME test_opcode_info_align_a3_verification COMMAND ./test_opcode_info_align_a3)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
