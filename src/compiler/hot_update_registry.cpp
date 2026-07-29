@@ -70,6 +70,13 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
 
 void HotUpdateRegistry::on_reload_success() noexcept {
     aot_reload_success_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2302: clear force_jit_regions_mask (wholesale — successful
+    // reload un-forces all regions) + reset attempts_left to 0.
+    force_jit_regions_mask_.store(0, std::memory_order_relaxed);
+    attempts_left_.store(0, std::memory_order_relaxed);
+    // Clear deferred-reemit flag too — successful reload means the
+    // deferred reemit (if any) has been processed.
+    deferred_reemit_pending_v2_.store(0, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_reload_rollback(AotReloadFail reason) noexcept {
@@ -121,6 +128,16 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     // invalidation is deferred; counters make the decision observable.
     force_jit_for_reason_total_.fetch_add(1, std::memory_order_relaxed);
     last_force_jit_reason_.store(static_cast<std::uint8_t>(reason), std::memory_order_release);
+    // Issue #2302: set the force_jit_regions_mask bit for this reason
+    // (bit N = reason N in the AotReloadFail enum). Agents query the
+    // mask via query:aot-reload-recovery-stats to know which regions
+    // are currently in force-JIT mode without OR'ing per-reason counters.
+    force_jit_regions_mask_.fetch_or(static_cast<std::uint64_t>(1)
+                                         << static_cast<std::uint8_t>(reason),
+                                     std::memory_order_relaxed);
+    // attempts_left exhausted on fall-back (matches the policy_for()
+    // loop terminal condition in aura_jit_bridge.cpp).
+    attempts_left_.store(0, std::memory_order_relaxed);
     last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(reason),
                                        std::memory_order_release);
 }
@@ -426,6 +443,27 @@ bool HotUpdateRegistry::shape_storm_active() const noexcept {
     return shape_storm_active_.load(std::memory_order_acquire);
 }
 
+// Issue #2302: accessor for the 5-field ReloadRecovery state.
+// Reads all 5 atomics in a single sweep so the query primitive
+// gets a coherent view (relaxed loads — safe because the
+// individual atomics are independently meaningful even if
+// temporally skewed across the 5 reads; queries are advisory).
+HotUpdateRegistry::ReloadRecoveryState HotUpdateRegistry::reload_recovery_state() const noexcept {
+    ReloadRecoveryState s;
+    s.attempts_left = attempts_left_.load(std::memory_order_relaxed);
+    s.force_jit_regions_mask = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    s.last_reason = last_aot_reload_fail_reason_.load(std::memory_order_relaxed);
+    s.pending_dirty_count = pending_dirty_count_.load(std::memory_order_relaxed);
+    s.deferred_reemit_pending = deferred_reemit_pending_v2_.load(std::memory_order_relaxed);
+    return s;
+}
+
+// Issue #2302: C-linkage reader for the pending-dirty count
+// (Agent dashboard / linter helpers).
+extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(void) {
+    return aura::compiler::hot_update_registry().pending_dirty_count();
+}
+
 // Issue #2094: unified StormLevel facade. Combines the global
 // deopt storm (should_throttle_reemit) with the shape storm
 // (shape_storm_active) into a single bitmask for downstream
@@ -548,6 +586,10 @@ bool HotUpdateRegistry::has_deferred_reemit() const noexcept {
 
 // Issue #2273: steal-path observability bumper.
 void HotUpdateRegistry::on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) noexcept {
+    // Issue #2302: mark deferred_reemit_pending so the unified
+    // recovery state reflects the steal-path reemit deferral.
+    deferred_reemit_pending_v2_.store(1, std::memory_order_relaxed);
+    // existing impl continues below
     reemit_deferred_seen_on_steal_total_.fetch_add(1, std::memory_order_relaxed);
     reemit_deferred_seen_on_steal_last_fiber_id_.store(fiber_id, std::memory_order_relaxed);
 }

@@ -17,6 +17,10 @@
 // aura_jit_bridge.h:299 (included above), so we don't re-declare it here.
 extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept;
 extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
+// Issue #2302: C-linkage reader for the unified ReloadRecovery
+// state machine's pending_dirty_count_ (defined in
+// hot_update_registry.cpp).
+extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(void);
 
 #include <atomic>
 #include <cstdint>
@@ -1426,6 +1430,78 @@ int main() {
         // AC6: success on 2nd Region attempt -> success counter, no exhausted
         CHECK(p_region.max_reemit >= 2, "AC6: Region policy supports up to 2 retries");
         CHECK(p_staging.max_reemit >= 2, "AC6: Staging policy supports up to 2 retries");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Section X: Issue #2302 ReloadRecovery state machine API
+    // ═══════════════════════════════════════════════════════════
+    //
+    // Verifies the 5-field ReloadRecoveryState accessor + the
+    // wire-up to on_force_jit_for_reason / on_reload_success /
+    // on_deferred_reemit_seen_on_steal. AC1-AC5 in the issue
+    // body describe query-primitive behaviors; this test exercises
+    // the underlying API surface (the query primitive is a
+    // follow-up). Skips AC2-AC5 E2E paths that require the
+    // aura_jit_bridge.cpp reload harness — tracked separately.
+    {
+        auto& reg = aura::compiler::hot_update_registry();
+
+        // Reset: clear force_jit_regions_mask via on_reload_success
+        // (wholesale clear) so prior state doesn't leak.
+        reg.on_reload_success();
+        const auto s0 = reg.reload_recovery_state();
+        CHECK(s0.attempts_left == 0, "2302.1: initial attempts_left == 0");
+        CHECK(s0.force_jit_regions_mask == 0, "2302.2: initial force_jit_regions_mask == 0");
+        // Note: last_reason is process-global (last_aot_reload_fail_reason_)
+        // and may carry residual state from prior tests in the same binary
+        // — only verify it after our own on_force_jit_for_reason below
+        // (2302.8). Skipped here intentionally.
+        CHECK(s0.pending_dirty_count == 0, "2302.4: initial pending_dirty_count == 0");
+        CHECK(s0.deferred_reemit_pending == 0, "2302.5: initial deferred_reemit_pending == 0");
+
+        // AC1 surface: on_force_jit_for_reason(Version) sets the
+        // force_jit_regions_mask bit + reset attempts_left + records
+        // last_reason. Query primitive (follow-up) would expose this
+        // as the 5-field struct.
+        reg.on_force_jit_for_reason(AotReloadFail::Version);
+        const auto s1 = reg.reload_recovery_state();
+        CHECK(s1.attempts_left == 0, "2302.6: post-force_jit attempts_left == 0");
+        CHECK((s1.force_jit_regions_mask & (1u << static_cast<unsigned>(AotReloadFail::Version))) !=
+                  0,
+              "2302.7: post-force_jit bit for Version set");
+        CHECK(s1.last_reason == static_cast<std::uint8_t>(AotReloadFail::Version),
+              "2302.8: post-force_jit last_reason == Version");
+
+        // AC3 surface: pending_dirty_count via inc/dec helpers.
+        reg.on_recovery_pending_dirty_inc();
+        reg.on_recovery_pending_dirty_inc();
+        reg.on_recovery_pending_dirty_inc();
+        const auto s2 = reg.reload_recovery_state();
+        CHECK(s2.pending_dirty_count == 3, "2302.9: pending_dirty_count == 3 after 3 inc");
+        reg.on_recovery_pending_dirty_dec();
+        const auto s3 = reg.reload_recovery_state();
+        CHECK(s3.pending_dirty_count == 2, "2302.10: pending_dirty_count == 2 after dec");
+        // dec on zero is a no-op (saturating)
+        reg.on_recovery_pending_dirty_dec();
+        reg.on_recovery_pending_dirty_dec();
+        reg.on_recovery_pending_dirty_dec();
+        reg.on_recovery_pending_dirty_dec();
+        CHECK(reg.reload_recovery_state().pending_dirty_count == 0,
+              "2302.11: pending_dirty_count saturates at 0");
+        // C-linkage reader returns same value.
+        CHECK(aura_hot_update_recovery_pending_dirty_total_v_read() == 0,
+              "2302.12: C-linkage reader matches per-controller pending_dirty_count");
+
+        // AC2 surface: successful reload clears force_jit_regions_mask
+        // wholesale + resets attempts_left + deferred_reemit_pending.
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        CHECK(reg.reload_recovery_state().force_jit_regions_mask != 0,
+              "2302.13: Env force_jit bit set");
+        reg.on_reload_success();
+        const auto s4 = reg.reload_recovery_state();
+        CHECK(s4.force_jit_regions_mask == 0, "2302.14: post-success force_jit cleared");
+        CHECK(s4.attempts_left == 0, "2302.15: post-success attempts_left == 0");
+        CHECK(s4.deferred_reemit_pending == 0, "2302.16: post-success deferred_reemit cleared");
     }
 
     if (::aura::test::g_failed)
