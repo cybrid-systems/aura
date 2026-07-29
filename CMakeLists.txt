@@ -400,18 +400,23 @@ endif()
 
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
-# ── aura-reflect: P2996 isolation (Issue #2290, GCC 16.1.0) ─────
-# Re-test on real g++ 16.1.0 (2026-07-29):
-#   PASS  non-module TU + -freflection + #include "reflect/reflect.hh"
-#   FAIL  same TU: `import std;` then #include <meta> / reflect.hh
-#         → hard redefinition of std entities (c++config / type_traits /
-#         pthreadtypes), not a silent ICE. GMF-based `export module`
-#         that includes <meta> still conflicts when a consumer also
-#         `import std` or pulls the same C headers.
-# Policy: keep pure -freflection TUs in this static lib, outside the
-# main CXX_MODULE_STD graph. Do NOT put non-reflection sources here.
-# Header-only helpers stay in reflect.hh; module wrapper is aura.reflect
-# (src/reflect/reflect.ixx) for future consumers once the conflict lifts.
+# ── aura-reflect: P2996 placement (Issue #2290, g++ 16.1.0) ─────
+# Hard limit is NOT "any module file cannot touch <meta>". Measured:
+#   PASS  non-module (or CXX_MODULE_STD without import std) + -freflection
+#         + #include <meta> / reflect.hh
+#   PASS  module GMF includes <meta> + -freflection → object builds
+#         (e.g. src/reflect/reflect.ixx)
+#   FAIL  same TU mixes `import std` with #include <meta>/reflect.hh
+#         (either order) → std redefinition / pthread header conflicts
+#         (hard errors, not a silent ICE)
+#   FAIL  consumer uses meta-bearing module exports that need BMI
+#         consteval / reflect templates (BMI "Bad file data"); pure
+#         runtime exports from such a module can still link
+# Policy: Aura business partitions all `import std`, so P2996 bodies
+# live here (aura-reflect) or other non-import-std -freflection TUs.
+# Call from module code via C ABI / split TU. Do not put non-meta
+# sources in this library. hygiene_validate.hh is meta-free and may
+# be included from import-std TUs.
 add_library(aura-reflect STATIC
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
@@ -1326,11 +1331,9 @@ target_compile_options(test_ir_pod_phase4_2291 PRIVATE -freflection -Wall
 target_compile_features(test_ir_pod_phase4_2291 PUBLIC cxx_std_26)
 target_link_libraries(test_ir_pod_phase4_2291 PRIVATE aura-reflect stdc++)
 add_test(NAME test_ir_pod_phase4_2291_verification COMMAND ./test_ir_pod_phase4_2291)
-# Issue #268 / #178: production NodeView roundtrip (split TU) — edsl_hygiene theme.
-# Relocated tests/issues/ → tests/edsl/ (wave 59 / #1957). Soft surface also in
-# test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection
-# on the reflect TU only (GCC 16 ICE if mixed with import aura.core.ast).
-# Bridge: tests/reflect/test_issue_178_bridge.h
+# Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
+# on the reflect TU only — import std / aura.core.ast must not mix with <meta>
+# (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
 add_executable(test_issue_178 tests/reflect/test_issue_178.cpp tests/reflect/test_issue_178_reflect.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)

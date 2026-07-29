@@ -1,9 +1,10 @@
 // ir_reflect_serialize.cpp — P2996 IR serialize / inspect (aura-reflect)
 //
-// Issue #2290: non-module + -freflection (cannot import aura.compiler.ir).
-// Issue #2291 Phase 4: pure-POD types (IRInstruction, IRFunctionHeader,
-// OpcodeArity) use only auto_serialize / auto_validate / to_json.
-// Full IRModule still uses recursive bin_write (containers + nested).
+// #2290: non-import-std + -freflection. Cannot `import aura.compiler.ir`
+// here because that module graph pulls import std, which conflicts with
+// <meta> in the same TU. POD mirrors live in ir_pod_reflect.hh.
+// #2291 Phase 4: IRInstruction / IRFunctionHeader / OpcodeArity use only
+// auto_serialize / auto_validate / to_json. Full IRModule uses bin_write.
 
 #include <cstdint>
 #include <cstddef>

@@ -3,13 +3,10 @@
 // test_issue_178.cpp — Issue #178 / #268: production NodeView
 // roundtrip via reflect_members + auto_serialize.
 //
-// GCC 16.1.0 (#2290): cannot mix import std / aura.core.ast with
-// reflect.hh (<meta>) in one TU (std redefinition conflicts).
-// This module TU uses the REAL aura::ast::NodeView; reflection
-// runs in test_issue_178_reflect.cpp (implements the bridge).
-//
-// Bridge API: tests/reflect/test_issue_178_bridge.h
-// Declared here by hand (must stay in sync with that header).
+// #2290: this TU imports std / aura.core.ast — cannot also include
+// reflect.hh (<meta>). Real NodeView lives here; P2996 roundtrip
+// runs in test_issue_178_reflect.cpp. Bridge decls by hand below
+// (sync with test_issue_178_bridge.h).
 
 import std;
 import aura.core.ast;

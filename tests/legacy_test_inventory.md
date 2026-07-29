@@ -1049,7 +1049,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_reflect_batch.cpp
 - `tests/reflect/test_reflect_hygiene_agent_diagnostics.cpp` (—) [domain_suite, theme_reflect] — reflect:provenance-blame for expand → diagnose → mutate closed loops.
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_hygiene_unit_batch.cpp — consolidated edsl hygiene drivers
-- `tests/reflect/test_reflect_isolation_2290.cpp` (#2290) [small, domain_suite, theme_reflect] — Issue #2290: aura-reflect isolation re-test on real GCC 16.1.0.
+- `tests/reflect/test_reflect_isolation_2290.cpp` (#2290) [small, domain_suite, theme_reflect] — Issue #2290: P2996 placement smoke (g++ 16.1.0).
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_macro_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_rest_param_hygiene_2169.cpp` (#2169) [domain_suite, theme_compiler] — AC1: source cites #2169; always gensym rest; process serial

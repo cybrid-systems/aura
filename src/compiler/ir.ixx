@@ -203,23 +203,16 @@ export inline constexpr IROpcodeClass opcode_class(IROpcode op) noexcept {
 
 // ── Phase 4 reflection (#2291): pure-POD IR wire path ────────
 //
-// IRInstruction / flat headers serialize via P2996 helpers in
-// the aura-reflect TU (cannot mix import aura.compiler.ir with
-// <meta> on GCC 16.1.0 — see #2290):
+// Wire path lives in aura-reflect (non-import-std + -freflection).
+// g++ 16.1.0: import std and <meta> cannot share a TU; this module
+// imports std, so IR types are mirrored under ir_pod_reflect.hh.
 //
-//   src/reflect/ir_pod_reflect.hh     — POD mirrors + pattern
-//   src/compiler/ir_reflect_serialize.cpp — C ABI + module dump
+//   ir_pod_reflect.hh / ir_reflect_serialize.cpp /
 //   tests/reflect/test_ir_pod_phase4_2291.cpp
 //
-// Pattern for the next type batch:
-//   1. Keep the type POD (arithmetic / enum / std::array).
-//   2. auto_serialize / auto_deserialize / auto_validate / to_json
-//      only — no field-by-field write loops.
-//   3. Mirror under ir_pod until module+meta isolation lifts.
-//
-// Nested containers (BasicBlock, IRFunction, IRModule) still use
-// recursive bin_write in aura-reflect. kOpcodeInfo names stay
-// hand tables for now; OpcodeArity POD covers numeric meta.
+// Next types: same POD + auto_serialize pattern; C ABI back to
+// module code. Nested IRModule still bin_write; kOpcodeInfo names
+// hand table for now (names can align with opcode_reflect).
 
 export struct IRInstruction {
     IROpcode opcode;
