@@ -420,6 +420,8 @@ target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 add_library(aura-reflect STATIC
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
+    # Wave A1: snapshot JSON via to_json (needs -freflection)
+    src/compiler/observability_json.cpp
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura-reflect PRIVATE -freflection)
@@ -429,10 +431,6 @@ target_link_libraries(aura-reflect PRIVATE stdc++)
 # Link reflect into aura
 target_link_libraries(aura PRIVATE aura-reflect)
 
-# observability_json.cpp: hand-rolled JSON, no -freflection / <meta>.
-# Was incorrectly bundled into aura-reflect for linker convenience;
-# lives with other non-module aura sources (#2290 isolation reduction).
-target_sources(aura PRIVATE src/compiler/observability_json.cpp)
 
 
 
@@ -695,9 +693,7 @@ add_library(aura_test_objects STATIC
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp
-    # Issue #2290: non-reflection JSON (was wrongly in aura-reflect)
-    src/compiler/observability_json.cpp)
+    src/compiler/lowering_linear_types_impl.cpp)
 set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 # .cpp impls require .ixx BMIs from the same module set the helper
 # wires for each test_issue_* target. Add them here so the static
@@ -1331,6 +1327,13 @@ target_compile_options(test_ir_pod_phase4_2291 PRIVATE -freflection -Wall
 target_compile_features(test_ir_pod_phase4_2291 PUBLIC cxx_std_26)
 target_link_libraries(test_ir_pod_phase4_2291 PRIVATE aura-reflect stdc++)
 add_test(NAME test_ir_pod_phase4_2291_verification COMMAND ./test_ir_pod_phase4_2291)
+
+# Wave A1: observability snapshot JSON via to_json (links aura-reflect).
+add_executable(test_obs_json_to_json_a1 tests/reflect/test_obs_json_to_json_a1.cpp)
+target_include_directories(test_obs_json_to_json_a1 PRIVATE src)
+target_compile_features(test_obs_json_to_json_a1 PUBLIC cxx_std_26)
+target_link_libraries(test_obs_json_to_json_a1 PRIVATE aura-reflect stdc++)
+add_test(NAME test_obs_json_to_json_a1_verification COMMAND ./test_obs_json_to_json_a1)
 # Issue #268 / #178: NodeView roundtrip (split TU). Full AC needs -freflection
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h

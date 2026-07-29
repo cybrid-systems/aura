@@ -12,9 +12,9 @@
 // fixed (fn/expected/actual/generic_block for deopt events).
 // For more complex event types, extend the dispatcher below.
 //
-// For --evo-explain (Iter 3), JSON serialization of CompilerSnapshot
-// is in observability_json.cpp (non-module, hand-rolled — no
-// -freflection; Issue #2290). Module TUs call snapshot_to_json().
+// For --evo-explain (Iter 3), JSON is in observability_json.cpp
+// (aura-reflect, -freflection + to_json; Wave A1). Module TUs call
+// snapshot_to_json() only — no <meta> in import-std TUs.
 //
 // Usage:
 //   log_event_deopt("foo", 1, 4, 7);
@@ -52,10 +52,10 @@ inline void log_event_deopt(const char* fn, std::uint32_t expected_shape,
                  fn_str, expected_shape, actual_shape, generic_block);
 }
 
-// Issue #62 Iter 3: forward-declared in observability_json.cpp.
-// Returns a JSON object literal of the snapshot. Compiled with
-// -freflection (the framework's auto_to_json).
+// Issue #62 Iter 3 / Wave A1: implemented in observability_json.cpp
+// via aura::reflect::to_json (full POD field set).
 std::string snapshot_to_json(const CompilerSnapshot& s);
+std::string fn_metrics_to_json(const FnMetrics& f);
 
 } // namespace aura::compiler
 
