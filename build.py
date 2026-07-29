@@ -1997,6 +1997,25 @@ def cmd_residual_gc_defer_multi_eval_coverage():
     return 0
 
 
+def cmd_capture_cell_remap_coverage():
+    """Issue #2297: structural capture-cell remount after densify.
+
+    Validates densify object_remap context, remount cell walk after env_gen
+    PRIMARY, metrics/query schema-2297, RootRemapPass publish.
+    """
+    print(f"{B}=== structural capture-cell remount coverage (#2297) ==={N}")
+    script = ROOT / "scripts" / "check_capture_cell_remap_2297.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("structural capture-cell remount coverage contract rows failed")
+        return 1
+    ok("structural capture-cell remount coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2352,6 +2371,7 @@ def cmd_gate():
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
         or cmd_residual_gc_defer_multi_eval_coverage()
+        or cmd_capture_cell_remap_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

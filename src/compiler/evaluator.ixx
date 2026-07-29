@@ -2016,6 +2016,17 @@ public:
             return m->closure_capture_env_gen_mismatch_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2297: structural capture-cell remap after densify.
+    [[nodiscard]] std::uint64_t get_closure_capture_cell_remap_ok_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->closure_capture_cell_remap_ok_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_closure_capture_cell_remap_fail_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->closure_capture_cell_remap_fail_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     void bump_aot_live_closure_refresh_on_mutation_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

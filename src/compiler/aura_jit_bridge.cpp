@@ -232,6 +232,18 @@ extern "C" void aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n
     }
 }
 
+// Issue #2297: structural capture-cell remap metrics.
+extern "C" void aura_bump_closure_capture_cell_remap_ok_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->closure_capture_cell_remap_ok_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+extern "C" void aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->closure_capture_cell_remap_fail_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2234: aura_closure_has_env_or_linear_captures /
 // aura_remount_closure_captures live in aura_jit_runtime.cpp
 // (they need file-static g_closure_* tables). Declarations remain

@@ -1320,15 +1320,13 @@ int aura_closure_is_freed(int64_t closure_id) {
     return (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) ? 1 : 0;
 }
 
-// Issue #2234: capture detection helper. Returns 1 when the
-// closure has any env or linear capture to remount (proxied by
-// non-zero defuse_version or non-zero linear_state). Lives here
-// (not bridge) because g_closure_* tables are file-static.
-extern "C" int aura_closure_has_env_or_linear_captures(std::int64_t closure_id) {
+// Issue #2234: capture detection body (no lock). Caller must hold
+// shared or exclusive g_closure_table_mtx, or accept a data race for
+// best-effort probes.
+static int aura_closure_has_env_or_linear_captures_unlocked(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;
     const auto cid = static_cast<std::size_t>(closure_id);
-    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     if (cid >= g_closure_func_ids.size())
         return 0;
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
@@ -1343,28 +1341,129 @@ extern "C" int aura_closure_has_env_or_linear_captures(std::int64_t closure_id) 
     return (has_env || has_env_gen || has_linear) ? 1 : 0;
 }
 
-// Issue #2234 + #2272: post-reemit / post-compact env_frame + linear
-// capture remount consistency gate. #2272 promotes env_gen to the
-// PRIMARY env axis (live_env_gen vs cid_env_gen); the legacy defuse
-// proxy remains a secondary check (for transition period + #2091
-// host mirror parity). Returns 1 when captures match live; 0 → caller
-// sets MustDeopt + bumps closure_capture_env_gen_mismatch_total.
-extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
-                                             std::uint8_t linear_fp) {
+// Public C ABI: shared lock. Reemit path uses unlocked form (holds exclusive).
+extern "C" int aura_closure_has_env_or_linear_captures(std::int64_t closure_id) {
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    return aura_closure_has_env_or_linear_captures_unlocked(closure_id);
+}
+
+// Issue #2297: densify object_remap context for structural capture-cell
+// remount. Published by RootRemapPass / tests; consulted after env_gen
+// PRIMARY OK. Empty map → zero extra work (AC3).
+namespace densify_remap_detail {
+    inline std::mutex& mtx() {
+        static std::mutex m;
+        return m;
+    }
+    inline std::unordered_map<void*, void*>& object_remap() {
+        static std::unordered_map<void*, void*> m;
+        return m;
+    }
+    inline std::unordered_set<void*>& densify_candidates() {
+        static std::unordered_set<void*> s;
+        return s;
+    }
+} // namespace densify_remap_detail
+
+extern "C" void aura_set_densify_object_remap(const void* const* olds, const void* const* news,
+                                              std::size_t n) {
+    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    auto& m = densify_remap_detail::object_remap();
+    m.clear();
+    if (!olds || !news || n == 0)
+        return;
+    m.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (olds[i])
+            m[const_cast<void*>(olds[i])] = const_cast<void*>(news[i]);
+    }
+}
+
+extern "C" void aura_clear_densify_object_remap(void) {
+    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    densify_remap_detail::object_remap().clear();
+}
+
+extern "C" void aura_set_densify_candidates(const void* const* cands, std::size_t n) {
+    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    auto& s = densify_remap_detail::densify_candidates();
+    s.clear();
+    if (!cands || n == 0)
+        return;
+    s.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (cands[i])
+            s.insert(const_cast<void*>(cands[i]));
+    }
+}
+
+extern "C" void aura_clear_densify_candidates(void) {
+    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    densify_remap_detail::densify_candidates().clear();
+}
+
+// Issue #2297: rewrite g_closure_envs cells through densify object_remap.
+// Cells are int64_t; raw create-object pointers stored as bit patterns
+// match remap keys exactly. Non-pointer values never hit the map → skip.
+// Returns 1 on success, 0 on fail-closed (unmapped densify candidate).
+static int remount_capture_cells_via_densify_(std::size_t cid) {
+    std::unordered_map<void*, void*> remap_copy;
+    std::unordered_set<void*> cand_copy;
+    {
+        std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+        if (densify_remap_detail::object_remap().empty() &&
+            densify_remap_detail::densify_candidates().empty())
+            return 1; // AC3: zero work
+        remap_copy = densify_remap_detail::object_remap();
+        cand_copy = densify_remap_detail::densify_candidates();
+    }
+    // Merge remap keys into candidates for fail-closed checks.
+    for (const auto& [old_ptr, neu] : remap_copy) {
+        (void)neu;
+        cand_copy.insert(old_ptr);
+    }
+    if (cid >= g_closure_envs.size())
+        return 1;
+    auto& env = g_closure_envs[cid];
+    std::uint64_t ok_n = 0;
+    for (auto& cell : env) {
+        if (cell == 0)
+            continue;
+        void* as_ptr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+        auto it = remap_copy.find(as_ptr);
+        if (it != remap_copy.end()) {
+            cell = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(it->second));
+            ++ok_n;
+            continue;
+        }
+        // Unmapped densify candidate → fail closed (MustDeopt path).
+        if (cand_copy.find(as_ptr) != cand_copy.end()) {
+            aura_bump_closure_capture_cell_remap_fail_total(1);
+            return 0;
+        }
+    }
+    if (ok_n)
+        aura_bump_closure_capture_cell_remap_ok_total(ok_n);
+    return 1;
+}
+
+// Issue #2234 + #2272 + #2297: remount body. Caller must hold exclusive
+// g_closure_table_mtx when densify remap may rewrite g_closure_envs
+// (or accept shared for fingerprint-only when densify empty).
+static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
+                                                  std::uint64_t live_env_gen,
+                                                  std::uint8_t linear_fp) {
     if (closure_id < 0)
         return 0;
     const auto cid = static_cast<std::size_t>(closure_id);
-    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     if (cid >= g_closure_func_ids.size())
         return 0;
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
         return 0;
     // Issue #2272 PRIMARY axis: env_generation_ stamp vs live.
+    // Cell remap only runs after env_gen OK (AC2).
     const auto cid_env_gen = cid < g_closure_env_gen.size() ? g_closure_env_gen[cid] : 0;
     if (cid_env_gen != 0 && cid_env_gen != live_env_gen) {
-        // Bump mismatch counter via the C ABI (per-class atomic,
-        // not file-scope — keeps observability on the metrics path).
-        // (Forward decl lives in aura_jit_bridge.h — already in scope here.)
         aura_bump_closure_capture_env_gen_mismatch_total(1);
         return 0;
     }
@@ -1373,7 +1472,19 @@ extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint6
     const auto cid_linear = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
     const bool env_ok = (cid_defuse == 0) || (cid_defuse == live_env_gen);
     const bool linear_ok = (cid_linear == 0) || (cid_linear == linear_fp);
-    return (env_ok && linear_ok) ? 1 : 0;
+    if (!(env_ok && linear_ok))
+        return 0;
+    // Issue #2297: structural capture-cell remount (after fingerprint OK).
+    if (remount_capture_cells_via_densify_(cid) == 0)
+        return 0;
+    return 1;
+}
+
+// Public C ABI: takes exclusive table lock (may rewrite capture cells).
+extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                             std::uint8_t linear_fp) {
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    return aura_remount_closure_captures_unlocked(closure_id, live_env_gen, linear_fp);
 }
 
 // Issue #660 Option 1: set the closure's name after allocation. Used by
@@ -1597,10 +1708,12 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // caller must set MustDeopt + batch_deopt so the next
         // aura_closure_call force-deopts instead of running pre-reemit
         // native with dirty captures.
-        if (aura_closure_has_env_or_linear_captures(static_cast<std::int64_t>(cid))) {
+        // Unlocked has/remount: exclusive g_closure_table_mtx already held
+        // (non-recursive — public APIs would deadlock on re-lock).
+        if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid))) {
             const auto live_linear_fp = aura_get_aot_live_linear_state_fingerprint();
-            if (aura_remount_closure_captures(static_cast<std::int64_t>(cid), host_defuse,
-                                              live_linear_fp) != 0) {
+            if (aura_remount_closure_captures_unlocked(static_cast<std::int64_t>(cid), host_defuse,
+                                                       live_linear_fp) != 0) {
                 aura_bump_closure_capture_remount_ok_total(1);
             } else {
                 // Remount fail — keep the flag set so the next

@@ -12880,8 +12880,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         capture_remount_fail));
                 }
             }
-            // Capacity 64: #1930/#2233/#2234 keys (was 32).
-            auto* ht = FlatHashTable::create(64);
+            // Capacity must be power-of-two (open-address mask).
+            // ~55 keys with #2297; use 128 for headroom (64 was tight).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -12945,6 +12946,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("closure-capture-env-gen-wired", 1);
             insert_kv("schema-2272", 2272);
             insert_kv("issue-2272", 2272);
+            // Issue #2297: structural capture-cell remap (densify object_remap).
+            // Read metrics via compiler_metrics_ (not qev getters) to avoid
+            // partition BMI coupling on new accessors.
+            {
+                auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());
+                const auto cell_ok =
+                    m ? m->closure_capture_cell_remap_ok_total.load(std::memory_order_relaxed) : 0;
+                const auto cell_fail =
+                    m ? m->closure_capture_cell_remap_fail_total.load(std::memory_order_relaxed)
+                      : 0;
+                insert_kv("closure-capture-cell-remap-ok-total",
+                          static_cast<std::int64_t>(cell_ok));
+                insert_kv("closure-capture-cell-remap-fail-total",
+                          static_cast<std::int64_t>(cell_fail));
+            }
+            insert_kv("capture-cell-remap-wired", 1);
+            insert_kv("schema-2297", 2297);
+            insert_kv("issue-2297", 2297);
             insert_kv("schema-2234", 2234);
             insert_kv("issue-2234", 2234);
             insert_kv("capture-remount-wired", 1);

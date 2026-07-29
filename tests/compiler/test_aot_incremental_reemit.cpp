@@ -1481,8 +1481,8 @@ static void ac2272_env_gen_remount(CompilerService& cs) {
           "AC1: g_closure_env_gen vector declared");
     CHECK(jit_rt.find("stamp_closure_provenance_locked") != std::string::npos,
           "AC1: stamp_closure_provenance_locked stamps env_gen");
-    // AC2: PRIMARY axis check in remount.
-    CHECK(jit_rt.find("g_closure_env_gen[cid] != live_env_gen") != std::string::npos,
+    // AC2: PRIMARY axis check in remount (local cid_env_gen after load).
+    CHECK(jit_rt.find("cid_env_gen != live_env_gen") != std::string::npos,
           "AC2: remount PRIMARY env_gen check");
     CHECK(bridge_cpp.find("aura_bump_closure_capture_env_gen_mismatch_total") != std::string::npos,
           "AC2: mismatch counter bumper impl");
@@ -1535,6 +1535,157 @@ static void ac2272_env_gen_remount(CompilerService& cs) {
     }
 }
 
+// Issue #2297 AC1-AC5: structural capture-cell remount after densify.
+// AC1: densify remap rewrites capture cell OR fail-closed MustDeopt path.
+// AC2: env_gen mismatch still PRIMARY (cell remap not reached).
+// AC3: empty remap / no cells → zero extra work.
+// AC4: metrics + query keys + schema-2297.
+// AC5: source-cite; #2272 / #2234 paths remain green.
+static void ac2297_structural_cell_remap(CompilerService& cs) {
+    std::println("\n--- AC #2297: structural capture-cell remount after densify ---");
+    auto jit_rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
+    auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto rpass = read_file("src/compiler/root_remap_pass.ixx");
+
+    CHECK(bridge_h.find("aura_set_densify_object_remap") != std::string::npos,
+          "AC5: densify remap C ABI declared");
+    CHECK(bridge_h.find("aura_bump_closure_capture_cell_remap_ok_total") != std::string::npos,
+          "AC5: cell remap ok bumper declared");
+    CHECK(jit_rt.find("remount_capture_cells_via_densify_") != std::string::npos,
+          "AC5: structural cell remount helper");
+    CHECK(jit_rt.find("aura_set_densify_object_remap") != std::string::npos,
+          "AC5: densify remap publish impl");
+    CHECK(obs.find("closure_capture_cell_remap_ok_total{0}") != std::string::npos,
+          "AC4: cell_remap_ok metric field");
+    CHECK(obs.find("closure_capture_cell_remap_fail_total{0}") != std::string::npos,
+          "AC4: cell_remap_fail metric field");
+    CHECK(q.find("closure-capture-cell-remap-ok-total") != std::string::npos, "AC4: query ok key");
+    CHECK(q.find("closure-capture-cell-remap-fail-total") != std::string::npos,
+          "AC4: query fail key");
+    CHECK(q.find("schema-2297") != std::string::npos && q.find("issue-2297") != std::string::npos,
+          "AC4: schema-2297 / issue-2297 lineage");
+    CHECK(q.find("capture-cell-remap-wired") != std::string::npos,
+          "AC4: capture-cell-remap-wired sentinel");
+    CHECK(rpass.find("aura_set_densify_object_remap") != std::string::npos,
+          "AC5: RootRemapPass publishes densify context");
+    // AC2: cell remap after env_gen PRIMARY (order in remount).
+    CHECK(jit_rt.find("Cell remap only runs after env_gen OK") != std::string::npos ||
+              jit_rt.find("remount_capture_cells_via_densify_") != std::string::npos,
+          "AC2: structural remount after fingerprint");
+
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    aura_set_aot_metrics(m);
+    // remount's live_env_gen param is dual-used for env_gen AND defuse.
+    // Align both stamps + the caller's live arg to the closure's defuse
+    // (alloc stamps defuse from host mirror).
+    auto stamp_for_remount = [](std::int64_t cid) -> std::uint64_t {
+        const auto defuse = aura_get_closure_defuse_version(cid);
+        aura_closure_set_env_gen(cid, defuse);
+        return defuse;
+    };
+    const auto live_linear = aura_get_aot_live_linear_state_fingerprint();
+
+    // AC3: empty densify context → remount succeeds without cell metrics
+    {
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+        const auto fail0 = m->closure_capture_cell_remap_fail_total.load();
+        const auto cid = static_cast<std::int64_t>(aura_alloc_closure(/*func_id=*/0));
+        if (cid >= 0) {
+            const auto live = stamp_for_remount(cid);
+            const int r = aura_remount_closure_captures(cid, live, live_linear);
+            CHECK(r == 1, "AC3: remount ok with empty densify context");
+            CHECK(m->closure_capture_cell_remap_ok_total.load() == ok0,
+                  "AC3: cell_remap_ok unchanged (zero work)");
+            CHECK(m->closure_capture_cell_remap_fail_total.load() == fail0,
+                  "AC3: cell_remap_fail unchanged");
+        }
+    }
+
+    // AC1 happy: densify remap rewrites capture cell
+    {
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        const auto cid = static_cast<std::int64_t>(aura_alloc_closure(/*func_id=*/0));
+        if (cid >= 0) {
+            const auto live = stamp_for_remount(cid);
+            void* old_addr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1000));
+            void* new_addr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2000));
+            aura_closure_capture(
+                cid, /*idx=*/0,
+                static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(old_addr)));
+            const void* olds[] = {old_addr};
+            const void* news[] = {new_addr};
+            aura_set_densify_object_remap(olds, news, 1);
+            const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+            const int r = aura_remount_closure_captures(cid, live, live_linear);
+            CHECK(r == 1, "AC1: remount ok after cell rewrite");
+            CHECK(m->closure_capture_cell_remap_ok_total.load() > ok0, "AC1: cell_remap_ok bumped");
+            aura_clear_densify_object_remap();
+        }
+    }
+
+    // AC1 fail-closed: unmapped densify candidate
+    {
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        const auto cid = static_cast<std::int64_t>(aura_alloc_closure(/*func_id=*/0));
+        if (cid >= 0) {
+            const auto live = stamp_for_remount(cid);
+            void* dangling = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xDEAD));
+            aura_closure_capture(
+                cid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(dangling)));
+            void* other_old = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1));
+            void* other_neu = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2));
+            const void* olds[] = {other_old};
+            const void* news[] = {other_neu};
+            aura_set_densify_object_remap(olds, news, 1);
+            const void* cands[] = {dangling};
+            aura_set_densify_candidates(cands, 1);
+            const auto fail0 = m->closure_capture_cell_remap_fail_total.load();
+            const int r = aura_remount_closure_captures(cid, live, live_linear);
+            CHECK(r == 0, "AC1-fail: remount returns 0 on unmapped densify candidate");
+            CHECK(m->closure_capture_cell_remap_fail_total.load() > fail0,
+                  "AC1-fail: cell_remap_fail bumped");
+            aura_clear_densify_object_remap();
+            aura_clear_densify_candidates();
+        }
+    }
+
+    // AC2: env_gen mismatch still PRIMARY (cell remap not reached)
+    {
+        aura_clear_densify_object_remap();
+        const auto cid = static_cast<std::int64_t>(aura_alloc_closure(/*func_id=*/0));
+        if (cid >= 0) {
+            void* old_addr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3000));
+            void* new_addr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x4000));
+            aura_closure_capture(
+                cid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(old_addr)));
+            const void* olds[] = {old_addr};
+            const void* news[] = {new_addr};
+            aura_set_densify_object_remap(olds, news, 1);
+            aura_closure_set_env_gen(cid, 42);
+            const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+            const auto mm0 = m->closure_capture_env_gen_mismatch_total.load();
+            // live=99 mismatches env_gen=42 → PRIMARY fail before cell remap.
+            const int r = aura_remount_closure_captures(cid, /*live=*/99, live_linear);
+            CHECK(r == 0, "AC2: env_gen mismatch fails remount");
+            CHECK(m->closure_capture_env_gen_mismatch_total.load() > mm0,
+                  "AC2: env_gen mismatch counter bumped");
+            CHECK(m->closure_capture_cell_remap_ok_total.load() == ok0,
+                  "AC2: cell remap not run on env_gen fail");
+            aura_clear_densify_object_remap();
+        }
+    }
+
+    aura_set_aot_metrics(nullptr);
+}
+
 } // namespace
 
 int main() {
@@ -1571,6 +1722,10 @@ int main() {
     {
         CompilerService cs;
         ac2272_env_gen_remount(cs);
+    }
+    {
+        CompilerService cs;
+        ac2297_structural_cell_remap(cs);
     }
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

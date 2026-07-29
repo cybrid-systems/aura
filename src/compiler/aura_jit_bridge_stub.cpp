@@ -662,6 +662,17 @@ aura_bump_live_closure_epoch_restamp_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_closure_capture_remount_ok_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
+aura_bump_closure_capture_cell_remap_ok_total(std::uint64_t /*n*/) {}
+extern "C" __attribute__((weak)) void
+aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t /*n*/) {}
+extern "C" __attribute__((weak)) void aura_set_densify_object_remap(const void* const* /*olds*/,
+                                                                    const void* const* /*news*/,
+                                                                    std::size_t /*n*/) {}
+extern "C" __attribute__((weak)) void aura_clear_densify_object_remap(void) {}
+extern "C" __attribute__((weak)) void aura_set_densify_candidates(const void* const* /*cands*/,
+                                                                  std::size_t /*n*/) {}
+extern "C" __attribute__((weak)) void aura_clear_densify_candidates(void) {}
+extern "C" __attribute__((weak)) void
 aura_bump_closure_capture_remount_fail_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t /*n*/) {}
