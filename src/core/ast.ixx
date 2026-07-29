@@ -44,16 +44,16 @@ namespace aura::ast {
 // NodeId / NULL_NODE / SymId come from aura.core.mutation (#275).
 export constexpr SymId INVALID_SYM = ~0u;
 
-// ── Issue #217 Cycle 5/7: AST types are reflection-ready ─────
+// ── Wave B3: small public AST PODs on auto_serialize ─────────
 //
-// The AST types below (SourceLocation, ParsedPhase, NodeMeta,
-// NodeView, MutationRecord, Patch, MatchClauseInfo) are plain
-// POD structs that the C++26 P2996 reflection
-// (reflect_members<T>()) sees automatically — no explicit
-// REFLECT_MEMBERS annotation is required. The reflection-driven
-// serialization (auto_serialize<T>(buf, obj) /
-// auto_deserialize<T>(buf, pos)) works for the simple types
-// (SourceLocation, Patch) out of the box.
+// SourceLocation, Patch, MatchClauseInfo, NodeLifecycleStats,
+// PostRestoreReport wire via mirrors in reflect/ast_pod_reflect.hh
+// (non-import-std + -freflection; see test_ast_pod_reflect_b3).
+// FlatAST SoA remains custom serialize_soa (private columns).
+//
+// Legacy note (#217 Cycle 5/7): public POD types need no
+// REFLECT_MEMBERS macro; NodeView / private SoA still need
+// split-TU or hand wire.
 //
 // Cycle 7 updates:
 //   - std::span<T, N> is now a first-class MemberKind
