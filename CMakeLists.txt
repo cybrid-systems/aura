@@ -2758,6 +2758,13 @@ aura_add_issue_test(test_dead_coercion_layered_2282)
 aura_issue_test_link_llvm_jit(test_dead_coercion_layered_2282)
 add_dependencies(all_test_issue_targets test_dead_coercion_layered_2282)
 
+# Issue #2283: wire type_dep_graph_ into infer_flat_partial primary affected set
+# via touched_type_ids (CS touched_roots + occurrence vars + rebinding type change).
+# Systematic merge + live_and_still_typed filter + 2 new metrics + 1 additive query primitive.
+aura_add_issue_test(test_type_dep_partial_merge_2283)
+aura_issue_test_link_llvm_jit(test_type_dep_partial_merge_2283)
+add_dependencies(all_test_issue_targets test_type_dep_partial_merge_2283)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)

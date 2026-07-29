@@ -6678,6 +6678,75 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #2283: query:type-dep-partial-merge-stats. Hash view of the
+    // systematic type_dep_graph_ merge for delta-touched TypeIds (CS
+    // touched_roots + occurrence vars + rebinding type change). Agents
+    // can compute the ratio of partial-merge expansion vs the existing
+    // type_dep_graph_affected_expand_total to gauge the cost of the new
+    // path under incremental typecheck.
+    //   - type-dep-partial-merge-total: # of times the merge was performed
+    //   - type-dep-partial-nodes-added: # of nodes added by the merge
+    //   - type-dep-graph-affected-expand-total: existing #1528 expansion
+    //   - type-dep-merge-ratio-bp: nodes_added * 10000 / affected_expand
+    //     (ratio in basis points; 0 when no expansion)
+    ObservabilityPrims::register_stats_impl(
+        "query:type-dep-partial-merge-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::int64_t partial_merge_total =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_partial_merge_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t partial_nodes_added =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_partial_nodes_added.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t affected_expand =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_graph_affected_expand_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t merge_ratio_bp =
+                affected_expand > 0 ? (partial_nodes_added * 10000) / affected_expand : 0;
+            insert_kv("type-dep-partial-merge-total", partial_merge_total);
+            insert_kv("type-dep-partial-nodes-added", partial_nodes_added);
+            insert_kv("type-dep-graph-affected-expand-total", affected_expand);
+            insert_kv("type-dep-merge-ratio-bp", merge_ratio_bp);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #305: query:type-propagation-stats. Returns the
     // sum of 4 TypeId/TypeScheme propagation observability
     // counters from the shared CompilerMetrics struct (EDA

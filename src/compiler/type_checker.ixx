@@ -505,6 +505,13 @@ public:
     // high-priority dirty root for solve_delta worklist + re-generalize.
     void mark_let_poly_dirty(aura::core::TypeId var);
     [[nodiscard]] std::size_t touched_roots_size() const noexcept { return touched_roots_.size(); }
+    // Issue #2283: expose the actual touched_roots set so infer_flat_partial
+    // can build touched_type_ids from CS touched_roots (in addition to
+    // occurrence targets + rebinding type change) for the systematic
+    // type_dep_graph_ merge.
+    [[nodiscard]] const std::unordered_set<std::uint32_t>& touched_roots() const noexcept {
+        return touched_roots_;
+    }
     [[nodiscard]] std::size_t let_poly_dirty_roots_size() const noexcept {
         return let_poly_dirty_roots_.size();
     }
