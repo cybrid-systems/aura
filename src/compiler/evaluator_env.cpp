@@ -1922,6 +1922,19 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
             m->envframe_truncate_doomed_closures_total.fetch_add(doomed, std::memory_order_relaxed);
         }
     }
+    // Issue #2295: release env_frames unique lock BEFORE ownership-exit
+    // scan. scan_live_closures takes closures_mtx_ and may touch env
+    // frames — holding wlock here is a Resource deadlock avoided footgun
+    // (NEVER env_frames then closures under the same thread).
+    wlock.unlock();
+    // Ownership protocol after truncate: skip-freed scan closes dual-path
+    // stale windows for resume-hint / bare-chain holders. EnvFrameRef
+    // holders outside this function still call drop() after use_site_check
+    // fails (AC1).
+    if (dropped > 0) {
+        (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                     /*only_if_moved=*/true);
+    }
     return dropped;
 }
 
@@ -2443,6 +2456,54 @@ std::optional<EnvFrame const*> EnvFrameRef::resolve_if_valid(Evaluator const& ev
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
         m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
     return std::nullopt;
+}
+
+// Issue #2295: ownership transfer protocol.
+// transfer_to restamps dst from the live env_generation_, moves the
+// index, clears *this. Prefer this over a silent generation bump when
+// a live Ref is observed at steal / remount sites.
+void EnvFrameRef::transfer_to(Evaluator& ev, EnvFrameRef& dst) noexcept {
+    if (!has_ownership()) {
+        dst = invalid();
+        return;
+    }
+    // OOB / truncated source → drop rather than mint a dangling dst.
+    if (index < 0 || static_cast<std::size_t>(index) >= ev.env_frames_size()) {
+        drop(ev);
+        dst = invalid();
+        return;
+    }
+    const EnvId moved = index;
+    dst = EnvFrameRef(moved, ev.env_generation());
+    index = NULL_ENV_ID;
+    env_gen_stamp = 0;
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->envframe_ownership_transfer_total.fetch_add(1, std::memory_order_relaxed);
+    // Dual-path update on the live frame (string/SymId parity).
+    if (EnvFrame* fr = ev.resolve_env_frame_mut(moved))
+        (void)fr->ensure_dual_path_consistent();
+}
+
+// drop: tombstone the source Ref, bump drop metric, run a skip-freed
+// ownership scan. When the Ref was already stale at drop time, also
+// bump env_gen_use_site_reject_total so AC1 observability holds
+// (truncate → use-site fails → explicit drop → scan + reject).
+void EnvFrameRef::drop(Evaluator& ev) noexcept {
+    if (!has_ownership())
+        return;
+    const bool was_valid = still_valid(ev);
+    index = NULL_ENV_ID;
+    env_gen_stamp = 0;
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        m->envframe_ownership_drop_total.fetch_add(1, std::memory_order_relaxed);
+        // Stale-at-drop: caller held dual-path ownership past gen bump.
+        if (!was_valid)
+            m->env_gen_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Ownership-exit scan (same shape as EnvFrameLifetimeGuard exit):
+    // skip freed/tombstoned linear captures without full boundary.
+    (void)ev.scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                    /*only_if_moved=*/true);
 }
 
 void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,

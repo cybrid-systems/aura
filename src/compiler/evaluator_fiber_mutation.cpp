@@ -1772,18 +1772,32 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
     if (pending_panic_checkpoint())
         (void)transfer_and_revalidate_panic_checkpoint(fb_void);
 
-    // 5) Clear one-shot resume hints after consumption.
+    // 5) Ownership transfer / drop for live resume hint, then clear.
+    // Issue #2295: prefer transfer_to (restamp) when the hint env_id is
+    // still in-range after dual-epoch refresh; otherwise drop. This
+    // closes dual-path stale windows that generation fences alone leave
+    // when a bare env_id / EnvFrameRef was held across steal.
     // Issue #2268: bump envframe_cache_cleared_on_steal_total when
     // the fiber-local EnvFrame cache (resume_env_hint_) was
-    // actually populated at steal time (any non-zero hint). The
-    // counter only increments on a "real" clear so dashboards can
-    // distinguish clear-on-migrate from no-op hint clearing. Same
-    // shape as #2194 post-resume refresh; this is the use-site
-    // fence for fiber-local caches that hold a bare EnvFrame*
-    // (or env_id) across yield / steal windows.
+    // actually populated at steal time (any non-zero hint).
     if (fb_void != nullptr) {
         auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
-        if (fiber->resume_env_hint() != 0 || fiber->resume_bridge_epoch_hint() != 0) {
+        const auto hint = fiber->resume_env_hint();
+        const bool had_hint = hint != 0 || fiber->resume_bridge_epoch_hint() != 0;
+        if (hint != 0 && hint != static_cast<std::uint64_t>(NULL_ENV_ID)) {
+            EnvFrameRef live(static_cast<EnvId>(hint), env_generation());
+            if (live.still_valid(*this)) {
+                EnvFrameRef restamped;
+                live.transfer_to(*this, restamped);
+                // restamped is the post-steal ownership handle; callers
+                // that re-capture from resume path will re-materialize.
+                (void)restamped;
+            } else {
+                // Hint points past truncate / INVALID frame — explicit drop.
+                live.drop(*this);
+            }
+        }
+        if (had_hint) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->envframe_cache_cleared_on_steal_total.fetch_add(1, std::memory_order_relaxed);
             }
