@@ -6819,6 +6819,38 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             }
         }
     }
+    // Issue #2285 Phase 2: selective invalidate from FULL affected set
+    // (broader than the target_node subtree walk above; covers type_dep
+    // additions from #2283 that extend beyond the mutated binding's
+    // direct subtree). Drops memo entries that mention any binding name
+    // in affected, preserving unrelated entries (AC1: independent If
+    // predicates → unrelated conds stay cached). Zero cost when
+    // affected is empty (helper no-op on empty set).
+    {
+        std::unordered_set<std::string> affected_names;
+        affected_names.reserve(affected.size());
+        for (auto nid : affected) {
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                continue;
+            auto nv = flat.get(nid);
+            if (nv.sym_id != aura::ast::INVALID_SYM &&
+                (nv.tag == aura::ast::NodeTag::Variable || nv.tag == aura::ast::NodeTag::Define ||
+                 nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec ||
+                 nv.tag == aura::ast::NodeTag::Lambda)) {
+                auto nm = pool.resolve(nv.sym_id);
+                if (!nm.empty())
+                    affected_names.insert(std::string(nm));
+            }
+        }
+        const auto selective_affected =
+            affected_names.empty() ? std::size_t{0}
+                                   : engine.invalidate_predicate_memo_for_var_names(affected_names);
+        if (metrics_ && selective_affected > 0) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->predicate_memo_boundary_selective_total.fetch_add(selective_affected,
+                                                                 std::memory_order_relaxed);
+        }
+    }
     // Issue #1529 / #1924: pre-seed blame affected sequence from the
     // mutation primary + a bounded prefix of the affected set
     // (full dump is O(delta), not O(workspace)).

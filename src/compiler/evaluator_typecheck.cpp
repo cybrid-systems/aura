@@ -1885,6 +1885,34 @@ void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
         const auto dropped_gen = eng->invalidate_predicate_memo_for_min_gen(epoch > 0 ? epoch : 0);
         const auto selective_n = dropped_vars + dropped_gen;
 
+        // Issue #2285 Phase 2: selective invalidate from occurrence_targets
+        // (broader than dirty_var_names which only walks the target_node
+        // subtree). Covers type_dep additions and any If-context that the
+        // reanalysis surfaced but the dirty walk missed. Zero cost when
+        // occurrence_targets is empty (helper no-op on empty set).
+        std::size_t dropped_affected = 0;
+        {
+            std::unordered_set<std::string> guard_affected_names;
+            guard_affected_names.reserve(occurrence_targets.size());
+            for (auto nid : occurrence_targets) {
+                if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                    continue;
+                auto nv = flat.get(nid);
+                if (nv.sym_id != aura::ast::INVALID_SYM &&
+                    (nv.tag == aura::ast::NodeTag::Variable ||
+                     nv.tag == aura::ast::NodeTag::Define || nv.tag == aura::ast::NodeTag::Let ||
+                     nv.tag == aura::ast::NodeTag::LetRec ||
+                     nv.tag == aura::ast::NodeTag::Lambda)) {
+                    auto nm = pool.resolve(nv.sym_id);
+                    if (!nm.empty())
+                        guard_affected_names.insert(std::string(nm));
+                }
+            }
+            if (!guard_affected_names.empty())
+                dropped_affected =
+                    eng->invalidate_predicate_memo_for_var_names(guard_affected_names);
+        }
+
         // ── Reanalyze dirty if-contexts; clear kOccurrenceDirty / stale ──
         std::size_t refreshed = 0;
         if (!occurrence_targets.empty()) {
@@ -1904,6 +1932,16 @@ void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
                 m->predicate_memo_selective_invalidate_total.fetch_add(selective_n,
                                                                        std::memory_order_relaxed);
                 m->predicate_memo_boundary_selective_total.fetch_add(selective_n,
+                                                                     std::memory_order_relaxed);
+            }
+            if (dropped_affected > 0) {
+                // Issue #2285 Phase 2: Phase-2-only drops (occurrence_targets
+                // names not already in dirty_var_names).
+                m->guard_exit_selective_invalidate_total.fetch_add(dropped_affected,
+                                                                   std::memory_order_relaxed);
+                m->predicate_memo_selective_invalidate_total.fetch_add(dropped_affected,
+                                                                       std::memory_order_relaxed);
+                m->predicate_memo_boundary_selective_total.fetch_add(dropped_affected,
                                                                      std::memory_order_relaxed);
             }
             if (refreshed > 0) {
