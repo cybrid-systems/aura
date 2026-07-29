@@ -58,6 +58,7 @@ module;
 #include <string>
 #include <string_view>
 #include <utility>
+#include "reflect/error_kind_names.hh"
 
 export module aura.core.error;
 
@@ -240,79 +241,8 @@ export [[nodiscard]] inline AuraErrorKind map_kind_name(std::string_view name) n
 namespace aura::core {
 
 inline std::string_view AuraError::kind_name(AuraErrorKind k) noexcept {
-    switch (k) {
-        case AuraErrorKind::ParseError:
-            return "ParseError";
-        case AuraErrorKind::UnexpectedToken:
-            return "UnexpectedToken";
-        case AuraErrorKind::UnterminatedSExpr:
-            return "UnterminatedSExpr";
-        case AuraErrorKind::UnboundVariable:
-            return "UnboundVariable";
-        case AuraErrorKind::DivisionByZero:
-            return "DivisionByZero";
-        case AuraErrorKind::InvalidClosure:
-            return "InvalidClosure";
-        case AuraErrorKind::ArityMismatch:
-            return "ArityMismatch";
-        case AuraErrorKind::TypeError:
-            return "TypeError";
-        case AuraErrorKind::CoercionError:
-            return "CoercionError";
-        case AuraErrorKind::OccurrenceTypingError:
-            return "OccurrenceTypingError";
-        case AuraErrorKind::OwnershipError:
-            return "OwnershipError";
-        case AuraErrorKind::LinearOwnershipError:
-            return "LinearOwnershipError";
-        case AuraErrorKind::PatternMatchExhaustiveness:
-            return "PatternMatchExhaustiveness";
-        case AuraErrorKind::MutationNotCommitted:
-            return "MutationNotCommitted";
-        case AuraErrorKind::MutationNoRollbackData:
-            return "MutationNoRollbackData";
-        case AuraErrorKind::MutationInvalidTarget:
-            return "MutationInvalidTarget";
-        case AuraErrorKind::MutationInvalidParent:
-            return "MutationInvalidParent";
-        case AuraErrorKind::MutationInvalidField:
-            return "MutationInvalidField";
-        case AuraErrorKind::MutationUnknownStructuralOp:
-            return "MutationUnknownStructuralOp";
-        case AuraErrorKind::MutationOutOfRange:
-            return "MutationOutOfRange";
-        case AuraErrorKind::ArenaOutOfMemory:
-            return "ArenaOutOfMemory";
-        case AuraErrorKind::ArenaDefragFailed:
-            return "ArenaDefragFailed";
-        case AuraErrorKind::ArenaInvalidAllocator:
-            return "ArenaInvalidAllocator";
-        case AuraErrorKind::EvalError:
-            return "EvalError";
-        case AuraErrorKind::EvalTypeMismatch:
-            return "EvalTypeMismatch";
-        case AuraErrorKind::EvalDivisionByZero:
-            return "EvalDivisionByZero";
-        case AuraErrorKind::EvalStackOverflow:
-            return "EvalStackOverflow";
-        case AuraErrorKind::ConcurrencyFiberCanceled:
-            return "ConcurrencyFiberCanceled";
-        case AuraErrorKind::ConcurrencyLockFailed:
-            return "ConcurrencyLockFailed";
-        case AuraErrorKind::ConcurrencyGenerationInvalidated:
-            return "ConcurrencyGenerationInvalidated";
-        case AuraErrorKind::InternalInvariantViolation:
-            return "InternalInvariantViolation";
-        case AuraErrorKind::InternalNotImplemented:
-            return "InternalNotImplemented";
-        case AuraErrorKind::InternalContractFailure:
-            return "InternalContractFailure";
-        case AuraErrorKind::ResourceQuotaExceeded:
-            return "ResourceQuotaExceeded";
-        case AuraErrorKind::Sentinel_COUNT_:
-            return "Sentinel_COUNT_";
-    }
-    return "UnknownErrorKind";
+    // Wave C1 wire: table lookup (kAuraErrorKindNames); P2996-aligned in tests.
+    return aura_error_kind_name(static_cast<std::size_t>(k));
 }
 
 inline std::unexpected<AuraError> make_unexpected(AuraErrorKind k, std::string msg,
