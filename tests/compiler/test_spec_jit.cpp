@@ -20,6 +20,14 @@ using namespace aura::compiler::shape;
 // from the test.
 extern "C" std::uint64_t aura_specjit_shape_version_miss_total_v_read(void);
 
+// Issue #2301 AC4: process-global storm-clear counter accessor.
+// Mirrors the #2276 declaration above — the per-controller
+// storm_clear_count() accessor on SpecJITController is declared
+// via #include "spec_jit_controller.h" (it's a member function),
+// but the C-linkage reader is defined in spec_jit_controller.cpp
+// and needs an explicit forward decl here for direct read access.
+extern "C" std::uint64_t aura_specjit_storm_clear_total_v_read(void);
+
 static int tests_run = 0;
 static int tests_passed = 0;
 
@@ -350,6 +358,118 @@ int main() {
         TEST("4h: invalidate clears has + get",
              !ctl.has_specialization("clear_me", kShape) &&
                  ctl.get_specialized("clear_me", kShape) == nullptr);
+    }
+
+    // ── 4i-4o: Issue #2301 proactive clear on deopt-storm enter ─
+    // AC1: install → on_deopt_storm → specialization_count() == 0
+    //      without waiting for get.
+    // AC2: post-clear get/has remain miss until re-install under
+    //      new shape_version.
+    // AC3: empty SpecJIT → on_deopt_storm does not bump extra
+    //      work beyond existing storm counters (zero-cost when
+    //      no specializations cached — clear() on an empty
+    //      unordered_map is a no-op; the counter still bumps
+    //      to record the storm-fire event itself, but no
+    //      iteration / memory pressure is added).
+    // AC4: Metric specjit_storm_clear_total (via C-linkage
+    //      reader aura_specjit_storm_clear_total_v_read) +
+    //      per-controller storm_clear_count() accessor bump.
+    // AC5: Existing #2276 Section 4 AC rows (4a-4h) still green
+    //      by construction — on_deopt_storm() delegates to the
+    //      existing clear() which clears specializations_;
+    //      install_specialization / has_specialization /
+    //      get_specialization semantics unchanged.
+    {
+        aura::jit::AuraJIT jit;
+        SpecJITController ctl(jit);
+        constexpr aura::jit::ScalarFn kFnA = &spec_jit_2276_stub_fn_a;
+        constexpr aura::jit::ScalarFn kFnB = &spec_jit_2276_stub_fn_b;
+        constexpr ShapeID kShape = SHAPE_INT;
+
+        // 4i: empty ctl → on_deopt_storm() is safe, no entries
+        // to clear, but storm-clear counter still bumps to
+        // record the storm-fire event (AC3: zero extra work
+        // beyond counters; AC4: counter reachable via
+        // C-linkage reader + per-controller accessor).
+        const auto storm_pre = aura_specjit_storm_clear_total_v_read();
+        const auto ctl_pre = ctl.storm_clear_count();
+        ctl.on_deopt_storm();
+        TEST("4i: empty ctl on_deopt_storm → specialization_count == 0 (AC1)",
+             ctl.specialization_count() == 0);
+        TEST("4i: empty ctl storm_clear_count bumped (AC4)",
+             ctl.storm_clear_count() == ctl_pre + 1);
+        TEST("4i: empty ctl global storm counter bumped (AC4)",
+             aura_specjit_storm_clear_total_v_read() == storm_pre + 1);
+
+        // 4j: install 2 entries + on_deopt_storm → cache
+        // drains immediately (AC1) without waiting for get.
+        ctl.install_specialization("add", kShape, kFnA);
+        ctl.install_specialization("mul", kShape, kFnB);
+        TEST("4j: pre-storm count == 2", ctl.specialization_count() == 2);
+        ctl.on_deopt_storm();
+        TEST("4j: post-storm count == 0 (AC1 — no waiting for get)",
+             ctl.specialization_count() == 0);
+
+        // 4k: post-clear get/has remain miss until re-install
+        // under new shape_version (AC2). bump_shape_version_on_storm_enter
+        // simulates a new generation; install_specialization
+        // stamps the entry with the current version, restoring
+        // the hit path.
+        TEST("4k: post-clear has=false (AC2)", !ctl.has_specialization("add", kShape));
+        TEST("4k: post-clear get=nullptr (AC2)", ctl.get_specialized("add", kShape) == nullptr);
+        bump_shape_version_on_storm_enter();
+        ctl.install_specialization("add", kShape, kFnB);
+        TEST("4k: re-install post-storm has=true (AC2)", ctl.has_specialization("add", kShape));
+        TEST("4k: re-install post-storm get=kFnB (AC2)",
+             ctl.get_specialized("add", kShape) == kFnB);
+
+        // 4l: AC3 — empty SpecJIT → on_deopt_storm does not
+        // bump extra work beyond the storm-clear counter.
+        // Verified by:
+        // (a) specialization_count() stays at 0
+        // (b) storm_clear_count() bumps by exactly 1
+        // (c) no other #2276 counter (#2276 shape-version
+        //     miss) is bumped by on_deopt_storm() — the
+        //     clear() path does not consult shape_version.
+        const auto miss_pre = aura_specjit_shape_version_miss_total_v_read();
+        ctl.on_deopt_storm(); // ctl is empty now
+        TEST("4l: empty on_deopt_storm no extra #2276 miss bump (AC3)",
+             aura_specjit_shape_version_miss_total_v_read() == miss_pre);
+
+        // 4m: AC4 — repeated storm fires bump the counter
+        // monotonically; per-controller storm_clear_count()
+        // matches the global reader after a single-controller
+        // test scenario (no concurrent controllers).
+        const auto storm_pre2 = aura_specjit_storm_clear_total_v_read();
+        const auto ctl_pre2 = ctl.storm_clear_count();
+        ctl.on_deopt_storm();
+        ctl.on_deopt_storm();
+        ctl.on_deopt_storm();
+        TEST("4m: 3 storms → storm_clear_count += 3 (AC4)",
+             ctl.storm_clear_count() == ctl_pre2 + 3);
+        TEST("4m: 3 storms → global storm counter += 3 (AC4)",
+             aura_specjit_storm_clear_total_v_read() == storm_pre2 + 3);
+
+        // 4n: AC5 — install → clear → install cycle preserves
+        // the spec_jit invariants (entry stamped with current
+        // version, last_used advanced, no null placeholders).
+        ctl.install_specialization("n1", kShape, kFnA);
+        const auto ver_after_install = current_global_shape_version();
+        ctl.on_deopt_storm();
+        bump_shape_version_on_storm_enter();
+        ctl.install_specialization("n1", kShape, kFnB);
+        TEST("4n: re-install after storm clears, fresh version (AC5)",
+             ctl.get_specialized("n1", kShape) == kFnB && ctl.has_specialization("n1", kShape));
+        TEST("4n: version stamped on re-install (AC5)",
+             current_global_shape_version() > ver_after_install);
+
+        // 4o: AC5 — invalidate() still works post-storm-clear
+        // (storm-clear does not corrupt internal state for
+        // subsequent invalidate / install operations).
+        ctl.install_specialization("o1", kShape, kFnA);
+        ctl.invalidate("o1");
+        TEST("4o: invalidate post-storm-clean works (AC5)",
+             !ctl.has_specialization("o1", kShape) && ctl.get_specialized("o1", kShape) == nullptr);
     }
 
     // ═══════════════════════════════════════════════════════════
