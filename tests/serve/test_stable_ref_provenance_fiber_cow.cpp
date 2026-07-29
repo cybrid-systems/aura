@@ -266,7 +266,11 @@ static void ac3_task1() {
     const auto pm0 = cs.evaluator().get_provenance_mismatch();
     std::mt19937 rng(552u);
     std::uniform_int_distribution<int> val_dist(0, 9999);
-    for (int i = 0; i < 1000; ++i) {
+    // Issue #2335: hardcoded 1000 iters caused 90s timeout. AC4 uses
+    // k_long_iters() (default 200, override via AURA_STRESS_ITERS env).
+    // Match that pattern — per-iter cost ~100ms means 200 iters ~20s
+    // (fits 90s budget with ORIG+TASK1 prelude ~30s), 1000 iters ~100s.
+    for (int i = 0; i < k_long_iters(); ++i) {
         std::string code = std::string("(define ") + (i & 1 ? "a" : "b") + " " +
                            std::to_string(val_dist(rng)) + ")";
         (void)cs.eval(code);
