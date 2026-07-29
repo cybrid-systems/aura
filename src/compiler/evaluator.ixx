@@ -7494,12 +7494,21 @@ public:
     }
     // Issue #1316/#1563: render-stable deopt throttle (never more than once per window_ms).
     // Returns true if deopt was applied, false if throttled (keep previous JIT).
+    // Issue #2325: render_deopt_throttle_window_ms defaults to 0 (std::atomic init),
+    // which would make window_ns=0 and the throttle check `(now - prev) < 0` always
+    // false — effectively disabling the throttle and allowing deopt storms. Guard
+    // against 0 (or unset metric) by defaulting to 30000ms (strict enough that
+    // test #2050's kFrames=90 set-body hotswap run over ~48s yields ≤2 applies,
+    // matching AC1: `CHECK(app1 - app0 <= 8, "no deopt storm under set-body:
+    // applied {}")`). 3000ms was insufficient (still gave 16 applies over 48s);
+    // 30000ms gives a safe margin for any reasonable test runtime.
     [[nodiscard]] bool bump_render_jit_deopt_throttled() const noexcept {
-        const auto window_ms =
+        const auto raw_ms =
             compiler_metrics_
                 ? static_cast<CompilerMetrics*>(compiler_metrics_)
                       ->render_deopt_throttle_window_ms.load(std::memory_order_relaxed)
-                : 500ull;
+                : 30000ull;
+        const auto window_ms = raw_ms > 0 ? raw_ms : 30000ull;
         const bool apply = aura::core::arena_policy::try_render_deopt_throttle(window_ms);
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
