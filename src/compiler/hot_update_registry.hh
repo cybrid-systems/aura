@@ -470,6 +470,33 @@ private:
     std::atomic<std::uint64_t> force_jit_for_reason_total_{0};
     std::atomic<std::uint8_t> last_force_jit_reason_{0};
 
+    // Issue #2302: unified ReloadRecovery state machine atomics.
+    //   attempts_left_: retry budget remaining for the current
+    //     reload attempt (0 when not in-flight). Wired from
+    //     aura_jit_bridge.cpp reload path via
+    //     on_recovery_set_attempts_left() — set to
+    //     policy.max_reemit at start of aura_reload_aot_module_for_eval,
+    //     cleared to 0 on success or exhausted.
+    //   force_jit_regions_mask_: bitmask of regions currently
+    //     in force-JIT mode (bit N = reason N in the AotReloadFail
+    //     enum). Set via fetch_or in on_force_jit_for_reason,
+    //     cleared wholesale (store 0) in on_reload_success.
+    //   pending_dirty_count_: count of pending dirty defines in
+    //     HotUpdateRegistry that haven't been applied yet.
+    //     Externally managed via on_recovery_pending_dirty_inc/dec()
+    //     (Agent-facing API for Agents that maintain their own
+    //     dirty-set overlay).
+    //   deferred_reemit_pending_v2_: flag exposed via the
+    //     unified recovery state — set in on_deferred_reemit_seen_on_steal,
+    //     cleared in take_deferred_reemit_version and on_reload_success.
+    //   All relaxed atomic (single-writer from the eval thread
+    //   + reader from query primitive, mirrors the
+    //   aot_reload_fail_* pattern).
+    std::atomic<std::uint32_t> attempts_left_{0};
+    std::atomic<std::uint64_t> force_jit_regions_mask_{0};
+    std::atomic<std::uint64_t> pending_dirty_count_{0};
+    std::atomic<std::uint8_t> deferred_reemit_pending_v2_{0};
+
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
     std::atomic<std::uint64_t> deopt_window_count_{0};
@@ -551,6 +578,47 @@ private:
     bool feed_region_deopt_locked(RegionWindow& w, std::uint64_t n, std::uint64_t threshold,
                                   std::uint64_t window_ms, std::uint64_t hard_thr,
                                   std::uint64_t region) noexcept;
+
+    // Issue #2302: unified ReloadRecovery state accessor. Returns a
+    // 5-field snapshot combining retry budget + force-JIT region mask +
+    // last fail reason + pending dirty count + deferred-reemit flag.
+    // Reads relaxed atomics — safe under concurrent writers on the eval
+    // thread (single-writer for attempts_left_ / force_jit_regions_mask_
+    // / deferred_reemit_pending_v2_; multi-writer for pending_dirty_count_
+    // via Agent-facing inc/dec API). Schema additive — does NOT modify
+    // the existing Snapshot struct (AC4 compatibility).
+    struct ReloadRecoveryState {
+        std::uint32_t attempts_left = 0;
+        std::uint64_t force_jit_regions_mask = 0;
+        std::uint8_t last_reason = 0; // mirrors last_aot_reload_fail_reason_
+        std::uint64_t pending_dirty_count = 0;
+        std::uint8_t deferred_reemit_pending = 0;
+    };
+
+public:
+    [[nodiscard]] ReloadRecoveryState reload_recovery_state() const noexcept;
+    // Agent-facing API: increment / decrement pending dirty count.
+    // Used by Agents that maintain their own dirty-set overlay and
+    // want to publish the size via the unified recovery state.
+    void on_recovery_pending_dirty_inc() noexcept {
+        pending_dirty_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void on_recovery_pending_dirty_dec() noexcept {
+        if (pending_dirty_count_.load(std::memory_order_relaxed) > 0)
+            pending_dirty_count_.fetch_sub(1, std::memory_order_relaxed);
+    }
+    // Wire attempts_left_ from aura_jit_bridge.cpp reload path.
+    void on_recovery_set_attempts_left(std::uint32_t n) noexcept {
+        attempts_left_.store(n, std::memory_order_relaxed);
+    }
+
+public:
+    // Public accessor for pending_dirty_count_ (used by the C-linkage
+    // reader in hot_update_registry.cpp — namespace-scope extern "C"
+    // functions can't access private members directly).
+    [[nodiscard]] std::uint64_t pending_dirty_count() const noexcept {
+        return pending_dirty_count_.load(std::memory_order_relaxed);
+    }
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
