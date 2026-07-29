@@ -27,6 +27,27 @@ extern "C" bool aura_is_current_workspace_eval(void* eval_ptr) noexcept;
 #include <thread>
 #include <vector>
 
+
+// C-linkage decls from src/compiler/aura_jit_runtime.cpp (Issue #2232 hot-update).
+extern "C" {
+void aura_set_live_workspace_cow_gen(std::uint64_t cow_gen);
+void aura_set_aot_expected_cow_gen_for_eval(void* eval_ptr, std::uint64_t cow_gen);
+std::uint64_t aura_get_live_workspace_cow_gen(void);
+std::uint64_t aura_get_aot_expected_cow_gen_for_eval(void* eval_ptr);
+}
+
+
+static std::string read_file(const char* path) {
+    const std::string rel(path);
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -57,26 +78,7 @@ std::string build_test_so(std::uint64_t version) {
     // Issue #2232: .so with both aot_emit_version + aot_env_frame_version
     // so the Env retry-recovery AC can fire repeatedly (the default
     // build_test_so only sets aot_emit_version + aot_region_mask).
-    std::string build_test_so_with_env(std::uint64_t version, std::uint64_t env_version) {
-        const char* dir = "/tmp";
-        std::string cpath = std::format("{}/aura_aot_test_{}_{}.c", dir, version, env_version);
-        std::string sopath = std::format("{}/aura_aot_test_{}_{}.so", dir, version, env_version);
-        {
-            std::ofstream f(cpath);
-            if (!f)
-                return {};
-            f << "#include <stdint.h>\n";
-            f << "uint64_t aot_emit_version = " << version << "ULL;\n";
-            f << "uint64_t aot_region_mask = 0ULL;\n";
-            f << "uint64_t aot_env_frame_version = " << env_version << "ULL;\n";
-            f << "__attribute__((constructor)) static void reg(void) {(void)aot_emit_version; "
-                 "(void)aot_env_frame_version;}\n";
-        }
-        std::string cmd = std::format("cc -shared -fPIC -o {} {} 2>/dev/null", sopath, cpath);
-        if (std::system(cmd.c_str()) != 0)
-            return {};
-        return sopath;
-    }
+    // (build_test_so_with_env moved below)
 
     std::string sopath = std::format("{}/aura_aot_test_{}.so", dir, version);
     {
@@ -95,6 +97,27 @@ std::string build_test_so(std::uint64_t version) {
         return {};
     return sopath;
 }
+std::string build_test_so_with_env(std::uint64_t version, std::uint64_t env_version) {
+    const char* dir = "/tmp";
+    std::string cpath = std::format("{}/aura_aot_test_{}_{}.c", dir, version, env_version);
+    std::string sopath = std::format("{}/aura_aot_test_{}_{}.so", dir, version, env_version);
+    {
+        std::ofstream f(cpath);
+        if (!f)
+            return {};
+        f << "#include <stdint.h>\n";
+        f << "uint64_t aot_emit_version = " << version << "ULL;\n";
+        f << "uint64_t aot_region_mask = 0ULL;\n";
+        f << "uint64_t aot_env_frame_version = " << env_version << "ULL;\n";
+        f << "__attribute__((constructor)) static void reg(void) {(void)aot_emit_version; "
+             "(void)aot_env_frame_version;}\n";
+    }
+    std::string cmd = std::format("cc -shared -fPIC -o {} {} 2>/dev/null", sopath, cpath);
+    if (std::system(cmd.c_str()) != 0)
+        return {};
+    return sopath;
+}
+
 
 // Issue #2012: .so that registers a staged func_id via aura_register_fn_tracked.
 // Uses dlsym(RTLD_DEFAULT) so the .so has no undefined symbols at dlopen
@@ -114,6 +137,7 @@ std::string build_registering_so(std::uint64_t version, std::uint64_t region, in
         f << "uint64_t aot_emit_version = " << version << "ULL;\n";
         f << "uint64_t aot_region_mask = " << region << "ULL;\n";
         f << "typedef void (*reg_fn_t)(int64_t, int64_t);\n";
+
         f << "static int64_t aura_aot_reg_sentinel_" << tag
           << "(int64_t* a, uint32_t n) { (void)a; (void)n; return " << version << "; }\n";
         f << "__attribute__((constructor)) static void reg(void) {\n";
@@ -534,8 +558,11 @@ int main() {
     // ── Issue #2240: stable cross-workspace reject reason code ──
     ac7b_cross_workspace_reason_code_2240();
     std::println("\n=== AC #2275: CowGenMismatch wire (fail-closed) ===");
-    ac2275_cow_gen_mismatch(cs);
-    ac2271_physical_invalidate(cs);
+    {
+        CompilerService cs;
+        ac2275_cow_gen_mismatch(cs);
+        ac2271_physical_invalidate(cs);
+    }
 
     // ── Aura: region mask round-trip ──
     // aot:get-region-mask is registered via register_stats_impl (engine:metrics).
@@ -1235,11 +1262,7 @@ int main() {
               "AC4: wired sentinel");
         CHECK(q.find("schema-2252") != std::string::npos, "AC4: schema-2252 lineage");
         CHECK(q.find("issue-2252") != std::string::npos, "AC4: issue-2252 lineage");
-        // AC5: runtime counter bump is queryable.
-        const auto counter_before =
-            static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()) ? 0 : 0;
-        (void)counter_before;
-        // Actual hard-reject bump is exercised end-to-end via the
+        // AC5: runtime counter bump is queryable end-to-end via the
         // existing #2046 cross-fiber slot stale probe path (which
         // already exercises gen != cur). The #2252 wire-up is
         // additive — same mismatch path now bumps the dedicated
@@ -1256,8 +1279,8 @@ int main() {
         auto met = read_file("src/compiler/observability_metrics.h");
         auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         // AC1/AC2: policy_for Region/Staging -> {2, 15, true}
-        const auto p_region = aura::compiler::policy_for(AotReloadFail::Region);
-        const auto p_staging = aura::compiler::policy_for(AotReloadFail::Staging);
+        const auto p_region = ::policy_for(AotReloadFail::Region);
+        const auto p_staging = ::policy_for(AotReloadFail::Staging);
         CHECK(p_region.max_reemit == 2, "AC1: Region max_reemit == 2");
         CHECK(p_region.backoff_ms == 15, "AC1: Region backoff_ms == 15");
         CHECK(p_region.fall_back_jit_only == true, "AC1: Region fall_back_jit_only == true");
@@ -1265,8 +1288,8 @@ int main() {
         CHECK(p_staging.backoff_ms == 15, "AC2: Staging backoff_ms == 15");
         CHECK(p_staging.fall_back_jit_only == true, "AC2: Staging fall_back_jit_only == true");
         // AC3: Dlopen / Other still never retry (regression vs #2232)
-        const auto p_dlopen = aura::compiler::policy_for(AotReloadFail::Dlopen);
-        const auto p_other = aura::compiler::policy_for(AotReloadFail::Other);
+        const auto p_dlopen = ::policy_for(AotReloadFail::Dlopen);
+        const auto p_other = ::policy_for(AotReloadFail::Other);
         CHECK(p_dlopen.max_reemit == 0, "AC3: Dlopen max_reemit == 0");
         CHECK(p_dlopen.fall_back_jit_only == false, "AC3: Dlopen fall_back_jit_only == false");
         CHECK(p_other.max_reemit == 0, "AC3: Other max_reemit == 0");

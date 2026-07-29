@@ -94,11 +94,11 @@ int main() {
     {
         std::println("\n--- AC1: default (no :pure) eval-serialized=#t ---");
         const auto unlocked_before =
-            g_orch_module_stats.pure_unlocked_applies.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_parallel_tasks_total.load(std::memory_order_relaxed);
         const auto fallback_before =
-            g_orch_module_stats.pure_fallback_locked.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_fallback_locked_total.load(std::memory_order_relaxed);
         const auto violated_before =
-            g_orch_module_stats.pure_contract_violated.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
 
         auto r = cs.eval(R"(
             (parallel-intend (list (lambda () 1) (lambda () 2) (lambda () 3))
@@ -122,13 +122,13 @@ int main() {
 
         // Pure metrics must NOT advance on the default (non-pure)
         // path. This is the regression lock the issue calls out.
-        CHECK(g_orch_module_stats.pure_unlocked_applies.load(std::memory_order_relaxed) ==
+        CHECK(g_orch_module_stats.pure_parallel_tasks_total.load(std::memory_order_relaxed) ==
                   unlocked_before,
               "AC1: pure_unlocked_applies NOT engaged for default batch");
-        CHECK(g_orch_module_stats.pure_fallback_locked.load(std::memory_order_relaxed) ==
+        CHECK(g_orch_module_stats.pure_fallback_locked_total.load(std::memory_order_relaxed) ==
                   fallback_before,
               "AC1: pure_fallback_locked NOT engaged for default batch");
-        CHECK(g_orch_module_stats.pure_contract_violated.load(std::memory_order_relaxed) ==
+        CHECK(g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed) ==
                   violated_before,
               "AC1: pure_contract_violated NOT engaged for default batch");
     }
@@ -137,9 +137,9 @@ int main() {
     {
         std::println("\n--- AC2: :pure #t pure arithmetic → unlocked ---");
         const auto unlocked_before =
-            g_orch_module_stats.pure_unlocked_applies.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_parallel_tasks_total.load(std::memory_order_relaxed);
         const auto violated_before =
-            g_orch_module_stats.pure_contract_violated.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
 
         auto r = cs.eval(R"(
             (parallel-intend (list (lambda () 1) (lambda () 2) (lambda () 3) (lambda () 4))
@@ -163,9 +163,9 @@ int main() {
               "AC2: eval-serialized=#f under :pure #t (any unlocked)");
 
         const auto unlocked_after =
-            g_orch_module_stats.pure_unlocked_applies.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_parallel_tasks_total.load(std::memory_order_relaxed);
         const auto violated_after =
-            g_orch_module_stats.pure_contract_violated.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
         std::println("  pure_unlocked_applies delta={} pure_contract_violated delta={}",
                      unlocked_after - unlocked_before, violated_after - violated_before);
         CHECK(unlocked_after > unlocked_before,
@@ -178,7 +178,7 @@ int main() {
     {
         std::println("\n--- AC3: :pure #t + mutate → pure-contract-violated ---");
         const auto violated_before =
-            g_orch_module_stats.pure_contract_violated.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
 
         // A thunk that mutates a top-level binding: under :pure #t
         // this should fail with the pure-contract-violated error and
@@ -199,7 +199,7 @@ int main() {
         )");
         CHECK(r.has_value(), "AC3: mutate-under-pure batch returns a value");
         const auto violated_after =
-            g_orch_module_stats.pure_contract_violated.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
         std::println("  pure_contract_violated delta={}", violated_after - violated_before);
         CHECK(violated_after > violated_before,
               "AC3: pure_contract_violated bumped on mutate under :pure #t");
@@ -215,7 +215,7 @@ int main() {
     {
         std::println("\n--- AC4: :pure #t + held boundary → fallback lock ---");
         const auto fallback_before =
-            g_orch_module_stats.pure_fallback_locked.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_fallback_locked_total.load(std::memory_order_relaxed);
 
         // Run a batch under :pure #t from inside a mutation boundary
         // context. The probe should force-lock eval_mu for the
@@ -237,7 +237,7 @@ int main() {
         )");
         CHECK(r.has_value(), "AC4: :pure #t + held boundary batch returns a value");
         const auto fallback_after =
-            g_orch_module_stats.pure_fallback_locked.load(std::memory_order_relaxed);
+            g_orch_module_stats.pure_fallback_locked_total.load(std::memory_order_relaxed);
         std::println("  pure_fallback_locked delta={}", fallback_after - fallback_before);
         // Note: the host-thread call site doesn't actually hold a
         // mutation boundary — `pure_fallback_locked` advances only

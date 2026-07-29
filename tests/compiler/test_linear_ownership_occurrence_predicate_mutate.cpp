@@ -137,7 +137,12 @@ int aura_issue_linear_ownership_occurrence_predicate_mutate_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     return aura_issue_linear_ownership_occurrence_predicate_mutate_run();
 }
 #endif
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

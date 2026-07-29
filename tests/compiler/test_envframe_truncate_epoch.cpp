@@ -43,6 +43,13 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
     return as_int(*r);
 }
 
+static std::int64_t href_int(CompilerService& cs, const char* expr) {
+    auto r = cs.eval(expr);
+    if (!r || !is_int(*r))
+        return -999999;
+    return as_int(*r);
+}
+
 static std::string read_file(const char* path) {
     std::ifstream in(path);
     if (!in)

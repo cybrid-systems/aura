@@ -135,7 +135,8 @@ static void ac2_subtree_restamp_after_bump() {
     std::vector<aura::ast::NodeId> kids;
     kids.push_back(sib_var);
     auto wrapper = flat.add_call(flat.add_variable(pool.intern("Wrap")), kids);
-    flat.root = flat.add_begin({wrapper, cloned});
+    const aura::ast::NodeId __exprs[] = {wrapper, cloned};
+    flat.root = flat.add_begin(__exprs);
 
     // Force a generation advance that would leave clone stale.
     flat.bump_generation();

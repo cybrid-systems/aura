@@ -116,7 +116,12 @@ int aura_issue_cpp26_contracts_hotpath_arena_soa_value_shape_pass_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     return aura_issue_cpp26_contracts_hotpath_arena_soa_value_shape_pass_run();
 }
 #endif
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

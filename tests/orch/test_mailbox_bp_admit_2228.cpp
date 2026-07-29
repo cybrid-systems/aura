@@ -50,6 +50,7 @@
 //                                       + schema-2228)
 
 #include "test_harness.hpp"
+#include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
@@ -82,6 +83,7 @@ using aura::serve::Fiber;
 using aura::serve::SchedRunner;
 using aura::serve::Scheduler;
 using aura::serve::mf_mailbox::MailMessage;
+using aura::serve::mf_mailbox::MailPriority;
 using aura::serve::mf_mailbox::MultiFiberMailbox;
 using aura::serve::mf_mailbox::PushStatus;
 
@@ -131,7 +133,7 @@ int main() {
             m.to_fiber = 0;
             m.from_fiber = 0;
             m.payload = "x";
-            m.priority = 0;
+            m.priority = aura::serve::mf_mailbox::MailPriority::Normal;
             if (test_mb->push(std::move(m)) == PushStatus::Backpressure) {
                 ++bp_triggered;
             }

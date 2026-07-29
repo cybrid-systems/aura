@@ -372,7 +372,7 @@ static void run_116_deferred_coercion_node() {
     auto callee_var = flat->add_variable(callee_sym);
     auto arg0 = flat->add_literal(42);
     auto arg1 = flat->add_literal(2);
-    auto call_id = flat->add_call(callee_var, {arg0, arg1});
+    auto call_id = flat->add_call(callee_var, std::array<aura::ast::NodeId, 2>{arg0, arg1});
     flat->root = call_id;
     int n0 = flat->size();
     aura::compiler::CoercionMap cm;
@@ -640,7 +640,7 @@ static void run_132_ast_walker_extractions() {
         auto def_a = flat.add_define(a_name, flat.add_literal(1));
         auto def_b = flat.add_define(b_name, flat.add_literal(2));
         auto lit_42 = flat.add_literal(42);
-        auto begin = flat.add_begin({def_a, def_b, lit_42});
+        auto begin = flat.add_begin(std::array<aura::ast::NodeId, 3>{def_a, def_b, lit_42});
         auto defs = aura::compiler::find_top_level_defines(flat, pool, begin);
         CHECK(defs.size() == 2 && defs[0].first == "a" && defs[1].first == "b",
               "find_top_level_defines returns (a, b) in document order");
@@ -657,8 +657,8 @@ static void run_132_ast_walker_extractions() {
         auto def_outer = flat.add_define(outer_name, flat.add_literal(1));
         auto x_var = flat.add_variable(x_name);
         auto inner_body = flat.add_define(inner_name, flat.add_literal(2));
-        auto lambda = flat.add_lambda({x_var}, {inner_body});
-        auto begin = flat.add_begin({def_outer, lambda});
+        auto lambda = flat.add_lambda(std::array<aura::ast::SymId, 1>{x_var}, inner_body);
+        auto begin = flat.add_begin(std::array<aura::ast::NodeId, 2>{def_outer, lambda});
         auto defs = aura::compiler::find_top_level_defines(flat, pool, begin);
         CHECK(defs.size() == 1 && defs[0].first == "outer",
               "find_top_level_defines skips nested defines inside lambda");
@@ -688,7 +688,7 @@ static void run_132_ast_walker_extractions() {
         auto def_a = flat.add_define(a_name, flat.add_literal(1));
         auto def_c = flat.add_define(c_name, flat.add_literal(3));
         auto annot = flat.add_type_annotation(int_sym, flat.add_literal(0), b_name);
-        auto begin = flat.add_begin({def_a, annot, def_c});
+        auto begin = flat.add_begin(std::array<aura::ast::NodeId, 3>{def_a, annot, def_c});
         auto names = aura::compiler::collect_user_bindings(flat, pool, begin);
         CHECK(names.size() == 3 && names[0] == "a" && names[1] == "b" && names[2] == "c",
               "collect_user_bindings: (a, b, c) including TypeAnnotation");
@@ -2471,7 +2471,7 @@ static void run_126_pure_functions_extracted() {
         auto b_var = flat.add_variable(b_id);
         auto plus_id = pool.intern("+");
         auto plus_var = flat.add_variable(plus_id);
-        auto call = flat.add_call(plus_var, {a_var, b_var});
+        auto call = flat.add_call(plus_var, std::array<aura::ast::NodeId, 2>{a_var, b_var});
         std::unordered_set<std::string> available;
         available.insert("a");
         available.insert("b");
@@ -2484,7 +2484,7 @@ static void run_126_pure_functions_extracted() {
         }
         // Deduplication
         auto a2_var = flat.add_variable(a_id);
-        auto call_dup = flat.add_call(plus_var, {a_var, a2_var});
+        auto call_dup = flat.add_call(plus_var, std::array<aura::ast::NodeId, 2>{a_var, a2_var});
         auto deps2 = aura::compiler::compute_dependencies(flat, pool, call_dup, available);
         CHECK(deps2.size() == 1, "compute_dependencies deduplicates 'a'");
         if (deps2.size() == 1) {
@@ -2493,7 +2493,7 @@ static void run_126_pure_functions_extracted() {
         // d not in available
         auto d_id = pool.intern("d");
         auto d_var = flat.add_variable(d_id);
-        auto call3 = flat.add_call(plus_var, {a_var, d_var});
+        auto call3 = flat.add_call(plus_var, std::array<aura::ast::NodeId, 2>{a_var, d_var});
         auto deps3 = aura::compiler::compute_dependencies(flat, pool, call3, available);
         CHECK(deps3.size() == 1 && deps3[0] == "a",
               "compute_dependencies excludes 'd' (not in available_defines)");

@@ -385,6 +385,11 @@ static void ac1923_8_no_crash() {
 
 } // namespace
 
+// Issue bundle guard: skip standalone main() when compiled as a bundle member.
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     std::println("=== typechecker_incremental pair: #798 + #1923 ===\n");
     ac798_1_schema();
@@ -406,3 +411,7 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

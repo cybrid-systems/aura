@@ -29,6 +29,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.value;
+import aura.compiler.ir;
 import aura.core.ast;
 
 namespace {

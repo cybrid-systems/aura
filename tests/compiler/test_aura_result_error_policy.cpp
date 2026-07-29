@@ -102,7 +102,12 @@ int aura_issue_aura_result_error_policy_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     return aura_issue_aura_result_error_policy_run();
 }
 #endif
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

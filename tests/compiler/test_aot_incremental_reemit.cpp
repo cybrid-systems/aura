@@ -37,6 +37,8 @@
 #include <unordered_set>
 #include <vector>
 
+extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id);
+
 // Declared in aura_jit_runtime / stubs.
 extern "C" void aura_deopt_inc();
 extern "C" void aura_hot_update_note_deopt(void);
@@ -1426,12 +1428,12 @@ static void ac_capture_remount_source_cite() {
     std::println("  src/compiler/observability_metrics.h:462-470");
     std::println("    closure_capture_remount_ok_total + closure_capture_remount_fail_total");
     std::println("  src/compiler/aura_jit_bridge.cpp:200-240");
-    std::println("    aura_bump_closure_capture_remount_{ok,fail}_total C-linkage bumpers");
+    std::println("    aura_bump_closure_capture_remount_{{ok,fail}}_total C-linkage bumpers");
     std::println("    aura_closure_has_env_or_linear_captures + aura_remount_closure_captures");
     std::println("  src/compiler/aura_jit_bridge.h:100-115");
     std::println("    C-linkage forward declarations");
     std::println("  src/compiler/evaluator.ixx:1917-1928");
-    std::println("    get_closure_capture_remount_{ok,fail}_total inline accessors");
+    std::println("    get_closure_capture_remount_{{ok,fail}}_total inline accessors");
     std::println("  src/compiler/aura_jit_runtime.cpp:1306-1336");
     std::println("    remap hit path: capture remount gate + ok/fail bump + fail -> set-MustDeopt "
                  "+ batch_deopt_for");
@@ -1505,7 +1507,7 @@ static void ac2272_env_gen_remount(CompilerService& cs) {
         aura_set_aot_metrics(m);
         // Allocate a fresh closure (push_back path stamps env_gen from
         // host mirror; capture current value for the test).
-        const auto cid = static_cast<std::int64_t>(aura_alloc_closure());
+        const auto cid = static_cast<std::int64_t>(aura_alloc_closure(/*func_id=*/0));
         if (cid < 0) {
             CHECK(true, "AC5: skip (closure alloc unavailable in sandbox)");
         } else {
@@ -1525,8 +1527,7 @@ static void ac2272_env_gen_remount(CompilerService& cs) {
             CHECK(ok == 0, "AC5: remount returns 0 on env_gen mismatch");
             CHECK(m1 >= m0 + 1, "AC5: closure_capture_env_gen_mismatch_total bumped");
             // Verify query surface exposes the counter.
-            const auto qv = qev ? qev : nullptr;
-            (void)qv;
+            // (no qev needed — test verifies counter directly)
             // Restore live env gen (test hygiene).
             aura_set_aot_live_env_frame_version(live_now);
         }
@@ -1567,7 +1568,10 @@ int main() {
     ac_capture_remount_miss();
     ac_capture_remount_query();
     ac_capture_remount_source_cite();
-    ac2272_env_gen_remount(cs);
+    {
+        CompilerService cs;
+        ac2272_env_gen_remount(cs);
+    }
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

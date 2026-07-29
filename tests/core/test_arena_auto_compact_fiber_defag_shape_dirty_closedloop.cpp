@@ -186,7 +186,12 @@ int aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
+// Bundle guard: skip standalone main() when compiled as a bundle member
+// (AURA_ISSUE_BUNDLE_MEMBER=1).
+#ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {
     return aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run();
 }
 #endif
+
+#endif // AURA_ISSUE_BUNDLE_MEMBER

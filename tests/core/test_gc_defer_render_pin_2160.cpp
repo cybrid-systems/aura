@@ -35,6 +35,8 @@ using aura::ast::LiveCompactMode;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::core::lifetime::LifetimePin;
+using aura::core::lifetime::PinOwner;
 using aura::serve::GCCollector;
 using aura::serve::Scheduler;
 using aura::test::g_failed;
@@ -128,7 +130,7 @@ void ac2270_pin_owner_state(CompilerService& cs) {
     // AC5: runtime smoke — verify PinOwner transitions + helpers.
     {
         // The LifetimePin class is in the aura.core.lifetime_pin module.
-        aura::LifetimePin pin;
+        aura::core::lifetime::LifetimePin pin;
         int dummy_buf = 0;
         pin.pin(&dummy_buf, 1, 0);
         CHECK(pin.owner() == PinOwner::Arena, "AC5: pin() sets owner_ = Arena");
@@ -153,7 +155,7 @@ void ac2270_pin_owner_state(CompilerService& cs) {
         // Move ctor transfers owner_.
         pin.mark_ffi_owned();
         CHECK(pin.owner() == PinOwner::FfiOwned, "AC5: pre-move state");
-        aura::LifetimePin moved(std::move(pin));
+        aura::core::lifetime::LifetimePin moved(std::move(pin));
         CHECK(moved.owner() == PinOwner::FfiOwned, "AC5: move ctor transfers owner_ (FfiOwned)");
         CHECK(pin.owner() == PinOwner::None, "AC5: moved-from resets owner_ to None");
     }

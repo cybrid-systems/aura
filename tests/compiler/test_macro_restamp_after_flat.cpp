@@ -102,7 +102,8 @@ static void ac2_gen_matches_after_expand() {
     CHECK(flat.is_macro_introduced(cloned), "cloned is MacroIntroduced");
 
     // Simulate set_child generation bump (structural mutate).
-    auto root_begin = flat.add_begin({cloned});
+    const aura::ast::NodeId __exprs[] = {cloned};
+    auto root_begin = flat.add_begin(__exprs);
     flat.root = root_begin;
     // Force a generation advance that would leave clone stale if not restamped.
     flat.bump_generation();
