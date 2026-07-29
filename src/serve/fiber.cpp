@@ -455,9 +455,12 @@ namespace {
         auto& s = metrics::adaptive_steal_stats();
         s.yield_while_mutation_held_total.fetch_add(1, std::memory_order_relaxed);
         s.last_yield_rejected_reason.store(why, std::memory_order_relaxed);
-#ifndef NDEBUG
-        assert(false && "Fiber::yield under MutationBoundary held/depth (#2200 / #354)");
-#else
+        // Issue #2324: removed the debug-mode assert(false) here. Test
+        // #2200 deliberately triggers Fiber::yield under a live
+        // MutationBoundary to verify the rejection contract (counter
+        // bumps, no swapcontext). The metric bump above is sufficient
+        // signal; production forensics remains opt-in via the env-var-
+        // gated hard abort below (AURA_YIELD_HELD_ABORT=1).
         // Optional hard abort for production forensics.
         static const bool abort_on_reject = []() noexcept {
             const char* e = std::getenv("AURA_YIELD_HELD_ABORT");
@@ -470,7 +473,6 @@ namespace {
                          static_cast<unsigned>(why));
             std::abort();
         }
-#endif
     }
 } // namespace
 

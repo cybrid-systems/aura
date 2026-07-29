@@ -2338,12 +2338,13 @@ aura_issue_test_link_llvm_jit(test_mutation_hold_hard_timeout_2199)
 add_dependencies(all_test_issue_targets test_mutation_hold_hard_timeout_2199)
 
 # Issue #2200: hard-block Fiber::yield while MutationBoundary held/depth.
-# DISABLED (runtime crash/hang) for CI green:
-# aura_add_issue_test(test_yield_while_mutation_held_2200)
-
-# aura_issue_test_link_llvm_jit(test_yield_while_mutation_held_2200)
-
-# add_dependencies(all_test_issue_targets test_yield_while_mutation_held_2200)
+# Re-enabled after #2324 (SIGABRT fix to src/serve/fiber.cpp:459 —
+# removed debug-mode assert(false) that test #2200 deliberately
+# triggers; counter bump + env-var-gated hard abort retained for
+# production forensics):
+aura_add_issue_test(test_yield_while_mutation_held_2200)
+aura_issue_test_link_llvm_jit(test_yield_while_mutation_held_2200)
+add_dependencies(all_test_issue_targets test_yield_while_mutation_held_2200)
 
 
 # Issue #2201: Agent-visible mutation-log pressure + forced compact.
