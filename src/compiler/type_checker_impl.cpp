@@ -6607,6 +6607,61 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
         collect_deep_predicate_if_exprs_in_subtree(flat, pool, rec.target_node, occurrence_targets,
                                                    occurrence_seen);
+    // Issue #2283: systematic merge of affected_nodes_for_type for delta-touched
+    // TypeIds. Build touched_type_ids from CS touched_roots + occurrence vars +
+    // rebinding type change, then call affected_nodes_for_type(tid) for each to
+    // pull in dependent nodes that the existing per-seed loop (only type variables)
+    // would miss. Prefer type_dep + DefUseIndex over pure ancestor walk when
+    // available; ancestor remains as fallback. live_and_still_typed filter drops
+    // stale graph entries whose current type_id no longer matches the touched tid.
+    {
+        std::unordered_set<std::uint32_t> touched_type_ids;
+        auto add_tid_from_node = [&](NodeId nid) {
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                return;
+            const auto tid = static_cast<std::uint32_t>(flat.get(nid).type_id);
+            if (tid != 0)
+                touched_type_ids.insert(tid);
+        };
+        // CS touched_roots (ConstraintSystem::touched_roots_ — the set used by
+        // the existing type_dep_graph_ expansion at line 6517+). Accessed
+        // via TypeChecker::constraint_system() which returns solve_delta_cs_.
+        for (auto nid : constraint_system().touched_roots()) {
+            add_tid_from_node(nid);
+        }
+        // Occurrence vars (Issue #518 / #689).
+        for (auto nid : occurrence_targets) {
+            add_tid_from_node(nid);
+        }
+        // Rebinding type change (rec.target_node).
+        add_tid_from_node(rec.target_node);
+
+        if (!touched_type_ids.empty()) {
+            std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+            std::uint64_t nodes_added = 0;
+            for (auto tid : touched_type_ids) {
+                for (auto dep : affected_nodes_for_type(tid)) {
+                    if (dep == aura::ast::NULL_NODE || dep >= flat.size())
+                        continue;
+                    // live_and_still_typed: drop stale graph entries whose
+                    // current type_id no longer matches the touched tid.
+                    if (static_cast<std::uint32_t>(flat.get(dep).type_id) != tid)
+                        continue;
+                    if (seen.insert(dep).second) {
+                        affected.push_back(dep);
+                        ++nodes_added;
+                    }
+                }
+            }
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->type_dep_partial_merge_total.fetch_add(1, std::memory_order_relaxed);
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->type_dep_partial_nodes_added.fetch_add(nodes_added,
+                                                             std::memory_order_relaxed);
+            }
+        }
+    }
     {
         const std::uint8_t kOccurrenceBit =
             static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);

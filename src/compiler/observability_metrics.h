@@ -8176,6 +8176,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_cache_hit_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_pruned_total{0};
     std::atomic<std::uint64_t> type_dep_graph_affected_expand_total{0};
+    // Issue #2283: systematic merge of affected_nodes_for_type for delta-touched
+    // TypeIds (CS touched_roots + occurrence vars + rebinding type change).
+    // type_dep_partial_merge_total: number of times the merge was performed
+    // in infer_flat_partial (counter, +1 per call when touched_type_ids non-empty).
+    // type_dep_partial_nodes_added: number of nodes added to the affected set
+    // by the merge (after live_and_still_typed filter).
+    std::atomic<std::uint64_t> type_dep_partial_merge_total{0};
+    std::atomic<std::uint64_t> type_dep_partial_nodes_added{0};
     // Issue #2191: type affected cone mirrored into dirty::DepGraph cascade.
     // type_dirty_cone_mirrored_total — AST nodes pushed as encode_ast_dep_node.
     // type_ir_cone_union_size_avg_x100 — last avg |type ∪ IR| × 100.
