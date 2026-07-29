@@ -887,11 +887,25 @@ public:
     // Issue #168 Phase 1: set the cache epoch. CompilerService
     // calls this before every infer_flat with the current
     // mutation_epoch_ (#166). The engine uses it to gate the
-    // type cache: if the epoch has changed since the last
-    // inference, the whole cache is invalidated (re-infer
-    // everything). This is the safety net for mutations
-    // that don't set is_dirty on the right nodes.
+    // Issue #2286: getter was placed in wrong class (InferenceEngine at
+    // line 828, not TypeChecker at line 1568). The real TypeChecker
+    // getter is added separately below at the TypeChecker struct.
     void set_cache_epoch(std::uint64_t epoch) {
+        // Issue #2065: when the epoch advances, clear ConstraintSystem's
+        // processed_roots_this_epoch_ so roots from prior epochs can be
+        // re-collected by collect_for_root (InferenceEngine owns cs_).
+        if (epoch != cache_epoch_) {
+            cs_.clear_processed_roots_this_epoch();
+            // Issue #2278: tag the new epoch + prune stale
+            // OccurrenceGoal entries (epoch > 0 && epoch < new_epoch).
+            // Untagged goals (epoch == 0) survive — they predate the
+            // epoch-aware path or were recorded from a CS context
+            // that never set current_epoch_. Replay path in
+            // solve_delta_occurrence pulls live goals back into the
+            // priority worklist (AC1: survives clear_blame_context).
+            cs_.set_current_epoch(epoch);
+            cs_.prune_occurrence_goals(epoch);
+        }
         // Issue #2065: when the epoch advances, clear ConstraintSystem's
         // processed_roots_this_epoch_ so roots from prior epochs can be
         // re-collected by collect_for_root (InferenceEngine owns cs_).
@@ -1651,6 +1665,12 @@ export struct TypeChecker {
     // epoch is stored on the TypeChecker and forwarded to
     // the per-call InferenceEngine, which uses it to
     // invalidate the cache on epoch advance.
+    // Issue #2286: getter for OwnershipEscapeSummary publish key. The
+    // TypeChecker publishes the escape summary under (metrics, cache_epoch);
+    // CompilerService reads the same key via this getter to set the
+    // thread-local current_escape_key before lowering, so the
+    // escape_blocks_move_elision_for_current lookup matches.
+    [[nodiscard]] std::uint64_t cache_epoch() const noexcept { return cache_epoch_; }
     void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
     // Issue #258: plumb the CompilerMetrics pointer through
     // to ConstraintSystem::solve_delta() for timing. Today
@@ -2118,7 +2138,8 @@ public:
 export aura::ast::InvariantStatus
 post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                               aura::core::TypeRegistry& reg, const aura::ast::MutationRecord& rec,
-                              std::vector<OwnershipNote>& notes_out, void* metrics = nullptr);
+                              std::vector<OwnershipNote>& notes_out, void* metrics = nullptr,
+                              std::uint64_t cache_epoch = 0);
 
 // Issue #610: bump linear ownership post-mutate observability
 // counters (revalidation, violations, leaks) into CompilerMetrics.
@@ -2248,16 +2269,18 @@ export std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::as
 export class PostMutationInvariantVisitor {
 public:
     PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
-                                 void* metrics = nullptr)
+                                 void* metrics = nullptr, std::uint64_t cache_epoch = 0)
         : pool_(pool)
         , reg_(reg)
-        , metrics_(metrics) {}
+        , metrics_(metrics)
+        , cache_epoch_(cache_epoch) {}
 
     void visit_mutation(aura::ast::FlatAST& flat, const aura::ast::MutationRecord& rec) {
         if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked)
             return;
         std::vector<OwnershipNote> notes;
-        auto st = post_mutation_invariant_check(flat, pool_, reg_, rec, notes, metrics_);
+        auto st =
+            post_mutation_invariant_check(flat, pool_, reg_, rec, notes, metrics_, cache_epoch_);
         status_updates_[rec.mutation_id] = st;
         if (st == aura::ast::InvariantStatus::Warnings) {
             worst_ = aura::ast::InvariantStatus::Warnings;
@@ -2284,6 +2307,10 @@ private:
     const aura::ast::StringPool& pool_;
     aura::core::TypeRegistry& reg_;
     void* metrics_ = nullptr;
+    // Issue #2286: cache_epoch_ passed through to post_mutation_invariant_check
+    // so the OwnershipEscapeSummary publish key matches what the CompilerService
+    // thread-local lookup uses (scoped gate per (eval, cow_gen)).
+    std::uint64_t cache_epoch_ = 0;
     aura::ast::InvariantStatus worst_ = aura::ast::InvariantStatus::Ok;
     std::vector<OwnershipNote> notes_out_;
     std::unordered_map<std::uint64_t, aura::ast::InvariantStatus> status_updates_;

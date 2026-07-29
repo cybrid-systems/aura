@@ -82,7 +82,11 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
             }
             if (escape_move_elision_gate_active()) {
                 g_linear_lowering_escape_summary_hit_total.fetch_add(1, std::memory_order_relaxed);
-                if (!binding_name.empty() && escape_blocks_move_elision(binding_name)) {
+                // Issue #2286: keyed lookup reads thread-local current key
+                // (set by Evaluator before lower_to_ir). Legacy
+                // escape_blocks_move_elision used process-wide state → cross-eval
+                // contamination (#2274 / #2275 lineage).
+                if (!binding_name.empty() && escape_blocks_move_elision_for_current(binding_name)) {
                     g_linear_move_elision_blocked_escape_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
                     // Fall through: emit MoveOp (escape-aware block).

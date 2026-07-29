@@ -5,6 +5,16 @@
 //   AC2: clean owned path under active summary still elides
 //   AC3: no escape summary → legacy always emit MoveOp (no elide)
 //   AC4: schema-2263 + source-cite
+//
+// Issue #2286 — scope the gate per (Evaluator*, workspace_cow_gen) so
+// multi-eval / multi-workspace hosts (#2274 PerRegion storm isolation,
+// #2275 CowGenMismatch) don't cross-contaminate elision decisions.
+//
+//   AC6: Two Evaluators; A marks x; B elides clean y (no cross-block)
+//   AC7: Same eval + matching cow_gen: escape bindings still block (#2263 parity)
+//   AC8: Cow-gen advance clears/ignores stale summary (no UAF / wrong elide)
+//   AC9: Happy path (no escape) bumps cross-eval-miss counter; safe default
+//   AC10: schema-2286 + source-cite (gate header, hooks, impl, service_dirty, lookup)
 
 #include "test_harness.hpp"
 #include "compiler/ownership_escape_lowering_gate.h"
@@ -179,12 +189,120 @@ static void ac4_schema_source() {
 
 } // namespace
 
+// Issue #2286: AC6-AC10 — per-(Evaluator*, cow_gen) gate scoping.
+namespace {
+
+using aura::compiler::clear_escape_move_elision_gate_for_key;
+using aura::compiler::escape_blocks_move_elision_for_key;
+using aura::compiler::g_linear_escape_gate_cross_eval_miss_total;
+using aura::compiler::publish_escape_move_elision_gate_for_key;
+
+// Use a heap-allocated sentinel as a fake eval identity (each TypeChecker
+// instance is a unique eval identity in production; here we mimic by using
+// the address of stack-allocated objects with careful lifetime).
+struct FakeEval {
+    std::uint64_t sentinel = 0xCAFE'BABE'DEAD'BEEF;
+};
+
+static void ac6_cross_eval_isolation() {
+    std::println("\n--- AC6: Two Evaluators, A marks x, B elides clean y ---");
+    FakeEval eval_a;
+    FakeEval eval_b;
+    // Publish under A's identity with cow_gen=1.
+    publish_escape_move_elision_gate_for_key(&eval_a, 1, true,
+                                             std::unordered_set<std::string>{"x"});
+    // B has no published summary for its key → lookup misses → safe default.
+    CHECK(!escape_blocks_move_elision_for_key(&eval_b, 1, "y"),
+          "B's clean y not blocked by A's x (no cross-contamination)");
+    CHECK(escape_blocks_move_elision_for_key(&eval_a, 1, "x"),
+          "A's x still blocked (matching key)");
+    CHECK(!escape_blocks_move_elision_for_key(&eval_a, 1, "y"),
+          "A's clean y not blocked (not in A's blocked set)");
+    clear_escape_move_elision_gate_for_key(&eval_a, 1);
+}
+
+static void ac7_same_eval_parity() {
+    std::println("\n--- AC7: Same eval + matching cow_gen blocks (#2263 parity) ---");
+    FakeEval eval;
+    publish_escape_move_elision_gate_for_key(&eval, 5, true, std::unordered_set<std::string>{"x"});
+    CHECK(escape_blocks_move_elision_for_key(&eval, 5, "x"), "matching eval+gen blocks x");
+    CHECK(!escape_blocks_move_elision_for_key(&eval, 5, "y"),
+          "matching eval+gen doesn't block y (not in blocked set)");
+    clear_escape_move_elision_gate_for_key(&eval, 5);
+}
+
+static void ac8_cow_gen_advance_clears() {
+    std::println("\n--- AC8: Cow-gen advance clears/ignores stale summary ---");
+    FakeEval eval;
+    publish_escape_move_elision_gate_for_key(&eval, 10, true, std::unordered_set<std::string>{"x"});
+    CHECK(escape_blocks_move_elision_for_key(&eval, 10, "x"), "gen=10 blocks x");
+    // Advance gen → stale summary should not match (lookup for new gen misses).
+    CHECK(!escape_blocks_move_elision_for_key(&eval, 11, "x"),
+          "gen=11 stale → safe default (no block)");
+    // Original gen still works until explicitly cleared.
+    CHECK(escape_blocks_move_elision_for_key(&eval, 10, "x"),
+          "gen=10 still blocks x (per-key storage)");
+    clear_escape_move_elision_gate_for_key(&eval, 10);
+    CHECK(!escape_blocks_move_elision_for_key(&eval, 10, "x"), "gen=10 cleared");
+}
+
+static void ac9_zero_cost_happy_path() {
+    std::println("\n--- AC9: Happy path (no escape) bumps cross-eval-miss counter ---");
+    const auto miss0 = load_u64(g_linear_escape_gate_cross_eval_miss_total);
+    FakeEval eval;
+    const bool blocks = escape_blocks_move_elision_for_key(&eval, 100, "x");
+    CHECK(!blocks, "miss → safe default (no block)");
+    CHECK(load_u64(g_linear_escape_gate_cross_eval_miss_total) > miss0,
+          "cross-eval-miss counter bumped on keyed miss");
+}
+
+static void ac10_schema_source() {
+    std::println("\n--- AC10: schema-2286 + source-cite ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2286") == 2286, "schema-2286 key");
+    CHECK(href(cs, "issue-2286") == 2286, "issue-2286 key");
+    CHECK(href(cs, "linear-escape-gate-cross-eval-miss-total") >= 0, "cross-eval-miss counter key");
+
+    const auto gate_h = read_file("src/compiler/ownership_escape_lowering_gate.h");
+    CHECK(gate_h.find("Issue #2286") != std::string::npos, "gate header #2286");
+    CHECK(gate_h.find("EscapeGateKey") != std::string::npos, "EscapeGateKey struct");
+    CHECK(gate_h.find("aura_escape_move_gate_publish_for_key") != std::string::npos,
+          "keyed publish API");
+    CHECK(gate_h.find("escape_blocks_move_elision_for_current") != std::string::npos,
+          "thread-local lookup wrapper");
+    const auto hooks = read_file("src/compiler/typed_mutation_audit_hooks.cpp");
+    CHECK(hooks.find("Issue #2286") != std::string::npos, "hooks #2286");
+    CHECK(hooks.find("aura_escape_blocks_move_elision_for_key") != std::string::npos,
+          "keyed C lookup");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("publish_escape_move_elision_gate_for_key") != std::string::npos,
+          "publish for key at post_mutation_invariant_check");
+    const auto sd = read_file("src/compiler/service_dirty.cpp");
+    CHECK(sd.find("set_current_escape_key") != std::string::npos,
+          "set thread-local before lower_to_ir");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-2286") != std::string::npos, "query schema-2286");
+    const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(lin.find("escape_blocks_move_elision_for_current") != std::string::npos,
+          "lookup uses thread-local current key");
+    const auto tcx = read_file("src/compiler/type_checker.ixx");
+    CHECK(tcx.find("Issue #2286") != std::string::npos, "type_checker.ixx cites #2286");
+    CHECK(tcx.find("cache_epoch()") != std::string::npos, "cache_epoch() getter for publish key");
+}
+
+} // namespace
+
 int main() {
-    std::println("=== Issue #2263: escape summary → MoveOp elision gate ===");
+    std::println("=== Issue #2263 / #2286: escape summary → MoveOp elision gate ===");
     ac1_escape_blocks_elision();
     ac2_clean_path_elides();
     ac3_null_summary_legacy();
     ac4_schema_source();
+    ac6_cross_eval_isolation();
+    ac7_same_eval_parity();
+    ac8_cow_gen_advance_clears();
+    ac9_zero_cost_happy_path();
+    ac10_schema_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

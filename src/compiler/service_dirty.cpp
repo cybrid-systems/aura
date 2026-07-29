@@ -12,12 +12,13 @@ module;
 #include "observability_metrics.h"
 #include "jit_typed_mutation_stats.h" // ir_soa_migration::record_capture_dirty_mark
 #include "aura_jit.h"
-#include "aura_jit_bridge.h"               // aura_reemit_aot_for_dirty (#2035)
-#include "hot_update_registry.hh"          // HotUpdateRegistry notify + region mask (#2035)
-#include "render_prim_template.hh"         // #2050 aura_is_render_evolution_name
-#include "compiler/frame_budget.hh"        // #2137 frame-budget cascade isolation
-#include "core/arena_auto_policy_stats.h"  // in_render_hotpath
-#include "core/transparent_string_hash.hh" // TransparentStringHash for ir_cache_index
+#include "aura_jit_bridge.h"        // aura_reemit_aot_for_dirty (#2035)
+#include "hot_update_registry.hh"   // HotUpdateRegistry notify + region mask (#2035)
+#include "render_prim_template.hh"  // #2050 aura_is_render_evolution_name
+#include "compiler/frame_budget.hh" // #2137 frame-budget cascade isolation
+#include "compiler/ownership_escape_lowering_gate.h" // #2286: set_current_escape_key
+#include "core/arena_auto_policy_stats.h"            // in_render_hotpath
+#include "core/transparent_string_hash.hh"           // TransparentStringHash for ir_cache_index
 #include <algorithm>
 #include <chrono>
 #include <memory>
@@ -1240,9 +1241,26 @@ void CompilerService::invalidate_function(const std::string& name) {
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
+        // Issue #2286: scope the OwnershipEscapeSummary gate by
+        // (Evaluator TypeChecker*, cache_epoch) so the lowering's
+        // escape_blocks_move_elision_for_current lookup matches the key
+        // the TypeChecker published under (post_mutation_invariant_check).
+        // Without this, lookup would miss under multi-eval hosts and
+        // either wrongly elide or wrongly block (#2274 / #2275 lineage).
+        aura::compiler::TypeChecker* _esc_tc =
+            static_cast<aura::compiler::TypeChecker*>(evaluator_.ensure_typechecker());
+        const std::uint64_t _esc_gen =
+            _esc_tc ? _esc_tc->cache_epoch() : evaluator_.current_cache_epoch();
+        // Issue #2286: eval identity must match the key the TypeChecker
+        // publishes under (publish_escape_move_elision_gate_for_key uses
+        // the metrics pointer as eval identity — TypeChecker::metrics_
+        // which is set to evaluator_.compiler_metrics()). Without this
+        // match, the lookup would miss and the gate would silently no-op.
+        aura::compiler::set_current_escape_key(evaluator_.compiler_metrics(), _esc_gen);
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
             cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
+        aura::compiler::clear_current_escape_key();
 
         // Issue #2044: full incremental dirty suite (CK/CF/TypeProp/Shape/
         // Escape + DCE) — replaces prior CK+CF-only cascade path.

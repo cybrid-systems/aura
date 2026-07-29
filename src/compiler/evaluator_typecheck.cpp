@@ -1005,7 +1005,11 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     // ── Type revalidation (post_mutation_invariant_check) ──
     if (flat && pool && reg) {
         try {
-            PostMutationInvariantVisitor visitor(*pool, *reg, compiler_metrics());
+            // Issue #2286: pass cache_epoch to the visitor so the OwnershipEscapeSummary
+            // publish key (metrics, cache_epoch) matches what CompilerService uses
+            // for the thread-local lookup before lower_to_ir.
+            PostMutationInvariantVisitor visitor(*pool, *reg, compiler_metrics(),
+                                                 current_cache_epoch());
             for (const auto& rec : flat->all_mutations()) {
                 if (rec.invariant_status == aura::ast::InvariantStatus::NotChecked)
                     visitor.visit_mutation(*flat, rec);

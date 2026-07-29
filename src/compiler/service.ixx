@@ -8901,8 +8901,12 @@ public:
             // workspace state, not the intermediate states.
             auto* ws_flat = evaluator_.workspace_flat();
             if (ws_flat) {
+                // Issue #2286: pass current_cache_epoch so the
+                // OwnershipEscapeSummary publish key (metrics, cache_epoch)
+                // matches what CompilerService uses for the thread-local
+                // lookup before lower_to_ir.
                 aura::compiler::PostMutationInvariantVisitor invariant_visitor(
-                    *current_pool_, type_registry_, &metrics_);
+                    *current_pool_, type_registry_, &metrics_, evaluator_.current_cache_epoch());
                 aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
                 invariant_visitor.apply_status_updates(*ws_flat);
                 result.invariant_status = invariant_visitor.worst_status();
@@ -9186,8 +9190,11 @@ public:
             // final status with 1/N the work for an N-mutation batch.
             if (!suppress_invariant_check_) {
                 // Issue #147 / #1458: type-checker half (OwnershipEnv).
+                // Issue #2286: pass current_cache_epoch so the
+                // OwnershipEscapeSummary publish key matches the
+                // CompilerService thread-local lookup before lower_to_ir.
                 aura::compiler::PostMutationInvariantVisitor invariant_visitor(
-                    *current_pool_, type_registry_, &metrics_);
+                    *current_pool_, type_registry_, &metrics_, evaluator_.current_cache_epoch());
                 aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
                 invariant_visitor.apply_status_updates(*ws_flat);
                 res.invariant_status = invariant_visitor.worst_status();
