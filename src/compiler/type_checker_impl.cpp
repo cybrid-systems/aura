@@ -8224,7 +8224,7 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
                                                          const StringPool& pool, TypeRegistry& reg,
                                                          const aura::ast::MutationRecord& rec,
                                                          std::vector<OwnershipNote>& notes_out,
-                                                         void* metrics) {
+                                                         void* metrics, std::uint64_t cache_epoch) {
     // Issue #1875: always count the check for hit-rate denominator.
     if (metrics) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics);
@@ -8384,7 +8384,11 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
                 }
             }
         }
-        set_escape_move_elision_gate(true, blocked);
+        // Issue #2286: publish under (TypeChecker*, cache_epoch_) so cross-eval
+        // / cross-cow-gen contamination is impossible. Legacy process-wide
+        // set_escape_move_elision_gate was the root cause of multi-eval
+        // cross-block (#2274 / #2275 lineage).
+        publish_escape_move_elision_gate_for_key(metrics, cache_epoch, true, blocked);
     }
 
     // Issue #1615: dirty Coercion nodes → post-coercion linear reval +

@@ -9879,6 +9879,12 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(linear_move_elided_total()));
             insert_kv("schema-2263", 2263);
             insert_kv("issue-2263", 2263);
+            // Issue #2286: per-(eval, cow_gen) gate scoping.
+            insert_kv("schema-2286", 2286);
+            insert_kv("issue-2286", 2286);
+            insert_kv("linear-escape-gate-cross-eval-miss-total",
+                      static_cast<std::int64_t>(g_linear_escape_gate_cross_eval_miss_total.load(
+                          std::memory_order_relaxed)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
