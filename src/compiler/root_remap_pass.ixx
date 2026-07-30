@@ -81,6 +81,12 @@ namespace root_remap_detail {
     inline std::atomic<std::uint64_t> g_pass_calls_total{0};
     inline std::atomic<std::uint64_t> g_rewrite_ok_total{0};
     inline std::atomic<std::uint64_t> g_rewrite_fail_total{0};
+    // Issue #2341: track the most recent run's any_fail() so the
+    // Phase 5 driver (evaluator_mutation_boundary.cpp) can build a
+    // DensifyConsistencyReport at densify success. Process-level
+    // atomic; "last result" semantic (overwritten per run). The
+    // cumulative g_rewrite_fail_total remains the rate counter.
+    inline std::atomic<std::uint8_t> g_last_root_remap_any_fail{0};
 
     // Thread-local CompilerMetrics for test/direct-invoke paths (mirrors #2267).
     inline thread_local CompilerMetrics* g_metrics_for_test = nullptr;
@@ -294,6 +300,16 @@ inline void set_root_remap_pass_test_metrics(CompilerMetrics* m) noexcept {
     return root_remap_detail::g_rewrite_fail_total.load(std::memory_order_relaxed);
 }
 
+// Issue #2341: last_root_remap_any_fail — "last result" semantic of
+// run_root_remap_pass().any_fail(). Read by the Phase 5 driver
+// (evaluator_mutation_boundary.cpp) when building a unified
+// DensifyConsistencyReport at densify success. Relaxed load; the
+// "last result" semantic is inherently racy w.r.t. concurrent runs
+// (consistent with #2266 / #2339 patterns).
+[[nodiscard]] inline bool last_root_remap_any_fail() noexcept {
+    return root_remap_detail::g_last_root_remap_any_fail.load(std::memory_order_relaxed) != 0;
+}
+
 // Issue #2339: auto-register / auto-unregister accessors.
 [[nodiscard]] inline std::uint64_t root_remap_auto_register_total() noexcept {
     return g_root_remap_auto_register_total.load(std::memory_order_relaxed);
@@ -376,6 +392,14 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
         root_remap_detail::g_rewrite_fail_total.fetch_add(fail, std::memory_order_relaxed);
 
     root_remap_detail::bump_metrics(stats);
+
+    // Issue #2341: record any_fail() so the Phase 5 driver can read
+    // it via last_root_remap_any_fail() when building the unified
+    // DensifyConsistencyReport. Relaxed ordering is fine — the
+    // "last result" semantic is inherently racy w.r.t. concurrent
+    // runs; Phase 5 takes the most-recently-committed value.
+    root_remap_detail::g_last_root_remap_any_fail.store(
+        stats.any_fail() ? std::uint8_t{1} : std::uint8_t{0}, std::memory_order_relaxed);
 
     if (stats.any_fail() && root_remap_detail::hard_contract_enabled()) {
         // Fail-closed hard mode: process abort (production safety contract).

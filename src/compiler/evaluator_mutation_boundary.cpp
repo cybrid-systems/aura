@@ -24,20 +24,21 @@ module;
                                             // + aura_aot_func_table_epoch +
                                             //   aura_jit_batch_deopt_for (+ empty-name
                                             //   deopt-all, Issue #2162)
-#include "compiler/hot_update_registry.hh" // Issue #2090: AuraJITHotUpdateRegistry
-                                           //   C-linkage shims —
-                                           // aura_hot_update_should_throttle_reemit
-                                           // aura_hot_update_on_reemit_throttled
-                                           // aura_hot_update_notify_epoch_bump
-                                           // aura_hot_update_reemit_provider_wired
-                                           // aura_reemit_aot_for_dirty
-#include "typed_mutation_audit.h"          // Issue #1589 / #1614 / #1894 / #2145
-#include "core/sandbox.hh"                 // Issue #2145 Strict hard-gate
-#include "core/provenance_tracker.hh"      // Issue #2222: boundary LinearEnforce Strict hold
-#include "core/arena_auto_policy_stats.h"  // in_render_hotpath
-#include "compiler/frame_budget.hh"        // Issue #2137 frame-budget cascade isolation
-#include "serve/fiber.h"                   // Issue #2184: publish MutationSafetySnapshot
-#include "compiler/shape_profiler.h"       // Issue #2255: current_global_shape_version
+#include "compiler/hot_update_registry.hh"   // Issue #2090: AuraJITHotUpdateRegistry
+                                             //   C-linkage shims —
+                                             // aura_hot_update_should_throttle_reemit
+                                             // aura_hot_update_on_reemit_throttled
+                                             // aura_hot_update_notify_epoch_bump
+                                             // aura_hot_update_reemit_provider_wired
+                                             // aura_reemit_aot_for_dirty
+#include "typed_mutation_audit.h"            // Issue #1589 / #1614 / #1894 / #2145
+#include "core/sandbox.hh"                   // Issue #2145 Strict hard-gate
+#include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
+#include "core/arena_auto_policy_stats.h"    // in_render_hotpath
+#include "core/densify_consistency_report.h" // Issue #2341: DensifyConsistencyReport + counter
+#include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
+#include "serve/fiber.h"                     // Issue #2184: publish MutationSafetySnapshot
+#include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -1785,7 +1786,53 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // (Gated on pin_contract_held — false suppresses outermost_exit_phase5_unlock
         // + outermost_exit_order_complete so Agents see the contract miss, not a
         // false success.)
-        if (pin_contract_held) {
+        //
+        // Issue #2341: compute DensifyConsistencyReport once at densify
+        // success (after RootRemap + pin verify + closure remount).
+        // Gate the same success metrics on overall_ok() — mirrors the
+        // pin_contract_held gating above. Bumps unified fail counter
+        // on !overall_ok() (per-axis fail counters remain additive).
+        aura::core::densify_consistency::DensifyConsistencyReport densify_consistency;
+        densify_consistency.pin_ok = pin_contract_held;
+        // linear_ok: linear pin verify is subsumed in pin_contract_held
+        // (#2266 / #2280). Future separate linear verify will diverge.
+        densify_consistency.linear_ok = pin_contract_held;
+        // root_remap_ok: last_root_remap_any_fail reads the most recent
+        // run_root_remap_pass() any_fail() result (per #2341 design).
+        densify_consistency.root_remap_ok =
+            !aura::compiler::root_remap_pass::last_root_remap_any_fail();
+        // closure_remount_ok: 0 cell-remap fails since process start
+        // (cumulative fail-total accessor per #2297). Note: cumulative
+        // semantics — production wire-up of "last-call" gating is a
+        // follow-up per the #2341 close comment.
+        densify_consistency.closure_remount_ok =
+            ev_->get_closure_capture_cell_remap_fail_total() == 0;
+        // envframe_ok: trivially true today — #2340 surface
+        // (densify_ownership_scan_total) is a process-level
+        // monotonic counter without fail-closed semantics yet.
+        // Production wire-up of fail-closed gating is a follow-up.
+        densify_consistency.envframe_ok = true;
+        if (!densify_consistency.overall_ok()) {
+            // Issue #2341 AC2: unified fail — mirror pin_contract_held
+            // gating above. Bump fail counter; optional hard abort
+            // when AURA_DENSIFY_CONTRACT=hard (aligns RootRemap hard
+            // contract pattern at root_remap_pass.ixx:380).
+            aura::core::densify_consistency::bump_densify_consistency_fail_total();
+            const char* contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
+            const bool hard_fail = (contract_env != nullptr && std::string(contract_env) == "hard");
+            if (hard_fail) {
+                std::fprintf(stderr,
+                             "[#2341] Densify consistency contract failed: %s "
+                             "(AURA_DENSIFY_CONTRACT=hard) — aborting\n",
+                             densify_consistency.force_reason());
+                std::abort();
+            }
+            std::fprintf(stderr,
+                         "[#2341] Densify consistency contract failed (soft mode): %s "
+                         "— suppressing success metrics\n",
+                         densify_consistency.force_reason());
+        }
+        if (pin_contract_held && densify_consistency.overall_ok()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
                 m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
                 m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
