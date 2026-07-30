@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 537 | Preferred destination suites |
-| **Total scanned** | **537** | |
+| `tests/core/test_*.cpp` | 538 | Preferred destination suites |
+| **Total scanned** | **538** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 51 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 11 | 11 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 56 | 56 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 57 | 57 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 116 | 116 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 31 | 31 | P3 — review case-by-case |
@@ -174,6 +174,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_aot_reload_primitive.cpp`
 - `tests/compiler/test_aot_shell_c0_escape.cpp`
 - `tests/compiler/test_aot_stats_null_metrics.cpp`
+- `tests/compiler/test_aot_version_triple_2306.cpp`
 - `tests/compiler/test_apply_closure_envframe_soa.cpp`
 - `tests/core/test_arena_adaptive_compact_2059.cpp`
 - `tests/core/test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp`
@@ -1080,13 +1081,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (56)
+### `jit_incremental` — JIT / AOT / incremental relower (57)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (56)
+#### domain/ (57)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1097,6 +1098,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aot_region_per_eval.cpp` (—) [domain_suite, theme_compiler] — test_aot_region_per_eval.cpp — Issue #1367 (standalone; ACs drift under current aot: API)
 - `tests/compiler/test_aot_reload_primitive.cpp` (—) [large, domain_suite, theme_compiler] — test_aot_reload_primitive.cpp — Issue #1366: (aot:reload) Aura wrappers
 - `tests/compiler/test_aot_shell_c0_escape.cpp` (—) [domain_suite, theme_compiler] — test_issue_1997.cpp -- runtime smoke test for B-002 / #1997
+- `tests/compiler/test_aot_version_triple_2306.cpp` (#2306) [domain_suite, theme_compiler] — Issue #2306 — (query:aot-version-triple) Agent-facing read-only
 - `tests/compiler/test_build_kv_hash_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_build_kv_hash_batch.cpp — build_kv_hash pair dup-merge (R19 phase 8).
 - `tests/compiler/test_cache_stamp_restamp_contract_2183.cpp` (#2183) [domain_suite, theme_compiler] — AC1: restamp_cache_entry + restamp_cache_entry_live_ on store/partial
 - `tests/compiler/test_capability_gating.cpp` (—) [domain_suite, theme_compiler] — Issue #1416: Inline no-op stubs for aura::jit::AuraJIT::invalidate_prefix
