@@ -2206,6 +2206,25 @@ def cmd_mutation_hold_slo_coverage():
     return 0
 
 
+def cmd_type_system_health_coverage():
+    """Issue #2350: query:type-system-health single Agent score.
+
+    Aggregates provenance completeness, timeout reject rate, linear pin
+    miss rate, layered DCE efficiency into health-bp + force-reason.
+    """
+    print(f"{B}=== type-system-health coverage (#2350) ==={N}")
+    script = ROOT / "scripts" / "check_type_system_health_2350.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type-system-health coverage contract rows failed")
+        return 1
+    ok("type-system-health coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2572,6 +2591,7 @@ def cmd_gate():
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
+        or cmd_type_system_health_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

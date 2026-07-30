@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-07-30 by `scripts/inventory_legacy_tests.py`
+**Generated:** 2026-07-31 by `scripts/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 543 | Preferred destination suites |
-| **Total scanned** | **543** | |
+| `tests/core/test_*.cpp` | 544 | Preferred destination suites |
+| **Total scanned** | **544** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 56 | 56 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 158 | 158 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 159 | 159 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 53 | 53 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 12 | 12 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
@@ -668,6 +668,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_type_prop_invariant_correlation.cpp`
 - `tests/compiler/test_type_propagation_dead_coercion.cpp`
 - `tests/core/test_type_registry_ownership.cpp`
+- `tests/compiler/test_type_system_health_2350.cpp`
 - `tests/compiler/test_type_timeout_repair_2284.cpp`
 - `tests/compiler/test_typechecker_incremental_batch.cpp`
 - `tests/compiler/test_typed_mutation_audit_decision_2281.cpp`
@@ -793,13 +794,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (158)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (159)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (158)
+#### domain/ (159)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -946,6 +947,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tui_present_dirty_2214.cpp` (#2214) [domain_suite, theme_compiler] — AC1: Primitive registered under AURA_ENABLE_TUI + hot meta
 - `tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp` (#2191) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
+- `tests/compiler/test_type_system_health_2350.cpp` (#2350) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)
 - `tests/compiler/test_type_timeout_repair_2284.cpp` (#2284) [domain_suite, theme_compiler] — test_type_timeout_repair_2284.cpp
 - `tests/compiler/test_typed_mutation_audit_decision_2281.cpp` (#2281) [domain_suite, theme_compiler] — (≥12 cells per AC4) + the query schema sentinels (AC2/AC3).
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp — Issue #745:
