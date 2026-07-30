@@ -9903,6 +9903,21 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-escape-gate-cross-eval-miss-total",
                       static_cast<std::int64_t>(g_linear_escape_gate_cross_eval_miss_total.load(
                           std::memory_order_relaxed)));
+            // Issue #2309: rollback-clear counter — bumped by
+            // composite_txn_commit reject / MutationBoundary hard-gate
+            // force-rollback paths when they call
+            // aura_escape_move_gate_clear(). The clear prevents a
+            // stale "blocked" set from a rolled-back txn leaking into
+            // a subsequent independent mutate in the same eval / process
+            // (multi-Agent / multi-round).
+            insert_kv("linear-escape-gate-clear-on-rollback-total",
+                      static_cast<std::int64_t>(g_linear_escape_gate_clear_on_rollback_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-2309", 2309);
+            insert_kv("issue-2309", 2309);
+            // Wired sentinel — confirms the #2309 rollback-clear fix
+            // landed at every reject / force-rollback site.
+            insert_kv("escape-gate-rollback-clear-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

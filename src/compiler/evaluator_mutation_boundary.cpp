@@ -18,11 +18,12 @@ module;
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
-#include "security_capabilities.h"         // aura_fiber_current_id
-#include "aura_jit_bridge.h"               // aura_invoke_long_mutation_scheduler_hook
-                                           // + aura_aot_func_table_epoch +
-                                           //   aura_jit_batch_deopt_for (+ empty-name
-                                           //   deopt-all, Issue #2162)
+#include "security_capabilities.h"          // aura_fiber_current_id
+#include "aura_jit_bridge.h"                // aura_invoke_long_mutation_scheduler_hook
+#include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
+                                            // + aura_aot_func_table_epoch +
+                                            //   aura_jit_batch_deopt_for (+ empty-name
+                                            //   deopt-all, Issue #2162)
 #include "compiler/hot_update_registry.hh" // Issue #2090: AuraJITHotUpdateRegistry
                                            //   C-linkage shims —
                                            // aura_hot_update_should_throttle_reemit
@@ -667,6 +668,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                             m->typed_mutation_full_force_rollback_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                        // Issue #2309: clear the escape → MoveOp elision gate
+                        // before control returns to the Agent. The boundary
+                        // path is the canonical rollback surface for composite
+                        // txn commit — without this clear, a stale "blocked"
+                        // set from the failed composite (or hard-gate reject)
+                        // leaks into the next independent mutate in the same
+                        // eval / process. Counter bump mirrors the typecheck
+                        // reject branches.
+                        aura_escape_move_gate_clear();
+                        g_linear_escape_gate_clear_on_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
                         // Issue #2284: publish boundary hard-reject signal on the
                         // repair surface. The typecheck path already published the
                         // detailed unresolved_affected_nodes data; we only update

@@ -66,6 +66,13 @@ extern std::atomic<std::uint64_t> g_linear_lowering_escape_summary_hit_total;
 extern std::atomic<std::uint32_t> g_linear_escape_move_gate_wired;
 // Issue #2286: miss counter for cross-eval / cross-gen lookups.
 extern std::atomic<std::uint64_t> g_linear_escape_gate_cross_eval_miss_total;
+// Issue #2309: rollback-clear counter — bumped by composite_txn_commit /
+// MutationBoundary hard-gate force-rollback paths when they call
+// aura_escape_move_gate_clear(). Agents read this to confirm the
+// stale-gate leak fix landed (failure: a rejected txn's blocked set
+// could survive into a subsequent independent mutate in the same
+// process / same eval).
+extern std::atomic<std::uint64_t> g_linear_escape_gate_clear_on_rollback_total;
 
 namespace detail {
     // Issue #2286: thread-local current key set by Evaluator before lowering

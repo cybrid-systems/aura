@@ -11,6 +11,7 @@ module;
 #include "core/sandbox.hh"               // Issue #2145 Strict sandbox hard-gate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
+#include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
 
 module aura.compiler.evaluator;
 
@@ -1310,6 +1311,14 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
             m->typed_mutation_full_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
             m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #2309: hard-gate force-rollback clears the process-wide
+        // escape → MoveOp elision gate so a stale "blocked" set from the
+        // failed txn can't leak into a subsequent independent mutate
+        // (multi-Agent / multi-round). Without this clear, a binding
+        // that's no longer escaped post-rollback would still see its
+        // MoveOp forced (or vice versa).
+        aura_escape_move_gate_clear();
+        g_linear_escape_gate_clear_on_rollback_total.fetch_add(1, std::memory_order_relaxed);
         if (strict) {
             strict_mutate_hold_.store(1, std::memory_order_relaxed);
             ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
@@ -1397,6 +1406,11 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         m->typed_mutation_full_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
         m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2309: see the matching clear site at the boundary_solve_proof_gate
+    // reject branch above — same fix applied here so a failed typed-mutation
+    // audit (Full / Strict) doesn't leak its escape gate into the next mutate.
+    aura_escape_move_gate_clear();
+    g_linear_escape_gate_clear_on_rollback_total.fetch_add(1, std::memory_order_relaxed);
     // Strict sandbox: hold further mutate until clear.
     if (strict) {
         strict_mutate_hold_.store(1, std::memory_order_relaxed);
