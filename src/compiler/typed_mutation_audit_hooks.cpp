@@ -32,6 +32,11 @@ std::atomic<std::uint64_t> g_linear_lowering_escape_summary_hit_total{0};
 std::atomic<std::uint32_t> g_linear_escape_move_gate_wired{1};
 // Issue #2286: keyed-lookup miss counter (cross-eval / cross-gen).
 std::atomic<std::uint64_t> g_linear_escape_gate_cross_eval_miss_total{0};
+// Issue #2344: Option A — miss path blocked because some other live key
+// has the binding in its escape-blocked set.
+std::atomic<std::uint64_t> g_linear_escape_gate_miss_conservative_block_total{0};
+// Issue #2344: key-contract wiring sentinel (always 1 once linked).
+std::atomic<std::uint32_t> g_linear_escape_gate_key_contract_wired{1};
 // Issue #2309: rollback-clear counter (see ownership_escape_lowering_gate.h).
 std::atomic<std::uint64_t> g_linear_escape_gate_clear_on_rollback_total{0};
 
@@ -82,8 +87,23 @@ extern "C" void aura_escape_move_gate_clear_key(void* eval, std::uint64_t cow_ge
     s.entries.erase({eval, cow_gen});
 }
 
-// Issue #2286: keyed lookup — consults only the entry for (eval, cow_gen).
-// Miss → safe default (no block). Bumps cross_eval_miss when key absent.
+// Issue #2286 / #2344: keyed lookup for MoveOp elision gate.
+//
+// Matching key (happy path, AC3): single map lookup — no full scan.
+//   active + name in blocked → block (1)
+//   active + name clean     → allow elide (0)
+//   inactive entry          → allow elide (0)
+//
+// Miss (key absent) — Issue #2344 Option A (conservative):
+//   1. bump cross_eval_miss
+//   2. scan *all* active entries; if any blocks `binding`, return 1 and
+//      bump miss_conservative_block_total
+//   3. else return 0 (true unknown — no live summary blocks this name)
+//
+// Rationale: publish under key A + lower under key B (stale gen / wrong
+// eval metrics / forgotten set_current_escape_key) must never elide a
+// Move of a name that some concurrent live summary has escape-blocked.
+// Disjoint names across evals still isolate (scan only matches the name).
 extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t cow_gen,
                                                        const char* binding) noexcept {
     if (!binding || binding[0] == '\0')
@@ -91,14 +111,26 @@ extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t
     auto& s = escape_move_gate_state();
     std::lock_guard lock(s.mu);
     auto it = s.entries.find({eval, cow_gen});
-    if (it == s.entries.end()) {
-        aura::compiler::g_linear_escape_gate_cross_eval_miss_total.fetch_add(
-            1, std::memory_order_relaxed);
-        return 0;
+    if (it != s.entries.end()) {
+        // Matching key: zero-cost relative to full map scan (AC3).
+        if (!it->second.active)
+            return 0;
+        return it->second.blocked.find(binding) != it->second.blocked.end() ? 1 : 0;
     }
-    if (!it->second.active)
-        return 0;
-    return it->second.blocked.find(binding) != it->second.blocked.end() ? 1 : 0;
+    // Miss — Issue #2344 Option A.
+    aura::compiler::g_linear_escape_gate_cross_eval_miss_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    for (const auto& [key, entry] : s.entries) {
+        (void)key;
+        if (!entry.active)
+            continue;
+        if (entry.blocked.find(binding) != entry.blocked.end()) {
+            aura::compiler::g_linear_escape_gate_miss_conservative_block_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 // Legacy process-wide APIs — kept for backward compat with existing tests

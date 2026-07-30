@@ -50,7 +50,10 @@ extern "C" void aura_escape_move_gate_clear() noexcept;
 extern "C" int aura_escape_move_gate_active() noexcept;
 extern "C" int aura_escape_blocks_move_elision(const char* binding) noexcept;
 // Issue #2286: keyed variants. publish stores under (eval, cow_gen);
-// lookup consults only that entry; miss → safe default (no block).
+// lookup consults that entry first.
+// Issue #2344 (Option A): on miss, if *any* active keyed summary blocks the
+// binding name, still block elision (conservative) — never miss→elide a
+// name that a concurrent live summary has escape-blocked.
 extern "C" void aura_escape_move_gate_publish_for_key(void* eval, std::uint64_t cow_gen, int active,
                                                       const char* const* names,
                                                       std::size_t n) noexcept;
@@ -66,6 +69,11 @@ extern std::atomic<std::uint64_t> g_linear_lowering_escape_summary_hit_total;
 extern std::atomic<std::uint32_t> g_linear_escape_move_gate_wired;
 // Issue #2286: miss counter for cross-eval / cross-gen lookups.
 extern std::atomic<std::uint64_t> g_linear_escape_gate_cross_eval_miss_total;
+// Issue #2344: miss path took the Option A conservative block (any live
+// summary blocks the binding name). Additive over #2286 miss counter.
+extern std::atomic<std::uint64_t> g_linear_escape_gate_miss_conservative_block_total;
+// Issue #2344: sentinel for key-contract wiring (publish key ↔ lower key).
+extern std::atomic<std::uint32_t> g_linear_escape_gate_key_contract_wired;
 // Issue #2309: rollback-clear counter — bumped by composite_txn_commit /
 // MutationBoundary hard-gate force-rollback paths when they call
 // aura_escape_move_gate_clear(). Agents read this to confirm the

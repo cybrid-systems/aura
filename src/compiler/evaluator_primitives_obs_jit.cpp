@@ -9854,7 +9854,8 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                         m->own_escape_post_savings_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            // Capacity: #863 + #2263 + #2286 + #2309 + #2344 keys (~24).
+            auto* ht = FlatHashTable::create(64) /* #1141 / #2344 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -9921,6 +9922,18 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
             // Wired sentinel — confirms the #2309 rollback-clear fix
             // landed at every reject / force-rollback site.
             insert_kv("escape-gate-rollback-clear-wired", 1);
+            // Issue #2344: publish key ↔ lower key contract (Option A).
+            // On keyed miss, if any live summary blocks the binding name,
+            // still block elision (escape-miss-conservative-block-total).
+            insert_kv(
+                "escape-miss-conservative-block-total",
+                static_cast<std::int64_t>(g_linear_escape_gate_miss_conservative_block_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("escape-gate-key-contract-wired",
+                      static_cast<std::int64_t>(
+                          g_linear_escape_gate_key_contract_wired.load(std::memory_order_relaxed)));
+            insert_kv("schema-2344", 2344);
+            insert_kv("issue-2344", 2344);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

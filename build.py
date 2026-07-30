@@ -2092,6 +2092,25 @@ def cmd_type_timeout_repair_graph_coverage():
     return 0
 
 
+def cmd_escape_gate_key_contract_coverage():
+    """Issue #2344: escape-gate publish key ↔ lower key contract (Option A).
+
+    Wrong-key miss must never elide a binding blocked under any live summary;
+    matching key retains #2286 isolation + zero-cost happy path.
+    """
+    print(f"{B}=== escape-gate key contract coverage (#2344) ==={N}")
+    script = ROOT / "scripts" / "check_escape_gate_key_contract_2344.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("escape-gate key contract coverage contract rows failed")
+        return 1
+    ok("escape-gate key contract coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2452,6 +2471,7 @@ def cmd_gate():
         or cmd_aot_per_eval_slot_invalidate_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
+        or cmd_escape_gate_key_contract_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
