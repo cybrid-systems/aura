@@ -102,6 +102,12 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_strict_reject_wea
 // Issue #2261: Sampled skipped CoercionNode insert on incomplete provenance
 // (never stamp weak mid / sentinel pretend into IR under Sampled).
 export inline std::atomic<std::uint64_t> g_coercion_provenance_sampled_reject_total{0};
+// Issue #2317: Sampled insert counter — bumped when Sampled +
+// incomplete provenance + NOT production reject → still insert
+// CoercionNode (with force-audit via fill_coercion_provenance_chain's
+// note_provenance_miss_for_boundary call). Distinct from
+// coercion_provenance_sampled_reject_total which counts SKIPS.
+export inline std::atomic<std::uint64_t> g_coercion_sampled_insert_incomplete_total{0};
 export inline std::atomic<std::uint32_t> g_coercion_provenance_ban_weak_ir_wired{1};
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
@@ -494,17 +500,33 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         }
 
         // Issue #1873 / #2024 / #2102 / #2261: full provenance chain recovery.
-        // Incomplete under reject-on-miss OR Sampled/non-Off → skip insert
-        // (never ship weak mid / sentinel pretend into IR under Sampled).
+        // Issue #2317: Sampled + incomplete provenance + NOT production reject
+        // → INSERT (with force-audit via fill_coercion_provenance_chain's
+        // note_provenance_miss_for_boundary call + bump new counter
+        // coercion_sampled_insert_incomplete_total). Reject-on-miss
+        // (production default) + Full + Strict still skip per existing
+        // #2147 / #2261 rules (no regression).
         const bool prov_complete = fill_coercion_provenance_chain(flat, e);
-        if (!prov_complete && should_skip_coercion_insert_on_incomplete()) {
-            g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
+        if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::get_strategy;
-            if (get_strategy() == AuditStrategy::Sampled)
-                g_coercion_provenance_sampled_reject_total.fetch_add(1, std::memory_order_relaxed);
-            ++s.skipped_stale;
-            continue;
+            const auto s = get_strategy();
+            // Issue #2317: Sampled + !reject → INSERT (not skip).
+            if (s == AuditStrategy::Sampled && !reject_apply_on_provenance_miss()) {
+                g_coercion_sampled_insert_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+                // Fall through to insert (CoercionNode exists for
+                // lowering; force-audit triggered by fill_coercion_provenance_chain).
+            } else if (should_skip_coercion_insert_on_incomplete()) {
+                // existing skip path (reject-on-miss OR non-Off strategy)
+                g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
+                if (s == AuditStrategy::Sampled)
+                    g_coercion_provenance_sampled_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                ++s.skipped_stale;
+                continue;
+            }
+            // For Off soft path (with incomplete provenance): falls through
+            // to insert (existing behavior; weak mid cleared per #2261).
         }
 
         // Locate the parent and confirm it still points at the

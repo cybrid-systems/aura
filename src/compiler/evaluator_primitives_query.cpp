@@ -6421,6 +6421,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-provenance-weak-id-total", coercion_prov_weak);
             insert_kv("coercion_provenance_weak_id_total", coercion_prov_weak);
             insert_kv("coercion-provenance-strict-reject-weak-total", coercion_prov_strict_weak);
+            // Issue #2317: Sampled insert counter — bumped when Sampled +
+            // incomplete provenance + NOT production reject → still insert
+            // CoercionNode (with force-audit via
+            // fill_coercion_provenance_chain's note_provenance_miss_for_boundary
+            // call). Distinct from coercion-provenance-sampled-reject-total
+            // which counts SKIPS. P0 production Sampled hosts must not
+            // silently lose coercion sites (soundness / debuggability hole).
+            const std::int64_t coercion_sampled_insert = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_sampled_insert_incomplete_total.load(
+                    std::memory_order_relaxed));
+            insert_kv("coercion-sampled-insert-incomplete-total", coercion_sampled_insert);
+            insert_kv("coercion_sampled_insert_incomplete_total", coercion_sampled_insert);
+            insert_kv("coercion-sampled-insert-policy-wired", 1);
+            insert_kv("schema-2317", 2317);
+            insert_kv("issue-2317", 2317);
             insert_kv("coercion-parent-walk-cap-sampled", 16);
             insert_kv("coercion-parent-walk-cap-full", 64);
             insert_kv("coercion-provenance-fast-path-wired", 1);
