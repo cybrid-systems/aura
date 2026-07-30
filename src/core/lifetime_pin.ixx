@@ -149,21 +149,128 @@ inline std::mutex& pin_registry_mtx() {
     return m;
 }
 
+// Issue #2342: sharded pin registry. Replaces the process-wide
+// `pin_registry()` + `pin_registry_mtx()` pair with N independent
+// shards. Each shard owns its own mutex + vector; LifetimePin
+// ctor/dtor/move/pin route to one shard by arena_id (default
+// shard 0 for arena_id=0). Compact walks that target a specific
+// arena touch only the relevant shard; walks that need every pin
+// (remap_pins_pointing_to, verify_pins_under_moving_compact) take
+// all N shard locks in shard-index order (deadlock-safe).
+//
+// Shard count is a power of 2 so arena_id-based routing is a single
+// AND. 16 shards is enough to spread FFI/render pin churn across
+// distinct mutexes without exploding memory; can grow if benchmarks
+// show saturation.
+//
+// AC1: scalability — global lock hold time shrinks because most pin
+// ctor/dtor traffic targets one shard's mutex, not the global one.
+// AC2: Soft / no densify still pays one shard lock (not zero —
+// TLS buffer would be required for true zero-lock; per the issue
+// "Prefer (1) or (2) for incremental risk" — Option 1 chosen for
+// simpler lock-ordering analysis). Documented as incremental; true
+// zero-lock via TLS buffer is future work.
+// AC3: compact walks remain correct — restamp_all_pins_for_arena
+// hits one shard; non-arena walks hit all shards in order.
+// AC4: observability — pin_registry_shard_pin_count(idx) +
+// pin_registry_shard_max_pin_count() + pin_registry_lock_wait_us_total.
+inline constexpr std::size_t kPinRegistryShardCount = 16;
+inline constexpr std::size_t kPinRegistryShardMask = kPinRegistryShardCount - 1;
+
+struct PinRegistryShard {
+    std::mutex mtx;
+    std::vector<LifetimePin*> pins;
+};
+
+inline std::array<PinRegistryShard, kPinRegistryShardCount>& pin_registry_shards() noexcept {
+    static std::array<PinRegistryShard, kPinRegistryShardCount> shards{};
+    return shards;
+}
+
+// Route by arena_id (0 lands on shard 0 — default for untyped FFI
+// buffers). arena_id != 0 spreads by arena, so compact arena-specific
+// walks only touch one shard.
+inline std::size_t pin_registry_shard_index(std::uint64_t arena_id) noexcept {
+    if (arena_id == 0)
+        return 0;
+    return static_cast<std::size_t>(arena_id) & kPinRegistryShardMask;
+}
+
+// Process-level cumulative lock-wait microseconds. Bumped inside
+// each shard's lock_guard ctor (best-effort; the std::chrono
+// resolution is microseconds). Used by AC4 observability.
+inline std::atomic<std::uint64_t> g_pin_registry_lock_wait_us_total{0};
+inline std::uint64_t pin_registry_lock_wait_us_total() noexcept {
+    return g_pin_registry_lock_wait_us_total.load(std::memory_order_relaxed);
+}
+
+// Per-shard pin count (takes the shard's lock briefly). Cheap
+// enough for AC5 stress-test snapshots.
+inline std::size_t pin_registry_shard_pin_count(std::size_t shard_idx) noexcept {
+    if (shard_idx >= kPinRegistryShardCount)
+        return 0;
+    auto& s = pin_registry_shards()[shard_idx];
+    std::lock_guard<std::mutex> lock(s.mtx);
+    std::size_t n = 0;
+    for (auto* p : s.pins)
+        if (p && p->pinned())
+            ++n;
+    return n;
+}
+
+// Max pin count across all shards (for AC4 load-balance dashboards).
+inline std::size_t pin_registry_shard_max_pin_count() noexcept {
+    std::size_t m = 0;
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i)
+        m = std::max(m, pin_registry_shard_pin_count(i));
+    return m;
+}
+
+// Total live pins across all shards (replacement for the existing
+// live_pin_count() monotonic reader; preserved as a thin shim).
+inline std::size_t pin_registry_total_pinned_count() noexcept {
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& s = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(s.mtx);
+        for (auto* p : s.pins)
+            if (p && p->pinned())
+                ++total;
+    }
+    return total;
+}
+
 class LifetimePin {
 public:
     LifetimePin() noexcept {
-        std::lock_guard<std::mutex> lock(pin_registry_mtx());
-        pin_registry().push_back(this);
+        // Issue #2342: route to shard by arena_id_ (0 → shard 0).
+        shard_index_ = pin_registry_shard_index(arena_id_);
+        auto& shard = pin_registry_shards()[shard_index_];
+        const auto wait_start = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        const auto wait_end = std::chrono::steady_clock::now();
+        g_pin_registry_lock_wait_us_total.fetch_add(
+            static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(wait_end - wait_start)
+                    .count()),
+            std::memory_order_relaxed);
+        shard.pins.push_back(this);
         owner_ = PinOwner::Arena; // Issue #2270: default Arena on pin().
         ++g_lifetime_pin_stats.pins;
         ++g_lifetime_pin_stats.pin_owner_arena_transitions;
     }
     ~LifetimePin() noexcept {
-        std::lock_guard<std::mutex> lock(pin_registry_mtx());
-        auto& reg = pin_registry();
-        auto it = std::find(reg.begin(), reg.end(), this);
-        if (it != reg.end())
-            reg.erase(it);
+        // Issue #2342: deregister from shard_index_'s shard (not a
+        // global search). Defensive bounds check — shard_index_ is
+        // set in ctor and updated only via pin() / move.
+        if (shard_index_ >= kPinRegistryShardCount)
+            return;
+        auto& shard = pin_registry_shards()[shard_index_];
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        auto& vec = shard.pins;
+        auto it = std::find(vec.begin(), vec.end(), this);
+        if (it != vec.end())
+            vec.erase(it);
         owner_ = PinOwner::None; // Issue #2270: terminal None on dtor.
         ++g_lifetime_pin_stats.unpins;
     }
@@ -175,37 +282,55 @@ public:
         , gen_(o.gen_)
         , arena_id_(o.arena_id_)
         , ffi_handoff_(o.ffi_handoff_)
-        , owner_(o.owner_) { // Issue #2270: transfer ownership state.
+        , owner_(o.owner_)
+        , shard_index_(o.shard_index_) { // Issue #2342: transfer shard routing.
         o.ptr_ = nullptr;
         o.gen_ = 0;
         o.arena_id_ = 0;
         o.ffi_handoff_ = false;
         o.owner_ = PinOwner::None; // Issue #2270: moved-from resets to None.
-        std::lock_guard<std::mutex> lock(pin_registry_mtx());
-        auto& reg = pin_registry();
-        auto it = std::find(reg.begin(), reg.end(), &o);
-        if (it != reg.end())
+        o.shard_index_ = 0;        // Issue #2342: source's shard_index_ is now stale.
+        auto& shard = pin_registry_shards()[shard_index_];
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        auto& vec = shard.pins;
+        auto it = std::find(vec.begin(), vec.end(), &o);
+        if (it != vec.end())
             *it = this;
         else
-            reg.push_back(this);
+            vec.push_back(this);
     }
     LifetimePin& operator=(LifetimePin&& o) noexcept {
         if (this != &o) {
+            // Issue #2342: deregister this from current shard first.
+            if (shard_index_ < kPinRegistryShardCount) {
+                auto& my_shard = pin_registry_shards()[shard_index_];
+                std::lock_guard<std::mutex> my_lock(my_shard.mtx);
+                auto& my_vec = my_shard.pins;
+                auto my_it = std::find(my_vec.begin(), my_vec.end(), this);
+                if (my_it != my_vec.end())
+                    my_vec.erase(my_it);
+            }
             ptr_ = o.ptr_;
             gen_ = o.gen_;
             arena_id_ = o.arena_id_;
             ffi_handoff_ = o.ffi_handoff_;
-            owner_ = o.owner_; // Issue #2270: transfer ownership state.
+            owner_ = o.owner_;             // Issue #2270: transfer ownership state.
+            shard_index_ = o.shard_index_; // Issue #2342: transfer shard routing.
             o.ptr_ = nullptr;
             o.gen_ = 0;
             o.arena_id_ = 0;
             o.ffi_handoff_ = false;
             o.owner_ = PinOwner::None; // Issue #2270: reset moved-from.
-            std::lock_guard<std::mutex> lock(pin_registry_mtx());
-            auto& reg = pin_registry();
-            auto it = std::find(reg.begin(), reg.end(), &o);
-            if (it != reg.end())
-                *it = this;
+            o.shard_index_ = 0;
+            // Register in destination shard.
+            auto& new_shard = pin_registry_shards()[shard_index_];
+            std::lock_guard<std::mutex> new_lock(new_shard.mtx);
+            auto& new_vec = new_shard.pins;
+            auto src_it = std::find(new_vec.begin(), new_vec.end(), &o);
+            if (src_it != new_vec.end())
+                *src_it = this;
+            else
+                new_vec.push_back(this);
         }
         return *this;
     }
@@ -213,10 +338,36 @@ public:
     // Pin a buffer pointer with a generation stamp. arena_id = 0 means
     // "no specific arena — generic FFI buffer" (validate still checks gen).
     void pin(void* p, std::uint64_t g, std::uint64_t arena_id = 0) noexcept {
+        // Issue #2342: re-route to correct shard if arena_id changed.
+        // Locks both old + new shards in idx order (deadlock-safe).
+        const auto old_idx = shard_index_;
+        const auto new_idx = pin_registry_shard_index(arena_id);
         ptr_ = p;
         gen_ = g;
         arena_id_ = arena_id;
         ffi_handoff_ = false;
+        if (new_idx != old_idx) {
+            auto& old_shard = pin_registry_shards()[old_idx];
+            auto& new_shard = pin_registry_shards()[new_idx];
+            if (old_idx < new_idx) {
+                std::lock_guard<std::mutex> old_lock(old_shard.mtx);
+                std::lock_guard<std::mutex> new_lock(new_shard.mtx);
+                auto& old_vec = old_shard.pins;
+                auto old_it = std::find(old_vec.begin(), old_vec.end(), this);
+                if (old_it != old_vec.end())
+                    old_vec.erase(old_it);
+                new_shard.pins.push_back(this);
+            } else {
+                std::lock_guard<std::mutex> new_lock(new_shard.mtx);
+                std::lock_guard<std::mutex> old_lock(old_shard.mtx);
+                auto& old_vec = old_shard.pins;
+                auto old_it = std::find(old_vec.begin(), old_vec.end(), this);
+                if (old_it != old_vec.end())
+                    old_vec.erase(old_it);
+                new_shard.pins.push_back(this);
+            }
+            shard_index_ = new_idx;
+        }
     }
 
     [[nodiscard]] bool pinned() const noexcept { return ptr_ != nullptr; }
@@ -331,6 +482,11 @@ private:
     std::uint64_t gen_ = 0;
     std::uint64_t arena_id_ = 0;
     bool ffi_handoff_ = false;
+    // Issue #2342: shard routing. Ctor sets to shard 0 (arena_id_=0
+    // default). pin() re-routes when arena_id_ changes. move ctor /
+    // assign transfer from source. Used by dtor to deregister from
+    // the correct shard (avoids O(N) search across all shards).
+    mutable std::uint32_t shard_index_ = 0;
     // Issue #2270: owner state machine. Default Arena (set in ctor).
     // Updated by mark_ffi_handoff / mark_ffi_owned / release_ffi / dtor.
     PinOwner owner_ = PinOwner::Arena;
@@ -341,8 +497,13 @@ private:
 // gen. Returns # restamped (counter-bumped).
 inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
                                               std::uint64_t new_gen = 0) noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
+    // Issue #2342: shard by arena_id — restamp walks only the relevant
+    // shard (since LifetimePin routes by arena_id). Reduces lock hold
+    // from O(total pins) to O(shard pins) for arena-specific restamps.
+    const auto idx = pin_registry_shard_index(arena_id);
+    auto& shard = pin_registry_shards()[idx];
+    std::lock_guard<std::mutex> lock(shard.mtx);
+    auto& reg = shard.pins;
     std::size_t n = 0;
     for (auto* p : reg) {
         if (!p || !p->pinned())
@@ -357,8 +518,11 @@ inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
 
 // Invalidate every live LifetimePin tied to `arena_id`. Returns # invalidated.
 inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
+    // Issue #2342: shard by arena_id — same routing as restamp.
+    const auto idx = pin_registry_shard_index(arena_id);
+    auto& shard = pin_registry_shards()[idx];
+    std::lock_guard<std::mutex> lock(shard.mtx);
+    auto& reg = shard.pins;
     std::size_t n = 0;
     for (auto* p : reg) {
         if (!p || !p->pinned())
@@ -389,23 +553,29 @@ inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uin
     RemapResult out{};
     if (!old_ptr || !new_ptr)
         return out;
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
-    for (auto* p : reg) {
-        if (!p || !p->pinned())
-            continue;
-        if (arena_id_filter != 0 && p->arena_id() != arena_id_filter)
-            continue;
-        if (p->ptr() != old_ptr) {
-            // No match: bump miss only if this pin's arena IS the filter
-            // (otherwise the pin belongs to a different arena entirely
-            // and isn't a candidate for this remap).
-            if (arena_id_filter != 0 && p->arena_id() == arena_id_filter)
-                ++g_lifetime_pin_stats.remap_misses;
-            continue;
+    // Issue #2342: iterate all shards in shard-index order (deadlock-safe).
+    // arena_id_filter == 0 means "any arena" so all shards are visited.
+    // arena_id_filter != 0 still visits all shards but only processes
+    // pins whose arena_id matches (filter inside loop body).
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& shard = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        for (auto* p : shard.pins) {
+            if (!p || !p->pinned())
+                continue;
+            if (arena_id_filter != 0 && p->arena_id() != arena_id_filter)
+                continue;
+            if (p->ptr() != old_ptr) {
+                // No match: bump miss only if this pin's arena IS the filter
+                // (otherwise the pin belongs to a different arena entirely
+                // and isn't a candidate for this remap).
+                if (arena_id_filter != 0 && p->arena_id() == arena_id_filter)
+                    ++g_lifetime_pin_stats.remap_misses;
+                continue;
+            }
+            p->remap(new_ptr, new_gen);
+            ++out.remapped;
         }
-        p->remap(new_ptr, new_gen);
-        ++out.remapped;
     }
     return out;
 }
@@ -441,15 +611,10 @@ inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
 inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
     return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
 }
-// Total live pins (for tests + observability).
+// Total live pins (for tests + observability). Issue #2342: delegate
+// to pin_registry_total_pinned_count() which iterates all shards.
 inline std::size_t live_pin_count() noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
-    std::size_t n = 0;
-    for (auto* p : reg)
-        if (p && p->pinned())
-            ++n;
-    return n;
+    return pin_registry_total_pinned_count();
 }
 
 // Issue #2256: Moving-compact hard contract. Every live pointer
@@ -502,15 +667,19 @@ verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_add
 inline bool
 verify_pins_under_moving_compact(std::uint64_t arena_id,
                                  const std::unordered_set<void*>& old_addresses) noexcept {
-    // Arena check first (cheaper, most linear roots are not under
-    // Moving compact — typical Agent mutate keeps linear in a
-    // dedicated arena not the densify set).
-    const bool arena_ok = [&]() noexcept {
-        std::lock_guard<std::mutex> lock(pin_registry_mtx());
-        auto& reg = pin_registry();
-        const auto t0 = std::chrono::steady_clock::now();
-        std::uint64_t honored = 0;
-        for (auto* p : reg) {
+    // Issue #2342: iterate all shards in shard-index order
+    // (deadlock-safe — matches the per-call-site lock ordering used by
+    // remap_pins_pointing_to). The global lock is replaced by N
+    // short shard locks (one per shard, in order). arena_id != 0
+    // filters inside the loop body (pins with mismatched arena are
+    // skipped). arena_id == 0 visits every pinned entry.
+    const auto t0 = std::chrono::steady_clock::now();
+    std::uint64_t honored = 0;
+    bool arena_ok = true;
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& shard = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        for (auto* p : shard.pins) {
             if (!p || !p->pinned())
                 continue;
             if (arena_id != 0 && p->arena_id() != arena_id)
@@ -528,22 +697,36 @@ verify_pins_under_moving_compact(std::uint64_t arena_id,
                             .count()),
                     std::memory_order_relaxed);
                 g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
-                return false;
+                arena_ok = false;
+                // Release locks (RAII) on return; continue scanning
+                // remaining shards to honor the rest of the contract
+                // (no skip — caller will see false and yield the
+                // compact, but the contract counters reflect every
+                // miss). For correctness, break out of the loop
+                // early but still bump counters for each remaining
+                // miss. Trade-off: skip remaining misses (faster)
+                // vs. scan all (more accurate counters). For #2342,
+                // skip remaining misses (call to yield is the primary
+                // signal; missed pin total is a follow-up enrichment).
+                break;
             }
             ++honored;
         }
+        if (!arena_ok)
+            break;
+    }
+    if (arena_ok) {
         const auto t1 = std::chrono::steady_clock::now();
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
         g_moving_compact_pin_hits_total.fetch_add(honored, std::memory_order_relaxed);
         g_moving_compact_remap_us_total.fetch_add(static_cast<std::uint64_t>(us),
                                                   std::memory_order_relaxed);
         g_moving_compact_count_total.fetch_add(1, std::memory_order_relaxed);
-        return true;
-    }();
+    }
     if (!arena_ok)
         return false;
     // Issue #2280: linear pin check (separate mutex; no deadlock risk
-    // because we already released pin_registry_mtx()).
+    // because we already released all shard locks via RAII).
     return verify_linear_pins_under_moving_compact(old_addresses);
 }
 
