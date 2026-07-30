@@ -6057,6 +6057,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("composite-commit-solve-empty-cs-total",
                           static_cast<std::int64_t>(c.composite_commit_solve_empty_cs_total.load(
                               std::memory_order_relaxed)));
+                // Issue #2345: hard vs soft empty-CS after expected partial.
+                insert_kv(
+                    "composite-commit-empty-cs-hard-miss-total",
+                    static_cast<std::int64_t>(c.composite_commit_empty_cs_hard_miss_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("composite-commit-empty-cs-observe-total",
+                          static_cast<std::int64_t>(c.composite_commit_empty_cs_observe_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-empty-cs-hard-wired",
+                          static_cast<std::int64_t>(
+                              c.composite_empty_cs_hard_wired.load(std::memory_order_relaxed)));
+                insert_kv("schema-2345", 2345);
+                insert_kv("issue-2345", 2345);
                 insert_kv("commit-cs-live", ev.commit_cs_live() ? 1 : 0);
                 insert_kv("composite-commit-cs-reuse-wired", 1);
                 insert_kv("schema-2180", 2180);

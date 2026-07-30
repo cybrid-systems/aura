@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <mutex>
@@ -184,6 +185,13 @@ struct TypedMutationAuditCounters {
     // Issue #2180: commit reuses stashed partial CS vs empty greenfield.
     std::atomic<std::uint64_t> composite_commit_solve_reuse_hit_total{0};
     std::atomic<std::uint64_t> composite_commit_solve_empty_cs_total{0};
+    // Issue #2345: expected-partial + empty CS anti false-green.
+    // hard_miss: production / Full / Strict / AURA_COMPOSITE_EMPTY_CS_HARD=1
+    //   → solve_ok forced false (commit rejected).
+    // observe: dev Sampled soft path → counter only; commit may succeed.
+    std::atomic<std::uint64_t> composite_commit_empty_cs_hard_miss_total{0};
+    std::atomic<std::uint64_t> composite_commit_empty_cs_observe_total{0};
+    std::atomic<std::uint32_t> composite_empty_cs_hard_wired{1};
     // Issue #2221: composite commit blame-complete hard gate.
     std::atomic<std::uint64_t> blame_commit_check_total{0};
     std::atomic<std::uint64_t> blame_commit_reject_total{0};
@@ -237,6 +245,32 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 [[nodiscard]] inline bool production_defaults_active() noexcept {
     return g_typed_mutation_audit_counters.production_defaults_active.load(
                std::memory_order_relaxed) != 0;
+}
+
+// Issue #2345: env override AURA_COMPOSITE_EMPTY_CS_HARD=1 forces hard-reject
+// on expected-partial empty CS even under Sampled/dev (sandbox off).
+// Lazy-init; no exceptions (digit/flag parse matches other AURA_* gates).
+[[nodiscard]] inline bool composite_empty_cs_hard_env() noexcept {
+    static const bool cached = []() noexcept -> bool {
+        const char* e = std::getenv("AURA_COMPOSITE_EMPTY_CS_HARD");
+        if (e == nullptr || e[0] == '\0')
+            return false;
+        // Accept "1" / "true" / "yes" (case-insensitive first char).
+        if (e[0] == '1' && e[1] == '\0')
+            return true;
+        if ((e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y') && e[1] != '\0')
+            return true;
+        return false;
+    }();
+    return cached;
+}
+
+// Issue #2345: hard-reject empty CS after expected partial under production
+// defaults, Full strategy, Strict sandbox, or AURA_COMPOSITE_EMPTY_CS_HARD=1.
+// Dev Sampled + sandbox off → soft observe only (AC2).
+[[nodiscard]] inline bool composite_empty_cs_hard_reject_enabled() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full ||
+           composite_empty_cs_hard_env();
 }
 
 // Issue #2053: production multi-tenant AI — capture every self-modify event.
@@ -971,6 +1005,11 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_solve_reuse_hit_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_solve_empty_cs_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2345
+    g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total.store(
         0, std::memory_order_relaxed);
     // Issue #2221
     g_typed_mutation_audit_counters.blame_commit_check_total.store(0, std::memory_order_relaxed);
