@@ -7,6 +7,15 @@
   AC4: Soft path zero remap when no densify
   AC5: Object-class inventory + query keys + schema-2298 + tests
 
+  Issue #2337: GeneralObjectPin adoption in mutate/agent create paths.
+  AC6: wire-up counter on LifetimePinStats (per-call-site that adopts
+       GeneralObjectPin in mutate create paths).
+  AC7: 4 new query keys on query:compact-stats + schema/issue sentinels.
+  AC8: wire-up site in evaluator_primitives_mutate.cpp + import +
+       GeneralObjectPin::pin calls + counter bump.
+  AC9: tests/core/test_general_object_pin_2298.cpp extended with
+       ac6_2337 / ac7_2337 / ac8_2337 functions + Issue #2337 cite.
+
 Exit 0 = all ACs satisfied.
 """
 
@@ -18,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LP = ROOT / "src" / "core" / "lifetime_pin.ixx"
 Q = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
+M = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
 TEST = ROOT / "tests" / "core" / "test_general_object_pin_2298.cpp"
 CMAKE = ROOT / "CMakeLists.txt"
 
@@ -31,6 +41,7 @@ def main() -> int:
 
     lp = LP.read_text(encoding="utf-8", errors="replace")
     q = Q.read_text(encoding="utf-8", errors="replace")
+    m = M.read_text(encoding="utf-8", errors="replace")
     test = TEST.read_text(encoding="utf-8", errors="replace")
     cmake = CMAKE.read_text(encoding="utf-8", errors="replace")
 
@@ -71,6 +82,29 @@ def main() -> int:
     must("void ac2_missing_pin_fail_closed", "AC5", test)
     must("void ac4_soft_zero_cost", "AC5", test)
     must("void ac5_inventory_and_surface", "AC5", test)
+
+    # Issue #2337: GeneralObjectPin adoption in mutate/agent create paths.
+    # AC6: wire-up counter on LifetimePinStats struct.
+    # AC7: 4 new query keys on query:compact-stats + schema/issue sentinels.
+    # AC8: wire-up site in evaluator_primitives_mutate.cpp.
+    # AC9: tests extended with ac6_2337 / ac7_2337 / ac8_2337 functions.
+    must("general_object_pin_mutate_wire_total", "AC6", lp)
+    must("Issue #2337: adoption wire-up counter", "AC6", lp)
+    must("general-object-pin-mutate-wire-total", "AC7", q)
+    must("general_object_pin_mutate_wire_total", "AC7", q)
+    must("general-object-pin-mutate-wired", "AC7", q)
+    must("schema-2337", "AC7", q)
+    must("issue-2337", "AC7", q)
+    must("Issue #2337: GeneralObjectPin adoption in mutate/agent create", "AC7", q)
+    must("import aura.core.lifetime_pin", "AC8", m)
+    must("Issue #2337: GeneralObjectPin adoption in mutate create path", "AC8", m)
+    must("pat_pin.pin(static_cast<void*>(pat_pool)", "AC8", m)
+    must("pat_pin.pin(static_cast<void*>(pat_flat)", "AC8", m)
+    must("general_object_pin_mutate_wire_total += 1", "AC8", m)
+    must("void ac6_2337_wire_counter_initialized", "AC9", test)
+    must("void ac7_2337_schema_sentinels", "AC9", test)
+    must("void ac8_2337_source_cite", "AC9", test)
+    must("Issue #2337 (Refine #2298)", "AC9", test)
 
     if fails:
         for f in fails:

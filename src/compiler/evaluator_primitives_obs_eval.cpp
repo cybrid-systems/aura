@@ -1801,6 +1801,21 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2298", 2298);
                 insert_kv("issue-2298", 2298);
             }
+            // Issue #2337: GeneralObjectPin adoption in mutate/agent create
+            // paths. Wire-up counter is per-call-site that wraps a
+            // GeneralObjectPin around an intermediate create buffer.
+            {
+                using aura::core::lifetime::g_lifetime_pin_stats;
+                insert_kv("general-object-pin-mutate-wire-total",
+                          static_cast<std::int64_t>(
+                              g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
+                insert_kv("general_object_pin_mutate_wire_total",
+                          static_cast<std::int64_t>(
+                              g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
+                insert_kv("general-object-pin-mutate-wired", 1);
+                insert_kv("schema-2337", 2337);
+                insert_kv("issue-2337", 2337);
+            }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in
             // evaluator_mutation_boundary.cpp) gates success metrics + bumps
