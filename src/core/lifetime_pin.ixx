@@ -204,41 +204,9 @@ inline std::uint64_t pin_registry_lock_wait_us_total() noexcept {
     return g_pin_registry_lock_wait_us_total.load(std::memory_order_relaxed);
 }
 
-// Per-shard pin count (takes the shard's lock briefly). Cheap
-// enough for AC5 stress-test snapshots.
-inline std::size_t pin_registry_shard_pin_count(std::size_t shard_idx) noexcept {
-    if (shard_idx >= kPinRegistryShardCount)
-        return 0;
-    auto& s = pin_registry_shards()[shard_idx];
-    std::lock_guard<std::mutex> lock(s.mtx);
-    std::size_t n = 0;
-    for (auto* p : s.pins)
-        if (p && p->pinned())
-            ++n;
-    return n;
-}
-
-// Max pin count across all shards (for AC4 load-balance dashboards).
-inline std::size_t pin_registry_shard_max_pin_count() noexcept {
-    std::size_t m = 0;
-    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i)
-        m = std::max(m, pin_registry_shard_pin_count(i));
-    return m;
-}
-
-// Total live pins across all shards (replacement for the existing
-// live_pin_count() monotonic reader; preserved as a thin shim).
-inline std::size_t pin_registry_total_pinned_count() noexcept {
-    std::size_t total = 0;
-    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
-        auto& s = pin_registry_shards()[i];
-        std::lock_guard<std::mutex> lock(s.mtx);
-        for (auto* p : s.pins)
-            if (p && p->pinned())
-                ++total;
-    }
-    return total;
-}
+// pin_registry_shard_pin_count / pin_registry_total_pinned_count /
+// pin_registry_shard_max_pin_count are defined after LifetimePin (they
+// call pinned() — incomplete type here would fail -Werror builds).
 
 class LifetimePin {
 public:
@@ -282,8 +250,9 @@ public:
         , gen_(o.gen_)
         , arena_id_(o.arena_id_)
         , ffi_handoff_(o.ffi_handoff_)
-        , owner_(o.owner_)
-        , shard_index_(o.shard_index_) { // Issue #2342: transfer shard routing.
+        // Declaration order: shard_index_ before owner_ (#2342 / -Werror=reorder).
+        , shard_index_(o.shard_index_) // Issue #2342: transfer shard routing.
+        , owner_(o.owner_) {
         o.ptr_ = nullptr;
         o.gen_ = 0;
         o.arena_id_ = 0;
@@ -611,6 +580,43 @@ inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
 inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
     return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
 }
+// Per-shard pin count (takes the shard's lock briefly). Cheap
+// enough for AC5 stress-test snapshots. Defined after LifetimePin
+// so pinned() is a complete type.
+inline std::size_t pin_registry_shard_pin_count(std::size_t shard_idx) noexcept {
+    if (shard_idx >= kPinRegistryShardCount)
+        return 0;
+    auto& s = pin_registry_shards()[shard_idx];
+    std::lock_guard<std::mutex> lock(s.mtx);
+    std::size_t n = 0;
+    for (auto* p : s.pins)
+        if (p && p->pinned())
+            ++n;
+    return n;
+}
+
+// Max pin count across all shards (for AC4 load-balance dashboards).
+inline std::size_t pin_registry_shard_max_pin_count() noexcept {
+    std::size_t m = 0;
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i)
+        m = std::max(m, pin_registry_shard_pin_count(i));
+    return m;
+}
+
+// Total live pins across all shards (replacement for the existing
+// live_pin_count() monotonic reader; preserved as a thin shim).
+inline std::size_t pin_registry_total_pinned_count() noexcept {
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& s = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(s.mtx);
+        for (auto* p : s.pins)
+            if (p && p->pinned())
+                ++total;
+    }
+    return total;
+}
+
 // Total live pins (for tests + observability). Issue #2342: delegate
 // to pin_registry_total_pinned_count() which iterates all shards.
 inline std::size_t live_pin_count() noexcept {

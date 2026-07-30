@@ -36,6 +36,10 @@ void aura_orch_note_agent_steal_skipped_boundary() __attribute__((weak));
 // defer + stack handoff metric). Strong def in evaluator_fiber_mutation.cpp;
 // weak no-op in fiber_bridge.cpp for light test binaries.
 void aura_evaluator_on_steal_complete(void* fiber_ptr) __attribute__((weak));
+// Issue #2310: fail-closed force-deopt on MutationSafetySnapshot mismatch.
+// Strong def in evaluator_fiber_mutation.cpp / aura_jit_bridge.cpp; weak
+// no-op in fiber_bridge.cpp for light / asan serve-only link units.
+void aura_force_deopt_on_steal_snapshot_mismatch(void* fiber_ptr) noexcept __attribute__((weak));
 }
 
 static inline void call_steal_arena_yield() noexcept {
@@ -232,7 +236,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // Optional AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only for
             // unit tests (must not be production default).
             if (!aura::serve::is_steal_snapshot_soft_mode()) {
-                aura_force_deopt_on_steal_snapshot_mismatch(stolen);
+                if (aura_force_deopt_on_steal_snapshot_mismatch)
+                    aura_force_deopt_on_steal_snapshot_mismatch(stolen);
             }
             // Do not normal-enqueue until refresh completes (under
             // exclusive recovery). The fiber is dropped from this steal

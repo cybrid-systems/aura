@@ -35,7 +35,8 @@ module;
 #include "basis_points.h"
 #include "serve/fiber.h"
 #include "core/gc_hooks.h"
-#include "core/lifetime_contract.h" // Issue #2300
+#include "core/lifetime_contract.h"          // Issue #2300
+#include "core/densify_consistency_report.h" // Issue #2341
 #include "core/resource_quota.hh"
 #include "compiler/pipeline_policy.hh" // Issue #2213 tree-walker fallback policy
 #include <limits>
@@ -53,6 +54,7 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.core.lifetime_pin;
 import aura.core.envframe_lifetime;
+import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
@@ -11039,8 +11041,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             // Soft / empty remap / no Moving → all axes ok trivially.
             const bool densify_pin_ok = (snap.moving_pin_contract_fail_total == 0);
             const bool densify_linear_ok = densify_pin_ok; // #2266/#2280 subsumed
-            const bool densify_root_remap_ok =
-                !aura::compiler::root_remap_pass::last_root_remap_any_fail();
+            const bool densify_root_remap_ok = !aura::compiler::last_root_remap_any_fail();
             const bool densify_closure_remount_ok =
                 (ev.get_closure_capture_cell_remap_fail_total() == 0);
             const bool densify_envframe_ok = true; // #2340 surface is

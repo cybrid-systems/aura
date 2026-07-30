@@ -80,6 +80,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <shared_mutex>
 #include <utility>

@@ -32,7 +32,10 @@ namespace aura::compiler {
 // and Clang attaches @aura.compiler.type_checker linkage. Consumers
 // import this module (or use TypeChecker::partial_cs_import_*()).
 export inline std::atomic<std::uint64_t> g_partial_cs_import_total{0};
-export inline std::atomic<std::uint64_t> g_partial_cs_import_skip_skip_total{0};
+export inline std::atomic<std::uint64_t> g_partial_cs_import_skip_total{0};
+// Issue #2320: process-wide type_dep_graph prune observability (prune walks).
+export inline std::atomic<std::uint64_t> g_type_dep_graph_prune_total{0};
+export inline std::atomic<std::uint64_t> g_type_dep_graph_entries_dropped{0};
 
 // Issue #2318: anti-starvation streak gate threshold (env-driven).
 // Lazy-init from AURA_DELTA_TRUNCATE_STREAK_FULL env var (default 2).
@@ -2174,8 +2177,8 @@ public:
                         nodes.end());
             dropped += (before - nodes.size());
         }
-        type_dep_graph_prune_total.fetch_add(1, std::memory_order_relaxed);
-        type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
+        g_type_dep_graph_prune_total.fetch_add(1, std::memory_order_relaxed);
+        g_type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
     }
 
     // Issue #387: clear the graph (e.g., on set-code when the
