@@ -2750,6 +2750,11 @@ aura_add_issue_test(test_castop_density_hard_2358)
 aura_issue_test_link_llvm_jit(test_castop_density_hard_2358)
 add_dependencies(all_test_issue_targets test_castop_density_hard_2358)
 
+# Issue #2359: unify occurrence_goals + predicate_memo epoch health query.
+aura_add_issue_test(test_memo_goal_epoch_health_2359)
+aura_issue_test_link_llvm_jit(test_memo_goal_epoch_health_2359)
+add_dependencies(all_test_issue_targets test_memo_goal_epoch_health_2359)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)

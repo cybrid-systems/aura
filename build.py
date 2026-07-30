@@ -2359,6 +2359,25 @@ def cmd_castop_density_hard_coverage():
     return 0
 
 
+def cmd_memo_goal_epoch_health_coverage():
+    """Issue #2359: occurrence_goals + predicate_memo epoch health query.
+
+    Pure read keys on query:type-incremental-fidelity-stats (cache-epoch,
+    goals-live, memo-live/stale, delta, wired). No solver behavior change.
+    """
+    print(f"{B}=== memo-goal epoch health coverage (#2359) ==={N}")
+    script = ROOT / "scripts" / "check_memo_goal_epoch_health_2359.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("memo-goal epoch health (#2359) coverage contract rows failed")
+        return 1
+    ok("memo-goal epoch health (#2359) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2754,6 +2773,7 @@ def cmd_gate():
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
         or cmd_castop_density_hard_coverage()
+        or cmd_memo_goal_epoch_health_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
