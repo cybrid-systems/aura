@@ -1209,6 +1209,26 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     hard_cfg != 0 ? hard_cfg : static_cast<std::uint64_t>(extreme_us));
                 // Issue #2199: AURA_MUTATION_HOLD_STRICT=1 aligns with
                 // long_mutation_strict_mode (process-wide production knob).
+
+                // Issue #2313: configurable hold-budget accessor (default 100_000 µs
+                // = 100 ms). Lazy-init from AURA_MUTATION_HOLD_BUDGET_US env var.
+                // C-style digit parse for consistency with AURA_MUTATION_HOLD_STRICT
+                // (no exceptions; small + predictable hot-path cost). Cached once per
+                // process via static lambda — see #2269 / #2313 zero-cost pattern.
+                // Returns µs; consumer compares against hold_us (same units).
+                [[nodiscard]] inline std::uint64_t mutation_hold_budget_us() noexcept {
+                    static const std::uint64_t cached = []() noexcept -> std::uint64_t {
+                        const char* e = std::getenv("AURA_MUTATION_HOLD_BUDGET_US");
+                        if (e == nullptr || e[0] == '\0')
+                            return 100000ULL; // 100 ms default
+                        std::uint64_t v = 0;
+                        for (const char* p = e; *p >= '0' && *p <= '9'; ++p) {
+                            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+                        }
+                        return v > 0 ? v : 100000ULL;
+                    }();
+                    return cached;
+                }
                 static const bool env_hold_strict = []() noexcept {
                     const char* e = std::getenv("AURA_MUTATION_HOLD_STRICT");
                     return e != nullptr && e[0] != '\0' && e[0] != '0' && e[0] != 'f' &&
@@ -1275,6 +1295,23 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     success = false;
                     m->long_mutation_forced_abort_total.fetch_add(1, std::memory_order_relaxed);
                 }
+            }
+            // Issue #2313 AC1: hold-budget over-budget signal. Distinct
+            // from mutation_too_long_total which is the LATE-warning
+            // threshold via long_mutation_threshold_us (default 500ms).
+            // mutation_hold_budget_us() is the EARLY-warning threshold
+            // (default 100ms via AURA_MUTATION_HOLD_BUDGET_US). Bumped
+            // when hold exceeds budget. SIGNAL-ONLY — does NOT force-
+            // fail or yield (would violate #2200 / unlock workspace_mtx_
+            // mid-mutate). Agents read mutation_hold_over_budget_total
+            // + over-budget rate via query:mutation-boundary-hold-stats
+            // and choose RenderFastExit-style degrade or shorter batches
+            // (closed-loop AC2; #2253 -40 steal penalty still fires on
+            // last_hold_us for #2253 integration). Per AC3: zero cost
+            // under budget (one env-cached load + compare on the dtor
+            // safe point — no extra atomics when uus <= budget).
+            if (uus > mutation_hold_budget_us()) {
+                m->mutation_hold_over_budget_total.fetch_add(1, std::memory_order_relaxed);
             }
             // Export-ready: one load + conditional store (avoid write every dtor).
             if (m->runtime_obs_export_ready.load(std::memory_order_relaxed) == 0)
