@@ -263,15 +263,111 @@ static void ac5_schema_source_cite() {
           "weak ban comment");
 }
 
+// ── Issue #2317: Sampled incomplete provenance → INSERT (not skip) ──
+// AC1: Sampled + !prov_complete + !reject → INSERT + bump new counter
+// AC2: Production reject-on-miss unchanged (still skip)
+// AC3: Full / Strict honesty (no regression to #2147 / #2261 rules)
+// AC4: Observability — new counter + query keys + schema-2317 / issue-2317
+// AC5: source-cite rows
+
+static void ac2317_sampled_insert_policy() {
+    std::println("\n--- #2317 AC1: Sampled insert policy ---");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    // AC1: new counter g_coercion_sampled_insert_incomplete_total present
+    CHECK(cm.find("g_coercion_sampled_insert_incomplete_total") != std::string::npos,
+          "AC1: new counter g_coercion_sampled_insert_incomplete_total present");
+    CHECK(cm.find("g_coercion_sampled_insert_incomplete_total{0};") != std::string::npos,
+          "AC1: new counter atomic init");
+    // AC1: apply path Sampled branch — Sampled + !reject → INSERT (not skip)
+    CHECK(cm.find("Sampled") != std::string::npos &&
+              cm.find("!reject_apply_on_provenance_miss()") != std::string::npos,
+          "AC1: Sampled + !reject branch present");
+    // AC1: note_provenance_miss_for_boundary still called via
+    // fill_coercion_provenance_chain at line 328 (force-audit trigger)
+    CHECK(cm.find("note_provenance_miss_for_boundary()") != std::string::npos,
+          "AC1: force-audit note_provenance_miss_for_boundary present");
+    // AC1: weak mid NOT stamped (preserve #2261)
+    CHECK(cm.find("never write weak") != std::string::npos ||
+              cm.find("never stamp weak") != std::string::npos ||
+              cm.find("never weak mid") != std::string::npos,
+          "AC1: weak mid ban preserved (#2261)");
+    CHECK(cm.find("Issue #2317") != std::string::npos, "AC1: coercion_map.ixx cites Issue #2317");
+}
+
+static void ac2317_reject_unchanged() {
+    std::println("\n--- #2317 AC2: production reject unchanged ---");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    // AC2: existing reject-on-miss skip path preserved
+    CHECK(cm.find("reject_apply_on_provenance_miss()") != std::string::npos,
+          "AC2: reject_apply_on_provenance_miss check present");
+    CHECK(cm.find("g_coercion_provenance_miss_reject_total") != std::string::npos,
+          "AC2: existing miss_reject counter present");
+    CHECK(cm.find("g_coercion_provenance_sampled_reject_total") != std::string::npos,
+          "AC2: existing sampled_reject counter present");
+    CHECK(cm.find("skipped_stale") != std::string::npos, "AC2: existing skip path counter present");
+}
+
+static void ac2317_full_strict_honesty() {
+    std::println("\n--- #2317 AC3: Full / Strict honesty (no regression) ---");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    // AC3: Full / Strict still skip per #2147 / #2261 (no regression)
+    CHECK(cm.find("AuditStrategy::Full") != std::string::npos,
+          "AC3: Full audit strategy check present");
+    CHECK(cm.find("strict") != std::string::npos, "AC3: strict sandbox mode check present");
+    CHECK(cm.find("#2147") != std::string::npos || cm.find("Issue #2147") != std::string::npos,
+          "AC3: #2147 honest handling preserved");
+    CHECK(cm.find("#2261") != std::string::npos, "AC3: #2261 weak ban preserved");
+}
+
+static void ac2317_query_keys() {
+    std::println("\n--- #2317 AC4: observability query keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "coercion-sampled-insert-incomplete-total") >= 0,
+          "AC4: coercion-sampled-insert-incomplete-total key present");
+    CHECK(href(cs, "coercion-sampled-insert-policy-wired") == 1,
+          "AC4: coercion-sampled-insert-policy-wired sentinel = 1");
+    CHECK(href(cs, "schema-2317") == 2317, "AC4: schema-2317");
+    CHECK(href(cs, "issue-2317") == 2317, "AC4: issue-2317");
+    // #2317 lineage preserved
+    CHECK(href(cs, "schema-2261") == 2261, "AC4: schema-2261 retained");
+    CHECK(href(cs, "coercion-provenance-sampled-reject-total") >= 0,
+          "AC4: existing sampled-reject key retained");
+}
+
+static void ac2317_source_cite_rows() {
+    std::println("\n--- #2317 AC5: source-cite rows ---");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    const auto ep = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(cm.find("g_coercion_sampled_insert_incomplete_total") != std::string::npos,
+          "AC5: coercion_map.ixx has new counter");
+    CHECK(cm.find("Issue #2317") != std::string::npos, "AC5: coercion_map.ixx cites 2317");
+    CHECK(ep.find("coercion-sampled-insert-incomplete-total") != std::string::npos,
+          "AC5: query primitive exposes new counter key");
+    CHECK(ep.find("coercion_sampled_insert_incomplete_total") != std::string::npos,
+          "AC5: query primitive exposes underscored alias");
+    CHECK(ep.find("coercion-sampled-insert-policy-wired") != std::string::npos,
+          "AC5: query primitive exposes policy-wired sentinel");
+    CHECK(ep.find("schema-2317") != std::string::npos, "AC5: query primitive schema-2317");
+    CHECK(ep.find("issue-2317") != std::string::npos, "AC5: query primitive issue-2317");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2261: ban weak mid under Sampled; never stamp into IR ===");
+    std::println("=== Issue #2317: Sampled + incomplete provenance → INSERT (not skip) ===");
     ac1_sampled_no_weak_insert();
     ac2_full_complete_fast_path();
     ac3_off_soft_no_weak_mid();
     ac4_env_reject_override();
     ac5_schema_source_cite();
+    // Issue #2317: Sampled insert policy (refines #2261, both refine
+    // the Sampled incomplete-provenance branch). AC1-AC5 wiring.
+    ac2317_sampled_insert_policy();
+    ac2317_reject_unchanged();
+    ac2317_full_strict_honesty();
+    ac2317_query_keys();
+    ac2317_source_cite_rows();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
