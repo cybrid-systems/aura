@@ -733,6 +733,9 @@ AURA_COMPILER_METRICS_FIELD(let_poly_regeneralize_check_total)
 AURA_COMPILER_METRICS_FIELD(let_poly_truncation_fallback_total)
 // Issue #2356: truncated reverify one-shot expand (occurrence/let-poly).
 AURA_COMPILER_METRICS_FIELD(delta_reverify_expand_total)
+// Issue #2357: linear synth Move/Drop violations (first-class).
+AURA_COMPILER_METRICS_FIELD(linear_synth_violation_total)
+AURA_COMPILER_METRICS_FIELD(linear_synth_hard_fail_total)
 AURA_COMPILER_METRICS_FIELD(let_poly_priority_reverify_hits_total)
 AURA_COMPILER_METRICS_FIELD(let_poly_post_mutation_scope_total)
 AURA_COMPILER_METRICS_FIELD(solve_delta_worklist_size_peak)

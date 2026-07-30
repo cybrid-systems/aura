@@ -6574,6 +6574,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_relower_revalidate_hits{0};
     // Issue #688: infer_flat_partial OwnershipEnv post-mutate revalidate.
     std::atomic<std::uint64_t> linear_dirty_revalidate_count{0};
+    // Issue #2357 Phase 1: linear Move/Drop/MutBorrow violations during
+    // synthesize_flat_* (first-class, not only post-mutate audit).
+    //   - linear_synth_violation_total: every can_move/can_drop/can_mut_borrow fail
+    //   - linear_synth_hard_fail_total: production_defaults || strict_ path
+    std::atomic<std::uint64_t> linear_synth_violation_total{0}; // #2357
+    std::atomic<std::uint64_t> linear_synth_hard_fail_total{0}; // #2357
     // Issue #1531: escape analysis + OwnershipEnv dirty revalidate.
     //   - linear_escape_reanalysis_total: AST escape re-analysis runs
     //     after dirty ownership validation (typed_mutate path)

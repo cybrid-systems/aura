@@ -2320,6 +2320,26 @@ def cmd_reverify_expand_coverage():
     return 0
 
 
+def cmd_linear_synth_violation_coverage():
+    """Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.
+
+    can_move/can_drop fail during synthesize reports TypeError under
+    production/strict (Warning soft); set_node_error + counters; post-mutate
+    audit remains defense-in-depth.
+    """
+    print(f"{B}=== linear synth violation coverage (#2357) ==={N}")
+    script = ROOT / "scripts" / "check_linear_synth_violation_2357.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear synth violation (#2357) coverage contract rows failed")
+        return 1
+    ok("linear synth violation (#2357) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2713,6 +2733,7 @@ def cmd_gate():
         or cmd_lock_order_audit_2354_coverage()
         or cmd_type_dep_epoch_prune_coverage()
         or cmd_reverify_expand_coverage()
+        or cmd_linear_synth_violation_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
