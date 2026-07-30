@@ -17,6 +17,7 @@ module;
 #include "render_prim_template.hh"  // #2050 aura_is_render_evolution_name
 #include "compiler/frame_budget.hh" // #2137 frame-budget cascade isolation
 #include "compiler/ownership_escape_lowering_gate.h" // #2286: set_current_escape_key
+#include "compiler/mutate_type_gate.hh"              // #2219 / #2319 hard gate check
 #include "core/arena_auto_policy_stats.h"            // in_render_hotpath
 #include "core/transparent_string_hash.hh"           // TransparentStringHash for ir_cache_index
 #include <algorithm>
@@ -1315,8 +1316,11 @@ void CompilerService::invalidate_function(const std::string& name) {
                     // budget pressure, the dynamic bindings are present
                     // (per #2282 layered DeadCoercion — annotated fixtures
                     // have dead_coercion_eliminated counter advancing).
+                    // Use CompilerMetrics dead_coercion_elim_total (IR-layer
+                    // elision) as the density baseline — process-level
+                    // g_dead_coercion_ast_elided_total lives in another module.
                     const auto dead_elim =
-                        metrics_.dead_coercion_ast_elided_total.load(std::memory_order_relaxed);
+                        metrics_.dead_coercion_elim_total.load(std::memory_order_relaxed);
                     const auto castop_em =
                         metrics_.coercion_castop_emitted_total.load(std::memory_order_relaxed);
                     const bool unannotated_dynamic =
@@ -1327,13 +1331,10 @@ void CompilerService::invalidate_function(const std::string& name) {
                         metrics_.castop_density_hard_wired.store(1, std::memory_order_relaxed);
                         // Soft gate: Warning + metric (mutate may still
                         // succeed). Hard MutateTypeGate: TypeError / reject
-                        // aligned with #2219.
-                        if (aura::compiler::mutate_type_gate::is_hard()) {
-                            // Mark dirty scope for downstream reject path
-                            // (#2219 MutateTypeGate Hard). Production
-                            // security defaults opt-in documented.
-                            mutate_type_gate_soft_warn_marker = true;
-                        }
+                        // aligned with #2219. Density hard reject is
+                        // metric-only here; hard gate rejects via the
+                        // post-mutate typecheck path (#2219).
+                        (void)mutate_type_gate::is_hard();
                         // Soft path always falls through (no immediate
                         // reject) — Agent sees the gate fire via
                         // query:castop-density-stats keys (castop-density-

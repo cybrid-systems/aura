@@ -59,7 +59,8 @@ __attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_
 // module TU is not linked. This weak no-op keeps non-evaluator link
 // units (test_concurrent / test_issue_*) resolving without dragging
 // the full module into their link unit.
-__attribute__((weak, used)) void aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) {}
+__attribute__((weak, used)) void
+aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) noexcept {}
 
 // Issue #485: deferred steal violation + resume migration.
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}

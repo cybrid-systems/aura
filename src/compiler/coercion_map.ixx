@@ -510,16 +510,17 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::get_strategy;
-            const auto s = get_strategy();
+            // Do not shadow outer stats ref `s` (DeadCoercionAstStats).
+            const auto strat = get_strategy();
             // Issue #2317: Sampled + !reject → INSERT (not skip).
-            if (s == AuditStrategy::Sampled && !reject_apply_on_provenance_miss()) {
+            if (strat == AuditStrategy::Sampled && !reject_apply_on_provenance_miss()) {
                 g_coercion_sampled_insert_incomplete_total.fetch_add(1, std::memory_order_relaxed);
                 // Fall through to insert (CoercionNode exists for
                 // lowering; force-audit triggered by fill_coercion_provenance_chain).
             } else if (should_skip_coercion_insert_on_incomplete()) {
                 // existing skip path (reject-on-miss OR non-Off strategy)
                 g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
-                if (s == AuditStrategy::Sampled)
+                if (strat == AuditStrategy::Sampled)
                     g_coercion_provenance_sampled_reject_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
                 ++s.skipped_stale;

@@ -30,6 +30,7 @@ module;
 #include "core/self_healing_hooks.h"
 #include <chrono>
 #include "typed_mutation_audit.h"
+#include "compiler/mutation_hold_budget.h" // Issue #2313
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh" // #2224: tenant-isolation-stats primitive
@@ -6036,8 +6037,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
                 // Current budget config — exposes the env-driven threshold.
                 {"mutation-hold-budget-us",
-                 make_int(static_cast<std::int64_t>(mutation_hold_budget_us()))},
-                {"mutation-hold-over-budget-wired", 1},
+                 make_int(static_cast<std::int64_t>(aura::compiler::mutation_hold_budget_us()))},
+                {"mutation-hold-over-budget-wired", make_int(1)},
                 {"schema-2313", make_int(2313)},
                 {"issue-2313", make_int(2313)},
                 // Issue #2314: residual defer cleared on steal (orphan
@@ -6047,7 +6048,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
                 {"residual_defer_cleared_on_steal_total",
                  make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
-                {"residual-defer-steal-interlock-wired", 1},
+                {"residual-defer-steal-interlock-wired", make_int(1)},
                 {"schema-2314", make_int(2314)},
                 {"issue-2314", make_int(2314)},
             };

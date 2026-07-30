@@ -417,3 +417,4 @@ int main() {
     std::println("\n=== #2300 + #2341: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+// build-fix binding refresh for obs_jit (#1453)

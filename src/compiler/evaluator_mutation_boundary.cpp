@@ -37,6 +37,7 @@ module;
 #include "core/arena_auto_policy_stats.h"    // in_render_hotpath
 #include "core/densify_consistency_report.h" // Issue #2341: DensifyConsistencyReport + counter
 #include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
+#include "compiler/mutation_hold_budget.h"   // Issue #2313: mutation_hold_budget_us()
 #include "serve/fiber.h"                     // Issue #2184: publish MutationSafetySnapshot
 #include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
 #include <cassert>
@@ -56,7 +57,8 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
-import aura.compiler.coercion_map; // Issue #2102: provenance-miss force-audit
+import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
+import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
 
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
@@ -1210,26 +1212,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     hard_cfg != 0 ? hard_cfg : static_cast<std::uint64_t>(extreme_us));
                 // Issue #2199: AURA_MUTATION_HOLD_STRICT=1 aligns with
                 // long_mutation_strict_mode (process-wide production knob).
-
-                // Issue #2313: configurable hold-budget accessor (default 100_000 µs
-                // = 100 ms). Lazy-init from AURA_MUTATION_HOLD_BUDGET_US env var.
-                // C-style digit parse for consistency with AURA_MUTATION_HOLD_STRICT
-                // (no exceptions; small + predictable hot-path cost). Cached once per
-                // process via static lambda — see #2269 / #2313 zero-cost pattern.
-                // Returns µs; consumer compares against hold_us (same units).
-                [[nodiscard]] inline std::uint64_t mutation_hold_budget_us() noexcept {
-                    static const std::uint64_t cached = []() noexcept -> std::uint64_t {
-                        const char* e = std::getenv("AURA_MUTATION_HOLD_BUDGET_US");
-                        if (e == nullptr || e[0] == '\0')
-                            return 100000ULL; // 100 ms default
-                        std::uint64_t v = 0;
-                        for (const char* p = e; *p >= '0' && *p <= '9'; ++p) {
-                            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
-                        }
-                        return v > 0 ? v : 100000ULL;
-                    }();
-                    return cached;
-                }
+                // mutation_hold_budget_us() is file-scope (#2313) — see above.
                 static const bool env_hold_strict = []() noexcept {
                     const char* e = std::getenv("AURA_MUTATION_HOLD_STRICT");
                     return e != nullptr && e[0] != '\0' && e[0] != '0' && e[0] != 'f' &&
@@ -1799,8 +1782,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         densify_consistency.linear_ok = pin_contract_held;
         // root_remap_ok: last_root_remap_any_fail reads the most recent
         // run_root_remap_pass() any_fail() result (per #2341 design).
-        densify_consistency.root_remap_ok =
-            !aura::compiler::root_remap_pass::last_root_remap_any_fail();
+        densify_consistency.root_remap_ok = !aura::compiler::last_root_remap_any_fail();
         // closure_remount_ok: 0 cell-remap fails since process start
         // (cumulative fail-total accessor per #2297). Note: cumulative
         // semantics — production wire-up of "last-call" gating is a

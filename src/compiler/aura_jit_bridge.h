@@ -149,12 +149,12 @@ void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n);
 // defense-in-depth). Strong def in evaluator_fiber_mutation.cpp;
 // aura_jit_bridge.cpp provides file-level atomic fallback; weak no-op
 // in fiber_bridge.cpp for light test binaries.
-void aura_force_deopt_on_steal_snapshot_mismatch(void* fiber_ptr);
+void aura_force_deopt_on_steal_snapshot_mismatch(void* fiber_ptr) noexcept;
 // Issue #2310: static accessor for the force-deopt counter. Returns
 // per-CompilerMetrics value when scheduler evaluator is live (via
 // evaluator_for_scheduler_hooks), otherwise file-level atomic fallback
 // in aura_jit_bridge.cpp.
-std::uint64_t aura_static_steal_snapshot_mismatch_force_deopt_total();
+std::uint64_t aura_static_steal_snapshot_mismatch_force_deopt_total() noexcept;
 
 // Issue #2094: StormLevel facade accessor (C ABI). Returns the
 // combined bitmask of shape-storm + global-deopt-storm detectors

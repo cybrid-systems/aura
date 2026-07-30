@@ -160,6 +160,14 @@ inline void register_root_remap_closure_capture_slot(void** slot) noexcept {
         v.push_back(slot);
 }
 
+inline void unregister_root_remap_closure_capture_slot(void** slot) noexcept {
+    if (!slot)
+        return;
+    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    auto& v = root_remap_detail::closure_capture_slots();
+    v.erase(std::remove(v.begin(), v.end(), slot), v.end());
+}
+
 // Issue #2339: auto-register / auto-unregister counters (per-call-site
 // that wires up auto-register instead of manual register_root_remap_*
 // calls). Mirrors the existing root_remap_*_total counters but
@@ -254,16 +262,7 @@ public:
         }
         return *this;
     }
-}
-
-inline void
-unregister_root_remap_closure_capture_slot(void** slot) noexcept {
-    if (!slot)
-        return;
-    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
-    auto& v = root_remap_detail::closure_capture_slots();
-    v.erase(std::remove(v.begin(), v.end(), slot), v.end());
-}
+};
 
 // Mark addresses as densify candidates even when absent from object_remap
 // (AC4 fail-closed path + dropped-track densify). Cleared by reset.
