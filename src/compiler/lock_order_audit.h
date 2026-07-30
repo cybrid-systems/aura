@@ -1,8 +1,9 @@
-// lock_order_audit.h — Issue #1523 / #1388 / #2043 / #2316 canonical
-// lock-order verifier.
+// lock_order_audit.h — Issue #1523 / #1388 / #2043 / #2316 / #2354
+// canonical lock-order verifier.
 //
 // Canonical acquire order (never reverse):
 //   Mailbox → Mutate → HotUpdate → Workspace → EnvFrames → CompactEnv → DepGraph
+//   → Orphan → WaitMap → Joiner → OwnedFibers → FiberRegistry → Closures → Module
 //
 // Issue #2043 — linear ownership + GC window (soft/hard invalidate):
 //   While Level::Mutate is held:
@@ -25,52 +26,36 @@
 //   Mailbox    — multi_fiber_mailbox mu_ (delivery gate, #2312)
 //   Mutate     — workspace_mtx_ exclusive (MutationBoundary, #2184 / #2253)
 //   HotUpdate  — HotUpdateRegistry mutex (reemit / drain, #2205 / #2208 / #2273)
-//   Workspace  — workspace / closures_mtx
+//   Workspace  — workspace_mtx_ (MutationBoundaryGuard outermost)
 //   EnvFrames  — env_frames_mtx_
 //   CompactEnv — compact_env_frames_lock_
 //   DepGraph   — dep_graph_mtx_
-//   Forbidden inversions (rank check fail → record metric or abort under
-//   canary):
-//     - Acquiring Mailbox while Mutate+ held → fail (delivery during mutate)
-//     - Acquiring Mutate while HotUpdate+ held → fail (mutate during reemit)
-//     - Acquiring HotUpdate while Workspace+ held → fail
-//     - Acquiring Workspace while EnvFrames+ held → fail (existing #1388)
-//     - Acquiring EnvFrames while CompactEnv+ held → fail (existing #4393)
-//     - Acquiring CompactEnv while DepGraph+ held → fail
 //
-// Runtime canary (optional, AURA_LOCK_ORDER_CANARY=1): on inversion,
-// abort with file:line. Production default OFF (zero cost — single
-// relaxed load of thread-local depth + compare).
+// Issue #2354 — scheduler / worker / closures / module ranks (production
+// review 建议 6). Append-only so #2316 numeric ranks stay stable:
+//   Orphan        — Scheduler::orphan_mutex_
+//   WaitMap       — Scheduler::wait_map_mutex_
+//   Joiner        — Scheduler::joiner_map_mutex_
+//   OwnedFibers   — Scheduler::owned_fibers_mutex_
+//   FiberRegistry — WorkerThread::fiber_registry_mutex_
+//   Closures      — Evaluator::closures_mtx_
+//   Module        — Evaluator::module_mtx_
+// Documented Scheduler reap_orphans_now order:
+//   orphan_mutex_ → wait_map_mutex_ → joiner_map_mutex_ → owned_fibers_mutex_
 //
-// Thread-local depth counters detect inversions (acquiring a lower
-// level while a higher level is held). Zero-cost when depths are zero
-// (single relaxed loads). Used by CompilerService invalidate paths +
-// Evaluator workspace/env locks.
+// Forbidden inversions (rank check fail → record metric or abort under
+// canary / audit hard mode):
+//   - Acquiring lower rank while any higher rank is held
+//   - Scheduler: WaitMap while OwnedFibers held, etc.
 //
-// Contended mutate: try_lock fails → bump mutate_mtx_contended_total,
-// then blocking lock.
-//
-// Issue #2043 — linear ownership + GC window (soft/hard invalidate):
-//   While Level::Mutate is held:
-//     1. prepare_unified_invalidation_pre_cascade_ (linear scan + GC coord)
-//     2. dual-epoch bump + live-closure expire
-//     3. dirty cascade / re-lower (may take Workspace / DepGraph)
-//     4. finalize_linear_gc_invalidation_window_ (scan + enforce +
-//        sync_linear_roots + linear_ownership_epoch bump + root audit)
-//   Apply / fiber steal / GC must observe a complete window: either
-//   pre-bump state or post-finalize state — never half-updated linear
-//   ownership_state with live apply.
-//
-// Issue #2131 — GcCoordScope phase machine (same order every path):
-//   PrePin → Cascade → PostAudit → Released
-//   (gc_coord_scope.h). invalidate / soft-dirty / boundary / hot-swap /
-//   compact open a Scope; reverse order or missing after_cascade bumps
-//   phase_violations_total (+ abort when gc_coord::strict_mode).
+// Runtime modes (lazy-init from env; Production default OFF = zero cost):
+//   AURA_LOCK_ORDER_AUDIT=1  — soft: TLS depth + counters (no abort)
+//   AURA_LOCK_ORDER_CANARY=1 — hard: soft + abort with rank diagnostics
+//   both unset               — single early branch in on_acquire/on_release
 //
 // Thread-local depth counters detect inversions (acquiring a lower
-// level while a higher level is held). Zero-cost when depths are zero
-// (single relaxed loads). Used by CompilerService invalidate paths +
-// Evaluator workspace/env locks.
+// level while a higher level is held). Used by CompilerService
+// invalidate paths + Evaluator workspace/env locks + Scheduler/Worker.
 //
 // Contended mutate: try_lock fails → bump mutate_mtx_contended_total,
 // then blocking lock.
@@ -88,17 +73,25 @@
 
 namespace aura::compiler::lock_order {
 
-// Levels match #1388 + #2316 extension: lower index = must be acquired
-// earlier. Forbidden inversions documented in header comment above.
+// Levels: lower index = must be acquired earlier. Append-only after
+// DepGraph so #2316 numeric ranks remain stable.
 enum class Level : std::uint8_t {
     Mailbox = 0,    // multi_fiber_mailbox mu_ (delivery gate, #2312)
-    Mutate = 1,     // workspace_mtx_ exclusive (MutationBoundary)
+    Mutate = 1,     // mutate_mtx_ exclusive (CompilerService)
     HotUpdate = 2,  // HotUpdateRegistry mutex (reemit / drain)
-    Workspace = 3,  // workspace / closures_mtx
+    Workspace = 3,  // workspace_mtx_ (MutationBoundaryGuard)
     EnvFrames = 4,  // env_frames_mtx_
     CompactEnv = 5, // compact_env_frames_lock_
     DepGraph = 6,   // dep_graph_mtx_
-    kCount = 7,
+    // Issue #2354: scheduler / worker / closures / module (append-only).
+    Orphan = 7,         // Scheduler::orphan_mutex_
+    WaitMap = 8,        // Scheduler::wait_map_mutex_
+    Joiner = 9,         // Scheduler::joiner_map_mutex_
+    OwnedFibers = 10,   // Scheduler::owned_fibers_mutex_
+    FiberRegistry = 11, // WorkerThread::fiber_registry_mutex_
+    Closures = 12,      // Evaluator::closures_mtx_
+    Module = 13,        // Evaluator::module_mtx_
+    kCount = 14,
 };
 
 // Process-wide observability (mirrored into CompilerMetrics by Agents).
@@ -106,22 +99,93 @@ inline std::atomic<std::uint64_t> g_lock_inversion_detected_total{0};
 inline std::atomic<std::uint64_t> g_mutate_mtx_contended_total{0};
 inline std::atomic<std::uint64_t> g_lock_order_acquire_total{0};
 inline std::atomic<std::uint64_t> g_lock_order_release_total{0};
-// Issue #2316: dedicated canary counter (distinct from
-// g_lock_inversion_detected_total which is observability; this is the
-// canary-only enforcement counter). Always 0 when canary is disabled
-// (production). Lazy-init canary flag from AURA_LOCK_ORDER_CANARY env.
-inline std::atomic<std::uint64_t> g_lock_order_violation_total{0}; // #2316
-inline std::atomic<int> g_lock_order_canary_enabled{0};            // #2316
+// Issue #2316: canary-only enforcement counter (also bumped on soft audit).
+inline std::atomic<std::uint64_t> g_lock_order_violation_total{0}; // #2316 / #2354
+// Legacy canary flag (kept for tests that poke it). Prefer mode atomics.
+inline std::atomic<int> g_lock_order_canary_enabled{0}; // #2316
+// Issue #2354: 0=uninit, 1=off, 2=soft (AUDIT), 3=hard (CANARY).
+inline std::atomic<int> g_lock_order_mode{0};
+
+[[nodiscard]] inline const char* level_name(Level L) noexcept {
+    switch (L) {
+        case Level::Mailbox:
+            return "Mailbox";
+        case Level::Mutate:
+            return "Mutate";
+        case Level::HotUpdate:
+            return "HotUpdate";
+        case Level::Workspace:
+            return "Workspace";
+        case Level::EnvFrames:
+            return "EnvFrames";
+        case Level::CompactEnv:
+            return "CompactEnv";
+        case Level::DepGraph:
+            return "DepGraph";
+        case Level::Orphan:
+            return "Orphan";
+        case Level::WaitMap:
+            return "WaitMap";
+        case Level::Joiner:
+            return "Joiner";
+        case Level::OwnedFibers:
+            return "OwnedFibers";
+        case Level::FiberRegistry:
+            return "FiberRegistry";
+        case Level::Closures:
+            return "Closures";
+        case Level::Module:
+            return "Module";
+        default:
+            return "Unknown";
+    }
+}
+
+// Resolve mode once (process-lifetime). AC1: when off, on_acquire is a
+// single branch. Tests may force via force_audit_mode_for_test.
+[[nodiscard]] inline int lock_order_mode() noexcept {
+    int m = g_lock_order_mode.load(std::memory_order_acquire);
+    if (m != 0)
+        return m;
+    // Hard canary wins over soft audit.
+    const char* c = std::getenv("AURA_LOCK_ORDER_CANARY");
+    if (c != nullptr && c[0] == '1') {
+        g_lock_order_mode.store(3, std::memory_order_release);
+        g_lock_order_canary_enabled.store(1, std::memory_order_release);
+        return 3;
+    }
+    // Issue #2354: AURA_LOCK_ORDER_AUDIT=1 soft mode.
+    const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
+    if (a != nullptr && a[0] == '1') {
+        g_lock_order_mode.store(2, std::memory_order_release);
+        return 2;
+    }
+    // Legacy: if tests pre-set canary flag to 1, treat as hard.
+    if (g_lock_order_canary_enabled.load(std::memory_order_acquire) == 1) {
+        g_lock_order_mode.store(3, std::memory_order_release);
+        return 3;
+    }
+    g_lock_order_mode.store(1, std::memory_order_release);
+    return 1;
+}
+
+[[nodiscard]] inline bool lock_order_audit_enabled() noexcept {
+    return lock_order_mode() >= 2;
+}
 
 [[nodiscard]] inline bool lock_order_canary_enabled() noexcept {
-    int expected = g_lock_order_canary_enabled.load(std::memory_order_acquire);
-    if (expected != 0)
-        return expected == 1;
-    // Lazy-init from env (zero-cost single getenv check on first call).
-    const char* v = std::getenv("AURA_LOCK_ORDER_CANARY");
-    const int v1 = (v != nullptr && v[0] == '1') ? 1 : 0;
-    g_lock_order_canary_enabled.store(v1, std::memory_order_release);
-    return v1 == 1;
+    return lock_order_mode() == 3;
+}
+
+// Test helpers: force soft (2) or hard (3) or off (1). Do not call while
+// locks held. Resets lazy-init so next mode() call is stable.
+inline void force_audit_mode_for_test(int mode) noexcept {
+    if (mode < 1)
+        mode = 1;
+    if (mode > 3)
+        mode = 3;
+    g_lock_order_mode.store(mode, std::memory_order_release);
+    g_lock_order_canary_enabled.store(mode == 3 ? 1 : 0, std::memory_order_release);
 }
 
 // Per-thread re-entry depth for each level.
@@ -141,13 +205,29 @@ inline thread_local std::uint8_t g_depth[static_cast<std::uint8_t>(Level::kCount
     return false;
 }
 
+inline void dump_held_ranks(FILE* out) noexcept {
+    std::fprintf(out, "  held ranks:");
+    bool any = false;
+    for (std::uint8_t i = 0; i < static_cast<std::uint8_t>(Level::kCount); ++i) {
+        if (g_depth[i] > 0) {
+            std::fprintf(out, " %s(depth=%u)", level_name(static_cast<Level>(i)),
+                         static_cast<unsigned>(g_depth[i]));
+            any = true;
+        }
+    }
+    if (!any)
+        std::fprintf(out, " (none)");
+    std::fprintf(out, "\n");
+}
+
 // Returns true if acquire is legal; false if inversion (still records
-// depth so release pairing works — production continues after metric).
-// Issue #2316: under AURA_LOCK_ORDER_CANARY=1, inversion aborts with
-// file:line. Production default OFF (zero cost — single relaxed load +
-// compare skipped when env unset).
+// depth so release pairing works — soft mode continues after metric).
+// Hard canary (mode==3): abort with file:line + rank dump.
+// AC1 (#2354): audit off → single early branch, zero atomics / TLS writes.
 inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
                        int line = __builtin_LINE()) noexcept {
+    if (!lock_order_audit_enabled())
+        return true; // AC1: production default OFF
     g_lock_order_acquire_total.fetch_add(1, std::memory_order_relaxed);
     const bool inv = any_higher_held(L);
     if (inv) {
@@ -156,8 +236,9 @@ inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
         if (lock_order_canary_enabled()) {
             std::fprintf(stderr,
                          "LOCK_ORDER_CANARY: inversion at %s:%d "
-                         "(level=%u, higher held)\n",
-                         file, line, static_cast<unsigned>(L));
+                         "(acquiring level=%u %s while higher held)\n",
+                         file, line, static_cast<unsigned>(L), level_name(L));
+            dump_held_ranks(stderr);
             std::abort();
         }
     }
@@ -166,11 +247,85 @@ inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
 }
 
 inline void on_release(Level L) noexcept {
+    if (!lock_order_audit_enabled())
+        return; // AC1: production default OFF
     g_lock_order_release_total.fetch_add(1, std::memory_order_relaxed);
     auto& d = g_depth[static_cast<std::uint8_t>(L)];
     if (d > 0)
         --d;
 }
+
+// Issue #2354: RAII scope that pairs on_acquire/on_release around an
+// existing lock_guard. Place *before* the lock_guard so rank is checked
+// prior to blocking on the mutex.
+class AuditScope {
+public:
+    explicit AuditScope(Level L, const char* file = __builtin_FILE(),
+                        int line = __builtin_LINE()) noexcept
+        : level_(L)
+        , active_(true) {
+        on_acquire(L, file, line);
+    }
+    ~AuditScope() {
+        if (active_)
+            on_release(level_);
+    }
+    AuditScope(const AuditScope&) = delete;
+    AuditScope& operator=(const AuditScope&) = delete;
+    AuditScope(AuditScope&& o) noexcept
+        : level_(o.level_)
+        , active_(o.active_) {
+        o.active_ = false;
+    }
+    AuditScope& operator=(AuditScope&& o) noexcept {
+        if (this != &o) {
+            if (active_)
+                on_release(level_);
+            level_ = o.level_;
+            active_ = o.active_;
+            o.active_ = false;
+        }
+        return *this;
+    }
+
+private:
+    Level level_;
+    bool active_ = false;
+};
+
+// Issue #2354: combined audit + std::mutex lock (scheduler / worker sites).
+class AuditedMutexLock {
+public:
+    AuditedMutexLock(std::mutex& m, Level L, const char* file = __builtin_FILE(),
+                     int line = __builtin_LINE()) noexcept
+        : level_(L)
+        , active_(true) {
+        on_acquire(L, file, line);
+        lock_ = std::unique_lock<std::mutex>(m);
+    }
+    ~AuditedMutexLock() { release(); }
+    AuditedMutexLock(const AuditedMutexLock&) = delete;
+    AuditedMutexLock& operator=(const AuditedMutexLock&) = delete;
+    AuditedMutexLock(AuditedMutexLock&& o) noexcept
+        : lock_(std::move(o.lock_))
+        , level_(o.level_)
+        , active_(o.active_) {
+        o.active_ = false;
+    }
+    void release() noexcept {
+        if (!active_)
+            return;
+        if (lock_.owns_lock())
+            lock_.unlock();
+        on_release(level_);
+        active_ = false;
+    }
+
+private:
+    std::unique_lock<std::mutex> lock_;
+    Level level_ = Level::Orphan;
+    bool active_ = false;
+};
 
 // ── RAII ordered unique lock ──────────────────────────────────
 template <typename Mutex> class OrderedUniqueLock {

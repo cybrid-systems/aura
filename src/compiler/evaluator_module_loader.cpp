@@ -7,6 +7,7 @@ module;
 #include <sys/stat.h>
 #include <unistd.h>
 #include "runtime_shared.h"
+#include "lock_order_audit.h" // Issue #2354: Module rank
 
 module aura.compiler.evaluator;
 
@@ -284,8 +285,10 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // module_arena_ptrs_ in one shot. Without the lock, a concurrent
     // (gc) could half-clear the cache between the push_back and the
     // module_cache_[resolved] = mod_idx assignment.
+    // Issue #2354: Module rank (after Closures in total order when audit on).
     auto mod_idx = modules_.size();
     {
+        aura::compiler::lock_order::AuditScope lo_module(aura::compiler::lock_order::Level::Module);
         std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
         modules_.push_back(mod_env);
         module_cache_[resolved] = mod_idx;

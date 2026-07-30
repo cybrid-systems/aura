@@ -4,6 +4,7 @@
 #include "aura_platform.h"
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
+#include "compiler/lock_order_audit.h" // Issue #2354: rank audit
 #include <unistd.h>
 
 import std;
@@ -113,7 +114,8 @@ Scheduler::~Scheduler() {
     // Issue #707: destroy owned fibers so per-fiber stack vectors
     // return to the bounded pool instead of leaking until process exit.
     {
-        std::lock_guard<std::mutex> lock(owned_fibers_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
         owned_fibers_.clear();
     }
     if (epoll_fd_ >= 0)
@@ -158,13 +160,15 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
 #endif
 
     {
-        std::lock_guard<std::mutex> lock(wait_map_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
         wait_map_[ptr->eventfd()] = ptr;
     }
 
     // Store fiber for lifetime management (Issue #707: per-scheduler).
     {
-        std::lock_guard<std::mutex> lock(owned_fibers_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
         owned_fibers_.push_back(std::move(fb));
     }
 
@@ -218,12 +222,14 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
 #endif
 
     {
-        std::lock_guard<std::mutex> lock(wait_map_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
         wait_map_[ptr->eventfd()] = ptr;
     }
 
     {
-        std::lock_guard<std::mutex> lock(owned_fibers_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
         owned_fibers_.push_back(std::move(fb));
     }
 
@@ -257,7 +263,8 @@ void Scheduler::register_event_fiber(int eventfd, Fiber* fiber) {
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, eventfd, &ee);
 #endif
 
-    std::lock_guard<std::mutex> lock(wait_map_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
     wait_map_[eventfd] = fiber;
 }
 
@@ -267,7 +274,8 @@ void Scheduler::unregister_fiber(int eventfd) {
 #if AURA_HAVE_EPOLL
     ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, eventfd, nullptr);
 #endif
-    std::lock_guard<std::mutex> lock(wait_map_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
     wait_map_.erase(eventfd);
 }
 
@@ -286,7 +294,8 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
 #if AURA_HAVE_EPOLL
         ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, evfd, nullptr);
 #endif
-        std::lock_guard<std::mutex> lock(wait_map_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
         wait_map_.erase(evfd);
     }
 
@@ -309,7 +318,8 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
     // up the write and resume the joiner.
     std::vector<Fiber*> joiners;
     {
-        std::lock_guard<std::mutex> lock(joiner_map_mutex_);
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            joiner_map_mutex_, ::aura::compiler::lock_order::Level::Joiner);
         auto it = joiner_map_.find(fiber->id());
         if (it != joiner_map_.end()) {
             joiners = std::move(it->second);
@@ -344,7 +354,8 @@ bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
     Fiber* target = fiber_by_id(target_fiber_id);
     if (!target)
         return false;
-    std::lock_guard<std::mutex> lock(joiner_map_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        joiner_map_mutex_, ::aura::compiler::lock_order::Level::Joiner);
     auto& list = joiner_map_[target_fiber_id];
     // Idempotent: if the joiner is already in the list, skip.
     for (auto* f : list) {
@@ -359,7 +370,8 @@ bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
 void Scheduler::remove_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
     if (!joiner)
         return;
-    std::lock_guard<std::mutex> lock(joiner_map_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        joiner_map_mutex_, ::aura::compiler::lock_order::Level::Joiner);
     auto it = joiner_map_.find(target_fiber_id);
     if (it == joiner_map_.end())
         return;
@@ -381,7 +393,8 @@ void Scheduler::note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noex
         return;
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(hard_deadline_ms);
-    std::lock_guard<std::mutex> lock(orphan_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        orphan_mutex_, ::aura::compiler::lock_order::Level::Orphan);
     // Refresh in place if already registered (newest deadline wins).
     for (auto& e : orphan_fibers_) {
         if (e.fiber == f) {
@@ -413,7 +426,8 @@ void Scheduler::note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noex
 std::size_t Scheduler::reap_orphans_now() noexcept {
     const auto now = std::chrono::steady_clock::now();
     std::size_t reaped = 0;
-    std::lock_guard<std::mutex> lock(orphan_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        orphan_mutex_, ::aura::compiler::lock_order::Level::Orphan);
     // Two-pass: first pass identifies candidates under the lock;
     // second pass removes them after the per-fiber cleanup
     // (which may release other locks). Cleanup is done under the
@@ -438,7 +452,8 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // Drop from wait_map_ (epoll wake-ups for this fiber id
         // are no longer relevant; the body is detached).
         {
-            std::lock_guard<std::mutex> wl(wait_map_mutex_);
+            ::aura::compiler::lock_order::AuditedMutexLock wl(
+                wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
             const auto evfd = f->eventfd();
             if (evfd >= 0)
                 wait_map_.erase(evfd);
@@ -453,7 +468,8 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // JoinStatus::Ok (the joiner path treats reclaimed
         // fibers as done — see Fiber::join for the bit).
         {
-            std::lock_guard<std::mutex> jl(joiner_map_mutex_);
+            ::aura::compiler::lock_order::AuditedMutexLock jl(
+                joiner_map_mutex_, ::aura::compiler::lock_order::Level::Joiner);
             auto jit = joiner_map_.find(f->id());
             if (jit != joiner_map_.end()) {
                 for (Fiber* joiner : jit->second) {
@@ -473,7 +489,8 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // holds it. The body stack is freed here; non-yielding
         // bodies leak stack until return — documented limitation).
         {
-            std::lock_guard<std::mutex> ol(owned_fibers_mutex_);
+            ::aura::compiler::lock_order::AuditedMutexLock ol(
+                owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
             for (auto oit = owned_fibers_.begin(); oit != owned_fibers_.end(); ++oit) {
                 if (oit->get() == f) {
                     owned_fibers_.erase(oit);
@@ -495,7 +512,8 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
 }
 
 std::size_t Scheduler::orphan_count() const noexcept {
-    std::lock_guard<std::mutex> lock(orphan_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        orphan_mutex_, ::aura::compiler::lock_order::Level::Orphan);
     return orphan_fibers_.size();
 }
 
@@ -562,7 +580,8 @@ void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t dura
 }
 
 bool Scheduler::has_waiting_fibers() const {
-    std::lock_guard<std::mutex> lock(wait_map_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
     // Issue #63723: skip entries whose Fiber* is not currently
     // owned by this scheduler (defensive — the underlying
     // corruption that produces such entries is a separate
@@ -699,7 +718,8 @@ void Scheduler::run() {
                 // Always wake all waiting fibers on stdin activity
                 // (they may be waiting for stdin data from the reader)
                 {
-                    std::lock_guard<std::mutex> lock(wait_map_mutex_);
+                    ::aura::compiler::lock_order::AuditedMutexLock lock(
+                        wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
                     for (auto& [evfd, fiber] : wait_map_) {
                         // Issue #63723: same defensive guard as
                         // in has_waiting_fibers() — skip entries
@@ -772,7 +792,8 @@ void Scheduler::run() {
 
         // Check if all fibers are done
         {
-            std::lock_guard<std::mutex> lock(wait_map_mutex_);
+            ::aura::compiler::lock_order::AuditedMutexLock lock(
+                wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
             bool all_idle = wait_map_.empty();
             if (all_idle) {
                 // No fibers in epoll — check if any have pending work

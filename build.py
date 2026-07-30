@@ -2263,6 +2263,25 @@ def cmd_post_densify_linear_type_revalidate_coverage():
     return 0
 
 
+def cmd_lock_order_audit_2354_coverage():
+    """Issue #2354: debug lock-order audit for scheduler / workspace / closures.
+
+    Rank table + AURA_LOCK_ORDER_AUDIT soft mode + canary hard abort;
+    instrumented Scheduler wait_map/joiner/orphan/owned + Worker fiber_registry.
+    """
+    print(f"{B}=== lock-order audit coverage (#2354) ==={N}")
+    script = ROOT / "scripts" / "check_lock_order_audit_2354.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("lock-order audit (#2354) coverage contract rows failed")
+        return 1
+    ok("lock-order audit (#2354) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2653,6 +2672,7 @@ def cmd_gate():
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
+        or cmd_lock_order_audit_2354_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

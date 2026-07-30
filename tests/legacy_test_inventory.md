@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 547 | Preferred destination suites |
-| **Total scanned** | **547** | |
+| `tests/core/test_*.cpp` | 548 | Preferred destination suites |
+| **Total scanned** | **548** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 56 | 56 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 160 | 160 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 55 | 55 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 56 | 56 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 12 | 12 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 58 | 58 | P2 — link-profile heavy; migrate AC smoke first |
@@ -416,6 +416,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp`
 - `tests/core/test_lock_hierarchy.cpp`
 - `tests/compiler/test_lock_order_audit_2316.cpp`
+- `tests/compiler/test_lock_order_audit_2354.cpp`
 - `tests/compiler/test_lock_order_closures_env.cpp`
 - `tests/compiler/test_longrunning_infra_primitives.cpp`
 - `tests/compiler/test_longrunning_recovery_latency.cpp`
@@ -966,13 +967,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (55)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (56)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (55)
+#### domain/ (56)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1: Happy path — B's body replies to ask protocol; A's
@@ -1003,6 +1004,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_issues_809_817_batch.cpp` (#809) [batch_driver, domain_suite, theme_compiler] — test_issues_809_817_batch.cpp — Phase 1 close for Issues #809–#817.
 - `tests/orch/test_join_drain_reclaim_2227.cpp` (#2227) [domain_suite, theme_orch] — AC1: residual + reclaim counters bump when non-yielding body +
 - `tests/serve/test_join_drain_timeout_2153.cpp` (#2153) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
+- `tests/compiler/test_lock_order_audit_2354.cpp` (#2354) [domain_suite, theme_compiler] — AC1: Audit off → zero cost (single branch; no atomics on acquire).
 - `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp` (#2188) [domain_suite, theme_serve] — Issue #2347 — Strict/hard audit + optional Guard-window threshold
 - `tests/serve/test_mutation_safety_snapshot_steal_2184.cpp` (#2184) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
