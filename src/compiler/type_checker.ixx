@@ -93,6 +93,25 @@ export struct Constraint {
     std::uint32_t affected_node = 0;       // NodeId in affected set
 };
 
+// Issue #2343: one edge of the TIMEOUT/CONFLICT var↔constraint subgraph.
+// Agent-readable: which UF rep still depends on which constraint
+// (kind + lhs/rhs TypeIds) so repair prioritizes by degree.
+// Defined here (before ConstraintSystem) so export method can reference it.
+export struct UnresolvedGraphEdge {
+    std::uint32_t var_rep = 0;
+    std::uint32_t constraint_index = 0;
+    std::uint8_t kind = 0; // Constraint::Kind
+    aura::core::TypeId lhs{};
+    aura::core::TypeId rhs{};
+};
+
+// Caps for #2343 graph export (must stay bounded — no full CS dump).
+export inline constexpr std::size_t kUnresolvedGraphEdgeCap = 64;
+export inline constexpr std::size_t kUnresolvedGraphSuggestedRootsCap = 8;
+// Query ring publishes a smaller sample of edges (layout documented on
+// query:type-timeout-repair-stats); full vector may hold up to edge cap.
+export inline constexpr std::size_t kUnresolvedGraphEdgeQueryCap = 16;
+
 // Issue #1877: DeltaBlameFrame.kind for MacroIntroduced hygiene frames
 // (Constraint::Kind values are small; 0xFF is reserved for hygiene).
 export inline constexpr std::uint8_t kHygieneBlameKind = 0xFF;
@@ -401,6 +420,16 @@ public:
     void force_next_delta_timeout_for_test(bool v = true) noexcept {
         force_next_delta_timeout_ = v;
     }
+    // Issue #2343: export a bounded var↔constraint dependency subgraph
+    // for Agent self-repair. Seeds from touched / occurrence / let-poly /
+    // pending roots union unresolved constraint endpoints, then walks
+    // var_to_constraints_ (capped). Zero allocation when both outs stay
+    // empty (caller only invokes on TIMEOUT / non-empty CONFLICT).
+    void export_unresolved_var_constraint_graph(
+        const std::vector<Constraint>& unresolved, std::vector<UnresolvedGraphEdge>& edges_out,
+        std::vector<std::uint32_t>& suggested_roots_out,
+        std::size_t edge_cap = kUnresolvedGraphEdgeCap,
+        std::size_t root_cap = kUnresolvedGraphSuggestedRootsCap);
     // Issue #2146: pin clean-reverify scan limit for truncation tests
     // (0 = use adaptive effective_reverify_limit). Production leaves 0.
     void force_reverify_limit_for_test(std::size_t lim = 0) noexcept {
@@ -2430,6 +2459,12 @@ export struct SolveDeltaOccurrenceResult {
     // Unique affected_node ids from unresolved + blame frames (Agent
     // repair set — no free-form diagnostic parsing required).
     std::vector<std::uint32_t> unresolved_affected_nodes;
+    // Issue #2343: bounded var↔constraint dependency subgraph on
+    // TIMEOUT / CONFLICT (empty on SOLVED — zero-cost happy path).
+    // Edges: {var_rep, constraint_index, kind, lhs, rhs}, cap 64.
+    // suggested_roots: top-k TypeId reps by degree in the subgraph (k≤8).
+    std::vector<UnresolvedGraphEdge> unresolved_graph_edges;
+    std::vector<std::uint32_t> suggested_roots;
 };
 
 // Issue #2028: mark occurrence vars, restore retained blame anchors if

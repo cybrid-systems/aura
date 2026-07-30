@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 56 | 56 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 156 | 156 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 157 | 157 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 52 | 52 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 12 | 12 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 58 | 58 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 116 | 116 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 115 | 115 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 31 | 31 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -790,13 +790,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (156)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (157)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (156)
+#### domain/ (157)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -942,6 +942,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tui_present_dirty_2214.cpp` (#2214) [domain_suite, theme_compiler] — AC1: Primitive registered under AURA_ENABLE_TUI + hot meta
 - `tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp` (#2191) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
+- `tests/compiler/test_type_timeout_repair_2284.cpp` (#2284) [domain_suite, theme_compiler] — test_type_timeout_repair_2284.cpp
 - `tests/compiler/test_typed_mutation_audit_decision_2281.cpp` (#2281) [domain_suite, theme_compiler] — (≥12 cells per AC4) + the query schema sentinels (AC2/AC3).
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp — Issue #745:
 - `tests/compiler/test_typesystem_type_propagation_jit_l2_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_type_propagation_jit_l2_typed_mutate.cpp — Issue #746:
@@ -1181,13 +1182,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (116)
+### `observability` — Observability / metrics / query:*-stats (115)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (116)
+#### domain/ (115)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1302,7 +1303,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_partial_merge_2283.cpp` (#2283) [domain_suite, theme_compiler] — test_type_dep_partial_merge_2283.cpp
 - `tests/compiler/test_type_prop_invariant_correlation.cpp` (—) [domain_suite, theme_compiler] — Issue #1884 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_propagation_dead_coercion.cpp` (—) [domain_suite, theme_compiler] — test_type_propagation_dead_coercion.cpp — Issue #1874 (#1978 renamed):
-- `tests/compiler/test_type_timeout_repair_2284.cpp` (#2284) [domain_suite, theme_compiler] — test_type_timeout_repair_2284.cpp
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 

@@ -8848,6 +8848,101 @@ uint64_t TypeChecker::hash_node_shape_recursive(const aura::ast::FlatAST& flat,
 
 // ── Issue #2028: stable constraint solver surface ─────────────────────────
 
+// Issue #2343: bounded var↔constraint subgraph for Agent self-repair.
+// Seeds UF reps from live root sets + unresolved endpoints, then walks
+// var_to_constraints_ under a hard edge cap. Ranks seeds by edge degree
+// into suggested_roots (top-k). Must stay O(seeds × adj) with caps —
+// never dump the full CS.
+void ConstraintSystem::export_unresolved_var_constraint_graph(
+    const std::vector<Constraint>& unresolved, std::vector<UnresolvedGraphEdge>& edges_out,
+    std::vector<std::uint32_t>& suggested_roots_out, std::size_t edge_cap, std::size_t root_cap) {
+    edges_out.clear();
+    suggested_roots_out.clear();
+    if (edge_cap == 0)
+        return;
+
+    std::unordered_set<std::uint32_t> seeds;
+    seeds.reserve(touched_roots_.size() + occurrence_priority_roots_.size() +
+                  let_poly_dirty_roots_.size() + pending_full_solve_roots_.size() +
+                  unresolved.size() * 2);
+    for (auto r : touched_roots_)
+        seeds.insert(r);
+    for (auto r : occurrence_priority_roots_)
+        seeds.insert(r);
+    for (auto r : let_poly_dirty_roots_)
+        seeds.insert(r);
+    for (auto r : pending_full_solve_roots_)
+        seeds.insert(r);
+    for (const auto& c : unresolved) {
+        if (c.lhs.valid())
+            seeds.insert(find(c.lhs).index);
+        if (c.rhs.valid())
+            seeds.insert(find(c.rhs).index);
+    }
+    // Force-TIMEOUT path clears touched_roots_ before return; if seeds
+    // still empty but reverse map has dirty entries, seed those reps so
+    // Agents still see a non-empty subgraph under residual dirty.
+    if (seeds.empty() && !var_to_constraints_.empty()) {
+        for (const auto& [rep, indices] : var_to_constraints_) {
+            for (auto idx : indices) {
+                if (idx < constraint_dirty_.size() && constraint_dirty_[idx]) {
+                    seeds.insert(rep);
+                    break;
+                }
+            }
+        }
+    }
+    if (seeds.empty())
+        return;
+
+    std::unordered_map<std::uint32_t, std::size_t> degree;
+    std::unordered_set<std::uint64_t> seen_edge;
+    degree.reserve(seeds.size());
+    seen_edge.reserve(edge_cap * 2);
+
+    for (auto rep : seeds) {
+        auto it = var_to_constraints_.find(rep);
+        if (it == var_to_constraints_.end())
+            continue;
+        for (auto idx : it->second) {
+            if (idx >= constraints_.size())
+                continue;
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(rep) << 32) | static_cast<std::uint64_t>(idx);
+            if (!seen_edge.insert(key).second)
+                continue;
+            const auto& c = constraints_[idx];
+            UnresolvedGraphEdge e;
+            e.var_rep = rep;
+            e.constraint_index = static_cast<std::uint32_t>(idx);
+            e.kind = static_cast<std::uint8_t>(c.kind);
+            e.lhs = c.lhs;
+            e.rhs = c.rhs;
+            edges_out.push_back(e);
+            ++degree[rep];
+            if (edges_out.size() >= edge_cap)
+                break;
+        }
+        if (edges_out.size() >= edge_cap)
+            break;
+    }
+
+    if (root_cap == 0 || degree.empty())
+        return;
+    std::vector<std::pair<std::size_t, std::uint32_t>> ranked;
+    ranked.reserve(degree.size());
+    for (const auto& [rep, d] : degree)
+        ranked.emplace_back(d, rep);
+    std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
+        if (a.first != b.first)
+            return a.first > b.first; // higher degree first
+        return a.second < b.second;   // stable tie-break by rep
+    });
+    suggested_roots_out.reserve(std::min(root_cap, ranked.size()));
+    for (std::size_t i = 0; i < ranked.size() && suggested_roots_out.size() < root_cap; ++i)
+        suggested_roots_out.push_back(ranked[i].second);
+}
+
 SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
                                                   std::span<const TypeId> occurrence_vars,
                                                   std::vector<Constraint>* unresolved_out,
@@ -8948,6 +9043,14 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
         if (r.unresolved_affected_nodes.size() > kAffectedSampleCap)
             r.unresolved_affected_nodes.resize(kAffectedSampleCap);
     }
+    // Issue #2343: var↔constraint subgraph export on TIMEOUT / CONFLICT.
+    // SOLVED + empty worklist → skip (zero-cost happy path — AC3).
+    if (r.status == SolveResult::TIMEOUT ||
+        (r.status == SolveResult::CONFLICT && !r.unresolved.empty())) {
+        cs.export_unresolved_var_constraint_graph(r.unresolved, r.unresolved_graph_edges,
+                                                  r.suggested_roots, kUnresolvedGraphEdgeCap,
+                                                  kUnresolvedGraphSuggestedRootsCap);
+    }
     if (m) {
         m->solve_delta_occurrence_total.fetch_add(1, std::memory_order_relaxed);
         if (r.provenance_continuity)
@@ -8986,6 +9089,45 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
             if (r.unresolved.empty()) {
                 m->last_unresolved_goal_kind.store(0, std::memory_order_relaxed);
             }
+        }
+        // Issue #2343: mirror graph sample onto durable repair metrics so
+        // query:type-timeout-repair-stats can publish edges without holding
+        // a live SolveDeltaOccurrenceResult. Gated on TIMEOUT / CONFLICT —
+        // SOLVED path does not touch these atomics (AC3 zero-cost happy path).
+        if (r.status == SolveResult::TIMEOUT ||
+            (r.status == SolveResult::CONFLICT && !r.unresolved.empty())) {
+            const std::size_t ec = r.unresolved_graph_edges.size();
+            const std::size_t rc = r.suggested_roots.size();
+            m->type_repair_unresolved_edge_count.store(ec, std::memory_order_relaxed);
+            m->type_repair_suggested_root_count.store(rc, std::memory_order_relaxed);
+            const std::size_t root_pub =
+                std::min(rc, static_cast<std::size_t>(kUnresolvedGraphSuggestedRootsCap));
+            for (std::size_t i = 0; i < kUnresolvedGraphSuggestedRootsCap; ++i) {
+                m->type_repair_suggested_roots[i].store(i < root_pub ? r.suggested_roots[i] : 0u,
+                                                        std::memory_order_relaxed);
+            }
+            const std::size_t edge_pub =
+                std::min(ec, static_cast<std::size_t>(kUnresolvedGraphEdgeQueryCap));
+            for (std::size_t i = 0; i < kUnresolvedGraphEdgeQueryCap; ++i) {
+                if (i < edge_pub) {
+                    const auto& e = r.unresolved_graph_edges[i];
+                    m->type_repair_edge_var[i].store(e.var_rep, std::memory_order_relaxed);
+                    m->type_repair_edge_cix[i].store(e.constraint_index, std::memory_order_relaxed);
+                    m->type_repair_edge_kind[i].store(e.kind, std::memory_order_relaxed);
+                    m->type_repair_edge_lhs[i].store(e.lhs.index, std::memory_order_relaxed);
+                    m->type_repair_edge_rhs[i].store(e.rhs.index, std::memory_order_relaxed);
+                } else {
+                    m->type_repair_edge_var[i].store(0, std::memory_order_relaxed);
+                    m->type_repair_edge_cix[i].store(0, std::memory_order_relaxed);
+                    m->type_repair_edge_kind[i].store(0, std::memory_order_relaxed);
+                    m->type_repair_edge_lhs[i].store(0, std::memory_order_relaxed);
+                    m->type_repair_edge_rhs[i].store(0, std::memory_order_relaxed);
+                }
+            }
+            // Count how many TIMEOUT/CONFLICT exports produced ≥1 edge
+            // (Agent dashboard: repair graph fire rate).
+            if (ec > 0)
+                m->type_repair_graph_export_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     return r;
