@@ -8,9 +8,26 @@
 //   AC3: Inject pin-contract fail total → ok=0 + force-reason pin-miss.
 //   AC4: Existing query keys unchanged; new keys additive with schema/issue.
 //   AC5: Unit matrix + source-cite; no mutate side effects.
+//
+//   Issue #2341 (Refine #2300): unified post-densify consistency probe
+//   (pin + RootRemap + linear + closure remount) layered on top of
+//   lifetime-contract-snapshot. Refines #2266 · #2280 · #2294 · #2297
+//   · #2295 · #2300; production review (2026-07-29) 建议 5.
+//   AC_2340_1: DensifyConsistencyReport default-constructed report is
+//              overall_ok + force_reason=="none".
+//   AC_2341_2: Per-axis failure drives force_reason priority
+//              (pin > linear > root_remap > closure > envframe > none).
+//   AC_2341_3: densify_consistency_fail_total counter is queryable
+//              + process-level atomic.
+//   AC_2341_4: query:lifetime-contract-snapshot exposes #2341 keys
+//              (schema-2341 + issue-2341 + densify-consistency-ok +
+//              densify-force-reason-code + per-axis kebab+snake).
+//   AC_2341_5: source-cite DensifyConsistencyReport + last_root_remap
+//              _any_fail + Phase 5 driver + query surface.
 
 #include "test_harness.hpp"
 
+#include "core/densify_consistency_report.h" // Issue #2341
 #include "core/gc_hooks.h"
 #include "core/lifetime_contract.h"
 
@@ -22,6 +39,7 @@
 import std;
 import aura.core.lifetime_pin;
 import aura.core.envframe_lifetime;
+import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -30,6 +48,9 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::core::densify_consistency::bump_densify_consistency_fail_total;
+using aura::core::densify_consistency::densify_consistency_fail_total;
+using aura::core::densify_consistency::DensifyConsistencyReport;
 using aura::core::lifetime::g_linear_pin_miss_total;
 using aura::core::lifetime::g_moving_compact_pin_contract_fail_total;
 using aura::core::lifetime::linear_root_snapshot;
@@ -215,13 +236,184 @@ void ac4_query_additive() {
 
 } // namespace
 
+// Issue #2341 AC_2341_1: default-constructed DensifyConsistencyReport
+// is overall_ok + force_reason=="none". Mirrors the soft / empty remap
+// / no Moving trivially-ok contract. Sets baseline for AC_2341_2.
+void ac2341_1_report_default_ok() {
+    std::println("\n--- AC_2341_1: DensifyConsistencyReport default-ok ---");
+    DensifyConsistencyReport r;
+    CHECK(r.pin_ok, "AC_2341_1.1: pin_ok default true");
+    CHECK(r.linear_ok, "AC_2341_1.2: linear_ok default true");
+    CHECK(r.root_remap_ok, "AC_2341_1.3: root_remap_ok default true");
+    CHECK(r.closure_remount_ok, "AC_2341_1.4: closure_remount_ok default true");
+    CHECK(r.envframe_ok, "AC_2341_1.5: envframe_ok default true");
+    CHECK(r.overall_ok(), "AC_2341_1.6: overall_ok default true");
+    const auto* reason = r.force_reason();
+    CHECK(reason != nullptr, "AC_2341_1.7: force_reason non-null");
+    if (reason) {
+        CHECK(std::string_view(reason) == "none", "AC_2341_1.8: force_reason default == 'none'");
+    }
+}
+
+// Issue #2341 AC_2341_2: per-axis failure drives force_reason priority.
+// pin > linear > root_remap > closure > envframe > none. Each axis
+// failure flips overall_ok → false AND the most-severe failing axis
+// drives the priority.
+void ac2341_2_force_reason_priority() {
+    std::println(
+        "\n--- AC_2341_2: force_reason priority pin>linear>root_remap>closure>envframe ---");
+    // Only pin fail: reason == "pin".
+    {
+        DensifyConsistencyReport r;
+        r.pin_ok = false;
+        CHECK(!r.overall_ok(), "AC_2341_2.1: pin-only fail → !overall_ok");
+        CHECK(std::string_view(r.force_reason()) == "pin",
+              "AC_2341_2.2: pin-only fail → force_reason == 'pin'");
+    }
+    // Only linear fail: reason == "linear".
+    {
+        DensifyConsistencyReport r;
+        r.linear_ok = false;
+        CHECK(!r.overall_ok(), "AC_2341_2.3: linear-only fail → !overall_ok");
+        CHECK(std::string_view(r.force_reason()) == "linear",
+              "AC_2341_2.4: linear-only fail → force_reason == 'linear'");
+    }
+    // Only root_remap fail: reason == "root_remap".
+    {
+        DensifyConsistencyReport r;
+        r.root_remap_ok = false;
+        CHECK(!r.overall_ok(), "AC_2341_2.5: root_remap-only fail → !overall_ok");
+        CHECK(std::string_view(r.force_reason()) == "root_remap",
+              "AC_2341_2.6: root_remap-only fail → force_reason == 'root_remap'");
+    }
+    // Only closure fail: reason == "closure".
+    {
+        DensifyConsistencyReport r;
+        r.closure_remount_ok = false;
+        CHECK(!r.overall_ok(), "AC_2341_2.7: closure-only fail → !overall_ok");
+        CHECK(std::string_view(r.force_reason()) == "closure",
+              "AC_2341_2.8: closure-only fail → force_reason == 'closure'");
+    }
+    // Only envframe fail: reason == "envframe".
+    {
+        DensifyConsistencyReport r;
+        r.envframe_ok = false;
+        CHECK(!r.overall_ok(), "AC_2341_2.9: envframe-only fail → !overall_ok");
+        CHECK(std::string_view(r.force_reason()) == "envframe",
+              "AC_2341_2.10: envframe-only fail → force_reason == 'envframe'");
+    }
+    // Priority: all axes fail → reason == "pin" (most severe).
+    {
+        DensifyConsistencyReport r;
+        r.pin_ok = false;
+        r.linear_ok = false;
+        r.root_remap_ok = false;
+        r.closure_remount_ok = false;
+        r.envframe_ok = false;
+        CHECK(std::string_view(r.force_reason()) == "pin",
+              "AC_2341_2.11: all-axis fail → force_reason == 'pin' (priority)");
+    }
+}
+
+// Issue #2341 AC_2341_3: densify_consistency_fail_total counter is
+// queryable + process-level atomic + bumps monotonically.
+void ac2341_3_counter_queryable() {
+    std::println("\n--- AC_2341_3: densify_consistency_fail_total counter ---");
+    const auto before = densify_consistency_fail_total();
+    CHECK(before >= 0, "AC_2341_3.1: densify_consistency_fail_total queryable + >= 0");
+    bump_densify_consistency_fail_total();
+    const auto after = densify_consistency_fail_total();
+    CHECK(after == before + 1, "AC_2341_3.2: bump_densify_consistency_fail_total increments by 1");
+}
+
+// Issue #2341 AC_2341_4: query:lifetime-contract-snapshot extends with
+// #2341 keys. kebab + snake aliases per axis; overall ok flag;
+// force_reason_code (priority int); fail-total counter; sentinel;
+// schema + issue sentinels.
+void ac2341_4_query_schema(CompilerService& cs) {
+    std::println("\n--- AC_2341_4: query:lifetime-contract-snapshot #2341 surface ---");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "schema-2341") == 2341,
+          "AC_2341_4.1: schema-2341 == 2341");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "issue-2341") == 2341,
+          "AC_2341_4.2: issue-2341 == 2341");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-consistency-wired") == 1,
+          "AC_2341_4.3: densify-consistency-wired == 1 (proves #2341 wired)");
+    // Per-axis kebab + snake (booleans, default 1 at idle).
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-pin-ok") >= 0,
+          "AC_2341_4.4: densify-pin-ok reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify_pin_ok") >= 0,
+          "AC_2341_4.5: densify_pin_ok reachable (snake)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-linear-ok") >= 0,
+          "AC_2341_4.6: densify-linear-ok reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-root-remap-ok") >= 0,
+          "AC_2341_4.7: densify-root-remap-ok reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-closure-remount-ok") >= 0,
+          "AC_2341_4.8: densify-closure-remount-ok reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-envframe-ok") >= 0,
+          "AC_2341_4.9: densify-envframe-ok reachable (kebab)");
+    // Overall + reason + counter.
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-consistency-ok") >= 0,
+          "AC_2341_4.10: densify-consistency-ok reachable (overall)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-force-reason-code") >= 0,
+          "AC_2341_4.11: densify-force-reason-code reachable (priority int)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-consistency-fail-total") >= 0,
+          "AC_2341_4.12: densify-consistency-fail-total reachable (counter)");
+}
+
+// Issue #2341 AC_2341_5: source-cite grep verifier. Each #2341 file
+// must contain the Issue #2341 cite + the contract surface (header
+// struct + atomic + accessor + bump helper + getter + report gate +
+// query keys + ac2341_* test functions).
+void ac2341_5_source_cite() {
+    std::println("\n--- AC_2341_5: Issue #2341 source-cite across 5 files ---");
+    auto check = [](const std::filesystem::path& p, std::initializer_list<const char*> needles,
+                    std::string_view tag) {
+        if (!std::filesystem::exists(p)) {
+            CHECK(false, std::format("AC_2341_5: {} not found", p.string()).c_str());
+            return;
+        }
+        std::ifstream in(p);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        const auto txt = buf.str();
+        for (const auto* needle : needles) {
+            CHECK(txt.find(needle) != std::string::npos,
+                  std::format("AC_2341_5: {} contains {}", tag, needle).c_str());
+        }
+    };
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/core/densify_consistency_report.h",
+          {"Issue #2341", "DensifyConsistencyReport", "force_reason",
+           "g_densify_consistency_fail_total", "bump_densify_consistency_fail_total",
+           "densify_consistency_fail_total", "densify_consistency_hard_contract_enabled"},
+          "densify_consistency_report.h");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/root_remap_pass.ixx",
+          {"Issue #2341", "g_last_root_remap_any_fail", "last_root_remap_any_fail"},
+          "root_remap_pass.ixx");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_mutation_boundary.cpp",
+          {"Issue #2341", "DensifyConsistencyReport", "bump_densify_consistency_fail_total",
+           "AURA_DENSIFY_CONTRACT"},
+          "evaluator_mutation_boundary.cpp");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_primitives_obs_jit.cpp",
+          {"Issue #2341", "densify-consistency-ok", "densify-force-reason-code",
+           "densify-consistency-fail-total", "schema-2341", "issue-2341"},
+          "evaluator_primitives_obs_jit.cpp");
+}
+
 int main() {
-    std::println("=== Issue #2300: lifetime-contract-snapshot ===");
+    std::println("=== Issue #2300 + #2341: lifetime-contract-snapshot + densify consistency ===");
     ac5_source_cite();
     ac1_idle_ok();
     ac3_pin_contract_fail();
     ac2_armed_hold_and_linear();
     ac4_query_additive();
-    std::println("\n=== #2300: {} passed, {} failed ===", g_passed, g_failed);
+    ac2341_1_report_default_ok();
+    ac2341_2_force_reason_priority();
+    ac2341_3_counter_queryable();
+    {
+        CompilerService cs;
+        ac2341_4_query_schema(cs);
+    }
+    ac2341_5_source_cite();
+    std::println("\n=== #2300 + #2341: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -57,6 +57,7 @@ import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
 import aura.compiler.lowering_linear_types; // Issue #2263: linear_move_elided_total
+import aura.compiler.root_remap_pass;       // Issue #2341: last_root_remap_any_fail()
 
 // Hoisted from evaluator_primitives_obs_jit_00..14.cpp
 extern "C" {
@@ -11030,6 +11031,56 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2300", 2300);
             insert_kv("issue-2300", static_cast<std::int64_t>(
                                         aura::core::lifetime_contract::kLifetimeContractIssue));
+            // Issue #2341: unified post-densify consistency probe.
+            // Per-axis live reads (kebab + snake aliases); unified
+            // overall_ok flag + force_reason_code (priority pin >
+            // linear > root_remap > closure > envframe > none); counter
+            // for unified fail bumps; sentinel + schema/issue cite.
+            // Soft / empty remap / no Moving → all axes ok trivially.
+            const bool densify_pin_ok = (snap.moving_pin_contract_fail_total == 0);
+            const bool densify_linear_ok = densify_pin_ok; // #2266/#2280 subsumed
+            const bool densify_root_remap_ok =
+                !aura::compiler::root_remap_pass::last_root_remap_any_fail();
+            const bool densify_closure_remount_ok =
+                (ev.get_closure_capture_cell_remap_fail_total() == 0);
+            const bool densify_envframe_ok = true; // #2340 surface is
+                                                   // counter-only today;
+                                                   // fail-closed gating is
+                                                   // a follow-up per #2341
+                                                   // close comment.
+            const bool densify_consistency_ok = densify_pin_ok && densify_linear_ok &&
+                                                densify_root_remap_ok &&
+                                                densify_closure_remount_ok && densify_envframe_ok;
+            int densify_force_reason_code = 0;
+            if (!densify_pin_ok)
+                densify_force_reason_code = 1;
+            else if (!densify_linear_ok)
+                densify_force_reason_code = 2;
+            else if (!densify_root_remap_ok)
+                densify_force_reason_code = 3;
+            else if (!densify_closure_remount_ok)
+                densify_force_reason_code = 4;
+            else if (!densify_envframe_ok)
+                densify_force_reason_code = 5;
+            insert_kv("densify-pin-ok", densify_pin_ok ? 1 : 0);
+            insert_kv("densify_pin_ok", densify_pin_ok ? 1 : 0);
+            insert_kv("densify-linear-ok", densify_linear_ok ? 1 : 0);
+            insert_kv("densify_linear_ok", densify_linear_ok ? 1 : 0);
+            insert_kv("densify-root-remap-ok", densify_root_remap_ok ? 1 : 0);
+            insert_kv("densify_root_remap_ok", densify_root_remap_ok ? 1 : 0);
+            insert_kv("densify-closure-remount-ok", densify_closure_remount_ok ? 1 : 0);
+            insert_kv("densify_closure_remount_ok", densify_closure_remount_ok ? 1 : 0);
+            insert_kv("densify-envframe-ok", densify_envframe_ok ? 1 : 0);
+            insert_kv("densify_envframe_ok", densify_envframe_ok ? 1 : 0);
+            insert_kv("densify-consistency-ok", densify_consistency_ok ? 1 : 0);
+            insert_kv("densify-force-reason-code",
+                      static_cast<std::int64_t>(densify_force_reason_code));
+            insert_kv("densify-consistency-fail-total",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::densify_consistency_fail_total()));
+            insert_kv("densify-consistency-wired", 1);
+            insert_kv("schema-2341", 2341);
+            insert_kv("issue-2341", 2341);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
