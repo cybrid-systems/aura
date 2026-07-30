@@ -2,7 +2,10 @@
 // @reason: Issue #2354 — debug lock-order audit for workspace / closures /
 // module / wait_map / scheduler / fiber_registry.
 //
-//   AC1: Audit off → zero cost (single branch; no atomics on acquire).
+//   AC1: Audit off → zero atomics on acquire (TLS depth still tracked —
+//        required for OrderedUniqueLock::acquire_if_needed nest safety).
+//   AC1b: Audit off + nested acquire_if_needed does NOT deadlock
+//         (regression: #2354 zero-TLS-depth bug → EDEADLK).
 //   AC2: Soft audit + correct order → passes (no inversion).
 //   AC3: Soft audit + reverse order → detected (hard canary aborts; soft
 //        bumps counters — tested via soft + deliberate reverse).
@@ -18,6 +21,7 @@
 #include <fstream>
 #include <mutex>
 #include <print>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 
@@ -31,12 +35,14 @@ using aura::compiler::lock_order::force_audit_mode_for_test;
 using aura::compiler::lock_order::g_lock_inversion_detected_total;
 using aura::compiler::lock_order::g_lock_order_acquire_total;
 using aura::compiler::lock_order::g_lock_order_violation_total;
+using aura::compiler::lock_order::is_held;
 using aura::compiler::lock_order::Level;
 using aura::compiler::lock_order::level_name;
 using aura::compiler::lock_order::lock_order_audit_enabled;
 using aura::compiler::lock_order::lock_order_mode;
 using aura::compiler::lock_order::on_acquire;
 using aura::compiler::lock_order::on_release;
+using aura::compiler::lock_order::OrderedUniqueLock;
 using aura::compiler::lock_order::reset_tls_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -52,19 +58,45 @@ static std::string read_file(const char* path) {
     return {};
 }
 
-// ── AC1: audit off → no acquire counters ──
+// ── AC1: audit off → no acquire counters (TLS depth still tracked) ──
 static void ac1_audit_off_zero_cost() {
-    std::println("\n--- AC1: audit off → zero cost ---");
+    std::println("\n--- AC1: audit off → zero atomics (depth tracked) ---");
     force_audit_mode_for_test(1); // off
     reset_tls_for_test();
     CHECK(!lock_order_audit_enabled(), "AC1: audit disabled");
     const auto a0 = g_lock_order_acquire_total.load();
     CHECK(on_acquire(Level::Workspace), "AC1: on_acquire returns true when off");
+    CHECK(is_held(Level::Workspace), "AC1: TLS depth set when audit off (nest safety)");
     CHECK(on_acquire(Level::Orphan), "AC1: second acquire true when off");
     CHECK(g_lock_order_acquire_total.load() == a0, "AC1: acquire_total unchanged when audit off");
     on_release(Level::Workspace);
     on_release(Level::Orphan);
+    CHECK(!is_held(Level::Workspace), "AC1: depth cleared on release");
     CHECK(g_lock_order_acquire_total.load() == a0, "AC1: still unchanged after release");
+}
+
+// ── AC1b: audit off + nested acquire_if_needed must not EDEADLK ──
+static void ac1b_nested_acquire_if_needed_no_deadlock() {
+    std::println("\n--- AC1b: audit off + nested acquire_if_needed ---");
+    force_audit_mode_for_test(1); // production default OFF
+    reset_tls_for_test();
+    std::shared_mutex mtx;
+    {
+        OrderedUniqueLock<std::shared_mutex> outer(mtx, Level::Mutate);
+        CHECK(outer.owns_lock(), "AC1b: outer owns mutate lock");
+        CHECK(is_held(Level::Mutate), "AC1b: is_held(Mutate) under outer");
+        // Nested path used by CompilerService invalidate — must skip re-lock.
+        auto inner = OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mtx, Level::Mutate);
+        CHECK(!inner.owns_lock(), "AC1b: inner inactive (already held)");
+        CHECK(outer.owns_lock(), "AC1b: outer still owns after nested skip");
+    }
+    CHECK(!is_held(Level::Mutate), "AC1b: depth cleared after outer release");
+    // Fresh acquire still works after nest.
+    {
+        auto again = OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mtx, Level::Mutate);
+        CHECK(again.owns_lock(), "AC1b: re-acquire after release owns lock");
+    }
+    reset_tls_for_test();
 }
 
 // ── AC2: soft audit + correct order ──
@@ -203,6 +235,7 @@ int main() {
     std::println("=== Issue #2354: debug lock-order audit (scheduler/workspace/closures) ===");
     ac4_rank_table_and_source_cite();
     ac1_audit_off_zero_cost();
+    ac1b_nested_acquire_if_needed_no_deadlock();
     ac2_correct_order();
     ac3_reverse_order_detected();
     ac3b_audited_mutex_reverse();

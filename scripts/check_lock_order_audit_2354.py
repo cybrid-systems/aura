@@ -43,11 +43,14 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
-    # AC1 zero cost
+    # AC1 zero atomics when off; TLS depth still tracked (nest safety)
     must("AURA_LOCK_ORDER_AUDIT", "AC1", h)
     must("lock_order_audit_enabled", "AC1", h)
     must("if (!lock_order_audit_enabled())", "AC1", h)
+    must("Depth always", "AC1", h)
+    must("acquire_if_needed", "AC1", h)
     must("ac1_audit_off_zero_cost", "AC1", test)
+    must("ac1b_nested_acquire_if_needed_no_deadlock", "AC1b", test)
     must("Issue #2354", "AC1", h)
 
     # AC2 correct order ranks
