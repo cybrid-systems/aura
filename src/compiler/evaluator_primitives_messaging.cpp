@@ -254,9 +254,11 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #2010: fanout-backpressure-rejects.
             // Issue #2188: recv-rejected-in-mutation-boundary.
             std::uint64_t pushes = 0, pops = 0, broadcasts = 0, bp = 0, attaches = 0, ph = 0,
-                          waits = 0, tmo = 0, lchk = 0, lviol = 0, fbp = 0, rej_bound = 0;
+                          waits = 0, tmo = 0, lchk = 0, lviol = 0, fbp = 0, rej_bound = 0,
+                          def_mh = 0;
             MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
-                                                    waits, tmo, lchk, lviol, &fbp, &rej_bound);
+                                                    waits, tmo, lchk, lviol, &fbp, &rej_bound,
+                                                    &def_mh);
             // Capacity 32→48: #2188 keys fit without silent drop.
             auto* ht = FlatHashTable::create(48);
             if (!ht)
@@ -308,6 +310,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-2188", 2188);
             insert_kv("recv-boundary-gate-wired", 1);
             insert_kv("health-wired", 1);
+            // Issue #2312: push-side delivery gate — push / broadcast_fanout
+            // defer (BP) when target fiber(s) hold MutationBoundary. Distinct
+            // from recv-side recv-rejected-in-mutation-boundary (#2188); this
+            // is the producer-side gate that prevents lock-order inversion vs
+            // workspace_mtx_ + GcDeferReason::MutationHold under multi-agent
+            // fanout. Reuses #2184 MutationSafetySnapshot + is_at_mutation_
+            // boundary_safe truth table.
+            insert_kv("mailbox-deferred-mutation-hold-total", static_cast<std::int64_t>(def_mh));
+            insert_kv("mailbox_deferred_mutation_hold_total", static_cast<std::int64_t>(def_mh));
+            insert_kv("mailbox-mutation-hold-gate-wired", 1);
+            insert_kv("schema-2312", 2312);
+            insert_kv("issue-2312", 2312);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
