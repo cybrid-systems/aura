@@ -262,7 +262,7 @@ bool HotUpdateRegistry::should_throttle_reemit(std::uint64_t region_or_priority)
         // Issue #2316: wire HotUpdateRegistry region_windows_mtx_
         // acquisition to lock_order audit (Level::HotUpdate rank).
         (void)::aura::compiler::lock_order::on_acquire(
-            ::aura::compiler::lock_order::Level::HotUpdate, __builtin_FILE(), __builtin_LINE__);
+            ::aura::compiler::lock_order::Level::HotUpdate, __builtin_FILE(), __builtin_LINE());
         std::lock_guard<std::mutex> lock(region_windows_mtx_);
         auto it = region_windows_.find(region_or_priority);
         if (it != region_windows_.end() && it->second)
@@ -632,7 +632,7 @@ std::uint64_t HotUpdateRegistry::register_epoch_listener(EpochListener fn) {
     // Issue #2316: wire HotUpdateRegistry listeners_mtx_ acquisition
     // to lock_order audit (Level::HotUpdate rank).
     (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::HotUpdate,
-                                                   __builtin_FILE(), __builtin_LINE__);
+                                                   __builtin_FILE(), __builtin_LINE());
     std::lock_guard<std::mutex> lock(listeners_mtx_);
     epoch_listeners_.push_back(std::move(fn));
     register_calls_.fetch_add(1, std::memory_order_relaxed);
