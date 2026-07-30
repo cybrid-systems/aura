@@ -754,7 +754,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_envframe_truncate_guard_dual_epoch.cpp` (—) [domain_suite, theme_core] — Issue #1739/#1842/#1889/#1927/#1948 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_epoch_apply_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_epoch_apply_batch.cpp — epoch_apply pair dup-merge (R19 phase 15).
 - `tests/compiler/test_epoch_bump_invariant_2304.cpp` (#2304) [domain_suite, theme_compiler] — Issue #2304 — post-bump hard invariant walk infrastructure.
-- `tests/compiler/test_escape_move_elision_gate_2263.cpp` (#2263) [domain_suite, theme_compiler] — AC1: escape-after-move binding → MoveOp emitted; blocked counter bumps
+- `tests/compiler/test_escape_move_elision_gate_2263.cpp` (#2263) [large, domain_suite, theme_compiler] — AC1: escape-after-move binding → MoveOp emitted; blocked counter bumps
 - `tests/core/test_force_compact_hard_mutex_2157.cpp` (#2157) [domain_suite, theme_core] — LifetimePin + EnvFrameLifetimeGuard (no gen bump / pin invalidate while held).
 - `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
 - `tests/serve/test_gc_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_batch.cpp — GC compact family batch driver.
