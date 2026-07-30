@@ -7455,6 +7455,18 @@ struct CompilerMetrics {
     // Optional hard_timeout_us: 0 = use max_extreme_mutation_us; non-zero
     // overrides extreme ceiling for force-fail (still outermost-only).
     std::atomic<std::uint64_t> hard_timeout_us{0}; // #2199
+    // Issue #2313: hold-budget over-budget signal — distinct from
+    // mutation_too_long_total (which is the LATE-warning threshold via
+    // long_mutation_threshold_us, default 500ms). mutation_hold_over_
+    // budget_total is the EARLY-warning threshold via mutation_hold_
+    // budget_us() (default 100ms via AURA_MUTATION_HOLD_BUDGET_US).
+    // Bumped at outermost dtor when hold > budget. SIGNAL-ONLY — does
+    // NOT force-fail or yield (would violate #2200 / unlock workspace_mtx_
+    // mid-mutate). Agents read over-budget rate via
+    // query:mutation-boundary-hold-stats to choose RenderFastExit-style
+    // degrade or shorter batches (closed-loop AC2; #2253 -40 steal
+    // penalty still fires on last_hold_us for #2253 integration).
+    std::atomic<std::uint64_t> mutation_hold_over_budget_total{0}; // #2313
     // Issue #1373: cross-fiber yield + hold observability (Agent dashboard)
     //   - yield_same_thread: yield while boundary held, same OS thread
     //   - cross_thread_migration: yield checkpoint resume on different thread

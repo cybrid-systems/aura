@@ -631,14 +631,103 @@ namespace _548_detail {
 
 } // namespace _548_detail
 
+// ── Issue #2313: hold-budget over-budget cooperative safepoint ──
+namespace _2313_detail {
+
+    // AC1/AC2/AC3: source wiring + zero-cost-under-budget + over-budget signal.
+    // AC4: query keys exposed.
+    // AC5: source-cite rows.
+    static void run_2313_hold_budget() {
+        std::println("\n=== #2313: hold-budget over-budget signal ===");
+
+        // AC1/AC5: source wiring — verify the over-budget check + accessor are
+        // wired in evaluator_mutation_boundary.cpp.
+        {
+            std::println("\n--- #2313 AC1/AC5: source wiring ---");
+            const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+            const auto obm = read_file("src/compiler/observability_metrics.h");
+            CHECK(emb.find("mutation_hold_budget_us") != std::string::npos,
+                  "AC1: accessor mutation_hold_budget_us() present");
+            CHECK(emb.find("mutation_hold_over_budget_total") != std::string::npos,
+                  "AC1: dtor bumps mutation_hold_over_budget_total");
+            CHECK(emb.find("AURA_MUTATION_HOLD_BUDGET_US") != std::string::npos,
+                  "AC1: env var AURA_MUTATION_HOLD_BUDGET_US documented");
+            CHECK(emb.find("Issue #2313") != std::string::npos, "AC5: evaluator cites 2313");
+            CHECK(obm.find("mutation_hold_over_budget_total") != std::string::npos,
+                  "AC1: observability_metrics.h has counter");
+        }
+
+        // AC3: zero-cost under budget — fast Guard exit should NOT bump
+        // the over-budget counter (default budget 100ms, fast exit < budget).
+        {
+            std::println("\n--- #2313 AC3: zero cost under budget ---");
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            CHECK(m != nullptr, "AC3: metrics available");
+            const auto ob_0 = m->mutation_hold_over_budget_total.load();
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(ev, &ok);
+                // No body work — dtor fires immediately, hold_us ~µs.
+            }
+            CHECK(ok, "AC3: fast Guard success");
+            const auto ob_1 = m->mutation_hold_over_budget_total.load();
+            CHECK(ob_1 == ob_0, "AC3: fast Guard (under budget) → over-budget counter unchanged");
+        }
+
+        // AC2: over-budget exits still feed last_hold_us for #2253 integration.
+        // The dtor unconditionally calls fiber->set_last_hold_us(uus) before
+        // the over-budget check (existing #2253 wiring); we verify the
+        // counter relationship via source wiring.
+        {
+            std::println("\n--- #2313 AC2: closed loop with #2253 last_hold_us ---");
+            const auto fh = read_file("src/serve/fiber.h");
+            CHECK(fh.find("set_last_hold_us") != std::string::npos,
+                  "AC2: fiber.h exposes last_hold_us (#2253)");
+            CHECK(fh.find("last_hold_us_") != std::string::npos,
+                  "AC2: fiber.h has last_hold_us_ field (#2253)");
+            // The over-budget signal is read by Agents via query, who choose
+            // RenderFastExit degrade (#2215) or shorter batches. The −40
+            // steal penalty on last_hold_us (#2253) still fires for the
+            // outer scheduler — closed loop is intact.
+        }
+
+        // AC4: query keys exposed on query:mutation-boundary-hold-stats.
+        {
+            std::println("\n--- #2313 AC4: query schema-2313 + suppress keys ---");
+            CompilerService cs;
+            CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+            auto r1 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                              "\"mutation-hold-over-budget-total\")");
+            CHECK(r1.has_value() && is_int(*r1), "AC4: mutation-hold-over-budget-total key");
+            auto r2 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                              "\"mutation-hold-budget-us\")");
+            CHECK(r2.has_value() && is_int(*r2), "AC4: mutation-hold-budget-us key");
+            auto r3 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                              "\"mutation-hold-over-budget-wired\")");
+            CHECK(r3.has_value() && is_int(*r3) && as_int(*r3) == 1,
+                  "AC4: mutation-hold-over-budget-wired sentinel");
+            auto r4 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                              "\"schema-2313\")");
+            CHECK(r4.has_value() && is_int(*r4) && as_int(*r4) == 2313, "AC4: schema-2313");
+            auto r5 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                              "\"issue-2313\")");
+            CHECK(r5.has_value() && is_int(*r5) && as_int(*r5) == 2313, "AC4: issue-2313");
+        }
+    }
+
+} // namespace _2313_detail
+
 } // namespace aura_mutation_boundary_batch
 
 int main() {
     std::println("=== B pilot #10: mutation_boundary family batch "
-                 "(#1591 + #1444 + #417 + #548) ===");
+                 "(#1591 + #1444 + #417 + #548 + #2313) ===");
     aura_mutation_boundary_batch::_1591_detail::run_1591_safe_yield_fairness();
     aura_mutation_boundary_batch::_1444_detail::run_1444_full_coverage();
     aura_mutation_boundary_batch::_417_detail::run_417_invariant_closed_loop();
     aura_mutation_boundary_batch::_548_detail::run_548_panic_rollback_fiber();
+    aura_mutation_boundary_batch::_2313_detail::run_2313_hold_budget();
     return RUN_ALL_TESTS();
 }

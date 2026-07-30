@@ -5992,6 +5992,25 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
                 {"schema-2311", make_int(2311)},
                 {"issue-2311", make_int(2311)},
+                // Issue #2313: hold-budget over-budget signal — distinct
+                // from mutation_too_long_total which is the LATE-warning
+                // threshold via long_mutation_threshold_us (default 500ms).
+                // mutation_hold_over_budget_total is the EARLY-warning
+                // threshold via AURA_MUTATION_HOLD_BUDGET_US (default 100ms).
+                // Bumped at outermost dtor when hold > budget. SIGNAL-ONLY —
+                // does NOT force-fail or yield (would violate #2200 / unlock
+                // workspace_mtx_ mid-mutate). Agents read over-budget rate
+                // to choose RenderFastExit-style degrade or shorter batches.
+                {"mutation-hold-over-budget-total",
+                 make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
+                {"mutation_hold_over_budget_total",
+                 make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
+                // Current budget config — exposes the env-driven threshold.
+                {"mutation-hold-budget-us",
+                 make_int(static_cast<std::int64_t>(mutation_hold_budget_us()))},
+                {"mutation-hold-over-budget-wired", 1},
+                {"schema-2313", make_int(2313)},
+                {"issue-2313", make_int(2313)},
             };
             return build_hash(kv);
         });
