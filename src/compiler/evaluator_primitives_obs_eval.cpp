@@ -5973,6 +5973,25 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"render-fast-exit-wired", make_int(1)},
                 {"schema-2215", make_int(2215)},
                 {"issue-2215", make_int(2215)},
+                // Issue #2311: RenderFastExit suppress counters (linear /
+                // match-site / hard_gate force full audit path). Distinct
+                // from render-fast-exit-skipped-audit-total which counts
+                // skipped audits AFTER fast-exit — these count suppressed
+                // fast-exits (production fail-closed default).
+                {"render-fast-exit-suppressed-linear-or-match-total",
+                 make_int(m ? load(m->render_fast_exit_suppressed_linear_or_match_total) : 0)},
+                {"render_fast_exit_suppressed_linear_or_match_total",
+                 make_int(m ? load(m->render_fast_exit_suppressed_linear_or_match_total) : 0)},
+                {"render-fast-exit-suppressed-linear-total",
+                 make_int(m ? load(m->render_fast_exit_suppressed_linear_total) : 0)},
+                {"render_fast_exit_suppressed_linear_total",
+                 make_int(m ? load(m->render_fast_exit_suppressed_linear_total) : 0)},
+                {"render-fast-exit-suppressed-match-total",
+                 make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
+                {"render_fast_exit_suppressed_match_total",
+                 make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
+                {"schema-2311", make_int(2311)},
+                {"issue-2311", make_int(2311)},
             };
             return build_hash(kv);
         });

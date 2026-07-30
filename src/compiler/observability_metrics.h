@@ -7556,6 +7556,28 @@ struct CompilerMetrics {
     // Issue #2215: RenderFastExit (outermost success under render hotpath).
     // Skips Full TypedMutationAudit + full linear/dual-path; defers reemit.
     // Exposed via query:mutation-boundary-hold-stats schema-2215.
+    // Issue #2311: RenderFastExit suppress counters — bumped at the
+    // MutationBoundaryGuard dtor's render_fast decision when the
+    // outermost Guard encloses linear ops OR ADT match sites OR
+    // hard_gate. Production fail-closed default for #2145/#2222/#2223
+    // under-sample / soft-continue hole. Distinct from
+    // render_fast_exit_skipped_audit_total which counts skipped audits
+    // AFTER fast-exit was taken — these count suppressed fast-exits.
+    // render_fast_exit_suppressed_linear_or_match_total: bumped when
+    //   any of {linear_ops_present, match_sites_present, hard_gate}
+    //   forces full audit path (split between linear/match keys below)
+    //   instead of taking RenderFastExit. AC4 observability.
+    // render_fast_exit_suppressed_linear_total: linear-only sub-counter
+    //   so dashboards can isolate linear under-sample risk from
+    //   ADT-match exhaustiveness risk.
+    // render_fast_exit_suppressed_match_total: match-only sub-counter.
+    std::atomic<std::uint64_t> render_fast_exit_suppressed_linear_or_match_total{0}; // #2311
+    std::atomic<std::uint64_t> render_fast_exit_suppressed_linear_total{0};          // #2311
+    std::atomic<std::uint64_t> render_fast_exit_suppressed_match_total{0};           // #2311
+    // hard_gate_audits_total still bumps when suppression forces the
+    // full audit path (existing #2145 behavior); we just additionally
+    // surface the suppression reason so dashboards can distinguish
+    // "fast-exit taken" from "fast-exit suppressed → full audit".
     std::atomic<std::uint64_t> render_fast_exit_total{0};                 // #2215
     std::atomic<std::uint64_t> render_fast_exit_skipped_audit_total{0};   // #2215
     std::atomic<std::uint64_t> render_fast_exit_deferred_reemit_total{0}; // #2215

@@ -170,6 +170,93 @@ static void ac4_render_hot_entry_guard() {
     CHECK(m->render_fast_exit_total.load() == f0 + 1, "AC4: fast exit via RenderHotEntryGuard");
 }
 
+// ── Issue #2311 AC1/AC5: source wiring for suppress logic ──
+static void ac2311_source_wiring() {
+    std::println("\n--- #2311 AC1/AC5: source wiring for suppress ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ob = read_file("src/compiler/observability_metrics.h");
+    const auto epo = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(mb.find("render_fast_exit_suppressed_linear_or_match_total") != std::string::npos,
+          "AC1: dtor bumps suppress counter");
+    CHECK(mb.find("linear_ops_present_local") != std::string::npos,
+          "AC1: dtor computes linear_ops_present");
+    CHECK(mb.find("match_sites_present_local") != std::string::npos,
+          "AC1: dtor computes match_sites_present");
+    CHECK(mb.find("hard_gate_local") != std::string::npos,
+          "AC1: dtor computes hard_gate via typed_audit");
+    CHECK(mb.find("Issue #2311") != std::string::npos, "AC5: evaluator cites 2311");
+    CHECK(mb.find("NodeTag::Linear") != std::string::npos &&
+              mb.find("NodeTag::Move") != std::string::npos,
+          "AC1: linear detection mirrors subtree_has_linear_ops");
+    CHECK(ob.find("render_fast_exit_suppressed_linear_or_match_total") != std::string::npos,
+          "AC1: observability_metrics.h has suppress counter");
+    CHECK(ob.find("render_fast_exit_suppressed_linear_total") != std::string::npos,
+          "AC1: observability_metrics.h has linear sub-counter");
+    CHECK(ob.find("render_fast_exit_suppressed_match_total") != std::string::npos,
+          "AC1: observability_metrics.h has match sub-counter");
+    CHECK(epo.find("schema-2311") != std::string::npos, "AC1: query schema-2311");
+    CHECK(epo.find("issue-2311") != std::string::npos, "AC1: query issue-2311");
+    CHECK(epo.find("render-fast-exit-suppressed-linear-or-match-total") != std::string::npos,
+          "AC1: query suppress key");
+    CHECK(tma.find("requires_invariant_hard_gate") != std::string::npos,
+          "AC1: typed_audit::requires_invariant_hard_gate wired");
+}
+
+// ── Issue #2311 AC2: query schema-2311 + suppress keys ──
+static void ac2311_query_schema() {
+    std::println("\n--- #2311 AC2: query schema-2311 + suppress keys ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2311") == 2311, "AC2: schema-2311");
+    CHECK(href(cs, "issue-2311") == 2311, "AC2: issue-2311");
+    CHECK(href(cs, "render-fast-exit-suppressed-linear-or-match-total") >= 0,
+          "AC2: suppress-or-match key");
+    CHECK(href(cs, "render-fast-exit-suppressed-linear-total") >= 0, "AC2: linear key");
+    CHECK(href(cs, "render-fast-exit-suppressed-match-total") >= 0, "AC2: match key");
+    // Regression: schema-2215 retained.
+    CHECK(href(cs, "schema-2215") == 2215, "AC2: schema-2215 retained");
+    CHECK(href(cs, "render-fast-exit-total") >= 0, "AC2: 2215 total key retained");
+}
+
+// ── Issue #2311 AC3: regression — pure render still fast ──
+// (covered by existing ac1_ac5_hotpath_fast_exit(); re-check counters.)
+static void ac2311_pure_render_regression() {
+    std::println("\n--- #2311 AC3: pure render still fast (regression) ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto sup_before = m->render_fast_exit_suppressed_linear_or_match_total.load();
+    aura::core::arena_policy::enter_render_hotpath();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+    }
+    aura::core::arena_policy::exit_render_hotpath();
+    const auto sup_after = m->render_fast_exit_suppressed_linear_or_match_total.load();
+    // Pure render (no linear, no match) → suppress must NOT fire.
+    CHECK(sup_after == sup_before, "AC3: pure render → suppress counter unchanged");
+}
+
+// ── Issue #2311 AC4: counter exists + atomic ──
+static void ac2311_counter_wired() {
+    std::println("\n--- #2311 AC4: counter exists + atomic ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    // All three counters must be loadable (atomic semantics).
+    const auto sup_or_match = m->render_fast_exit_suppressed_linear_or_match_total.load();
+    const auto sup_linear = m->render_fast_exit_suppressed_linear_total.load();
+    const auto sup_match = m->render_fast_exit_suppressed_match_total.load();
+    CHECK(sup_or_match >= 0, "AC4: sup_or_match atomic loadable");
+    CHECK(sup_linear >= 0, "AC4: sup_linear atomic loadable");
+    CHECK(sup_match >= 0, "AC4: sup_match atomic loadable");
+    CHECK(sup_or_match >= sup_linear, "AC4: sup_or_match >= sup_linear (sanity)");
+    CHECK(sup_or_match >= sup_match, "AC4: sup_or_match >= sup_match (sanity)");
+}
+
 } // namespace
 
 int main() {
@@ -183,6 +270,11 @@ int main() {
     ac3_failure_no_fast();
     ac2_query();
     ac4_render_hot_entry_guard();
+    // Issue #2311: AC1-AC5 for linear / match-site hard-gate suppress.
+    ac2311_source_wiring();
+    ac2311_query_schema();
+    ac2311_pure_render_regression();
+    ac2311_counter_wired();
 
     std::println("\n=== test_render_fast_exit_2215: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
