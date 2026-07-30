@@ -36,6 +36,8 @@ extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_tota
 // mutation_steal_snapshot_mismatch_total_ which is observed-only —
 // this is the actual fail-closed enforcement counter for production.
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
+// Issue #2346: resume hard-fail total (fail-closed canary).
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
 
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
@@ -251,6 +253,20 @@ public:
     [[nodiscard]] static std::uint64_t steal_snapshot_mismatch_force_deopt_total() noexcept {
         return steal_snapshot_mismatch_force_deopt_total_.load(std::memory_order_relaxed);
     }
+    // Issue #2346: resume hard-fail counter (fail-closed canary). Distinct
+    // from force-deopt (#2310 steal path) and observed-only mismatch (#2184).
+    static void bump_steal_snapshot_hard_fail() noexcept {
+        steal_snapshot_hard_fail_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t steal_snapshot_hard_fail_total() noexcept {
+        return steal_snapshot_hard_fail_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2346: post-sync resume invariant. Samples one snapshot (same as
+    // existing resume check). Soft → bump mismatch, return true (continue).
+    // Hard → bump mismatch + hard-fail, mark cancel/Done, return false
+    // (caller must not swapcontext). Happy path: one snapshot load only.
+    // Tests may call this directly with injected inconsistent mirrors.
+    [[nodiscard]] bool check_and_enforce_resume_snapshot_invariant() noexcept;
 
     // Issue #2118: set when orch agent body soft-registers mutation depth
     // (lightweight; not a full MutationBoundaryGuard — fiber stack limit).
@@ -765,6 +781,8 @@ private:
     // Issue #2310: see bump_steal_snapshot_mismatch_force_deopt().
     // Distinct from mutation_steal_snapshot_mismatch_total_ (observed-only).
     static std::atomic<std::uint64_t> steal_snapshot_mismatch_force_deopt_total_;
+    // Issue #2346: resume hard-fail (mark-failed) total.
+    static std::atomic<std::uint64_t> steal_snapshot_hard_fail_total_;
     // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
     std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
     // Issue #2227: back-pointer to owner Scheduler so the orch join
@@ -895,19 +913,31 @@ struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
 
-// Issue #2310: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only mode for
-// unit tests. Production default is fail-closed (force-deopt + full
-// refresh under exclusive recovery). Lazy init from std::getenv per
-// TU; env vars are process-global so the cached value is consistent
-// across call sites (worker.cpp steal path, evaluator_fiber_mutation.cpp
-// resume path re-sample fence).
+// Issue #2310 / #2346: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only mode
+// for unit tests. Production default is fail-closed (force-deopt + full
+// refresh under exclusive recovery). Live getenv (not process-static)
+// so tests can toggle Soft/Hard without restart; only consulted on the
+// rare mismatch / steal-inconsistency path.
 [[nodiscard]] inline bool is_steal_snapshot_soft_mode() noexcept {
-    static const int cached = []() {
-        const char* v = std::getenv("AURA_STEAL_SNAPSHOT_SOFT");
-        return (v && v[0] == '1') ? 1 : 0;
-    }();
-    return cached != 0;
+    const char* v = std::getenv("AURA_STEAL_SNAPSHOT_SOFT");
+    return v && v[0] == '1';
 }
+
+// Issue #2346: resume MutationSafetySnapshot hard-invariant decision table.
+//
+// | Mode        | Trigger                                              | Resume on mismatch | |
+// Soft        | AURA_STEAL_SNAPSHOT_SOFT=1 (overrides HARD)          | bump mismatch; continue | |
+// Soft        | default when neither HARD nor production canary      | bump mismatch; continue | |
+// Hard        | AURA_STEAL_SNAPSHOT_HARD=1                           | hard-fail (mark
+// Done/cancel)| | Production  | production_defaults canary (see probe) && !SOFT      | same as Hard
+// | | Hard+abort  | AURA_STEAL_SNAPSHOT_HARD_ABORT=1 under Hard          | std::abort after
+// mark-fail  |
+//
+// Steal path (#2310 force-deopt) is separate; this table governs Fiber::resume
+// post-sync only. Happy path cost: one existing mutation_safety_snapshot load.
+// Implementation in fiber.cpp (production canary via typed_mutation_audit).
+[[nodiscard]] bool is_steal_snapshot_hard_mode() noexcept;
+[[nodiscard]] bool is_steal_snapshot_hard_abort() noexcept;
 
 } // namespace aura::serve
 

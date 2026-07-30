@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -32,6 +33,8 @@ extern "C" void aura_evaluator_test_push_mutation_checkpoint();
 extern "C" void aura_evaluator_test_pop_mutation_checkpoint();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
 
 namespace {
 
@@ -370,7 +373,142 @@ int main() {
         CHECK(efm.find("Issue #2310") != std::string::npos, "AC5: evaluator cites 2310");
     }
 
-    std::println("\n=== #2184/#2310 MutationSafetySnapshot: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── Issue #2346: resume MutationSafetySnapshot hard invariant ──
+    {
+        std::println("\n--- #2346 AC1: Soft mismatch → counter bump, fiber continues ---");
+        // Default: no AURA_STEAL_SNAPSHOT_HARD, no production defaults → Soft.
+        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "AC1: default Soft for resume");
+        // Inject inconsistency under a live fiber (depth>0 + Explicit yield).
+        Scheduler sched(2);
+        std::atomic<bool> done{false};
+        const auto miss0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+        const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
+        sched.spawn([&]() {
+            auto* fb = aura::serve::g_current_fiber;
+            aura_evaluator_test_push_mutation_checkpoint();
+            fb->set_yield_reason(YieldReason::Explicit);
+            CHECK(fb->mutation_safety_snapshot_inconsistent(fb->mutation_safety_snapshot()),
+                  "AC1: injected inconsistent");
+            const bool cont = fb->check_and_enforce_resume_snapshot_invariant();
+            CHECK(cont, "AC1: Soft continues (return true)");
+            CHECK(aura_fiber_static_mutation_steal_snapshot_mismatch_total() > miss0,
+                  "AC1: mismatch counter bumped");
+            CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() == hard0,
+                  "AC1: hard-fail total unchanged under Soft");
+            aura_evaluator_test_pop_mutation_checkpoint();
+            done.store(true);
+        });
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(done.load(), "AC1: body ran");
+    }
+
+    {
+        std::println("\n--- #2346 AC2: Hard mismatch → mark-failed, hard-fail +1 ---");
+        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        CHECK(aura::serve::is_steal_snapshot_hard_mode(), "AC2: Hard mode on");
+        Scheduler sched(2);
+        std::atomic<bool> done{false};
+        const auto miss0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+        const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
+        sched.spawn([&]() {
+            auto* fb = aura::serve::g_current_fiber;
+            aura_evaluator_test_push_mutation_checkpoint();
+            fb->set_yield_reason(YieldReason::Explicit);
+            CHECK(fb->mutation_safety_snapshot_inconsistent(fb->mutation_safety_snapshot()),
+                  "AC2: injected inconsistent");
+            const bool cont = fb->check_and_enforce_resume_snapshot_invariant();
+            CHECK(!cont, "AC2: Hard returns false (no swapcontext)");
+            CHECK(fb->is_cancel_requested(), "AC2: cancel marked");
+            CHECK(fb->state() == aura::serve::FiberState::Done, "AC2: state Done (mark-failed)");
+            CHECK(aura_fiber_static_mutation_steal_snapshot_mismatch_total() > miss0,
+                  "AC2: mismatch counter bumped");
+            CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() > hard0,
+                  "AC2: hard-fail total +1");
+            aura_evaluator_test_pop_mutation_checkpoint();
+            done.store(true);
+        });
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(done.load(), "AC2: body ran");
+        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    }
+
+    {
+        std::println("\n--- #2346 AC3: happy path → no hard-fail bump ---");
+        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        Scheduler sched(2);
+        std::atomic<int> finished{0};
+        constexpr int k = 3;
+        const auto hard0 = aura_fiber_static_steal_snapshot_hard_fail_total();
+        const auto miss0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+        for (int i = 0; i < k; ++i) {
+            sched.spawn([&]() {
+                auto* fb = aura::serve::g_current_fiber;
+                fb->set_yield_reason(YieldReason::MutationBoundary);
+                // depth 0, MB yield → consistent
+                CHECK(fb->check_and_enforce_resume_snapshot_invariant(), "AC3: continue");
+                finished.fetch_add(1);
+            });
+        }
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (finished.load() < k && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(finished.load() == k, "AC3: all fibers finished");
+        CHECK(aura_fiber_static_steal_snapshot_hard_fail_total() == hard0,
+              "AC3: hard-fail unchanged");
+        CHECK(aura_fiber_static_mutation_steal_snapshot_mismatch_total() == miss0,
+              "AC3: mismatch unchanged on happy path");
+    }
+
+    {
+        std::println("\n--- #2346 AC4: query keys + decision table ---");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+        CHECK(href(cs, "schema-2346") == 2346, "schema-2346");
+        CHECK(href(cs, "issue-2346") == 2346, "issue-2346");
+        CHECK(href(cs, "steal-snapshot-hard-wired") == 1, "hard-wired");
+        CHECK(href(cs, "steal-snapshot-mismatch-total") >= 0, "mismatch alias key");
+        CHECK(href(cs, "steal-snapshot-hard-fail-total") >= 0, "hard-fail key");
+        CHECK(href(cs, "schema-2184") == 2184, "schema-2184 retained");
+        CHECK(href(cs, "schema-2310") == 2310, "schema-2310 retained");
+        const auto fh = read_file("src/serve/fiber.h");
+        CHECK(fh.find("Issue #2346") != std::string::npos, "decision table cite");
+        CHECK(fh.find("AURA_STEAL_SNAPSHOT_HARD") != std::string::npos, "HARD env");
+        CHECK(fh.find("is_steal_snapshot_hard_mode") != std::string::npos, "hard mode API");
+    }
+
+    {
+        std::println("\n--- #2346 AC5: source-cite ---");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto fh = read_file("src/serve/fiber.h");
+        const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(fc.find("check_and_enforce_resume_snapshot_invariant") != std::string::npos,
+              "resume enforces helper");
+        CHECK(fc.find("steal_snapshot_hard_fail_total_") != std::string::npos ||
+                  fc.find("bump_steal_snapshot_hard_fail") != std::string::npos,
+              "hard-fail bump");
+        CHECK(fh.find("check_and_enforce_resume_snapshot_invariant") != std::string::npos,
+              "API in fiber.h");
+        CHECK(q.find("schema-2346") != std::string::npos, "query schema-2346");
+        CHECK(q.find("steal-snapshot-hard-fail-total") != std::string::npos, "query hard-fail key");
+    }
+
+    std::println("\n=== #2184/#2310/#2346 MutationSafetySnapshot: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -2687,6 +2687,12 @@ add_dependencies(all_test_issue_targets test_reemit_mutation_boundary_handshake_
 
 # add_dependencies(all_test_issue_targets test_mutation_safety_snapshot_steal_2184)
 
+# Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed canary).
+# Focused suite (no #2184 concurrent stress) so CI stays green.
+aura_add_issue_test(test_steal_snapshot_hard_invariant_2346)
+aura_issue_test_link_llvm_jit(test_steal_snapshot_hard_invariant_2346)
+add_dependencies(all_test_issue_targets test_steal_snapshot_hard_invariant_2346)
+
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)

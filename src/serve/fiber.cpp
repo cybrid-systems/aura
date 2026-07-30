@@ -154,6 +154,65 @@ std::atomic<std::uint64_t> Fiber::mutation_steal_snapshot_mismatch_total_{0};
 // enforcement). Distinct from mutation_steal_snapshot_mismatch_total_
 // which is observed-only.
 std::atomic<std::uint64_t> Fiber::steal_snapshot_mismatch_force_deopt_total_{0};
+// Issue #2346: resume hard-fail (mark-failed) total.
+std::atomic<std::uint64_t> Fiber::steal_snapshot_hard_fail_total_{0};
+
+// Issue #2346: C ABI for hard-fail total (query / tests without Fiber type).
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total() {
+    return Fiber::steal_snapshot_hard_fail_total();
+}
+
+// Issue #2346 production canary: strong def in typed_mutation_audit_hooks.cpp
+// overrides this weak no-op when the audit TU is linked.
+extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noexcept {
+    return 0;
+}
+
+bool is_steal_snapshot_hard_mode() noexcept {
+    if (is_steal_snapshot_soft_mode())
+        return false;
+    const char* hard = std::getenv("AURA_STEAL_SNAPSHOT_HARD");
+    if (hard && hard[0] == '1')
+        return true;
+    // Production canary (strong probe when audit hooks linked).
+    if (aura_production_defaults_active_probe() != 0)
+        return true;
+    return false;
+}
+
+bool is_steal_snapshot_hard_abort() noexcept {
+    if (!is_steal_snapshot_hard_mode())
+        return false;
+    const char* v = std::getenv("AURA_STEAL_SNAPSHOT_HARD_ABORT");
+    return v && v[0] == '1';
+}
+
+// Issue #2346: post-sync resume invariant (Soft metric / Hard mark-failed).
+// See decision table on is_steal_snapshot_hard_mode() in fiber.h.
+bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
+    // Single snapshot sample (AC3 zero extra cost on happy path beyond
+    // this existing load used by resume).
+    const auto snap = mutation_safety_snapshot();
+    if (!mutation_safety_snapshot_inconsistent(snap))
+        return true; // consistent — continue
+    // Soft always bumps the observed mismatch counter first.
+    bump_mutation_steal_snapshot_mismatch();
+    if (!is_steal_snapshot_hard_mode())
+        return true; // Soft: continue resume
+    // Hard: mark-failed so orch can drain (prefer over silent continue).
+    bump_steal_snapshot_hard_fail();
+    request_cancel();
+    set_state(FiberState::Done);
+    if (is_steal_snapshot_hard_abort()) {
+        std::fprintf(stderr,
+                     "FATAL: Fiber::resume MutationSafetySnapshot inconsistent "
+                     "(AURA_STEAL_SNAPSHOT_HARD_ABORT=1, fiber=%llu depth=%zu yield=%u)\n",
+                     static_cast<unsigned long long>(id_), snap.depth,
+                     static_cast<unsigned>(snap.last_yield));
+        std::abort();
+    }
+    return false; // caller must not swapcontext
+}
 // The runtime-side hook installer (defined in
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
@@ -380,11 +439,15 @@ void Fiber::resume() {
     // read of an atomic field).
     if (g_fiber_sync_mutation_stack_)
         g_fiber_sync_mutation_stack_(mutation_stack_storage_.load(std::memory_order_acquire));
-    // Issue #2184: post-sync snapshot invariant (debug metric).
-    {
-        const auto snap = mutation_safety_snapshot();
-        if (mutation_safety_snapshot_inconsistent(snap))
-            bump_mutation_steal_snapshot_mismatch();
+    // Issue #2184 / #2346: post-sync snapshot invariant.
+    // Soft: bump mismatch metric, continue. Hard: mark-failed (Done+cancel),
+    // skip swapcontext so inconsistent code never runs (orch can drain).
+    if (!check_and_enforce_resume_snapshot_invariant()) {
+        // Hard-fail: restore TLS and return without parking the body.
+        if (g_fiber_setter_)
+            g_fiber_setter_(prev_fiber_void);
+        g_current_fiber = prev;
+        return;
     }
     // Issue #485: transfer mutation stack + bump migration stats.
     aura_evaluator_resume_fiber_migration();

@@ -177,6 +177,12 @@ extern "C" int aura_escape_blocks_move_elision(const char* binding) noexcept {
     return it->second.blocked.find(binding) != it->second.blocked.end() ? 1 : 0;
 }
 
+// Issue #2346: weak-friendly probe for Fiber::is_steal_snapshot_hard_mode
+// production canary (serve layer must not import typed_mutation_audit.h).
+extern "C" int aura_production_defaults_active_probe() noexcept {
+    return aura::compiler::typed_audit::production_defaults_active() ? 1 : 0;
+}
+
 extern "C" void aura_typed_audit_note_predicate_memo_eviction(std::uint64_t n) {
     aura::compiler::typed_audit::note_predicate_memo_eviction(n);
 }
