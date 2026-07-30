@@ -7632,6 +7632,15 @@ struct CompilerMetrics {
     //   (subset of gc_defer_orphan_cleared_total; resume/migration may add more)
     std::atomic<std::uint64_t> steal_complete_total{0};                   // #2203
     std::atomic<std::uint64_t> gc_defer_orphan_cleared_on_steal_total{0}; // #2203
+    // Issue #2314: residual GcDeferReason clear invoked from the steal-
+    // complete entry when defer_reasons_snapshot() != 0 post #2203 panic
+    // clear. Closes the brief window between Guard Phase-5 residual clear
+    // and a concurrent steal-complete that could re-arm or leave orphan
+    // bits accumulating across long AI sessions. Mirrors
+    // gc_hooks.h process-wide g_residual_defer_cleared_on_steal_total.
+    // Idempotent (force_clear_residual_defer_for_evaluator is atomic +
+    // CAS-based — calling twice does not double-bump counters).
+    std::atomic<std::uint64_t> residual_defer_cleared_on_steal_total{0}; // #2314
     // Issue #2194: unified Fiber::resume / steal refresh (pairs with Guard exit).
     // fiber_migration_refresh_total — refresh_after_fiber_migration calls
     // fiber_migration_gc_defer_cleared_total — orphan depths cleared in that helper

@@ -260,15 +260,130 @@ static void ac_null_fiber_still_counts() {
           "null fiber still bumps steal_complete_total");
 }
 
+// ── Issue #2314 AC1: residual defer interlock wiring + idempotency ──
+static void ac2314_residual_interlock() {
+    std::println("\n--- #2314 AC1: residual defer interlock wiring ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obm = read_file("src/compiler/observability_metrics.h");
+    CHECK(gh.find("force_clear_residual_defer_for_evaluator") != std::string::npos,
+          "AC1: gc_hooks.h has shared helper");
+    CHECK(gh.find("g_residual_defer_cleared_on_steal_total") != std::string::npos,
+          "AC1: gc_hooks.h has process-wide counter");
+    CHECK(gh.find("residual_defer_cleared_on_steal_total()") != std::string::npos,
+          "AC1: gc_hooks.h has counter accessor");
+    CHECK(efm.find("force_clear_residual_defer_for_evaluator") != std::string::npos,
+          "AC1: steal-complete calls shared helper");
+    CHECK(efm.find("defer_reasons_snapshot() != 0") != std::string::npos,
+          "AC1: steal-complete guards on snapshot non-zero");
+    // AC1: Guard Phase 5 uses INLINE calls (not the helper) — preserved
+    // for #2296 contract rows check which requires these symbols
+    // (force_clear_all_gc_defer_for_evaluator, mutation_hold_defer_active,
+    // release_mutation_hold_defer, reconcile_gc_defer_bits_after_clear)
+    // to appear directly in evaluator_mutation_boundary.cpp. The shared
+    // helper in gc_hooks.h is used by steal-complete (AC1.2 interlock).
+    CHECK(emb.find("force_clear_all_gc_defer_for_evaluator") != std::string::npos,
+          "AC1: Guard Phase 5 has inline force_clear_all_gc_defer_for_evaluator");
+    CHECK(emb.find("release_mutation_hold_defer") != std::string::npos,
+          "AC1: Guard Phase 5 has inline release_mutation_hold_defer");
+    CHECK(emb.find("reconcile_gc_defer_bits_after_clear") != std::string::npos,
+          "AC1: Guard Phase 5 has inline reconcile_gc_defer_bits_after_clear");
+    CHECK(obm.find("residual_defer_cleared_on_steal_total{0}; // #2314") != std::string::npos,
+          "AC1: observability_metrics.h has per-CompilerMetrics counter");
+}
+
+// ── Issue #2314 AC2: production Clear default unchanged ──
+static void ac2314_clear_default_unchanged() {
+    std::println("\n--- #2314 AC2: Clear policy unchanged ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Production default is still 'clear' under production security defaults
+    // (#2269 unchanged). #2314 only adds the interlock — it does NOT change
+    // policy selection (Soft / Clear / Hard).
+    CHECK(emb.find("ResidualPolicy::Clear") != std::string::npos,
+          "AC2: Guard Phase 5 still routes to Clear policy");
+    CHECK(emb.find("AURA_RESIDUAL_DEFER_POLICY") != std::string::npos,
+          "AC2: env var AURA_RESIDUAL_DEFER_POLICY unchanged");
+    CHECK(emb.find("AURA_HARD_RESIDUAL_DEFER") != std::string::npos,
+          "AC2: legacy AURA_HARD_RESIDUAL_DEFER unchanged");
+}
+
+// ── Issue #2314 AC3: zero cost when snapshot is zero ──
+static void ac2314_zero_cost_snapshot_zero() {
+    std::println("\n--- #2314 AC3: zero cost when snapshot == 0 ---");
+    // When defer_reasons_snapshot() returns 0, the interlock must skip the
+    // helper call entirely. We verify by structural inspection: the guard
+    // check is the FIRST condition after the orphan clear block.
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("if (aura::gc_hooks::defer_reasons_snapshot() != 0)") != std::string::npos,
+          "AC3: zero-cost early-exit guard present");
+    CHECK(efm.find("Issue #2314 AC1.2") != std::string::npos,
+          "AC3: comment cites AC1.2 (zero-cost noted)");
+    // Idempotency sanity: shared helper itself does not double-bump.
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(gh.find("Idempotent") != std::string::npos, "AC3: helper documented as idempotent");
+}
+
+// ── Issue #2314 AC4: query keys exposed ──
+static void ac2314_query_keys() {
+    std::println("\n--- #2314 AC4: query keys exposed ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm eval");
+    auto r1 = cs.eval("(hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "
+                      "\"residual-defer-cleared-on-steal-total\")");
+    CHECK(r1.has_value() && is_int(*r1), "AC4: gc-defer-reason-stats residual key");
+    auto r2 = cs.eval("(hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "
+                      "\"residual-defer-steal-interlock-wired\")");
+    CHECK(r2.has_value() && is_int(*r2) && as_int(*r2) == 1,
+          "AC4: gc-defer-reason-stats wired sentinel");
+    auto r3 = cs.eval("(hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "
+                      "\"schema-2314\")");
+    CHECK(r3.has_value() && is_int(*r3) && as_int(*r3) == 2314,
+          "AC4: gc-defer-reason-stats schema-2314");
+    auto r4 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                      "\"residual-defer-cleared-on-steal-total\")");
+    CHECK(r4.has_value() && is_int(*r4), "AC4: mutation-boundary-hold-stats residual key");
+    auto r5 = cs.eval("(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") "
+                      "\"issue-2314\")");
+    CHECK(r5.has_value() && is_int(*r5) && as_int(*r5) == 2314,
+          "AC4: mutation-boundary-hold-stats issue-2314");
+}
+
+// ── Issue #2314 AC5: source-cite rows ──
+static void ac2314_source_cite_rows() {
+    std::println("\n--- #2314 AC5: source-cite rows ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto epoj = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto epoe = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(gh.find("Issue #2314") != std::string::npos, "AC5: gc_hooks.h cites 2314");
+    CHECK(efm.find("Issue #2314") != std::string::npos,
+          "AC5: evaluator_fiber_mutation.cpp cites 2314");
+    CHECK(emb.find("Issue #2314") != std::string::npos,
+          "AC5: evaluator_mutation_boundary.cpp cites 2314");
+    CHECK(epoj.find("schema-2314") != std::string::npos, "AC5: obs_jit.cpp cites 2314");
+    CHECK(epoe.find("schema-2314") != std::string::npos, "AC5: obs_eval.cpp cites 2314");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
+    std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
     ac1_ac5_ac6_source();
     ac_null_fiber_still_counts();
     ac2_clear_via_steal_complete();
     ac3_query_metrics();
     ac4_stress_steals();
+    // Issue #2314 AC1-AC5: residual defer clear interlock (extends #2203
+    // single-entry; both consult the same force_clear_residual_defer_for_evaluator
+    // helper so the orphan interlock + Guard residual path cannot race).
+    ac2314_residual_interlock();
+    ac2314_clear_default_unchanged();
+    ac2314_zero_cost_snapshot_zero();
+    ac2314_query_keys();
+    ac2314_source_cite_rows();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

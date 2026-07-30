@@ -6011,6 +6011,16 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"mutation-hold-over-budget-wired", 1},
                 {"schema-2313", make_int(2313)},
                 {"issue-2313", make_int(2313)},
+                // Issue #2314: residual defer cleared on steal (orphan
+                // interlock). Mirrors query:gc-defer-reason-stats (which
+                // also exposes the same counter for cross-subsystem view).
+                {"residual-defer-cleared-on-steal-total",
+                 make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
+                {"residual_defer_cleared_on_steal_total",
+                 make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
+                {"residual-defer-steal-interlock-wired", 1},
+                {"schema-2314", make_int(2314)},
+                {"issue-2314", make_int(2314)},
             };
             return build_hash(kv);
         });

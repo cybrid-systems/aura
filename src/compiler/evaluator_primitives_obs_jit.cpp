@@ -10921,6 +10921,22 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gc_defer_orphan_cleared_on_steal_total",
                       static_cast<std::int64_t>(
                           aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+            // Issue #2314: residual GcDeferReason clear invoked from the
+            // steal-complete entry when defer_reasons_snapshot() != 0 post
+            // #2203 panic clear. Distinct from gc-defer-orphan-cleared-on-
+            // steal-total which counts cleared Panic depths — this counts
+            // steal-complete entries that invoked the residual interlock.
+            // Idempotent (force_clear_residual_defer_for_evaluator is atomic
+            // + CAS-based — calling twice does not double-bump counters).
+            insert_kv(
+                "residual-defer-cleared-on-steal-total",
+                static_cast<std::int64_t>(aura::gc_hooks::residual_defer_cleared_on_steal_total()));
+            insert_kv(
+                "residual_defer_cleared_on_steal_total",
+                static_cast<std::int64_t>(aura::gc_hooks::residual_defer_cleared_on_steal_total()));
+            insert_kv("residual-defer-steal-interlock-wired", 1);
+            insert_kv("schema-2314", 2314);
+            insert_kv("issue-2314", 2314);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
