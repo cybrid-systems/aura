@@ -1011,7 +1011,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_issues_809_817_batch.cpp` (#809) [batch_driver, domain_suite, theme_compiler] — test_issues_809_817_batch.cpp — Phase 1 close for Issues #809–#817.
 - `tests/orch/test_join_drain_reclaim_2227.cpp` (#2227) [domain_suite, theme_orch] — AC1: residual + reclaim counters bump when non-yielding body +
 - `tests/serve/test_join_drain_timeout_2153.cpp` (#2153) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
-- `tests/compiler/test_lock_order_audit_2354.cpp` (#2354) [domain_suite, theme_compiler] — AC1: Audit off → zero cost (single branch; no atomics on acquire).
+- `tests/compiler/test_lock_order_audit_2354.cpp` (#2354) [domain_suite, theme_compiler] — AC1: Audit off → zero atomics on acquire (TLS depth still tracked —
 - `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp` (#2188) [domain_suite, theme_serve] — Issue #2347 — Strict/hard audit + optional Guard-window threshold
 - `tests/serve/test_mutation_safety_snapshot_steal_2184.cpp` (#2184) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
