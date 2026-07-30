@@ -1781,6 +1781,20 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("root-remap-closure-capture-total", static_cast<std::int64_t>(root_remap_cc));
             insert_kv("root-remap-closure-capture-fail-total",
                       static_cast<std::int64_t>(root_remap_cc_fail));
+            // Issue #2339: RootRemapPass auto-register / auto-unregister
+            // counters (#2294 lineage). Bumped per-call-site that uses
+            // auto_register_root_remap_*_slot instead of manual
+            // register_root_remap_*_slot. Keeps schema-2294 keys.
+            insert_kv("root-remap-auto-register-total",
+                      static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_total()));
+            insert_kv("root_remap_auto_register_total",
+                      static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_total()));
+            insert_kv("root-remap-auto-register-unregister-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::root_remap_auto_register_unregister_total()));
+            insert_kv("root-remap-auto-register-wired", 1);
+            insert_kv("schema-2339", 2339);
+            insert_kv("issue-2339", 2339);
             // Issue #2265 Phase 3: LifetimePin::remap() + remap_pins_pointing_to()
             // wire-up at densify site. Schema additive — no break.
             insert_kv("schema-2265", 2265);

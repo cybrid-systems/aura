@@ -149,6 +149,98 @@ def check() -> list:
         "AC5: query primitive must surface schema-2267 / issue-2267 / root-remap-pass-wired",
         fails,
     )
+
+    # AC6: Issue #2339 — RootRemapPass auto-register / auto-unregister
+    #     surface (RAII helpers + atomics + auto_register functions +
+    #     query keys + test functions). Production wire-up at Closure /
+    #     Stable materialize sites is a follow-up; this section enforces
+    #     the API surface exists so future wire-ups have a stable contract.
+    _must(
+        "g_root_remap_auto_register_total{0}" in pass_ixx,
+        "AC6: root_remap_pass.ixx must define g_root_remap_auto_register_total atomic",
+        fails,
+    )
+    _must(
+        "g_root_remap_auto_register_unregister_total{0}" in pass_ixx,
+        "AC6: root_remap_pass.ixx must define g_root_remap_auto_register_unregister_total atomic",
+        fails,
+    )
+    _must(
+        "auto_register_root_remap_stable_slot" in pass_ixx,
+        "AC6: root_remap_pass.ixx must define auto_register_root_remap_stable_slot function",
+        fails,
+    )
+    _must(
+        "auto_register_root_remap_closure_capture_slot" in pass_ixx,
+        "AC6: root_remap_pass.ixx must define auto_register_root_remap_closure_capture_slot function",
+        fails,
+    )
+    _must(
+        "class RootRemapAutoRegisterStable" in pass_ixx,
+        "AC6: root_remap_pass.ixx must define RootRemapAutoRegisterStable RAII class",
+        fails,
+    )
+    _must(
+        "class RootRemapAutoRegisterClosureCapture" in pass_ixx,
+        "AC6: root_remap_pass.ixx must define RootRemapAutoRegisterClosureCapture RAII class",
+        fails,
+    )
+    _must(
+        "Issue #2339" in pass_ixx,
+        "AC6: root_remap_pass.ixx must cite Issue #2339",
+        fails,
+    )
+    _must(
+        "root-remap-auto-register-total" in q and "root_remap_auto_register_total" in q,
+        "AC6: evaluator_primitives_obs_eval.cpp must surface root-remap-auto-register-total (kebab + snake)",
+        fails,
+    )
+    _must(
+        "root-remap-auto-register-wired" in q,
+        "AC6: evaluator_primitives_obs_eval.cpp must surface root-remap-auto-register-wired sentinel",
+        fails,
+    )
+    _must(
+        '"schema-2339"' in q and '"issue-2339"' in q,
+        "AC6: evaluator_primitives_obs_eval.cpp must surface schema-2339 / issue-2339 sentinels",
+        fails,
+    )
+    _must(
+        "ac2339_1_raii_helper_lifecycle" in test_cpp,
+        "AC6: test_root_remap_pass_2267.cpp must define ac2339_1_raii_helper_lifecycle",
+        fails,
+    )
+    _must(
+        "ac2339_2_auto_register_counter_accessible" in test_cpp,
+        "AC6: test_root_remap_pass_2267.cpp must define ac2339_2_auto_register_counter_accessible",
+        fails,
+    )
+    _must(
+        "ac2339_3_query_schema" in test_cpp,
+        "AC6: test_root_remap_pass_2267.cpp must define ac2339_3_query_schema",
+        fails,
+    )
+    _must(
+        "ac2339_4_source_cite" in test_cpp,
+        "AC6: test_root_remap_pass_2267.cpp must define ac2339_4_source_cite",
+        fails,
+    )
+    _must(
+        "Issue #2339" in test_cpp,
+        "AC6: test_root_remap_pass_2267.cpp must cite Issue #2339",
+        fails,
+    )
+    _must(
+        "Issue #2339" in q,
+        "AC6: evaluator_primitives_obs_eval.cpp must cite Issue #2339",
+        fails,
+    )
+
+    _must(
+        "Issue #2339" in q,
+        "AC6: evaluator_primitives_obs_eval.cpp must cite Issue #2339",
+        fails,
+    )
     _must(
         "root_remap_rewrite_ok_total" in pass_ixx,
         "AC5: additive rewrite-success metric missing",
