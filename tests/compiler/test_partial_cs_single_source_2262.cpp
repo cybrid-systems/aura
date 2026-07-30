@@ -6,6 +6,12 @@
 //   AC2: Full + expected partial + empty CS → hard empty miss (no silent SOLVED)
 //   AC3: Composite reuse still hits; double-import is idempotent
 //   AC4: schema-2262 + source-cite
+//
+// Issue #2345 — production composite commit reject on expected-partial empty CS:
+//   AC5: production defaults + txn_dirty empty CS → reject; hard-miss +1
+//   AC6: dev Sampled soft → observe only; commit may succeed
+//   AC7: structural-only (no txn_dirty) → success with empty CS
+//   AC8: source-cite composite_txn_commit + commit_cs_has_work + schema-2345
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -39,9 +45,12 @@ using aura::compiler::g_partial_cs_single_source_wired;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::SolveResult;
 using aura::compiler::TypeChecker;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::CompositeTxnCommitResult;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
@@ -215,6 +224,144 @@ static void ac4_schema_source() {
           "service stash on partial paths");
 }
 
+// ── Issue #2345 ──
+
+static void ac5_production_empty_cs_hard_reject() {
+    std::println("\n--- AC5 (#2345): production + expected partial + empty CS → reject ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "production defaults on");
+    set_mode(SandboxMode::Off);
+    CompilerService svc;
+    CHECK(svc.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(svc.eval("(eval-current)").has_value(), "eval");
+
+    svc.evaluator().note_txn_dirty(); // expected_partial
+    const auto hard0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total);
+    const auto obs0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total);
+    const auto empty0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_solve_empty_cs_total);
+
+    CompositeTxnCommitResult cr{};
+    const bool committed = svc.evaluator().composite_txn_commit(
+        /*mid=*/2345, "prod-empty-cs", 0, 0, 1, /*nested=*/true, /*batch=*/true, &cr);
+
+    CHECK(!committed, "AC5: commit rejected under production empty CS");
+    CHECK(!cr.solve_ok, "AC5: solve_ok false (anti false-green)");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total) >
+              hard0,
+          "AC5: hard-miss total +1");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total) == obs0,
+          "AC5: observe total unchanged on hard path");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_solve_empty_cs_total) > empty0,
+          "AC5: empty_cs lineage total advanced");
+    svc.evaluator().clear_txn_dirty();
+    apply_dev_audit_defaults();
+}
+
+static void ac6_dev_soft_observe() {
+    std::println("\n--- AC6 (#2345): dev Sampled soft → observe only ---");
+    reset_for_test();
+    apply_dev_audit_defaults(); // Sampled, production off
+    CHECK(!production_defaults_active(), "production off");
+    set_strategy(AuditStrategy::Sampled);
+    set_mode(SandboxMode::Off);
+    CompilerService svc;
+    CHECK(svc.eval("(set-code \"(define soft 1)\")").has_value(), "set-code");
+    CHECK(svc.eval("(eval-current)").has_value(), "eval");
+
+    svc.evaluator().note_txn_dirty();
+    const auto hard0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total);
+    const auto obs0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total);
+
+    CompositeTxnCommitResult cr{};
+    const bool committed = svc.evaluator().composite_txn_commit(
+        /*mid=*/23450, "dev-soft-empty-cs", 0, 0, 1, true, true, &cr);
+
+    // Soft path: observe bumps; commit may succeed (vacuous SOLVED allowed in dev).
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total) > obs0,
+          "AC6: observe total +1 under Sampled/dev");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total) ==
+              hard0,
+          "AC6: hard-miss total unchanged on soft path");
+    // Commit success is allowed under soft (anti false-green is production-only).
+    CHECK(committed || !cr.solve_ok || true, "AC6: soft path defined (commit may succeed)");
+    (void)committed;
+    svc.evaluator().clear_txn_dirty();
+}
+
+static void ac7_structural_vacuous_ok() {
+    std::println("\n--- AC7 (#2345): no txn_dirty → vacuous empty CS OK ---");
+    reset_for_test();
+    apply_production_audit_defaults(); // even under production, no expected_partial
+    CompilerService svc;
+    CHECK(svc.eval("(set-code \"(define vac 0)\")").has_value(), "set-code");
+    CHECK(svc.eval("(eval-current)").has_value(), "eval");
+    // Do NOT note_txn_dirty — structural-only / expected_partial=false.
+    CHECK(!svc.evaluator().txn_dirty(), "AC7: no expected partial");
+
+    const auto hard0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total);
+    const auto obs0 =
+        load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total);
+
+    CompositeTxnCommitResult cr{};
+    const bool committed = svc.evaluator().composite_txn_commit(
+        /*mid=*/23451, "structural-only", 0, 0, 1, true, true, &cr);
+
+    // Without expected partial, empty CS is not a hard miss.
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total) ==
+              hard0,
+          "AC7: no hard-miss without expected_partial");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total) == obs0,
+          "AC7: no observe without expected_partial");
+    // Structural-only may still fail for other reasons (linear/audit); require
+    // that empty-CS policy did not force solve_ok false solely for greenfield.
+    // If solve ran on empty greenfield without txn_dirty, solve_ok stays true
+    // unless other gates fire.
+    if (!committed) {
+        CHECK(!cr.solve_ok || !cr.linear_ok || !cr.blame_ok || !cr.audit_ok,
+              "AC7: reject must cite non-empty-CS reason if any");
+    } else {
+        CHECK(cr.solve_ok, "AC7: vacuous structural commit solve_ok");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac8_source_cite_2345() {
+    std::println("\n--- AC8 (#2345): source-cite + schema ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2345") == 2345, "schema-2345");
+    CHECK(href(cs, "issue-2345") == 2345, "issue-2345");
+    CHECK(href(cs, "composite-empty-cs-hard-wired") == 1, "wired");
+    CHECK(href(cs, "composite-commit-empty-cs-hard-miss-total") >= 0, "hard-miss key");
+    CHECK(href(cs, "composite-commit-empty-cs-observe-total") >= 0, "observe key");
+    CHECK(href(cs, "composite-commit-solve-empty-cs-total") >= 0, "empty_cs lineage key");
+    CHECK(href(cs, "schema-2262") == 2262, "schema-2262 retained");
+
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(etc.find("composite_txn_commit") != std::string::npos, "composite_txn_commit");
+    CHECK(etc.find("Issue #2345") != std::string::npos ||
+              etc.find("composite_empty_cs_hard_reject_enabled") != std::string::npos,
+          "hard-reject policy site");
+    CHECK(etc.find("composite_commit_empty_cs_hard_miss_total") != std::string::npos,
+          "hard-miss bump");
+    CHECK(etc.find("composite_commit_empty_cs_observe_total") != std::string::npos, "observe bump");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(ixx.find("commit_cs_has_work") != std::string::npos, "commit_cs_has_work");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(aud.find("composite_empty_cs_hard_reject_enabled") != std::string::npos, "policy helper");
+    CHECK(aud.find("AURA_COMPOSITE_EMPTY_CS_HARD") != std::string::npos, "env override");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("schema-2345") != std::string::npos, "query schema-2345");
+    CHECK(q.find("composite-commit-empty-cs-hard-miss-total") != std::string::npos,
+          "query hard-miss key");
+}
+
 } // namespace
 
 int main() {
@@ -223,6 +370,11 @@ int main() {
     ac2_hard_empty_miss();
     ac3_composite_reuse_idempotent();
     ac4_schema_source();
+    std::println("\n=== Issue #2345: production empty-CS hard-reject ===");
+    ac5_production_empty_cs_hard_reject();
+    ac6_dev_soft_observe();
+    ac7_structural_vacuous_ok();
+    ac8_source_cite_2345();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

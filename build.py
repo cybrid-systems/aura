@@ -2111,6 +2111,25 @@ def cmd_escape_gate_key_contract_coverage():
     return 0
 
 
+def cmd_composite_empty_cs_hard_coverage():
+    """Issue #2345: production composite empty-CS hard-reject (anti false-green).
+
+    expected_partial + empty CS → hard miss under production/Full; soft
+    observe under Sampled/dev; vacuous structural batches stay OK.
+    """
+    print(f"{B}=== composite empty-CS hard-reject coverage (#2345) ==={N}")
+    script = ROOT / "scripts" / "check_composite_empty_cs_hard_2345.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("composite empty-CS hard-reject coverage contract rows failed")
+        return 1
+    ok("composite empty-CS hard-reject coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2472,6 +2491,7 @@ def cmd_gate():
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
         or cmd_escape_gate_key_contract_coverage()
+        or cmd_composite_empty_cs_hard_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

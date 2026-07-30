@@ -8288,6 +8288,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> partial_cs_import_total{0};
     std::atomic<std::uint64_t> partial_cs_import_skip_total{0};
     std::atomic<std::uint64_t> partial_cs_hard_empty_miss_total{0};
+    // Issue #2345: per-CompilerMetrics mirrors of composite empty-CS policy.
+    std::atomic<std::uint64_t> composite_commit_empty_cs_hard_miss_total{0};
+    std::atomic<std::uint64_t> composite_commit_empty_cs_observe_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
     // Issue #1528: O(delta) re-inference observability.

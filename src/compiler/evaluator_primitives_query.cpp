@@ -6020,8 +6020,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->blame_chain_completeness_rate.load(std::memory_order_relaxed))
                   : 0;
-            // Power-of-2 capacity; #1923+#1924+#2024+#2028+#2030 keys.
-            auto* ht = FlatHashTable::create(256);
+            // Power-of-2 capacity; #1923+#1924+#2024+#2028+#2030+#2260+#2262+#2345 keys.
+            auto* ht = FlatHashTable::create(512);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6779,6 +6779,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         std::memory_order_relaxed)));
                 insert_kv("schema-2262", 2262);
                 insert_kv("issue-2262", 2262);
+            }
+            // Issue #2345: expected-partial empty CS anti false-green (hard vs soft).
+            {
+                using namespace aura::compiler::typed_audit;
+                insert_kv(
+                    "composite-commit-empty-cs-hard-miss-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total
+                            .load(std::memory_order_relaxed)));
+                insert_kv(
+                    "composite-commit-empty-cs-observe-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total
+                            .load(std::memory_order_relaxed)));
+                // Lineage #2180 empty-cs total retained.
+                insert_kv(
+                    "composite-commit-solve-empty-cs-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_commit_solve_empty_cs_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv("composite-empty-cs-hard-wired",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.composite_empty_cs_hard_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-2345", 2345);
+                insert_kv("issue-2345", 2345);
             }
             insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
             insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030

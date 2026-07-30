@@ -739,11 +739,29 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 // SOLVED, solve_ok stays false here — never half-solved ship.
                 auto post_escalate = cs_ptr->escalate_if_production(sdo.status, &unresolved);
                 cr.solve_ok = (post_escalate == SolveResult::SOLVED) && !sdo.truncated_reverify;
-                // Issue #2262: empty CS after expected partial is never clean SOLVED
-                // under Full/Strict (no silent greenfield success).
-                if (partial_cs_hard_empty &&
-                    (get_strategy() == AuditStrategy::Full || aura::core::sandbox::is_strict())) {
-                    cr.solve_ok = false;
+                // Issue #2262 / #2345: expected-partial + empty CS anti false-green.
+                // Production defaults / Full / AURA_COMPOSITE_EMPTY_CS_HARD=1 →
+                // hard-reject (solve_ok=false). Dev Sampled soft → observe only
+                // (commit may succeed). True vacuous batches (no txn_dirty /
+                // expected_partial=false) never set partial_cs_hard_empty.
+                // Strict sandbox also hard-rejects (production-like soundness).
+                if (partial_cs_hard_empty) {
+                    const bool hard = composite_empty_cs_hard_reject_enabled() ||
+                                      aura::core::sandbox::is_strict();
+                    if (hard) {
+                        cr.solve_ok = false;
+                        c.composite_commit_empty_cs_hard_miss_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                            m->composite_commit_empty_cs_hard_miss_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    } else {
+                        c.composite_commit_empty_cs_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                            m->composite_commit_empty_cs_observe_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
                 }
                 // Issue #2284: compute blame_complete before the publish site
                 // so we can capture it on the repair surface.
