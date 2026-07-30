@@ -74,6 +74,13 @@ struct EnvFrameLifetimeStats {
     // Issue #2164 Phase 2b: hold generation advanced under a live Guard
     // (should stay 0 when compact gate is correct).
     std::uint64_t hold_gen_mismatch_total = 0;
+    // Issue #2340: post-densify ownership-exit scan runs that
+    // iterate live EnvFrameRef set + transfer_to / drop those
+    // pointing into densified addresses (after Moving success in
+    // live_compact / Phase 5). Distinct from `scans_run` (the
+    // Guard's mandatory scan_skip_freed exit scan) — counts
+    // explicit per-call-site densify scans, not Guard dtor scans.
+    std::uint64_t densify_ownership_scan_total = 0;
 };
 
 inline EnvFrameLifetimeStats g_envframe_lifetime_stats{};
@@ -140,6 +147,23 @@ inline std::uint64_t envframe_lifetime_hold_gen_mismatch_total() noexcept {
 inline std::uint64_t envframe_lifetime_site_constructs(EnvFrameLifetimeSite site) noexcept {
     const auto i = static_cast<std::uint8_t>(site);
     return i < 3 ? g_envframe_lifetime_stats.site_constructs[i] : 0;
+}
+
+// Issue #2340: post-densify ownership-exit scan counter accessor.
+// Bumped per scan run at the densify success site (after Moving
+// densify succeeds in live_compact / Phase 5). The Guard's own
+// scan_skip_freed exit scan bumps `scans_run`; this is a distinct
+// counter that measures the explicit per-call-site densify scan.
+inline std::uint64_t envframe_lifetime_densify_ownership_scan_total() noexcept {
+    return g_envframe_lifetime_stats.densify_ownership_scan_total;
+}
+
+// Issue #2340: bump helper for the post-densify ownership-exit scan
+// counter. Inline so wire-up sites (e.g. evaluator_gc.cpp CompactSweep
+// helper + densify success path) can bump without a function call
+// boundary; matches the existing site_constructs[] bump pattern.
+inline void bump_envframe_lifetime_densify_ownership_scan_total() noexcept {
+    ++g_envframe_lifetime_stats.densify_ownership_scan_total;
 }
 
 // Build a host from raw function pointers. Use when the wire-up site

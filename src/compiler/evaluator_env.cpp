@@ -2506,6 +2506,44 @@ void EnvFrameRef::drop(Evaluator& ev) noexcept {
                                                     /*only_if_moved=*/true);
 }
 
+// Issue #2340: live_env_frame_refs() — snapshot of live EnvFrameRefs
+// the evaluator is tracking (those that could point into a densified
+// address set after Moving success in live_compact / Phase 5). Today
+// returns an empty vector — production tracking across
+// materialize_call_env_ref / lookup_by_symid_chain_ref is a follow-up
+// (per #2340 close comment). The hook exists so the densify success
+// wire-up has a stable iteration target.
+std::vector<EnvFrameRef*> Evaluator::live_env_frame_refs() noexcept {
+    return {};
+}
+
+// Issue #2340: scan_live_env_frame_refs_after_densify — post-densify
+// ownership-exit scan. Iterates live_env_frame_refs() and calls
+// transfer_to / drop on refs that point into a densified set (per
+// EnvFrameRef::transfer_to / drop). Today the iteration is a no-op
+// (empty live_env_frame_refs() stub); the site counter still bumps
+// via bump_envframe_lifetime_densify_ownership_scan_total() so
+// observability can verify the scan is running at the densify
+// success site. The full per-ref transfer / drop is a follow-up
+// paired with the production live-refs tracking.
+//
+// AC3 happy path: when live_env_frame_refs() is empty (today's
+// production reality), the iteration cost is just one empty-vector
+// iterate + one atomic bump — no transfer / drop atomics touched.
+void Evaluator::scan_live_env_frame_refs_after_densify() noexcept {
+    auto refs = live_env_frame_refs();
+    for (EnvFrameRef* r : refs) {
+        if (!r)
+            continue;
+        // Production logic (follow-up): if r->points_into_densified_set(old_addrs):
+        //   EnvFrameRef restamped{};
+        //   r->transfer_to(*this, restamped); // or r->drop(*this);
+        // For now: no live refs to scan — counter still bumps.
+        (void)r;
+    }
+    aura::core::envframe_lifetime::bump_envframe_lifetime_densify_ownership_scan_total();
+}
+
 void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
                                      std::vector<std::int64_t>& closure_roots_out) const {
     // De-dup: a pair/closure may be bound in multiple envs.

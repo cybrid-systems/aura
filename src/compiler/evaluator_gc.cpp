@@ -1114,6 +1114,18 @@ static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev) {
     EnvFrameLifetimeGuard guard{make_envframe_lifetime_host(ev),
                                 EnvFrameLifetimeSite::CompactSweep};
     (void)guard.site();
+    // Issue #2340: post-densify ownership-exit scan. Runs inside the
+    // Guard scope so the site attribution (CompactSweep) and
+    // mandatory scan_skip_freed callback (Guard dtor) both attribute
+    // the scan to densify, not only BoundaryExit / FiberSteal
+    // (#2340 AC2). The site counter (densify_ownership_scan_total)
+    // bumps per call so observability can verify the scan is running
+    // at the densify success site (#2340 AC4).
+    //
+    // AC3 happy path: Soft / no densify never reaches
+    // compact_sweep — only explicit sweep sites do — so the counter
+    // stays at 0 in those paths.
+    ev.scan_live_env_frame_refs_after_densify();
     return 0;
 }
 

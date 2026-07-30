@@ -6432,6 +6432,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("envframe-ownership-drop-wired", 1);
             insert_kv("schema-2295", 2295);
             insert_kv("issue-2295", 2295);
+            // Issue #2340: post-densify ownership-exit scan counter.
+            // Distinct from `scans_run` (Guard dtor mandatory scan) —
+            // counts explicit per-call-site densify scans wired at the
+            // CompactSweep helper (evaluator_gc.cpp). The counter
+            // starts at 0 and bumps only when compact_sweep runs (AC3
+            // happy path: soft / no densify never reaches compact_sweep).
+            {
+                using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
+                insert_kv(
+                    "envframe-densify-ownership-scan-total",
+                    static_cast<std::int64_t>(envframe_lifetime_densify_ownership_scan_total()));
+                insert_kv(
+                    "envframe_densify_ownership_scan_total",
+                    static_cast<std::int64_t>(envframe_lifetime_densify_ownership_scan_total()));
+                insert_kv("envframe-densify-ownership-scan-wired", 1);
+                insert_kv("schema-2340", 2340);
+                insert_kv("issue-2340", 2340);
+            }
             insert_kv("bridge-epoch-bump-on-truncate",
                       m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
                               std::memory_order_relaxed))

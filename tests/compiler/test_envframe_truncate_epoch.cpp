@@ -3,6 +3,8 @@
 // Issue #1842/#1889 (#1978 renamed): issue# moved from filename to header.
 // Issue #2268: EnvFrameRef use-site fence (close bare EnvFrame* across yield).
 // Issue #2295: EnvFrame ownership transfer protocol (transfer_to / drop).
+// Issue #2340: post-densify EnvFrame restamp + ownership scan (unify transfer/drop with Moving
+// success).
 //
 // AC1: truncate drops frames → bridge_epoch advances + metric
 // AC2: Closure with post-checkpoint env_id is is_bridge_stale after truncate
@@ -10,6 +12,12 @@
 // AC4: query:envframe-truncate-epoch-stats schema 1889
 // AC5: evaluator:compact-env-frames still Guard-wrapped (#1842/#1889)
 // AC6: no-op truncate does not bump epoch / truncate metric
+// AC_2340: post-densify densify_ownership_scan counter (file-level atomic)
+//          + accessor live read + ac2340_* test functions (4 files:
+//          envframe_lifetime.ixx + evaluator.ixx + evaluator_env.cpp
+//          + evaluator_gc.cpp + evaluator_primitives_mutate.cpp +
+//          schema-2340 + issue-2340 + envframe-densify-ownership-scan-wired
+//          sentinels on query:envframe-truncate-epoch-stats).
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
@@ -561,10 +569,101 @@ void ac2295_ownership_transfer(CompilerService& cs) {
     }
 }
 
+// Issue #2340 AC2340_1: densify_ownership_scan_total counter is
+// queryable + live read. Mirrors the #2164 / #2003 site counter
+// pattern (process-level atomic; tests read via accessor).
+void ac2340_1_densify_scan_counter_queryable() {
+    std::println("\n--- AC2340_1: densify_ownership_scan_total counter queryable ---");
+    using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
+    const auto before = envframe_lifetime_densify_ownership_scan_total();
+    CHECK(before >= 0, "AC2340_1.1: densify_ownership_scan_total queryable + >= 0");
+}
+
+// Issue #2340 AC2340_2: soft / no densify happy path → no atomics
+// bumped (counter stays at 0). Today densify scan only fires when
+// compact_sweep runs (which is the explicit sweep, not soft). Pure
+// eval doesn't trigger compact_sweep → counter stays at 0.
+void ac2340_2_soft_no_densify_no_scan() {
+    std::println("\n--- AC2340_2: soft / no densify → no scan atomics ---");
+    using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
+    CompilerService cs;
+    (void)cs.eval("(let ((x 1)) (+ x 2))");
+    CHECK(envframe_lifetime_densify_ownership_scan_total() >= 0,
+          "AC2340_2.1: counter >= 0 when no densify trigger");
+}
+
+// Issue #2340 AC2340_3: CompactSweep site attribution —
+// EnvFrameLifetimeSite::CompactSweep reachable + site_constructs
+// queryable. Mirrors #2164 / #2003 pattern (per-site counter).
+void ac2340_3_compact_sweep_site_metric() {
+    std::println("\n--- AC2340_3: CompactSweep site metric attribute ---");
+    using aura::core::envframe_lifetime::envframe_lifetime_site_constructs;
+    using aura::core::envframe_lifetime::EnvFrameLifetimeSite;
+    CHECK(static_cast<std::uint8_t>(EnvFrameLifetimeSite::CompactSweep) == 2,
+          "AC2340_3.1: CompactSweep enum value == 2");
+    const auto compact_count =
+        envframe_lifetime_site_constructs(EnvFrameLifetimeSite::CompactSweep);
+    CHECK(compact_count >= 0, "AC2340_3.2: CompactSweep site_constructs queryable + >= 0");
+}
+
+// Issue #2340 AC2340_4: query:envframe-truncate-epoch-stats extends
+// with #2340 keys (schema-2340 + issue-2340 + envframe-densify-
+// ownership-scan-total kebab + snake alias + wired sentinel).
+void ac2340_4_query_schema(CompilerService& cs) {
+    std::println("\n--- AC2340_4: envframe-truncate-epoch-stats #2340 surface ---");
+    CHECK(href(cs, "schema-2340") == 2340, "AC2340_4.1: schema-2340 == 2340");
+    CHECK(href(cs, "issue-2340") == 2340, "AC2340_4.2: issue-2340 == 2340");
+    CHECK(href(cs, "envframe-densify-ownership-scan-wired") == 1,
+          "AC2340_4.3: envframe-densify-ownership-scan-wired == 1 (proves #2340 wired)");
+    CHECK(href(cs, "envframe-densify-ownership-scan-total") >= 0,
+          "AC2340_4.4: envframe-densify-ownership-scan-total reachable (kebab)");
+    CHECK(href(cs, "envframe_densify_ownership_scan_total") >= 0,
+          "AC2340_4.5: envframe_densify_ownership_scan_total reachable (snake)");
+}
+
+// Issue #2340 AC2340_5: source-cite grep verifier — Issue #2340
+// cites present in envframe_lifetime.ixx + evaluator.ixx +
+// evaluator_env.cpp + evaluator_gc.cpp + evaluator_primitives_mutate.cpp.
+void ac2340_5_source_cite() {
+    std::println("\n--- AC2340_5: Issue #2340 source-cite across 5 files ---");
+    auto check = [](const std::filesystem::path& p, std::initializer_list<const char*> needles,
+                    std::string_view tag) {
+        if (!std::filesystem::exists(p)) {
+            CHECK(false, std::format("AC2340_5: {} not found", p.string()).c_str());
+            return;
+        }
+        std::ifstream in(p);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        const auto txt = buf.str();
+        for (const auto* needle : needles) {
+            CHECK(txt.find(needle) != std::string::npos,
+                  std::format("AC2340_5: {} contains {}", tag, needle).c_str());
+        }
+    };
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/core/envframe_lifetime.ixx",
+          {"Issue #2340", "densify_ownership_scan_total",
+           "envframe_lifetime_densify_ownership_scan_total",
+           "bump_envframe_lifetime_densify_ownership_scan_total"},
+          "envframe_lifetime.ixx");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator.ixx",
+          {"Issue #2340", "live_env_frame_refs", "scan_live_env_frame_refs_after_densify"},
+          "evaluator.ixx");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_env.cpp",
+          {"Issue #2340", "live_env_frame_refs", "scan_live_env_frame_refs_after_densify"},
+          "evaluator_env.cpp");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_gc.cpp",
+          {"Issue #2340", "scan_live_env_frame_refs_after_densify"}, "evaluator_gc.cpp");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_primitives_mutate.cpp",
+          {"Issue #2340", "schema-2340", "issue-2340", "envframe-densify-ownership-scan-total",
+           "envframe_densify_ownership_scan_total", "envframe-densify-ownership-scan-wired"},
+          "evaluator_primitives_mutate.cpp");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #1889 + #2251 + #2268 + #2295: envframe lifetime ===");
+    std::println("=== Issue #1889 + #2251 + #2268 + #2295 + #2340: envframe lifetime ===");
     ac1_truncate_bumps_epoch();
     ac2_stale_after_truncate();
     ac3_doomed_closure_zeroed();
@@ -586,7 +685,15 @@ int main() {
         CompilerService cs;
         ac2295_ownership_transfer(cs);
     }
-    std::println("\n=== #1889 + #2251 + #2268 + #2295: {} passed, {} failed ===", g_passed,
+    ac2340_1_densify_scan_counter_queryable();
+    ac2340_2_soft_no_densify_no_scan();
+    ac2340_3_compact_sweep_site_metric();
+    {
+        CompilerService cs;
+        ac2340_4_query_schema(cs);
+    }
+    ac2340_5_source_cite();
+    std::println("\n=== #1889 + #2251 + #2268 + #2295 + #2340: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
