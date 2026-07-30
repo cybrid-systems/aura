@@ -16,7 +16,7 @@
 //   AC_2340_1: DensifyConsistencyReport default-constructed report is
 //              overall_ok + force_reason=="none".
 //   AC_2341_2: Per-axis failure drives force_reason priority
-//              (pin > linear > root_remap > closure > envframe > none).
+//              (pin > linear > type > root_remap > closure > envframe > none).
 //   AC_2341_3: densify_consistency_fail_total counter is queryable
 //              + process-level atomic.
 //   AC_2341_4: query:lifetime-contract-snapshot exposes #2341 keys
@@ -244,6 +244,7 @@ void ac2341_1_report_default_ok() {
     DensifyConsistencyReport r;
     CHECK(r.pin_ok, "AC_2341_1.1: pin_ok default true");
     CHECK(r.linear_ok, "AC_2341_1.2: linear_ok default true");
+    CHECK(r.type_ok, "AC_2341_1.2b: type_ok default true (#2353)");
     CHECK(r.root_remap_ok, "AC_2341_1.3: root_remap_ok default true");
     CHECK(r.closure_remount_ok, "AC_2341_1.4: closure_remount_ok default true");
     CHECK(r.envframe_ok, "AC_2341_1.5: envframe_ok default true");
@@ -256,12 +257,12 @@ void ac2341_1_report_default_ok() {
 }
 
 // Issue #2341 AC_2341_2: per-axis failure drives force_reason priority.
-// pin > linear > root_remap > closure > envframe > none. Each axis
-// failure flips overall_ok → false AND the most-severe failing axis
-// drives the priority.
+// pin > linear > type > root_remap > closure > envframe > none (#2353 type).
+// Each axis failure flips overall_ok → false AND the most-severe failing
+// axis drives the priority.
 void ac2341_2_force_reason_priority() {
-    std::println(
-        "\n--- AC_2341_2: force_reason priority pin>linear>root_remap>closure>envframe ---");
+    std::println("\n--- AC_2341_2: force_reason priority "
+                 "pin>linear>type>root_remap>closure>envframe ---");
     // Only pin fail: reason == "pin".
     {
         DensifyConsistencyReport r;
@@ -277,6 +278,14 @@ void ac2341_2_force_reason_priority() {
         CHECK(!r.overall_ok(), "AC_2341_2.3: linear-only fail → !overall_ok");
         CHECK(std::string_view(r.force_reason()) == "linear",
               "AC_2341_2.4: linear-only fail → force_reason == 'linear'");
+    }
+    // Only type fail: reason == "type" (#2353).
+    {
+        DensifyConsistencyReport r;
+        r.type_ok = false;
+        CHECK(!r.overall_ok(), "AC_2341_2.4b: type-only fail → !overall_ok");
+        CHECK(std::string_view(r.force_reason()) == "type",
+              "AC_2341_2.4c: type-only fail → force_reason == 'type'");
     }
     // Only root_remap fail: reason == "root_remap".
     {
@@ -307,11 +316,20 @@ void ac2341_2_force_reason_priority() {
         DensifyConsistencyReport r;
         r.pin_ok = false;
         r.linear_ok = false;
+        r.type_ok = false;
         r.root_remap_ok = false;
         r.closure_remount_ok = false;
         r.envframe_ok = false;
         CHECK(std::string_view(r.force_reason()) == "pin",
               "AC_2341_2.11: all-axis fail → force_reason == 'pin' (priority)");
+    }
+    // Priority: linear + type fail → linear wins.
+    {
+        DensifyConsistencyReport r;
+        r.linear_ok = false;
+        r.type_ok = false;
+        CHECK(std::string_view(r.force_reason()) == "linear",
+              "AC_2341_2.12: linear+type fail → force_reason == 'linear'");
     }
 }
 
@@ -345,6 +363,10 @@ void ac2341_4_query_schema(CompilerService& cs) {
           "AC_2341_4.5: densify_pin_ok reachable (snake)");
     CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-linear-ok") >= 0,
           "AC_2341_4.6: densify-linear-ok reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-type-ok") >= 0,
+          "AC_2341_4.6b: densify-type-ok reachable (kebab, #2353)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "densify_type_ok") >= 0,
+          "AC_2341_4.6c: densify_type_ok reachable (snake, #2353)");
     CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-root-remap-ok") >= 0,
           "AC_2341_4.7: densify-root-remap-ok reachable (kebab)");
     CHECK(href(cs, "query:lifetime-contract-snapshot", "densify-closure-remount-ok") >= 0,

@@ -11009,7 +11009,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 residual_hard, aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total(),
                 aura::core::lifetime_contract::residual_defer_policy_from_env(), moving_on);
 
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #2300 base + #2341 densify axes + #2342 pin shards +
+            // #2353 post-densify linear/type keys (~47 inserts). create(32)
+            // silently dropped late keys when the open-address table filled.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11065,11 +11068,21 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             // Issue #2341: unified post-densify consistency probe.
             // Per-axis live reads (kebab + snake aliases); unified
             // overall_ok flag + force_reason_code (priority pin >
-            // linear > root_remap > closure > envframe > none); counter
-            // for unified fail bumps; sentinel + schema/issue cite.
+            // linear > type > root_remap > closure > envframe > none);
+            // counter for unified fail bumps; sentinel + schema/issue cite.
             // Soft / empty remap / no Moving → all axes ok trivially.
+            // Issue #2353: type axis from post_densify_linear_type_fail_total.
             const bool densify_pin_ok = (snap.moving_pin_contract_fail_total == 0);
-            const bool densify_linear_ok = densify_pin_ok; // #2266/#2280 subsumed
+            const auto* cm = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::uint64_t post_densify_reval =
+                cm ? cm->post_densify_linear_type_revalidate_total.load(std::memory_order_relaxed)
+                   : 0;
+            const std::uint64_t post_densify_fail =
+                cm ? cm->post_densify_linear_type_fail_total.load(std::memory_order_relaxed) : 0;
+            // linear_ok: pin-subsumed (#2266/#2280) AND no #2353 revalidate fail.
+            const bool densify_linear_ok = densify_pin_ok && (post_densify_fail == 0);
+            // type_ok: #2353 ownership/type revalidate — vacuous ok when never failed.
+            const bool densify_type_ok = densify_pin_ok && (post_densify_fail == 0);
             const bool densify_root_remap_ok = !aura::compiler::last_root_remap_any_fail();
             const bool densify_closure_remount_ok =
                 (ev.get_closure_capture_cell_remap_fail_total() == 0);
@@ -11079,23 +11092,29 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                                                    // a follow-up per #2341
                                                    // close comment.
             const bool densify_consistency_ok = densify_pin_ok && densify_linear_ok &&
-                                                densify_root_remap_ok &&
+                                                densify_type_ok && densify_root_remap_ok &&
                                                 densify_closure_remount_ok && densify_envframe_ok;
+            // force_reason codes: 0=none 1=pin 2=linear 3=type 4=root_remap
+            // 5=closure 6=envframe (#2353 inserts type between linear and root_remap).
             int densify_force_reason_code = 0;
             if (!densify_pin_ok)
                 densify_force_reason_code = 1;
             else if (!densify_linear_ok)
                 densify_force_reason_code = 2;
-            else if (!densify_root_remap_ok)
+            else if (!densify_type_ok)
                 densify_force_reason_code = 3;
-            else if (!densify_closure_remount_ok)
+            else if (!densify_root_remap_ok)
                 densify_force_reason_code = 4;
-            else if (!densify_envframe_ok)
+            else if (!densify_closure_remount_ok)
                 densify_force_reason_code = 5;
+            else if (!densify_envframe_ok)
+                densify_force_reason_code = 6;
             insert_kv("densify-pin-ok", densify_pin_ok ? 1 : 0);
             insert_kv("densify_pin_ok", densify_pin_ok ? 1 : 0);
             insert_kv("densify-linear-ok", densify_linear_ok ? 1 : 0);
             insert_kv("densify_linear_ok", densify_linear_ok ? 1 : 0);
+            insert_kv("densify-type-ok", densify_type_ok ? 1 : 0);
+            insert_kv("densify_type_ok", densify_type_ok ? 1 : 0);
             insert_kv("densify-root-remap-ok", densify_root_remap_ok ? 1 : 0);
             insert_kv("densify_root_remap_ok", densify_root_remap_ok ? 1 : 0);
             insert_kv("densify-closure-remount-ok", densify_closure_remount_ok ? 1 : 0);
@@ -11111,6 +11130,18 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-consistency-wired", 1);
             insert_kv("schema-2341", 2341);
             insert_kv("issue-2341", 2341);
+            // Issue #2353: post-densify / post-steal Linear+Type revalidate counters.
+            insert_kv("post-densify-linear-type-revalidate-total",
+                      static_cast<std::int64_t>(post_densify_reval));
+            insert_kv("post_densify_linear_type_revalidate_total",
+                      static_cast<std::int64_t>(post_densify_reval));
+            insert_kv("post-densify-linear-type-fail-total",
+                      static_cast<std::int64_t>(post_densify_fail));
+            insert_kv("post_densify_linear_type_fail_total",
+                      static_cast<std::int64_t>(post_densify_fail));
+            insert_kv("post-densify-linear-type-wired", 1);
+            insert_kv("schema-2353", 2353);
+            insert_kv("issue-2353", 2353);
             // Issue #2342: sharded pin registry surface. Live reads
             // of shard count + max pin count + cumulative lock-wait
             // microseconds + wired sentinel + schema/issue cite.

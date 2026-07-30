@@ -2244,6 +2244,25 @@ def cmd_steal_layout_stamp_coverage():
     return 0
 
 
+def cmd_post_densify_linear_type_revalidate_coverage():
+    """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
+
+    Complements #2341 DensifyConsistencyReport with ownership + type axis.
+    Soft / no densify / no linear → zero cost; fail-closed suppresses Phase 5 success.
+    """
+    print(f"{B}=== post-densify Linear+Type revalidate coverage (#2353) ==={N}")
+    script = ROOT / "scripts" / "check_post_densify_linear_type_revalidate_2353.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("post-densify Linear+Type revalidate coverage contract rows failed")
+        return 1
+    ok("post-densify Linear+Type revalidate coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2633,6 +2652,7 @@ def cmd_gate():
         or cmd_type_system_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
+        or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

@@ -1360,6 +1360,9 @@ AURA_COMPILER_METRICS_FIELD(post_steal_linear_revalidate_total)
 AURA_COMPILER_METRICS_FIELD(post_steal_linear_hard_fail_total)
 AURA_COMPILER_METRICS_FIELD(post_steal_linear_soft_incomplete_total)
 AURA_COMPILER_METRICS_FIELD(post_steal_linear_force_audit_armed)
+// Issue #2353: post-densify / post-steal unified Linear+Type revalidate.
+AURA_COMPILER_METRICS_FIELD(post_densify_linear_type_revalidate_total)
+AURA_COMPILER_METRICS_FIELD(post_densify_linear_type_fail_total)
 AURA_COMPILER_METRICS_FIELD(gc_defer_table_overflow_total)
 // Issue #2088: unified GcDeferReason bitmask lineage.
 AURA_COMPILER_METRICS_FIELD(gc_defer_arm_panic_total)

@@ -2315,6 +2315,13 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                     // dual-path scan + AOT deopt so generation-behind native
                     // code cannot run after steal.
                     ev->scan_live_closures_for_linear_captures(true, std::false_type{});
+                    // Issue #2353: stamp mismatch implies densify may have
+                    // moved objects on the previous host — run unified
+                    // Linear+Type revalidate (ownership enforce + dual-path)
+                    // complementary to pin verify / #2341 object-axis.
+                    // AC3: only on mismatch path (matching stamp → skip).
+                    (void)ev->run_post_densify_linear_type_revalidate(
+                        /*had_moving_densify=*/true);
                     aura_aot_record_deopt_on_steal();
                     ev->bump_concurrent_safety_aot_reload_at_guard();
                 }

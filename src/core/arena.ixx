@@ -586,9 +586,13 @@ export struct AdaptiveCompactResult {
     // moving_compact_pin_contract_fail_total + suppresses success metrics
     // when this is false. Default true (no Moving = contract trivially held).
     bool pin_contract_held = true;
+    // Issue #2353: any arena actually moved live objects (densify work).
+    // Used by post-densify linear+type revalidate to skip AC3 zero-cost path
+    // when densify was empty (no objects moved).
+    bool moved_live_objects = false;
 
     [[nodiscard]] bool empty() const noexcept {
-        return bytes_reclaimed_total == 0 && pin_contract_held;
+        return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects;
     }
 };
 
@@ -2493,6 +2497,7 @@ public:
             const auto r = it->second->live_compact(LiveCompactMode::Moving);
             out.bytes_reclaimed_total += r.bytes_reclaimed;
             out.pin_contract_held = out.pin_contract_held && r.pin_contract_held;
+            out.moved_live_objects = out.moved_live_objects || r.moved_live_objects;
         }
         return out;
     }
