@@ -6043,6 +6043,20 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"mutation-hold-over-budget-wired", make_int(1)},
                 {"schema-2313", make_int(2313)},
                 {"issue-2313", make_int(2313)},
+                // Issue #2349: production hold SLO circuit-breaker.
+                // Soft: metric only. Production default: force success_flag=false.
+                // Env AURA_MUTATION_HOLD_SLO_US (default 100ms; 0 disables).
+                {"mutation-hold-slo-violation-total",
+                 make_int(m ? load(m->mutation_hold_slo_violation_total) : 0)},
+                {"mutation_hold_slo_violation_total",
+                 make_int(m ? load(m->mutation_hold_slo_violation_total) : 0)},
+                {"mutation-hold-slo-us",
+                 make_int(static_cast<std::int64_t>(aura::compiler::mutation_hold_slo_us()))},
+                {"mutation-hold-slo-soft",
+                 make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
+                {"mutation-hold-slo-wired", make_int(1)},
+                {"schema-2349", make_int(2349)},
+                {"issue-2349", make_int(2349)},
                 // Issue #2314: residual defer cleared on steal (orphan
                 // interlock). Mirrors query:gc-defer-reason-stats (which
                 // also exposes the same counter for cross-subsystem view).

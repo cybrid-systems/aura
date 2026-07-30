@@ -2187,6 +2187,25 @@ def cmd_bidirectional_match_coverage():
     return 0
 
 
+def cmd_mutation_hold_slo_coverage():
+    """Issue #2349: outermost hold SLO circuit-breaker (production fail path).
+
+    Soft/sandbox: metric only. Production default: hold > SLO → success_flag
+    false. Env AURA_MUTATION_HOLD_SLO_US=0 disables. No second timer.
+    """
+    print(f"{B}=== mutation hold SLO circuit-breaker coverage (#2349) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_hold_slo_2349.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation hold SLO circuit-breaker coverage contract rows failed")
+        return 1
+    ok("mutation hold SLO circuit-breaker coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2552,6 +2571,7 @@ def cmd_gate():
         or cmd_steal_snapshot_hard_invariant_coverage()
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_bidirectional_match_coverage()
+        or cmd_mutation_hold_slo_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
