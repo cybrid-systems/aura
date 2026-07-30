@@ -1170,6 +1170,12 @@ struct CompilerMetrics {
     // Schema-2278 — additive, mirrors the on-CS record set.
     std::atomic<std::uint64_t> occurrence_goal_replay_total{0};
     std::atomic<std::uint64_t> occurrence_goal_stale_drop_total{0};
+    // Issue #2321: refined-drift counter — bumped on solve_delta_occurrence
+    // re-validate when a live goal's stored `refined` is no longer consistent
+    // with the current Union-Find binding of `g.var` (detects stale narrowing
+    // under multi-round mutate). Distinct from
+    // occurrence_goal_stale_drop_total (epoch-prune, #2278 lineage).
+    std::atomic<std::uint64_t> occurrence_goal_refined_drift_total{0}; // #2321
     // Issue #1873: derived completeness rate (0–100) =
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.
