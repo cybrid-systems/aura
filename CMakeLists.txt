@@ -2186,6 +2186,11 @@ aura_issue_test_link_llvm_jit(test_aot_reload_primitive)
 target_link_options(test_aot_reload_primitive PRIVATE -Wl,--export-dynamic)
 add_dependencies(all_test_issue_targets test_aot_reload_primitive)
 
+# Issue #2306: (query:aot-version-triple) 5-stamp aggregator primitive.
+aura_add_issue_test(test_aot_version_triple_2306)
+aura_issue_test_link_llvm_jit(test_aot_version_triple_2306)
+add_dependencies(all_test_issue_targets test_aot_version_triple_2306)
+
 # Issue #2304: post-bump epoch invariant walk infrastructure.
 aura_add_issue_test(test_epoch_bump_invariant_2304)
 aura_issue_test_link_llvm_jit(test_epoch_bump_invariant_2304)

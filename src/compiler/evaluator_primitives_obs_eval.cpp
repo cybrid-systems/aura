@@ -2794,6 +2794,84 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2306: (query:aot-version-triple) — Agent-facing read-only
+    // primitive that aggregates the 5 host AOT stamps (defuse / env /
+    // linear / bridge / table-epoch) so Agents can plan a reemit/reload
+    // without stitching 4+ separate query surfaces (query:aot-reload-stats,
+    // query:aot-hot-reload-stats, query:aot-checkpoint-version-stats, ...).
+    // Mirrors the values stamped by `generate_registration_c` / reemit
+    // success path (parity with #2168 stamp coverage).
+    //
+    // AC1: returns all 5 stamps + schema/issue/wired sentinels.
+    // AC2: mutate that bumps defuse → subsequent query shows
+    //      defuse strictly greater.
+    // AC3: pure — two successive calls without mutate return identical
+    //      values; no metric side effects required.
+    // AC4: matches live values used by `generate_registration_c` /
+    //      reemit success path.
+    // AC5: schema-2306 lineage sentinels + issue-2306 wired sentinel
+    //      (mirrors the existing schema/issue/wired pattern).
+    //
+    // Values are read at call time via the aura_jit_bridge.h C-linkage
+    // wrappers (declared in compiler/aura_jit_bridge.h at line 35/46/386/388/494
+    // — visible because this TU already #includes the header). Relaxed
+    // loads on the underlying atomics; no counter bumps. The 5 readers
+    // are #2168 / #2046 / #2091 / #1485 stamp surfaces — all already
+    // verified live.
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-version-triple", [&ev](const auto&) -> EvalValue {
+            const std::uint64_t defuse = aura_get_aot_defuse_version();
+            const std::uint64_t env_gen = aura_get_aot_live_env_frame_version();
+            const std::uint64_t linear_fp = aura_get_aot_live_linear_state_fingerprint();
+            const std::uint64_t bridge_ep = aura_get_current_bridge_epoch();
+            const std::uint64_t table_ep = aura_aot_func_table_epoch();
+            // Capacity must be a power of 2 — the insert_kv probe
+            // uses `(hcap - 1) & idx` masking which requires it.
+            // 8 entries (5 stamps + 3 sentinels) at 50% load → 16.
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("defuse", static_cast<std::int64_t>(defuse));
+            insert_kv("env", static_cast<std::int64_t>(env_gen));
+            insert_kv("linear", static_cast<std::int64_t>(linear_fp));
+            insert_kv("bridge", static_cast<std::int64_t>(bridge_ep));
+            insert_kv("table-epoch", static_cast<std::int64_t>(table_ep));
+            // Schema / issue / wired sentinels (AC5) — mirror the
+            // existing pattern from query:aot-reload-func-table-stats
+            // (schema=644 / issue=644) and query:compact-stats
+            // (schema=2168 / issue=2168).
+            insert_kv("schema", 2306);
+            insert_kv("issue", 2306);
+            insert_kv("aot-version-triple-wired", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 21 (orig lines 3165-3290)
