@@ -259,8 +259,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
                                                     waits, tmo, lchk, lviol, &fbp, &rej_bound,
                                                     &def_mh);
-            // Capacity 32→48: #2188 keys fit without silent drop.
-            auto* ht = FlatHashTable::create(48);
+            // Capacity 32→48→64: #2188/#2312/#2347 keys fit without silent drop.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -322,6 +322,25 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-mutation-hold-gate-wired", 1);
             insert_kv("schema-2312", 2312);
             insert_kv("issue-2312", 2312);
+            // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
+            // Soft path leaves hard-total / force-rollback-total at 0; Policy A
+            // soft reject remains on recv-rejected-in-mutation-boundary.
+            // Capacity 48 holds pre-#2347 keys + these additive rows without drop.
+            const auto hard_tot =
+                g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+                    std::memory_order_relaxed);
+            const auto force_rb = g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(
+                std::memory_order_relaxed);
+            insert_kv("recv-rejected-in-mutation-boundary-hard-total",
+                      static_cast<std::int64_t>(hard_tot));
+            insert_kv("recv_rejected_in_mutation_boundary_hard_total",
+                      static_cast<std::int64_t>(hard_tot));
+            insert_kv("recv-boundary-force-rollback-total", static_cast<std::int64_t>(force_rb));
+            insert_kv("recv_boundary_force_rollback_total", static_cast<std::int64_t>(force_rb));
+            insert_kv("mutate-mailbox-strict-wired", 1);
+            insert_kv("recv-boundary-hard-wired", 1);
+            insert_kv("schema-2347", 2347);
+            insert_kv("issue-2347", 2347);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

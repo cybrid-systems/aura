@@ -1824,6 +1824,13 @@ public:
             return m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2347: mailbox Strict path may force outermost mutation
+    // success_flag=false when blocking recv rejects exceed the Guard window
+    // threshold (Policy A stays non-blocking; Agents cannot ship while spinning).
+    void mark_outermost_mutation_failed() noexcept {
+        if (outermost_mutation_success_flag_)
+            *outermost_mutation_success_flag_ = false;
+    }
     // Issue #1907: reflect/EDSL bridge accessors backing the
     // (engine:metrics "query:reflect-schema") + (mutate:validate-reflected)
     // primitives + the post-mutation auto_validate + hygiene gate hook
