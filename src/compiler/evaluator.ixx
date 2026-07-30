@@ -3279,6 +3279,16 @@ public:
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
+    // Issue #2308: opaque handle to the live commit TypeChecker (null
+    // when no commit CS is currently live). Query primitives cast it
+    // to TypeChecker* and call constraint_system() to build a
+    // SolverSnapshot. Mirrors the internal pattern at
+    // evaluator_typecheck.cpp:690 (which is friend-accessible today);
+    // exported here so query:* primitives don't need a friend
+    // declaration. Always pair with commit_cs_live() check.
+    [[nodiscard]] void* commit_type_checker_handle() const noexcept {
+        return commit_type_checker_opaque_;
+    }
     // Issue #2105: Agent-visible flag — composite/nested txn still open
     // (half-typed views must not be treated as committed).
     [[nodiscard]] bool txn_dirty() const noexcept {

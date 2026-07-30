@@ -1802,6 +1802,10 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
         return prior;
     if (!aura::compiler::typed_audit::production_defaults_active())
         return prior;
+    // Issue #2308: mark the CS as production-escalated so the next
+    // SolverSnapshot exposes production_escalated == true without
+    // re-running escalate_if_production (which mutates state).
+    production_escalated_ = true;
     auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
     c.delta_timeout_full_solve_total.fetch_add(1, std::memory_order_relaxed);
     if (metrics_) {
@@ -1817,6 +1821,47 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
         }
     }
     return full;
+}
+
+// Issue #2308: Agent-stable SolverSnapshot — pure read of cs state.
+// Mirrors SolveDeltaOccurrenceResult::unresolved_affected_nodes sample
+// cap (kAffectedSampleCap = 16) so repair_nodes stays small enough for
+// the query ring. When `last` is null the snapshot still reports
+// blame / truncated_reverify / provenance_continuity / production_escalated
+// from the live CS state (useful for boundary type-proof gates that
+// haven't called solve_delta_occurrence yet).
+constexpr std::size_t kSolverSnapshotRepairCap = 16;
+
+SolverSnapshot snapshot_constraint_system(ConstraintSystem& cs,
+                                          const SolveDeltaOccurrenceResult* last) {
+    SolverSnapshot s;
+    s.blame = cs.last_blame_chain();
+    s.provenance_continuity = s.blame.is_complete() || s.blame.complete;
+    s.truncated_reverify = s.blame.truncated_reverify || cs.last_reverify_truncated();
+    s.unscanned_constraint_count = s.blame.unscanned_constraint_count != 0
+                                       ? s.blame.unscanned_constraint_count
+                                       : cs.last_reverify_unscanned();
+    s.production_escalated = cs.production_escalated();
+    if (last) {
+        s.status = last->status;
+        s.unresolved = last->unresolved;
+        // Unique affected_node ids across unresolved + blame frames —
+        // matches SolveDeltaOccurrenceResult::unresolved_affected_nodes
+        // shape (Agent repair set, no free-form parsing required).
+        std::unordered_set<std::uint32_t> seen;
+        auto push_node = [&](std::uint32_t n) {
+            if (n == 0 || !seen.insert(n).second)
+                return;
+            if (s.repair_nodes.size() >= kSolverSnapshotRepairCap)
+                return;
+            s.repair_nodes.push_back(n);
+        };
+        for (const auto& c : last->unresolved)
+            push_node(c.affected_node);
+        for (const auto& f : s.blame.frames)
+            push_node(f.affected_node);
+    }
+    return s;
 }
 
 // Issue #1414: hash helpers for solved_delta_cache_ in

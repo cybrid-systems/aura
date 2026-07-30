@@ -281,6 +281,11 @@ private:
     // so record_cross_delta_blame_hit can mark truncated chains.
     bool last_reverify_truncated_ = false;
     std::size_t last_reverify_unscanned_ = 0;
+    // Issue #2308: production_escalated_ flipped true when
+    // escalate_if_production took the #2277 full-solve path.
+    // SolverSnapshot reads this to expose production_escalated
+    // without re-running escalate_if_production (which mutates state).
+    bool production_escalated_ = false;
     // Issue #2146: last effective_reverify_limit() observed by reverify.
     std::size_t last_reverify_limit_used_ = kReverifyCleanScanLimit;
     // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
@@ -376,6 +381,11 @@ public:
         force_reverify_limit_ = lim;
     }
     [[nodiscard]] bool last_reverify_truncated() const noexcept { return last_reverify_truncated_; }
+    // Issue #2308: forensic / Agent-visible accessor — true when the
+    // last escalate_if_production call took the production full-solve
+    // path (delta_timeout_full_solve_total bumped). SolverSnapshot
+    // reads this so Agents can detect production escalation end-to-end.
+    [[nodiscard]] bool production_escalated() const noexcept { return production_escalated_; }
     [[nodiscard]] std::size_t last_reverify_unscanned() const noexcept {
         return last_reverify_unscanned_;
     }
@@ -2365,6 +2375,35 @@ export struct SolveDeltaOccurrenceResult {
 // Issue #2107: always fills result.unresolved on TIMEOUT (and optionally
 // CONFLICT); mirrors into unresolved_out when non-null. Strict vs
 // permissive TypeError/Warning policy is unchanged at InferenceEngine.
+// Issue #2308: Agent-stable SolverSnapshot — unified post-solve surface
+// that always answers "what failed, which nodes to touch next, is blame
+// complete?". Pure read (no solve side effects); safe to call from
+// composite_txn_commit / boundary type-proof reject / audit without
+// re-parsing free-form diagnostics. When `last` is non-null the
+// status / unresolved / repair_nodes fields reflect that result;
+// otherwise the snapshot is built purely from cs.last_blame_chain()
+// and the underlying flags (status defaults to SOLVED, unresolved +
+// repair_nodes empty).
+export struct SolverSnapshot {
+    SolveResult status = SolveResult::SOLVED;
+    std::vector<Constraint> unresolved;
+    DeltaBlameChain blame;
+    // Unique affected / predicate node ids Agents should touch next.
+    // Cap matches SolveDeltaOccurrenceResult::unresolved_affected_nodes
+    // (kAffectedSampleCap = 16) so the query ring stays small.
+    std::vector<std::uint32_t> repair_nodes;
+    bool truncated_reverify = false;
+    std::size_t unscanned_constraint_count = 0;
+    bool provenance_continuity = false;
+    // Issue #2277 / #2308: true if escalate_if_production took the
+    // full-solve path on the most recent TIMEOUT — Agent-visible signal
+    // that production reject policy engaged.
+    bool production_escalated = false;
+};
+
+export SolverSnapshot snapshot_constraint_system(ConstraintSystem& cs,
+                                                 const SolveDeltaOccurrenceResult* last = nullptr);
+
 export SolveDeltaOccurrenceResult
 solve_delta_occurrence(ConstraintSystem& cs,
                        std::span<const aura::core::TypeId> occurrence_vars = {},

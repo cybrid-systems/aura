@@ -6152,6 +6152,40 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // is forensic-only and not read in the solve path. Agents
             // can query this key to confirm the #2307 refactor landed.
             insert_kv("occurrence-goal-sole-authority-wired", 1);
+            // Issue #2308: Agent-stable SolverSnapshot (status +
+            // unresolved + blame + repair_nodes + truncated + production
+            // escalation). Built from the live commit CS via
+            // snapshot_constraint_system — mirrors C++ API shape so
+            // Agents query the same fields they see in SolverSnapshot.
+            // Pure read; no solve side effects.
+            //   solver-snapshot-status: 0=SOLVED, 1=CONFLICT, 2=TIMEOUT
+            //   solver-snapshot-unresolved-count: size of unresolved vec
+            //   solver-snapshot-repair-nodes-count: dedup affected_node
+            //     ids from unresolved + blame.frames (cap 16)
+            //   solver-snapshot-blame-complete: 0/1 from blame.is_complete()
+            //   solver-snapshot-truncated: 0/1 from blame.truncated_reverify
+            //     || cs.last_reverify_truncated()
+            {
+                SolverSnapshot snap{};
+                if (ev && ev->commit_cs_live()) {
+                    if (auto* ctc_h = static_cast<aura::compiler::TypeChecker*>(
+                            ev->commit_type_checker_handle())) {
+                        snap = snapshot_constraint_system(ctc_h->constraint_system(), nullptr);
+                    }
+                }
+                insert_kv("solver-snapshot-status", static_cast<std::int64_t>(snap.status));
+                insert_kv("solver-snapshot-unresolved-count",
+                          static_cast<std::int64_t>(snap.unresolved.size()));
+                insert_kv("solver-snapshot-repair-nodes-count",
+                          static_cast<std::int64_t>(snap.repair_nodes.size()));
+                insert_kv("solver-snapshot-blame-complete", snap.blame.is_complete() ? 1 : 0);
+                insert_kv("solver-snapshot-truncated", snap.truncated_reverify ? 1 : 0);
+            }
+            insert_kv("schema-2308", 2308);
+            insert_kv("issue-2308", 2308);
+            // Wired sentinel — confirms the #2308 refactor landed
+            // (C++ API + query surface both present).
+            insert_kv("solver-snapshot-wired", 1);
             // Issue #2281: Agent-visible TypedMutationAudit decision query.
             // Exposes the current strategy / sample_ratio / production_defaults
             // state + a representative decide() result for inputs
