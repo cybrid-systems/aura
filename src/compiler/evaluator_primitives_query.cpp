@@ -6035,8 +6035,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->blame_chain_completeness_rate.load(std::memory_order_relaxed))
                   : 0;
-            // Power-of-2 capacity; #1923+#1924+#2024+#2028+#2030+#2260+#2262+#2345 keys.
-            auto* ht = FlatHashTable::create(512);
+            // Power-of-2 capacity; #1923+#1924+#2024+#2028+#2030+#2260+#2262+#2345+#2359 keys.
+            auto* ht = FlatHashTable::create(1024);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6830,6 +6830,62 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   std::memory_order_relaxed)));
                 insert_kv("schema-2345", 2345);
                 insert_kv("issue-2345", 2345);
+            }
+            // Issue #2359: unify occurrence_goals + predicate_memo epoch
+            // health on the fidelity-stats surface (pure read; no solve
+            // side effects). Agents use these keys to decide whether
+            // narrowing caches and CS goals are same-generation:
+            //   - cache-epoch: TypeChecker / Evaluator current epoch
+            //   - occurrence-goals-live / max-epoch / stale-vs-epoch
+            //   - predicate-memo-live / stale-vs-epoch
+            //   - memo-goal-epoch-delta: 0 healthy; >0 lag (memo stale
+            //     + goal survivors past prune boundary)
+            // Vacuous healthy (0s) when no commit TypeChecker / memo.
+            {
+                std::int64_t cache_epoch_v = 0;
+                std::int64_t goals_live = 0;
+                std::int64_t goals_max_epoch = 0;
+                std::int64_t goals_stale = 0;
+                std::int64_t memo_live = 0;
+                std::int64_t memo_stale = 0;
+                if (ev) {
+                    cache_epoch_v = static_cast<std::int64_t>(ev->current_cache_epoch());
+                    if (auto* ctc = static_cast<aura::compiler::TypeChecker*>(
+                            ev->commit_type_checker_handle())) {
+                        cache_epoch_v = static_cast<std::int64_t>(ctc->cache_epoch());
+                        const auto& cs = ctc->constraint_system();
+                        goals_live = static_cast<std::int64_t>(cs.occurrence_goals_size());
+                        goals_max_epoch =
+                            static_cast<std::int64_t>(cs.occurrence_goals_max_epoch());
+                        goals_stale = static_cast<std::int64_t>(
+                            cs.occurrence_goals_stale_vs_epoch(ctc->cache_epoch()));
+                        // Last partial snapshot (engine is ephemeral).
+                        memo_live = static_cast<std::int64_t>(ctc->last_predicate_memo_live());
+                        memo_stale =
+                            static_cast<std::int64_t>(ctc->last_predicate_memo_stale_vs_epoch());
+                    }
+                    // Prefer live guard-path InferenceEngine when present
+                    // (memo survives multi-round Guard exit / selective).
+                    if (auto* eng = static_cast<aura::compiler::InferenceEngine*>(
+                            ev->guard_infer_engine())) {
+                        memo_live = static_cast<std::int64_t>(eng->predicate_memo_size());
+                        memo_stale =
+                            static_cast<std::int64_t>(eng->predicate_memo_stale_vs_epoch());
+                    }
+                }
+                // Lag signal: memo entries behind cache epoch + goals
+                // that would be prune-eligible but still live.
+                const std::int64_t delta = memo_stale + goals_stale;
+                insert_kv("cache-epoch", cache_epoch_v);
+                insert_kv("occurrence-goals-live", goals_live);
+                insert_kv("occurrence-goals-max-epoch", goals_max_epoch);
+                insert_kv("occurrence-goals-stale-vs-epoch", goals_stale);
+                insert_kv("predicate-memo-live", memo_live);
+                insert_kv("predicate-memo-stale-vs-epoch", memo_stale);
+                insert_kv("memo-goal-epoch-delta", delta);
+                insert_kv("memo-goal-epoch-health-wired", 1);
+                insert_kv("schema-2359", 2359);
+                insert_kv("issue-2359", 2359);
             }
             insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
             insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030

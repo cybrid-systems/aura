@@ -646,6 +646,27 @@ public:
     [[nodiscard]] const std::vector<OccurrenceGoal>& occurrence_goals_for_test() const noexcept {
         return occurrence_goals_;
     }
+    // Issue #2359: pure epoch-health helpers for query surface.
+    // max_epoch: highest goal.epoch in the table (0 when empty).
+    // stale_vs_epoch: goals with epoch > 0 && epoch < `epoch` (same
+    // predicate as prune_occurrence_goals would drop). Untagged (0)
+    // sentinels are never counted stale.
+    [[nodiscard]] std::uint64_t occurrence_goals_max_epoch() const noexcept {
+        std::uint64_t m = 0;
+        for (const auto& g : occurrence_goals_) {
+            if (g.epoch > m)
+                m = g.epoch;
+        }
+        return m;
+    }
+    [[nodiscard]] std::size_t occurrence_goals_stale_vs_epoch(std::uint64_t epoch) const noexcept {
+        std::size_t n = 0;
+        for (const auto& g : occurrence_goals_) {
+            if (g.epoch > 0 && g.epoch < epoch)
+                ++n;
+        }
+        return n;
+    }
     void set_current_epoch(std::uint64_t epoch) noexcept { current_epoch_ = epoch; }
     [[nodiscard]] std::uint64_t current_epoch() const noexcept { return current_epoch_; }
     // Issue #1871: size of pending full-solve root backlog.
@@ -1130,6 +1151,18 @@ public:
         return predicate_memo_selective_invalidate_total_;
     }
     std::size_t predicate_memo_size() const noexcept { return predicate_memo_.size(); }
+    // Issue #2359: pure scan — count memo entries whose stored epoch
+    // does not match the live cache_epoch_ (stale-vs-epoch lag after
+    // epoch advance without selective invalidate / prune). Zero cost
+    // when the memo is empty; O(n) bounded by PREDICATE_MEMO_MAX_ENTRIES.
+    [[nodiscard]] std::size_t predicate_memo_stale_vs_epoch() const noexcept {
+        std::size_t n = 0;
+        for (const auto& e : predicate_memo_) {
+            if (e.second.epoch != cache_epoch_)
+                ++n;
+        }
+        return n;
+    }
     // Issue #434: per-node occurrence dirty recovery.
     // Returns the lifetime total of narrowing
     // re-analyses triggered by dirty If nodes.
@@ -1871,6 +1904,16 @@ export struct TypeChecker {
     [[nodiscard]] std::uint32_t last_partial_narrowing_evidence() const noexcept {
         return last_partial_narrowing_evidence_;
     }
+    // Issue #2359: last predicate-memo epoch-health snapshot from the
+    // most recent infer_flat_partial (engine is short-lived; Agents
+    // read these via query:type-incremental-fidelity-stats when no
+    // long-lived guard_infer_engine is present).
+    [[nodiscard]] std::size_t last_predicate_memo_live() const noexcept {
+        return last_predicate_memo_live_;
+    }
+    [[nodiscard]] std::size_t last_predicate_memo_stale_vs_epoch() const noexcept {
+        return last_predicate_memo_stale_vs_epoch_;
+    }
 
     // Issue #130: cache hit rate (0.0 .. 1.0). Computed
     // as hits / (hits + misses + stale). Returns 0.0 if
@@ -2160,6 +2203,10 @@ public:
     bool bidirectional_mode_ = true;
     // Issue #627: last narrowing evidence from infer_flat_partial.
     std::uint32_t last_partial_narrowing_evidence_ = 0;
+    // Issue #2359: last predicate-memo epoch-health snapshot (engine
+    // is ephemeral; Agents query these after partial).
+    std::size_t last_predicate_memo_live_ = 0;
+    std::size_t last_predicate_memo_stale_vs_epoch_ = 0;
 
     // Issue #116: see last_coercions() / take_coercions() above.
     CoercionMap last_coercions_;

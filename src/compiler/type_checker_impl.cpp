@@ -7362,6 +7362,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.predicate_memo_misses += engine.predicate_memo_misses();
     stats_.predicate_memo_evictions += engine.predicate_memo_evictions();
     stats_.predicate_memo_partial_evictions += engine.predicate_memo_partial_evictions();
+    // Issue #2359: snapshot memo epoch health for the Agent query
+    // surface (engine dies at end of this partial; guard_infer_engine
+    // may still hold a live memo on the Evaluator path).
+    last_predicate_memo_live_ = engine.predicate_memo_size();
+    last_predicate_memo_stale_vs_epoch_ = engine.predicate_memo_stale_vs_epoch();
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call
