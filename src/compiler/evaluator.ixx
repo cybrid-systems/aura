@@ -2973,6 +2973,10 @@ public:
         // never leave new flat + empty index half-committed.
         // Issue #1898: bump workspace_flat_gen_ so pin revalidation
         // detects mid-flight rebind (paired with WorkspaceFlatPin).
+        // Issue #2316: wire workspace_mtx_ acquisition to lock_order
+        // audit (Level::Workspace rank in extended table).
+        (void)::aura::compiler::lock_order::on_acquire(
+            ::aura::compiler::lock_order::Level::Workspace, __builtin_FILE(), __builtin_LINE__);
         std::unique_lock<std::shared_mutex> lk(workspace_mtx_);
         ast::FlatAST* const saved = workspace_flat_;
         workspace_flat_ = f;

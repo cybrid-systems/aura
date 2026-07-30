@@ -1,4 +1,5 @@
-// multi_fiber_mailbox.h — Issue #1585 / #1211 / #1595: MultiFiberMailbox with
+// multi_fiber_mailbox.h — Issue #1585 / #1211 / #1595 / #2312 / #2316:
+// MultiFiberMailbox with
 // multi-attach, broadcast, blocking recv, priority, and backpressure.
 // #1595: linear-claim payload prefix filter (linear-viol:) + process counters.
 // #1881: fanout linear_checks + local push stats.
@@ -6,12 +7,15 @@
 //        observability (+ orch hook for dashboards).
 // #2188: forbid blocking recv / Fiber::yield while MutationBoundary is live
 //        (depth>0 or held) — Policy A: non-blocking empty + metric, no park.
+// #2316: wire mu_ acquire to lock_order::on_acquire(Level::Mailbox) for
+//        rank-table audit + AURA_LOCK_ORDER_CANARY inversion detection.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
 
 #ifndef AURA_SERVE_MULTI_FIBER_MAILBOX_H
 #define AURA_SERVE_MULTI_FIBER_MAILBOX_H
 
 #include "fiber.h"
+#include "compiler/lock_order_audit.h" // Issue #2316: lock-order audit
 
 #include <algorithm>
 #include <atomic>
@@ -136,6 +140,9 @@ public:
     void attach(Fiber* f, int /*priority*/ = 0) {
         if (!f)
             return;
+        // Issue #2316: wire mu_ acquire to lock_order audit.
+        (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
+                                     __builtin_LINE__);
         std::lock_guard lock(mu_);
         for (auto* a : attachers_) {
             if (a == f)
@@ -148,20 +155,28 @@ public:
     void detach(Fiber* f) {
         if (!f)
             return;
+        (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
+                                     __builtin_LINE__);
         std::lock_guard lock(mu_);
         attachers_.erase(std::remove(attachers_.begin(), attachers_.end(), f), attachers_.end());
     }
 
     [[nodiscard]] std::size_t attacher_count() const {
+        (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
+                                     __builtin_LINE__);
         std::lock_guard lock(mu_);
         return attachers_.size();
     }
 
     [[nodiscard]] std::size_t size() const {
+        (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
+                                     __builtin_LINE__);
         std::lock_guard lock(mu_);
         return queue_.size();
     }
     [[nodiscard]] bool empty() const {
+        (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
+                                     __builtin_LINE__);
         std::lock_guard lock(mu_);
         return queue_.empty();
     }
@@ -173,6 +188,8 @@ public:
     [[nodiscard]] PushStatus push(MailMessage msg) {
         if (reject_if_linear_viol(msg.payload))
             return PushStatus::Closed;
+        (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
+                                     __builtin_LINE__);
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
