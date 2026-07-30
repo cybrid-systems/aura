@@ -3214,7 +3214,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:linear-ownership-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                // Capacity 16: #688 base + #2357 synth keys.
+                auto* ht = FlatHashTable::create(16);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -3267,11 +3268,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m ? m->linear_typed_mutate_safe_fallbacks.load(std::memory_order_relaxed) +
                         m->compiler_closure_safe_fallbacks.load(std::memory_order_relaxed)
                   : 0;
+            // Issue #2357: synthesize-time Move/Drop/MutBorrow violations.
+            const std::uint64_t synth_viol =
+                m ? m->linear_synth_violation_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t synth_hard =
+                m ? m->linear_synth_hard_fail_total.load(std::memory_order_relaxed) : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"post-mutate-revalidates", make_int(static_cast<std::int64_t>(revalidates))},
                 {"violations-caught", make_int(static_cast<std::int64_t>(violations))},
                 {"enforcement-hits", make_int(static_cast<std::int64_t>(enforcements))},
                 {"safe-fallbacks", make_int(static_cast<std::int64_t>(safe_fallbacks))},
+                {"linear-synth-violation-total", make_int(static_cast<std::int64_t>(synth_viol))},
+                {"linear-synth-hard-fail-total", make_int(static_cast<std::int64_t>(synth_hard))},
+                {"linear-synth-wired", make_int(1)},
+                {"schema-2357", make_int(2357)},
+                {"issue-2357", make_int(2357)},
             };
             return build_hash(kv);
         });

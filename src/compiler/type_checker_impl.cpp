@@ -5557,7 +5557,45 @@ TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& po
     return inner_type;
 }
 
+// Issue #2357 Phase 1: first-class linear Move/Drop/MutBorrow violations
+// during synthesize. production_defaults || strict_ → TypeError (hard);
+// non-strict non-production → Warning (documented AC3 soft path).
+// Always set_node_error so partial TC / boundary see a fail signal before
+// relying solely on post_mutation Full audit. Defense-in-depth: post_mutation
+// invariant + escape analysis (#2263/#2108) still run.
+bool InferenceEngine::note_linear_synth_violation(FlatAST& flat, NodeId node_id,
+                                                  std::string_view violation_kind,
+                                                  const std::string& msg,
+                                                  const std::string& suggestion,
+                                                  TypeId binding_ty) {
+    const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
+    const auto kind = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+    diag_.report(Diagnostic(kind, msg, cur_loc_)
+                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                     .with_suggestion(suggestion));
+    if (node_id != NULL_NODE && node_id < flat.size()) {
+        flat.set_node_error(node_id, static_cast<std::uint8_t>(ErrorKind::TypeError));
+    }
+    ++linear_synth_violation_count_;
+    if (hard)
+        linear_synth_hard_fail_ = true;
+    if (cs_.metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        m->linear_synth_violation_total.fetch_add(1, std::memory_order_relaxed);
+        if (hard)
+            m->linear_synth_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Optional light touch: mark binding type var so solve_delta re-visits
+    // dependents (no new Constraint kind — Phase 1).
+    if (binding_ty.valid())
+        cs_.mark_touched_on_delta(binding_ty, /*occurrence_narrow=*/false);
+    (void)violation_kind;
+    return hard;
+}
+
 // Issue #903 Phase 1: ownership-op peels from synthesize_flat switch.
+// Issue #2357: Move/Drop/MutBorrow violations fail synthesize hard under
+// production/strict (not only post-mutate audit).
 TypeId InferenceEngine::synthesize_flat_move(FlatAST& flat, StringPool& pool, NodeView v) {
     // (move e): check ownership, mark Moved, unwrap Linear T → T
     TypeId inner_type = reg_.void_type();
@@ -5571,13 +5609,14 @@ TypeId InferenceEngine::synthesize_flat_move(FlatAST& flat, StringPool& pool, No
                 if (!ownership_env_.can_move(var_name)) {
                     auto st = ownership_env_.get(var_name);
                     auto msg = "cannot move " + var_name + " — " + ownership_env_.state_name(st);
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                     .with_suggestion("rebind " + var_name +
-                                                      " to a fresh value, or end the active "
-                                                      "borrow first"));
+                    (void)note_linear_synth_violation(
+                        flat, v.id, "use-after-move", msg,
+                        "rebind " + var_name + " to a fresh value, or end the active borrow first",
+                        var_ty);
+                    // Do not mark Moved again — state already non-Owned.
+                } else {
+                    ownership_env_.mark(var_name, OwnershipState::Moved);
                 }
-                ownership_env_.mark(var_name, OwnershipState::Moved);
             }
         }
         inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
@@ -5600,13 +5639,14 @@ TypeId InferenceEngine::synthesize_flat_borrow(FlatAST& flat, StringPool& pool, 
                 if (!ownership_env_.can_borrow(var_name)) {
                     auto st = ownership_env_.get(var_name);
                     auto msg = "cannot borrow " + var_name + " — " + ownership_env_.state_name(st);
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                     .with_suggestion("end the active mutable borrow of " +
-                                                      var_name +
-                                                      " before taking an immutable borrow"));
+                    (void)note_linear_synth_violation(flat, v.id, "double-borrow", msg,
+                                                      "end the active mutable borrow of " +
+                                                          var_name +
+                                                          " before taking an immutable borrow",
+                                                      var_ty);
+                } else {
+                    ownership_env_.mark(var_name, OwnershipState::Borrowed);
                 }
-                ownership_env_.mark(var_name, OwnershipState::Borrowed);
             }
         }
         inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
@@ -5628,12 +5668,13 @@ TypeId InferenceEngine::synthesize_flat_mut_borrow(FlatAST& flat, StringPool& po
                     auto st = ownership_env_.get(var_name);
                     auto msg =
                         "cannot mutably borrow " + var_name + " — " + ownership_env_.state_name(st);
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                     .with_suggestion("end any active borrows of " + var_name +
-                                                      " before taking a mutable borrow"));
+                    (void)note_linear_synth_violation(flat, v.id, "double-borrow", msg,
+                                                      "end any active borrows of " + var_name +
+                                                          " before taking a mutable borrow",
+                                                      var_ty);
+                } else {
+                    ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
                 }
-                ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
             }
         }
         inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
@@ -5653,12 +5694,12 @@ TypeId InferenceEngine::synthesize_flat_drop(FlatAST& flat, StringPool& pool, No
                 if (!ownership_env_.can_drop(var_name)) {
                     auto st = ownership_env_.get(var_name);
                     auto msg = "cannot drop " + var_name + " — " + ownership_env_.state_name(st);
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
-                                     .with_suggestion("end active borrows of " + var_name +
-                                                      " before dropping"));
+                    (void)note_linear_synth_violation(
+                        flat, v.id, "use-after-move", msg,
+                        "end active borrows of " + var_name + " before dropping", var_ty);
+                } else {
+                    ownership_env_.mark(var_name, OwnershipState::Moved);
                 }
-                ownership_env_.mark(var_name, OwnershipState::Moved);
             }
         }
         synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));

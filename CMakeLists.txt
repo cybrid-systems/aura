@@ -2740,6 +2740,11 @@ aura_add_issue_test(test_reverify_expand_2356)
 aura_issue_test_link_llvm_jit(test_reverify_expand_2356)
 add_dependencies(all_test_issue_targets test_reverify_expand_2356)
 
+# Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.
+aura_add_issue_test(test_linear_synth_violation_2357)
+aura_issue_test_link_llvm_jit(test_linear_synth_violation_2357)
+add_dependencies(all_test_issue_targets test_linear_synth_violation_2357)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)

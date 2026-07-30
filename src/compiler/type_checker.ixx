@@ -1544,6 +1544,25 @@ private:
     aura::core::TypeId synthesize_flat_drop(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                             aura::ast::NodeView v);
 
+    // Issue #2357 Phase 1: first-class linear Move/Drop/MutBorrow violation
+    // during synthesize (not only post-mutate audit). Reports TypeError under
+    // production_defaults || strict_, Warning otherwise; set_node_error;
+    // bumps linear_synth_violation_total; optional mark_touched_on_delta.
+    // Returns true when hard fail policy is active.
+    bool note_linear_synth_violation(aura::ast::FlatAST& flat, aura::ast::NodeId node_id,
+                                     std::string_view violation_kind, const std::string& msg,
+                                     const std::string& suggestion,
+                                     aura::core::TypeId binding_ty = {});
+
+    // Issue #2357: true if any hard linear-synth violation this engine life.
+    [[nodiscard]] bool linear_synth_hard_fail() const noexcept { return linear_synth_hard_fail_; }
+    [[nodiscard]] std::uint64_t linear_synth_violation_count() const noexcept {
+        return linear_synth_violation_count_;
+    }
+
+    bool linear_synth_hard_fail_ = false;
+    std::uint64_t linear_synth_violation_count_ = 0;
+
     void check_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                          aura::ast::NodeView v, aura::core::TypeId expected);
     void check_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
