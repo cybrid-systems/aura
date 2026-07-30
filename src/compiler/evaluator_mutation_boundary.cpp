@@ -1308,9 +1308,64 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // Issue #2215: RenderFastExit — success + outermost entered under
     // render hotpath. Skip Full TypedMutationAudit / full linear+dual-path;
     // always keep pin restamp + unlock. Failure never uses fast exit.
-    const bool render_fast = outermost && success && render_fast_exit_;
+    //
+    // Issue #2311: RenderFastExit must NOT skip linear / match-site
+    // hard-gate. If the outermost Guard encloses linear ops OR ADT match
+    // sites OR requires_invariant_hard_gate fires, force full audit
+    // path even under render hotpath. Closes the under-sample /
+    // soft-continue hole that #2145/#2222/#2223 closed for Agent
+    // mutate but #2215 reopened for render hotpath when the same Guard
+    // encloses linear ops or match sites.
+    const bool render_fast_candidate = outermost && success && render_fast_exit_;
+    bool linear_ops_present_local = false;
+    bool match_sites_present_local = false;
+    std::uint64_t nodes_changed_local = 0;
+    if (auto* ws = ev_->workspace_flat()) {
+        const auto cur_dirty_calls = ws->mark_dirty_upward_call_count();
+        nodes_changed_local = (cur_dirty_calls > dirty_upward_at_enter_)
+                                  ? (cur_dirty_calls - dirty_upward_at_enter_)
+                                  : 0;
+        const auto n = ws->size();
+        for (aura::ast::NodeId id = 0; id < n; ++id) {
+            if (!ws->is_live_node(id))
+                continue;
+            if (ws->has_match_info(id))
+                match_sites_present_local = true;
+            // Linear detection: mirror subtree_has_linear_ops (type_checker_impl.cpp:64)
+            // for any live node. Look for Linear/Move/Borrow/MutBorrow/Drop
+            // NodeTag — the same set the type-checker uses to detect linear
+            // ops in a subtree. This is broader than the audit path's
+            // audit_op string heuristic (which only checks for op-name
+            // substrings) but the wider net is the fail-closed default.
+            const auto v = ws->get(id);
+            if (v.tag == aura::ast::NodeTag::Linear || v.tag == aura::ast::NodeTag::Move ||
+                v.tag == aura::ast::NodeTag::Borrow || v.tag == aura::ast::NodeTag::MutBorrow ||
+                v.tag == aura::ast::NodeTag::Drop) {
+                linear_ops_present_local = true;
+            }
+            if (linear_ops_present_local && match_sites_present_local)
+                break;
+        }
+    }
+    const bool strict_sandbox_local = aura::core::sandbox::is_strict();
+    const bool hard_gate_local =
+        typed_audit::requires_invariant_hard_gate(nodes_changed_local, linear_ops_present_local,
+                                                  strict_sandbox_local, match_sites_present_local);
+    const bool linear_or_match_suppress =
+        linear_ops_present_local || match_sites_present_local || hard_gate_local;
+    const bool render_fast = render_fast_candidate && !linear_or_match_suppress;
+    if (render_fast_candidate && linear_or_match_suppress) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+            m->render_fast_exit_suppressed_linear_or_match_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (linear_ops_present_local)
+                m->render_fast_exit_suppressed_linear_total.fetch_add(1, std::memory_order_relaxed);
+            if (match_sites_present_local)
+                m->render_fast_exit_suppressed_match_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    ev_->render_fast_exit_this_boundary_ = render_fast;
     if (render_fast) {
-        ev_->render_fast_exit_this_boundary_ = true;
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
             m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);
     }
