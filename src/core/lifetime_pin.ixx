@@ -104,6 +104,13 @@ struct LifetimePinStats {
     std::uint64_t general_object_pin_total = 0;               // pin_or_fail / GeneralObjectPin::pin
     std::uint64_t general_object_pin_validate_fail_total = 0; // validate failed
     std::uint64_t general_object_pin_remap_ok_total = 0;      // validate ok after Moving densify
+    // Issue #2337: adoption wire-up counter for mutate/agent create paths.
+    // Bumped per call site that wraps a GeneralObjectPin around an
+    // intermediate create buffer per the #2337 adoption pattern. Distinct
+    // from general_object_pin_total (per-allocate) — this is per-site
+    // (per call site that adopts the pattern), so dashboard can spot
+    // which create paths have been adopted.
+    std::uint64_t general_object_pin_mutate_wire_total = 0; // #2337
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};

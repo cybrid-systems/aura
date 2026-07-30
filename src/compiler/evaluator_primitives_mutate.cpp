@@ -31,6 +31,7 @@ import aura.compiler.coercion_map;
 import aura.compiler.matcher;
 import aura.parser.parser;
 import aura.core.mutators; // Phase 4 follow-up #3: migrate mutate:* primitives to strategy dispatch
+import aura.core.lifetime_pin; // Issue #2337: GeneralObjectPin adoption in mutate create paths
 import aura.diag;
 import aura.compiler.hardware_backend;
 import aura.compiler.service; // Issue #1442: typed_mutate_atomic
@@ -3066,6 +3067,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto alloc = ev.temp_arena_->allocator();
         auto* pat_pool = ev.temp_arena_->create<aura::ast::StringPool>(alloc);
         auto* pat_flat = ev.temp_arena_->create<aura::ast::FlatAST>(alloc);
+        // Issue #2337: GeneralObjectPin adoption in mutate create path.
+        // Pin the pattern pool + flat as intermediate create buffers per
+        // the #2298/#2337 GeneralObjectPin protocol. Wire counter bumps
+        // per call site so dashboards can track adoption coverage across
+        // mutate/agent create paths. temp_arena_ scoped (destroyed at end
+        // of call) — pin is defensive measure + pattern demonstration for
+        // future cross-boundary sites that survive Moving densify.
+        aura::core::lifetime::GeneralObjectPin pat_pin;
+        pat_pin.pin(static_cast<void*>(pat_pool), /*gen=*/0, /*arena_id=*/0);
+        pat_pin.pin(static_cast<void*>(pat_flat), /*gen=*/0, /*arena_id=*/0);
+        aura::core::lifetime::g_lifetime_pin_stats.general_object_pin_mutate_wire_total += 1;
         auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
         if (!pat_pr.success || pat_pr.root == NULL_NODE) {
             ok = false;
