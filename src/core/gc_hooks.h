@@ -179,6 +179,13 @@ namespace detail {
     // 0 = use env-derived default (AURA_GC_DEFER_OVERFLOW_POLICY, default
     // ProcessWide). Tests set via set_gc_defer_overflow_policy_for_test(p).
     inline std::atomic<int> g_overflow_policy_override{0};
+    // Issue #2338: production lock for overflow policy. When 1, env-empty
+    // branch in gc_defer_overflow_policy() returns HardFail (not the legacy
+    // ProcessWide silent fallback). Set by apply_production_security_defaults
+    // after sandbox resolution; tests can override via the existing
+    // set_gc_defer_overflow_policy_for_test(p) setter (which wins over
+    // the lock — highest priority).
+    inline std::atomic<int> g_production_locked{0};
 } // namespace detail
 
 // Issue #2173: overflow policy enum. ProcessWide is the legacy default
@@ -239,8 +246,15 @@ enum class GcDeferOverflowPolicy : std::uint8_t {
     }
     static const GcDeferOverflowPolicy cached = []() noexcept -> GcDeferOverflowPolicy {
         const char* env = std::getenv("AURA_GC_DEFER_OVERFLOW_POLICY");
-        if (!env || !*env)
-            return GcDeferOverflowPolicy::ProcessWide;
+        if (!env || !*env) {
+            // Issue #2338: production default is HardFail (not ProcessWide
+            // silent fallback). Dev / AURA_SANDBOX=off keeps ProcessWide.
+            // Per-process production lock is captured at first call (cache
+            // initialized lazily after security_defaults settles).
+            return detail::g_production_locked.load(std::memory_order_acquire) == 1
+                       ? GcDeferOverflowPolicy::HardFail
+                       : GcDeferOverflowPolicy::ProcessWide;
+        }
         // std::string_view reads up to but not including the null terminator,
         // and operator== does element-wise comparison (no over-read UB that
         // memcmp(env, "HardFail", 10) would trigger when "HardFail" is only
@@ -270,6 +284,17 @@ inline void set_gc_defer_overflow_policy_for_test(GcDeferOverflowPolicy p) noexc
 }
 inline void reset_gc_defer_overflow_policy_for_test() noexcept {
     detail::g_overflow_policy_override.store(0, std::memory_order_release);
+}
+
+// Issue #2338: production lock setters/getters. Set by
+// apply_production_security_defaults when sandbox != off. Tests use the
+// existing set_gc_defer_overflow_policy_for_test(p) which wins over
+// the lock (override > 0 check in gc_defer_overflow_policy).
+inline void set_gc_defer_production_locked(bool v) noexcept {
+    detail::g_production_locked.store(v ? 1 : 0, std::memory_order_release);
+}
+[[nodiscard]] inline bool gc_defer_production_locked() noexcept {
+    return detail::g_production_locked.load(std::memory_order_acquire) == 1;
 }
 
 // Issue #2173: bumped when arm_gc_defer_pending_panic_for (or

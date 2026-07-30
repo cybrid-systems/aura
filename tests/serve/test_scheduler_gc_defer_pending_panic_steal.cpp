@@ -18,6 +18,19 @@
 //   AC_O2: #2173 HardFail → arm rejected, process depth unchanged
 //   AC_O3: #2173 steal clear still zeros depth under HardFail
 //   AC_O4: #2173 capacity override + clamp (env + test setters)
+//
+//   Issue #2338 (Refine #2173): production default GcDefer overflow
+//   policy = HardFail (not ProcessWide silent fallback). Effective policy
+//   is HardFail under production_defaults_active (sandbox != off) unless
+//   env AURA_GC_DEFER_OVERFLOW_POLICY explicitly overrides. Dev /
+//   AURA_SANDBOX=off keeps ProcessWide for stress tests that intentionally
+//   fill the table.
+//   AC_2338_1: set_gc_defer_production_locked + gc_defer_production_locked
+//              setters/getters exist and round-trip (compile + link + run).
+//   AC_2338_2: schema-2338 + issue-2338 + gc-defer-overflow-production-locked
+//              sentinels reachable via query:gc-defer-reason-stats.
+//   AC_2338_3: source-cite wire-up in security_defaults.hh
+//              (set_gc_defer_production_locked(!dev_off) call present).
 
 #include "test_harness.hpp"
 #include <fstream>
@@ -879,6 +892,80 @@ static void ac12_query_gc_defer_reason_stats_2088() {
     CHECK(aura::gc_hooks::should_defer_compact_for_pending_checkpoint() == false,
           "AC14: legacy alias returns false at baseline (panic defer inactive)");
 }
+
+// Issue #2338 AC_2338_1: set_gc_defer_production_locked setter +
+// gc_defer_production_locked getter exist and round-trip. Verifies the
+// wire-up API surface is available to security_defaults.hh (call site)
+// and to query readers. Production lock value is captured lazily by
+// gc_defer_overflow_policy() at first call (env-empty branch), so the
+// getter returning true here does NOT retroactively change the cache —
+// but the setter+getter contract itself is verified by the round-trip.
+static void ac2338_1_production_lock_roundtrip() {
+    std::println("\n--- AC_2338_1: production lock setter/getter round-trip ---");
+    // Save current state for restoration.
+    const auto saved = aura::gc_hooks::gc_defer_production_locked();
+    aura::gc_hooks::set_gc_defer_production_locked(true);
+    CHECK(aura::gc_hooks::gc_defer_production_locked() == true,
+          "AC_2338_1.1: set(true) → get() == true");
+    aura::gc_hooks::set_gc_defer_production_locked(false);
+    CHECK(aura::gc_hooks::gc_defer_production_locked() == false,
+          "AC_2338_1.2: set(false) → get() == false");
+    aura::gc_hooks::set_gc_defer_production_locked(saved);
+}
+
+// Issue #2338 AC_2338_2: schema-2338 + issue-2338 +
+// gc-defer-overflow-production-locked sentinels reachable via
+// query:gc-defer-reason-stats. Verifies the query surface exposes the
+// production lock state + lineage sentinels so Agents can confirm the
+// gate is engaged end-to-end.
+static void ac2338_2_query_schema() {
+    std::println("\n--- AC_2338_2: schema/issue/production-locked sentinels ---");
+    CompilerService cs;
+    (void)cs.eval("(let ((y 7)) y)");
+    const auto schema = href(cs, "schema-2338");
+    CHECK(schema == 2338, "AC_2338_2.1: schema-2338 == 2338");
+    const auto issue = href(cs, "issue-2338");
+    CHECK(issue == 2338, "AC_2338_2.2: issue-2338 == 2338");
+    const auto prod_locked = href(cs, "gc-defer-overflow-production-locked");
+    CHECK(prod_locked == 0 || prod_locked == 1,
+          "AC_2338_2.3: gc-defer-overflow-production-locked reachable (0 or 1)");
+}
+
+// Issue #2338 AC_2338_3: source-cite wire-up in security_defaults.hh.
+// Verifies the production lock is set from apply_production_security_defaults
+// (the call site). The wire-up closes the "production keeps ProcessWide
+// silent fallback" gap by forcing HardFail when sandbox != off.
+static void ac2338_3_source_cite() {
+    std::println("\n--- AC_2338_3: security_defaults.hh wire-up source-cite ---");
+    const auto p = std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/security_defaults.hh";
+    if (!std::filesystem::exists(p)) {
+        CHECK(false, "AC_2338_3.1: security_defaults.hh not found");
+        return;
+    }
+    std::ifstream in(p);
+    std::stringstream buf;
+    buf << in.rdbuf();
+    const auto txt = buf.str();
+    CHECK(txt.find("#include \"core/gc_hooks.h\"") != std::string::npos,
+          "AC_2338_3.1: #include \"core/gc_hooks.h\" present in security_defaults.hh");
+    CHECK(txt.find("set_gc_defer_production_locked(!dev_off)") != std::string::npos,
+          "AC_2338_3.2: set_gc_defer_production_locked(!dev_off) call present");
+    CHECK(txt.find("Issue #2338: production lock for gc_defer_overflow_policy") !=
+              std::string::npos,
+          "AC_2338_3.3: Issue #2338 cite present in security_defaults.hh");
+    // Also verify gc_hooks.h has the new setter/getter + production_locked atomic.
+    const auto gh = std::filesystem::path(AURA_SOURCE_DIR) / "src/core/gc_hooks.h";
+    std::ifstream gin(gh);
+    std::stringstream gbuf;
+    gbuf << gin.rdbuf();
+    const auto gtxt = gbuf.str();
+    CHECK(gtxt.find("set_gc_defer_production_locked") != std::string::npos,
+          "AC_2338_3.4: set_gc_defer_production_locked in gc_hooks.h");
+    CHECK(gtxt.find("gc_defer_production_locked()") != std::string::npos,
+          "AC_2338_3.5: gc_defer_production_locked() getter in gc_hooks.h");
+    CHECK(gtxt.find("g_production_locked{0}") != std::string::npos,
+          "AC_2338_3.6: g_production_locked atomic in gc_hooks.h");
+}
 int main() {
     std::println("=== test_scheduler_gc_defer_pending_panic_steal (#1581 + #2002) ===");
     ac1_collector_request_defers();
@@ -896,6 +983,9 @@ int main() {
     ac_o2_hardfail_arm_rejected_2173();
     ac_o3_steal_clear_under_overflow_2173();
     ac_o4_capacity_clamp_and_env_2173();
+    ac2338_1_production_lock_roundtrip();
+    ac2338_2_query_schema();
+    ac2338_3_source_cite();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

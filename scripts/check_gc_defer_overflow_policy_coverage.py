@@ -47,6 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CORE_DIR = REPO_ROOT / "src" / "core"
 COMPILER_DIR = REPO_ROOT / "src" / "compiler"
 TESTS_DIR = REPO_ROOT / "tests" / "serve"
+SECURITY_DEFAULTS = COMPILER_DIR / "security_defaults.hh"  # Issue #2338
 
 
 def _read(p: Path) -> str:
@@ -194,6 +195,68 @@ def check_contract() -> tuple[int, list[str]]:
         )
         if missing:
             failures.append(f"test_scheduler_gc_defer_pending_panic_steal.cpp missing #2173 AC entries: {missing}")
+
+    # 6. Issue #2338: production default GcDefer overflow policy = HardFail.
+    #    Wire-up across gc_hooks.h + security_defaults.hh +
+    #    evaluator_primitives_obs_jit.cpp + test extension.
+    if gc:
+        missing = _contains_all(
+            gc,
+            [
+                # Production lock atomic + setter/getter.
+                "g_production_locked{0}",
+                "set_gc_defer_production_locked",
+                "gc_defer_production_locked",
+                # Production lock wire-up in env-empty branch.
+                "detail::g_production_locked.load",
+                # Cite.
+                "Issue #2338",
+            ],
+        )
+        if missing:
+            failures.append(f"src/core/gc_hooks.h missing #2338 production lock pieces: {missing}")
+    security = _read(SECURITY_DEFAULTS)
+    if not security:
+        failures.append("src/compiler/security_defaults.hh missing")
+    else:
+        missing = _contains_all(
+            security,
+            [
+                # Include gc_hooks.h.
+                '#include "core/gc_hooks.h"',
+                # Wire-up call.
+                "set_gc_defer_production_locked(!dev_off)",
+                # Cite.
+                "Issue #2338: production lock for gc_defer_overflow_policy",
+            ],
+        )
+        if missing:
+            failures.append(f"src/compiler/security_defaults.hh missing #2338 wire-up: {missing}")
+    if prim:
+        missing = _contains_all(
+            prim,
+            [
+                # New query keys.
+                "gc-defer-overflow-production-locked",
+                "schema-2338",
+                "issue-2338",
+            ],
+        )
+        if missing:
+            failures.append(f"src/compiler/evaluator_primitives_obs_jit.cpp missing #2338 query keys: {missing}")
+    if test_src:
+        missing = _contains_all(
+            test_src,
+            [
+                "ac2338_1_production_lock_roundtrip",
+                "ac2338_2_query_schema",
+                "ac2338_3_source_cite",
+                # Cite.
+                "#2338",
+            ],
+        )
+        if missing:
+            failures.append(f"test_scheduler_gc_defer_pending_panic_steal.cpp missing #2338 AC entries: {missing}")
 
     return (1 if failures else 0, failures)
 

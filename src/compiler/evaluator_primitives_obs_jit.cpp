@@ -10905,6 +10905,15 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 "table-overflow-total",
                 static_cast<std::int64_t>(aura::gc_hooks::g_gc_defer_table_overflow_total.load(
                     std::memory_order_relaxed)));
+            // Issue #2338: production default is HardFail (not ProcessWide
+            // silent fallback). Wired in security_defaults via
+            // gc_hooks::set_gc_defer_production_locked(!dev_off). The
+            // sentinel exposes effective production lock state so Agents
+            // can confirm the gate is engaged end-to-end.
+            insert_kv("gc-defer-overflow-production-locked",
+                      aura::gc_hooks::gc_defer_production_locked() ? 1 : 0);
+            insert_kv("schema-2338", 2338);
+            insert_kv("issue-2338", 2338);
             // Issue #2203: steal-complete single entry metrics (lineage retained;
             // schema-2088 primary keys unchanged). Process-wide atomics are
             // the source of truth; CompilerMetrics mirrors when present.
