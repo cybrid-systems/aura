@@ -796,6 +796,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> castop_density_over_budget_total{0};
     std::atomic<std::uint64_t> last_castop_density_bp{0};
     std::atomic<std::uint64_t> castop_density_budget_bp{1500};
+    // Issue #2319: opt-in hard CastOp density gate (refine #2287 soft hint).
+    //   - castop_density_hard_reject_total: cumulative count of hard/soft
+    //     gate firings when AURA_CASTOP_DENSITY_HARD=1 + density > budget
+    //     + dirty scope has unannotated Dynamic binding.
+    //   - castop_density_hard_wired: sentinel = 1 when the hard gate is
+    //     integrated (production default OFF; env-gated Soft default).
+    std::atomic<std::uint64_t> castop_density_hard_reject_total{0}; // #2319
+    std::atomic<std::uint64_t> castop_density_hard_wired{0};        // #2319
     // Issue #691: CoercionMap + NarrowingRecord provenance linkage.
     //   - coercion_post_narrow_elim_opportunities_total: deferred
     //     coercions recorded with narrowing evidence/provenance
