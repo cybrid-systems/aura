@@ -775,6 +775,45 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                         m->type_repair_last_blame_complete.store(blame_complete ? 1u : 0u,
                                                                  std::memory_order_relaxed);
                         m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #2343: re-mirror unresolved graph onto the durable
+                        // repair surface at publish time (production escalate /
+                        // soft TIMEOUT both land here when !cr.solve_ok).
+                        {
+                            using aura::compiler::kUnresolvedGraphEdgeQueryCap;
+                            using aura::compiler::kUnresolvedGraphSuggestedRootsCap;
+                            const std::size_t ec = sdo.unresolved_graph_edges.size();
+                            const std::size_t rc = sdo.suggested_roots.size();
+                            m->type_repair_unresolved_edge_count.store(ec,
+                                                                       std::memory_order_relaxed);
+                            m->type_repair_suggested_root_count.store(rc,
+                                                                      std::memory_order_relaxed);
+                            for (std::size_t i = 0; i < kUnresolvedGraphSuggestedRootsCap; ++i) {
+                                m->type_repair_suggested_roots[i].store(
+                                    i < rc ? sdo.suggested_roots[i] : 0u,
+                                    std::memory_order_relaxed);
+                            }
+                            for (std::size_t i = 0; i < kUnresolvedGraphEdgeQueryCap; ++i) {
+                                if (i < ec) {
+                                    const auto& e = sdo.unresolved_graph_edges[i];
+                                    m->type_repair_edge_var[i].store(e.var_rep,
+                                                                     std::memory_order_relaxed);
+                                    m->type_repair_edge_cix[i].store(e.constraint_index,
+                                                                     std::memory_order_relaxed);
+                                    m->type_repair_edge_kind[i].store(e.kind,
+                                                                      std::memory_order_relaxed);
+                                    m->type_repair_edge_lhs[i].store(e.lhs.index,
+                                                                     std::memory_order_relaxed);
+                                    m->type_repair_edge_rhs[i].store(e.rhs.index,
+                                                                     std::memory_order_relaxed);
+                                } else {
+                                    m->type_repair_edge_var[i].store(0, std::memory_order_relaxed);
+                                    m->type_repair_edge_cix[i].store(0, std::memory_order_relaxed);
+                                    m->type_repair_edge_kind[i].store(0, std::memory_order_relaxed);
+                                    m->type_repair_edge_lhs[i].store(0, std::memory_order_relaxed);
+                                    m->type_repair_edge_rhs[i].store(0, std::memory_order_relaxed);
+                                }
+                            }
+                        }
                     }
                 }
                 // Issue #2221: blame-complete surface after solve_delta_occurrence.

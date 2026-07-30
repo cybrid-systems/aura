@@ -8365,6 +8365,27 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_repair_last_blame_complete{0};
     std::atomic<std::uint64_t> type_repair_publish_total{0};
     std::atomic<std::uint64_t> type_repair_wired{1};
+    // Issue #2343: var↔constraint unresolved graph (TIMEOUT / CONFLICT).
+    // Additive on query:type-timeout-repair-stats (schema-2284 retained;
+    // schema-2343 / issue-2343 / type-repair-graph-wired mark the graph).
+    //   - type_repair_unresolved_edge_count: size of exported edge vector (≤64)
+    //   - type_repair_suggested_root_count: top-k roots by degree (≤8)
+    //   - type_repair_suggested_roots[N]: TypeId rep index (N=0..7)
+    //   - type_repair_edge_{var,cix,kind,lhs,rhs}[N]: query sample (N=0..15)
+    //     Layout: var=UF rep, cix=constraint index, kind=Constraint::Kind,
+    //     lhs/rhs=TypeId.index of the constraint endpoints.
+    //   - type_repair_graph_export_total: TIMEOUT/CONFLICT exports with ≥1 edge
+    //   - type_repair_graph_wired: sentinel (=1)
+    std::atomic<std::uint64_t> type_repair_unresolved_edge_count{0};
+    std::atomic<std::uint64_t> type_repair_suggested_root_count{0};
+    std::array<std::atomic<std::uint64_t>, 8> type_repair_suggested_roots{};
+    std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_var{};
+    std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_cix{};
+    std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_kind{};
+    std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_lhs{};
+    std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_rhs{};
+    std::atomic<std::uint64_t> type_repair_graph_export_total{0};
+    std::atomic<std::uint64_t> type_repair_graph_wired{1};
 
     std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
     std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};

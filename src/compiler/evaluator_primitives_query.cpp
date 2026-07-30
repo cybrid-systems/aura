@@ -6901,6 +6901,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - type-timeout-repair-publish-total: counter of publish calls
     //   - type-timeout-repair-wired: sentinel (=1)
     //   - schema == 2284 (lineage 2284)
+    // Issue #2343 (schema-additive): var↔constraint unresolved graph
+    //   - type-repair-unresolved-edge-count: exported edges (≤64)
+    //   - type-repair-suggested-root-count: top-k roots by degree (≤8)
+    //   - type-repair-suggested-root-N: UF rep (N=0..7)
+    //   - type-repair-edge-N-{var,cix,kind,lhs,rhs}: query sample N=0..15
+    //     Layout: var=UF rep, cix=constraint index, kind=Constraint::Kind,
+    //     lhs/rhs=TypeId.index of the constraint endpoints.
+    //   - type-repair-graph-export-total / type-repair-graph-wired
+    //   - schema-2343 / issue-2343 (=2343)
     ObservabilityPrims::register_stats_impl(
         "query:type-timeout-repair-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -6909,7 +6918,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(32);
+            // Capacity must cover #2284 fixed keys + 16 aff-node slots +
+            // #2343 graph keys (edge sample 16×5 + 8 roots + meta).
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6965,7 +6976,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("type-timeout-repair-publish-total",
                       static_cast<std::int64_t>(publish_total));
             insert_kv("type-timeout-repair-wired", 1);
-            char field_buf[64];
+            char field_buf[72];
             for (std::size_t i = 0; i < 16; ++i) {
                 const std::uint64_t node_id =
                     m ? m->type_repair_last_unresolved_aff_nodes[i].load(std::memory_order_relaxed)
@@ -6976,6 +6987,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             insert_kv("schema", 2284);
             insert_kv("issue", 2284);
+            // Issue #2343: additive graph surface (schema-2284 keys intact).
+            const std::uint64_t edge_count =
+                m ? m->type_repair_unresolved_edge_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t root_count =
+                m ? m->type_repair_suggested_root_count.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t graph_export_total =
+                m ? m->type_repair_graph_export_total.load(std::memory_order_relaxed) : 0;
+            insert_kv("type-repair-unresolved-edge-count", static_cast<std::int64_t>(edge_count));
+            insert_kv("type-repair-suggested-root-count", static_cast<std::int64_t>(root_count));
+            insert_kv("type-repair-graph-export-total",
+                      static_cast<std::int64_t>(graph_export_total));
+            insert_kv("type-repair-graph-wired", 1);
+            for (std::size_t i = 0; i < 8; ++i) {
+                const std::uint64_t root =
+                    m ? m->type_repair_suggested_roots[i].load(std::memory_order_relaxed) : 0;
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-suggested-root-%zu", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(root));
+            }
+            for (std::size_t i = 0; i < 16; ++i) {
+                const std::uint64_t var =
+                    m ? m->type_repair_edge_var[i].load(std::memory_order_relaxed) : 0;
+                const std::uint64_t cix =
+                    m ? m->type_repair_edge_cix[i].load(std::memory_order_relaxed) : 0;
+                const std::uint64_t kind =
+                    m ? m->type_repair_edge_kind[i].load(std::memory_order_relaxed) : 0;
+                const std::uint64_t lhs =
+                    m ? m->type_repair_edge_lhs[i].load(std::memory_order_relaxed) : 0;
+                const std::uint64_t rhs =
+                    m ? m->type_repair_edge_rhs[i].load(std::memory_order_relaxed) : 0;
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-edge-%zu-var", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(var));
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-edge-%zu-cix", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(cix));
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-edge-%zu-kind", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(kind));
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-edge-%zu-lhs", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(lhs));
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-edge-%zu-rhs", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(rhs));
+            }
+            insert_kv("schema-2343", 2343);
+            insert_kv("issue-2343", 2343);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

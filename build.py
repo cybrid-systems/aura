@@ -2073,6 +2073,25 @@ def cmd_lifetime_contract_snapshot_coverage():
     return 0
 
 
+def cmd_type_timeout_repair_graph_coverage():
+    """Issue #2343: TIMEOUT/CONFLICT var↔constraint graph for Agent repair.
+
+    Validates UnresolvedGraphEdge export, suggested_roots ranking, SOLVED
+    zero-cost path, additive schema-2343 query keys, #2284 lineage retained.
+    """
+    print(f"{B}=== type-timeout-repair graph coverage (#2343) ==={N}")
+    script = ROOT / "scripts" / "check_type_timeout_repair_graph_2343.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type-timeout-repair graph coverage contract rows failed")
+        return 1
+    ok("type-timeout-repair graph coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2432,6 +2451,7 @@ def cmd_gate():
         or cmd_general_object_pin_coverage()
         or cmd_aot_per_eval_slot_invalidate_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
+        or cmd_type_timeout_repair_graph_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
