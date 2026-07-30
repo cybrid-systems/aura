@@ -21,6 +21,7 @@ module;
 #include "basis_points.h"                   // Issue #2030 ratio bp helpers
 #include "core/provenance_tracker.hh"       // Issue #2030 linear-provenance consistency bp
 #include "mutate_type_gate.hh"              // Issue #2219 Soft/Hard post-mutate type gate
+#include "compiler/type_system_health.hh"   // Issue #2350: query:type-system-health score
 
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,7 @@ import aura.compiler.service;
 import aura.compiler.type_checker; // Issue #2262: partial_cs_import_* module atomics
 import aura.compiler.value;
 import aura.compiler.ir_cache_pure; // Issue #2257: current_shape_stability_ratio
+import aura.core.lifetime_pin;      // Issue #2350: linear pin miss rate for type-system-health
 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
@@ -7342,6 +7344,139 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("castop_density_hard_wired", hard_wired);
             insert_kv("schema-2319", 2319);
             insert_kv("issue-2319", 2319);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2350: query:type-system-health — single Agent score (basis points)
+    // aggregating provenance completeness, timeout reject rate, linear pin miss
+    // rate, and layered DCE efficiency. Pure/read-only (AC3); does not rename
+    // existing keys. force-reason priority when health < budget:
+    // timeout-reject > pin-miss > provenance-miss > castop-density > ok.
+    //
+    // Score (see type_system_health.hh AC1 comment):
+    //   health_bp = (prov + (10000-timeout_rate) + (10000-pin_rate) + dce_eff) / 4
+    ObservabilityPrims::register_stats_impl(
+        "query:type-system-health", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* __qev_ = Evaluator::get_query_evaluator();
+            const auto* m =
+                __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
+
+            TypeSystemHealthSnapshot snap;
+            // AC1 components — vacuous healthy when no samples.
+            snap.provenance_completeness_bp = coercion_provenance_completeness_bp();
+
+            const std::uint64_t to_reject =
+                m ? m->delta_timeout_reject_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t to_full =
+                m ? m->delta_timeout_full_solve_total.load(std::memory_order_relaxed) : 0;
+            snap.timeout_reject_total = to_reject;
+            snap.timeout_full_solve_total = to_full;
+            snap.timeout_reject_rate_bp = rate_bp(to_reject, to_full);
+
+            const auto pin_stats = aura::core::lifetime::linear_root_snapshot();
+            snap.pin_total = pin_stats.pin_total;
+            snap.pin_miss_total = pin_stats.pin_miss_total;
+            snap.linear_pin_miss_rate_bp = rate_bp(pin_stats.pin_miss_total, pin_stats.pin_total);
+
+            const std::uint64_t ast_elided =
+                g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed);
+            const std::uint64_t ir_elided =
+                opt_registry::dead_coercion_ir_elided_total.load(std::memory_order_relaxed);
+            const std::uint64_t dirty_cone =
+                opt_registry::dead_coercion_dirty_cone_skips.load(std::memory_order_relaxed);
+            const std::uint64_t pipeline_runs =
+                opt_registry::dead_coercion_pipeline_runs_total.load(std::memory_order_relaxed);
+            snap.layered_elided_total = ast_elided + ir_elided + dirty_cone;
+            snap.dce_pipeline_runs = pipeline_runs;
+            snap.layered_dce_efficiency_bp =
+                layered_dce_efficiency_bp(snap.layered_elided_total, pipeline_runs);
+
+            if (m) {
+                snap.castop_density_bp = m->last_castop_density_bp.load(std::memory_order_relaxed);
+                snap.castop_density_budget_bp =
+                    m->castop_density_budget_bp.load(std::memory_order_relaxed);
+                snap.castop_over_budget_total =
+                    m->castop_density_over_budget_total.load(std::memory_order_relaxed);
+            }
+
+            const auto scored = compute_type_system_health(snap);
+
+            // Capacity 32: health keys + component mirrors + schema sentinels.
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        auto vidx = string_heap.size();
+                        string_heap.push_back(std::string(v_str));
+                        vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            insert_kv("health-bp", static_cast<std::int64_t>(scored.health_bp));
+            insert_kv("health-budget-bp", static_cast<std::int64_t>(scored.health_budget_bp));
+            insert_kv_str("force-reason", scored.force_reason);
+            // Component mirrors (optional AC4).
+            insert_kv("component-provenance-completeness-bp",
+                      static_cast<std::int64_t>(snap.provenance_completeness_bp));
+            insert_kv("component-timeout-reject-rate-bp",
+                      static_cast<std::int64_t>(snap.timeout_reject_rate_bp));
+            insert_kv("component-linear-pin-miss-rate-bp",
+                      static_cast<std::int64_t>(snap.linear_pin_miss_rate_bp));
+            insert_kv("component-layered-dce-efficiency-bp",
+                      static_cast<std::int64_t>(snap.layered_dce_efficiency_bp));
+            insert_kv("component-castop-density-bp",
+                      static_cast<std::int64_t>(snap.castop_density_bp));
+            insert_kv("type-system-health-wired", 1);
+            insert_kv("schema-2350", 2350);
+            insert_kv("issue-2350", 2350);
+            // Lineage sentinels (related schemas still independently queryable).
+            insert_kv("schema-2282", 2282);
+            insert_kv("schema-2284", 2284);
+            insert_kv("schema-2287", 2287);
+
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
