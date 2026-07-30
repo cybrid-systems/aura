@@ -72,6 +72,15 @@ struct MultiFiberMailboxStats {
     // Issue #2188: blocking recv refused while MutationBoundary is live
     // (depth>0 or held) — Policy A non-blocking empty return.
     std::atomic<std::uint64_t> recv_rejected_in_mutation_boundary{0};
+    // Issue #2312: delivery gate — bump when push / broadcast_fanout
+    // observes the target fiber(s) holding a live MutationBoundary
+    // (depth>0 or held) and defers (Backpressure) rather than risking
+    // AST writes interleaving with foreign delivery under the same
+    // workspace_mtx_ exclusive + GcDeferReason::MutationHold arm.
+    // Reuse the #2184 MutationSafetySnapshot + is_at_mutation_boundary_safe
+    // truth table. Distinct from recv_rejected_in_mutation_boundary which
+    // is the recv-side gate (#2188) — this is the push-side gate.
+    std::atomic<std::uint64_t> mailbox_deferred_mutation_hold_total{0}; // #2312
 };
 
 // Process-wide aggregate (tests / observability).
@@ -167,6 +176,31 @@ public:
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
+        // Issue #2312: delivery gate — when msg.to_fiber resolves to an
+        // attached fiber, gate on its MutationSafetySnapshot. If the
+        // target is NOT at a mutation-boundary-safe point, defer (BP)
+        // rather than delivering mutate-triggering work to a fiber
+        // holding Guard (lock-order inversion vs workspace_mtx_,
+        // silent partial updates under multi-agent fanout). Reuses
+        // #2184 snapshot + is_at_mutation_boundary_safe truth table.
+        // Per AC3: zero cost when target is safe (one snapshot load).
+        // Per AC2: deferred = not dropped; the sender retries / queues
+        // and the target becomes deliverable after outermost Guard exit.
+        if (msg.to_fiber != 0) {
+            for (auto* a : attachers_) {
+                if (a && a->id() == msg.to_fiber) {
+                    const auto snap = a->mutation_safety_snapshot();
+                    if (!a->is_at_mutation_boundary_safe(snap)) {
+                        g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        return PushStatus::Backpressure;
+                    }
+                    break;
+                }
+            }
+        }
         if (queue_.size() >= high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/false);
             return PushStatus::Backpressure;
@@ -205,6 +239,24 @@ public:
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
+        // Issue #2312: per-attached-fiber delivery gate. If ANY attached
+        // fiber is unsafe (MutationBoundary held / depth>0), defer the
+        // entire fan-out — don't partially deliver mutate-triggering
+        // work to a subset while another target holds Guard. Mirrors
+        // the per-to_fiber gate in push(). Reuses #2184 snapshot.
+        for (auto* a : attachers_) {
+            if (!a)
+                continue;
+            const auto snap = a->mutation_safety_snapshot();
+            if (!a->is_at_mutation_boundary_safe(snap)) {
+                g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                note_backpressure(&local_stats_, /*from_fanout=*/true);
+                return PushStatus::Backpressure;
+            }
+        }
         const auto need = attachers_.empty() ? std::size_t{1} : attachers_.size();
         if (queue_.size() + need > high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/true);
@@ -340,7 +392,8 @@ public:
                                      std::uint64_t& recv_waits, std::uint64_t& recv_timeouts,
                                      std::uint64_t& linear_checks, std::uint64_t& linear_violations,
                                      std::uint64_t* fanout_bp = nullptr,
-                                     std::uint64_t* recv_rejected_boundary = nullptr) noexcept {
+                                     std::uint64_t* recv_rejected_boundary = nullptr,
+                                     std::uint64_t* deferred_mutation_hold = nullptr) noexcept {
         snapshot_global(pushes, pops, broadcasts, bp, attaches);
         priority_high = g_mf_mailbox_stats.priority_high.load(std::memory_order_relaxed);
         recv_waits = g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
@@ -352,6 +405,11 @@ public:
                 g_mf_mailbox_stats.fanout_backpressure_rejects.load(std::memory_order_relaxed);
         if (recv_rejected_boundary)
             *recv_rejected_boundary = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
+                std::memory_order_relaxed);
+        // Issue #2312: delivery-gate counter (push-side, distinct from
+        // recv_rejected_boundary which is recv-side #2188).
+        if (deferred_mutation_hold)
+            *deferred_mutation_hold = g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(
                 std::memory_order_relaxed);
     }
 
