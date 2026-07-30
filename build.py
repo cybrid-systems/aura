@@ -2340,6 +2340,25 @@ def cmd_linear_synth_violation_coverage():
     return 0
 
 
+def cmd_castop_density_hard_coverage():
+    """Issue #2358: CastOp density HARD force-JIT policy.
+
+    AURA_CASTOP_DENSITY_HARD=1 + dens>budget → force-JIT (codegen degrade);
+    mutate still succeeds; HARD=0 soft-only; under budget zero extra action.
+    """
+    print(f"{B}=== castop density HARD policy coverage (#2358) ==={N}")
+    script = ROOT / "scripts" / "check_castop_density_hard_2358.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("castop density HARD (#2358) coverage contract rows failed")
+        return 1
+    ok("castop density HARD (#2358) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2734,6 +2753,7 @@ def cmd_gate():
         or cmd_type_dep_epoch_prune_coverage()
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
+        or cmd_castop_density_hard_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

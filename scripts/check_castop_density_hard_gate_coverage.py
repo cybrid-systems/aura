@@ -60,36 +60,41 @@ def main() -> int:
             "castop_density_hard_wired{0};",
             "observability_metrics.h: castop_density_hard_wired sentinel",
         ),
-        # service_dirty.cpp: env accessor + hard gate branch
+        # service_dirty.cpp + castop_density_policy.hh (#2358 extracted helper)
         (
-            ROOT / "src/compiler/service_dirty.cpp",
+            ROOT / "src/compiler/castop_density_policy.hh",
             "AURA_CASTOP_DENSITY_HARD",
-            "service_dirty.cpp: AURA_CASTOP_DENSITY_HARD env var present",
+            "castop_density_policy.hh: AURA_CASTOP_DENSITY_HARD env var present",
         ),
         (
-            ROOT / "src/compiler/service_dirty.cpp",
-            "hard_env = false",
-            "service_dirty.cpp: hard_env defaults to false (Soft default)",
+            ROOT / "src/compiler/castop_density_policy.hh",
+            "hard_env_enabled",
+            "castop_density_policy.hh: hard_env_enabled defaults Soft (env unset)",
         ),
         (
-            ROOT / "src/compiler/service_dirty.cpp",
+            ROOT / "src/compiler/castop_density_policy.hh",
             "castop_density_hard_reject_total.fetch_add",
-            "service_dirty.cpp: hard_reject_total bumped on over-budget",
+            "castop_density_policy.hh: hard_reject_total bumped on over-budget",
         ),
         (
-            ROOT / "src/compiler/service_dirty.cpp",
+            ROOT / "src/compiler/castop_density_policy.hh",
             "castop_density_hard_wired.store",
-            "service_dirty.cpp: hard_wired sentinel set on over-budget",
+            "castop_density_policy.hh: hard_wired sentinel set on over-budget",
         ),
         (
-            ROOT / "src/compiler/service_dirty.cpp",
-            "unannotated_dynamic",
-            "service_dirty.cpp: unannotated_dynamic detection present",
+            ROOT / "src/compiler/castop_density_policy.hh",
+            "dead_elim + 16",
+            "castop_density_policy.hh: unannotated Dynamic residual heuristic",
         ),
         (
             ROOT / "src/compiler/service_dirty.cpp",
             "mutate_type_gate::is_hard()",
             "service_dirty.cpp: MutateTypeGate Hard check present (#2219)",
+        ),
+        (
+            ROOT / "src/compiler/service_dirty.cpp",
+            "apply_hard_policy",
+            "service_dirty.cpp: apply_hard_policy wired after dens calc",
         ),
         (ROOT / "src/compiler/service_dirty.cpp", "Issue #2319", "service_dirty.cpp: cites Issue #2319"),
         # mutate_type_gate.hh: MutateTypeGate enum
