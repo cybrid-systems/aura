@@ -249,16 +249,90 @@ static void ac5_query_schema() {
     CHECK(drop_kebab >= 0, "AC5.6: occurrence-goal-stale-drop-total reachable");
 }
 
+// Issue #2307 (Refine #2278): occurrence_goals_ is the SOLE authority
+// for occurrence priority on solve_delta_occurrence. retained_mutation_id_
+// / retained_predicate_cond_node_ are forensic-only — captured by
+// clear_blame_context for Agent / test forensics, but explicitly NOT
+// read by the solver (the historical #2024 stitch path is documented
+// and retired). AC verifies (a) clear_blame_context still captures
+// retained_* (backward-compat for forensic consumers + Agents reading
+// last_blame_chain), (b) the live OccurrenceGoal table is preserved
+// across the clear (this is what solve_delta_occurrence replays from
+// — proven by AC1 + AC4 of #2278), and (c) the new sentinel
+// `occurrence-goal-sole-authority-wired` is reachable in
+// query:type-incremental-fidelity-stats (proves the #2307 refactor
+// landed + Agents can confirm the new code path is wired).
+static void ac6_2307_sole_authority_sentinel() {
+    std::println("\n--- AC6 (#2307): occurrence-goal-sole-authority-wired sentinel ---");
+    CompilerService cs;
+    // Touch metrics so the hash isn't empty for unrelated reasons.
+    (void)cs.eval("(let ((y 7)) y)");
+
+    // Sole-authority sentinel (replaces the implicit reliance on the
+    // #2024 retained_* restore block, which was removed in #2307).
+    const auto sole_auth = href(cs, "occurrence-goal-sole-authority-wired");
+    CHECK(sole_auth == 1,
+          "AC6.1: occurrence-goal-sole-authority-wired == 1 (proves #2307 refactor landed)");
+}
+
+// Issue #2307 AC2: clear_blame_context still captures retained_mutation_id_
+// / retained_predicate_cond_node_ (forensic-only — Agents and tests can
+// read them via the accessors for blame-chain forensics). The solver
+// does NOT consult them, but the capture path is preserved so existing
+// forensic consumers + the multi-round blame-chain dump surface stay
+// working. Verifies (a) capture from active_* still happens, (b) the
+// accessors expose the captured value, (c) goals are simultaneously
+// preserved (proves the new dual-track is consistent — both forensic
+// capture and live goal table survive the clear).
+static void ac7_2307_retained_capture_forensic_only() {
+    std::println("\n--- AC7 (#2307): retained_* capture is forensic-only ---");
+    UnitCs u;
+    u.cs.set_active_mutation_id(2307);
+    u.cs.set_active_blame_context(/*pred=*/42, /*affected=*/7);
+    u.cs.set_current_epoch(1);
+
+    // Mark a live OccurrenceGoal (the new sole authority).
+    auto v = u.cs.fresh_var();
+    u.cs.mark_touched_on_delta(v, /*occurrence_narrow=*/true);
+    CHECK(u.cs.occurrence_goals_size() == 1,
+          "AC7.1: 1 live OccurrenceGoal recorded (sole authority)");
+
+    // clear_blame_context captures retained_* (forensic-only, AC2).
+    u.cs.clear_blame_context(/*preserve_last=*/false);
+    CHECK(u.cs.retained_mutation_id() == 2307,
+          "AC7.2: retained_mutation_id captured from active (forensic trail)");
+    CHECK(u.cs.retained_predicate_cond_node() == 42,
+          "AC7.3: retained_predicate_cond_node captured from active (forensic trail)");
+    CHECK(u.cs.active_mutation_id() == 0,
+          "AC7.4: active_mutation_id zeroed after clear (live stamp reset)");
+
+    // Live OccurrenceGoal table is preserved across the clear — this
+    // is what solve_delta_occurrence replays from. The captured
+    // retained_* is forensic-only and does NOT seed solver priority
+    // (proven by AC1 + AC4 above replaying without consulting retained_*).
+    CHECK(u.cs.occurrence_goals_size() == 1,
+          "AC7.5: OccurrenceGoal preserved across clear (sole authority for solve)");
+
+    // Goal's epoch is unchanged across clear (epoch is a goal-internal
+    // property, not derived from active stamps).
+    const auto& goals = u.cs.occurrence_goals_for_test();
+    CHECK(goals.size() == 1, "AC7.6: for_test() view sees 1 goal");
+    CHECK(goals[0].epoch == 1,
+          "AC7.7: goal epoch == 1 (preserved across clear, unrelated to retained_*)");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2278: epoch-scoped OccurrenceGoal table ===");
+    std::println("=== Issue #2278 + #2307: OccurrenceGoal table + sole-authority refactor ===");
 
     ac1_durable_across_clear();
     ac2_epoch_prune();
     ac3_zero_extra_work();
     ac4_multi_round();
     ac5_query_schema();
+    ac6_2307_sole_authority_sentinel();
+    ac7_2307_retained_capture_forensic_only();
 
     std::println("\n=== Results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

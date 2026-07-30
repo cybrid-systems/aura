@@ -426,16 +426,22 @@ public:
         if (node != 0)
             blame_affected_nodes_.push_back(node);
     }
-    // Issue #1924 / #2024: clear active stamps but retain cross-delta
-    // continuity. preserve_last=true keeps last_blame_chain_ dumpable.
-    // Issue #2024: even when preserve_last=false, a *complete* chain is
-    // retained (forensic self-evo rollback under dirty cascade) and the
-    // last mutation/predicate are stashed for stitching the next hit.
+    // Issue #1924 / #2024 / #2307: clear active stamps.
+    // preserve_last=true keeps last_blame_chain_ dumpable. Issue #2024:
+    // even when preserve_last=false, a *complete* chain is retained
+    // (forensic self-evo rollback under dirty cascade). Issue #2307:
+    // retained_mutation_id_ / retained_predicate_cond_node_ are
+    // FORENSIC-ONLY — Agents can read them via the accessors below for
+    // blame-chain forensics, but solve_delta_occurrence explicitly does
+    // NOT read them (occurrence_goals_ is the sole authority for
+    // cross-delta occurrence priority replay per #2307 AC1). The
+    // historical #2024 stitch path is documented but no longer consulted
+    // by the solver; multi-delta continuity is preserved by replaying the
+    // live OccurrenceGoal table (epoch == 0 untagged OR epoch ==
+    // current_epoch) in solve_delta_occurrence.
     void clear_blame_context(bool preserve_last = false) noexcept {
-        // Snapshot continuity anchors before zeroing actives.
-        // Issue #2028: also clear active_mutation_id so the next
-        // solve_delta_occurrence can restore from retained_* (cross-delta
-        // dirty-cascade continuity). Prior behavior left mutation id live.
+        // Snapshot continuity anchors before zeroing actives (forensic
+        // trail only; not consulted by solve_delta_occurrence after #2307).
         if (active_mutation_id_ != 0)
             retained_mutation_id_ = active_mutation_id_;
         if (active_predicate_cond_node_ != 0)
@@ -488,7 +494,12 @@ public:
         f.kind = 0;
         last_blame_chain_.frames.push_back(f);
     }
-    // Issue #2024: cross-delta continuity anchors after clear_blame_context.
+    // Issue #2024 / #2307: FORENSIC-ONLY cross-delta continuity anchors
+    // captured by clear_blame_context. Agents / tests may read these for
+    // blame-chain forensics, but solve_delta_occurrence does NOT consult
+    // them — occurrence_goals_ is the sole authority for occurrence
+    // priority replay on the solver path. See clear_blame_context above
+    // for the full #2307 rationale.
     [[nodiscard]] std::uint64_t retained_mutation_id() const noexcept {
         return retained_mutation_id_;
     }

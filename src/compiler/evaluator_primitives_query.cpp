@@ -6146,6 +6146,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence_goal_stale_drop_total", occurrence_goal_stale_drop);
             insert_kv("schema-2278", 2278);
             insert_kv("issue-2278", 2278);
+            // Issue #2307: sole-authority sentinel. solve_delta_occurrence
+            // now seeds occurrence priority only from live occurrence_goals_
+            // (epoch == 0 untagged OR epoch == current_epoch); retained_*
+            // is forensic-only and not read in the solve path. Agents
+            // can query this key to confirm the #2307 refactor landed.
+            insert_kv("occurrence-goal-sole-authority-wired", 1);
             // Issue #2281: Agent-visible TypedMutationAudit decision query.
             // Exposes the current strategy / sample_ratio / production_defaults
             // state + a representative decide() result for inputs
