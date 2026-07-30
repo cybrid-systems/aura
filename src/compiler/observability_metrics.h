@@ -4595,6 +4595,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_unresolved_last_count{0};
     std::atomic<std::uint64_t> solve_delta_unscanned_last{0};
     std::atomic<std::uint64_t> solve_delta_truncated_reverify_last{0};
+    // Issue #2318: anti-starvation streak gate. N consecutive truncated
+    // delta solves → force one full ConstraintSystem::solve() (anti
+    // starvation under partial CS + multi-round Agent mutate).
+    //   - delta_reverify_truncate_streak: current consecutive-truncate
+    //     streak (reset on !truncated_reverify). Atomic for cross-thread
+    //     observability. Monotonic when same thread increments.
+    //   - delta_truncate_force_full_solve_total: cumulative count of
+    //     full-solve invocations triggered by streak threshold.
+    //   - delta_truncate_streak_threshold: current threshold from
+    //     AURA_DELTA_TRUNCATE_STREAK_FULL env (default 2). Atomic for
+    //     observability.
+    //   - delta_truncate_anti_starve_wired: sentinel = 1 (set after
+    //     first threshold check; production binary unaffected when 0).
+    std::atomic<std::uint64_t> delta_reverify_truncate_streak{0};        // #2318
+    std::atomic<std::uint64_t> delta_truncate_force_full_solve_total{0}; // #2318
+    std::atomic<std::uint64_t> delta_truncate_streak_threshold{0};       // #2318
+    std::atomic<std::uint64_t> delta_truncate_anti_starve_wired{0};      // #2318
     // Issue #2146: adaptive reverify limit + truncation drain to pending full-solve.
     //   - solve_delta_reverify_truncated_total: lifetime reverify caps hit
     //   - solve_delta_reverify_limit_used: last effective_reverify_limit()

@@ -32,7 +32,25 @@ namespace aura::compiler {
 // and Clang attaches @aura.compiler.type_checker linkage. Consumers
 // import this module (or use TypeChecker::partial_cs_import_*()).
 export inline std::atomic<std::uint64_t> g_partial_cs_import_total{0};
-export inline std::atomic<std::uint64_t> g_partial_cs_import_skip_total{0};
+export inline std::atomic<std::uint64_t> g_partial_cs_import_skip_skip_total{0};
+
+// Issue #2318: anti-starvation streak gate threshold (env-driven).
+// Lazy-init from AURA_DELTA_TRUNCATE_STREAK_FULL env var (default 2).
+// C-style digit parse (no exceptions; matches AURA_LOCK_ORDER_CANARY /
+// AURA_MUTATION_HOLD_STRICT pattern in this codebase).
+[[nodiscard]] inline std::uint64_t delta_truncate_streak_threshold() noexcept {
+    static const std::uint64_t cached = []() noexcept -> std::uint64_t {
+        const char* e = std::getenv("AURA_DELTA_TRUNCATE_STREAK_FULL");
+        if (e == nullptr || e[0] == '\0')
+            return 2ULL; // default 2 consecutive truncates → force full solve
+        std::uint64_t v = 0;
+        for (const char* p = e; *p >= '0' && *p <= '9'; ++p) {
+            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+        }
+        return v > 0 ? v : 2ULL;
+    }();
+    return cached;
+}
 
 // ── Type Environment ─────────────────────────────────────
 export class TypeEnv {
@@ -281,6 +299,11 @@ private:
     // so record_cross_delta_blame_hit can mark truncated chains.
     bool last_reverify_truncated_ = false;
     std::size_t last_reverify_unscanned_ = 0;
+    // Issue #2318: anti-starvation streak counter — N consecutive truncated
+    // delta solves → force one full solve() (per AC2). Reset on !truncate.
+    // Per-ConstraintSystem state (long-lived via TypeChecker::solve_delta_cs_
+    // so multi-round mutate shares state per #2220).
+    std::size_t truncate_streak_ = 0;
     // Issue #2308: production_escalated_ flipped true when
     // escalate_if_production took the #2277 full-solve path.
     // SolverSnapshot reads this to expose production_escalated
@@ -380,6 +403,16 @@ public:
     void force_reverify_limit_for_test(std::size_t lim = 0) noexcept {
         force_reverify_limit_ = lim;
     }
+    // Issue #2318: anti-starvation streak gate. Called after solve_delta_impl
+    // returns. If last_reverify_truncated_ bumped, increment truncate_streak_
+    // (and mirror to m.delta_reverify_truncate_streak). When streak ≥
+    // delta_truncate_streak_threshold() (env AURA_DELTA_TRUNCATE_STREAK_FULL,
+    // default 2), force one full ConstraintSystem::solve() (mirror #2277
+    // escalation body), bump m.delta_truncate_force_full_solve_total, and
+    // reset streak. When !last_reverify_truncated_, reset streak to 0
+    // (happy path = no extra full solve; per AC3 zero cost).
+    SolveResult check_truncate_anti_starve(struct CompilerMetrics& m,
+                                           std::vector<Constraint>* unresolved_out);
     [[nodiscard]] bool last_reverify_truncated() const noexcept { return last_reverify_truncated_; }
     // Issue #2308: forensic / Agent-visible accessor — true when the
     // last escalate_if_production call took the production full-solve
