@@ -142,7 +142,7 @@ public:
             return;
         // Issue #2316: wire mu_ acquire to lock_order audit.
         (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
-                                     __builtin_LINE__);
+                                     __builtin_LINE());
         std::lock_guard lock(mu_);
         for (auto* a : attachers_) {
             if (a == f)
@@ -156,27 +156,27 @@ public:
         if (!f)
             return;
         (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
-                                     __builtin_LINE__);
+                                     __builtin_LINE());
         std::lock_guard lock(mu_);
         attachers_.erase(std::remove(attachers_.begin(), attachers_.end(), f), attachers_.end());
     }
 
     [[nodiscard]] std::size_t attacher_count() const {
         (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
-                                     __builtin_LINE__);
+                                     __builtin_LINE());
         std::lock_guard lock(mu_);
         return attachers_.size();
     }
 
     [[nodiscard]] std::size_t size() const {
         (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
-                                     __builtin_LINE__);
+                                     __builtin_LINE());
         std::lock_guard lock(mu_);
         return queue_.size();
     }
     [[nodiscard]] bool empty() const {
         (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
-                                     __builtin_LINE__);
+                                     __builtin_LINE());
         std::lock_guard lock(mu_);
         return queue_.empty();
     }
@@ -189,7 +189,7 @@ public:
         if (reject_if_linear_viol(msg.payload))
             return PushStatus::Closed;
         (void)lock_order::on_acquire(lock_order::Level::Mailbox, __builtin_FILE(),
-                                     __builtin_LINE__);
+                                     __builtin_LINE());
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
