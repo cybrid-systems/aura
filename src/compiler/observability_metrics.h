@@ -4665,6 +4665,9 @@ struct CompilerMetrics {
     //   - solve_delta_pending_full_solve_enqueued_total: roots enqueued from unscanned
     std::atomic<std::uint64_t> solve_delta_reverify_truncated_total{0};
     std::atomic<std::uint64_t> solve_delta_reverify_limit_used{0};
+    // Issue #2356: one-shot expand of truncated reverify scoped to
+    // occurrence/let-poly priority roots (at most once per solve_delta).
+    std::atomic<std::uint64_t> delta_reverify_expand_total{0}; // #2356
     std::atomic<std::uint64_t> solve_delta_pending_full_solve_roots_last{0};
     std::atomic<std::uint64_t> solve_delta_pending_full_solve_enqueued_total{0};
     std::atomic<std::uint64_t> reverify_adaptive_wired{1};

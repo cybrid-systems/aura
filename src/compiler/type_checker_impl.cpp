@@ -774,30 +774,52 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         }
     }
 
-    // Issue #1617: when reverify was truncated, force a targeted
-    // fallback pass over remaining Let-Poly / occurrence-priority
-    // constraints so generalization + ADT narrowing are not dropped.
+    // Issue #2356 / #1617: truncated reverify one-shot expand for
+    // occurrence / let-poly priority roots. When the adaptive scan hits
+    // the cap AND priority roots are non-empty, run exactly one expanded
+    // pass over remaining high-pri constraints only:
+    //   expand_limit = min(kReverifyCleanScanMax, max(limit*2, limit+|priority|))
+    // AC2: empty priority roots → this path never taken (zero cost).
+    // AC3: at most one expand per reverify/solve_delta (no loop).
+    // Production TIMEOUT full-solve escalation (#2277) remains the final
+    // backstop for still-truncated residual (pending_full_solve_roots_).
     if (truncated && (!let_poly_dirty_roots_.empty() || !occurrence_priority_roots_.empty())) {
+        const std::size_t priority_n =
+            occurrence_priority_roots_.size() + let_poly_dirty_roots_.size();
+        const std::size_t expand_limit =
+            std::min(kReverifyCleanScanMax, std::max(scan_limit * 2, scan_limit + priority_n));
+        // Budget for the expand pass: additional scans beyond the first pass.
+        const std::size_t expand_budget =
+            expand_limit > scanned ? expand_limit - scanned : expand_limit;
         if (metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            // #2356 primary counter (once per expand).
+            m->delta_reverify_expand_total.fetch_add(1, std::memory_order_relaxed);
+            // #1617 lineage: keep let-poly truncation fallback metric.
             m->let_poly_truncation_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
-        constexpr std::size_t kLetPolyFallbackCap = 128;
-        std::size_t fallback_n = 0;
+        std::size_t expand_n = 0;
         for (const auto& [pri, idx] : ordered) {
             if (scanned_set.count(idx) > 0)
                 continue;
             // Only force remaining high-priority (occurrence / Let-Poly).
             if (pri < 3)
                 continue;
-            if (fallback_n++ >= kLetPolyFallbackCap)
+            if (expand_n >= expand_budget)
                 break;
+            ++expand_n;
             if (!reverify_one(pri, idx)) {
                 delta_record_mode_ = saved_record;
                 return false;
             }
             scanned_set.insert(idx); // Issue #2146: avoid double-queue as pending
         }
+        // Refresh unscanned after expand; clear truncated only if nothing left.
+        last_reverify_unscanned_ =
+            ordered.size() > scanned_set.size() ? ordered.size() - scanned_set.size() : 0;
+        if (last_reverify_unscanned_ == 0)
+            last_reverify_truncated_ = false;
+        // AC3: do not re-enter expand — single if-block, no loop.
     }
 
     // Issue #2146 Phase B: on truncation, merge unscanned clean candidates'
