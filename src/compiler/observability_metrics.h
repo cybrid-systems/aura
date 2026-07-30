@@ -8465,6 +8465,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> must_deopt_before_next_call_total{0};    // #2128
     std::atomic<std::uint64_t> must_deopt_force_deopt_success_total{0}; // #2128
     std::atomic<std::uint64_t> must_deopt_force_deopt_fail_total{0};    // #2128
+    // Issue #2310: per-CompilerMetrics force-deopt counter bumped by
+    // aura_force_deopt_on_steal_snapshot_mismatch on every fail-closed
+    // trigger from steal snapshot inconsistency (production default).
+    // Distinct from the Fiber::mutation_steal_snapshot_mismatch_total_
+    // process-wide counter (observed-only).
+    // steal_snapshot_mismatch_force_deopt_total: #2310 AC1+AC4
+    //   bumped at WorkerThread::try_steal_from success path when
+    //   mutation_safety_snapshot_inconsistent(snap) AND NOT in soft mode
+    //   (AURA_STEAL_SNAPSHOT_SOFT=1). Bumps the per-CompilerMetrics
+    //   counter when scheduler evaluator is live; mirrors into
+    //   Fiber::bump_steal_snapshot_mismatch_force_deopt for the
+    //   process-wide aggregate.
+    std::atomic<std::uint64_t> steal_snapshot_mismatch_force_deopt_total{0}; // #2310
 
     // ── Issue #2016: LLVM incremental reemit + adaptive region mask ──
     // aot_incremental_llvm_emit_total: successful default/host LLVM reemits

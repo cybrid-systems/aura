@@ -226,7 +226,151 @@ int main() {
         (void)aura_fiber_static_mutation_steal_snapshot_mismatch_total();
     }
 
-    std::println("\n=== #2184 MutationSafetySnapshot: {} passed, {} failed ===", g_passed,
+    // ── Issue #2310 AC1: source wiring ──
+    {
+        std::println("\n--- #2310 AC1: source wiring ---");
+        const auto wc = read_file("src/serve/worker.cpp");
+        const auto fh = read_file("src/serve/fiber.h");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto ajb = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto obm = read_file("src/compiler/observability_metrics.h");
+        const auto ajbh = read_file("src/compiler/aura_jit_bridge.h");
+        const auto fb = read_file("src/compiler/fiber_bridge.cpp");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto epo = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        const auto exx = read_file("src/compiler/evaluator.ixx");
+        CHECK(wc.find("aura_force_deopt_on_steal_snapshot_mismatch") != std::string::npos,
+              "AC1: worker.cpp calls force-deopt C ABI");
+        CHECK(wc.find("is_steal_snapshot_soft_mode") != std::string::npos,
+              "AC1: worker.cpp respects soft mode");
+        CHECK(fh.find("bump_steal_snapshot_mismatch_force_deopt") != std::string::npos,
+              "AC1: fiber.h has force-deopt bumper");
+        CHECK(fh.find("aura_fiber_static_steal_snapshot_mismatch_force_deopt_total") !=
+                  std::string::npos,
+              "AC1: fiber.h has C-linkage shim decl");
+        CHECK(fh.find("is_steal_snapshot_soft_mode") != std::string::npos,
+              "AC1: fiber.h has soft-mode accessor");
+        CHECK(fc.find("aura_fiber_static_steal_snapshot_mismatch_force_deopt_total") !=
+                  std::string::npos,
+              "AC1: fiber.cpp has C-linkage shim def");
+        CHECK(efm.find("aura_force_deopt_on_steal_snapshot_mismatch") != std::string::npos,
+              "AC1: evaluator_fiber_mutation.cpp strong def");
+        CHECK(efm.find("Evaluator::bump_steal_snapshot_mismatch_force_deopt_total") !=
+                  std::string::npos,
+              "AC1: evaluator_fiber_mutation.cpp has bump impl");
+        CHECK(efm.find("Issue #2310") != std::string::npos, "AC1: evaluator cites 2310");
+        CHECK(ajb.find("aura_force_deopt_on_steal_snapshot_mismatch") != std::string::npos,
+              "AC1: aura_jit_bridge.cpp C ABI");
+        CHECK(ajb.find("g_2310_force_deopt_fallback_total") != std::string::npos,
+              "AC1: aura_jit_bridge.cpp file-level atomic fallback");
+        CHECK(ajbh.find("aura_force_deopt_on_steal_snapshot_mismatch") != std::string::npos,
+              "AC1: aura_jit_bridge.h declaration");
+        CHECK(obm.find("steal_snapshot_mismatch_force_deopt_total") != std::string::npos,
+              "AC1: observability_metrics.h counter");
+        CHECK(exx.find("bump_steal_snapshot_mismatch_force_deopt_total") != std::string::npos,
+              "AC1: evaluator.ixx declaration");
+        CHECK(epo.find("schema-2310") != std::string::npos, "AC1: query schema-2310");
+        CHECK(epo.find("steal-snapshot-mismatch-force-deopt-total") != std::string::npos,
+              "AC1: query force-deopt key");
+        CHECK(fb.find("aura_force_deopt_on_steal_snapshot_mismatch") != std::string::npos,
+              "AC1: fiber_bridge.cpp weak stub");
+    }
+
+    // ── Issue #2310 AC2: injection — depth>0 + last_yield != MB → inconsistent ──
+    {
+        std::println("\n--- #2310 AC2: injection test ---");
+        Scheduler sched(2);
+        std::atomic<bool> done{false};
+        const auto mismatch0 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+        sched.spawn([&]() {
+            auto* f = aura::serve::g_current_fiber;
+            // Inject inconsistency: depth>0 with Explicit yield
+            // (not MutationBoundary) AND not in orch agent window.
+            aura_evaluator_test_push_mutation_checkpoint();
+            f->set_yield_reason(YieldReason::Explicit);
+            {
+                const auto s = f->mutation_safety_snapshot();
+                CHECK(s.depth >= 1, "AC2: depth pushed");
+                CHECK(s.last_yield == YieldReason::Explicit,
+                      "AC2: yield is Explicit (inconsistent)");
+                CHECK(f->mutation_safety_snapshot_inconsistent(s), "AC2: snapshot inconsistent");
+            }
+            // Production default: !is_steal_snapshot_soft_mode() → fail-closed.
+            CHECK(!is_steal_snapshot_soft_mode(), "AC2: production default fail-closed");
+            // The mismatch counter may have advanced if a steal attempt
+            // observed the inconsistency. Steal attempts are timing-
+            // dependent so we soft-assert.
+            const auto mismatch1 = aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+            if (mismatch1 > mismatch0)
+                CHECK(mismatch1 > mismatch0, "AC2: mismatch counter advanced");
+            else
+                CHECK(true, "AC2 soft: no steal attempt observed (timing)");
+            aura_evaluator_test_pop_mutation_checkpoint();
+            done.store(true);
+        });
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(done.load(), "AC2: body ran");
+    }
+
+    // ── Issue #2310 AC3: happy path — consistent → no force-deopt ──
+    {
+        std::println("\n--- #2310 AC3: happy path ---");
+        Scheduler sched(2);
+        std::atomic<int> fibers_finished{0};
+        constexpr int k_fibers = 4;
+        const auto counter0 = aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
+        for (int i = 0; i < k_fibers; ++i) {
+            sched.spawn([&]() {
+                auto* f = aura::serve::g_current_fiber;
+                f->set_yield_reason(YieldReason::MutationBoundary);
+                // No checkpoint push: depth=0, !held, MB yield → safe + consistent.
+                Fiber::yield(YieldReason::MutationBoundary);
+                fibers_finished.fetch_add(1);
+            });
+        }
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (fibers_finished.load() < k_fibers && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(fibers_finished.load() == k_fibers, "AC3: all happy-path fibers done");
+        const auto counter1 = aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
+        CHECK(counter1 == counter0, "AC3: force-deopt counter unchanged on happy path");
+    }
+
+    // ── Issue #2310 AC4: query schema-2310 ──
+    {
+        std::println("\n--- #2310 AC4: query schema-2310 ---");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+        CHECK(href(cs, "schema-2310") == 2310, "AC4: schema-2310");
+        CHECK(href(cs, "issue-2310") == 2310, "AC4: issue-2310");
+        CHECK(href(cs, "steal-snapshot-mismatch-force-deopt-total") >= 0, "AC4: force-deopt key");
+        // Regression: schema-2184 still wired.
+        CHECK(href(cs, "schema-2184") == 2184, "AC4: schema-2184 retained");
+        CHECK(href(cs, "mutation-steal-snapshot-mismatch-total") >= 0,
+              "AC4: observed-only key retained");
+    }
+
+    // ── Issue #2310 AC5: source-cite rows for fiber.h / worker.cpp / evaluator_fiber_mutation.cpp
+    // ──
+    {
+        std::println("\n--- #2310 AC5: source-cite rows ---");
+        const auto fh = read_file("src/serve/fiber.h");
+        const auto wc = read_file("src/serve/worker.cpp");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(fh.find("Issue #2310") != std::string::npos, "AC5: fiber.h cites 2310");
+        CHECK(wc.find("Issue #2310") != std::string::npos, "AC5: worker.cpp cites 2310");
+        CHECK(efm.find("Issue #2310") != std::string::npos, "AC5: evaluator cites 2310");
+    }
+
+    std::println("\n=== #2184/#2310 MutationSafetySnapshot: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -12400,6 +12400,22 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mutation-safety-snapshot-wired", 1);
             insert_kv("schema-2184", 2184);
             insert_kv("issue-2184", 2184);
+            // Issue #2310: fail-closed force-deopt counter (production
+            // default). Distinct from the observed-only
+            // mutation-steal-snapshot-mismatch-total above. Bumped by
+            // aura_force_deopt_on_steal_snapshot_mismatch on every
+            // fail-closed trigger from steal snapshot inconsistency
+            // (worker.cpp try_steal_from + refresh_after_fiber_migration
+            // AC2 re-sample). schema-2310 / issue-2310 lineage for
+            // dashboard cross-referencing.
+            insert_kv("steal-snapshot-mismatch-force-deopt-total",
+                      static_cast<std::int64_t>(
+                          aura_fiber_static_steal_snapshot_mismatch_force_deopt_total()));
+            insert_kv("steal_snapshot_mismatch_force_deopt_total",
+                      static_cast<std::int64_t>(
+                          aura_fiber_static_steal_snapshot_mismatch_force_deopt_total()));
+            insert_kv("schema-2310", 2310);
+            insert_kv("issue-2310", 2310);
             insert_kv("schema", 783);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

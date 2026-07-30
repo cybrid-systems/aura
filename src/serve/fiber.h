@@ -5,6 +5,7 @@
 #include <ucontext.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <atomic>
@@ -28,6 +29,13 @@ extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutati
 // Issue #2184: process-wide steal snapshot mismatch counter
 // (depth/held/yield inconsistent after resume or under steal).
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+
+// Issue #2310: process-wide force-deopt counter bumped whenever a
+// steal snapshot inconsistency triggers fail-closed (force-deopt +
+// full refresh under exclusive recovery). Distinct from
+// mutation_steal_snapshot_mismatch_total_ which is observed-only —
+// this is the actual fail-closed enforcement counter for production.
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
 
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
@@ -229,6 +237,19 @@ public:
     }
     [[nodiscard]] static std::uint64_t mutation_steal_snapshot_mismatch_total() noexcept {
         return mutation_steal_snapshot_mismatch_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2310: process-wide force-deopt counter. Bumped by
+    // aura_force_deopt_on_steal_snapshot_mismatch (C ABI hook in
+    // aura_jit_bridge.cpp / evaluator_fiber_mutation.cpp) on every
+    // fail-closed trigger. Distinct from
+    // mutation_steal_snapshot_mismatch_total_ — that one is observed-
+    // only (soft metric); this one is the actual enforcement counter.
+    // See WorkerThread::try_steal_from for the call site.
+    static void bump_steal_snapshot_mismatch_force_deopt() noexcept {
+        steal_snapshot_mismatch_force_deopt_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t steal_snapshot_mismatch_force_deopt_total() noexcept {
+        return steal_snapshot_mismatch_force_deopt_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #2118: set when orch agent body soft-registers mutation depth
@@ -741,6 +762,9 @@ private:
     std::atomic<std::uint32_t> held_mirror_{0};
     std::atomic<std::uint64_t> defuse_mirror_{0};
     static std::atomic<std::uint64_t> mutation_steal_snapshot_mismatch_total_;
+    // Issue #2310: see bump_steal_snapshot_mismatch_force_deopt().
+    // Distinct from mutation_steal_snapshot_mismatch_total_ (observed-only).
+    static std::atomic<std::uint64_t> steal_snapshot_mismatch_force_deopt_total_;
     // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
     std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
     // Issue #2227: back-pointer to owner Scheduler so the orch join
@@ -870,6 +894,20 @@ extern thread_local WorkerContext* g_worker_ctx;
 struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
+
+// Issue #2310: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only mode for
+// unit tests. Production default is fail-closed (force-deopt + full
+// refresh under exclusive recovery). Lazy init from std::getenv per
+// TU; env vars are process-global so the cached value is consistent
+// across call sites (worker.cpp steal path, evaluator_fiber_mutation.cpp
+// resume path re-sample fence).
+[[nodiscard]] inline bool is_steal_snapshot_soft_mode() noexcept {
+    static const int cached = []() {
+        const char* v = std::getenv("AURA_STEAL_SNAPSHOT_SOFT");
+        return (v && v[0] == '1') ? 1 : 0;
+    }();
+    return cached != 0;
+}
 
 } // namespace aura::serve
 

@@ -129,6 +129,13 @@ extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferre
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total() {
     return Fiber::mutation_steal_snapshot_mismatch_total();
 }
+// Issue #2310: process-wide force-deopt total (fail-closed
+// enforcement). Bumped by aura_force_deopt_on_steal_snapshot_mismatch
+// in worker.cpp try_steal_from success path + refresh_after_fiber_migration
+// resume-path re-sample fence (AC2 defense-in-depth).
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total() {
+    return Fiber::steal_snapshot_mismatch_force_deopt_total();
+}
 extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total() {
     return Fiber::static_cross_fiber_mutation_safe_steal_total();
 }
@@ -143,6 +150,10 @@ std::atomic<std::uint64_t> Fiber::static_cross_fiber_mutation_safe_steal_count_{
 std::atomic<std::uint64_t> Fiber::static_yield_mutation_boundary_total_{0};
 // Issue #2184: MutationSafetySnapshot mismatch under steal/resume.
 std::atomic<std::uint64_t> Fiber::mutation_steal_snapshot_mismatch_total_{0};
+// Issue #2310: process-wide force-deopt counter (fail-closed
+// enforcement). Distinct from mutation_steal_snapshot_mismatch_total_
+// which is observed-only.
+std::atomic<std::uint64_t> Fiber::steal_snapshot_mismatch_force_deopt_total_{0};
 // The runtime-side hook installer (defined in
 // aura_jit_runtime.cpp).
 extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());

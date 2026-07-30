@@ -260,6 +260,33 @@ extern "C" void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n) {
     }
 }
 
+// Issue #2310: file-level atomic fallback for light binaries without
+// CompilerMetrics linked. Always bumped alongside per-CompilerMetrics
+// counter by aura_force_deopt_on_steal_snapshot_mismatch.
+static std::atomic<std::uint64_t> g_2310_force_deopt_fallback_total{0};
+
+// Issue #2310: fail-closed force-deopt on steal snapshot inconsistency.
+// Strong def in evaluator_fiber_mutation.cpp bumps the per-CompilerMetrics
+// counter (via evaluator_for_scheduler_hooks) + runs refresh. This
+// file-level fallback path bumps g_2310_force_deopt_fallback_total so
+// light binaries (test_concurrent / test_issue_* without evaluator TU
+// linked) still observe the counter. In production, the strong def wins
+// (fiber_bridge.cpp weak no-op loses to evaluator_fiber_mutation.cpp).
+extern "C" void aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) noexcept {
+    if (auto* m = aot_metrics()) {
+        m->steal_snapshot_mismatch_force_deopt_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_2310_force_deopt_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+extern "C" std::uint64_t aura_static_steal_snapshot_mismatch_force_deopt_total() noexcept {
+    if (auto* m = aot_metrics()) {
+        return m->steal_snapshot_mismatch_force_deopt_total.load(std::memory_order_relaxed);
+    }
+    return g_2310_force_deopt_fallback_total.load(std::memory_order_relaxed);
+}
+
 // ── Issue #1443: long-mutation policy knobs ───────────
 //
 // C-linkage setters for `long_mutation_threshold_us` (default 500'000 µs
