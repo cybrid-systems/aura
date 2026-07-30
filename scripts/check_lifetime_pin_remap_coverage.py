@@ -207,6 +207,122 @@ def check() -> list:
         fails,
     )
 
+    # AC_2342 — Issue #2342: sharded LifetimePin registry (Option 1 —
+    # shard by arena_id, N=16). Refines #2265/#2270/#2160/#2298.
+    # Production review (2026-07-29) 建议 6.
+    _must(
+        "kPinRegistryShardCount = 16" in pin,
+        "AC_2342: kPinRegistryShardCount == 16 (power of 2 for arena_id AND)",
+        fails,
+    )
+    _must(
+        "struct PinRegistryShard" in pin,
+        "AC_2342: PinRegistryShard struct missing",
+        fails,
+    )
+    _must(
+        "pin_registry_shards()" in pin,
+        "AC_2342: pin_registry_shards() accessor missing",
+        fails,
+    )
+    _must(
+        "pin_registry_shard_index" in pin,
+        "AC_2342: pin_registry_shard_index(arena_id) helper missing",
+        fails,
+    )
+    _must(
+        "g_pin_registry_lock_wait_us_total" in pin and "pin_registry_lock_wait_us_total" in pin,
+        "AC_2342: lock_wait_us_total atomic + accessor missing",
+        fails,
+    )
+    _must(
+        "pin_registry_shard_pin_count" in pin
+        and "pin_registry_shard_max_pin_count" in pin
+        and "pin_registry_total_pinned_count" in pin,
+        "AC_2342: per-shard pin count + max + total accessors missing",
+        fails,
+    )
+    _must(
+        "shard_index_" in pin,
+        "AC_2342: LifetimePin::shard_index_ member missing",
+        fails,
+    )
+    _must(
+        "Issue #2342" in pin,
+        "AC_2342: lifetime_pin.ixx must cite Issue #2342",
+        fails,
+    )
+    # Compact functions rewired to iterate shards (no longer use
+    # global pin_registry_mtx() lock at function entry).
+    _must(
+        "for (std::size_t i = 0; i < kPinRegistryShardCount; ++i)" in pin,
+        "AC_2342: compact functions must iterate all shards in order",
+        fails,
+    )
+    # Query surface: query:lifetime-contract-snapshot extends with #2342 keys.
+    q_obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
+    _must(
+        '"pin-registry-shard-count"' in q_obs,
+        "AC_2342: query:lifetime-contract-snapshot must surface pin-registry-shard-count",
+        fails,
+    )
+    _must(
+        '"pin_registry_shard_count"' in q_obs,
+        "AC_2342: query:lifetime-contract-snapshot must surface pin_registry_shard_count (snake alias)",
+        fails,
+    )
+    _must(
+        '"pin-registry-shard-max-pin-count"' in q_obs,
+        "AC_2342: query:lifetime-contract-snapshot must surface pin-registry-shard-max-pin-count",
+        fails,
+    )
+    _must(
+        '"pin-registry-lock-wait-us-total"' in q_obs,
+        "AC_2342: query:lifetime-contract-snapshot must surface pin-registry-lock-wait-us-total",
+        fails,
+    )
+    _must(
+        '"pin-registry-shard-wired"' in q_obs,
+        "AC_2342: query:lifetime-contract-snapshot must surface pin-registry-shard-wired sentinel",
+        fails,
+    )
+    _must(
+        '"schema-2342"' in q_obs and '"issue-2342"' in q_obs,
+        "AC_2342: query primitive must surface schema-2342 / issue-2342 lineage",
+        fails,
+    )
+    # Tests: ac2342_* test functions.
+    _must(
+        "void ac2342_1_shard_constants_and_accessors" in test,
+        "AC_2342: ac2342_1_shard_constants_and_accessors test missing",
+        fails,
+    )
+    _must(
+        "void ac2342_2_ctor_dtor_routes_to_shard_zero" in test,
+        "AC_2342: ac2342_2_ctor_dtor_routes_to_shard_zero test missing",
+        fails,
+    )
+    _must(
+        "void ac2342_3_lock_wait_us_total" in test,
+        "AC_2342: ac2342_3_lock_wait_us_total test missing",
+        fails,
+    )
+    _must(
+        "void ac2342_4_query_schema" in test,
+        "AC_2342: ac2342_4_query_schema test missing",
+        fails,
+    )
+    _must(
+        "void ac2342_5_source_cite" in test,
+        "AC_2342: ac2342_5_source_cite test missing",
+        fails,
+    )
+    _must(
+        "Issue #2342" in test,
+        "AC_2342: test_moving_compact_2166.cpp must cite Issue #2342",
+        fails,
+    )
+
     return fails
 
 

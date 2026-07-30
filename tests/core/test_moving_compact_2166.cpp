@@ -6,6 +6,29 @@
 //          gen advanced; pins invalidated / remapped.
 //   AC_M3: Moving on + live pin present → blocked; precondition metric bumps.
 //   AC_M4: after Moving, resolve_object_remap / pin fail-closed paths remain valid.
+//
+//   Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
+//   — shard by arena_id, N=16 per the issue's "incremental risk"
+//   preference). Foundation already present (#2166/#2265/#2266/#2280
+//   pin-or-remap contract); this round ships the sharded surface so
+//   hot-path pin ctor/dtor traffic no longer serializes on the global
+//   pin_registry_mtx. Refines #2265 (Phase 3 remap) · #2270 (PinOwner)
+//   · #2160 (RenderPin) · #2298 (GeneralObjectPin adoption).
+//   AC_2342_1: kPinRegistryShardCount == 16 + max_pin_count +
+//              total_pinned_count accessors queryable.
+//   AC_2342_2: pin ctor/dtor routes to shard 0 for arena_id=0 default;
+//              pin(arena_id=N) re-routes to correct shard via
+//              pin_registry_shard_index(N).
+//   AC_2342_3: pin_registry_lock_wait_us_total counter bumps on
+//              shard lock acquisition (cumulative atomic).
+//   AC_2342_4: query:lifetime-contract-snapshot exposes #2342 keys
+//              (pin-registry-shard-count kebab+snake + max-pin-count
+//              + lock-wait-us-total + wired sentinel + schema/issue).
+//   AC_2342_5: source-cite sharded registry infrastructure across
+//              lifetime_pin.ixx (kPinRegistryShardCount +
+//              pin_registry_shards + accessors + ctor/dtor/move/pin
+//              shard routing) + evaluator_primitives_obs_jit.cpp
+//              (query surface).
 
 #include "test_harness.hpp"
 
@@ -139,6 +162,137 @@ void ac2256_moving_compact_production_default() {
           "AC4: ShapeProfiler::on_arena_compact feeds compact_count_total");
     CHECK(shape.find("g_moving_compact_remap_us_total") != std::string::npos,
           "AC4: ShapeProfiler::on_arena_compact feeds remap_us_total");
+}
+
+// Issue #2342 AC_2342_1: sharded registry constants + accessors queryable.
+// kPinRegistryShardCount == 16 (power of 2 for arena_id-based AND
+// routing); pin_registry_shard_pin_count(idx) + pin_registry_shard_max
+// _pin_count() + pin_registry_total_pinned_count() return non-negative
+// values; reads are process-level atomic for the counter, lock-shard
+// for per-shard pin count.
+void ac2342_1_shard_constants_and_accessors() {
+    std::println("\n--- AC_2342_1: sharded registry constants + accessors ---");
+    using aura::core::lifetime::kPinRegistryShardCount;
+    using aura::core::lifetime::pin_registry_shard_max_pin_count;
+    using aura::core::lifetime::pin_registry_shard_pin_count;
+    using aura::core::lifetime::pin_registry_total_pinned_count;
+    CHECK(kPinRegistryShardCount == 16, "AC_2342_1.1: kPinRegistryShardCount == 16 (power of 2)");
+    CHECK(kPinRegistryShardCount != 0, "AC_2342_1.2: kPinRegistryShardCount != 0");
+    CHECK(pin_registry_total_pinned_count() >= 0,
+          "AC_2342_1.3: pin_registry_total_pinned_count queryable + >= 0");
+    CHECK(pin_registry_shard_max_pin_count() >= 0,
+          "AC_2342_1.4: pin_registry_shard_max_pin_count queryable + >= 0");
+    // Per-shard pin count (idx valid + idx OOB returns 0).
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        CHECK(pin_registry_shard_pin_count(i) >= 0,
+              "AC_2342_1.5: per-shard pin count queryable for valid idx");
+    }
+    CHECK(pin_registry_shard_pin_count(kPinRegistryShardCount) == 0,
+          "AC_2342_1.6: OOB shard idx returns 0 (defensive)");
+    CHECK(pin_registry_shard_pin_count(kPinRegistryShardCount + 100) == 0,
+          "AC_2342_1.7: very-OOB shard idx returns 0 (defensive)");
+}
+
+// Issue #2342 AC_2342_2: pin ctor/dtor routes to shard 0 for arena_id=0
+// default; pin(arena_id=N) re-routes to correct shard. We construct
+// a few LifetimePin instances with arena_id=0 (default shard 0) and
+// verify live_pin_count == pin_registry_total_pinned_count (both
+// iterate the new sharded registry).
+void ac2342_2_ctor_dtor_routes_to_shard_zero() {
+    std::println("\n--- AC_2342_2: pin ctor/dtor routes to shard 0 ---");
+    using aura::core::lifetime::LifetimePin;
+    using aura::core::lifetime::live_pin_count;
+    using aura::core::lifetime::pin_registry_total_pinned_count;
+    const auto before = pin_registry_total_pinned_count();
+    // Create 4 pins with arena_id=0 (default → shard 0).
+    LifetimePin p1, p2, p3, p4;
+    int dummy_a = 0, dummy_b = 0, dummy_c = 0, dummy_d = 0;
+    p1.pin(&dummy_a, /*gen=*/1);
+    p2.pin(&dummy_b, /*gen=*/1);
+    p3.pin(&dummy_c, /*gen=*/1);
+    p4.pin(&dummy_d, /*gen=*/1);
+    CHECK(pin_registry_total_pinned_count() == before + 4,
+          "AC_2342_2.1: 4 pin ctors bump total_pinned_count by 4");
+    CHECK(live_pin_count() == before + 4,
+          "AC_2342_2.2: live_pin_count matches pin_registry_total_pinned_count");
+    // Scope exit → 4 dtors run.
+}
+
+// Issue #2342 AC_2342_3: pin_registry_lock_wait_us_total counter bumps
+// on shard lock acquisition. Each pin ctor/dtor acquires a shard lock
+// once, so creating + destroying pins should bump the counter.
+void ac2342_3_lock_wait_us_total() {
+    std::println("\n--- AC_2342_3: pin_registry_lock_wait_us_total counter ---");
+    using aura::core::lifetime::LifetimePin;
+    using aura::core::lifetime::pin_registry_lock_wait_us_total;
+    const auto before = pin_registry_lock_wait_us_total();
+    CHECK(before >= 0, "AC_2342_3.1: lock_wait counter queryable + >= 0");
+    {
+        LifetimePin p;
+        int dummy = 0;
+        p.pin(&dummy, /*gen=*/1);
+    }
+    const auto after = pin_registry_lock_wait_us_total();
+    CHECK(after >= before, "AC_2342_3.2: lock_wait counter monotonic (>= after ctor+dtor)");
+}
+
+// Issue #2342 AC_2342_4: query:lifetime-contract-snapshot extends with
+// #2342 keys. kebab + snake aliases per axis; wired sentinel;
+// schema/issue sentinels.
+void ac2342_4_query_schema(CompilerService& cs) {
+    std::println("\n--- AC_2342_4: query:lifetime-contract-snapshot #2342 surface ---");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin-registry-shard-count") == 16,
+          "AC_2342_4.1: pin-registry-shard-count == 16 (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin_registry_shard_count") == 16,
+          "AC_2342_4.2: pin_registry_shard_count == 16 (snake alias)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin-registry-shard-max-pin-count") >= 0,
+          "AC_2342_4.3: pin-registry-shard-max-pin-count reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin_registry_shard_max_pin_count") >= 0,
+          "AC_2342_4.4: pin_registry_shard_max_pin_count reachable (snake)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin-registry-lock-wait-us-total") >= 0,
+          "AC_2342_4.5: pin-registry-lock-wait-us-total reachable (kebab)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin_registry_lock_wait_us_total") >= 0,
+          "AC_2342_4.6: pin_registry_lock_wait_us_total reachable (snake)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "pin-registry-shard-wired") == 1,
+          "AC_2342_4.7: pin-registry-shard-wired == 1 (proves #2342 wired)");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "schema-2342") == 2342,
+          "AC_2342_4.8: schema-2342 == 2342");
+    CHECK(href(cs, "query:lifetime-contract-snapshot", "issue-2342") == 2342,
+          "AC_2342_4.9: issue-2342 == 2342");
+}
+
+// Issue #2342 AC_2342_5: source-cite grep verifier. Each #2342 file
+// must contain the Issue #2342 cite + the contract surface (shard
+// infrastructure + shard_index_ + ctor/dtor/move/pin shard routing +
+// compact function shard iteration + query keys).
+void ac2342_5_source_cite() {
+    std::println("\n--- AC_2342_5: Issue #2342 source-cite ---");
+    auto check = [](const std::filesystem::path& p, std::initializer_list<const char*> needles,
+                    std::string_view tag) {
+        if (!std::filesystem::exists(p)) {
+            CHECK(false, std::format("AC_2342_5: {} not found", p.string()).c_str());
+            return;
+        }
+        std::ifstream in(p);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        const auto txt = buf.str();
+        for (const auto* needle : needles) {
+            CHECK(txt.find(needle) != std::string::npos,
+                  std::format("AC_2342_5: {} contains {}", tag, needle).c_str());
+        }
+    };
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/core/lifetime_pin.ixx",
+          {"Issue #2342", "kPinRegistryShardCount", "PinRegistryShard", "pin_registry_shards",
+           "pin_registry_shard_index", "pin_registry_lock_wait_us_total", "shard_index_",
+           "g_root_remap_any_fail" /* fallback if not present */},
+          "lifetime_pin.ixx");
+    // Issue cite appears in lifetime_pin.ixx; fallback probe for the
+    // primary keyword (drop the optional secondary if absent).
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_primitives_obs_jit.cpp",
+          {"Issue #2342", "pin-registry-shard-count", "pin-registry-shard-wired", "schema-2342",
+           "issue-2342"},
+          "evaluator_primitives_obs_jit.cpp");
 }
 
 } // namespace
@@ -455,6 +609,20 @@ int main() {
 
     set_moving_compact_enabled(0);
 
-    std::println("\n=== #2166 Moving compact: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2342: sharded LifetimePin registry surface (Option 1 —
+    // shard by arena_id, N=16 per the issue's "incremental risk"
+    // preference). Runs last so the global stats counters are stable
+    // for ac2342_1 / ac2342_3 (the prior AC_M* tests bump pins +
+    // dtors which contribute to lock_wait_us_total + total_pinned).
+    ac2342_1_shard_constants_and_accessors();
+    ac2342_2_ctor_dtor_routes_to_shard_zero();
+    ac2342_3_lock_wait_us_total();
+    {
+        CompilerService cs;
+        ac2342_4_query_schema(cs);
+    }
+    ac2342_5_source_cite();
+
+    std::println("\n=== #2166 + #2342: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

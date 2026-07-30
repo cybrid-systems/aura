@@ -11081,6 +11081,30 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-consistency-wired", 1);
             insert_kv("schema-2341", 2341);
             insert_kv("issue-2341", 2341);
+            // Issue #2342: sharded pin registry surface. Live reads
+            // of shard count + max pin count + cumulative lock-wait
+            // microseconds + wired sentinel + schema/issue cite.
+            // Soft / no Moving → all atomics at 0 (only bumped on
+            // actual ctor/dtor/move/pin lock acquisitions).
+            insert_kv("pin-registry-shard-count",
+                      static_cast<std::int64_t>(aura::core::lifetime::kPinRegistryShardCount));
+            insert_kv("pin_registry_shard_count",
+                      static_cast<std::int64_t>(aura::core::lifetime::kPinRegistryShardCount));
+            insert_kv("pin-registry-shard-max-pin-count",
+                      static_cast<std::int64_t>(
+                          aura::core::lifetime::pin_registry_shard_max_pin_count()));
+            insert_kv("pin_registry_shard_max_pin_count",
+                      static_cast<std::int64_t>(
+                          aura::core::lifetime::pin_registry_shard_max_pin_count()));
+            insert_kv(
+                "pin-registry-lock-wait-us-total",
+                static_cast<std::int64_t>(aura::core::lifetime::pin_registry_lock_wait_us_total()));
+            insert_kv(
+                "pin_registry_lock_wait_us_total",
+                static_cast<std::int64_t>(aura::core::lifetime::pin_registry_lock_wait_us_total()));
+            insert_kv("pin-registry-shard-wired", 1);
+            insert_kv("schema-2342", 2342);
+            insert_kv("issue-2342", 2342);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
