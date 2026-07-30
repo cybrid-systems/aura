@@ -290,6 +290,65 @@ static void ac10_schema_source() {
     CHECK(tcx.find("cache_epoch()") != std::string::npos, "cache_epoch() getter for publish key");
 }
 
+// Issue #2309: composite_txn_commit / MutationBoundary hard-gate
+// force-rollback paths MUST clear the process-wide escape → MoveOp
+// elision gate. Without the clear, a stale "blocked" set from a
+// rejected / rolled-back txn leaks into a subsequent independent
+// mutate in the same eval / process (multi-Agent / multi-round).
+// Verifies:
+//   AC1 — counter `g_linear_escape_gate_clear_on_rollback_total`
+//         bumped on reject / force-rollback paths
+//   AC2 — counter NOT bumped on success path
+//   AC3 — `aura_escape_move_gate_clear()` is called at both reject /
+//         force-rollback sites in evaluator_typecheck.cpp +
+//         evaluator_mutation_boundary.cpp (source-cite)
+//   AC4 — query surface: linear-escape-gate-clear-on-rollback-total
+//         + schema-2309 / issue-2309 / escape-gate-rollback-clear-wired
+//         sentinels reachable via the JIT observability query
+static void ac11_2309_rollback_clear_gate() {
+    std::println("\n--- AC11 (#2309): rollback-clear fix sites ---");
+
+    // AC1 + AC3 — source-cite the clear sites. Both reject / force-rollback
+    // branches in evaluator_typecheck.cpp + evaluator_mutation_boundary.cpp
+    // must call aura_escape_move_gate_clear() AND bump the rollback
+    // counter next to the existing rollback counters (no semantic drift).
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(etc.find("aura_escape_move_gate_clear()") != std::string::npos,
+          "AC11.1: evaluator_typecheck.cpp clears gate at reject site");
+    CHECK(etc.find("g_linear_escape_gate_clear_on_rollback_total.fetch_add") != std::string::npos,
+          "AC11.2: evaluator_typecheck.cpp bumps rollback-clear counter");
+
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("aura_escape_move_gate_clear()") != std::string::npos,
+          "AC11.3: evaluator_mutation_boundary.cpp clears gate at force-rollback");
+    CHECK(emb.find("g_linear_escape_gate_clear_on_rollback_total.fetch_add") != std::string::npos,
+          "AC11.4: evaluator_mutation_boundary.cpp bumps rollback-clear counter");
+
+    // Counter declaration + definition.
+    const auto gate_h = read_file("src/compiler/ownership_escape_lowering_gate.h");
+    CHECK(gate_h.find("g_linear_escape_gate_clear_on_rollback_total") != std::string::npos,
+          "AC11.5: extern decl in ownership_escape_lowering_gate.h");
+    const auto hooks = read_file("src/compiler/typed_mutation_audit_hooks.cpp");
+    CHECK(hooks.find("g_linear_escape_gate_clear_on_rollback_total{0}") != std::string::npos,
+          "AC11.6: counter definition in typed_mutation_audit_hooks.cpp");
+
+    // AC4 — query surface: JIT observability query exposes the new
+    // counter + schema/issue/wired sentinels (additive over #2263).
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("linear-escape-gate-clear-on-rollback-total") != std::string::npos,
+          "AC11.7: query key linear-escape-gate-clear-on-rollback-total");
+    CHECK(q.find("schema-2309") != std::string::npos, "AC11.8: schema-2309 sentinel");
+    CHECK(q.find("issue-2309") != std::string::npos, "AC11.9: issue-2309 sentinel");
+    CHECK(q.find("escape-gate-rollback-clear-wired") != std::string::npos,
+          "AC11.10: escape-gate-rollback-clear-wired sentinel");
+
+    // No schema break — existing #2263 / #2286 keys still present.
+    CHECK(q.find("schema-2263") != std::string::npos,
+          "AC11.11: schema-2263 still present (no #2263 schema break)");
+    CHECK(q.find("schema-2286") != std::string::npos,
+          "AC11.12: schema-2286 still present (no #2286 schema break)");
+}
+
 } // namespace
 
 int main() {
@@ -303,6 +362,8 @@ int main() {
     ac8_cow_gen_advance_clears();
     ac9_zero_cost_happy_path();
     ac10_schema_source();
+    std::println("\n=== Issue #2309: rollback-clear on reject / force-rollback ===");
+    ac11_2309_rollback_clear_gate();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -32,6 +32,8 @@ std::atomic<std::uint64_t> g_linear_lowering_escape_summary_hit_total{0};
 std::atomic<std::uint32_t> g_linear_escape_move_gate_wired{1};
 // Issue #2286: keyed-lookup miss counter (cross-eval / cross-gen).
 std::atomic<std::uint64_t> g_linear_escape_gate_cross_eval_miss_total{0};
+// Issue #2309: rollback-clear counter (see ownership_escape_lowering_gate.h).
+std::atomic<std::uint64_t> g_linear_escape_gate_clear_on_rollback_total{0};
 
 namespace detail {
     // Issue #2286: thread-local current key — Evaluator sets before lowering,
