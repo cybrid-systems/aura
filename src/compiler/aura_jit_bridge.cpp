@@ -3779,6 +3779,48 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 }
 
 
+// Issue #2304: C-linkage readers + setter for the post-bump epoch
+// invariant walk infrastructure. File-level atomics in aura_jit_bridge.cpp
+// mirror the CompilerService member atomics (kept in sync via the
+// public setter). The CompilerService walk (service.ixx:
+// run_epoch_invariant_if_enabled) reads the same hard-enabled flag
+// via the CompilerService member + bumps its own counters; the file
+// level atomics here are exposed to test harnesses via extern "C".
+// Keeping them file-local avoids the module-include-in-non-module
+// pitfall (service.ixx is a C++20 module — non-module TUs can't
+// #include it).
+static std::atomic<std::uint64_t> g_epoch_invariant_violation_total{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_walks_total{0};
+static std::atomic<std::uint8_t> g_epoch_invariant_hard_enabled{0};
+
+extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
+    return g_epoch_invariant_violation_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_walks_total_v_read(void) {
+    return g_epoch_invariant_walks_total.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_set_epoch_invariant_hard_enabled(int enabled) {
+    g_epoch_invariant_hard_enabled.store(enabled != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+// Issue #2304: AURA_EPOCH_INVARIANT env-var bridge. Reads the env var
+// at module init and forwards to the global flag. Mirrors the
+// AURA_AOT_RELOAD_AUTO_RETRY / AURA_BRIDGE_EPOCH_LEGACY_TRUST pattern
+// at the top of this file.
+namespace {
+struct EpochInvariantEnvInit {
+    EpochInvariantEnvInit() noexcept {
+        if (const char* e = std::getenv("AURA_EPOCH_INVARIANT")) {
+            if (std::string(e) == "hard")
+                aura_set_epoch_invariant_hard_enabled(1);
+        }
+    }
+};
+[[maybe_unused]] EpochInvariantEnvInit g_epoch_invariant_env_init{};
+} // namespace
+
 extern "C" bool aura_emit_object_file(const void* mod, const char* path) {
     (void)mod;
     if (!path)
