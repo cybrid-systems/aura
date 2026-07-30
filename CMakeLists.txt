@@ -1472,6 +1472,14 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # + regression. Non-duplicative with #266/#369/#553/#213.
 aura_add_issue_test(test_mutation_rollback_coverage)
 aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage)
+# Issue #2315: production chaos soak for steal × mutate × GC × mailbox.
+# Runtime-gated by AURA_CHAOS_STEAL_GC=1; production binaries / default test
+# runs unaffected when unset. CI opt-in: set AURA_CHAOS_DURATION_S=60+
+# to satisfy AC1 ≥ 60s CI soak spec.
+aura_add_issue_test(test_chaos_steal_mutation_gc)
+aura_issue_test_link_llvm_jit(test_chaos_steal_mutation_gc)
+set_target_properties(test_chaos_steal_mutation_gc PROPERTIES EXCLUDE_FROM_ALL TRUE)
+add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
 # Issue #1987: wait_for_safepoint actually blocks until signaled (B-001).
 aura_add_issue_test(test_safepoint_mutation)
 aura_issue_test_link_llvm_jit(test_safepoint_mutation)
