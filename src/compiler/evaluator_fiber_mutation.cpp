@@ -1769,6 +1769,30 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
         bump_linear_post_mutate_enforcement();
     }
 
+    // Issue #2310 AC2: re-sample snapshot post-migration. If still
+    // inconsistent after the migration refresh above → fail-closed
+    // (defense in depth with the LayoutStamp 7-field fence earlier in
+    // this function). Skipped when AURA_STEAL_SNAPSHOT_SOFT=1 (unit-
+    // test mode); production default is the force-deopt path. The fiber
+    // is dropped from the steal attempt (worker.cpp skips normal
+    // enqueue) and the per-CompilerMetrics counter advances.
+    if (!aura::serve::is_steal_snapshot_soft_mode()) {
+        if (fb_void != nullptr) {
+            auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
+            const auto post_snap = fiber->mutation_safety_snapshot();
+            if (fiber->mutation_safety_snapshot_inconsistent(post_snap)) {
+                // Bump the observed-only mismatch counter (matches
+                // worker.cpp try_steal_from path). force-deopt counter
+                // bumped by the C ABI hook below.
+                aura::serve::Fiber::bump_mutation_steal_snapshot_mismatch();
+                aura_force_deopt_on_steal_snapshot_mismatch(fiber);
+                // Force additional dual-check via scan_live_closures_for_
+                // linear_captures (mark_invalid=true, only_if_moved=false).
+                scan_live_closures_for_linear_captures(true, std::false_type{});
+            }
+        }
+    }
+
     if (pending_panic_checkpoint())
         (void)transfer_and_revalidate_panic_checkpoint(fb_void);
 
@@ -2247,6 +2271,54 @@ extern "C" void aura_evaluator_test_seed_yield_cp_and_steal_complete(void* fiber
     cp.thread_id = std::this_thread::get_id();
     stack->push_back(std::move(cp));
     aura_evaluator_on_steal_complete(fiber);
+}
+
+// Issue #2310: per-CompilerMetrics force-deopt bumper. Mirrors the
+// C ABI hook in aura_jit_bridge.cpp + strong def in this TU.
+void Evaluator::bump_steal_snapshot_mismatch_force_deopt_total() noexcept {
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->steal_snapshot_mismatch_force_deopt_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+std::uint64_t Evaluator::steal_snapshot_mismatch_force_deopt_total() noexcept {
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        return m->steal_snapshot_mismatch_force_deopt_total.load(std::memory_order_relaxed);
+    }
+    return 0;
+}
+
+// Issue #2310: fail-closed force-deopt on steal snapshot inconsistency.
+// Strong def here bumps per-CompilerMetrics counter when scheduler
+// evaluator is live + runs refresh_after_fiber_migration on the fiber
+// under exclusive recovery. Production default; opt-out via
+// AURA_STEAL_SNAPSHOT_SOFT=1 at call sites (worker.cpp + this TU's
+// refresh AC2 re-sample). aura_jit_bridge.cpp provides file-level
+// atomic fallback for light binaries (test_concurrent / test_issue_*
+// without evaluator TU linked). fiber_bridge.cpp weak no-op is the
+// third tier. In production the strong def wins (fiber_bridge.cpp
+// weak loses).
+extern "C" void aura_force_deopt_on_steal_snapshot_mismatch(void* fiber_ptr) noexcept {
+    // Always bump the per-CompilerMetrics counter (when Evaluator linked).
+    if (auto* ev = evaluator_for_scheduler_hooks()) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+            m->steal_snapshot_mismatch_force_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Mirror into Fiber::bump_steal_snapshot_mismatch_force_deopt for
+    // process-wide aggregate (also bumped by aura_jit_bridge.cpp fallback).
+    aura::serve::Fiber::bump_steal_snapshot_mismatch_force_deopt();
+
+    // Refresh under exclusive recovery: run the unified refresh on the
+    // fiber to repair state (LayoutStamp fence + dual-check + orphan GC
+    // defer clear + linear repin). This is the defense-in-depth path —
+    // generation-behind code MUST NOT silently resume.
+    auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    if (fiber) {
+        if (auto* ev = evaluator_for_scheduler_hooks()) {
+            ev->refresh_after_fiber_migration(fiber);
+        }
+    }
 }
 
 // Issue #1490 / #1631: refresh EnvFrame.version_ / bridge_epoch after fiber

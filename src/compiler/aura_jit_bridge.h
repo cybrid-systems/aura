@@ -141,6 +141,21 @@ void aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_success_total(std::uint64_t n);
 void aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t n);
 
+// Issue #2310: fail-closed force-deopt on steal snapshot inconsistency.
+// Bumped from WorkerThread::try_steal_from success path when
+// mutation_safety_snapshot_inconsistent(snap) AND NOT in soft mode
+// (AURA_STEAL_SNAPSHOT_SOFT=1). Also bumped from
+// Evaluator::refresh_after_fiber_migration re-sample fence (AC2
+// defense-in-depth). Strong def in evaluator_fiber_mutation.cpp;
+// aura_jit_bridge.cpp provides file-level atomic fallback; weak no-op
+// in fiber_bridge.cpp for light test binaries.
+void aura_force_deopt_on_steal_snapshot_mismatch(void* fiber_ptr);
+// Issue #2310: static accessor for the force-deopt counter. Returns
+// per-CompilerMetrics value when scheduler evaluator is live (via
+// evaluator_for_scheduler_hooks), otherwise file-level atomic fallback
+// in aura_jit_bridge.cpp.
+std::uint64_t aura_static_steal_snapshot_mismatch_force_deopt_total();
+
 // Issue #2094: StormLevel facade accessor (C ABI). Returns the
 // combined bitmask of shape-storm + global-deopt-storm detectors
 // so external callers can branch on a single recovery-policy value.

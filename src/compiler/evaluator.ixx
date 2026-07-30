@@ -3238,6 +3238,14 @@ public:
     // linear probe → clear resume hints. Called from Fiber::resume after
     // mutation-stack sync; complete_post_resume_steal_refresh delegates here.
     void refresh_after_fiber_migration(void* fiber_void = nullptr) noexcept;
+    // Issue #2310: per-CompilerMetrics force-deopt counter (fail-closed
+    // enforcement). Bumped from the strong definition of
+    // aura_force_deopt_on_steal_snapshot_mismatch when the Evaluator
+    // module is linked (per-CompilerMetrics surface). Distinct from
+    // the Fiber::bump_steal_snapshot_mismatch_force_deopt process-wide
+    // aggregate — both bump in tandem.
+    void bump_steal_snapshot_mismatch_force_deopt_total() noexcept;
+    [[nodiscard]] std::uint64_t steal_snapshot_mismatch_force_deopt_total() noexcept;
     // Issue #1595: after Fiber::join / parallel child completion — linear
     // ownership probe + StableNodeRef restamp (joiner-side enforcement).
     // joined_fiber_void may be null (uses current fiber / full scan).

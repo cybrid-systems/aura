@@ -224,8 +224,21 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         // steal decision (depth + held + yield jointly). Defer when
         // MutationBoundary with active Guard (depth>0 or held).
         const auto snap = stolen->mutation_safety_snapshot();
-        if (stolen->mutation_safety_snapshot_inconsistent(snap))
+        if (stolen->mutation_safety_snapshot_inconsistent(snap)) {
             Fiber::bump_mutation_steal_snapshot_mismatch();
+            // Issue #2310 AC1: fail-closed on inconsistency. Production
+            // default is force-deopt + full refresh under exclusive
+            // recovery (NOT silent resume of generation-behind code).
+            // Optional AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only for
+            // unit tests (must not be production default).
+            if (!aura::serve::is_steal_snapshot_soft_mode()) {
+                aura_force_deopt_on_steal_snapshot_mismatch(stolen);
+            }
+            // Do not normal-enqueue until refresh completes (under
+            // exclusive recovery). The fiber is dropped from this steal
+            // attempt — generation-behind code must NOT silently resume.
+            continue;
+        }
         if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe(snap)) {
             const int pri = fiber_steal_priority(stolen);
             if (pri >= 2) {

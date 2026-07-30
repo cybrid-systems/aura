@@ -52,6 +52,15 @@ __attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 // that do not link the evaluator TU still resolve the worker path.
 __attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_ptr*/) {}
 
+// Issue #2310: fail-closed force-deopt on steal snapshot inconsistency.
+// Strong def in evaluator_fiber_mutation.cpp (with Evaluator module
+// access — bumps per-CompilerMetrics counter + runs refresh).
+// aura_jit_bridge.cpp provides a file-level atomic fallback when the
+// module TU is not linked. This weak no-op keeps non-evaluator link
+// units (test_concurrent / test_issue_*) resolving without dragging
+// the full module into their link unit.
+__attribute__((weak, used)) void aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) {}
+
 // Issue #485: deferred steal violation + resume migration.
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}
 __attribute__((weak)) void aura_evaluator_bump_mutation_steal_attempt() {}
