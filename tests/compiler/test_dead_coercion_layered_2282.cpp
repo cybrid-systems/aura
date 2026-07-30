@@ -260,7 +260,17 @@ namespace _2287_detail {
 
 int main() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
+    std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
     aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
+    // Issue #2319: opt-in hard CastOp density gate (refine #2287 soft hint).
+    // AC1-AC5 wiring: env var AURA_CASTOP_DENSITY_HARD + new counters
+    // + query primitive keys + Soft default preserved + hard path fires
+    // + source-cite rows.
+    aura_dead_coercion_layered_2282::_2287_detail::ac2319_hard_gate_wiring();
+    aura_dead_coercion_layered_2282::_2287_detail::ac2319_query_keys_wired();
+    aura_dead_coercion_layered_2282::_2287_detail::ac2319_soft_default_unchanged();
+    aura_dead_coercion_layered_2282::_2287_detail::ac2319_hard_path_fires();
+    aura_dead_coercion_layered_2282::_2287_detail::ac2319_source_cite_rows();
     return RUN_ALL_TESTS();
 }

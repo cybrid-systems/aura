@@ -7199,6 +7199,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Agent hint: 1 when last density exceeds budget, else 0. Soft
             // (non-blocking) — #2108 hard-block stays unchanged.
             insert_kv("castop-annotation-hint", dens > budget ? 1 : 0);
+            // Issue #2319: opt-in hard gate (refine #2287 soft hint).
+            //   - castop-density-hard-reject-total: cumulative count of
+            //     hard/soft gate firings when AURA_CASTOP_DENSITY_HARD=1
+            //     + density > budget + dirty scope has unannotated
+            //     Dynamic binding. Read-only observability.
+            //   - castop-density-hard-wired: sentinel = 1 when the hard
+            //     gate is integrated (production default OFF; env-gated
+            //     Soft default).
+            const std::int64_t hard_reject =
+                m ? static_cast<std::int64_t>(
+                        m->castop_density_hard_reject_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hard_wired =
+                m ? static_cast<std::int64_t>(
+                        m->castop_density_hard_wired.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("castop-density-hard-reject-total", hard_reject);
+            insert_kv("castop_density_hard_reject_total", hard_reject);
+            insert_kv("castop-density-hard-wired", hard_wired);
+            insert_kv("castop_density_hard_wired", hard_wired);
+            insert_kv("schema-2319", 2319);
+            insert_kv("issue-2319", 2319);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
