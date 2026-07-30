@@ -33,9 +33,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 56 | 56 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 157 | 157 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 156 | 156 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 52 | 52 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 11 | 11 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 12 | 12 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 58 | 58 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 21 | 21 | P2 — small-medium; soa_batch precedent |
@@ -771,7 +771,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_issue_1991.cpp` (#1991) [small, domain_suite, theme_serve] — test_issue_1991.cpp — Issue #1991 / B-010: (gc) primitive clears
 - `tests/serve/test_issue_1993.cpp` (#1993) [domain_suite, theme_serve] — test_issue_1993.cpp — Issue #1993 (D-001): (gc-heap) direct-clear
 - `tests/compiler/test_layout_stamp_2170.cpp` (#2170) [domain_suite, theme_compiler] — API for cross-subsystem epoch coherence (P1, MemorySafety-Review,
-- `tests/core/test_moving_compact_2166.cpp` (#2166) [domain_suite, theme_core] — AC_M1: Moving off → Force still non-moving (address stable, moved_live_objects false).
+- `tests/core/test_moving_compact_2166.cpp` (#2166) [large, domain_suite, theme_core] — Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
 - `tests/compiler/test_occurrence_goal_epoch_table_2278.cpp` (#2278) [domain_suite, theme_compiler] — AC1: clear_blame_context does NOT wipe OccurrenceGoal table
 - `tests/compiler/test_outermost_exit_order_2120.cpp` (#2120) [domain_suite, theme_compiler] — Documented success exit order (AC5):
 - `tests/compiler/test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp — Issue #740:
@@ -790,13 +790,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (157)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (156)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (157)
+#### domain/ (156)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -862,7 +862,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_invalidate_cascade_order.cpp` (—) [domain_suite, theme_compiler] — test_invalidate_cascade_order.cpp — Issue #1378:
 - `tests/compiler/test_isolation_audit_mid_2156.cpp` (#2156) [domain_suite, theme_compiler] — AC1: Isolation deny SecurityEvent.mutation_id is Mutation epoch space,
 - `tests/compiler/test_issues_819_829_batch.cpp` (#819) [batch_driver, domain_suite, theme_compiler] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.
-- `tests/compiler/test_lifetime_contract_snapshot_2300.cpp` (#2300) [domain_suite, theme_compiler] — for pin / linear / EnvFrame / GC-defer / residual contract.
 - `tests/renderer/test_lifetime_pin_batch_ffi_present_2048.cpp` (#2048) [batch_driver, domain_suite, theme_renderer] — AC1: source cites #2048; LifetimePin Phase 2; present FfiPresentPinGuard
 - `tests/compiler/test_linear_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_batch.cpp
 - `tests/compiler/test_linear_enforce_boundary_align_2222.cpp` (#2222) [domain_suite, theme_compiler] — AC1: Production → process Strict; sandbox-off → Soft; boundary enter
@@ -1017,16 +1016,17 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held_2200.cpp` (#2200) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (11)
+### `linear_ownership` — Linear ownership / borrow / consume (12)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (11)
+#### domain/ (12)
 
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_hardware_resource_linear_ownership.cpp` (—) [domain_suite, theme_compiler] — test_hardware_resource_linear_ownership.cpp — Issue #306:
+- `tests/compiler/test_lifetime_contract_snapshot_2300.cpp` (#2300) [domain_suite, theme_compiler] — for pin / linear / EnvFrame / GC-defer / residual contract.
 - `tests/compiler/test_linear_escape_commit_hardblock_2108.cpp` (#2108) [domain_suite, theme_compiler] — AC1: Cross-batch escape → commit fails; blocked + escape counters
 - `tests/compiler/test_linear_ownership_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_ownership_batch.cpp
 - `tests/compiler/test_linear_ownership_occurrence_predicate_mutate.cpp` (—) [domain_suite, theme_compiler] — test_linear_ownership_occurrence_predicate_mutate.cpp — Issue #747:
