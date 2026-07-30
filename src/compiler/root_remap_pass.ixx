@@ -154,7 +154,104 @@ inline void register_root_remap_closure_capture_slot(void** slot) noexcept {
         v.push_back(slot);
 }
 
-inline void unregister_root_remap_closure_capture_slot(void** slot) noexcept {
+// Issue #2339: auto-register / auto-unregister counters (per-call-site
+// that wires up auto-register instead of manual register_root_remap_*
+// calls). Mirrors the existing root_remap_*_total counters but
+// distinguishes manual vs auto register paths so dashboards can spot
+// adoption coverage across materialize sites (Closure capture install,
+// Stable object root install).
+inline std::atomic<std::uint64_t> g_root_remap_auto_register_total{0};            // #2339
+inline std::atomic<std::uint64_t> g_root_remap_auto_register_unregister_total{0}; // #2339
+
+// Issue #2339: auto-register wrappers (counter-bumping). Use these at
+// materialize / install sites instead of the manual register_root_remap_*
+// so dashboards can observe adoption via the auto_register counters.
+// Existing manual register_root_remap_*_slot paths remain unchanged
+// (no counter bump) so tests + pre-#2339 code paths still work.
+inline void auto_register_root_remap_stable_slot(void** slot) noexcept {
+    register_root_remap_stable_slot(slot);
+    g_root_remap_auto_register_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void auto_unregister_root_remap_stable_slot(void** slot) noexcept {
+    unregister_root_remap_stable_slot(slot);
+    g_root_remap_auto_register_unregister_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void auto_register_root_remap_closure_capture_slot(void** slot) noexcept {
+    register_root_remap_closure_capture_slot(slot);
+    g_root_remap_auto_register_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void auto_unregister_root_remap_closure_capture_slot(void** slot) noexcept {
+    unregister_root_remap_closure_capture_slot(slot);
+    g_root_remap_auto_register_unregister_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2339: RAII helper for stable-object root slots. Construct
+// registers via auto_register, destruct unregisters via auto_unregister.
+// Avoids forget-unregister leaks at Closure/Stable materialize sites.
+class RootRemapAutoRegisterStable {
+    void** slot_{nullptr};
+
+public:
+    explicit RootRemapAutoRegisterStable(void** slot) noexcept
+        : slot_(slot) {
+        auto_register_root_remap_stable_slot(slot_);
+    }
+    ~RootRemapAutoRegisterStable() noexcept {
+        if (slot_)
+            auto_unregister_root_remap_stable_slot(slot_);
+    }
+    RootRemapAutoRegisterStable(const RootRemapAutoRegisterStable&) = delete;
+    RootRemapAutoRegisterStable& operator=(const RootRemapAutoRegisterStable&) = delete;
+    RootRemapAutoRegisterStable(RootRemapAutoRegisterStable&& o) noexcept
+        : slot_(o.slot_) {
+        o.slot_ = nullptr;
+    }
+    RootRemapAutoRegisterStable& operator=(RootRemapAutoRegisterStable&& o) noexcept {
+        if (this != &o) {
+            if (slot_)
+                auto_unregister_root_remap_stable_slot(slot_);
+            slot_ = o.slot_;
+            o.slot_ = nullptr;
+        }
+        return *this;
+    }
+};
+
+// Issue #2339: RAII helper for closure capture cell slots. Same pattern
+// as RootRemapAutoRegisterStable but for the closure_capture registry.
+class RootRemapAutoRegisterClosureCapture {
+    void** slot_{nullptr};
+
+public:
+    explicit RootRemapAutoRegisterClosureCapture(void** slot) noexcept
+        : slot_(slot) {
+        auto_register_root_remap_closure_capture_slot(slot_);
+    }
+    ~RootRemapAutoRegisterClosureCapture() noexcept {
+        if (slot_)
+            auto_unregister_root_remap_closure_capture_slot(slot_);
+    }
+    RootRemapAutoRegisterClosureCapture(const RootRemapAutoRegisterClosureCapture&) = delete;
+    RootRemapAutoRegisterClosureCapture&
+    operator=(const RootRemapAutoRegisterClosureCapture&) = delete;
+    RootRemapAutoRegisterClosureCapture(RootRemapAutoRegisterClosureCapture&& o) noexcept
+        : slot_(o.slot_) {
+        o.slot_ = nullptr;
+    }
+    RootRemapAutoRegisterClosureCapture&
+    operator=(RootRemapAutoRegisterClosureCapture&& o) noexcept {
+        if (this != &o) {
+            if (slot_)
+                auto_unregister_root_remap_closure_capture_slot(slot_);
+            slot_ = o.slot_;
+            o.slot_ = nullptr;
+        }
+        return *this;
+    }
+}
+
+inline void
+unregister_root_remap_closure_capture_slot(void** slot) noexcept {
     if (!slot)
         return;
     std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
@@ -195,6 +292,14 @@ inline void set_root_remap_pass_test_metrics(CompilerMetrics* m) noexcept {
 
 [[nodiscard]] inline std::uint64_t root_remap_rewrite_fail_total() noexcept {
     return root_remap_detail::g_rewrite_fail_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2339: auto-register / auto-unregister accessors.
+[[nodiscard]] inline std::uint64_t root_remap_auto_register_total() noexcept {
+    return g_root_remap_auto_register_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t root_remap_auto_register_unregister_total() noexcept {
+    return g_root_remap_auto_register_unregister_total.load(std::memory_order_relaxed);
 }
 
 // Core rewrite. Empty object_remap → zero work (AC3).
