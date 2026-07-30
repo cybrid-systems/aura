@@ -67,6 +67,31 @@ def main() -> int:
     must("ac2295_ownership_transfer(cs)", "AC5", test)
     must("AC #2295: EnvFrame ownership transfer protocol", "AC5", test)
 
+    # AC6: Issue #2340 — post-densify ownership-exit scan surface.
+    # Closes the residual dual-path stale window under densify × steal
+    # by unifying transfer_to / drop with Moving success.
+    must("densify_ownership_scan_total = 0", "AC6", lf)
+    must("envframe_lifetime_densify_ownership_scan_total", "AC6", lf)
+    must("bump_envframe_lifetime_densify_ownership_scan_total", "AC6", lf)
+    must("Issue #2340", "AC6", lf)
+    must("live_env_frame_refs() noexcept", "AC6", eval_ixx)
+    must("scan_live_env_frame_refs_after_densify", "AC6", eval_ixx)
+    must("Issue #2340", "AC6", eval_ixx)
+    must("Evaluator::live_env_frame_refs() noexcept", "AC6", eval_env)
+    must("Evaluator::scan_live_env_frame_refs_after_densify() noexcept", "AC6", eval_env)
+    must("Issue #2340", "AC6", eval_env)
+    must("envframe-densify-ownership-scan-total", "AC6", prim_q)
+    must("envframe_densify_ownership_scan_total", "AC6", prim_q)
+    must("envframe-densify-ownership-scan-wired", "AC6", prim_q)
+    must('"schema-2340"', "AC6", prim_q)
+    must('"issue-2340"', "AC6", prim_q)
+    must("void ac2340_1_densify_scan_counter_queryable", "AC6", test)
+    must("void ac2340_2_soft_no_densify_no_scan", "AC6", test)
+    must("void ac2340_3_compact_sweep_site_metric", "AC6", test)
+    must("void ac2340_4_query_schema", "AC6", test)
+    must("void ac2340_5_source_cite", "AC6", test)
+    must("Issue #2340", "AC6", test)
+
     if failures:
         for f in failures:
             print(f"FAIL: {f}", file=sys.stderr)

@@ -3651,6 +3651,25 @@ public:
     // bindings. Bumps env_gen_use_site_reject_total on
     // stamp-mismatch / OOB / NULL.
     [[nodiscard]] std::optional<EnvFrameRef> materialize_call_env_ref(const Closure& cl);
+    // Issue #2340: post-densify ownership-exit scan hook. Returns the
+    // current snapshot of live EnvFrameRefs that the evaluator is
+    // tracking (those that could point into a densified address set
+    // after Moving success in live_compact / Phase 5). Today this
+    // returns an empty vector (production tracking of live refs across
+    // materialize_call_env_ref / lookup_by_symid_chain_ref is a
+    // follow-up — see #2340 close comment). The hook exists so that
+    // wire-up at the CompactSweep helper has a stable iteration target.
+    [[nodiscard]] std::vector<EnvFrameRef*> live_env_frame_refs() noexcept;
+    // Issue #2340: scan_live_env_frame_refs_after_densify — runs the
+    // post-densify ownership-exit scan. Iterates live_env_frame_refs(),
+    // transfers / drops refs that point into a densified set (per
+    // EnvFrameRef::transfer_to / drop), and bumps
+    // densify_ownership_scan_total via
+    // bump_envframe_lifetime_densify_ownership_scan_total(). For now
+    // the iteration is a no-op (empty live_env_frame_refs() stub);
+    // the counter bumps so observability can verify the scan is
+    // running at the densify success site.
+    void scan_live_env_frame_refs_after_densify() noexcept;
     // Issue #242: detect a stale EnvFrame (one whose `version_`
     // snapshot is older than the current `defuse_version_`). A
     // closure captured against env_frames_[id] whose frame.version_
