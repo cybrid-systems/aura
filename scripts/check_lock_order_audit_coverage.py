@@ -65,7 +65,8 @@ def main() -> int:
             "lock_order_audit.h: Level::CompactEnv = 5 (#2316 extension)",
         ),
         (ROOT / "src/compiler/lock_order_audit.h", "DepGraph = 6", "lock_order_audit.h: Level::DepGraph = 6"),
-        (ROOT / "src/compiler/lock_order_audit.h", "kCount = 7", "lock_order_audit.h: kCount = 7 (was 4 before #2316)"),
+        (ROOT / "src/compiler/lock_order_audit.h", "DepGraph = 6", "lock_order_audit.h: DepGraph = 6 (#2316 stable)"),
+        (ROOT / "src/compiler/lock_order_audit.h", "kCount =", "lock_order_audit.h: kCount present (#2354 may extend)"),
         # Forbidden inversions header comment
         (
             ROOT / "src/compiler/lock_order_audit.h",

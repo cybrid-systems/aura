@@ -10,6 +10,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"    // Issue #2026 / #2197: validate_linear_provenance
 #include "coercion_provenance_policy.hh" // Issue #2197: note_provenance_miss force-audit
+#include "lock_order_audit.h"            // Issue #2354: Closures rank
 
 module aura.compiler.evaluator;
 
@@ -218,7 +219,9 @@ std::size_t Evaluator::gc_root_count() const {
     // UAF an unlocked iterator. Returns an approximate upper bound —
     // string_heap_/pairs_ size() remain unlocked (heap_mutex_ covers
     // those in flush_gc_roots / compact_sweep at safepoint).
+    // Issue #2354: Closures rank after Workspace/DepGraph when audit on.
     std::size_t n = string_heap_.size() + pairs_.size();
+    aura::compiler::lock_order::AuditScope lo_closures(aura::compiler::lock_order::Level::Closures);
     std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
     for (const auto& [id, _] : closures_) {
         if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {

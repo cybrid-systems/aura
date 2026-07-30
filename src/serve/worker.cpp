@@ -2,6 +2,7 @@
 #include "worker.h"
 #include "scheduler.h"
 #include "aura_platform.h"
+#include "compiler/lock_order_audit.h" // Issue #2354: FiberRegistry rank
 
 #include <unistd.h>
 
@@ -172,19 +173,22 @@ void WorkerThread::notify_fiber_done(Fiber* fiber) {
 void WorkerThread::register_fiber(Fiber* fiber) {
     if (!fiber)
         return;
-    std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        fiber_registry_mutex_, ::aura::compiler::lock_order::Level::FiberRegistry);
     fiber_registry_[fiber->id()] = fiber;
 }
 
 void WorkerThread::unregister_fiber(Fiber* fiber) {
     if (!fiber)
         return;
-    std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        fiber_registry_mutex_, ::aura::compiler::lock_order::Level::FiberRegistry);
     fiber_registry_.erase(fiber->id());
 }
 
 Fiber* WorkerThread::fiber_by_id(std::uint64_t fiber_id) const {
-    std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
+    ::aura::compiler::lock_order::AuditedMutexLock lock(
+        fiber_registry_mutex_, ::aura::compiler::lock_order::Level::FiberRegistry);
     auto it = fiber_registry_.find(fiber_id);
     if (it == fiber_registry_.end())
         return nullptr;

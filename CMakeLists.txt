@@ -2724,6 +2724,17 @@ aura_add_issue_test(test_post_densify_linear_type_revalidate_2353)
 aura_issue_test_link_llvm_jit(test_post_densify_linear_type_revalidate_2353)
 add_dependencies(all_test_issue_targets test_post_densify_linear_type_revalidate_2353)
 
+# Issue #2354: debug lock-order audit (scheduler / workspace / closures / module).
+aura_add_issue_test(test_lock_order_audit_2354)
+# Header-only audit + no service eval — still link like other issue unit tests.
+aura_issue_test_link_llvm_jit(test_lock_order_audit_2354)
+add_dependencies(all_test_issue_targets test_lock_order_audit_2354)
+
+# Issue #2316 lineage (rank table / canary) — keep registered with #2354.
+aura_add_issue_test(test_lock_order_audit_2316)
+aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)
+add_dependencies(all_test_issue_targets test_lock_order_audit_2316)
+
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
