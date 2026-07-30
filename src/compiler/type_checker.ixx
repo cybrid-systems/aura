@@ -1388,6 +1388,11 @@ public:
                                  aura::ast::NodeId id, aura::ast::NodeView v,
                                  aura::core::TypeId expected, aura::ast::NodeId cond_id,
                                  aura::ast::NodeId then_id);
+    // Issue #2348: ADT match (__match_tmp Let) check-mode — pattern
+    // membership vs subject ADT, body checked under expected, exhaustiveness
+    // retained. Opt-out when bidirectional_mode_ is false (synthesize-only).
+    void check_flat_match(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                          aura::ast::NodeId id, aura::ast::NodeView v, aura::core::TypeId expected);
     void init_primitive_env_part0(aura::core::TypeId Int, aura::core::TypeId Bool,
                                   aura::core::TypeId Float, aura::core::TypeId String,
                                   aura::core::TypeId Dyn, aura::core::TypeId Void,

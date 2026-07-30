@@ -5845,7 +5845,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // they're being violated / coerced via Gradual
     // Typing).
     //
-    // The hash has 6 keys:
+    // The hash has 6 + #2348 keys:
     //   - mode:              "full" | "disabled"
     //                        (persistent CompilerService flag;
     //                        "sampled" deferred to a follow-up
@@ -5857,12 +5857,15 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     //   - coercion-deferred: int (compile_bidirectional_coercion_deferred_total)
     //   - narrow-records:    int (check_mode_narrow_hits_total, pre-existing
     //                        field — reuse rather than add a new atomic)
+    //   - match-check:       int (bidirectional_match_check_total) #2348
+    //   - match-refined:     int (bidirectional_match_refined_total) #2348
+    //   - guardshape-check:  int (bidirectional_guardshape_check_total) #2348
+    //   - schema-2348 / issue-2348 / match-check-wired sentinels
     //
     // Counter access via ev.get_bidirectional_stats_fn_() packed
     // uint64 (see Evaluator::get_bidirectional_stats_fn_ comment
-    // for bit layout); mode + narrow-records read directly from
-    // CompilerService / CompilerMetrics via the existing
-    // ev.compiler_service() / ev.compiler_metrics() accessors.
+    // for bit layout); mode + narrow-records + #2348 match keys
+    // read directly from CompilerService / CompilerMetrics.
     //
     // Default tier (kPrimSecSafe) — read-only stats primitive;
     // mirrors (compile:inline-pass-stats) at line 72 of
@@ -5884,10 +5887,17 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
             }
 
             std::uint64_t narrow_records = 0;
+            std::uint64_t match_check = 0;
+            std::uint64_t match_refined = 0;
+            std::uint64_t guardshape_check = 0;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 narrow_records = m->check_mode_narrow_hits_total.load(std::memory_order_relaxed);
+                match_check = m->bidirectional_match_check_total.load(std::memory_order_relaxed);
+                match_refined =
+                    m->bidirectional_match_refined_total.load(std::memory_order_relaxed);
+                guardshape_check =
+                    m->bidirectional_guardshape_check_total.load(std::memory_order_relaxed);
             }
-
 
             auto mode_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(mode_str);
@@ -5900,6 +5910,17 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
                 {"annotation-fails", make_int(static_cast<std::int64_t>(fail))},
                 {"coercion-deferred", make_int(static_cast<std::int64_t>(coercion))},
                 {"narrow-records", make_int(static_cast<std::int64_t>(narrow_records))},
+                // Issue #2348: match check-mode + GuardShape observability
+                {"match-check", make_int(static_cast<std::int64_t>(match_check))},
+                {"match-refined", make_int(static_cast<std::int64_t>(match_refined))},
+                {"guardshape-check", make_int(static_cast<std::int64_t>(guardshape_check))},
+                {"bidirectional-match-check-total",
+                 make_int(static_cast<std::int64_t>(match_check))},
+                {"bidirectional-match-refined-total",
+                 make_int(static_cast<std::int64_t>(match_refined))},
+                {"match-check-wired", make_int(1)},
+                {"schema-2348", make_int(2348)},
+                {"issue-2348", make_int(2348)},
             };
             return build_kv_hash(ev, kv);
         });

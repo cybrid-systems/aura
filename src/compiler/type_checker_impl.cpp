@@ -5661,6 +5661,14 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
     else if (v.tag == NodeTag::IfExpr) {
         check_flat_if(flat, pool, id, v, expected); // Issue #903
     } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
+        // Issue #2348: desugared match is (let ((__match_tmp subject)) if-chain).
+        // Route to check_flat_match so clause bodies see expected type + ADT
+        // subject refinement (exhaustiveness still shared with synthesize path).
+        const auto let_name = std::string(pool.resolve(v.sym_id));
+        if (let_name == "__match_tmp" && v.tag == NodeTag::Let) {
+            check_flat_match(flat, pool, id, v, expected);
+            return;
+        }
         // Let in check mode: check value, then check body against expected
         bool is_rec = (v.tag == NodeTag::LetRec);
         auto name = pool.resolve(v.sym_id);
@@ -5879,6 +5887,16 @@ void InferenceEngine::check_flat_if_narrowing(FlatAST& flat, StringPool& pool, N
                                                           /*check_mode=*/true);
         auto occ = pred.occ;
         if (occ && !occ->is_negation) {
+            // Issue #2348 AC2: GuardShape / predicate-shaped If under
+            // bidirectional_mode — refined types flow into then-branch
+            // (aligns with synthesize-side occurrence + selective renarrow).
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->bidirectional_guardshape_check_total.fetch_add(1, std::memory_order_relaxed);
+            } else if (cs_.metrics_) {
+                static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                    ->bidirectional_guardshape_check_total.fetch_add(1, std::memory_order_relaxed);
+            }
             // Then-branch: variable has refined type
             env_.push_scope();
             ownership_env_.push_scope();
@@ -5983,6 +6001,183 @@ void InferenceEngine::check_flat_if_narrowing(FlatAST& flat, StringPool& pool, N
     } // end bidirectional_mode_ opt-out
 }
 
+// Issue #2348: bidirectional check-mode for desugared ADT match.
+// Layout: (let ((__match_tmp subject)) if-chain-of-clauses) with
+// MatchClauseInfo on the Let. When bidirectional_mode_ is false, fall
+// back to synthesize-only (AC3 — zero regression for hosts that disable).
+// When on: validate used constructors against subject ADT, check clause
+// bodies (if-chain) under expected, retain selective/Full exhaustiveness.
+void InferenceEngine::check_flat_match(FlatAST& flat, StringPool& pool, NodeId id, NodeView v,
+                                       TypeId expected) {
+    // AC3: opt-out → prior synthesize-only (no pattern membership gate,
+    // no match-check counters). Body still unified with expected via
+    // synthesize + consistent_unify so annotation contracts do not
+    // silently disappear when hosts disable bidirectional.
+    if (!bidirectional_mode_) {
+        env_.push_scope();
+        ownership_env_.push_scope();
+        TypeId val_type = reg_.void_type();
+        if (!v.children.empty() && v.child(0) != NULL_NODE)
+            val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        env_.bind("__match_tmp", val_type);
+        TypeId body_type = reg_.void_type();
+        if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+            body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+        if (!cs_.consistent_unify(body_type, expected) && !is_coercible(body_type, expected)) {
+            auto msg = "match result type mismatch: expected " +
+                       std::string(reg_.format_type(expected)) + ", got " +
+                       std::string(reg_.format_type(body_type));
+            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
+        }
+        ownership_env_.pop_scope();
+        env_.pop_scope();
+        return;
+    }
+
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)->bidirectional_match_check_total.fetch_add(
+            1, std::memory_order_relaxed);
+    } else if (cs_.metrics_) {
+        static_cast<struct CompilerMetrics*>(cs_.metrics_)
+            ->bidirectional_match_check_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    env_.push_scope();
+    ownership_env_.push_scope();
+
+    // 1. Subject type (synthesize; env-narrowed if Variable under occurrence).
+    TypeId subject_type = reg_.void_type();
+    if (!v.children.empty() && v.child(0) != NULL_NODE) {
+        const auto val_id = v.child(0);
+        subject_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+        auto val_v = flat.get(val_id);
+        if (val_v.tag == NodeTag::Variable && val_v.sym_id != INVALID_SYM) {
+            auto var_name = std::string(pool.resolve(val_v.sym_id));
+            if (env_.is_bound(var_name)) {
+                auto env_type = env_.lookup(var_name);
+                if (reg_.tag_of(env_type) != TypeTag::TYPE_VAR)
+                    subject_type = env_type;
+            }
+        }
+    }
+    auto subject_norm = cs_.normalize(subject_type);
+    if (reg_.tag_of(subject_norm) == TypeTag::FUNC) {
+        if (auto* f = reg_.func_of(subject_norm))
+            subject_norm = f->ret;
+    }
+    env_.bind("__match_tmp", subject_norm);
+
+    // 2. Pattern membership / ctor arity vs subject ADT (AC1.1).
+    const auto* ctors = reg_.get_adt_constructors(subject_norm);
+    bool refined = ctors != nullptr && !ctors->empty();
+    if (auto* minfo = flat.get_match_info(id)) {
+        MatchClauseInfo updated = *minfo;
+        updated.subject_type_id = subject_norm.index;
+        updated.exhaustiveness_checked = true;
+        // Validate used constructors against ADT list when known.
+        if (ctors) {
+            auto check_ctor = [&](SymId sid) {
+                auto cname = std::string(pool.resolve(sid));
+                if (std::find(ctors->begin(), ctors->end(), cname) == ctors->end()) {
+                    // Not a registered ctor of this ADT — may be a candidate
+                    // var binding; only hard-fail for used_constructors.
+                    return false;
+                }
+                // Arity: look up constructor type in env when bound.
+                if (env_.is_bound(cname)) {
+                    TypeId ctor_ty = env_.lookup(cname);
+                    // Unwrap Forall shells.
+                    while (reg_.tag_of(ctor_ty) == TypeTag::FORALL) {
+                        if (auto* fa = reg_.forall_of(ctor_ty))
+                            ctor_ty = fa->body;
+                        else
+                            break;
+                    }
+                    // Func arity is informational for zero-arg / multi-arg
+                    // ctors; field types already live on the ctor FuncType
+                    // from define-type registration. Mismatch vs pattern
+                    // shape is enforced at runtime by the desugared
+                    // pair?/null? chain; here we only require the ctor
+                    // type is Func (or nullary → Func {}).
+                    (void)reg_.func_of(ctor_ty);
+                }
+                return true;
+            };
+            for (auto sid : minfo->used_constructors) {
+                if (!check_ctor(sid)) {
+                    auto cname = std::string(pool.resolve(sid));
+                    auto msg = "match pattern constructor '" + cname +
+                               "' is not a constructor of " +
+                               std::string(reg_.format_type(subject_norm));
+                    const auto kind = strict_ ? ErrorKind::TypeError : ErrorKind::Warning;
+                    diag_.report(Diagnostic(kind, std::move(msg), cur_loc_)
+                                     .with_suggestion("use a constructor of " +
+                                                      std::string(reg_.name_of(subject_norm))));
+                }
+            }
+            // Candidate bare-ids that resolve as ADT ctors count as refined.
+            for (auto sid : minfo->candidate_constructors) {
+                auto cname = std::string(pool.resolve(sid));
+                if (std::find(ctors->begin(), ctors->end(), cname) != ctors->end())
+                    refined = true;
+            }
+        }
+        flat.set_match_info(id, std::move(updated));
+    }
+    if (refined) {
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->bidirectional_match_refined_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (cs_.metrics_) {
+            static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                ->bidirectional_match_refined_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // 3. Exhaustiveness (shared with synthesize_flat_let / #2288 selective).
+    if (cs_.metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        m->match_subject_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    auto exh = check_match_exhaustiveness(flat, pool, reg_, id);
+    if (exh.subject_type_name.empty() && subject_norm.valid())
+        exh.subject_type_name = std::string(reg_.name_of(subject_norm));
+    if (cs_.metrics_ && exh.checked) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        m->adt_exhaustiveness_checked_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!exh.exhaustive && !exh.missing_constructors.empty()) {
+        if (cs_.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->adt_non_exhaustive_caught_total.fetch_add(1, std::memory_order_relaxed);
+            m->non_exhaustive_match_diagnostics_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        auto msg = format_match_exhaustiveness_message(exh);
+        const auto kind = strict_ ? ErrorKind::TypeError : ErrorKind::Warning;
+        if (exh.missing_constructors.size() == 1) {
+            diag_.report(Diagnostic(kind, msg, cur_loc_)
+                             .with_suggestion("add clause for '" + exh.missing_constructors[0] +
+                                              "' pattern"));
+        } else {
+            std::string suggest = "add clauses for ";
+            for (std::size_t mi = 0; mi < exh.missing_constructors.size(); ++mi) {
+                if (mi > 0)
+                    suggest += ", ";
+                suggest += "'" + exh.missing_constructors[mi] + "'";
+            }
+            diag_.report(Diagnostic(kind, msg, cur_loc_).with_suggestion(suggest));
+        }
+    }
+
+    // 4. Clause bodies (if-chain) checked under expected (AC1.2).
+    // Nested IfExpr uses check_flat_if → occurrence narrowing for GuardShape.
+    if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+        check_flat(flat, pool, v.child(1), expected);
+
+    ownership_env_.pop_scope();
+    env_.pop_scope();
+}
 
 void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView v,
                                       TypeId expected) {

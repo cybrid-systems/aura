@@ -6225,6 +6225,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compile_bidirectional_annotation_pass_total{0};
     std::atomic<std::uint64_t> compile_bidirectional_annotation_fail_total{0};
     std::atomic<std::uint64_t> compile_bidirectional_coercion_deferred_total{0};
+    // Issue #2348: bidirectional check-mode for ADT match + GuardShape.
+    //   - bidirectional_match_check_total: entries into check_flat_match
+    //     (bidirectional_mode on + __match_tmp Let under expected type).
+    //   - bidirectional_match_refined_total: subject resolved to known ADT
+    //     (ctors registered) so clause bodies checked under refined subject.
+    //   - bidirectional_guardshape_check_total: check_flat_if_narrowing
+    //     applied occurrence refinement under bidirectional_mode (If /
+    //     GuardShape then-branch alignment with #283).
+    std::atomic<std::uint64_t> bidirectional_match_check_total{0};
+    std::atomic<std::uint64_t> bidirectional_match_refined_total{0};
+    std::atomic<std::uint64_t> bidirectional_guardshape_check_total{0};
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. 3 lifetime counters:
     //   - consistent_unify_total: every call to
