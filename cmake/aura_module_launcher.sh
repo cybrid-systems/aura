@@ -71,8 +71,15 @@ fi
 
 # GCC emits a noisy scan-phase warning when CMake's CXX module scanner
 # invokes the compiler without linking. Filter it from stderr only.
-"${CXX[@]}" "$@" 2> >(grep -v 'linker input file unused because linking not done' >&2)
-RC=${PIPESTATUS[0]}
+#
+# NOTE: process substitution is NOT a pipeline — do not use PIPESTATUS.
+# Capture $? immediately after the compiler so a successful compile is
+# not reported as FAILED (which left only post-process noise like
+# "rm: cannot remove …gcm" visible on flaky CI logs).
+set +e
+"${CXX[@]}" "$@" 2> >(grep -v 'linker input file unused because linking not done' >&2 || true)
+RC=$?
+set -e
 
 [ -n "$per_target_dir" ] || exit $RC
 per_target_dir="$BUILD_DIR/$per_target_dir"
@@ -170,7 +177,8 @@ sync_gcm() {
         if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
             cp -f "$src" "$dst" 2>/dev/null || true
         fi
-        rm -f "$src"
+        # Never fail the compile on a concurrent gcm restat race.
+        rm -f "$src" 2>/dev/null || true
         ln -sfn "$dst" "$src" 2>/dev/null || true
         for c in "${consumers[@]}"; do
             ln -sfn "$dst" "$c/$gcm_name" 2>/dev/null || true

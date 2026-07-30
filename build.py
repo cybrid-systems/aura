@@ -518,15 +518,34 @@ def cmd_build():
     # live in bundles are EXCLUDE_FROM_ALL — see #871/#873).
     # fast tier: fixture subset + git-changed (issue_tier.py).
     # AURA_ISSUE_BUILD=bundles → only the profile bundle exes.
+    # AURA_ISSUE_BUILD=none/skip/off → skip issue matrix entirely.
+    #
+    # Sanitizer builds (build_asan / build_ubsan / build_tsan) default to
+    # skipping the issue matrix: linking 500+ ASAN-instrumented test
+    # binaries fills the GitHub Actions runner disk ("No space left on
+    # device") and blows the wall clock. asan-verify / ubsan-smoke only
+    # need aura + test_ir (+ concurrent). Force full matrix with
+    # AURA_ISSUE_BUILD=all under --sanitizer=.
     tier = issues_tier()
     issue_mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
+    san_name = BUILD.name.removeprefix("build_") if BUILD.name.startswith("build_") else ""
+    if san_name in SANITIZER_FLAGS and issue_mode in ("all", ""):
+        issue_mode = "none"
+        info(f"issue tests: skipped under --sanitizer={san_name} (set AURA_ISSUE_BUILD=all to force full matrix)")
     t0 = time.time()
-    if tier == "full" and issue_mode == "bundles":
+    if issue_mode in ("none", "skip", "off", "0"):
+        info("issue tests: skipped (AURA_ISSUE_BUILD=none)")
+        r = 0
+    elif tier == "full" and issue_mode == "bundles":
         from issue_tier import BUNDLE_PROFILES
 
         targets = [f"test_issues_{p}" for p in BUNDLE_PROFILES]
         issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]
         info(f"issue tests: tier=full mode=bundles ({len(targets)} bundle targets)")
+        r = run(issue_cmd, cwd=ROOT)
+        if r != 0:
+            warn("issue-test build failed — retrying once (module dyndep flake workaround)")
+            r = run(issue_cmd, cwd=ROOT)
     elif tier == "full":
         issue_cmd = [
             "ninja",
@@ -538,19 +557,20 @@ def cmd_build():
             "all_test_issue_targets",
         ]
         info("issue tests: tier=full (bundles + standalones; duals excluded)")
+        r = run(issue_cmd, cwd=ROOT)
+        if r != 0:
+            warn("issue-test build failed — retrying once (module dyndep flake workaround)")
+            r = run(issue_cmd, cwd=ROOT)
     else:
         targets = resolve_issue_targets("fast")
         issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]
         changed = [t for t in targets if t not in set(load_fast_targets())]
         extra = f", +{len(changed)} git-changed" if changed else ""
         info(f"issue tests: tier=fast ({len(targets)} targets{extra})")
-    r = run(issue_cmd, cwd=ROOT)
-    if r != 0:
-        # One retry: GCC 16 module dyndep scans under high -j can flake with
-        # "when writing output to …*.o.ddi.i: Invalid argument" (shared JIT
-        # lib reduces this; retry covers residual races).
-        warn("issue-test build failed — retrying once (module dyndep flake workaround)")
         r = run(issue_cmd, cwd=ROOT)
+        if r != 0:
+            warn("issue-test build failed — retrying once (module dyndep flake workaround)")
+            r = run(issue_cmd, cwd=ROOT)
     _phase("build issue tests", t0)
     if r != 0:
         # Don't fail cmd_build on partial-build errors —
