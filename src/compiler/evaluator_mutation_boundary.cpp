@@ -1298,6 +1298,30 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (uus > mutation_hold_budget_us()) {
                 m->mutation_hold_over_budget_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2349: production hold SLO circuit-breaker (default fail path).
+            // ── Decision table (Soft / Production / Disabled) ──
+            // | Mode       | Env select                                      | hold > SLO |
+            // | Soft       | AURA_SANDBOX=off OR AURA_MUTATION_HOLD_SLO_SOFT=1 | metric only |
+            // | Production | default                                         | force-fail  |
+            // | Disabled   | AURA_MUTATION_HOLD_SLO_US=0                     | no-op       |
+            // Happy path (hold ≤ SLO or SLO=0): one compare, zero force work (AC3).
+            // Reuses this outermost dtor hold sample — no second timer (goal 3).
+            // Distinct from #2199 STRICT hard-timeout (opt-in) and #2313 budget
+            // (signal-only). Cooperative only — does not unlock early (AC5).
+            {
+                const auto slo = mutation_hold_slo_us();
+                if (slo > 0 && uus > slo) {
+                    m->mutation_hold_slo_violation_total.fetch_add(1, std::memory_order_relaxed);
+                    if (!mutation_hold_slo_soft_mode()) {
+                        // Production default: fail mutation so agents cannot ship
+                        // while spinning a long Guard (GC/steal tail bound).
+                        if (flag_)
+                            *flag_ = false;
+                        success = false;
+                    }
+                    // Soft: counter only; success may remain true (AC2).
+                }
+            }
             // Export-ready: one load + conditional store (avoid write every dtor).
             if (m->runtime_obs_export_ready.load(std::memory_order_relaxed) == 0)
                 m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);

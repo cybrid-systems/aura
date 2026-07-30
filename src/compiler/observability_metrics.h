@@ -7522,6 +7522,14 @@ struct CompilerMetrics {
     // degrade or shorter batches (closed-loop AC2; #2253 -40 steal
     // penalty still fires on last_hold_us for #2253 integration).
     std::atomic<std::uint64_t> mutation_hold_over_budget_total{0}; // #2313
+    // Issue #2349: production hold SLO circuit-breaker violations.
+    // Bumped at outermost dtor when hold_us > mutation_hold_slo_us() (default
+    // 100ms via AURA_MUTATION_HOLD_SLO_US; 0 disables). Soft/sandbox: metric
+    // only. Production default: also force success_flag=false so mutate does
+    // not commit (bounds GC/steal tail under AI agent long mutate). Distinct
+    // from long_mutation_forced_abort_total (#2199 opt-in STRICT) and
+    // mutation_hold_over_budget_total (#2313 signal-only).
+    std::atomic<std::uint64_t> mutation_hold_slo_violation_total{0}; // #2349
     // Issue #1373: cross-fiber yield + hold observability (Agent dashboard)
     //   - yield_same_thread: yield while boundary held, same OS thread
     //   - cross_thread_migration: yield checkpoint resume on different thread

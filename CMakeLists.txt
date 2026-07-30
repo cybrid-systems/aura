@@ -2698,6 +2698,11 @@ aura_add_issue_test(test_bidirectional_match_check_2348)
 aura_issue_test_link_llvm_jit(test_bidirectional_match_check_2348)
 add_dependencies(all_test_issue_targets test_bidirectional_match_check_2348)
 
+# Issue #2349: outermost hold SLO circuit-breaker (production default fail).
+aura_add_issue_test(test_mutation_hold_slo_2349)
+aura_issue_test_link_llvm_jit(test_mutation_hold_slo_2349)
+add_dependencies(all_test_issue_targets test_mutation_hold_slo_2349)
+
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
