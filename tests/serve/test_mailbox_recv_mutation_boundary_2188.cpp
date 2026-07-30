@@ -1,6 +1,8 @@
 // @category: unit
 // @reason: Issue #2188 — forbid blocking MultiFiberMailbox::recv /
 // Fiber::yield while MutationBoundary is live (depth>0 or held).
+// Issue #2347 — Strict/hard audit + optional Guard-window threshold
+// force-rollback (Policy A stays non-blocking empty).
 //
 //   AC1: under live Guard (depth≥1), recv(wait=true) does not yield;
 //        returns empty; recv_rejected_in_mutation_boundary bumps
@@ -8,6 +10,13 @@
 //   AC3: fanout / push / linear-viol filter unchanged (source + smoke)
 //   AC4: fiber holds Guard, recv → no yield/deadlock; metric ≥1
 //   AC5: source-cite gate next to #2010 linear-viol hot-path comment
+//
+// #2347 ACs (extend Policy A):
+//   AC1 Soft: boundary-live blocking recv → empty + soft counter only
+//   AC2 Strict: hard-total bumps under AURA_MUTATE_MAILBOX_STRICT=1
+//   AC3 Threshold: N rejects in one Guard → success_flag=false
+//   AC4 Happy path (depth==0): hard-total unchanged on try/recv
+//   AC5 schema-2347 + Agent contract cite + window clear on exit
 
 #include "test_harness.hpp"
 
@@ -41,7 +50,9 @@ using aura::compiler::types::is_int;
 using aura::serve::Fiber;
 using aura::serve::Scheduler;
 using aura::serve::YieldReason;
+using aura::serve::mf_mailbox::clear_recv_boundary_reject_window;
 using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+using aura::serve::mf_mailbox::g_recv_boundary_reject_window;
 using aura::serve::mf_mailbox::MailMessage;
 using aura::serve::mf_mailbox::MultiFiberMailbox;
 using aura::serve::mf_mailbox::PushStatus;
@@ -327,11 +338,173 @@ static void ac2312_source_cite_rows() {
     CHECK(epm.find("schema-2312") != std::string::npos, "AC5: messaging primitive cites 2312");
 }
 
+// ── Issue #2347 AC1: Soft path — hard total stays 0 ──
+static void ac2347_soft_only_soft_counter() {
+    std::println("\n--- #2347 AC1: Soft path Policy A soft counter only ---");
+    // Ensure Strict env is off for Soft AC.
+    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    clear_recv_boundary_reject_window();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    MultiFiberMailbox mb(/*high_water=*/8);
+    const auto hard0 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+        std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        auto guard_r =
+            Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "AC1 Soft: try_acquire");
+        auto guard = std::move(*guard_r);
+        auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/-1);
+        CHECK(!msg.has_value(), "AC1 Soft: empty return (Policy A)");
+        CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
+                  std::memory_order_relaxed) > soft0,
+              "AC1 Soft: soft reject bumps");
+        CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+                  std::memory_order_relaxed) == hard0,
+              "AC1 Soft: hard total unchanged");
+    }
+}
+
+// ── Issue #2347 AC2: Strict hard counter ──
+static void ac2347_strict_hard_counter() {
+    std::println("\n--- #2347 AC2: Strict hard-total bumps ---");
+    setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    // Disable threshold so this AC only exercises hard counter.
+    setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "0", 1);
+    clear_recv_boundary_reject_window();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    MultiFiberMailbox mb(/*high_water=*/8);
+    const auto hard0 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+        std::memory_order_relaxed);
+    bool ok = true;
+    {
+        auto guard_r =
+            Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "AC2 Strict: try_acquire");
+        auto guard = std::move(*guard_r);
+        CHECK(ok, "AC2 Strict: success_flag starts true");
+        (void)mb.recv(true, -1);
+        (void)mb.recv(true, -1);
+        const auto hard1 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+            std::memory_order_relaxed);
+        CHECK(hard1 >= hard0 + 2, "AC2 Strict: hard-total +2");
+        CHECK(ok, "AC2 Strict: threshold=0 does not mark-failed");
+    }
+    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+}
+
+// ── Issue #2347 AC3: threshold force-rollback ──
+static void ac2347_threshold_force_rollback() {
+    std::println("\n--- #2347 AC3: threshold → success_flag=false ---");
+    setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "3", 1);
+    clear_recv_boundary_reject_window();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    MultiFiberMailbox mb(/*high_water=*/8);
+    const auto force0 =
+        g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        auto guard_r =
+            Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "AC3: try_acquire");
+        auto guard = std::move(*guard_r);
+        CHECK(ok, "AC3: starts success");
+        (void)mb.recv(true, -1);
+        CHECK(ok, "AC3: after 1 reject still ok (thr=3)");
+        (void)mb.recv(true, -1);
+        CHECK(ok, "AC3: after 2 rejects still ok");
+        (void)mb.recv(true, -1);
+        CHECK(!ok, "AC3: after 3 rejects success_flag=false");
+        CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(
+                  std::memory_order_relaxed) > force0,
+              "AC3: force-rollback total bumps");
+    }
+    // Window cleared on outermost Guard exit.
+    CHECK(g_recv_boundary_reject_window == 0, "AC3: window cleared on Guard exit");
+    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+}
+
+// ── Issue #2347 AC4: happy path zero extra hard cost ──
+static void ac2347_happy_path_no_hard() {
+    std::println("\n--- #2347 AC4: depth==0 happy path hard-total unchanged ---");
+    setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    clear_recv_boundary_reject_window();
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "AC4: depth 0");
+    MultiFiberMailbox mb(/*high_water=*/8);
+    const auto hard0 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+        std::memory_order_relaxed);
+    const auto force0 =
+        g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed);
+    (void)mb.try_recv();
+    (void)mb.recv(/*wait=*/false, /*timeout_ms=*/0);
+    MailMessage m;
+    m.payload = "happy-2347";
+    CHECK(mb.push(m) == PushStatus::Ok, "AC4: push ok");
+    auto got = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
+    CHECK(got.has_value() && got->payload == "happy-2347", "AC4: depth0 delivery");
+    CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+              std::memory_order_relaxed) == hard0,
+          "AC4: hard-total unchanged off boundary");
+    CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed) ==
+              force0,
+          "AC4: force-rollback unchanged off boundary");
+    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+}
+
+// ── Issue #2347 AC5: schema + Agent contract cite ──
+static void ac2347_schema_and_contract() {
+    std::println("\n--- #2347 AC5: schema-2347 + Agent contract ---");
+    const auto hdr = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto epm = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(hdr.find("Issue #2347") != std::string::npos, "AC5: mailbox cites #2347");
+    CHECK(hdr.find("AURA_MUTATE_MAILBOX_STRICT") != std::string::npos, "AC5: STRICT env");
+    CHECK(hdr.find("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD") != std::string::npos,
+          "AC5: THRESHOLD env");
+    CHECK(hdr.find("recv_rejected_in_mutation_boundary_hard_total") != std::string::npos,
+          "AC5: hard total counter");
+    CHECK(hdr.find("Guard") != std::string::npos &&
+              (hdr.find("blocking recv") != std::string::npos ||
+               hdr.find("blocking-recv") != std::string::npos ||
+               hdr.find("try_recv") != std::string::npos),
+          "AC5: Agent contract comment present");
+    CHECK(hdr.find("aura_evaluator_mark_outermost_mutation_failed") != std::string::npos,
+          "AC5: mark-failed C ABI cited");
+    CHECK(emb.find("clear_recv_boundary_reject_window") != std::string::npos,
+          "AC5: outermost exit clears window");
+    CHECK(epm.find("schema-2347") != std::string::npos, "AC5: query schema-2347");
+    CHECK(epm.find("issue-2347") != std::string::npos, "AC5: query issue-2347");
+    CHECK(epm.find("recv-rejected-in-mutation-boundary-hard-total") != std::string::npos,
+          "AC5: hard-total query key");
+    CHECK(epm.find("recv-boundary-force-rollback-total") != std::string::npos,
+          "AC5: force-rollback query key");
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2347") == 2347, "schema-2347");
+    CHECK(href(cs, "issue-2347") == 2347, "issue-2347");
+    CHECK(href(cs, "mutate-mailbox-strict-wired") == 1, "strict-wired");
+    CHECK(href(cs, "recv-boundary-hard-wired") == 1, "hard-wired");
+    CHECK(href(cs, "recv-rejected-in-mutation-boundary-hard-total") >= 0, "hard-total queryable");
+    CHECK(href(cs, "recv-boundary-force-rollback-total") >= 0, "force-rollback queryable");
+    // Lineage retained.
+    CHECK(href(cs, "schema-2188") == 2188, "schema-2188 retained");
+    CHECK(href(cs, "schema-2312") == 2312, "schema-2312 retained");
+}
+
 } // namespace
 
 int main() {
     std::println(
-        "=== Issue #2188/#2312: MultiFiberMailbox recv/push gate under MutationBoundary ===");
+        "=== Issue #2188/#2312/#2347: MultiFiberMailbox recv/push gate under MutationBoundary ===");
     ac1_recv_rejected_under_guard();
     ac2_depth0_unchanged();
     ac3_push_linear_unchanged();
@@ -343,6 +516,12 @@ int main() {
     ac2312_source_and_regression();
     ac2312_counter_wired();
     ac2312_source_cite_rows();
+    // Issue #2347: Strict hard audit + Guard-window threshold force-rollback.
+    ac2347_soft_only_soft_counter();
+    ac2347_strict_hard_counter();
+    ac2347_threshold_force_rollback();
+    ac2347_happy_path_no_hard();
+    ac2347_schema_and_contract();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

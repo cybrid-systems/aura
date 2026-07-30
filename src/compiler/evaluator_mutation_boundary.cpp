@@ -39,6 +39,7 @@ module;
 #include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
 #include "compiler/mutation_hold_budget.h"   // Issue #2313: mutation_hold_budget_us()
 #include "serve/fiber.h"                     // Issue #2184: publish MutationSafetySnapshot
+#include "serve/multi_fiber_mailbox.h"       // Issue #2347: clear recv boundary reject window
 #include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
 #include <cassert>
 #include <chrono>
@@ -1695,6 +1696,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
         ev_->outermost_mutation_success_flag_ = nullptr;
+        // Issue #2347: clear TLS Guard-window reject count so multi-round
+        // mutates do not accumulate a stale threshold across outermost
+        // boundaries (Soft dashboard + Strict force-rollback both reset).
+        aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
         ev_->unbind_yield_hook_evaluator();
         // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).
         // Captures the post-mutation stamp (env_generation_ + defuse_version_

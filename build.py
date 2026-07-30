@@ -2149,6 +2149,25 @@ def cmd_steal_snapshot_hard_invariant_coverage():
     return 0
 
 
+def cmd_mutate_mailbox_strict_coverage():
+    """Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.
+
+    Soft: Policy A soft counter only. Strict / production: hard-total +
+    optional Guard-window threshold force-rollback. Happy path: depth==0.
+    """
+    print(f"{B}=== mutate-mailbox Strict hard audit coverage (#2347) ==={N}")
+    script = ROOT / "scripts" / "check_mutate_mailbox_strict_2347.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutate-mailbox Strict hard audit coverage contract rows failed")
+        return 1
+    ok("mutate-mailbox Strict hard audit coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2512,6 +2531,7 @@ def cmd_gate():
         or cmd_escape_gate_key_contract_coverage()
         or cmd_composite_empty_cs_hard_coverage()
         or cmd_steal_snapshot_hard_invariant_coverage()
+        or cmd_mutate_mailbox_strict_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

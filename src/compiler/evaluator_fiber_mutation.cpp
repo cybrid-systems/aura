@@ -1101,6 +1101,13 @@ Evaluator* Evaluator::get_query_evaluator() noexcept {
     return g_scheduler_stats_evaluator.load(std::memory_order_acquire);
 }
 
+// Issue #2347: MultiFiberMailbox Strict path may force outermost mutation
+// mark-failed when blocking recv rejects exceed the Guard window threshold.
+extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept {
+    if (auto* ev = Evaluator::get_query_evaluator())
+        ev->mark_outermost_mutation_failed();
+}
+
 // Issue #63723: clear all per-thread/process-wide Evaluator
 // pointers that point at this dying instance. Without this,
 // when the closure that owned this Evaluator returns, the

@@ -7,6 +7,11 @@
 //        observability (+ orch hook for dashboards).
 // #2188: forbid blocking recv / Fiber::yield while MutationBoundary is live
 //        (depth>0 or held) — Policy A: non-blocking empty + metric, no park.
+// #2347: Guard-live blocking recv → hard audit under Strict/production.
+//        Agent contract: **Guard 内禁止 blocking recv**; use try_recv /
+//        recv(wait=false) or exit MutationBoundary first. Policy A stays
+//        non-blocking; Strict bumps hard counter and may force-rollback
+//        after N rejects in one outermost Guard window.
 // #2316: wire mu_ acquire to lock_order::on_acquire(Level::Mailbox) for
 //        rank-table audit + AURA_LOCK_ORDER_CANARY inversion detection.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
@@ -35,6 +40,11 @@
 // Issue #2010: optional orch mirror for mailbox backpressure (weak no-op when
 // orch is not linked; strong def bumps OrchModuleStats::send_backpressure_total).
 extern "C" void aura_orch_note_mailbox_backpressure();
+// Issue #2347: force outermost mutation success_flag=false (strong def in
+// evaluator_fiber_mutation.cpp; weak no-op when Evaluator not linked).
+extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept;
+// Issue #2346 / #2347: production canary probe (strong in audit hooks).
+extern "C" int aura_production_defaults_active_probe() noexcept;
 
 namespace aura::serve::mf_mailbox {
 
@@ -76,6 +86,11 @@ struct MultiFiberMailboxStats {
     // Issue #2188: blocking recv refused while MutationBoundary is live
     // (depth>0 or held) — Policy A non-blocking empty return.
     std::atomic<std::uint64_t> recv_rejected_in_mutation_boundary{0};
+    // Issue #2347: Strict / production hard path for the same Policy A
+    // reject (Agents must poll this; Soft path leaves it at 0).
+    std::atomic<std::uint64_t> recv_rejected_in_mutation_boundary_hard_total{0};
+    // Issue #2347: times window threshold forced mutation mark-failed.
+    std::atomic<std::uint64_t> recv_boundary_force_rollback_total{0};
     // Issue #2312: delivery gate — bump when push / broadcast_fanout
     // observes the target fiber(s) holding a live MutationBoundary
     // (depth>0 or held) and defers (Backpressure) rather than risking
@@ -89,6 +104,37 @@ struct MultiFiberMailboxStats {
 
 // Process-wide aggregate (tests / observability).
 inline MultiFiberMailboxStats g_mf_mailbox_stats{};
+
+// Issue #2347: rejects in the current outermost Guard window (TLS).
+// Cleared on outermost Guard exit so multi-round mutates do not carry
+// a stale window. Soft path still increments this for optional dashboards.
+inline thread_local std::uint64_t g_recv_boundary_reject_window{0};
+
+inline void clear_recv_boundary_reject_window() noexcept {
+    g_recv_boundary_reject_window = 0;
+}
+
+// Issue #2347: Strict / production opt-in for hard audit + threshold.
+// Soft (default): Policy A soft counter only.
+// Strict: AURA_MUTATE_MAILBOX_STRICT=1 OR production_defaults canary.
+[[nodiscard]] inline bool is_mutate_mailbox_strict() noexcept {
+    const char* e = std::getenv("AURA_MUTATE_MAILBOX_STRICT");
+    if (e && e[0] == '1')
+        return true;
+    return aura_production_defaults_active_probe() != 0;
+}
+
+// Default N=8 rejects in one Guard window → force mark-failed under Strict.
+// Override: AURA_MUTATE_MAILBOX_REJECT_THRESHOLD=<N> (0 disables threshold).
+[[nodiscard]] inline std::uint64_t mutate_mailbox_reject_threshold() noexcept {
+    const char* e = std::getenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    if (e == nullptr || e[0] == '\0')
+        return 8;
+    std::uint64_t v = 0;
+    for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+        v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+    return v; // 0 = disable force-rollback threshold
+}
 
 // ── Hot-path helpers (no Evaluator / GC / provenance) ──
 [[nodiscard]] inline bool is_linear_viol_payload(std::string_view payload) noexcept {
@@ -315,12 +361,18 @@ public:
     // timeout_ms < 0: wait forever; 0: try once; >0: deadline.
     // for_fiber: if non-zero, prefer messages with matching to_fiber or broadcast (0).
     //
-    // Issue #2188 (Policy A): while MutationBoundary is live (depth>0 or
-    // held), never park / Fiber::yield — return empty immediately and bump
-    // recv_rejected_in_mutation_boundary. Agents under Guard must use
-    // try_pop / recv(wait=false|timeout_ms=0). Depth==0 path unchanged.
+    // Issue #2188 / #2347 (Policy A + hard audit):
+    // While MutationBoundary is live (depth>0 or held), never park /
+    // Fiber::yield — return empty immediately and bump soft reject counter.
+    // Agent contract: **do not blocking-recv under Guard** — use try_recv /
+    // recv(wait=false) or exit the boundary first (prevents livelock spin).
+    // Strict / production (AURA_MUTATE_MAILBOX_STRICT=1 or production
+    // canary): also bump hard counter; after N rejects in one Guard window
+    // force outermost mutation mark-failed (threshold, default 8).
+    // Soft / default: Policy A soft counter only (AC1). Depth==0 unchanged.
     // Gate sits next to the #2010 linear-viol pure-string filter contract
     // (both are hot-path safety fences before any blocking wait).
+    // Happy path (no boundary): zero extra cost beyond existing depth/held probe.
     [[nodiscard]] std::optional<MailMessage> recv(bool wait = true, int timeout_ms = -1,
                                                   std::uint64_t for_fiber = 0) {
         const auto deadline = timeout_ms > 0 ? std::chrono::steady_clock::now() +
@@ -356,6 +408,24 @@ public:
                     1, std::memory_order_relaxed);
                 local_stats_.recv_rejected_in_mutation_boundary.fetch_add(
                     1, std::memory_order_relaxed);
+                // Issue #2347: window accumulate (all modes; Soft for dashboard).
+                ++g_recv_boundary_reject_window;
+                // Strict / production hard audit (AC2) + optional threshold (AC3).
+                if (is_mutate_mailbox_strict()) {
+                    g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    local_stats_.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    const auto thr = mutate_mailbox_reject_threshold();
+                    if (thr > 0 && g_recv_boundary_reject_window >= thr) {
+                        g_mf_mailbox_stats.recv_boundary_force_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        local_stats_.recv_boundary_force_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // Prefer mark-failed over re-parking (Policy A stays).
+                        aura_evaluator_mark_outermost_mutation_failed();
+                    }
+                }
                 // Policy A: non-blocking empty (no park, no Fiber::yield).
                 return std::nullopt;
             }
@@ -420,6 +490,8 @@ public:
         if (fanout_bp)
             *fanout_bp =
                 g_mf_mailbox_stats.fanout_backpressure_rejects.load(std::memory_order_relaxed);
+        // Issue #2347: hard / force totals available via g_mf_mailbox_stats
+        // or query:mf-mailbox-stats (schema-2347); soft reject remains here.
         if (recv_rejected_boundary)
             *recv_rejected_boundary = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
                 std::memory_order_relaxed);
