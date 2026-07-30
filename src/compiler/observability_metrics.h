@@ -2962,6 +2962,11 @@ struct CompilerMetrics {
     // Issue #2351: MB-yielded fiber expected Phase-5 stamp but
     // has_resume_layout_stamp() is false (observability only).
     std::atomic<std::uint64_t> layout_stamp_steal_missing_total{0}; // #2351
+    // Issue #2353: post-densify / post-steal unified Linear+Type revalidate.
+    // revalidate_total: phase entered (had Moving densify + linear work).
+    // fail_total: ownership enforce or type dual-path failed → suppress Phase 5 success.
+    std::atomic<std::uint64_t> post_densify_linear_type_revalidate_total{0}; // #2353
+    std::atomic<std::uint64_t> post_densify_linear_type_fail_total{0};       // #2353
     // Issue #2255: ShapeProfiler monotonic generation fence.
     // Bumped when fiber->resume_shape_version() != current layout
     // stamp's shape_version field (the 7th field added by #2255).

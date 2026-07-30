@@ -5,9 +5,9 @@
 // pure-aggregate pattern). Soft / empty remap / no Moving → trivially ok.
 //
 // Force-reason priority (most severe first):
-//   pin > linear > root_remap > closure > envframe > none
-// Codes (also returned as string for observability): pin / linear /
-// root_remap / closure / envframe / none.
+//   pin > linear > type > root_remap > closure > envframe > none
+// Codes (also returned as string for observability): pin / linear / type /
+// root_remap / closure / envframe / none. (#2353 adds type axis.)
 //
 // Used by Phase 5 mutation boundary driver (evaluator_mutation_boundary.cpp)
 // to gate outermost success publishes — mirrors pin_contract_held gating
@@ -37,21 +37,26 @@ namespace aura::core::densify_consistency {
 struct DensifyConsistencyReport {
     bool pin_ok = true;
     bool linear_ok = true;
+    // Issue #2353: type-axis after densify/steal (ownership + optional partial).
+    // Default true (no densify / Soft / no linear → vacuous ok).
+    bool type_ok = true;
     bool root_remap_ok = true;
     bool closure_remount_ok = true;
     bool envframe_ok = true;
 
     [[nodiscard]] bool overall_ok() const noexcept {
-        return pin_ok && linear_ok && root_remap_ok && closure_remount_ok && envframe_ok;
+        return pin_ok && linear_ok && type_ok && root_remap_ok && closure_remount_ok && envframe_ok;
     }
 
-    // force_reason priority: pin > linear > root_remap > closure > envframe > none.
+    // force_reason priority: pin > linear > type > root_remap > closure > envframe > none.
     // Returns the *most-severe* failing axis (or "none" when all ok).
     [[nodiscard]] const char* force_reason() const noexcept {
         if (!pin_ok)
             return "pin";
         if (!linear_ok)
             return "linear";
+        if (!type_ok)
+            return "type";
         if (!root_remap_ok)
             return "root_remap";
         if (!closure_remount_ok)
@@ -93,6 +98,8 @@ inline void bump_densify_consistency_fail_total() noexcept {
         return "pin";
     if (v == "linear")
         return "linear";
+    if (v == "type")
+        return "type";
     if (v == "root_remap")
         return "root_remap";
     if (v == "closure")

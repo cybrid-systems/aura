@@ -2719,6 +2719,11 @@ aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox_2352)
 aura_issue_test_link_llvm_jit(test_chaos_mutate_steal_gc_mailbox_2352)
 add_dependencies(all_test_issue_targets test_chaos_mutate_steal_gc_mailbox_2352)
 
+# Issue #2353: post-densify / post-steal unified Linear+Type revalidate.
+aura_add_issue_test(test_post_densify_linear_type_revalidate_2353)
+aura_issue_test_link_llvm_jit(test_post_densify_linear_type_revalidate_2353)
+add_dependencies(all_test_issue_targets test_post_densify_linear_type_revalidate_2353)
+
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)

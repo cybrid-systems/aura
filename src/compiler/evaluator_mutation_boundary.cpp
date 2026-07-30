@@ -1762,6 +1762,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // moving_compact_enabled lives in aura::ast (arena.ixx);
         // pin verify in aura::core::lifetime (lifetime_pin.ixx).
         bool pin_contract_held = true; // #2266 — default true (no Moving = contract held)
+        // Issue #2353: true only when Moving densify actually relocated live objects
+        // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
+        bool had_moving_densify = false;
         if (aura::ast::moving_compact_enabled()) {
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
@@ -1773,6 +1776,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         std::memory_order_relaxed);
             }
             pin_contract_held = compact_r.pin_contract_held;
+            had_moving_densify = compact_r.moved_live_objects;
             if (!pin_contract_held) {
                 // Issue #2266 AC2: contract failed — bump fail counter + do not
                 // publish success metrics as if contract held. Optional env
@@ -1804,11 +1808,21 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Gate the same success metrics on overall_ok() — mirrors the
         // pin_contract_held gating above. Bumps unified fail counter
         // on !overall_ok() (per-axis fail counters remain additive).
+        //
+        // Issue #2353: after pin verify, ordered Linear+Type revalidate
+        // composes into densify_consistency.linear_ok / type_ok. Soft /
+        // empty densify / no linear → early true (AC3 zero cost). Fail
+        // suppresses Phase 5 success via overall_ok() (AC2 fail-closed).
         aura::core::densify_consistency::DensifyConsistencyReport densify_consistency;
         densify_consistency.pin_ok = pin_contract_held;
-        // linear_ok: linear pin verify is subsumed in pin_contract_held
-        // (#2266 / #2280). Future separate linear verify will diverge.
-        densify_consistency.linear_ok = pin_contract_held;
+        // Issue #2353: linear_ok + type_ok from post-densify revalidate
+        // (pin-subsumed linear pin verify remains in pin_ok; this is the
+        // ownership + type axis complementary to #2341 object-axis).
+        const bool linear_type_ok =
+            pin_contract_held ? ev_->run_post_densify_linear_type_revalidate(had_moving_densify)
+                              : false;
+        densify_consistency.linear_ok = linear_type_ok;
+        densify_consistency.type_ok = linear_type_ok;
         // root_remap_ok: last_root_remap_any_fail reads the most recent
         // run_root_remap_pass() any_fail() result (per #2341 design).
         densify_consistency.root_remap_ok = !aura::compiler::last_root_remap_any_fail();

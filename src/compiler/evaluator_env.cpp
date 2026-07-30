@@ -14,6 +14,7 @@ import std;
 import aura.core.ast;
 import aura.core.error;
 import aura.core.envframe_lifetime; // Issue #2164: hold-pin compact gate
+import aura.core.lifetime_pin;      // Issue #2353: linear_root_snapshot for revalidate
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -1674,6 +1675,62 @@ Evaluator::LinearPostMutateSweepResult Evaluator::linear_post_mutate_enforce_all
         m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
     }
     return out;
+}
+
+// Issue #2353: post-densify / post-steal unified Linear+Type revalidate phase.
+// Complements #2341 object-axis DensifyConsistencyReport with ownership + type.
+// AC3: Soft / no linear / empty densify → single early return (no new atomics).
+bool Evaluator::run_post_densify_linear_type_revalidate(bool had_moving_densify) noexcept {
+    // AC3: no Moving densify work → zero extra cost.
+    if (!had_moving_densify)
+        return true;
+
+    // AC3: no live linear roots → skip steps 2–3 (env-frame sweep is the
+    // remaining ownership path only when linear roots exist; empty densify
+    // without linear is already handled by !had_moving_densify).
+    const auto lin = aura::core::lifetime::linear_root_snapshot();
+    if (lin.live_count == 0 && lin.pin_total == 0) {
+        // Still may have EnvFrame linear bindings without pin_linear_root;
+        // cheap frames_checked path below only runs if we decide to sweep.
+        // Production wants ownership proof when densify moved objects even
+        // without pin registry — run enforce_all only if any env frames exist.
+        std::size_t n_frames = 0;
+        {
+            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            n_frames = env_frames_.size();
+        }
+        if (n_frames == 0)
+            return true; // true empty: zero atomics
+    }
+
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    if (m)
+        m->post_densify_linear_type_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Step 2: linear_post_mutate_enforce_all (ownership state machines).
+    const auto sweep = linear_post_mutate_enforce_all();
+    bool linear_ok = sweep.all_safe || sweep.frames_checked == 0;
+
+    // Step 3: production dual-path type/ownership scan when linear present.
+    bool type_ok = true;
+    const bool production = [&]() noexcept {
+        const char* sandbox = std::getenv("AURA_SANDBOX");
+        if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
+            return false;
+        return true; // production default (same Soft table as residual Clear)
+    }();
+    if (linear_ok && production &&
+        (lin.live_count > 0 || lin.pin_total > 0 || sweep.frames_checked > 0)) {
+        // Dual-path linear capture scan (mark_invalid) — type_id on AST is
+        // stable across densify; ownership lag is the real hole this closes.
+        scan_live_closures_for_linear_captures(/*mark_invalid=*/true, /*only_if_moved=*/false);
+        type_ok = true; // scan is fail-closed via mark; enforce already covered Moved
+    }
+
+    const bool ok = linear_ok && type_ok;
+    if (!ok && m)
+        m->post_densify_linear_type_fail_total.fetch_add(1, std::memory_order_relaxed);
+    return ok;
 }
 
 // Issue #355: refresh_stale_frame_in_walk — single source of

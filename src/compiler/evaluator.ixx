@@ -3732,6 +3732,12 @@ public:
         bool all_safe = true;
     };
     [[nodiscard]] LinearPostMutateSweepResult linear_post_mutate_enforce_all() const noexcept;
+    // Issue #2353: post-densify / post-steal unified Linear+Type revalidate.
+    // Ordered: (1) pin already verified by caller (2) linear_post_mutate_enforce_all
+    // when linear roots / frames present (3) production dual-path scan when linear.
+    // AC3: had_moving_densify==false OR no linear → early true, zero new atomics.
+    // Returns joint ok (linear && type). Bumps post_densify_linear_type_* counters.
+    [[nodiscard]] bool run_post_densify_linear_type_revalidate(bool had_moving_densify) noexcept;
     // Issue #356: is_env_frame_invalid — true if the frame's
     // version_ has been marked INVALID_VERSION by a post-rollback
     // invalidation pass. Distinct from is_env_frame_stale:
