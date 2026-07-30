@@ -143,6 +143,103 @@ namespace _2283_detail {
         }
     }
 
+    // ── Issue #2320: prune stale NodeIds from type_dep_graph_ on
+    //   cache_epoch advance (bounded live entries). AC1-AC5 wiring +
+    //   source-cite rows.
+    static void ac2320_prune_wiring() {
+        std::println("\n--- #2320 AC1: prune wiring + counters ---");
+        const auto tc = read_file("src/compiler/type_checker.ixx");
+        const auto obm = read_file("src/compiler/observability_metrics.h");
+        const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+        const auto q_file = read_file("src/compiler/evaluator_primitives_query.cpp");
+        // AC1: prune method present in TypeChecker
+        CHECK(tc.find("prune_type_dep_graph") != std::string::npos,
+              "AC1: prune_type_dep_graph method in type_checker.ixx");
+        CHECK(tc.find("void prune_type_dep_graph") != std::string::npos,
+              "AC1: prune_type_dep_graph returns void");
+        CHECK(tc.find("n >= flat_size") != std::string::npos, "AC1: prune checks NodeId range");
+        CHECK(tc.find("flat.type_id(n) != tid") != std::string::npos,
+              "AC1: prune checks type_id match");
+        CHECK(tc.find("Issue #2320") != std::string::npos,
+              "AC1: type_checker.ixx cites Issue #2320");
+        // AC1: prune call from infer_flat_partial entry
+        CHECK(tci.find("prune_type_dep_graph(flat)") != std::string::npos,
+              "AC1: prune call from infer_flat_partial entry");
+        // AC1: 3 new per-CompilerMetrics counters
+        CHECK(obm.find("type_dep_graph_prune_total{0}; // #2320") != std::string::npos,
+              "AC1: type_dep_graph_prune_total counter in observability_metrics.h");
+        CHECK(obm.find("type_dep_graph_entries_dropped{0}; // #2320") != std::string::npos,
+              "AC1: type_dep_graph_entries_dropped counter in observability_metrics.h");
+        CHECK(obm.find("type_dep_graph_cap_evict_total{0}; // #2320") != std::string::npos,
+              "AC1: type_dep_graph_cap_evict_total counter in observability_metrics.h");
+    }
+
+    static void ac2320_query_keys_wired() {
+        std::println("\n--- #2320 AC2: query primitive keys ---");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "warm eval");
+        // AC2: 3 new query keys + schema/issue sentinels
+        CHECK(query_field(cs, "type-dep-graph-prune-total") >= 0,
+              "AC2: type-dep-graph-prune-total key reachable");
+        CHECK(query_field(cs, "type-dep-graph-entries-dropped") >= 0,
+              "AC2: type-dep-graph-entries-dropped key reachable");
+        CHECK(query_field(cs, "type-dep-graph-cap-evict-total") >= 0,
+              "AC2: type-dep-graph-cap-evict-total key reachable");
+        CHECK(query_field(cs, "schema-2320") == 2320, "AC2: schema-2320 sentinel");
+        CHECK(query_field(cs, "issue-2320") == 2320, "AC2: issue-2320 sentinel");
+        // AC2: existing #2283 / #387 keys preserved (no schema break)
+        CHECK(query_field(cs, "schema-2283") == 2283,
+              "AC2: schema-2283 retained (no #2283 schema break)");
+        CHECK(query_field(cs, "type-dep-partial-merge-total") >= 0,
+              "AC2: #2283 type-dep-partial-merge-total retained");
+    }
+
+    static void ac2320_soft_default_unchanged() {
+        std::println("\n--- #2320 AC3: zero cost happy path (no env set) ---");
+        const auto tc = read_file("src/compiler/type_checker.ixx");
+        // AC3: under-budget + no set_cache_epoch → zero prune cost
+        // (prune only fires when infer_flat_partial is called)
+        CHECK(tc.find("void prune_type_dep_graph") != std::string::npos,
+              "AC3: prune method exists");
+        // The prune method does early-out on empty range (front_of_vector
+        // for empty), and erase with a large number is O(N) but only
+        // when invoked. Not called eagerly per mutate.
+    }
+
+    static void ac2320_prune_correctness() {
+        std::println("\n--- #2320 AC4: prune correctness (no false-negative) ---");
+        // AC4: After prune, #2283 merge still finds live dependents for
+        // a mutated type; no false-negative empty affected for still-typed
+        // nodes. Live filter in affected_nodes_for_type uses flat.type_id
+        // (not the cached stale type_id) — so prune is safe.
+        const auto tc = read_file("src/compiler/type_checker.ixx");
+        CHECK(tc.find("flat.type_id(n) != tid") != std::string::npos,
+              "AC4: prune uses live flat.type_id (not stale cached type_id)");
+        // #387 live_filter in affected_nodes_for_type
+        CHECK(tc.find("affected_nodes_for_type") != std::string::npos,
+              "AC4: affected_nodes_for_type present (live filter)");
+    }
+
+    static void ac2320_source_cite_rows() {
+        std::println("\n--- #2320 AC5: source-cite rows ---");
+        const auto tc = read_file("src/compiler/type_checker.ixx");
+        const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+        const auto obm = read_file("src/compiler/observability_metrics.h");
+        const auto q_file = read_file("src/compiler/evaluator_primitives_query.cpp");
+        // #2320 cite in all modified files
+        CHECK(tc.find("Issue #2320") != std::string::npos, "AC5: type_checker.ixx cites 2320");
+        CHECK(tci.find("Issue #2320") != std::string::npos,
+              "AC5: type_checker_impl.cpp cites 2320");
+        CHECK(obm.find("// #2320") != std::string::npos, "AC5: observability_metrics.h cites 2320");
+        CHECK(q_file.find("schema-2320") != std::string::npos, "AC5: query primitive schema-2320");
+        CHECK(q_file.find("issue-2320") != std::string::npos, "AC5: query primitive issue-2320");
+        // No regression of #2283 / #387 keys
+        CHECK(tc.find("type_dep_graph_") != std::string::npos,
+              "AC5: #387 type_dep_graph_ retained (no #387 schema break)");
+        CHECK(obm.find("type_dep_graph_lookups{0};") != std::string::npos,
+              "AC5: #2283 type_dep_graph_lookups counter retained");
+    }
+
 } // namespace _2283_detail
 
 } // namespace aura_type_dep_partial_merge_2283

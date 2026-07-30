@@ -840,6 +840,19 @@ struct CompilerMetrics {
     //                       tracked (snapshot, not lifetime)
     std::atomic<std::uint64_t> type_dep_graph_lookups{0};
     std::atomic<std::uint64_t> type_dep_graph_hits{0};
+    // Issue #2320: prune observability + optional per-bucket cap.
+    //   - type_dep_graph_prune_total: cumulative count of prune calls
+    //     when set_cache_epoch advances (or when prune_type_dep_graph is
+    //     invoked from infer_flat_partial entry once per epoch).
+    //   - type_dep_graph_entries_dropped: total NodeIds dropped across
+    //     all buckets per prune call (cumulative; reset-on-prune for
+    //     observability, not state).
+    //   - type_dep_graph_cap_evict_total: cumulative count of per-bucket
+    //     cap-triggered evictions (AC2 optional cap path; default OFF
+    //     when env unset).
+    std::atomic<std::uint64_t> type_dep_graph_prune_total{0};     // #2320
+    std::atomic<std::uint64_t> type_dep_graph_entries_dropped{0}; // #2320
+    std::atomic<std::uint64_t> type_dep_graph_cap_evict_total{0}; // #2320
     std::atomic<std::uint64_t> type_dep_graph_size{0};
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Bumped by service.ixx after each lower_to_ir call when
