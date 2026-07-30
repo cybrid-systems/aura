@@ -2422,6 +2422,16 @@ std::uint64_t Evaluator::get_layout_stamp_resume_mismatch_total() const noexcept
     return m ? m->layout_stamp_resume_mismatch_total.load(std::memory_order_relaxed) : 0;
 }
 
+// Issue #2351: steal-complete LayoutStamp dual-check counters.
+std::uint64_t Evaluator::get_layout_stamp_steal_mismatch_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->layout_stamp_steal_mismatch_total.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_layout_stamp_steal_missing_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->layout_stamp_steal_missing_total.load(std::memory_order_relaxed) : 0;
+}
+
 // Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
 // field) hard-fence counter. Bumped by
 // evaluator_fiber_mutation.cpp when fiber->resume_shape_version() !=

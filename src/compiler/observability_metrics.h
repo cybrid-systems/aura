@@ -2952,6 +2952,16 @@ struct CompilerMetrics {
     // fields. Each bump forces scan_live_closures_for_linear_captures
     // (must not execute generation-behind AOT native code).
     std::atomic<std::uint64_t> layout_stamp_resume_mismatch_total{0};
+    // Issue #2351: LayoutStamp dual-check at steal-complete (before resume).
+    // Bumped when fiber has_resume_layout_stamp and stamp mismatches the
+    // thief worker's Evaluator::current_layout_stamp() (7 fields incl.
+    // shape_version). Forces dual-path scan / deopt signal so generation-
+    // behind AOT cannot run after densify raced on the previous host.
+    // Distinct from layout_stamp_resume_mismatch_total (#2250 resume path).
+    std::atomic<std::uint64_t> layout_stamp_steal_mismatch_total{0}; // #2351
+    // Issue #2351: MB-yielded fiber expected Phase-5 stamp but
+    // has_resume_layout_stamp() is false (observability only).
+    std::atomic<std::uint64_t> layout_stamp_steal_missing_total{0}; // #2351
     // Issue #2255: ShapeProfiler monotonic generation fence.
     // Bumped when fiber->resume_shape_version() != current layout
     // stamp's shape_version field (the 7th field added by #2255).
