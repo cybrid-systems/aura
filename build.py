@@ -2282,6 +2282,25 @@ def cmd_lock_order_audit_2354_coverage():
     return 0
 
 
+def cmd_type_dep_epoch_prune_coverage():
+    """Issue #2355: type_dep_graph_ epoch prune + NodeId invalidation.
+
+    TypeDepEdge stamps cache_epoch_; set_cache_epoch drops older edges;
+    dirty invalidate + per-bucket cap bound long AI sessions.
+    """
+    print(f"{B}=== type_dep epoch prune coverage (#2355) ==={N}")
+    script = ROOT / "scripts" / "check_type_dep_epoch_prune_2355.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type_dep epoch prune (#2355) coverage contract rows failed")
+        return 1
+    ok("type_dep epoch prune (#2355) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2673,6 +2692,7 @@ def cmd_gate():
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lock_order_audit_2354_coverage()
+        or cmd_type_dep_epoch_prune_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
