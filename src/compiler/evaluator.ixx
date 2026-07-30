@@ -12291,6 +12291,9 @@ public:
     [[nodiscard]] std::uint64_t get_layout_stamp_publish_total() const noexcept;
     // Issue #2250: LayoutStamp fence on Fiber resume/steal.
     [[nodiscard]] std::uint64_t get_layout_stamp_resume_mismatch_total() const noexcept;
+    // Issue #2351: steal-complete LayoutStamp dual-check counters.
+    [[nodiscard]] std::uint64_t get_layout_stamp_steal_mismatch_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_layout_stamp_steal_missing_total() const noexcept;
     // Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
     // field) hard-fence counter accessor for query primitive.
     [[nodiscard]] std::uint64_t get_shape_version_fence_reject_total() const noexcept;

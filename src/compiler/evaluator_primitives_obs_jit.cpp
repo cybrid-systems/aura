@@ -10946,6 +10946,22 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gc_defer_orphan_cleared_on_steal_total",
                       static_cast<std::int64_t>(
                           aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+            // Issue #2351: steal-complete LayoutStamp dual-check (lineage with #2203).
+            {
+                std::int64_t steal_mm = 0;
+                std::int64_t steal_miss = 0;
+                if (auto* __qev = Evaluator::get_query_evaluator()) {
+                    steal_mm =
+                        static_cast<std::int64_t>(__qev->get_layout_stamp_steal_mismatch_total());
+                    steal_miss =
+                        static_cast<std::int64_t>(__qev->get_layout_stamp_steal_missing_total());
+                }
+                insert_kv("layout-stamp-steal-mismatch-total", steal_mm);
+                insert_kv("layout-stamp-steal-missing-total", steal_miss);
+                insert_kv("layout-stamp-steal-wired", 1);
+                insert_kv("schema-2351", 2351);
+                insert_kv("issue-2351", 2351);
+            }
             // Issue #2314: residual GcDeferReason clear invoked from the
             // steal-complete entry when defer_reasons_snapshot() != 0 post
             // #2203 panic clear. Distinct from gc-defer-orphan-cleared-on-

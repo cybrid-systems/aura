@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 544 | Preferred destination suites |
-| **Total scanned** | **544** | |
+| `tests/core/test_*.cpp` | 545 | Preferred destination suites |
+| **Total scanned** | **545** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 56 | 56 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 159 | 159 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 53 | 53 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 54 | 54 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 12 | 12 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 58 | 58 | P2 — link-profile heavy; migrate AC smoke first |
@@ -644,6 +644,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/stdlib/test_stdlib_infrastructure.cpp`
 - `tests/compiler/test_stdlib_production_review_923.cpp`
 - `tests/serve/test_steal_complete_gc_defer_2203.cpp`
+- `tests/serve/test_steal_layout_stamp_2351.cpp`
 - `tests/serve/test_steal_snapshot_hard_invariant_2346.cpp`
 - `tests/compiler/test_storm_isolation_2236.cpp`
 - `tests/core/test_stress_alloc_storage_lock.cpp`
@@ -962,13 +963,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (53)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (54)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (53)
+#### domain/ (54)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1: Happy path — B's body replies to ask protocol; A's
@@ -1019,6 +1020,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp` (—) [domain_suite, theme_serve] — test_scheduler_gc_safepoint_mutation_coordination.cpp —
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
 - `tests/serve/test_steal_complete_gc_defer_2203.cpp` (#2203) [domain_suite, theme_serve] — AC1: try_steal_from success always invokes aura_evaluator_on_steal_complete
+- `tests/serve/test_steal_layout_stamp_2351.cpp` (#2351) [domain_suite, theme_serve] — AC1: Steal with matching stamp → no mismatch bump
 - `tests/serve/test_steal_snapshot_hard_invariant_2346.cpp` (#2346) [domain_suite, theme_serve] — (fail-closed canary). Soft: mismatch metric only. Hard: mark-failed.
 - `tests/core/test_stress_alloc_storage_lock.cpp` (—) [domain_suite, theme_core] — test_stress_alloc_storage_lock.cpp — Issue #1397
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.

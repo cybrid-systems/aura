@@ -1223,12 +1223,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 rec_int = 1;
             else if (invalidations >= 10)
                 rec_int = 2;
-            // Build a 4-field hash using the FNV-1a scheme
-            // (same as the other observability primitives).
+            // Build a hash using the FNV-1a scheme (same as other
+            // observability primitives). Capacity 16→64: #2170/#2250/
+            // #2255/#2351 layout-stamp keys fit without silent drop.
             // Uses the `string_heap` reference passed into
             // register_query_primitives() (avoids the private
             // Evaluator::string_heap_ field).
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_int(rec_int);
             auto meta = ht->metadata();
@@ -1290,6 +1291,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("layout-stamp-resume-wired", 1);
             insert_kv("schema-2250", 2250);
             insert_kv("issue-2250", 2250);
+            // Issue #2351: steal-complete LayoutStamp dual-check (before resume).
+            insert_kv("layout-stamp-steal-mismatch-total",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_steal_mismatch_total()));
+            insert_kv("layout_stamp_steal_mismatch_total",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_steal_mismatch_total()));
+            insert_kv("layout-stamp-steal-missing-total",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_steal_missing_total()));
+            insert_kv("layout_stamp_steal_missing_total",
+                      static_cast<std::int64_t>(ev.get_layout_stamp_steal_missing_total()));
+            insert_kv("layout-stamp-steal-wired", 1);
+            insert_kv("schema-2351", 2351);
+            insert_kv("issue-2351", 2351);
             // Issue #2255: ShapeProfiler monotonic generation (7th
             // LayoutStamp field) hard-fence counter.
             insert_kv("shape-version-fence-reject-total",

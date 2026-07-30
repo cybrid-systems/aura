@@ -2708,6 +2708,11 @@ aura_add_issue_test(test_type_system_health_2350)
 aura_issue_test_link_llvm_jit(test_type_system_health_2350)
 add_dependencies(all_test_issue_targets test_type_system_health_2350)
 
+# Issue #2351: steal-complete LayoutStamp dual-check before resume.
+aura_add_issue_test(test_steal_layout_stamp_2351)
+aura_issue_test_link_llvm_jit(test_steal_layout_stamp_2351)
+add_dependencies(all_test_issue_targets test_steal_layout_stamp_2351)
+
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)

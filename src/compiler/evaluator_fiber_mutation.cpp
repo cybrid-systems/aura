@@ -2285,6 +2285,63 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #2351: eager LayoutStamp / defuse dual-check at steal-complete
+    // (before fiber is pushed local and later resumed). Prevents generation-
+    // behind AOT when densify raced on the previous host.
+    //
+    // AC3: zero cost when no stamp set (single has_resume_layout_stamp load).
+    // Does NOT clear the stamp — resume path (#2250) still dual-checks and
+    // clears (defense in depth).
+    if (fiber) {
+        if (fiber->has_resume_layout_stamp()) {
+            if (auto* ev = evaluator_for_scheduler_hooks()) {
+                const auto cur = ev->current_layout_stamp();
+                const bool mismatch = fiber->resume_arena_id() != cur.arena_id ||
+                                      fiber->resume_arena_gen() != cur.arena_gen ||
+                                      fiber->resume_flat_gen() != cur.flat_gen ||
+                                      fiber->resume_mutation_epoch() != cur.mutation_epoch ||
+                                      fiber->resume_env_gen() != cur.env_gen ||
+                                      fiber->resume_defuse() != cur.defuse_version ||
+                                      fiber->resume_shape_version() != cur.shape_version;
+                if (mismatch) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                        m->layout_stamp_steal_mismatch_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        if (fiber->resume_shape_version() != cur.shape_version)
+                            m->shape_version_fence_reject_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    // Same fail-closed signal as resume fence (#2250): force
+                    // dual-path scan + AOT deopt so generation-behind native
+                    // code cannot run after steal.
+                    ev->scan_live_closures_for_linear_captures(true, std::false_type{});
+                    aura_aot_record_deopt_on_steal();
+                    ev->bump_concurrent_safety_aot_reload_at_guard();
+                }
+            }
+        } else {
+            // AC2 observability: MB-yielded fiber expected Phase-5 stamp but
+            // has none (yield checkpoint had_active_boundary or last yield
+            // was MutationBoundary). Soft metric only — resume still safe.
+            bool expected_stamp = false;
+            if (void* yp = fiber->yield_checkpoint_ptr()) {
+                auto& ystack = fiber_stack_pool_detail::yield_stack_from_ptr(yp);
+                if (!ystack.empty() && ystack.back().had_active_boundary)
+                    expected_stamp = true;
+            }
+            if (!expected_stamp &&
+                fiber->last_yield_reason() == aura::serve::YieldReason::MutationBoundary)
+                expected_stamp = true;
+            if (expected_stamp) {
+                if (auto* ev = evaluator_for_scheduler_hooks()) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                        m->layout_stamp_steal_missing_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+    }
+
     // Fold legacy weak-call sites so worker only needs one entry (AC5 still
     // keeps weak stubs for light binaries that never link this strong def).
     aura_evaluator_probe_linear_on_steal();
