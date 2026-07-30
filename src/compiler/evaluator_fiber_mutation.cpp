@@ -2243,6 +2243,36 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                         reconciled, std::memory_order_relaxed);
             }
         }
+        // Issue #2314 AC1.2: residual defer interlock. After the #2203
+        // orphan Panic clear, if defer_reasons_snapshot() != 0 (residual
+        // bits attributable to this eval/fiber remain), invoke the same
+        // residual clear path as outermost Guard success exit — closes
+        // the brief window between Guard Phase-5 residual clear and a
+        // concurrent steal-complete that could re-arm or leave orphan
+        // bits accumulating across long AI sessions.
+        // Idempotent (force_clear_residual_defer_for_evaluator is atomic
+        // + CAS-based — calling twice does not double-bump counters).
+        // Per AC3: zero cost when snapshot is zero (single relaxed load).
+        if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+            if (auto* ev = evaluator_for_scheduler_hooks()) {
+                const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
+                    static_cast<void*>(ev));
+                if (r.panic_depth_cleared > 0 || r.bits_reconciled > 0 || r.hold_released) {
+                    aura::gc_hooks::g_residual_defer_cleared_on_steal_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                        m->residual_defer_cleared_on_steal_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (r.panic_depth_cleared > 0)
+                            m->gc_defer_orphan_cleared_total.fetch_add(r.panic_depth_cleared,
+                                                                       std::memory_order_relaxed);
+                        if (r.bits_reconciled > 0)
+                            m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
+                                r.bits_reconciled, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
     } else if (auto* ev = evaluator_for_scheduler_hooks()) {
         if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
             m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);

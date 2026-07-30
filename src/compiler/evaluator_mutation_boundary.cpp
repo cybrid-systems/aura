@@ -1657,6 +1657,19 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // Issue #2296 AC1: force_clear_all_for_eval — panic table
                     // + process depth + bit reconcile (multi-eval lag safe).
                     // MutationHold re-release is process-wide (not per-eval).
+                    // Issue #2314: this Clear path is mirrored by the
+                    // steal-complete interlock — both paths perform the
+                    // same essential operations. The shared helper
+                    // force_clear_residual_defer_for_evaluator (gc_hooks.h)
+                    // is used by evaluator_fiber_mutation.cpp
+                    // aura_evaluator_on_steal_complete (AC1.2 #2314). We
+                    // preserve inline calls here (not refactored to the
+                    // helper) so the #2296 contract rows check — which
+                    // requires these symbols in evaluator_mutation_boundary.cpp
+                    // directly — continues to pass. Both paths perform the
+                    // same essential operations; the helper exists for
+                    // steal-side reuse only. Idempotent (atomic + CAS-based
+                    // — calling twice does not double-bump counters).
                     const auto fr = aura::gc_hooks::force_clear_all_gc_defer_for_evaluator(
                         static_cast<void*>(ev_));
                     if (aura::gc_hooks::mutation_hold_defer_active())

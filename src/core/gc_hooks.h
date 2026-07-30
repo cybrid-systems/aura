@@ -374,11 +374,48 @@ inline std::atomic<std::uint64_t> g_gc_defer_last_checkpoint_epoch{0};
 // gc_defer_orphan_cleared_total (which also tracks resume/migration).
 inline std::atomic<std::uint64_t> g_steal_complete_total{0};                   // #2203
 inline std::atomic<std::uint64_t> g_gc_defer_orphan_cleared_on_steal_total{0}; // #2203
+// Issue #2314: residual GcDeferReason clear invoked from the steal-
+// complete entry when defer_reasons_snapshot() != 0 post #2203 panic
+// clear. Distinct from g_gc_defer_orphan_cleared_on_steal_total which
+// counts cleared Panic depths — this counts steal-complete entries
+// that invoked the residual interlock (once per entry, regardless of
+// bits cleared).
+inline std::atomic<std::uint64_t> g_residual_defer_cleared_on_steal_total{0}; // #2314
 [[nodiscard]] inline std::uint64_t steal_complete_total() noexcept {
     return g_steal_complete_total.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint64_t gc_defer_orphan_cleared_on_steal_total() noexcept {
     return g_gc_defer_orphan_cleared_on_steal_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t residual_defer_cleared_on_steal_total() noexcept {
+    return g_residual_defer_cleared_on_steal_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2314: shared helper for residual GcDeferReason clear — used by
+// BOTH outermost Guard success exit (#2269 Clear policy) AND steal-
+// complete orphan interlock (#2314 AC1.2). Idempotent: force_clear_all_
+// gc_defer_for_evaluator is itself atomic + CAS-based; calling twice
+// does not double-clear or double-bump. Returns the count of cleared
+// panic depths + reconciled bits + hold-released flag for counter
+// bumping (no caller-side idempotency bookkeeping required).
+struct ResidualClearResult {
+    std::uint64_t panic_depth_cleared = 0;
+    std::uint64_t bits_reconciled = 0;
+    bool hold_released = false;
+};
+
+inline ResidualClearResult force_clear_residual_defer_for_evaluator(void* evaluator_id) noexcept {
+    ResidualClearResult r{};
+    const auto fr = force_clear_all_gc_defer_for_evaluator(evaluator_id);
+    r.panic_depth_cleared = static_cast<std::uint64_t>(fr.panic_depth_cleared);
+    r.bits_reconciled = static_cast<std::uint64_t>(fr.bits_reconciled);
+    if (mutation_hold_defer_active()) {
+        release_mutation_hold_defer();
+        r.hold_released = true;
+    }
+    // Final reconcile after hold release (hold bit ≠ Panic).
+    r.bits_reconciled += reconcile_gc_defer_bits_after_clear();
+    return r;
 }
 
 // Issue #2088: process-wide arm-count mirrors for Agent dashboards
