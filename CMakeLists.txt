@@ -2693,6 +2693,11 @@ aura_add_issue_test(test_steal_snapshot_hard_invariant_2346)
 aura_issue_test_link_llvm_jit(test_steal_snapshot_hard_invariant_2346)
 add_dependencies(all_test_issue_targets test_steal_snapshot_hard_invariant_2346)
 
+# Issue #2348: bidirectional check-mode for ADT match + GuardShape.
+aura_add_issue_test(test_bidirectional_match_check_2348)
+aura_issue_test_link_llvm_jit(test_bidirectional_match_check_2348)
+add_dependencies(all_test_issue_targets test_bidirectional_match_check_2348)
+
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
