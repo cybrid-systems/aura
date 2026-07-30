@@ -6388,6 +6388,12 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         static_cast<struct CompilerMetrics*>(metrics_)
             ->infer_flat_partial_selective_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2320: prune stale NodeIds from type_dep_graph_ on each
+    // infer_flat_partial entry (bounded live entries). Cheap O(N) per
+    // bucket, drops out-of-range or type_id-mismatch entries. Live
+    // filter in affected_nodes_for_type (#387) ensures no false-negative
+    // empty affected for still-typed nodes (#2320 AC3).
+    prune_type_dep_graph(flat);
     // Issue #411 follow-up #1: per-symbol re-inference
     // wiring. The baseline (ancestor-walk) used
     // `affected_subtree_from_mutation` which marks every

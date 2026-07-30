@@ -2150,6 +2150,34 @@ public:
     // Issue #387: number of distinct TypeIds tracked.
     std::size_t type_dep_graph_size() const { return type_dep_graph_.size(); }
 
+    // Issue #2320: prune stale NodeIds from type_dep_graph_ on cache_epoch
+    // advance. Bounded live entries — long multi-round Agent sessions
+    // grow vectors without bound; this caps the per-bucket cost.
+    // For each bucket, drop NodeIds that are out of range or whose
+    // current flat.type_id(nid) no longer equals the bucket TypeId.
+    // Bumps type_dep_graph_prune_total + type_dep_graph_entries_dropped.
+    // #387 live_filter (in affected_nodes_for_type) ensures no
+    // false-negative empty affected for still-typed nodes (#2320 AC3).
+    void prune_type_dep_graph(const aura::ast::FlatAST& flat) {
+        std::uint64_t dropped = 0;
+        const auto flat_size = flat.size();
+        for (auto& [tid, nodes] : type_dep_graph_) {
+            const auto before = nodes.size();
+            nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
+                                       [&](aura::ast::NodeId n) {
+                                           if (n >= flat_size)
+                                               return true;
+                                           if (flat.type_id(n) != tid)
+                                               return true;
+                                           return false;
+                                       }),
+                        nodes.end());
+            dropped += (before - nodes.size());
+        }
+        type_dep_graph_prune_total.fetch_add(1, std::memory_order_relaxed);
+        type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
+    }
+
     // Issue #387: clear the graph (e.g., on set-code when the
     // entire AST is rebuilt from scratch).
     void clear_type_dep_graph() {

@@ -6835,6 +6835,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("type-dep-partial-nodes-added", partial_nodes_added);
             insert_kv("type-dep-graph-affected-expand-total", affected_expand);
             insert_kv("type-dep-merge-ratio-bp", merge_ratio_bp);
+            // Issue #2320: prune observability (refine #2283 #387).
+            //   - type-dep-graph-prune-total: cumulative count of prune calls
+            //     when set_cache_epoch advances (or when prune_type_dep_graph
+            //     is invoked from infer_flat_partial entry once per epoch).
+            //   - type-dep-graph-entries-dropped: total NodeIds dropped
+            //     across all buckets per prune call (cumulative).
+            //   - type-dep-graph-cap-evict-total: cumulative count of
+            //     per-bucket cap-triggered evictions (AC2 optional cap
+            //     path; default OFF when env unset).
+            const std::int64_t prune_total =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_graph_prune_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t entries_dropped =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_graph_entries_dropped.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cap_evict =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_graph_cap_evict_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("type-dep-graph-prune-total", prune_total);
+            insert_kv("type_dep-graph-entries-dropped", entries_dropped);
+            insert_kv("type-dep-graph-cap-evict-total", cap_evict);
+            insert_kv("schema-2320", 2320);
+            insert_kv("issue-2320", 2320);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
