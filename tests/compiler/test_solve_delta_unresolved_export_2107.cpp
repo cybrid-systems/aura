@@ -388,6 +388,116 @@ static void ac7_issue_2277_escalate_and_schema() {
     restore();
 }
 
+// Issue #2308: Agent-stable SolverSnapshot — unified post-solve surface
+// (status + unresolved + blame + repair_nodes + truncated + production
+// escalation). Built from the live commit CS via snapshot_constraint_system
+// (pure read). Tests verify:
+//   AC1: Empty CS → SOLVED status, empty repair_nodes, blame is empty
+//        (not complete by default), all 6 query keys reachable.
+//   AC2: Snapshot reflects blame state — mark_touched + record_cross_delta
+//        populates blame + snapshot surfaces it.
+//   AC3: Production escalation flips production_escalated to true after
+//        escalate_if_production (the #2277 path).
+//   AC4: Query surface — 6 keys + 3 sentinels (schema-2308 / issue-2308 /
+//        solver-snapshot-wired) reachable via
+//        query:type-incremental-fidelity-stats.
+//   AC5: No schema break — existing #2107 / #2277 keys still reachable.
+static void ac8_2308_solver_snapshot() {
+    std::println("\n--- AC8 (#2308): SolverSnapshot + query surface ---");
+
+    // ── AC1: empty CS → SOLVED, empty repair_nodes, blame is empty ──
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        const auto snap = snapshot_constraint_system(cs, nullptr);
+        CHECK(snap.status == SolveResult::SOLVED, "AC8.1: empty CS → SOLVED (default status)");
+        CHECK(snap.unresolved.empty(), "AC8.2: empty CS → unresolved empty");
+        CHECK(snap.repair_nodes.empty(), "AC8.3: empty CS → repair_nodes empty");
+        CHECK(!snap.truncated_reverify, "AC8.4: empty CS → truncated_reverify false");
+        CHECK(!snap.production_escalated, "AC8.5: empty CS → production_escalated false");
+        CHECK(snap.provenance_continuity == false,
+              "AC8.6: empty CS → provenance_continuity false (blame empty)");
+    }
+
+    // ── AC2: snapshot reflects live blame state ──
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_active_mutation_id(2308);
+        cs.set_active_blame_context(/*pred=*/42, /*affected=*/7);
+        // Force a complete blame chain via the test helper.
+        cs.force_last_blame_complete_for_test(/*mutation_id=*/2308,
+                                              /*predicate=*/42,
+                                              /*affected_node=*/7);
+        const auto snap = snapshot_constraint_system(cs, nullptr);
+        CHECK(snap.status == SolveResult::SOLVED,
+              "AC8.7: blame-only snapshot still SOLVED (no solve_delta called)");
+        CHECK(snap.provenance_continuity, "AC8.8: complete blame → provenance_continuity true");
+        CHECK(snap.blame.complete, "AC8.9: complete blame surfaced on snapshot.blame");
+        // Last frame's affected_node shows up in repair_nodes (since the
+        // `last` param is null, repair_nodes is empty — blame.frames
+        // only feeds repair_nodes when an unresolved list is supplied).
+        CHECK(snap.repair_nodes.empty(),
+              "AC8.10: blame-only → repair_nodes empty (no unresolved feed)");
+    }
+
+    // ── AC3: production escalation flips production_escalated ──
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        CHECK(!cs.production_escalated(), "AC8.11: fresh CS → production_escalated false");
+        // Drive the production escalation path. Under sandbox (no
+        // production_defaults_active) escalate is a no-op, so force the
+        // typed_audit gate first.
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        (void)cs.escalate_if_production(SolveResult::TIMEOUT);
+        // Restore the global for downstream tests.
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+        CHECK(cs.production_escalated(),
+              "AC8.12: escalate_if_production flipped production_escalated_");
+        const auto snap = snapshot_constraint_system(cs, nullptr);
+        CHECK(snap.production_escalated, "AC8.13: snapshot.production_escalated mirrors CS flag");
+    }
+
+    // ── AC4 + AC5: query surface — 6 keys + 3 sentinels + no schema break ──
+    {
+        CompilerService svc;
+        CHECK(svc.eval("(+ 1 1)").has_value(), "AC8.14: eval smoke");
+
+        // #2308 sentinels.
+        CHECK(href(svc, "schema-2308") == 2308, "AC8.15: schema-2308 sentinel == 2308");
+        CHECK(href(svc, "issue-2308") == 2308, "AC8.16: issue-2308 sentinel == 2308");
+        CHECK(href(svc, "solver-snapshot-wired") == 1,
+              "AC8.17: solver-snapshot-wired sentinel == 1 (proves #2308 refactor landed)");
+
+        // 5 #2308 numeric / boolean keys reachable (>= 0 / 0 or 1).
+        CHECK(href(svc, "solver-snapshot-status") >= 0,
+              "AC8.18: solver-snapshot-status reachable (0=SOLVED, 1=CONFLICT, 2=TIMEOUT)");
+        CHECK(href(svc, "solver-snapshot-unresolved-count") >= 0,
+              "AC8.19: solver-snapshot-unresolved-count reachable");
+        CHECK(href(svc, "solver-snapshot-repair-nodes-count") >= 0,
+              "AC8.20: solver-snapshot-repair-nodes-count reachable");
+        CHECK(href(svc, "solver-snapshot-blame-complete") >= 0,
+              "AC8.21: solver-snapshot-blame-complete reachable (0/1)");
+        CHECK(href(svc, "solver-snapshot-truncated") >= 0,
+              "AC8.22: solver-snapshot-truncated reachable (0/1)");
+
+        // AC5: no schema break — existing #2107 / #2277 keys still present.
+        CHECK(href(svc, "schema-2277") == 2277,
+              "AC8.23: schema-2277 still reachable (no #2107 schema break)");
+        CHECK(href(svc, "issue-2277") == 2277,
+              "AC8.24: issue-2277 still reachable (no #2277 schema break)");
+        CHECK(href(svc, "delta-timeout-full-solve-total") >= 0,
+              "AC8.25: delta-timeout-full-solve-total still reachable (no #2277 schema break)");
+        CHECK(href(svc, "schema-2278") == 2278,
+              "AC8.26: schema-2278 still reachable (no #2278 schema break — OccurrenceGoal table)");
+        CHECK(href(svc, "occurrence-goal-sole-authority-wired") == 1,
+              "AC8.27: #2307 sole-authority sentinel still reachable (no #2307 schema break)");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -400,6 +510,8 @@ int main() {
     ac6_query_schema();
     std::println("\n=== Issue #2277: production TIMEOUT escalation ===");
     ac7_issue_2277_escalate_and_schema();
+    std::println("\n=== Issue #2308: SolverSnapshot + query surface ===");
+    ac8_2308_solver_snapshot();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
