@@ -6470,6 +6470,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       (m && m->delta_truncate_anti_starve_wired.load() != 0) ? 1 : 0);
             insert_kv("schema-2318", 2318);
             insert_kv("issue-2318", 2318);
+            // Issue #2321: OccurrenceGoal refined-drift observability.
+            //   - occurrence-goal-refined-drift-total: cumulative count of
+            //     goals dropped from solve_delta_occurrence replay when the
+            //     stored `refined` is no longer consistent with the current
+            //     Union-Find binding of `g.var` (drift detection).
+            //   - occurrence-goal-drift-wired: sentinel = 1 when the
+            //     re-validate + drop logic is integrated.
+            const std::int64_t refined_drift_total =
+                m ? static_cast<std::int64_t>(
+                        m->occurrence_goal_refined_drift_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("occurrence-goal-refined-drift-total", refined_drift_total);
+            insert_kv("occurrence_goal_refined_drift_total", refined_drift_total);
+            insert_kv("occurrence-goal-drift-wired", 1);
+            insert_kv("schema-2321", 2321);
+            insert_kv("issue-2321", 2321);
             insert_kv("coercion-parent-walk-cap-sampled", 16);
             insert_kv("coercion-parent-walk-cap-full", 64);
             insert_kv("coercion-provenance-fast-path-wired", 1);

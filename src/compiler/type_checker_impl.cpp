@@ -8877,12 +8877,31 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     {
         const auto& goals = cs.occurrence_goals_for_test();
         std::size_t replayed = 0;
+        std::size_t drifted = 0;
         const auto cur_epoch = cs.current_epoch();
         for (const auto& goal : goals) {
             if (!goal.var.valid())
                 continue;
             if (goal.epoch > 0 && goal.epoch < cur_epoch)
                 continue; // stale — prune_occurrence_goals covers it
+            // Issue #2321: re-validate refined against current binding (drift
+            // detection). If inconsistent, do not seed priority from this
+            // goal; erase / mark goal stale + bump drift counters. Use
+            // bidirectional consistent_unify (cur <-> refined) so gradual
+            // Dynamic goals survive (AC3 invariant — no strict EQUAL-only
+            // check). Live filter in affected_nodes_for_type uses live
+            // flat.type_id, so storing a stale refined is safe to drop
+            // (no false-negative empty affected for still-typed nodes).
+            auto cur = cs.find(goal.var);
+            if (!cs.consistent_unify(cur, goal.refined) &&
+                !cs.consistent_unify(goal.refined, cur)) {
+                if (m) {
+                    m->occurrence_goal_refined_drift_total.fetch_add(1, std::memory_order_relaxed);
+                    m->occurrence_goal_stale_drop_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                ++drifted;
+                continue;
+            }
             cs.mark_touched_on_delta(goal.var, /*occurrence_narrow=*/true);
             ++replayed;
         }
