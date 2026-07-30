@@ -12,6 +12,7 @@
 #include "compiler/hot_update_registry.hh" // Issue #2205 reemit boundary production default
 #include "compiler/mutate_type_gate.hh"    // Issue #2219 post-mutate type gate
 #include "compiler/pipeline_policy.hh"     // Issue #2213 tree-walker fallback production gate
+#include "core/gc_hooks.h"                 // Issue #2338: gc_defer production lock wire-up
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
@@ -351,6 +352,12 @@ inline void apply_production_security_defaults() noexcept {
     // just allows the existing Soft mode to persist under the lock with
     // a metric alarm (so a mis-deployed binary is observable, not silent).
     mutate_type_gate::set_production_locked(!dev_off);
+    // Issue #2338: production lock for gc_defer_overflow_policy. Default
+    // to HardFail (not ProcessWide silent fallback) under production.
+    // Dev / AURA_SANDBOX=off keeps the legacy ProcessWide for stress tests
+    // that intentionally fill the table. Lock is captured at first
+    // gc_defer_overflow_policy() call (lazy cache).
+    aura::gc_hooks::set_gc_defer_production_locked(!dev_off);
     if (mutate_type_gate::production_locked() && !mutate_type_gate::is_hard()) {
         // Preview alarm: Soft is set at apply-time and the lock just
         // turned on. Bump the counter now so a mis-deployed binary is
