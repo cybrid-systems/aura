@@ -1383,6 +1383,10 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
     // We use a void pointer (forward-declared via the
     // observability_metrics.h header) to avoid pulling the
     // full CompilerMetrics definition into this TU.
+    // Issue #2318: extended MetricsAccess with the new anti-starvation
+    // streak fields (per-CompilerMetrics mirror). Offsets match
+    // observability_metrics.h since CompilerMetrics declares the
+    // new fields in the same struct (layout-compatible).
     if (metrics_) {
         auto start = std::chrono::steady_clock::now();
         auto result = solve_delta_impl(unresolved_out);
@@ -1394,12 +1398,55 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
         // ordering. The metrics_ pointer is opaque here.
         struct MetricsAccess {
             std::atomic<std::uint64_t> delta_solve_time_us{0};
+            // Issue #2318: anti-starvation streak fields.
+            std::atomic<std::uint64_t> delta_reverify_truncate_streak{0};
+            std::atomic<std::uint64_t> delta_truncate_force_full_solve_total{0};
+            std::atomic<std::uint64_t> delta_truncate_streak_threshold{0};
+            std::atomic<std::uint64_t> delta_truncate_anti_starve_wired{0};
         };
-        static_cast<MetricsAccess*>(metrics_)->delta_solve_time_us.fetch_add(
-            static_cast<std::uint64_t>(us), std::memory_order_relaxed);
+        auto* ma = static_cast<MetricsAccess*>(metrics_);
+        ma->delta_solve_time_us.fetch_add(static_cast<std::uint64_t>(us),
+                                          std::memory_order_relaxed);
+        // Issue #2318: anti-starvation streak gate. If solve_delta
+        // truncated the reverify scan, increment streak; if streak ≥
+        // env threshold (AURA_DELTA_TRUNCATE_STREAK_FULL, default 2),
+        // force one full ConstraintSystem::solve() (anti-starvation
+        // under multi-round Agent mutate + partial CS).
+        if (last_reverify_truncated_) {
+            ++truncate_streak_;
+            ma->delta_reverify_truncate_streak.store(static_cast<std::uint64_t>(truncate_streak_),
+                                                     std::memory_order_relaxed);
+            const auto threshold = delta_truncate_streak_threshold();
+            ma->delta_truncate_streak_threshold.store(threshold, std::memory_order_relaxed);
+            if (truncate_streak_ >= threshold) {
+                ma->delta_truncate_anti_starve_wired.store(1, std::memory_order_relaxed);
+                ma->delta_truncate_force_full_solve_total.fetch_add(1, std::memory_order_relaxed);
+                truncate_streak_ = 0;
+                // Anti-starvation: force full solve (mirror #2277
+                // escalation body). Replaces the partial-solve result
+                // with the full-solve result; if full solve still
+                // CONFLICTS or TIMEOUTs, escalate_if_production path
+                // (already in place) handles the reject.
+                return solve(unresolved_out);
+            }
+        } else {
+            truncate_streak_ = 0;
+            ma->delta_reverify_truncate_streak.store(0, std::memory_order_relaxed);
+        }
         return result;
     }
-    return solve_delta_impl(unresolved_out);
+    auto result = solve_delta_impl(unresolved_out);
+    // Issue #2318: anti-starvation streak gate (no-metrics path).
+    if (last_reverify_truncated_) {
+        ++truncate_streak_;
+        if (truncate_streak_ >= delta_truncate_streak_threshold()) {
+            truncate_streak_ = 0;
+            return solve(unresolved_out);
+        }
+    } else {
+        truncate_streak_ = 0;
+    }
+    return result;
 }
 
 // Issue #258: solve_delta() body split out so the timer wrapper

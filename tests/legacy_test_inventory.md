@@ -1285,7 +1285,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_selfevo_bugfix_941.cpp` (#941) [small, domain_suite, theme_compiler] — test_selfevo_bugfix_941_967.cpp — Issues #941–#967 Phase 1
 - `tests/compiler/test_seva_demo_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1720/#1835/#1840/#1841 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp` (—) [domain_suite, theme_compiler] — Issue #1531/#1661/#462/#606 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_solve_delta_unresolved_export_2107.cpp` (#2107) [domain_suite, theme_compiler] — AC1: Synthetic over-limit → TIMEOUT + non-empty unresolved
+- `tests/compiler/test_solve_delta_unresolved_export_2107.cpp` (#2107) [large, domain_suite, theme_compiler] — AC1: Synthetic over-limit → TIMEOUT + non-empty unresolved
 - `tests/compiler/test_source_to_ir_desync_recovery_2206.cpp` (#2206) [domain_suite, theme_compiler] — AC1: After intentional map desync, recovery patches/rebuilds and
 - `tests/compiler/test_stale_closure_fallback.cpp` (—) [domain_suite, theme_compiler] — AC1: apply_closure after mark_define_dirty / epoch bump →
 - `tests/compiler/test_stats_catalog_drift.cpp` (—) [domain_suite, theme_compiler] — Issue #1672 (#1978 renamed): issue# moved from filename to header.

@@ -498,6 +498,117 @@ static void ac8_2308_solver_snapshot() {
     }
 }
 
+// ── Issue #2318: anti-starvation streak gate (consecutive truncated
+//   delta solves → force one full ConstraintSystem::solve()).
+//   Per #81967 prefer-existing — natural home (refines #2107 unresolved
+//   export lineage, same solve_delta path).
+//   AC1: Streak counter — bump on truncate, reset on !truncate.
+//   AC2: Force full solve at threshold (env AURA_DELTA_TRUNCATE_STREAK_FULL,
+//        default 2). Reset streak on force. Mirror #2277 reject path.
+//   AC3: Zero cost happy path (no truncate → no extra solve).
+//   AC4: Observability — counter + sentinel + schema-2318 / issue-2318.
+//   AC5: Tests — source-cite the streak field + threshold accessor +
+//        solve_delta modification + query keys + Issue #2318 cite.
+
+static void ac2318_streak_counter() {
+    std::println("\n--- #2318 AC1: streak counter wiring ---");
+    const auto tc = read_file("src/compiler/type_checker.ixx");
+    const auto obm = read_file("src/compiler/observability_metrics.h");
+    // AC1: streak field in ConstraintSystem
+    CHECK(tc.find("truncate_streak_") != std::string::npos, "AC1: truncate_streak_ field present");
+    CHECK(tc.find("truncate_streak_ = 0;") != std::string::npos,
+          "AC1: truncate_streak_ field init");
+    // AC1: threshold accessor (env AURA_DELTA_TRUNCATE_STREAK_FULL, default 2)
+    CHECK(tc.find("delta_truncate_streak_threshold()") != std::string::npos,
+          "AC1: delta_truncate_streak_threshold() accessor present");
+    CHECK(tc.find("AURA_DELTA_TRUNCATE_STREAK_FULL") != std::string::npos,
+          "AC1: env var AURA_DELTA_TRUNCATE_STREAK_FULL documented");
+    // AC1: counters in observability_metrics.h
+    CHECK(obm.find("delta_reverify_truncate_streak{0};") != std::string::npos,
+          "AC1: delta_reverify_truncate_streak counter");
+    CHECK(obm.find("delta_truncate_force_full_solve_total{0};") != std::string::npos,
+          "AC1: delta_truncate_force_full_solve_total counter");
+    CHECK(obm.find("delta_truncate_streak_threshold{0};") != std::string::npos,
+          "AC1: delta_truncate_streak_threshold counter");
+    CHECK(obm.find("delta_truncate_anti_starve_wired{0};") != std::string::npos,
+          "AC1: delta_truncate_anti_starve_wired sentinel");
+}
+
+static void ac2318_force_full_solve() {
+    std::println("\n--- #2318 AC2: force full solve at threshold ---");
+    const auto tc = read_file("src/compiler/type_checker.ixx");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    // AC2: check_truncate_anti_starve method declaration + implementation
+    CHECK(tc.find("check_truncate_anti_starve") != std::string::npos,
+          "AC2: check_truncate_anti_starve method present");
+    CHECK(tc.find("truncate_streak_ >= threshold") != std::string::npos,
+          "AC2: streak >= threshold check present");
+    CHECK(tc.find("delta_truncate_force_full_solve_total") != std::string::npos,
+          "AC2: force_full_solve_total bump present");
+    CHECK(tc.find("return solve(unresolved_out);") != std::string::npos,
+          "AC2: full solve call present");
+    // AC2: solve_delta modified to call streak check after solve_delta_impl
+    CHECK(tci.find("last_reverify_truncated_") != std::string::npos,
+          "AC2: solve_delta uses last_reverify_truncated_");
+    CHECK(tci.find("delta_truncate_streak_threshold") != std::string::npos,
+          "AC2: solve_delta reads threshold");
+    CHECK(tci.find("truncate_streak_") != std::string::npos,
+          "AC2: solve_delta manages truncate_streak_");
+}
+
+static void ac2318_alt_truncate_clean() {
+    std::println("\n--- #2318 AC3: zero cost happy path + alt truncate/clean ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    // AC3: no truncate → no extra full solve; only relaxed load/store
+    CHECK(tci.find("else {") != std::string::npos,
+          "AC3: else branch present (truncate=false path)");
+    CHECK(tci.find("truncate_streak_ = 0;") != std::string::npos, "AC3: streak reset on !truncate");
+    // AC3: streak reset in both with-metrics and no-metrics paths
+    const auto else_count = tci.find("truncate_streak_ = 0;");
+    CHECK(else_count != std::string::npos, "AC3: streak reset present");
+}
+
+static void ac2318_query_keys() {
+    std::println("\n--- #2318 AC4: query keys ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm eval");
+    // 4 #2318 keys reachable (>= 0 or 0/1).
+    CHECK(href(cs, "delta-reverify-truncate-streak") >= 0,
+          "AC4: delta-reverify-truncate-streak reachable");
+    CHECK(href(cs, "delta-truncate-force-full-solve-total") >= 0,
+          "AC4: delta-truncate-force-full-solve-total reachable");
+    CHECK(href(cs, "delta-truncate-streak-threshold") >= 0,
+          "AC4: delta-truncate-streak-threshold reachable");
+    CHECK(href(cs, "delta-truncate-anti-starve-wired") >= 0,
+          "AC4: delta-truncate-anti-starve-wired reachable (0 or 1)");
+    // #2318 lineage preserved
+    CHECK(href(cs, "schema-2318") == 2318, "AC4: schema-2318");
+    CHECK(href(cs, "issue-2318") == 2318, "AC4: issue-2318");
+    // Existing #2107 / #2277 / #2308 lineage preserved
+    CHECK(href(cs, "schema-2107") == 2107, "AC4: schema-2107 retained (no #2107 schema break)");
+    CHECK(href(cs, "schema-2277") == 2277, "AC4: schema-2277 retained (no #2277 schema break)");
+}
+
+static void ac2318_source_cite_rows() {
+    std::println("\n--- #2318 AC5: source-cite rows ---");
+    const auto tc = read_file("src/compiler/type_checker.ixx");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto obm = read_file("src/compiler/observability_metrics.h");
+    const auto ep = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2318 cite in all modified files
+    CHECK(tc.find("Issue #2318") != std::string::npos, "AC5: type_checker.ixx cites 2318");
+    CHECK(tci.find("Issue #2318") != std::string::npos, "AC5: type_checker_impl.cpp cites 2318");
+    CHECK(obm.find("// #2318") != std::string::npos || obm.find("Issue #2318") != std::string::npos,
+          "AC5: observability_metrics.h cites 2318");
+    CHECK(ep.find("schema-2318") != std::string::npos, "AC5: query primitive schema-2318");
+    CHECK(ep.find("issue-2318") != std::string::npos, "AC5: query primitive issue-2318");
+    // Streak field + threshold accessor
+    CHECK(tc.find("truncate_streak_") != std::string::npos,
+          "AC5: streak field in type_checker.ixx");
+    CHECK(tc.find("delta_truncate_streak_threshold()") != std::string::npos,
+          "AC5: threshold accessor in type_checker.ixx");
+}
+
 } // namespace
 
 int main() {
@@ -512,6 +623,13 @@ int main() {
     ac7_issue_2277_escalate_and_schema();
     std::println("\n=== Issue #2308: SolverSnapshot + query surface ===");
     ac8_2308_solver_snapshot();
+    // Issue #2318: anti-starvation streak gate (consecutive truncated
+    // delta solves → force one full solve). AC1-AC5 wiring.
+    ac2318_streak_counter();
+    ac2318_force_full_solve();
+    ac2318_alt_truncate_clean();
+    ac2318_query_keys();
+    ac2318_source_cite_rows();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

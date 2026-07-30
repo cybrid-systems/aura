@@ -6436,6 +6436,40 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-sampled-insert-policy-wired", 1);
             insert_kv("schema-2317", 2317);
             insert_kv("issue-2317", 2317);
+            // Issue #2318: anti-starvation streak gate. N consecutive
+            // truncated delta solves → force one full ConstraintSystem::
+            // solve() (mirror #2277 escalation body). Reads from the
+            // per-CompilerMetrics fields added in observability_metrics.h
+            // (delta_reverify_truncate_streak + delta_truncate_force_full
+            // _solve_total + delta_truncate_streak_threshold + delta_
+            // truncate_anti_starve_wired). Threshold reads from env
+            // AURA_DELTA_TRUNCATE_STREAK_FULL (default 2).
+            const std::int64_t delta_reverify_truncate_streak =
+                m ? static_cast<std::int64_t>(
+                        m->delta_reverify_truncate_streak.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t delta_truncate_force_full_solve_total =
+                m ? static_cast<std::int64_t>(
+                        m->delta_truncate_force_full_solve_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t delta_truncate_streak_threshold =
+                m ? static_cast<std::int64_t>(
+                        m->delta_truncate_streak_threshold.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("delta-reverify-truncate-streak", delta_reverify_truncate_streak);
+            insert_kv("delta_truncate_reverify_truncate_streak", delta_reverify_truncate_streak);
+            insert_kv("delta-truncate-force-full-solve-total",
+                      delta_truncate_force_full_solve_total);
+            insert_kv("delta_truncate_force_full_solve_total",
+                      delta_truncate_force_full_solve_total);
+            insert_kv("delta-truncate-streak-threshold", delta_truncate_streak_threshold);
+            insert_kv("delta_truncate_streak_threshold", delta_truncate_streak_threshold);
+            insert_kv("delta-truncate-anti-starve-wired",
+                      (m && m->delta_truncate_anti_starve_wired.load() != 0) ? 1 : 0);
+            insert_kv("delta_truncate_anti_starve_wired",
+                      (m && m->delta_truncate_anti_starve_wired.load() != 0) ? 1 : 0);
+            insert_kv("schema-2318", 2318);
+            insert_kv("issue-2318", 2318);
             insert_kv("coercion-parent-walk-cap-sampled", 16);
             insert_kv("coercion-parent-walk-cap-full", 64);
             insert_kv("coercion-provenance-fast-path-wired", 1);
