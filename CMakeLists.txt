@@ -2735,6 +2735,11 @@ aura_add_issue_test(test_type_dep_epoch_prune_2355)
 aura_issue_test_link_llvm_jit(test_type_dep_epoch_prune_2355)
 add_dependencies(all_test_issue_targets test_type_dep_epoch_prune_2355)
 
+# Issue #2356: truncated reverify one-shot expand (occurrence/let-poly).
+aura_add_issue_test(test_reverify_expand_2356)
+aura_issue_test_link_llvm_jit(test_reverify_expand_2356)
+add_dependencies(all_test_issue_targets test_reverify_expand_2356)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)

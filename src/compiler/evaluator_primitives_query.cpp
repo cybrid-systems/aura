@@ -6392,6 +6392,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("solve_delta_reverify_limit_used", reverify_limit_used);
             insert_kv("solve-delta-reverify-truncated-total", reverify_trunc_2146);
             insert_kv("solve_delta_reverify_truncated_total", reverify_trunc_2146);
+            // Issue #2356: truncated reverify one-shot expand for occurrence/let-poly.
+            const std::int64_t reverify_expand =
+                m ? static_cast<std::int64_t>(
+                        m->delta_reverify_expand_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("delta-reverify-expand-total", reverify_expand);
+            insert_kv("delta_reverify_expand_total", reverify_expand);
+            insert_kv("delta-reverify-expand-wired", 1);
+            insert_kv("schema-2356", 2356);
+            insert_kv("issue-2356", 2356);
             insert_kv("solve-delta-pending-full-solve-roots", pending_full);
             insert_kv("pending-full-solve-roots", pending_full);
             insert_kv("solve-delta-pending-full-solve-enqueued", pending_enq);

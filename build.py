@@ -2301,6 +2301,25 @@ def cmd_type_dep_epoch_prune_coverage():
     return 0
 
 
+def cmd_reverify_expand_coverage():
+    """Issue #2356: truncated reverify one-shot expand for occurrence/let-poly.
+
+    When reverify hits the scan cap and priority roots are non-empty, run
+    exactly one expanded pass; empty priority → zero cost; TIMEOUT escalate unchanged.
+    """
+    print(f"{B}=== reverify expand coverage (#2356) ==={N}")
+    script = ROOT / "scripts" / "check_reverify_expand_2356.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reverify expand (#2356) coverage contract rows failed")
+        return 1
+    ok("reverify expand (#2356) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2693,6 +2712,7 @@ def cmd_gate():
         or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lock_order_audit_2354_coverage()
         or cmd_type_dep_epoch_prune_coverage()
+        or cmd_reverify_expand_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
