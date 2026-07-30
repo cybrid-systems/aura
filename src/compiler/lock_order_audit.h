@@ -48,10 +48,11 @@
 //   - Acquiring lower rank while any higher rank is held
 //   - Scheduler: WaitMap while OwnedFibers held, etc.
 //
-// Runtime modes (lazy-init from env; Production default OFF = zero cost):
-//   AURA_LOCK_ORDER_AUDIT=1  — soft: TLS depth + counters (no abort)
+// Runtime modes (lazy-init from env; Production default OFF = zero atomics):
+//   AURA_LOCK_ORDER_AUDIT=1  — soft: counters + inversion metrics (no abort)
 //   AURA_LOCK_ORDER_CANARY=1 — hard: soft + abort with rank diagnostics
-//   both unset               — single early branch in on_acquire/on_release
+//   both unset               — TLS depth still tracked (nest safety for
+//                              OrderedUniqueLock::acquire_if_needed); no atomics
 //
 // Thread-local depth counters detect inversions (acquiring a lower
 // level while a higher level is held). Used by CompilerService
@@ -223,13 +224,21 @@ inline void dump_held_ranks(FILE* out) noexcept {
 // Returns true if acquire is legal; false if inversion (still records
 // depth so release pairing works — soft mode continues after metric).
 // Hard canary (mode==3): abort with file:line + rank dump.
-// AC1 (#2354): audit off → single early branch, zero atomics / TLS writes.
+//
+// AC1 (#2354) refined: production default OFF skips atomics / inversion
+// diagnostics, BUT always updates TLS g_depth. Depth is correctness, not
+// mere observability — OrderedUniqueLock::acquire_if_needed / nested
+// MutationBoundary paths rely on is_held() to skip re-locking the same
+// non-recursive mutex. Skipping depth when audit is off caused
+// "Resource deadlock avoided" (EDEADLK) under default CI (#2354 regression).
 inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
                        int line = __builtin_LINE()) noexcept {
-    if (!lock_order_audit_enabled())
-        return true; // AC1: production default OFF
-    g_lock_order_acquire_total.fetch_add(1, std::memory_order_relaxed);
+    // Depth always (nest / acquire_if_needed correctness).
     const bool inv = any_higher_held(L);
+    ++g_depth[static_cast<std::uint8_t>(L)];
+    if (!lock_order_audit_enabled())
+        return true; // AC1: zero atomics when OFF
+    g_lock_order_acquire_total.fetch_add(1, std::memory_order_relaxed);
     if (inv) {
         g_lock_inversion_detected_total.fetch_add(1, std::memory_order_relaxed);
         g_lock_order_violation_total.fetch_add(1, std::memory_order_relaxed);
@@ -242,17 +251,17 @@ inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
             std::abort();
         }
     }
-    ++g_depth[static_cast<std::uint8_t>(L)];
     return !inv;
 }
 
 inline void on_release(Level L) noexcept {
-    if (!lock_order_audit_enabled())
-        return; // AC1: production default OFF
-    g_lock_order_release_total.fetch_add(1, std::memory_order_relaxed);
+    // Depth always (pair with on_acquire).
     auto& d = g_depth[static_cast<std::uint8_t>(L)];
     if (d > 0)
         --d;
+    if (!lock_order_audit_enabled())
+        return; // AC1: zero atomics when OFF
+    g_lock_order_release_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2354: RAII scope that pairs on_acquire/on_release around an
