@@ -7330,7 +7330,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
             if (!m)
                 return make_int(0);
-            auto* ht = FlatHashTable::create(16);
+            // Capacity 32: #2287 + #2319 + #2358 keys.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7390,6 +7391,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("castop_density_hard_wired", hard_wired);
             insert_kv("schema-2319", 2319);
             insert_kv("issue-2319", 2319);
+            // Issue #2358: HARD policy force-JIT action (codegen, not type gate).
+            //   - castop-density-hard-enabled: env AURA_CASTOP_DENSITY_HARD (0/1)
+            //   - castop-density-hard-action-total: force-JIT fires under HARD=1
+            //   - schema-2358 / issue-2358 / wired sentinel
+            const std::int64_t hard_enabled =
+                m ? static_cast<std::int64_t>(
+                        m->castop_density_hard_enabled.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hard_action =
+                m ? static_cast<std::int64_t>(
+                        m->castop_density_hard_action_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("castop-density-hard-enabled", hard_enabled);
+            insert_kv("castop_density_hard_enabled", hard_enabled);
+            insert_kv("castop-density-hard-action-total", hard_action);
+            insert_kv("castop_density_hard_action_total", hard_action);
+            insert_kv("castop-density-hard-action-wired", 1);
+            insert_kv("schema-2358", 2358);
+            insert_kv("issue-2358", 2358);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

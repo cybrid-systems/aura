@@ -18,6 +18,7 @@ module;
 #include "compiler/frame_budget.hh" // #2137 frame-budget cascade isolation
 #include "compiler/ownership_escape_lowering_gate.h" // #2286: set_current_escape_key
 #include "compiler/mutate_type_gate.hh"              // #2219 / #2319 hard gate check
+#include "compiler/castop_density_policy.hh"         // #2358 HARD force-JIT policy
 #include "core/arena_auto_policy_stats.h"            // in_render_hotpath
 #include "core/transparent_string_hash.hh"           // TransparentStringHash for ir_cache_index
 #include <algorithm>
@@ -1297,51 +1298,13 @@ void CompilerService::invalidate_function(const std::string& name) {
                 metrics_.castop_density_over_budget_total.fetch_add(1, std::memory_order_relaxed);
             }
 
-            // Issue #2319: opt-in hard CastOp density gate (refine #2287
-            // soft hint). Default Soft path unchanged (hint only). When
-            // AURA_CASTOP_DENSITY_HARD=1 AND density > budget AND the
-            // mutate introduces / preserves an unannotated Dynamic binding
-            // in the dirty scope: bump castop_density_hard_reject_total
-            // + set castop_density_hard_wired sentinel + fire Soft warn
-            // or Hard MutateTypeGate reject aligned with #2219.
-            // Annotated / narrowed fixtures under budget: no gate fire.
-            {
-                bool hard_env = false;
-                if (const char* e2 = std::getenv("AURA_CASTOP_DENSITY_HARD")) {
-                    hard_env = (e2[0] == '1' || e2[0] == 't' || e2[0] == 'T');
-                }
-                if (hard_env && dens > budget) {
-                    // Detect "unannotated Dynamic" via existing density
-                    // signal: when castop_emitted continues to grow under
-                    // budget pressure, the dynamic bindings are present
-                    // (per #2282 layered DeadCoercion — annotated fixtures
-                    // have dead_coercion_eliminated counter advancing).
-                    // Use CompilerMetrics dead_coercion_elim_total (IR-layer
-                    // elision) as the density baseline — process-level
-                    // g_dead_coercion_ast_elided_total lives in another module.
-                    const auto dead_elim =
-                        metrics_.dead_coercion_elim_total.load(std::memory_order_relaxed);
-                    const auto castop_em =
-                        metrics_.coercion_castop_emitted_total.load(std::memory_order_relaxed);
-                    const bool unannotated_dynamic =
-                        (castop_em > dead_elim + 16) /* heuristic gate */;
-                    if (unannotated_dynamic) {
-                        metrics_.castop_density_hard_reject_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        metrics_.castop_density_hard_wired.store(1, std::memory_order_relaxed);
-                        // Soft gate: Warning + metric (mutate may still
-                        // succeed). Hard MutateTypeGate: TypeError / reject
-                        // aligned with #2219. Density hard reject is
-                        // metric-only here; hard gate rejects via the
-                        // post-mutate typecheck path (#2219).
-                        (void)mutate_type_gate::is_hard();
-                        // Soft path always falls through (no immediate
-                        // reject) — Agent sees the gate fire via
-                        // query:castop-density-stats keys (castop-density-
-                        // hard-reject-total + castop-density-hard-wired).
-                    }
-                }
-            }
+            // Issue #2319 / #2358: opt-in HARD CastOp density policy
+            // (refine #2287 soft hint). Default HARD=0 soft-only.
+            // HARD=1 + dens>budget → force-JIT (#2358) + optional
+            // unannotated-Dynamic hard_reject metric (#2319). Mutate
+            // always continues (AC3). Under budget: no action (AC4).
+            (void)castop_density::apply_hard_policy(metrics_, dens, budget);
+            (void)mutate_type_gate::is_hard(); // #2219 lineage retained
         }
 
         // Issue #2045: update ir_cache_v2_ (not only v1) so source_to_ir_map

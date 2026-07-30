@@ -804,6 +804,11 @@ struct CompilerMetrics {
     //     integrated (production default OFF; env-gated Soft default).
     std::atomic<std::uint64_t> castop_density_hard_reject_total{0}; // #2319
     std::atomic<std::uint64_t> castop_density_hard_wired{0};        // #2319
+    // Issue #2358: opt-in HARD policy degrades codegen (force-JIT), does
+    // NOT reject mutate. hard_action_total bumps once per over-budget fire
+    // under AURA_CASTOP_DENSITY_HARD=1; hard_enabled mirrors env (0/1).
+    std::atomic<std::uint64_t> castop_density_hard_action_total{0}; // #2358
+    std::atomic<std::uint64_t> castop_density_hard_enabled{0};      // #2358
     // Issue #691: CoercionMap + NarrowingRecord provenance linkage.
     //   - coercion_post_narrow_elim_opportunities_total: deferred
     //     coercions recorded with narrowing evidence/provenance
