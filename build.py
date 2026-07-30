@@ -2130,6 +2130,25 @@ def cmd_composite_empty_cs_hard_coverage():
     return 0
 
 
+def cmd_steal_snapshot_hard_invariant_coverage():
+    """Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed).
+
+    Soft: mismatch metric only. Hard / production canary: mark-failed +
+    steal-snapshot-hard-fail-total. Happy path: one existing snapshot sample.
+    """
+    print(f"{B}=== steal-snapshot hard-invariant coverage (#2346) ==={N}")
+    script = ROOT / "scripts" / "check_steal_snapshot_hard_invariant_2346.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal-snapshot hard-invariant coverage contract rows failed")
+        return 1
+    ok("steal-snapshot hard-invariant coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -2492,6 +2511,7 @@ def cmd_gate():
         or cmd_type_timeout_repair_graph_coverage()
         or cmd_escape_gate_key_contract_coverage()
         or cmd_composite_empty_cs_hard_coverage()
+        or cmd_steal_snapshot_hard_invariant_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

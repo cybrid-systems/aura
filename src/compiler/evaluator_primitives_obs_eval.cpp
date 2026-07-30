@@ -79,6 +79,8 @@ extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total();
 extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
+extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
@@ -12494,6 +12496,18 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
                           aura_fiber_static_steal_snapshot_mismatch_force_deopt_total()));
             insert_kv("schema-2310", 2310);
             insert_kv("issue-2310", 2310);
+            // Issue #2346: resume hard-invariant (fail-closed canary).
+            // steal-snapshot-mismatch-total aliases the #2184 observed
+            // mismatch counter; hard-fail is the resume mark-failed path.
+            insert_kv("steal-snapshot-mismatch-total",
+                      static_cast<std::int64_t>(
+                          aura_fiber_static_mutation_steal_snapshot_mismatch_total()));
+            insert_kv(
+                "steal-snapshot-hard-fail-total",
+                static_cast<std::int64_t>(aura_fiber_static_steal_snapshot_hard_fail_total()));
+            insert_kv("steal-snapshot-hard-wired", 1);
+            insert_kv("schema-2346", 2346);
+            insert_kv("issue-2346", 2346);
             insert_kv("schema", 783);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
