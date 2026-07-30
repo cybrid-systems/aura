@@ -2186,6 +2186,11 @@ aura_issue_test_link_llvm_jit(test_aot_reload_primitive)
 target_link_options(test_aot_reload_primitive PRIVATE -Wl,--export-dynamic)
 add_dependencies(all_test_issue_targets test_aot_reload_primitive)
 
+# Issue #2304: post-bump epoch invariant walk infrastructure.
+aura_add_issue_test(test_epoch_bump_invariant_2304)
+aura_issue_test_link_llvm_jit(test_epoch_bump_invariant_2304)
+add_dependencies(all_test_issue_targets test_epoch_bump_invariant_2304)
+
 # Issue #1930 / #1952 / #2013: incremental reemit + stable func_id + live remap.
 aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)

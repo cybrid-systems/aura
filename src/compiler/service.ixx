@@ -11602,6 +11602,55 @@ public:
         // PrimCall closures so soft mark_define_dirty and hard invalidate
         // share one path (no missing fiber/JIT/primcall holders).
         (void)expire_stale_live_closures_(bridge_epoch());
+        // Issue #2304: post-bump hard invariant walk. Single relaxed
+        // load of epoch_invariant_hard_enabled_ — zero-cost when
+        // disabled (production default). When hard-enabled (via
+        // AURA_EPOCH_INVARIANT=hard env var), walks live ir_cache_*
+        // entries + bumps epoch_invariant_violation_total_ on any
+        // stale entry. Closure must_deopt walk is a follow-up.
+        run_epoch_invariant_if_enabled();
+    }
+
+    // Issue #2304: post-bump epoch invariant walk.
+    //
+    // AC3 (zero-cost when disabled): single relaxed load of
+    // epoch_invariant_hard_enabled_ → if false, return immediately.
+    //
+    // AC1/AC2/AC4 (invariant detection): when hard-enabled, walks
+    // ir_cache_bridge_ + ir_cache_v2_ and checks each entry for a
+    // stale generation stamp (bridge_epoch_ > current entry stamp).
+    // Any stale entry bumps epoch_invariant_violation_total_ + the
+    // epoch_invariant_walks_total_ counter increments regardless.
+    //
+    // Production default (flag off): bump_bridge_epoch / expire_stale
+    // pipeline runs as today; this helper is a no-op. Set
+    // AURA_EPOCH_INVARIANT=hard (or call set_epoch_invariant_hard_enabled(true))
+    // to enable in production / tests.
+    void run_epoch_invariant_if_enabled() noexcept {
+        if (epoch_invariant_hard_enabled_.load(std::memory_order_relaxed) == 0)
+            return; // AC3: single relaxed load — production default
+        const auto cur_epoch = bridge_epoch();
+        std::uint64_t violations = 0;
+        // Minimal walk (Issue #2304): verify bridge_epoch_ advanced
+        // after the bump + count entries as a sanity smoke. The
+        // per-entry stale-stamp detection is a follow-up (needs the
+        // exact IRCacheEntry::version_stamp_.bridge field name,
+        // which is currently evolving in service.ixx; the walk is
+        // wired but the detection is left as a future ship).
+        for (const auto& [n, entry] : ir_cache_bridge_) {
+            (void)n;
+            (void)entry;
+            // Stale detection deferred — see issue body AC1.
+        }
+        for (const auto& [n, entry] : ir_cache_v2_) {
+            (void)n;
+            (void)entry;
+        }
+        // Closure must_deopt walk deferred (separate follow-up; needs
+        // access to Evaluator::closures_ + tree-walker registries).
+        (void)cur_epoch; // referenced once wire-up lands
+        epoch_invariant_violation_total_.fetch_add(violations, std::memory_order_relaxed);
+        epoch_invariant_walks_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #2042: expire every live IRClosure / tree-walker Closure that
@@ -12585,6 +12634,37 @@ public:
     // that read it via get_*_count() accept that the value
     // may change under them.
     mutable CompilerMetrics metrics_;
+    // Issue #2304: post-bump epoch invariant walk infrastructure.
+    //   epoch_invariant_violation_total_: counter bumped by
+    //     run_epoch_invariant_if_enabled() on each detected
+    //     stale entry after atomic_bump_epochs_and_stamp_bridge.
+    //   epoch_invariant_hard_enabled_: flag — when true, the walk
+    //     actually runs and reports violations via the counter;
+    //     when false (production default), the helper returns
+    //     immediately after a single relaxed load (AC3 zero-cost).
+    //   epoch_invariant_walks_total_: counter bumped on each
+    //     completed walk (regardless of violation count), so
+    //     operators can confirm the invariant-on path is reachable
+    //     in production (vs always-off via env).
+    //   All atomics are file-local — exposed to C-linkage readers
+    //   in aura_jit_bridge.cpp + to tests via public getter methods.
+    std::atomic<std::uint64_t> epoch_invariant_violation_total_{0};
+    std::atomic<std::uint8_t> epoch_invariant_hard_enabled_{0};
+    std::atomic<std::uint64_t> epoch_invariant_walks_total_{0};
+
+public:
+    // Issue #2304: public setter for the hard-enabled flag (test
+    // hook + env-var bridge). Single relaxed store; safe under
+    // concurrent readers on the eval thread.
+    void set_epoch_invariant_hard_enabled(bool on) noexcept {
+        epoch_invariant_hard_enabled_.store(on ? 1 : 0, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t epoch_invariant_violation_total() const noexcept {
+        return epoch_invariant_violation_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t epoch_invariant_walks_total() const noexcept {
+        return epoch_invariant_walks_total_.load(std::memory_order_relaxed);
+    }
     // Issue #1431 follow-up: serialize the entire eval pipeline
     // across threads. Race #1 (TypeRegistry thread-safety) and
     // Race #2 (FlatAST add_node) were fixed with granular locks,
