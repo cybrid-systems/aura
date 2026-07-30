@@ -71,8 +71,13 @@ def main() -> int:
         ),
         (
             ROOT / "src/compiler/type_checker.ixx",
-            "std::unordered_map<std::uint32_t, std::vector<aura::ast::NodeId>> type_dep_graph_",
+            "type_dep_graph_",
             "type_checker.ixx: type_dep_graph_ field present",
+        ),
+        (
+            ROOT / "src/compiler/type_checker.ixx",
+            "TypeDepEdge",
+            "type_checker.ixx: TypeDepEdge (#2355 epoch stamp; #2320 live prune composes)",
         ),
         (ROOT / "src/compiler/type_checker.ixx", "n >= flat_size", "type_checker.ixx: prune checks NodeId range"),
         (

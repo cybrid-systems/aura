@@ -6847,7 +6847,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(16);
+            // Capacity 32: #2283 + #2320 + #2355 keys (~20 inserts).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6914,10 +6915,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         m->type_dep_graph_cap_evict_total.load(std::memory_order_relaxed))
                   : 0;
             insert_kv("type-dep-graph-prune-total", prune_total);
+            insert_kv("type-dep-graph-entries-dropped", entries_dropped);
             insert_kv("type_dep-graph-entries-dropped", entries_dropped);
             insert_kv("type-dep-graph-cap-evict-total", cap_evict);
             insert_kv("schema-2320", 2320);
             insert_kv("issue-2320", 2320);
+            // Issue #2355: epoch-stale drop + dirty invalidate + size surface.
+            const std::int64_t stale_drop =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_graph_stale_drop_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t inv_drop =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_graph_invalidate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dep_size = m ? static_cast<std::int64_t>(m->type_dep_graph_size.load(
+                                                  std::memory_order_relaxed))
+                                            : 0;
+            insert_kv("type-dep-stale-drop-total", stale_drop);
+            insert_kv("type_dep_stale_drop_total", stale_drop);
+            insert_kv("type-dep-invalidate-total", inv_drop);
+            insert_kv("type_dep_invalidate_total", inv_drop);
+            insert_kv("type-dep-size", dep_size);
+            insert_kv("type_dep_size", dep_size);
+            insert_kv("type-dep-epoch-wired", 1);
+            insert_kv("schema-2355", 2355);
+            insert_kv("issue-2355", 2355);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

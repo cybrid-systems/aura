@@ -36,6 +36,22 @@ export inline std::atomic<std::uint64_t> g_partial_cs_import_skip_total{0};
 // Issue #2320: process-wide type_dep_graph prune observability (prune walks).
 export inline std::atomic<std::uint64_t> g_type_dep_graph_prune_total{0};
 export inline std::atomic<std::uint64_t> g_type_dep_graph_entries_dropped{0};
+// Issue #2355: epoch-stale edge drops (set_cache_epoch advance).
+export inline std::atomic<std::uint64_t> g_type_dep_graph_stale_drop_total{0};
+// Issue #2355: per-bucket cap evictions (generational compact).
+export inline std::atomic<std::uint64_t> g_type_dep_graph_cap_evict_total{0};
+// Issue #2355: dirty NodeId invalidation removals.
+export inline std::atomic<std::uint64_t> g_type_dep_graph_invalidate_total{0};
+
+// Issue #2355: epoch-stamped type-dep edge (mirrors OccurrenceGoal epoch).
+// epoch==0 is an untagged sentinel (survives epoch prune — AC1).
+export struct TypeDepEdge {
+    aura::ast::NodeId nid = 0;
+    std::uint64_t epoch = 0;
+};
+
+// Issue #2355: per-TypeId vector cap; overflow drops oldest half.
+export inline constexpr std::size_t kTypeDepBucketCap = 256;
 
 // Issue #2318: anti-starvation streak gate threshold (env-driven).
 // Lazy-init from AURA_DELTA_TRUNCATE_STREAK_FULL env var (default 2).
@@ -1762,7 +1778,15 @@ export struct TypeChecker {
     // thread-local current_escape_key before lowering, so the
     // escape_blocks_move_elision_for_current lookup matches.
     [[nodiscard]] std::uint64_t cache_epoch() const noexcept { return cache_epoch_; }
-    void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
+    // Issue #2355: on epoch advance, prune type_dep edges stamped at older
+    // epochs (epoch > 0 && epoch < new_epoch). AC3: same epoch → no-op.
+    void set_cache_epoch(std::uint64_t epoch) {
+        if (epoch != cache_epoch_) {
+            if (epoch > 0)
+                prune_type_dep_graph_epoch(epoch);
+            cache_epoch_ = epoch;
+        }
+    }
     // Issue #258: plumb the CompilerMetrics pointer through
     // to ConstraintSystem::solve_delta() for timing. Today
     // solve_delta isn't called from infer_flat_partial, so
@@ -2130,13 +2154,11 @@ public:
     // this scope-limited close ships the data structure +
     // observability surface.
     //
-    // Keyed by raw TypeId (uint32_t), value is a vector of
-    // NodeIds that have that type in their cache. The graph
-    // grows monotonically (we never remove entries — old node
-    // references are filtered at query time via the AST's
-    // current type_id_ check). Reset on clear() or when the
-    // TypeChecker is destroyed.
-    std::unordered_map<std::uint32_t, std::vector<aura::ast::NodeId>> type_dep_graph_;
+    // Keyed by raw TypeId (uint32_t), value is epoch-stamped edges
+    // (Issue #2355 TypeDepEdge). Epoch-0 edges are untagged sentinels
+    // (survive epoch prune). Per-bucket cap kTypeDepBucketCap bounds
+    // long AI sessions. Reset on clear() / TypeChecker destroy.
+    std::unordered_map<std::uint32_t, std::vector<TypeDepEdge>> type_dep_graph_;
 
     // Issue #387: type dep graph observability (3 counters).
     // type_dep_graph_size = number of distinct TypeIds tracked
@@ -2150,24 +2172,30 @@ public:
     std::uint64_t type_dep_graph_hits_ = 0;
 
 public:
-    // Issue #387: record that NodeId `node` references TypeId
-    // `tid`. Called from infer_flat's set_type_with_gen path.
-    // O(1) amortized — the per-TypeId vector grows
-    // monotonically; we don't dedup (the same node can have
-    // its type re-stamped on cache invalidation, and that's
-    // fine — the graph is "all nodes ever seen with this
-    // type", not "current nodes").
+    // Issue #387 / #2355: record that NodeId `node` references TypeId
+    // `tid`. Stamps cache_epoch_ on the edge. Cap per-bucket at
+    // kTypeDepBucketCap with generational compact (drop oldest half).
     void record_type_dependency(std::uint32_t tid, aura::ast::NodeId node) {
         if (tid == 0)
             return; // 0 = uninitialized, skip
-        type_dep_graph_[tid].push_back(node);
+        auto& vec = type_dep_graph_[tid];
+        if (vec.size() >= kTypeDepBucketCap) {
+            // Generational compact: drop oldest half of the bucket.
+            const auto drop = vec.size() / 2;
+            vec.erase(vec.begin(), vec.begin() + static_cast<std::ptrdiff_t>(drop));
+            g_type_dep_graph_cap_evict_total.fetch_add(1, std::memory_order_relaxed);
+            if (metrics_) {
+                static_cast<CompilerMetrics*>(metrics_)->type_dep_graph_cap_evict_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        vec.push_back(TypeDepEdge{node, cache_epoch_});
     }
 
     // Issue #387: query the affected-node set for a TypeId.
-    // Returns all NodeIds that have ever been stamped with
-    // this type. Callers should filter against the current
-    // FlatAST (since the graph can contain stale entries
-    // from re-inferred nodes whose type changed).
+    // Returns NodeIds from stamped edges. Callers should filter
+    // against the current FlatAST (stale entries from re-inferred
+    // nodes whose type changed).
     //
     // Bumps type_dep_graph_lookups_; bumps type_dep_graph_hits_
     // iff the returned vector is non-empty.
@@ -2179,7 +2207,9 @@ public:
         auto it = type_dep_graph_.find(tid);
         if (it != type_dep_graph_.end() && !it->second.empty()) {
             ++type_dep_graph_hits_;
-            out = it->second;
+            out.reserve(it->second.size());
+            for (const auto& e : it->second)
+                out.push_back(e.nid);
         }
         return out;
     }
@@ -2187,10 +2217,52 @@ public:
     // Issue #387: number of distinct TypeIds tracked.
     std::size_t type_dep_graph_size() const { return type_dep_graph_.size(); }
 
-    // Issue #2320: prune stale NodeIds from type_dep_graph_ on cache_epoch
-    // advance. Bounded live entries — long multi-round Agent sessions
-    // grow vectors without bound; this caps the per-bucket cost.
-    // For each bucket, drop NodeIds that are out of range or whose
+    // Issue #2355: total live edges across all TypeId buckets (for AC2 bound).
+    [[nodiscard]] std::size_t type_dep_graph_edge_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& [_, edges] : type_dep_graph_)
+            n += edges.size();
+        return n;
+    }
+
+    // Issue #2355 Phase A: drop edges with epoch > 0 && epoch < min_epoch.
+    // Epoch-0 sentinel edges survive (AC1). min_epoch==0 → no-op (AC3).
+    // Returns number of edges dropped.
+    std::size_t prune_type_dep_graph_epoch(std::uint64_t min_epoch) noexcept {
+        if (min_epoch == 0)
+            return 0;
+        std::size_t dropped = 0;
+        for (auto& [tid, edges] : type_dep_graph_) {
+            (void)tid;
+            const auto before = edges.size();
+            edges.erase(std::remove_if(edges.begin(), edges.end(),
+                                       [min_epoch](const TypeDepEdge& e) {
+                                           return e.epoch > 0 && e.epoch < min_epoch;
+                                       }),
+                        edges.end());
+            dropped += before - edges.size();
+        }
+        if (dropped > 0) {
+            g_type_dep_graph_stale_drop_total.fetch_add(dropped, std::memory_order_relaxed);
+            g_type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
+            if (metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(metrics_);
+                m->type_dep_graph_stale_drop_total.fetch_add(dropped, std::memory_order_relaxed);
+                m->type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
+            }
+        }
+        g_type_dep_graph_prune_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<CompilerMetrics*>(metrics_)->type_dep_graph_prune_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        return dropped;
+    }
+
+    // Issue #2320 / #2355: prune stale NodeIds from type_dep_graph_ against
+    // live FlatAST. Bounded live entries — long multi-round Agent sessions
+    // grow vectors without bound; this drops out-of-range / type_id mismatch.
+    // For each bucket, drop edges whose nid is out of range or whose
     // current flat.type_id(nid) no longer equals the bucket TypeId.
     // Bumps type_dep_graph_prune_total + type_dep_graph_entries_dropped.
     // #387 live_filter (in affected_nodes_for_type) ensures no
@@ -2201,7 +2273,8 @@ public:
         for (auto& [tid, nodes] : type_dep_graph_) {
             const auto before = nodes.size();
             nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
-                                       [&](aura::ast::NodeId n) {
+                                       [&](const TypeDepEdge& e) {
+                                           const auto n = e.nid;
                                            if (n >= flat_size)
                                                return true;
                                            if (flat.type_id(n) != tid)
@@ -2213,6 +2286,39 @@ public:
         }
         g_type_dep_graph_prune_total.fetch_add(1, std::memory_order_relaxed);
         g_type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
+        if (metrics_ && dropped > 0) {
+            auto* m = static_cast<CompilerMetrics*>(metrics_);
+            m->type_dep_graph_prune_total.fetch_add(1, std::memory_order_relaxed);
+            m->type_dep_graph_entries_dropped.fetch_add(dropped, std::memory_order_relaxed);
+        } else if (metrics_) {
+            static_cast<CompilerMetrics*>(metrics_)->type_dep_graph_prune_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+
+    // Issue #2355 Phase B: remove dirty NodeIds from all type_dep buckets
+    // (after expand / before re-infer re-records). Empty span → no-op (AC3).
+    std::size_t invalidate_type_dep_for_nodes(std::span<const aura::ast::NodeId> dirty) noexcept {
+        if (dirty.empty())
+            return 0;
+        std::unordered_set<aura::ast::NodeId> dead(dirty.begin(), dirty.end());
+        std::size_t dropped = 0;
+        for (auto& [tid, edges] : type_dep_graph_) {
+            (void)tid;
+            const auto before = edges.size();
+            edges.erase(std::remove_if(edges.begin(), edges.end(),
+                                       [&](const TypeDepEdge& e) { return dead.count(e.nid) > 0; }),
+                        edges.end());
+            dropped += before - edges.size();
+        }
+        if (dropped > 0) {
+            g_type_dep_graph_invalidate_total.fetch_add(dropped, std::memory_order_relaxed);
+            if (metrics_) {
+                static_cast<CompilerMetrics*>(metrics_)->type_dep_graph_invalidate_total.fetch_add(
+                    dropped, std::memory_order_relaxed);
+            }
+        }
+        return dropped;
     }
 
     // Issue #387: clear the graph (e.g., on set-code when the

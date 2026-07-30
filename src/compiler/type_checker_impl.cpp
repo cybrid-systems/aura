@@ -6958,6 +6958,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             }
         }
     }
+    // Issue #2355 Phase B: after expand, drop dirty nids from type_dep so
+    // re-infer re-records under the current epoch (bounds session growth).
+    // Empty affected already returned above — span non-empty here.
+    (void)invalidate_type_dep_for_nodes(std::span<const NodeId>(affected.data(), affected.size()));
     {
         const std::uint8_t kOccurrenceBit =
             static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);

@@ -853,6 +853,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_dep_graph_prune_total{0};     // #2320
     std::atomic<std::uint64_t> type_dep_graph_entries_dropped{0}; // #2320
     std::atomic<std::uint64_t> type_dep_graph_cap_evict_total{0}; // #2320
+    // Issue #2355: epoch-stale edge drops on set_cache_epoch advance.
+    std::atomic<std::uint64_t> type_dep_graph_stale_drop_total{0}; // #2355
+    // Issue #2355: dirty NodeId invalidation removals.
+    std::atomic<std::uint64_t> type_dep_graph_invalidate_total{0}; // #2355
     std::atomic<std::uint64_t> type_dep_graph_size{0};
     // Issue #254: IR SoA dual-emit counters (lifetime total).
     // Bumped by service.ixx after each lower_to_ir call when
