@@ -1478,8 +1478,9 @@ aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage)
 # to satisfy AC1 ≥ 60s CI soak spec.
 aura_add_issue_test(test_chaos_steal_mutation_gc)
 aura_issue_test_link_llvm_jit(test_chaos_steal_mutation_gc)
+# EXCLUDE_FROM_ALL: opt-in chaos soak (AURA_CHAOS_STEAL_GC); still wired to
+# all_test_issue_targets below after that aggregate target is created (#2315).
 set_target_properties(test_chaos_steal_mutation_gc PROPERTIES EXCLUDE_FROM_ALL TRUE)
-add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
 # Issue #1987: wait_for_safepoint actually blocks until signaled (B-001).
 aura_add_issue_test(test_safepoint_mutation)
 aura_issue_test_link_llvm_jit(test_safepoint_mutation)
@@ -1896,6 +1897,9 @@ aura_add_issue_bundle(light_late)
 
 # Default issue-suite build: the 12 profile bundles (not 200+ standalones).
 add_custom_target(all_test_issue_targets ALL)
+# Issue #2315: chaos soak registered above with EXCLUDE_FROM_ALL; opt-in
+# via AURA_CHAOS_STEAL_GC but still buildable under the aggregate target.
+add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
 add_dependencies(all_test_issue_targets test_issues_light)
 add_dependencies(all_test_issue_targets test_issues_jit_late1)
 # DISABLED (paired with disabled aura_add_issue_bundle above):
