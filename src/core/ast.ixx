@@ -8680,6 +8680,9 @@ resolve_across_layer(const FlatAST& target_flat, const mutation::NodeIdRemapTabl
 export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
 
 // ── Delta fixup (for deserialization) ──────────────────────────
+// Issue #221 / #2392: rebase parent-relative child deltas → absolute
+// NodeIds. Unsafe rebased ids (uint32 wrap or >= size()) become NULL_NODE.
+// See ast_impl.cpp fixup_deltas for full contract.
 export void fixup_deltas(FlatAST& ast);
 
 // ── Bridge from pointer tree to FlatAST ────────────────────────

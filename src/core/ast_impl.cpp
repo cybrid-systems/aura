@@ -41,18 +41,45 @@ bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
 }
 
 // ── Delta fixup (for deserialization) ──────────────────────────
+// Issue #221 + Issue #2392: some wire / staged encodings store children
+// as *deltas relative to the parent NodeId* (absolute = delta + parent_id).
+// Call this once after load to rebase deltas → absolute NodeIds.
+//
+// Contract of set_child (ast.ixx): does NOT clamp out-of-range child ids
+// (only updates parent_[child] when child < parent_.size()). Writing a
+// raw (delta+id) that wraps uint32 or lands past size() would silently
+// plant invalid edges. Issue #2392 therefore checks overflow + bounds and
+// writes NULL_NODE for any unsafe rebase (safe tombstone; no corrupt
+// absolute id left in children_).
 void fixup_deltas(FlatAST& ast) {
-    // Issue #221: the per-node children_ is a PersistentChildVector
-    // (immutable + COW). Iterate the read-only span and apply
-    // each delta as a set_child (which COW-creates a new PCV
-    // for that node).
-    for (NodeId id = 0; id < ast.size(); ++id) {
-        const auto& list = ast.children(id);
-        for (std::uint32_t j = 0; j < list.size(); ++j) {
-            NodeId cid = list[j];
-            if (cid != NULL_NODE) {
-                ast.set_child(id, j, cid + id);
+    const auto n = ast.size();
+    for (NodeId id = 0; id < n; ++id) {
+        // Snapshot child count first — set_child COWs the PCV and
+        // invalidates a live span from children(id).
+        const auto count = static_cast<std::uint32_t>(ast.children(id).size());
+        for (std::uint32_t j = 0; j < count; ++j) {
+            const auto list = ast.children(id);
+            if (j >= list.size())
+                break;
+            const NodeId delta = list[j];
+            if (delta == NULL_NODE)
+                continue;
+
+            // Detect uint32 wrap: delta + id must not exceed max NodeId.
+            // NULL_NODE is ~0u; any wrap would also be wrong as absolute.
+            NodeId rebased = NULL_NODE;
+            if (delta <= static_cast<NodeId>(~static_cast<NodeId>(0)) - id) {
+                const NodeId cand = static_cast<NodeId>(delta + id);
+                // In-range absolute only; cand == NULL_NODE is impossible
+                // without wrap (NULL_NODE is max, sum of two non-null
+                // would need one zero — but delta != NULL_NODE here).
+                if (cand < static_cast<NodeId>(n))
+                    rebased = cand;
             }
+            // Always write: either rebased absolute or NULL_NODE clamp.
+            // (Even when rebased == delta, e.g. parent id==0, still a
+            // no-op set that keeps parent_ links consistent.)
+            ast.set_child(id, j, rebased);
         }
     }
 }

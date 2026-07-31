@@ -3242,6 +3242,11 @@ aura_add_issue_test(test_validate_post_restore_soa_2391)
 aura_issue_test_link_llvm_jit(test_validate_post_restore_soa_2391)
 add_dependencies(all_test_issue_targets test_validate_post_restore_soa_2391)
 
+# Issue #2392: fixup_deltas safe rebase (bounds + overflow → NULL_NODE).
+aura_add_issue_test(test_fixup_deltas_2392)
+aura_issue_test_link_llvm_jit(test_fixup_deltas_2392)
+add_dependencies(all_test_issue_targets test_fixup_deltas_2392)
+
 # Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
 aura_add_issue_test(test_mutation_contention_2040)
 aura_issue_test_link_llvm_jit(test_mutation_contention_2040)

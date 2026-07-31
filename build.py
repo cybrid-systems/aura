@@ -2089,6 +2089,25 @@ def cmd_validate_post_restore_soa_coverage():
     return 0
 
 
+def cmd_fixup_deltas_coverage():
+    """Issue #2392: fixup_deltas safe rebase (bounds + overflow).
+
+    Parent-relative child deltas rebase to absolute NodeIds; wrap or
+    OOB rebased ids clamp to NULL_NODE (set_child does not clamp).
+    """
+    print(f"{B}=== fixup_deltas coverage (#2392) ==={N}")
+    script = ROOT / "scripts" / "check_fixup_deltas_2392.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("fixup_deltas (#2392) coverage contract rows failed")
+        return 1
+    ok("fixup_deltas (#2392) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3445,6 +3464,7 @@ def cmd_gate():
         or cmd_security_health_coverage()
         or cmd_validate_node_no_abort_coverage()
         or cmd_validate_post_restore_soa_coverage()
+        or cmd_fixup_deltas_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
