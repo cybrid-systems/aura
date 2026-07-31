@@ -3147,6 +3147,11 @@ aura_add_issue_test(test_ir_soa_layout_stamp_2432)
 aura_issue_test_link_llvm_jit(test_ir_soa_layout_stamp_2432)
 add_dependencies(all_test_issue_targets test_ir_soa_layout_stamp_2432)
 
+# Issue #2433: HighMutation default-on + deopt-storm × LayoutStamp.shape_version
+aura_add_issue_test(test_shape_high_mutation_storm_2433)
+aura_issue_test_link_llvm_jit(test_shape_high_mutation_storm_2433)
+add_dependencies(all_test_issue_targets test_shape_high_mutation_storm_2433)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -18,9 +18,17 @@
 #include <unordered_set>
 #include "hash_meta.h" // FNV constants (#901)
 
-// Issue #2370: StormIsolation mode (defined in hot_update_registry.cpp).
-// Avoid including full HotUpdateRegistry header from this TU.
-extern "C" int aura_get_storm_isolation_mode(void) noexcept;
+// Issue #2370 / #2433: C bridges into HotUpdateRegistry.
+// Weak defaults let standalone ShapeProfiler unit tests link without
+// the full serve; strong defs in hot_update_registry.cpp win in
+// production binaries (no circular module include from this TU).
+extern "C" __attribute__((weak)) int aura_get_storm_isolation_mode(void) noexcept {
+    return 0; // StormIsolation::Global
+}
+// Issue #2433: publish ShapeProfiler storm into HotUpdateRegistry so
+// StormLevel Shape bit + SpecJIT conservative gate observe isolation
+// in the same mutation boundary.
+extern "C" __attribute__((weak)) void aura_hot_update_set_shape_storm_active(int /*active*/) {}
 
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).
@@ -292,16 +300,19 @@ std::string format_shape_id(ShapeID id) {
 // ═══════════════════════════════════════════════════════════════
 
 ShapeProfiler::ShapeProfiler() {
-    // Issue #2257: production-default HighMutation preset. Soft
-    // path remains available via AURA_SHAPE_HIGH_MUTATION=0
+    // Issue #2257 / #2433 AC1: production-default HighMutation preset.
+    // Soft path remains available via AURA_SHAPE_HIGH_MUTATION=0
     // (unit tests / sandbox). Adaptive partial-relower threshold
     // (#2112) feeds on stability_ratio which HighMutation widens
     // (window_size=2000 vs default 1000; deopt_storm_window=512
     // vs default 256; deopt_storm_threshold=6 vs default 4) so
     // long-running Agent sessions stay more permissive while
     // still isolating storms when they hit the threshold.
+    //
+    // Issue #2433: apply_preset (not just active_preset_ tag) so
+    // window/threshold knobs actually take effect without env.
     if (shape_high_mutation_default_enabled())
-        active_preset_ = kHighMutationPreset;
+        apply_preset(kHighMutationPreset);
 }
 
 // ── Issue #2141: lock helpers ─────────────────────────────────
@@ -700,6 +711,11 @@ double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) n
         if (clear_compact_only_storm && deopt_storm_active_.load(std::memory_order_acquire)) {
             if (deopt_ring_count_ < deopt_storm_threshold_) {
                 deopt_storm_active_.store(false, std::memory_order_release);
+                // Issue #2433: clear published StormLevel Shape bit + force-reason
+                // when storm soft-clears (boundary/fiber sync, compact-only).
+                g_shape_storm_force_reason_atomic().store(kShapeStormForceReasonNone,
+                                                          std::memory_order_release);
+                aura_hot_update_set_shape_storm_active(0);
             }
         }
     }
@@ -743,10 +759,23 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
         // process-global shape_version — SpecJITController uses a
         // per-eval isolation epoch so concurrent evals are not
         // cross-invalidated by one noisy agent.
+        //
+        // Issue #2433 AC2: bump version AND publish shape_storm_active
+        // so SpecJIT StormLevel Shape gate + monomorphize consumers
+        // drop / refuse specialized code before the next eval of the
+        // affected fn (stamp miss + no new specialize under Shape bit).
         g_deopt_storm_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        g_shape_storm_force_reason_atomic().store(kShapeStormForceReasonThreshold,
+                                                  std::memory_order_release);
         // StormIsolation::PerEval = 2 (hot_update_registry.hh).
         if (aura_get_storm_isolation_mode() != 2)
             bump_shape_version_on_storm_enter();
+        // Snapshot version at storm (post-bump when Global/PerRegion).
+        g_shape_version_at_storm_atomic().store(current_global_shape_version(),
+                                                std::memory_order_release);
+        // Publish into HotUpdateRegistry StormLevel facade (soft cost:
+        // one store, only on storm-enter transition).
+        aura_hot_update_set_shape_storm_active(1);
     }
 }
 
