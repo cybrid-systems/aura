@@ -6,12 +6,15 @@
 #include "worker.h"
 #include "metrics.h"
 #include <ucontext.h>
+#include <chrono>
 #include <deque>
 #include <unordered_map>
 #include <memory>
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <cstdlib>
+#include <cstdint>
 
 namespace aura::serve {
 
@@ -107,7 +110,7 @@ public:
     // already done before registering as a joiner.
     Fiber* fiber_by_id(std::uint64_t fiber_id) const;
 
-    // ── Issue #2227: hard-reclaim orphan tracking ─────────────────
+    // ── Issue #2227 / #2396: hard-reclaim orphan tracking ─────────
     // The orch join path (cancel_and_drain_* / join_agent / parallel
     // Timeout residual) calls note_orphan_fiber after observing
     // !is_done() post-drain. The Scheduler holds the orphan for
@@ -116,9 +119,14 @@ public:
     // (so the next joiner sees "logically done"), wakes any
     // registered joiners. Bodies that never yield still consume
     // stack until they return — documented limitation, same as
-    // the cooperative cancel protocol (#2153). The reap is also
-    // invoked eagerly by reap_orphans_now() for tests + the IO
-    // thread tick.
+    // the cooperative cancel protocol (#2153).
+    //
+    // Issue #2396: production residual hard-reclaim is tick-driven.
+    // Scheduler::run() (IO/epoll loop) and maybe_reap_orphans_on_tick()
+    // call reap_orphans_now() on a cadence (AURA_ORPHAN_REAP_INTERVAL_MS,
+    // default 50) when orphan_count() > 0. Zero cost when empty (single
+    // relaxed load — does not take orphan_mutex_). Tests may call
+    // maybe_reap_orphans_on_tick() or reap_orphans_now() eagerly.
     struct OrphanEntry {
         Fiber* fiber;
         std::chrono::steady_clock::time_point hard_deadline;
@@ -127,8 +135,17 @@ public:
     // Force-reap all orphans past their hard_deadline. Returns
     // the number of fibers actually reclaimed. Idempotent.
     std::size_t reap_orphans_now() noexcept;
+    // Issue #2396: production tick entry — interval-gated reap when
+    // orphan_count_cached_ > 0. Returns fibers reaped this call.
+    std::size_t maybe_reap_orphans_on_tick() noexcept;
+    // Issue #2396: AURA_ORPHAN_REAP_INTERVAL_MS (default 50, clamp 1..5000).
+    [[nodiscard]] static std::uint64_t orphan_reap_interval_ms() noexcept;
+    // Cached size (relaxed) — zero-cost empty check for tick path.
     [[nodiscard]] std::size_t orphan_count() const noexcept;
     [[nodiscard]] std::uint64_t orphans_reaped_total() const noexcept;
+    // Issue #2396 observability (tick-driven path only).
+    [[nodiscard]] std::uint64_t orphans_tick_reap_total() const noexcept;
+    [[nodiscard]] std::uint64_t tick_orphan_mutex_acquired_total() const noexcept;
 
     // ── Worker management ───────────────────────────
     int num_workers() const { return num_workers_; }
@@ -227,6 +244,12 @@ private:
     std::vector<OrphanEntry> orphan_fibers_;
     mutable std::mutex orphan_mutex_;
     std::atomic<std::uint64_t> orphans_reaped_total_{0};
+    // Issue #2396: relaxed size for empty-check without taking
+    // orphan_mutex_ on the production tick (AC2 zero cost when empty).
+    std::atomic<std::size_t> orphan_count_cached_{0};
+    std::chrono::steady_clock::time_point last_orphan_reap_tp_{};
+    std::atomic<std::uint64_t> orphans_tick_reap_total_{0};
+    std::atomic<std::uint64_t> tick_orphan_mutex_acquired_total_{0};
 
     // Stdin fiber (handles stdin line protocol in serve mode)
     Fiber* stdin_fiber_ = nullptr;
