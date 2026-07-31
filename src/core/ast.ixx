@@ -1720,6 +1720,12 @@ public:
     // only and exposed via (query:pattern-index-stats).
     mutable std::atomic<bool> tag_arity_index_dirty_{false};
     mutable std::atomic<std::uint64_t> tag_arity_index_dirty_marks_{0};
+    // Issue #2419: protects tag_arity_index_ / tag_arity_node_key_ /
+    // tag_arity_index_built_size_ against concurrent find vs rebuild.
+    // Dedicated mutex (not structural_mtx_) so ensure/find do not
+    // deadlock StructuralMutationGuard which already holds structural
+    // exclusive. LOCK ORDER if both needed: structural → tag_arity.
+    mutable OwnedSharedMutex tag_arity_index_mtx_;
     // Module-level eval result cache (int64_t = EvalValue serialization).
     // Used by Evaluator::eval_flat for incremental evaluation (Issue #32b).
     // Indexed by NodeId. Zero = not cached. Stored at module level (not arena)
@@ -2276,7 +2282,13 @@ public:
         if (static_cast<std::size_t>(id) + 1 > tag_arity_index_built_size_)
             tag_arity_index_built_size_ = static_cast<std::size_t>(id) + 1;
     }
+    // Issue #2419: exclusive lock — public entry for compact/callers.
     void rebuild_tag_arity_index() noexcept {
+        std::unique_lock<std::shared_mutex> lock(tag_arity_index_mtx_.mutable_get());
+        rebuild_tag_arity_index_unlocked();
+    }
+    // Caller MUST hold tag_arity_index_mtx_ exclusive.
+    void rebuild_tag_arity_index_unlocked() noexcept {
         tag_arity_index_.clear();
         // Issue #554: time the rebuild so (query:pattern-
         // index-stats) can report the lifetime
@@ -2355,22 +2367,35 @@ public:
                                                    std::memory_order_relaxed);
         tag_arity_index_dirty_.store(false, std::memory_order_release);
     }
-    // Issue #1371 / #1503: refresh index if dirty.
+    // Issue #1371 / #1503 / #2419: refresh index if dirty.
     // Policy:
     //   1. empty → full rebuild
     //   2. append-only growth with no dirty below built_size → delta append
     //   3. dirty fraction > threshold_pct → full rebuild (threshold counter)
     //   4. else → incremental dirty-node patch
+    // Exclusive tag_arity_index_mtx_ for all map mutation.
     void ensure_tag_arity_index() noexcept {
+        // Fast path: shared probe — clean + built under shared lock.
+        {
+            std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get());
+            if (!tag_arity_index_dirty_.load(std::memory_order_acquire) &&
+                !(tag_arity_index_.empty() && size() > 0))
+                return;
+        }
+        std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_.mutable_get());
+        ensure_tag_arity_index_unlocked();
+    }
+    // Caller MUST hold tag_arity_index_mtx_ exclusive.
+    void ensure_tag_arity_index_unlocked() noexcept {
         if (!tag_arity_index_dirty_.load(std::memory_order_acquire)) {
             // First build: empty map with clean dirty flag.
             if (tag_arity_index_.empty() && size() > 0)
-                rebuild_tag_arity_index();
+                rebuild_tag_arity_index_unlocked();
             return;
         }
         const std::size_t n = size();
         if (tag_arity_index_.empty()) {
-            rebuild_tag_arity_index();
+            rebuild_tag_arity_index_unlocked();
             return;
         }
         // Count dirty among already-built ids (cheap byte scan).
@@ -2383,7 +2408,7 @@ public:
         // Index dirty with no dirty bits and no growth: unknown
         // in-place change (mark_tag_arity_index_dirty alone) → full rebuild.
         if (dirty_n == 0 && n <= tag_arity_index_built_size_) {
-            rebuild_tag_arity_index();
+            rebuild_tag_arity_index_unlocked();
             return;
         }
         // Append-only growth with no in-place dirties → O(new) delta.
@@ -2397,7 +2422,7 @@ public:
             scan_n > 0 && dirty_n * 100 > scan_n * static_cast<std::size_t>(pct);
         if (prefer_full) {
             tag_arity_index_threshold_full_rebuilds_.fetch_add(1, std::memory_order_relaxed);
-            rebuild_tag_arity_index();
+            rebuild_tag_arity_index_unlocked();
             return;
         }
         // Issue #1503: sparse dirty set → per-node re-key patch.
@@ -2407,19 +2432,10 @@ public:
     // index dirty (like mark_dirty_upward) and, when the index is warm,
     // immediately patches the seed node (append or in-place re-key).
     void mark_dirty_upward_with_index_update(NodeId id) {
-        mark_dirty_upward(id);
+        mark_dirty_upward(id); // already exclusive-patches under #2419
         if (id == NULL_NODE || id >= size())
             return;
-        if (tag_arity_index_.empty())
-            return; // not built yet — ensure will full-rebuild
-        // Issue #1503: live patch for append and in-place arity/tag.
-        patch_tag_arity_index_node(id);
-        if (tag_arity_index_built_size_ >= size()) {
-            // All nodes indexed; clear dirty so ensure is a no-op
-            // when only this path ran. Concurrent dirties may re-set.
-            // Leave dirty if other mark_dirty_upward calls flipped it.
-            // Conservative: keep dirty true so ensure still validates.
-        }
+        // mark_dirty_upward already live-patched under tag_arity lock.
     }
     void set_tag_arity_index_full_rebuild_threshold_pct(std::uint8_t pct) noexcept {
         tag_arity_index_full_rebuild_threshold_pct_ = pct == 0 ? 1 : (pct > 100 ? 100 : pct);
@@ -2434,22 +2450,29 @@ public:
         return tag_arity_index_incremental_patches_.load(std::memory_order_relaxed);
     }
 
-    // Issue #447 / #1371: find all NodeIds matching (tag,
-    // arity_min, arity_max). Returns a copy of the
-    // bucket. O(1) hash lookup. Bumps hit/miss counter.
-    // Callers should call ensure_tag_arity_index() /
-    // rebuild_tag_arity_index() first when the index may
-    // be dirty (query:pattern does this).
+    // Issue #447 / #1371 / #2419: find all NodeIds matching (tag,
+    // arity_min, arity_max). Returns a copy of the bucket.
+    // Ensures freshness then looks up under shared tag_arity lock
+    // so concurrent rebuild cannot race the hash map.
     [[nodiscard]] std::pmr::vector<NodeId>
     find_by_tag_arity(std::uint32_t tag, std::uint16_t arity_min, std::uint16_t arity_max) const {
         const TagArityKey key{tag, arity_min, arity_max};
-        auto it = tag_arity_index_.find(key);
-        if (it != tag_arity_index_.end()) {
-            tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
-            return it->second;
+        for (;;) {
+            // Ensure may exclusive-rebuild then release.
+            const_cast<FlatAST*>(this)->ensure_tag_arity_index();
+            std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get());
+            // Retry if a concurrent mark dirtied during unlock window.
+            if (tag_arity_index_dirty_.load(std::memory_order_acquire) ||
+                (tag_arity_index_.empty() && size() > 0))
+                continue;
+            auto it = tag_arity_index_.find(key);
+            if (it != tag_arity_index_.end()) {
+                tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
+                return it->second; // copy under shared lock
+            }
+            tag_arity_index_misses_.fetch_add(1, std::memory_order_relaxed);
+            return {};
         }
-        tag_arity_index_misses_.fetch_add(1, std::memory_order_relaxed);
-        return {};
     }
     // Issue #447: query-stats accessors.
     [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
@@ -2474,6 +2497,7 @@ public:
         tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get());
         return tag_arity_index_.size();
     }
     // Issue #547: dirty-flag hook. mark_tag_arity_index_dirty()
@@ -6139,12 +6163,12 @@ public:
         // patch) the index. mark_tag_arity_index_dirty()
         // bumps the dirty_marks counter (stats).
         mark_tag_arity_index_dirty();
-        // Issue #1503: when the index is already warm, live-patch
-        // the cascade seed so arity/tag re-keys stay O(1) and
-        // ensure_tag_arity_index can take the incremental path
-        // instead of a surprise full O(N) rebuild on large ASTs.
-        if (!tag_arity_index_.empty() && id < size())
-            patch_tag_arity_index_node(id);
+        // Issue #1503 / #2419: live-patch under exclusive map lock.
+        {
+            std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_.mutable_get());
+            if (!tag_arity_index_.empty() && id < size())
+                patch_tag_arity_index_node(id);
+        }
         // Issue #412: bump the type cache generation. Every
         // mark_dirty_upward() call invalidates ALL cached
         // type_id_ entries (they were computed against an
@@ -6297,9 +6321,12 @@ public:
         mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
         dirty_upward_fast_fixed_point_hits_.fetch_add(fixed_point_hits, std::memory_order_relaxed);
         mark_tag_arity_index_dirty();
-        // Issue #1503: live-patch seed when index is warm (same as mark_dirty_upward).
-        if (!tag_arity_index_.empty() && id < size())
-            patch_tag_arity_index_node(id);
+        // Issue #1503 / #2419: live-patch seed under exclusive map lock.
+        {
+            std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_.mutable_get());
+            if (!tag_arity_index_.empty() && id < size())
+                patch_tag_arity_index_node(id);
+        }
         type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
         // Issue #1455: fast upward path must invalidate
         // NarrowingRecords + occ_stale_ the same way as

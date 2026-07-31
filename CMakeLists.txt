@@ -3077,6 +3077,11 @@ aura_add_issue_test(test_structural_metadata_lock_order_2418)
 aura_issue_test_link_llvm_jit(test_structural_metadata_lock_order_2418)
 add_dependencies(all_test_issue_targets test_structural_metadata_lock_order_2418)
 
+# Issue #2419: tag_arity_index_ map lock vs concurrent rebuild.
+aura_add_issue_test(test_tag_arity_index_lock_2419)
+aura_issue_test_link_llvm_jit(test_tag_arity_index_lock_2419)
+add_dependencies(all_test_issue_targets test_tag_arity_index_lock_2419)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
