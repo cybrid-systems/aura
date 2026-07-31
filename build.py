@@ -3341,6 +3341,24 @@ def cmd_hot_contract_placement_coverage():
     return 0
 
 
+def cmd_post_compact_lifecycle_coverage():
+    """Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle.
+
+    Ordered steps; LayoutStamp after compact; soft_skip zero-cost path.
+    """
+    print(f"{B}=== post compact lifecycle coverage (#2436) ==={N}")
+    script = ROOT / "scripts" / "check_post_compact_lifecycle_2436.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("post compact lifecycle (#2436) coverage contract rows failed")
+        return 1
+    ok("post compact lifecycle (#2436) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4298,6 +4316,7 @@ def cmd_gate():
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
         or cmd_hot_contract_placement_coverage()
+        or cmd_post_compact_lifecycle_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

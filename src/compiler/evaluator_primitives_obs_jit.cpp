@@ -37,6 +37,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/lifetime_contract.h"          // Issue #2300
 #include "core/densify_consistency_report.h" // Issue #2341
+#include "core/post_compact_lifecycle.hh"    // Issue #2436
 #include "core/resource_quota.hh"
 #include "compiler/pipeline_policy.hh" // Issue #2213 tree-walker fallback policy
 #include <limits>
@@ -11202,6 +11203,38 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-last-call-axes-wired", 1);
             insert_kv("schema-2376", 2376);
             insert_kv("issue-2376", 2376);
+            // Issue #2436: Arena × IR SoA × Shape × fiber post-compact lifecycle
+            insert_kv(
+                "post-compact-lifecycle-runs-total",
+                static_cast<std::int64_t>(
+                    aura::core::post_compact_lifecycle::post_compact_lifecycle_runs_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv(
+                "post-compact-lifecycle-soft-skip-total",
+                static_cast<std::int64_t>(
+                    aura::core::post_compact_lifecycle::post_compact_lifecycle_soft_skip_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv(
+                "post-compact-lifecycle-ir-sync-total",
+                static_cast<std::int64_t>(
+                    aura::core::post_compact_lifecycle::post_compact_lifecycle_ir_sync_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv(
+                "post-compact-lifecycle-stamp-publish-total",
+                static_cast<std::int64_t>(
+                    aura::core::post_compact_lifecycle::post_compact_lifecycle_stamp_publish_total
+                        .load(std::memory_order_relaxed)));
+            insert_kv(
+                "post-compact-lifecycle-pin-fail-total",
+                static_cast<std::int64_t>(
+                    aura::core::post_compact_lifecycle::post_compact_lifecycle_pin_fail_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv("post-compact-lifecycle-wired",
+                      static_cast<std::int64_t>(
+                          aura::core::post_compact_lifecycle::post_compact_lifecycle_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2436", 2436);
+            insert_kv("issue-2436", 2436);
             // Issue #2353: post-densify / post-steal Linear+Type revalidate counters.
             insert_kv("post-densify-linear-type-revalidate-total",
                       static_cast<std::int64_t>(post_densify_reval));

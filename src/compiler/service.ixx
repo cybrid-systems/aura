@@ -39,6 +39,7 @@ module;
 #include "messaging_bridge.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+#include "core/post_compact_lifecycle.hh" // Issue #2436: post-compact IR dirty sync step
 #include "core/workspace_epoch.hh" // Issue #1964 cycle 2b: current_mutation_epoch / bump_mutation_epoch
 #include "jit_typed_mutation_stats.h"
 #include "typed_mutation_audit.h" // Issue #1884: TypeProp ↔ invariant correlation
@@ -632,10 +633,16 @@ public:
                     shape_profiler_.deopt_rate_per_fn(), shape_profiler_.deopt_storm_active(),
                     shape_profiler_.shape_stable_ratio());
                 aura::core::arena_policy::record_shape_inval_on_compact();
+                // Issue #2436 step 7: IR SoA finish_dirty_sync after compact
+                // dirty mark (pin-or-remap already held inside live_compact).
+                // Soft path when cache empty: loop is zero iterations.
                 for (auto& [_, entry] : ir_cache_v2_) {
                     entry.dirty = true;
                     entry.mark_all_blocks_dirty();
+                    // Single production entry for block→instr dirty (#2139).
+                    (void)entry.force_soa_instruction_dirty_sync();
                 }
+                aura::core::post_compact_lifecycle::note_lifecycle_ir_sync();
             });
         }
         aura::gc_hooks::g_arena_auto_compact_trigger.store(+[]() noexcept {
