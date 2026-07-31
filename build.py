@@ -3305,6 +3305,24 @@ def cmd_shape_high_mutation_storm_coverage():
     return 0
 
 
+def cmd_hot_pass_hard_dod_coverage():
+    """Issue #2434: hard HotPassDodCompliant for all production stages.
+
+    Unmarked soft-skip removed; production pack inventory; schema-2434.
+    """
+    print(f"{B}=== hot pass hard dod coverage (#2434) ==={N}")
+    script = ROOT / "scripts" / "check_hot_pass_hard_dod_2434.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hot pass hard dod (#2434) coverage contract rows failed")
+        return 1
+    ok("hot pass hard dod (#2434) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4260,6 +4278,7 @@ def cmd_gate():
         or cmd_dead_coercion_columnar_coverage()
         or cmd_ir_soa_layout_stamp_coverage()
         or cmd_shape_high_mutation_storm_coverage()
+        or cmd_hot_pass_hard_dod_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
