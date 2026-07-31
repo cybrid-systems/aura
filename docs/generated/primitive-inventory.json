@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 526,
-  "frozen_count": 452,
+  "frozen_count": 453,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -345,6 +345,7 @@
     "query:runtime-production-health",
     "query:scheduler-mutation-coord-stats",
     "query:scheduler-stealbudget-adaptive-stats",
+    "query:security-health",
     "query:security-stats",
     "query:self-evo-pipeline-stats",
     "query:self-evo-stats",
@@ -995,7 +996,7 @@
   ],
   "public_stats_via_add": 2,
   "schema": 2,
-  "stats_count": 429,
+  "stats_count": 430,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1322,6 +1323,7 @@
     "query:runtime-production-health",
     "query:scheduler-mutation-coord-stats",
     "query:scheduler-stealbudget-adaptive-stats",
+    "query:security-health",
     "query:security-stats",
     "query:self-evo-pipeline-stats",
     "query:self-evo-stats",

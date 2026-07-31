@@ -2032,6 +2032,25 @@ def cmd_security_audit_fold_coverage():
     return 0
 
 
+def cmd_security_health_coverage():
+    """Issue #2389: query:security-health single Agent score.
+
+    Aggregates effect/isolation deny rates, epoch-fence health, WAL posture,
+    and ring-wrap pressure into health-bp + force-reason.
+    """
+    print(f"{B}=== security-health coverage (#2389) ==={N}")
+    script = ROOT / "scripts" / "check_security_health_2389.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("security-health (#2389) coverage contract rows failed")
+        return 1
+    ok("security-health (#2389) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3385,6 +3404,7 @@ def cmd_gate():
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()
         or cmd_security_audit_fold_coverage()
+        or cmd_security_health_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
