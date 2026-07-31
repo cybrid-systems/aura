@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 608 | Preferred destination suites |
-| **Total scanned** | **608** | |
+| `tests/core/test_*.cpp` | 609 | Preferred destination suites |
+| **Total scanned** | **609** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 67 | 67 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 173 | 173 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 174 | 174 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 65 | 65 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -704,6 +704,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_stringpool_bytes_total_lock_2408.cpp`
 - `tests/core/test_stringpool_concurrent_intern.cpp`
 - `tests/core/test_structural_metadata_lock_order_2418.cpp`
+- `tests/core/test_subtree_dirty_bounds_2424.cpp`
 - `tests/core/test_subtree_gen_atomic_2422.cpp`
 - `tests/compiler/test_subtype_constraint_meet_2195.cpp`
 - `tests/core/test_summary_flags_guard_2415.cpp`
@@ -869,13 +870,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (173)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (174)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (173)
+#### domain/ (174)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -1032,6 +1033,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stable_ref_wire_v2_2198.cpp` (#2198) [domain_suite, theme_compiler] — AC1: v2 round-trips tenant_id, fiber_id, boundary_pinned,
 - `tests/core/test_stale_ref_string_heap.cpp` (—) [domain_suite, theme_core] — Issue #1681 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_stringpool_bytes_total_lock_2408.cpp` (#2408) [domain_suite, theme_core] — AC1: 4 threads concurrent intern + string_bytes_total (no crash; TSan clean)
+- `tests/core/test_subtree_dirty_bounds_2424.cpp` (#2424) [domain_suite, theme_core] — AC1: no OOB on dirty_ (bounds use dirty_.size() only)
 - `tests/core/test_summary_recompute_sym_2414.cpp` (#2414) [domain_suite, theme_core] — AC1: recompute(pool) sets keyword + query:/mutate: bits
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tui_present_dirty_2214.cpp` (#2214) [domain_suite, theme_compiler] — AC1: Primitive registered under AURA_ENABLE_TUI + hot meta

@@ -3125,6 +3125,24 @@ def cmd_dirty_column_lock_coverage():
     return 0
 
 
+def cmd_subtree_dirty_bounds_coverage():
+    """Issue #2424: is_subtree_dirty_node bounds via dirty_.size() (not size()).
+
+    Concurrent add_node grows dirty_ under dirty_column_mtx_; no tag_.size() race.
+    """
+    print(f"{B}=== subtree dirty bounds coverage (#2424) ==={N}")
+    script = ROOT / "scripts" / "check_subtree_dirty_bounds_2424.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("subtree dirty bounds (#2424) coverage contract rows failed")
+        return 1
+    ok("subtree dirty bounds (#2424) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4070,6 +4088,7 @@ def cmd_gate():
         or cmd_restamp_lazy_align_atomic_coverage()
         or cmd_subtree_gen_atomic_coverage()
         or cmd_dirty_column_lock_coverage()
+        or cmd_subtree_dirty_bounds_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
