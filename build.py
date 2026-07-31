@@ -3359,6 +3359,24 @@ def cmd_post_compact_lifecycle_coverage():
     return 0
 
 
+def cmd_gc_defer_reconcile_cas_coverage():
+    """Issue #2437: reconcile_gc_defer_bits_after_clear CAS fence + repair.
+
+    Concurrent arm must not lose Panic bit; orphan clear still works.
+    """
+    print(f"{B}=== gc defer reconcile cas coverage (#2437) ==={N}")
+    script = ROOT / "scripts" / "check_gc_defer_reconcile_cas_2437.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("gc defer reconcile cas (#2437) coverage contract rows failed")
+        return 1
+    ok("gc defer reconcile cas (#2437) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4317,6 +4335,7 @@ def cmd_gate():
         or cmd_hot_pass_hard_dod_coverage()
         or cmd_hot_contract_placement_coverage()
         or cmd_post_compact_lifecycle_coverage()
+        or cmd_gc_defer_reconcile_cas_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
