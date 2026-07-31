@@ -3132,6 +3132,11 @@ aura_add_issue_test(test_gc_defer_overflow_policy_atomic_2429)
 aura_issue_test_link_llvm_jit(test_gc_defer_overflow_policy_atomic_2429)
 add_dependencies(all_test_issue_targets test_gc_defer_overflow_policy_atomic_2429)
 
+# Issue #2430: snapshot_capability_effect_stats double-check (#1840 pattern).
+aura_add_issue_test(test_capability_effect_stats_snapshot_2430)
+aura_issue_test_link_llvm_jit(test_capability_effect_stats_snapshot_2430)
+add_dependencies(all_test_issue_targets test_capability_effect_stats_snapshot_2430)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

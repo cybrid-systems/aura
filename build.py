@@ -3233,6 +3233,24 @@ def cmd_gc_defer_overflow_policy_atomic_coverage():
     return 0
 
 
+def cmd_capability_effect_stats_snapshot_coverage():
+    """Issue #2430: snapshot_capability_effect_stats double-check (#1840).
+
+    16-retry acquire loads; verify enforced/denied/grants/checks stable.
+    """
+    print(f"{B}=== capability effect stats snapshot coverage (#2430) ==={N}")
+    script = ROOT / "scripts" / "check_capability_effect_stats_snapshot_2430.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("capability effect stats snapshot (#2430) coverage contract rows failed")
+        return 1
+    ok("capability effect stats snapshot (#2430) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4184,6 +4202,7 @@ def cmd_gate():
         or cmd_sandbox_mode_atomic_coverage()
         or cmd_gc_defer_arm_fetch_or_coverage()
         or cmd_gc_defer_overflow_policy_atomic_coverage()
+        or cmd_capability_effect_stats_snapshot_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
