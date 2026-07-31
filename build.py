@@ -2891,6 +2891,24 @@ def cmd_node_meta_bounds_coverage():
     return 0
 
 
+def cmd_node_meta_gap_coverage():
+    """Issue #2411: kNodeMeta gap is_gap + full tag/name consistency.
+
+    Gap entry uses tag 0x0C + is_gap; validate_node_meta checks every slot.
+    """
+    print(f"{B}=== node meta gap coverage (#2411) ==={N}")
+    script = ROOT / "scripts" / "check_node_meta_gap_2411.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("node meta gap (#2411) coverage contract rows failed")
+        return 1
+    ok("node meta gap (#2411) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3823,6 +3841,7 @@ def cmd_gate():
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()
         or cmd_node_meta_bounds_coverage()
+        or cmd_node_meta_gap_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

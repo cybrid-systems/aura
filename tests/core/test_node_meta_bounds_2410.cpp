@@ -73,9 +73,10 @@ int main() {
         CHECK(meta(NodeTag::Class).tag == NodeTag::Class, "AC3: Class tag");
         CHECK(meta(NodeTag::MacroDef).name == "MacroDef", "AC3: MacroDef");
         CHECK(meta(NodeTag::DefineType).name == "DefineType", "AC3: DefineType");
-        // Gap entry still addressable as raw index 0x0C
+        // Gap entry still addressable as raw index 0x0C (see #2411 is_gap)
         CHECK(is_valid_node_tag(static_cast<NodeTag>(0x0C)), "AC3: gap index in range");
         CHECK(meta(static_cast<NodeTag>(0x0C)).name == "<gap>", "AC3: gap name");
+        CHECK(meta(static_cast<NodeTag>(0x0C)).is_gap, "AC3: gap is_gap");
         // Spot-check index mapping for Class
         CHECK(&meta(NodeTag::Class) == &kNodeMeta[static_cast<std::size_t>(NodeTag::Class) - 1],
               "AC3: Class maps to last table slot");

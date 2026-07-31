@@ -616,6 +616,9 @@ export struct NodeMeta {
     bool has_int;                // has an int64 value (LiteralInt)
     bool has_float;              // has a double value (LiteralFloat)
     bool has_params;             // has param list (Lambda)
+    // Issue #2411: true only for the sole hole (0x0C). Callers must not
+    // infer gap-ness from .name or a fake LiteralInt .tag.
+    bool is_gap = false;
 };
 
 // Tag-to-metadata mapping, indexed by `tag - 1` for tag in [0x01,0x23].
@@ -632,7 +635,8 @@ export constexpr std::array<NodeMeta, kNodeTagNameCount> kNodeMeta = {{
     {NodeTag::Begin, kNodeTagNames[8], 0, true, false, false, false, false},
     {NodeTag::Set, kNodeTagNames[9], 1, false, true, false, false, false},
     {NodeTag::Quote, kNodeTagNames[10], 1, false, false, false, false, false},
-    {NodeTag::LiteralInt, kNodeTagNames[11], 0, false, false, false, false, false}, // 0x0C gap
+    // Issue #2411: gap uses tag=0x0C + is_gap (not LiteralInt spoof).
+    {static_cast<NodeTag>(0x0C), kNodeTagNames[11], 0, false, false, false, false, false, true},
     {NodeTag::LiteralString, kNodeTagNames[12], 0, false, true, false, false, false},
     // MacroDef was mis-labeled as gap; real tag 0x0E (flags stay minimal).
     {NodeTag::MacroDef, kNodeTagNames[13], 0, false, true, false, false, false},
@@ -688,19 +692,38 @@ consteval bool validate_node_meta() {
     // Issue #2410 AC5: table size tracks last enum value (Class).
     if (kNodeMeta.size() != static_cast<std::size_t>(kNodeTagMax))
         return false;
-    // Sole true hole in the tag space
-    if (kNodeMeta[kNodeTagGapIndex].name != "<gap>")
-        return false;
-    if (kNodeMeta[kNodeTagGapIndex].name.data() != kNodeTagNames[kNodeTagGapIndex].data())
-        return false;
+    // Issue #2411 AC2: every slot — tag/name/is_gap consistency (not just samples).
+    for (std::size_t i = 0; i < kNodeMeta.size(); ++i) {
+        const auto& e = kNodeMeta[i];
+        if (e.name.data() != kNodeTagNames[i].data() || e.name != kNodeTagNames[i])
+            return false;
+        if (i == kNodeTagGapIndex) {
+            // Sole hole: is_gap + tag 0x0C + name "<gap>" (never LiteralInt spoof).
+            if (!e.is_gap)
+                return false;
+            if (e.tag != static_cast<NodeTag>(0x0C))
+                return false;
+            if (e.name != "<gap>")
+                return false;
+            continue;
+        }
+        if (e.is_gap)
+            return false;
+        if (e.tag != static_cast<NodeTag>(i + 1))
+            return false;
+    }
     // Real tags formerly mis-marked as gaps
     if (meta(NodeTag::MacroDef).name != "MacroDef" ||
-        meta(NodeTag::MacroDef).tag != NodeTag::MacroDef)
+        meta(NodeTag::MacroDef).tag != NodeTag::MacroDef || meta(NodeTag::MacroDef).is_gap)
         return false;
     if (meta(NodeTag::DefineType).name != "DefineType" ||
-        meta(NodeTag::DefineType).tag != NodeTag::DefineType)
+        meta(NodeTag::DefineType).tag != NodeTag::DefineType || meta(NodeTag::DefineType).is_gap)
         return false;
-    if (meta(NodeTag::LiteralInt).name != "LiteralInt")
+    // Issue #2411 AC3: LiteralInt is the real 0x01 slot, not the gap.
+    if (meta(NodeTag::LiteralInt).name != "LiteralInt" ||
+        meta(NodeTag::LiteralInt).tag != NodeTag::LiteralInt || meta(NodeTag::LiteralInt).is_gap)
+        return false;
+    if (&meta(NodeTag::LiteralInt) != &kNodeMeta[0])
         return false;
     if (meta(NodeTag::Call).fixed_children != 1)
         return false;
@@ -736,6 +759,11 @@ consteval bool validate_node_meta() {
     if (!is_valid_node_tag(NodeTag::LiteralInt) || !is_valid_node_tag(NodeTag::Class))
         return false;
     if (is_valid_node_tag(static_cast<NodeTag>(0)) || is_valid_node_tag(static_cast<NodeTag>(0xFF)))
+        return false;
+    // Issue #2411 AC1: gap meta via meta(0x0C).
+    if (!meta(static_cast<NodeTag>(0x0C)).is_gap ||
+        meta(static_cast<NodeTag>(0x0C)).tag != static_cast<NodeTag>(0x0C) ||
+        meta(static_cast<NodeTag>(0x0C)).name != "<gap>")
         return false;
     return true;
 }

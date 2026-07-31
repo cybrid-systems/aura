@@ -3037,6 +3037,11 @@ aura_add_issue_test(test_node_meta_bounds_2410)
 aura_issue_test_link_llvm_jit(test_node_meta_bounds_2410)
 add_dependencies(all_test_issue_targets test_node_meta_bounds_2410)
 
+# Issue #2411: kNodeMeta gap is_gap + full tag/name consistency.
+aura_add_issue_test(test_node_meta_gap_2411)
+aura_issue_test_link_llvm_jit(test_node_meta_gap_2411)
+add_dependencies(all_test_issue_targets test_node_meta_gap_2411)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
