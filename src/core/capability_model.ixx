@@ -22,6 +22,8 @@ enum class Effect : std::uint16_t {
     Ffi = 1 << 5,
     Render = 1 << 6,
     MacroSelfEvo = 1 << 7, // Issue #2023 — keep in sync with capability_model.hh
+    TenantAdmin = 1 << 8,  // Issue #2387
+    Syscall = 1 << 9,      // Issue #2387
 };
 
 // Issue #2023: policy limits (header form in capability_model.hh is authoritative).

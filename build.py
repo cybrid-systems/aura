@@ -1994,6 +1994,25 @@ def cmd_grant_macro_self_evo_stamp_coverage():
     return 0
 
 
+def cmd_capability_string_matrix_unify_coverage():
+    """Issue #2387: unify sensitive string caps with Effect matrix.
+
+    tenant-admin / syscall map to Effect bits; has_capability is matrix-first;
+    revoke clears both; compile-stats remains staged string-only.
+    """
+    print(f"{B}=== capability string/matrix unify coverage (#2387) ==={N}")
+    script = ROOT / "scripts" / "check_capability_string_matrix_unify_2387.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("capability string/matrix unify (#2387) coverage contract rows failed")
+        return 1
+    ok("capability string/matrix unify (#2387) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3345,6 +3364,7 @@ def cmd_gate():
         or cmd_require_effect_live_mid_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
+        or cmd_capability_string_matrix_unify_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
