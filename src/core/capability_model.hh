@@ -891,37 +891,60 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t grant_epoch_window_advance = 0;
 };
 
+// Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
+// 22+ atomic loads without double-check can tear under concurrent
+// grant/revoke/check_and_record_effect writers. Retry up to 16 times
+// verifying the hottest counters (enforced/denied/grants/checks) did
+// not move mid-snapshot; best-effort after retries.
 [[nodiscard]] inline CapabilityEffectStatsSnapshot snapshot_capability_effect_stats() noexcept {
     auto& m = g_capability_effect_metrics();
     auto& reg = g_capability_registry();
-    return CapabilityEffectStatsSnapshot{
-        m.capability_effect_enforced_total.load(std::memory_order_relaxed),
-        m.capability_effect_denied_total.load(std::memory_order_relaxed),
-        m.capability_provenance_mismatch_total.load(std::memory_order_relaxed),
-        m.capability_grant_total.load(std::memory_order_relaxed),
-        m.capability_revoke_total.load(std::memory_order_relaxed),
-        m.capability_check_total.load(std::memory_order_relaxed),
-        m.capability_audit_total.load(std::memory_order_relaxed),
-        kCapabilityModelPhase,
-        kCapabilityModelIssue,
-        static_cast<int>(reg.sandbox_mode.load(std::memory_order_acquire)),
-        m.macro_self_evo_check_total.load(std::memory_order_relaxed),
-        m.macro_self_evo_allowed_total.load(std::memory_order_relaxed),
-        m.macro_self_evo_denied_total.load(std::memory_order_relaxed),
-        m.macro_self_evo_depth_clamp_total.load(std::memory_order_relaxed),
-        m.macro_self_evo_pass_clamp_total.load(std::memory_order_relaxed),
-        m.capability_grant_epoch_bound_total.load(std::memory_order_relaxed),
-        m.capability_revoke_epoch_bound_total.load(std::memory_order_relaxed),
-        m.capability_grant_fiber_bound_total.load(std::memory_order_relaxed),
-        m.capability_fiber_mismatch_total.load(std::memory_order_relaxed),
-        m.capability_epoch_fence_hit_total.load(std::memory_order_relaxed),
-        m.capability_mutation_bridge_split_total.load(std::memory_order_relaxed),
-        m.capability_fiber_hard_deny_total.load(std::memory_order_relaxed),
-        reg.hard_fiber_isolation() ? 1 : 0,
-        reg.grant_min_valid_epoch(),
-        reg.grant_epoch_retain_window(),
-        m.capability_grant_epoch_window_advance_total.load(std::memory_order_relaxed),
-    };
+    CapabilityEffectStatsSnapshot s;
+    s.phase = kCapabilityModelPhase;
+    s.issue = kCapabilityModelIssue;
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        s.enforced = m.capability_effect_enforced_total.load(std::memory_order_acquire);
+        s.denied = m.capability_effect_denied_total.load(std::memory_order_acquire);
+        s.provenance_mismatch =
+            m.capability_provenance_mismatch_total.load(std::memory_order_acquire);
+        s.grants = m.capability_grant_total.load(std::memory_order_acquire);
+        s.revokes = m.capability_revoke_total.load(std::memory_order_acquire);
+        s.checks = m.capability_check_total.load(std::memory_order_acquire);
+        s.audits = m.capability_audit_total.load(std::memory_order_acquire);
+        s.sandbox_mode = static_cast<int>(reg.sandbox_mode.load(std::memory_order_acquire));
+        s.macro_self_evo_checks = m.macro_self_evo_check_total.load(std::memory_order_acquire);
+        s.macro_self_evo_allowed = m.macro_self_evo_allowed_total.load(std::memory_order_acquire);
+        s.macro_self_evo_denied = m.macro_self_evo_denied_total.load(std::memory_order_acquire);
+        s.macro_self_evo_depth_clamps =
+            m.macro_self_evo_depth_clamp_total.load(std::memory_order_acquire);
+        s.macro_self_evo_pass_clamps =
+            m.macro_self_evo_pass_clamp_total.load(std::memory_order_acquire);
+        s.grant_epoch_bound = m.capability_grant_epoch_bound_total.load(std::memory_order_acquire);
+        s.revoke_epoch_bound =
+            m.capability_revoke_epoch_bound_total.load(std::memory_order_acquire);
+        s.grant_fiber_bound = m.capability_grant_fiber_bound_total.load(std::memory_order_acquire);
+        s.fiber_mismatch = m.capability_fiber_mismatch_total.load(std::memory_order_acquire);
+        s.epoch_fence_hits = m.capability_epoch_fence_hit_total.load(std::memory_order_acquire);
+        s.mutation_bridge_split =
+            m.capability_mutation_bridge_split_total.load(std::memory_order_acquire);
+        s.fiber_hard_deny = m.capability_fiber_hard_deny_total.load(std::memory_order_acquire);
+        s.hard_fiber_isolation = reg.hard_fiber_isolation() ? 1 : 0;
+        s.grant_min_valid_epoch = reg.grant_min_valid_epoch();
+        s.grant_epoch_retain_window = reg.grant_epoch_retain_window();
+        s.grant_epoch_window_advance =
+            m.capability_grant_epoch_window_advance_total.load(std::memory_order_acquire);
+
+        // Double-check most-bumped counters for torn multi-field view.
+        if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&
+            m.capability_effect_denied_total.load(std::memory_order_acquire) == s.denied &&
+            m.capability_grant_total.load(std::memory_order_acquire) == s.grants &&
+            m.capability_check_total.load(std::memory_order_acquire) == s.checks &&
+            m.capability_audit_total.load(std::memory_order_acquire) == s.audits &&
+            m.capability_revoke_total.load(std::memory_order_acquire) == s.revokes) {
+            return s;
+        }
+    }
+    return s; // best-effort after retries
 }
 
 // Issue #2023 / #2386: consult MacroSelfEvo capability at macro expand entry.
