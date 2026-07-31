@@ -45,6 +45,51 @@ namespace aura::ast {
 // NodeId / NULL_NODE / SymId come from aura.core.mutation (#275).
 export constexpr SymId INVALID_SYM = ~0u;
 
+// Issue #2402: generation-wrap restamp policy (production default = Auto).
+//   Full:        always restamp all live nodes on wrap recovery
+//   Incremental: dirty/touched cone only; empty cone → lazy-align only
+//                (no O(N) full walk); density never forces full
+//   Auto:        #2122 density-gated: incremental when touched density
+//                ≤ threshold; full fallback when empty cone or dense
+// Env: AURA_RESTAMP_POLICY=full|incremental|auto (default auto).
+// Zero cost when no wrap / no pending restamp (policy is only read
+// inside restamp_all_node_generations on wrap recovery).
+export enum class RestampPolicy : std::uint8_t {
+    Full = 0,
+    Incremental = 1,
+    Auto = 2,
+};
+
+export inline constexpr int kRestampIncrementalDefaultIssue = 2402;
+
+// Resolve process-wide restamp policy from AURA_RESTAMP_POLICY.
+// Default Auto = production-friendly density-gated incremental (#2122/#2402).
+export [[nodiscard]] inline RestampPolicy resolve_restamp_policy() noexcept {
+    const char* e = std::getenv("AURA_RESTAMP_POLICY");
+    if (!e || !*e)
+        return RestampPolicy::Auto;
+    // Case-insensitive-ish: accept common spellings.
+    if ((e[0] == 'f' || e[0] == 'F') && (e[1] == 'u' || e[1] == 'U'))
+        return RestampPolicy::Full;
+    if ((e[0] == 'i' || e[0] == 'I') && (e[1] == 'n' || e[1] == 'N'))
+        return RestampPolicy::Incremental;
+    if ((e[0] == 'a' || e[0] == 'A') && (e[1] == 'u' || e[1] == 'U'))
+        return RestampPolicy::Auto;
+    return RestampPolicy::Auto;
+}
+
+export [[nodiscard]] inline const char* restamp_policy_name(RestampPolicy p) noexcept {
+    switch (p) {
+        case RestampPolicy::Full:
+            return "full";
+        case RestampPolicy::Incremental:
+            return "incremental";
+        case RestampPolicy::Auto:
+        default:
+            return "auto";
+    }
+}
+
 // ── Wave B3: small public AST PODs on auto_serialize ─────────
 //
 // SourceLocation, Patch, MatchClauseInfo, NodeLifecycleStats,
@@ -1670,6 +1715,9 @@ public:
     mutable std::atomic<std::uint64_t> restamp_incremental_nodes_total_{0};
     mutable std::atomic<std::uint64_t> restamp_full_fallback_total_{0};
     mutable std::atomic<std::uint64_t> restamp_lazy_align_total_{0};
+    // Issue #2402: last restamp_all_node_generations call cost (Agent SLO).
+    mutable std::atomic<std::uint64_t> restamp_nodes_last_{0};
+    mutable std::atomic<std::uint64_t> restamp_us_last_{0};
     // Touched set for wrap-window restamp (mark_dirty / structural).
     // Parallel to live slots; resized lazily with size().
     std::vector<std::uint8_t> restamp_touched_;
@@ -1678,6 +1726,8 @@ public:
     // Density threshold: if touched/live > this (basis points), full restamp.
     // Default 3000 = 30%. Configurable for tests.
     std::uint32_t restamp_incremental_density_threshold_bp_{3000};
+    // Issue #2402: optional per-AST policy override (nullopt = process env).
+    mutable std::optional<RestampPolicy> restamp_policy_override_{};
     // Issue #1281: children topology restore via PCV snapshot count.
     mutable std::atomic<std::uint64_t> children_topology_restore_count_{0};
     // Issue #1502: parent_ column restored (snapshot or rebuild-from-children)
@@ -7170,6 +7220,26 @@ public:
     [[nodiscard]] std::uint32_t restamp_incremental_density_threshold_bp() const noexcept {
         return restamp_incremental_density_threshold_bp_;
     }
+    // Issue #2402: last-call restamp cost + active policy.
+    [[nodiscard]] std::uint64_t restamp_nodes_last() const noexcept {
+        return restamp_nodes_last_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t restamp_us_last() const noexcept {
+        return restamp_us_last_.load(std::memory_order_relaxed);
+    }
+    void set_restamp_policy_override(std::optional<RestampPolicy> p) const noexcept {
+        restamp_policy_override_ = p;
+    }
+    [[nodiscard]] RestampPolicy restamp_policy() const noexcept {
+        if (restamp_policy_override_)
+            return *restamp_policy_override_;
+        return resolve_restamp_policy();
+    }
+    // 1 when default production policy prefers incremental (Auto|Incremental).
+    [[nodiscard]] static std::int64_t restamp_incremental_default() noexcept {
+        const auto p = resolve_restamp_policy();
+        return (p == RestampPolicy::Auto || p == RestampPolicy::Incremental) ? 1 : 0;
+    }
     [[nodiscard]] bool auto_restamp_pending() const noexcept {
         return auto_restamp_pending_.load(std::memory_order_relaxed);
     }
@@ -7202,17 +7272,22 @@ public:
     // workspace. Also exposed publicly for the mutation
     // primitives to call after a non-SoA-mutating structural
     // change (e.g., a workspace-level COW swap).
-    // Issue #273 / #2061 / #2122: refresh node_gen_ after a generation bump.
+    // Issue #273 / #2061 / #2122 / #2402: refresh node_gen_ after a generation bump.
     //
-    // Issue #2122 wrap-recovery policy (when auto_restamp_pending_):
+    // Issue #2122 / #2402 wrap-recovery policy (when auto_restamp_pending_):
     //   1. Build touched set (mark_dirty cone + mutation_log targets).
-    //   2. If touched empty OR density > threshold (default 30% live):
-    //      full live-node restamp (fallback) — same as pre-#2122.
-    //   3. Else: restamp only touched live nodes (incremental path);
-    //      enable lazy gen-align on is_valid/make_ref for untouched live
-    //      nodes so eval stays correct without O(N) pause on wrap.
+    //   2. Policy Full → always full live-node restamp.
+    //   3. Policy Incremental → dirty cone only; empty cone → lazy-align only
+    //      (no O(N) full walk) — production long-session default for #2402
+    //      when env forces incremental.
+    //   4. Policy Auto (default production) → density-gated:
+    //        touched empty OR density > threshold → full fallback;
+    //        else incremental cone + lazy-align for untouched live.
     // Non-wrap calls (idempotent restamp / macro paths) always full-restamp
     // live nodes (free-list skipped) — preserves #2061 AC3.
+    // Zero cost when !wrap_recovery and caller is no-op... (still may be
+    // invoked deliberately; soft path with no pending is still a full
+    // restamp when called explicitly).
     void restamp_all_node_generations() {
         const auto t0 = std::chrono::steady_clock::now();
         const bool wrap_recovery = auto_restamp_pending_.load(std::memory_order_relaxed);
@@ -7238,13 +7313,33 @@ public:
             if (id < restamp_touched_.size() && restamp_touched_[id])
                 ++touched_live;
         }
+        const RestampPolicy policy = restamp_policy();
         bool use_incremental = false;
-        if (wrap_recovery && live > 0 && touched_live > 0) {
-            const auto dens_bp = static_cast<std::uint64_t>(touched_live * 10000ull / live);
-            use_incremental = dens_bp <= restamp_incremental_density_threshold_bp_;
+        bool lazy_only = false; // #2402 Incremental + empty cone
+        if (wrap_recovery && live > 0) {
+            if (policy == RestampPolicy::Full) {
+                use_incremental = false;
+            } else if (policy == RestampPolicy::Incremental) {
+                if (touched_live > 0)
+                    use_incremental = true;
+                else
+                    lazy_only = true; // no dirty → skip O(N) full walk
+            } else {
+                // Auto (#2122): density-gated when any dirty; empty → full.
+                if (touched_live > 0) {
+                    const auto dens_bp = static_cast<std::uint64_t>(touched_live * 10000ull / live);
+                    use_incremental = dens_bp <= restamp_incremental_density_threshold_bp_;
+                }
+            }
         }
-        if (use_incremental) {
-            // Issue #2122 AC1: restamp only dirty/touched cone.
+        if (lazy_only) {
+            // Issue #2402: wrap with no dirty under Incremental policy —
+            // enable lazy gen-align only (zero eager restamp). wrap_epoch
+            // still invalidates pre-wrap StableNodeRefs.
+            restamp_lazy_align_enabled_ = true;
+            restamped = 0;
+        } else if (use_incremental) {
+            // Issue #2122 / #2402 AC1: restamp only dirty/touched cone.
             for (NodeId id = 0; id < size(); ++id) {
                 if (on_free[id] || id >= node_gen_.size())
                     continue;
@@ -7256,7 +7351,7 @@ public:
             restamp_incremental_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
             restamp_lazy_align_enabled_ = true;
         } else {
-            // Full live restamp (default / fallback / non-wrap).
+            // Full live restamp (Auto empty/dense fallback / Full / non-wrap).
             if (wrap_recovery)
                 restamp_full_fallback_total_.fetch_add(1, std::memory_order_relaxed);
             for (NodeId id = 0; id < size(); ++id) {
@@ -7272,8 +7367,12 @@ public:
             std::fill(restamp_touched_.begin(), restamp_touched_.end(), 0);
         const auto t1 = std::chrono::steady_clock::now();
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        const auto us_u = static_cast<std::uint64_t>(us);
         restamp_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
-        restamp_us_total_.fetch_add(static_cast<std::uint64_t>(us), std::memory_order_relaxed);
+        restamp_us_total_.fetch_add(us_u, std::memory_order_relaxed);
+        // Issue #2402: last-call cost for Agent SLO dashboards.
+        restamp_nodes_last_.store(restamped, std::memory_order_relaxed);
+        restamp_us_last_.store(us_u, std::memory_order_relaxed);
         // Issue #1282: if restamp was pending due to uint16 wrap,
         // clear the flag and count the recovery (Agent-visible via
         // ast:generation-stats / production-sweep-1281-1285-stats).

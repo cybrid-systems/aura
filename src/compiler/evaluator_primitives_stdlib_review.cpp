@@ -1311,6 +1311,26 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                                                                 ws->restamp_lazy_align_total())));
                 kv.emplace_back("schema-2122", make_int(2122));
                 kv.emplace_back("issue-2122", make_int(2122));
+                // Issue #2402: production restamp policy + last-call cost.
+                // restamp-policy: 0=full 1=incremental 2=auto (process env /
+                // per-AST override). restamp-incremental-default=1 when Auto
+                // or Incremental (production default prefers cone restamp).
+                {
+                    using aura::ast::RestampPolicy;
+                    const auto pol = ws->restamp_policy();
+                    kv.emplace_back("restamp-policy", make_int(static_cast<std::int64_t>(pol)));
+                    kv.emplace_back("restamp-incremental-default",
+                                    make_int(aura::ast::FlatAST::restamp_incremental_default()));
+                    kv.emplace_back("restamp-nodes-last",
+                                    make_int(static_cast<std::int64_t>(ws->restamp_nodes_last())));
+                    kv.emplace_back("restamp-us-last",
+                                    make_int(static_cast<std::int64_t>(ws->restamp_us_last())));
+                    kv.emplace_back("schema-2402",
+                                    make_int(aura::ast::kRestampIncrementalDefaultIssue));
+                    kv.emplace_back("issue-2402",
+                                    make_int(aura::ast::kRestampIncrementalDefaultIssue));
+                    kv.emplace_back("restamp-incremental-wired", make_int(1));
+                }
             }
             return build_kv_hash(ev, kv);
         });

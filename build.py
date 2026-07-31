@@ -2260,6 +2260,25 @@ def cmd_agent_reply_coverage():
     return 0
 
 
+def cmd_restamp_incremental_coverage():
+    """Issue #2402: incremental restamp default + wrap cost control.
+
+    AURA_RESTAMP_POLICY=full|incremental|auto; last-call cost keys;
+    schema-2402 on query:generation-stats.
+    """
+    print(f"{B}=== restamp incremental coverage (#2402) ==={N}")
+    script = ROOT / "scripts" / "check_restamp_incremental_2402.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restamp incremental (#2402) coverage contract rows failed")
+        return 1
+    ok("restamp incremental (#2402) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3625,6 +3644,7 @@ def cmd_gate():
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()
         or cmd_agent_reply_coverage()
+        or cmd_restamp_incremental_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
