@@ -17,6 +17,7 @@ import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
+import aura.core.lifetime_pin; // Issue #2363: general-object pin adopt keys on production surface
 import aura.compiler.value;
 
 namespace aura::compiler::primitives_detail {
@@ -585,10 +586,11 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                         std::memory_order_relaxed),
                     std::memory_order_relaxed);
             }
-            // Capacity 64: #1518 + #2157 Force hard-mutex + #2166 Moving densify.
+            // Capacity 128: #1518 + #2157 Force + #2166 Moving + #2298/#2337/#2363
+            // general-object pin adopt keys (production surface wins over obs_eval).
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(64);
+                auto* ht = FlatHashTable::create(128);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -675,6 +677,38 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 {"schema-2166", make_int(aura::ast::kMovingCompactIssue)},
                 {"issue-2166", make_int(aura::ast::kMovingCompactIssue)},
                 {"moving-compact-wired", make_int(1)},
+                // Issue #2298: non-render general object pin-or-remap.
+                {"general-object-pin-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::g_lifetime_pin_stats.general_object_pin_total))},
+                {"general-object-pin-validate-fail-total",
+                 make_int(static_cast<std::int64_t>(aura::core::lifetime::g_lifetime_pin_stats
+                                                        .general_object_pin_validate_fail_total))},
+                {"general-object-pin-remap-ok-total",
+                 make_int(static_cast<std::int64_t>(aura::core::lifetime::g_lifetime_pin_stats
+                                                        .general_object_pin_remap_ok_total))},
+                {"general-object-pin-wired", make_int(1)},
+                {"schema-2298", make_int(2298)},
+                {"issue-2298", make_int(2298)},
+                // Issue #2337 / #2363: mutate/agent/scratch adopt wire-up.
+                {"general-object-pin-mutate-wire-total",
+                 make_int(static_cast<std::int64_t>(aura::core::lifetime::g_lifetime_pin_stats
+                                                        .general_object_pin_mutate_wire_total))},
+                {"general_object_pin_mutate_wire_total",
+                 make_int(static_cast<std::int64_t>(aura::core::lifetime::g_lifetime_pin_stats
+                                                        .general_object_pin_mutate_wire_total))},
+                {"general-object-pin-mutate-wired", make_int(1)},
+                {"schema-2337", make_int(2337)},
+                {"issue-2337", make_int(2337)},
+                {"general-object-pin-adopt-site-count",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::kGeneralObjectPinAdoptSiteCount))},
+                {"general_object_pin_adopt_site_count",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::kGeneralObjectPinAdoptSiteCount))},
+                {"general-object-pin-adopt-complete-wired", make_int(1)},
+                {"schema-2363", make_int(2363)},
+                {"issue-2363", make_int(2363)},
             };
             return build_hash(kv);
         });

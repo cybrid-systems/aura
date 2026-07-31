@@ -2766,6 +2766,11 @@ aura_add_issue_test(test_envframe_ownership_steal_densify_2362)
 aura_issue_test_link_llvm_jit(test_envframe_ownership_steal_densify_2362)
 add_dependencies(all_test_issue_targets test_envframe_ownership_steal_densify_2362)
 
+# Issue #2363: complete GeneralObjectPin adoption for mutate/agent/scratch.
+aura_add_issue_test(test_general_object_pin_adopt_2363)
+aura_issue_test_link_llvm_jit(test_general_object_pin_adopt_2363)
+add_dependencies(all_test_issue_targets test_general_object_pin_adopt_2363)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)

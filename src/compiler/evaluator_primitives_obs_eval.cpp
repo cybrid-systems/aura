@@ -1697,8 +1697,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 root_remap_cc_fail =
                     m->root_remap_closure_capture_fail_total.load(std::memory_order_relaxed);
             }
-            // Capacity 64: schema-2004 + #2157 Force + #2166 Moving densify.
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: schema-2004 + #2157 Force + #2166 Moving densify
+            // + #2298/#2337/#2363 general-object pin adopt keys (was 64;
+            // load approached capacity and dropped tail inserts).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1818,11 +1820,14 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2298", 2298);
                 insert_kv("issue-2298", 2298);
             }
-            // Issue #2337: GeneralObjectPin adoption in mutate/agent create
-            // paths. Wire-up counter is per-call-site that wraps a
-            // GeneralObjectPin around an intermediate create buffer.
+            // Issue #2337 / #2363: GeneralObjectPin adoption in mutate/agent/
+            // scratch create paths. Wire-up counter is per-call-site that
+            // wraps GeneralObjectPin(s) around intermediate create buffers
+            // (wire_general_object_create_pair). #2363 completes the
+            // inventory (kGeneralObjectPinAdoptSiteCount sites).
             {
                 using aura::core::lifetime::g_lifetime_pin_stats;
+                using aura::core::lifetime::kGeneralObjectPinAdoptSiteCount;
                 insert_kv("general-object-pin-mutate-wire-total",
                           static_cast<std::int64_t>(
                               g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
@@ -1832,6 +1837,14 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("general-object-pin-mutate-wired", 1);
                 insert_kv("schema-2337", 2337);
                 insert_kv("issue-2337", 2337);
+                // Issue #2363: complete adopt inventory + schema.
+                insert_kv("general-object-pin-adopt-site-count",
+                          static_cast<std::int64_t>(kGeneralObjectPinAdoptSiteCount));
+                insert_kv("general_object_pin_adopt_site_count",
+                          static_cast<std::int64_t>(kGeneralObjectPinAdoptSiteCount));
+                insert_kv("general-object-pin-adopt-complete-wired", 1);
+                insert_kv("schema-2363", 2363);
+                insert_kv("issue-2363", 2363);
             }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in

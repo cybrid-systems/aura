@@ -2436,6 +2436,25 @@ def cmd_envframe_ownership_steal_densify_coverage():
     return 0
 
 
+def cmd_general_object_pin_adopt_coverage():
+    """Issue #2363: complete GeneralObjectPin adopt for mutate/agent/scratch.
+
+    wire_general_object_create_pair across 7 intermediate create sites;
+    Moving densify remap/verify retained; Soft zero cost.
+    """
+    print(f"{B}=== general object pin adopt coverage (#2363) ==={N}")
+    script = ROOT / "scripts" / "check_general_object_pin_adopt_2363.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("general object pin adopt (#2363) coverage contract rows failed")
+        return 1
+    ok("general object pin adopt (#2363) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2834,6 +2853,7 @@ def cmd_gate():
         or cmd_memo_goal_epoch_health_coverage()
         or cmd_densify_envframe_ok_coverage()
         or cmd_envframe_ownership_steal_densify_coverage()
+        or cmd_general_object_pin_adopt_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
