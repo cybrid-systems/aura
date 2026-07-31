@@ -83,9 +83,18 @@ namespace {
 // Returns a description of the first violation, or empty string if valid.
 
 std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
-    // AURA_PRE
-    if (!is_valid(id))
-        std::abort();
+    // Issue #2390: never hard-abort on !is_valid. Recovery / validate_all
+    // / post-restore paths must report (or throw when fail_on_error) so
+    // partial / stale workspaces return PostRestoreReport-style diagnostics
+    // instead of crashing the process. is_valid is not a true AURA_PRE for
+    // reporting callers (fail_on_error=false); assertion-style callers still
+    // get std::logic_error when fail_on_error=true.
+    if (!is_valid(id)) {
+        auto msg = make_node_error(id, "node ID is not valid (generation/epoch mismatch or freed)");
+        if (fail_on_error)
+            throw std::logic_error(msg);
+        return msg;
+    }
     if (id >= size())
         return make_node_error(id, "node ID out of range");
 

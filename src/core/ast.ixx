@@ -5684,11 +5684,13 @@ public:
     // ── Node validation (NodeMeta invariants) ─────────────────
     // Checks a single node against its NodeMeta invariants.
     // Returns a description of the first violation, or empty string if valid.
-    // If fail_on_error is true, asserts on violation.
+    // If fail_on_error is true, throws std::logic_error on violation
+    // (including !is_valid — Issue #2390: never hard-aborts).
+    // If false, returns the error string for recovery / post-restore report.
     std::string validate_node(NodeId id, bool fail_on_error = true) const;
 
     // Validate all nodes in the FlatAST. Returns total violations found.
-    // If fail_on_error is true, asserts on first violation.
+    // If fail_on_error is true, throws on first violation (logic_error).
     std::size_t validate_all_nodes(bool fail_on_error = true) const;
 
     // Validation note type (for non-fatal reporting)

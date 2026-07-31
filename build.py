@@ -2051,6 +2051,25 @@ def cmd_security_health_coverage():
     return 0
 
 
+def cmd_validate_node_no_abort_coverage():
+    """Issue #2390: validate_node reports/throws instead of hard-abort.
+
+    !is_valid must return error string (fail_on_error=false) or throw
+    logic_error (true); validate_post_restore stays non-crashing.
+    """
+    print(f"{B}=== validate_node no-abort coverage (#2390) ==={N}")
+    script = ROOT / "scripts" / "check_validate_node_no_abort_2390.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("validate_node no-abort (#2390) coverage contract rows failed")
+        return 1
+    ok("validate_node no-abort (#2390) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3405,6 +3424,7 @@ def cmd_gate():
         or cmd_capability_string_matrix_unify_coverage()
         or cmd_security_audit_fold_coverage()
         or cmd_security_health_coverage()
+        or cmd_validate_node_no_abort_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
