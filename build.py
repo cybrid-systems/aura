@@ -1899,6 +1899,26 @@ def cmd_arena_compact_hook_stats_coverage():
     return 0
 
 
+def cmd_arena_dtor_clears_hooks_coverage():
+    """Issue #2382: ASTArena dtor clears hooks before internal teardown.
+
+    Nulls on_compact_hook_ / on_layout_change_ / root_remap_ under their
+    mutexes before run_destructors() so concurrent invoke_*_ never fires
+    dangling caller-capturing lambdas.
+    """
+    print(f"{B}=== arena dtor clears hooks coverage (#2382) ==={N}")
+    script = ROOT / "scripts" / "check_arena_dtor_clears_hooks_2382.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("arena dtor clears hooks (#2382) coverage contract rows failed")
+        return 1
+    ok("arena dtor clears hooks (#2382) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3245,6 +3265,7 @@ def cmd_gate():
         or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_arena_moving_compaction_coverage()
         or cmd_arena_compact_hook_stats_coverage()
+        or cmd_arena_dtor_clears_hooks_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
