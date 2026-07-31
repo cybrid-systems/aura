@@ -2697,6 +2697,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 1, std::memory_order_relaxed);
         }
 
+        // Issue #2400: isolation-level for Agent control planes.
+        //   pure_mode=false → "serialized"   (default :pure #f / eval_mu)
+        //   pure_mode=true  → "best-effort-pure"  (never "transactional";
+        //                     even if all tasks fallback-locked)
+        // C++ TaskSpec-only path (never touches Evaluator) may use "none"
+        // outside this Aura primitive — not advertised here.
+        // Do NOT advertise pure as transactional isolation (AC4 #2400 / #2230).
+        const char* isolation_level = pure_mode ? "best-effort-pure" : "serialized";
+        const auto iso_sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(isolation_level);
+
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"status", make_string(sidx)},
             {"ok-count", make_int(static_cast<std::int64_t>(batch.ok_count))},
@@ -2715,10 +2726,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"pure-unlocked-tasks", make_int(static_cast<std::int64_t>(pure_unlocked))},
             {"pure-fallback-locked", make_int(static_cast<std::int64_t>(pure_fallback))},
             {"pure-contract-violations", make_int(static_cast<std::int64_t>(pure_viol))},
+            // Issue #2400: explicit isolation-level enum (additive).
+            {"isolation-level", make_string(iso_sidx)},
+            {"isolation-level-wired", make_int(1)},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
             {"schema-2081", make_int(2081)},
             {"schema-2163", make_int(2163)},
+            {"schema-2400", make_int(2400)},
         };
         if (pure_engaged) {
             kv.push_back({"schema-pure-parallel", make_int(2163)});

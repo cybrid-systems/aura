@@ -2222,6 +2222,25 @@ def cmd_agent_scope_concurrent_coverage():
     return 0
 
 
+def cmd_parallel_isolation_level_coverage():
+    """Issue #2400: parallel-intend batch hash isolation-level enum.
+
+    serialized | best-effort-pure | none; additive keys; pure is never
+    advertised as transactional isolation.
+    """
+    print(f"{B}=== parallel isolation-level coverage (#2400) ==={N}")
+    script = ROOT / "scripts" / "check_parallel_isolation_level_2400.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("parallel isolation-level (#2400) coverage contract rows failed")
+        return 1
+    ok("parallel isolation-level (#2400) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3585,6 +3604,7 @@ def cmd_gate():
         or cmd_join_drain_reclaim_still_running_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
+        or cmd_parallel_isolation_level_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
