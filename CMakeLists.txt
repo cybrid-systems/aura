@@ -3042,6 +3042,11 @@ aura_add_issue_test(test_node_meta_gap_2411)
 aura_issue_test_link_llvm_jit(test_node_meta_gap_2411)
 add_dependencies(all_test_issue_targets test_node_meta_gap_2411)
 
+# Issue #2412: reset_node_slot always clears incoming_parent_edges_.
+aura_add_issue_test(test_reset_slot_parent_edges_2412)
+aura_issue_test_link_llvm_jit(test_reset_slot_parent_edges_2412)
+add_dependencies(all_test_issue_targets test_reset_slot_parent_edges_2412)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -1105,8 +1105,13 @@ private:
         if (id < occ_stale_.size())
             occ_stale_[id] = 0;
         parent_[id] = NULL_NODE;
-        // Issue #1689: recycled slot has no incoming edges.
-        if (!incoming_parent_index_dirty_ && id < incoming_parent_edges_.size())
+        // Issue #1689 / #2412: recycled slot has no incoming edges.
+        // Always clear — do not gate on !incoming_parent_index_dirty_.
+        // The dirty flag is managed by mutators (set on bulk topology
+        // changes; cleared by rebuild_incoming_parent_index). Leaving
+        // stale edges when dirty meant a 2nd+ recycle could inherit
+        // false parent refs until the next full rebuild.
+        if (id < incoming_parent_edges_.size())
             incoming_parent_edges_[id].clear();
         node_gen_[id] = generation_;
     }
@@ -4032,6 +4037,14 @@ public:
     }
     [[nodiscard]] bool incoming_parent_index_dirty() const noexcept {
         return incoming_parent_index_dirty_;
+    }
+
+    // Issue #2412: raw edge cardinality without ensure/rebuild.
+    // For tests/diagnostics — public collect paths always rebuild first.
+    [[nodiscard]] std::size_t incoming_parent_edge_count_raw(NodeId id) const noexcept {
+        if (id == NULL_NODE || id >= incoming_parent_edges_.size())
+            return 0;
+        return incoming_parent_edges_[id].size();
     }
 
     // ── Child field access ─────────────────────────────────────
