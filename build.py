@@ -2981,6 +2981,24 @@ def cmd_summary_flags_guard_coverage():
     return 0
 
 
+def cmd_incoming_parent_dirty_atomic_coverage():
+    """Issue #2416: incoming_parent_index_dirty_ is std::atomic<bool>.
+
+    acquire/release loads/stores; match tag_arity_index_dirty_ pattern.
+    """
+    print(f"{B}=== incoming_parent dirty atomic coverage (#2416) ==={N}")
+    script = ROOT / "scripts" / "check_incoming_parent_dirty_atomic_2416.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("incoming_parent dirty atomic (#2416) coverage contract rows failed")
+        return 1
+    ok("incoming_parent dirty atomic (#2416) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3918,6 +3936,7 @@ def cmd_gate():
         or cmd_flatast_add_node_lock_coverage()
         or cmd_summary_recompute_sym_coverage()
         or cmd_summary_flags_guard_coverage()
+        or cmd_incoming_parent_dirty_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
