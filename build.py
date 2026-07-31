@@ -2188,6 +2188,25 @@ def cmd_steal_snapshot_soft_production_lock_coverage():
     return 0
 
 
+def cmd_render_deopt_throttle_race_coverage():
+    """Issue #2373: try_render_deopt_throttle CAS race fix.
+
+    N concurrent callers within window → exactly one true; sequential
+    outside window preserved; CAS replaces load/store check-then-act.
+    """
+    print(f"{B}=== render deopt throttle CAS race coverage (#2373) ==={N}")
+    script = ROOT / "scripts" / "check_render_deopt_throttle_race_2373.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("render deopt throttle CAS race coverage contract rows failed")
+        return 1
+    ok("render deopt throttle CAS race coverage clean")
+    return 0
+
+
 def cmd_mutate_mailbox_strict_coverage():
     """Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.
 
@@ -3010,6 +3029,7 @@ def cmd_gate():
         or cmd_composite_empty_cs_hard_coverage()
         or cmd_steal_snapshot_hard_invariant_coverage()
         or cmd_steal_snapshot_soft_production_lock_coverage()
+        or cmd_render_deopt_throttle_race_coverage()
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
