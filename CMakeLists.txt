@@ -3351,3 +3351,11 @@ add_dependencies(all_test_issue_targets test_fiber_reclaim_safety)
 aura_add_issue_test(test_fiber_resume_state)
 aura_issue_test_link_llvm_jit(test_fiber_resume_state)
 add_dependencies(all_test_issue_targets test_fiber_resume_state)
+
+# Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
+# orphan_mutex_ released before per-fiber cleanup (wait_map_mutex_,
+# joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes
+# lock-held window under cancel storms (N=100 parallel timeouts).
+aura_add_issue_test(test_orphan_reap_stress)
+aura_issue_test_link_llvm_jit(test_orphan_reap_stress)
+add_dependencies(all_test_issue_targets test_orphan_reap_stress)
