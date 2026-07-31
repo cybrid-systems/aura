@@ -2388,6 +2388,11 @@ aura_add_issue_test(test_pcv_exclusive_with_set_2140)
 aura_issue_test_link_llvm_jit(test_pcv_exclusive_with_set_2140)
 add_dependencies(all_test_issue_targets test_pcv_exclusive_with_set_2140)
 
+# Issue #2406: optional TLS freelist for exclusive PCV unique-inplace.
+aura_add_issue_test(test_pcv_tls_scratch_2406)
+aura_issue_test_link_llvm_jit(test_pcv_tls_scratch_2406)
+add_dependencies(all_test_issue_targets test_pcv_tls_scratch_2406)
+
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)
