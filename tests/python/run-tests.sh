@@ -580,18 +580,15 @@ run_emit_test "emit:display-list" "(display (list 1 2 3))" "(1 2 3)"
 # M4 ownership model
 run_emit_test "emit:drop-int"    "(begin (drop 42) 7)" "7"
 run_emit_test "emit:drop-pair"   "(begin (drop (cons 1 2)) 7)" "7"
-# TODO AOT: skipped — AOT type-pass rejects `move`/`Linear` of non-Owned
-# literal with `error: move of non-Owned linear_ownership_state`. Tracked
-# for follow-up issue (PR-grade: PM type-propagation + Linear ownership
-# lowering). Re-enable when AOT supports literal-as-Owned no-op.
-#run_emit_test "emit:move-int"    "(begin (move 42) 7)" "7"
+# Issue #2407: move/Linear of Copy literals are no-ops (lowering elides
+# MoveOp/LinearWrap; runtime.c weak pin/unpin stubs for any residual emit).
+run_emit_test "emit:move-int"    "(begin (move 42) 7)" "7"
 run_emit_test "emit:borrow"      "(begin (& 42) 7)" "7"
-#run_emit_test "emit:linear"      "(begin (Linear 42) 7)" "7"
+run_emit_test "emit:linear"      "(begin (Linear 42) 7)" "7"
 
 # Complex ownership lifecycles
 run_emit_test "emit:drop-chain"  "(begin (drop 1) (drop 2) (drop 3) 42)" "42"
-# TODO AOT: see skip comment above (emit:move-int).
-#run_emit_test "emit:lin-drop"    "(begin (drop (Linear 42)) 7)" "7"
+run_emit_test "emit:lin-drop"    "(begin (drop (Linear 42)) 7)" "7"
 run_emit_test "emit:drop-loop"   "(begin (drop (cons 1 2)) (drop (cons 3 4)) (drop (cons 5 6)) 99)" "99"
 
 # List ops (via aura_prim_call PrimId dispatch)
