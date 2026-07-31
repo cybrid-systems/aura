@@ -3237,6 +3237,11 @@ aura_add_issue_test(test_validate_node_no_abort_2390)
 aura_issue_test_link_llvm_jit(test_validate_node_no_abort_2390)
 add_dependencies(all_test_issue_targets test_validate_node_no_abort_2390)
 
+# Issue #2391: validate_post_restore SoA column size cross-check.
+aura_add_issue_test(test_validate_post_restore_soa_2391)
+aura_issue_test_link_llvm_jit(test_validate_post_restore_soa_2391)
+add_dependencies(all_test_issue_targets test_validate_post_restore_soa_2391)
+
 # Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
 aura_add_issue_test(test_mutation_contention_2040)
 aura_issue_test_link_llvm_jit(test_mutation_contention_2040)

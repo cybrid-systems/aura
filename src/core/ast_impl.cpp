@@ -214,6 +214,47 @@ PostRestoreReport FlatAST::validate_post_restore(std::vector<ValidationError>* e
         }
     };
 
+    // Issue #2391: cross-column SoA size check before per-node walk.
+    // add_node() keeps these columns in lockstep with tag_.size(); drift
+    // (partial restore / botched mutator) previously passed validation
+    // then OOB'd later on int_val_/sym_id_/parent_ indexing.
+    // Skip free_list_ (not parallel), value_cache_ (lazy grow), subtree_gen_
+    // (lazy), incoming_parent_edges_ (rebuildable / dirty-tolerant).
+    const std::size_t sz = size();
+    auto record_size_mismatch = [&](const char* col_name, std::size_t col_size) {
+        if (col_size != sz) {
+            record(NULL_NODE, std::string("SoA column '") + col_name + "' size " +
+                                  std::to_string(col_size) + " != size() " + std::to_string(sz));
+        }
+    };
+    record_size_mismatch("tag_", tag_.size());
+    record_size_mismatch("int_val_", int_val_.size());
+    record_size_mismatch("float_val_", float_val_.size());
+    record_size_mismatch("sym_id_", sym_id_.size());
+    record_size_mismatch("children_", children_.size());
+    record_size_mismatch("parent_", parent_.size());
+    record_size_mismatch("node_gen_", node_gen_.size());
+    record_size_mismatch("type_id_", type_id_.size());
+    record_size_mismatch("type_cache_gen_", type_cache_gen_.size());
+    record_size_mismatch("type_cache_binding_gen_", type_cache_binding_gen_.size());
+    record_size_mismatch("marker_", marker_.size());
+    record_size_mismatch("provenance_", provenance_.size());
+    record_size_mismatch("dirty_", dirty_.size());
+    record_size_mismatch("ppa_dirty_", ppa_dirty_.size());
+    record_size_mismatch("verify_dirty_", verify_dirty_.size());
+    record_size_mismatch("verification_dirty_", verification_dirty_.size());
+    record_size_mismatch("macro_dirty_", macro_dirty_.size());
+    record_size_mismatch("line_", line_.size());
+    record_size_mismatch("col_", col_.size());
+    record_size_mismatch("schema_cache_", schema_cache_.size());
+    record_size_mismatch("error_kind_", error_kind_.size());
+    record_size_mismatch("occ_stale_", occ_stale_.size());
+    record_size_mismatch("param_begin_", param_begin_.size());
+    record_size_mismatch("param_count_", param_count_.size());
+    record_size_mismatch("cap_require_count_", cap_require_count_.size());
+    record_size_mismatch("node_first_mutation_", node_first_mutation_.size());
+    record_size_mismatch("last_seen_epoch_", last_seen_epoch_.size());
+
     if (generation_ == 0)
         record(NULL_NODE, "generation_ is zero (invalid workspace epoch)");
 
