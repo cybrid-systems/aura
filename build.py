@@ -1957,6 +1957,25 @@ def cmd_require_effect_live_mid_coverage():
     return 0
 
 
+def cmd_restricted_unset_principal_coverage():
+    """Issue #2385: Restricted denies side-effects when principal unset.
+
+    Production default Restricted must not silently skip isolation when
+    set_tenant_principal was never called. Pure reads (effects=0) stay ok.
+    """
+    print(f"{B}=== Restricted unset principal coverage (#2385) ==={N}")
+    script = ROOT / "scripts" / "check_restricted_unset_principal_2385.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Restricted unset principal (#2385) coverage contract rows failed")
+        return 1
+    ok("Restricted unset principal (#2385) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3306,6 +3325,7 @@ def cmd_gate():
         or cmd_arena_dtor_clears_hooks_coverage()
         or cmd_has_on_compact_hook_lock_coverage()
         or cmd_require_effect_live_mid_coverage()
+        or cmd_restricted_unset_principal_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
