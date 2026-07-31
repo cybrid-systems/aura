@@ -1805,6 +1805,12 @@ export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
 // default eval() path and run_coercion_elim_on_function. Metrics
 // flow through accumulate_coercion_pass_metrics →
 // dead_coercion_eliminated_total / (compile:dead-coercion-stats).
+// Issue #2431: pure columnar DCE metrics (process-wide).
+// columnar_total: SoA blocks processed without AoS materialize.
+// aos_bridge_total: residual bridge path (should stay 0 under AURA_IR_SOA_ONLY).
+export inline std::atomic<std::uint64_t> g_dead_coercion_columnar_total{0};
+export inline std::atomic<std::uint64_t> g_dead_coercion_aos_bridge_total{0};
+
 export class DeadCoercionEliminationPass {
 public:
     explicit DeadCoercionEliminationPass(const aura::core::TypeRegistry* reg = nullptr)
@@ -2079,12 +2085,12 @@ public:
         return any_change;
     }
 
-    // Issue #538 / #1920 / #2143: SoA IR incremental DCE via
-    // for_each_block(dirty_only). Prefer run_dirty() for the concept
-    // entry; this overload remains for dual-run / full-module peels.
-    // Marks blocks dirty when elisions occur so downstream JIT can
-    // invalidate specialized code. Phase 2: avoid hot-path to_aos_view
-    // for DeadCoercion kinds — this path peels only dirty SoA ranges.
+    // Issue #538 / #1920 / #2143 / #2431: pure columnar DCE on SoA IR.
+    // Operates only on opcodes_/operand*/type_ids_/narrow_evidence_ —
+    // no temporary AoS BasicBlock (residual_aos_bridge_total stays 0).
+    // Prefer run_dirty() for the concept entry; this overload remains
+    // for dual-run / full-module peels. Marks blocks dirty when elisions
+    // occur so downstream JIT can invalidate specialized code.
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         if (keep_for_debug_)
             return;
@@ -2095,31 +2101,10 @@ public:
             // (clean_skips / dirty_runs metrics via record_dirty_block_*).
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
-                    aura::ir::BasicBlock aos_block;
-                    aos_block.id = block.block_id;
-                    aos_block.instructions.reserve(block.end_idx - block.start_idx);
-                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                        aos_block.instructions.push_back(aura::ir::IRInstruction{
-                            .opcode = func.opcodes_[i],
-                            .operands = {func.operand0_[i], func.operand1_[i], func.operand2_[i],
-                                         func.operand3_[i]},
-                            .type_id = func.type_ids_[i],
-                            .narrow_evidence = func.narrow_evidence_[i],
-                        });
-                    }
-                    if (!run_on_block(aos_block))
+                    // Issue #2431: pure columnar path (no AoS materialize).
+                    g_dead_coercion_columnar_total.fetch_add(1, std::memory_order_relaxed);
+                    if (!run_columnar_block(func, block))
                         return;
-                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                        const auto local_i = i - block.start_idx;
-                        const auto& instr = aos_block.instructions[local_i];
-                        func.opcodes_[i] = instr.opcode;
-                        func.operand0_[i] = instr.operands[0];
-                        func.operand1_[i] = instr.operands[1];
-                        func.operand2_[i] = instr.operands[2];
-                        func.operand3_[i] = instr.operands[3];
-                        func.type_ids_[i] = instr.type_id;
-                        func.narrow_evidence_[i] = instr.narrow_evidence;
-                    }
                     func.mark_block_dirty(block.block_id);
                 },
                 /*dirty_only=*/dirty_blocks_only);
@@ -2138,6 +2123,14 @@ public:
     // DeadCoercion kinds (AoS default pipeline retained until dual-emit
     // retires; see SoAtoAoSBridgePass migration note).
     void run_dirty(IRModuleV2& mod) { run(mod, /*dirty_blocks_only=*/true); }
+
+    // Issue #2431: observability for pure columnar vs residual AoS bridge.
+    [[nodiscard]] static std::uint64_t columnar_block_runs() noexcept {
+        return g_dead_coercion_columnar_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t aos_bridge_block_runs() noexcept {
+        return g_dead_coercion_aos_bridge_total.load(std::memory_order_relaxed);
+    }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "dead-coercion"; }
@@ -2167,6 +2160,152 @@ public:
     static constexpr bool kPureWrap = true;
 
 private:
+    // Issue #2431: pure columnar DCE — same 6 elision rules as run_on_block,
+    // operating only on SoA columns (no temporary IRInstruction vector).
+    bool run_columnar_block(IRFunctionSoA& func, BasicBlockSoA& block) {
+        if (keep_for_debug_)
+            return false;
+        const auto start = block.start_idx;
+        const auto end = block.end_idx;
+        if (start >= end || end > func.opcodes_.size())
+            return false;
+        bool any_change = false;
+        bool changed = false;
+        do {
+            changed = false;
+            // slot → absolute instruction index in function stream
+            std::unordered_map<std::uint32_t, std::uint32_t> slot_to_idx;
+            slot_to_idx.reserve(static_cast<std::size_t>(end - start) * 2);
+            for (std::uint32_t i = start; i < end; ++i) {
+                if (auto* info = aura::ir::lookup_opcode(func.opcodes_[i])) {
+                    if (info->has_result_slot)
+                        slot_to_idx[func.operand0_[i]] = i;
+                }
+            }
+            auto find_source_idx = [&](std::uint32_t s) -> std::optional<std::uint32_t> {
+                auto it = slot_to_idx.find(s);
+                if (it == slot_to_idx.end())
+                    return std::nullopt;
+                return it->second;
+            };
+            auto elide_local = [&](std::uint32_t i, std::uint32_t tid, std::uint32_t evidence) {
+                func.opcodes_[i] = aura::ir::IROpcode::Local;
+                // operand0 (result) / operand1 (source) unchanged
+                func.operand2_[i] = 0;
+                func.operand3_[i] = 0;
+                func.type_ids_[i] = tid;
+                func.narrow_evidence_[i] = evidence;
+                ++eliminated_;
+                changed = true;
+            };
+
+            for (std::uint32_t i = start; i < end; ++i) {
+                const auto local_i = i - start;
+                if (instruction_dirty_fn_ && !is_instruction_dirty(block.block_id, local_i)) {
+                    instr_level_pass_skipped_clean_total.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                if (func.opcodes_[i] != aura::ir::IROpcode::CastOp)
+                    continue;
+                const auto result_slot = func.operand0_[i];
+                const auto value_slot = func.operand1_[i];
+                const auto target_tag = func.operand2_[i];
+                const auto cast_tid = func.type_ids_[i];
+                const auto cast_ev = func.narrow_evidence_[i];
+                (void)result_slot;
+
+                // Rule 6 (#629 / #1925): narrow_evidence-proved elision
+                if (cast_ev != 0) {
+                    if (auto src_opt = find_source_idx(value_slot)) {
+                        const auto si = *src_opt;
+                        const auto src_tid = func.type_ids_[si];
+                        const auto src_ev = func.narrow_evidence_[si];
+                        // 6a: concrete type_id identity under evidence
+                        if (cast_tid != 0 && src_tid != 0 && src_tid == cast_tid) {
+                            elide_local(i, cast_tid, cast_ev);
+                            ++narrow_evidence_hits_;
+                            continue;
+                        }
+                        // 6b: overlapping evidence bits
+                        if (src_ev != 0 && (src_ev & cast_ev) != 0) {
+                            const bool types_ok =
+                                src_tid == 0 || cast_tid == 0 || src_tid == cast_tid;
+                            if (types_ok) {
+                                elide_local(i, cast_tid != 0 ? cast_tid : src_tid, cast_ev);
+                                ++narrow_evidence_hits_;
+                                continue;
+                            }
+                        }
+                    }
+                    // 6c: Dynamic target + narrow_evidence → passthrough
+                    if (target_tag >= 3) {
+                        elide_local(i, cast_tid, cast_ev);
+                        ++narrow_evidence_hits_;
+                        continue;
+                    }
+                }
+
+                // Rule 1: identity cast — source type_id == cast type_id
+                if (cast_tid != 0) {
+                    if (auto src_opt = find_source_idx(value_slot)) {
+                        const auto si = *src_opt;
+                        const auto src_tid = func.type_ids_[si];
+                        if (src_tid != 0 && src_tid == cast_tid) {
+                            elide_local(i, cast_tid, 0);
+                            ++type_prop_hits_;
+                            continue;
+                        }
+                    }
+                }
+
+                // Rule 2: nested cast — (cast (cast x T1) T2)
+                if (auto src_opt = find_source_idx(value_slot)) {
+                    const auto si = *src_opt;
+                    if (func.opcodes_[si] == aura::ir::IROpcode::CastOp) {
+                        func.operand1_[i] = func.operand1_[si];
+                        if (cast_ev == 0 && func.narrow_evidence_[si] != 0)
+                            func.narrow_evidence_[i] = func.narrow_evidence_[si];
+                        ++eliminated_;
+                        ++nested_hits_;
+                        changed = true;
+                        continue;
+                    }
+                }
+
+                // Rule 3: safe Dynamic passthrough (target_tag ≥ 3)
+                if (target_tag >= 3) {
+                    if (auto src_opt = find_source_idx(value_slot)) {
+                        const auto si = *src_opt;
+                        auto src_tid = func.type_ids_[si];
+                        bool src_is_ground_known = false;
+                        if (src_tid != 0) {
+                            if (type_reg_) {
+                                auto src_ty = aura::core::TypeId{src_tid, 1};
+                                src_is_ground_known = (src_ty != type_reg_->dynamic_type());
+                            } else {
+                                src_is_ground_known = true;
+                            }
+                        }
+                        if (!src_is_ground_known && func.narrow_evidence_[si] != 0)
+                            src_is_ground_known = true;
+                        if (src_is_ground_known) {
+                            const auto out_tid = src_tid != 0 ? src_tid : cast_tid;
+                            const auto out_ev = func.narrow_evidence_[si] != 0
+                                                    ? func.narrow_evidence_[si]
+                                                    : cast_ev;
+                            elide_local(i, out_tid, out_ev);
+                            ++dynamic_hits_;
+                            continue;
+                        }
+                    }
+                }
+            }
+            if (changed)
+                any_change = true;
+        } while (changed);
+        return any_change;
+    }
+
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::size_t eliminated_ = 0;
     std::size_t type_prop_hits_ = 0;

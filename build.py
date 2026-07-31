@@ -3251,6 +3251,24 @@ def cmd_capability_effect_stats_snapshot_coverage():
     return 0
 
 
+def cmd_dead_coercion_columnar_coverage():
+    """Issue #2431: pure columnar DeadCoercionElimination on IRModuleV2.
+
+    No residual AoS BasicBlock materialize; run_columnar_block only.
+    """
+    print(f"{B}=== dead coercion columnar coverage (#2431) ==={N}")
+    script = ROOT / "scripts" / "check_dead_coercion_columnar_2431.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dead coercion columnar (#2431) coverage contract rows failed")
+        return 1
+    ok("dead coercion columnar (#2431) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4203,6 +4221,7 @@ def cmd_gate():
         or cmd_gc_defer_arm_fetch_or_coverage()
         or cmd_gc_defer_overflow_policy_atomic_coverage()
         or cmd_capability_effect_stats_snapshot_coverage()
+        or cmd_dead_coercion_columnar_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
