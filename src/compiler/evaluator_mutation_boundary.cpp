@@ -1832,11 +1832,31 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // follow-up per the #2341 close comment.
         densify_consistency.closure_remount_ok =
             ev_->get_closure_capture_cell_remap_fail_total() == 0;
-        // envframe_ok: trivially true today — #2340 surface
-        // (densify_ownership_scan_total) is a process-level
-        // monotonic counter without fail-closed semantics yet.
-        // Production wire-up of fail-closed gating is a follow-up.
-        densify_consistency.envframe_ok = true;
+        // Issue #2361: real envframe_ok (stop forcing true).
+        // Soft / no Moving densify → vacuous true (AC3 zero extra cost).
+        // After Moving densify: run densify ownership scan + require
+        // no ownership-scan fails + linear/dual-path revalidate clean.
+        if (had_moving_densify && pin_contract_held) {
+            using aura::core::envframe_lifetime::
+                envframe_lifetime_densify_ownership_scan_fail_total;
+            using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
+            const auto scan0 = envframe_lifetime_densify_ownership_scan_total();
+            const auto fail0 = envframe_lifetime_densify_ownership_scan_fail_total();
+            // Post-densify ownership-exit scan (#2340 site; also runs on
+            // CompactSweep). Explicit Phase 5 call so envframe axis is
+            // observed even when densify took the pinned compact path.
+            ev_->scan_live_env_frame_refs_after_densify();
+            const auto scan1 = envframe_lifetime_densify_ownership_scan_total();
+            const auto fail1 = envframe_lifetime_densify_ownership_scan_fail_total();
+            // Scan ran (counter advanced) and no ownership fails this call.
+            // linear_type_ok covers dual-path / linear_post_mutate clean.
+            densify_consistency.envframe_ok = (scan1 > scan0) && (fail1 == fail0) && linear_type_ok;
+        } else {
+            densify_consistency.envframe_ok = true;
+        }
+        // Publish last envframe axis for query:lifetime-contract-snapshot.
+        aura::core::densify_consistency::note_last_densify_envframe_ok(
+            densify_consistency.envframe_ok);
         if (!densify_consistency.overall_ok()) {
             // Issue #2341 AC2: unified fail — mirror pin_contract_held
             // gating above. Bump fail counter; optional hard abort

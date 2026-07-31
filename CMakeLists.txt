@@ -2755,6 +2755,11 @@ aura_add_issue_test(test_memo_goal_epoch_health_2359)
 aura_issue_test_link_llvm_jit(test_memo_goal_epoch_health_2359)
 add_dependencies(all_test_issue_targets test_memo_goal_epoch_health_2359)
 
+# Issue #2361: densify envframe_ok real per-call check (stop force-true).
+aura_add_issue_test(test_densify_envframe_ok_2361)
+aura_issue_test_link_llvm_jit(test_densify_envframe_ok_2361)
+add_dependencies(all_test_issue_targets test_densify_envframe_ok_2361)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)

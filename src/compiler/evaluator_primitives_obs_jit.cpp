@@ -11086,11 +11086,11 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const bool densify_root_remap_ok = !aura::compiler::last_root_remap_any_fail();
             const bool densify_closure_remount_ok =
                 (ev.get_closure_capture_cell_remap_fail_total() == 0);
-            const bool densify_envframe_ok = true; // #2340 surface is
-                                                   // counter-only today;
-                                                   // fail-closed gating is
-                                                   // a follow-up per #2341
-                                                   // close comment.
+            // Issue #2361: real envframe axis from last Phase 5 densify
+            // (Soft / no densify leaves last=true). Fail-closed when
+            // densify ownership scan fails or dual-path revalidate fails.
+            const bool densify_envframe_ok =
+                aura::core::densify_consistency::last_densify_envframe_ok();
             const bool densify_consistency_ok = densify_pin_ok && densify_linear_ok &&
                                                 densify_type_ok && densify_root_remap_ok &&
                                                 densify_closure_remount_ok && densify_envframe_ok;
@@ -11130,6 +11130,19 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-consistency-wired", 1);
             insert_kv("schema-2341", 2341);
             insert_kv("issue-2341", 2341);
+            // Issue #2361: densify ownership-scan fail counter + envframe
+            // axis wired sentinel (real check, not force-true).
+            insert_kv("densify-ownership-scan-fail-total",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::
+                              envframe_lifetime_densify_ownership_scan_fail_total()));
+            insert_kv("densify_ownership_scan_fail_total",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::
+                              envframe_lifetime_densify_ownership_scan_fail_total()));
+            insert_kv("densify-envframe-axis-wired", 1);
+            insert_kv("schema-2361", 2361);
+            insert_kv("issue-2361", 2361);
             // Issue #2353: post-densify / post-steal Linear+Type revalidate counters.
             insert_kv("post-densify-linear-type-revalidate-total",
                       static_cast<std::int64_t>(post_densify_reval));

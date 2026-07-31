@@ -72,12 +72,24 @@ struct DensifyConsistencyReport {
 // the query surface (query:lifetime-contract-snapshot additive keys).
 inline std::atomic<std::uint64_t> g_densify_consistency_fail_total{0};
 
+// Issue #2361: last Phase 5 densify envframe_ok (1=ok, 0=fail). Query
+// surface reads this instead of forcing true; Soft / no densify leaves 1.
+inline std::atomic<std::uint8_t> g_last_densify_envframe_ok{1};
+
 [[nodiscard]] inline std::uint64_t densify_consistency_fail_total() noexcept {
     return g_densify_consistency_fail_total.load(std::memory_order_relaxed);
 }
 
 inline void bump_densify_consistency_fail_total() noexcept {
     g_densify_consistency_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void note_last_densify_envframe_ok(bool ok) noexcept {
+    g_last_densify_envframe_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool last_densify_envframe_ok() noexcept {
+    return g_last_densify_envframe_ok.load(std::memory_order_relaxed) != 0;
 }
 
 // env-empty branch mirrors #2266 AURA_MOVING_PIN_CONTRACT=hard pattern.

@@ -81,6 +81,10 @@ struct EnvFrameLifetimeStats {
     // Guard's mandatory scan_skip_freed exit scan) — counts
     // explicit per-call-site densify scans, not Guard dtor scans.
     std::uint64_t densify_ownership_scan_total = 0;
+    // Issue #2361: densify ownership scan failures (ref transfer/drop
+    // miss, dual-path lag, or test inject). Gates
+    // DensifyConsistencyReport.envframe_ok fail-closed.
+    std::uint64_t densify_ownership_scan_fail_total = 0;
 };
 
 inline EnvFrameLifetimeStats g_envframe_lifetime_stats{};
@@ -164,6 +168,19 @@ inline std::uint64_t envframe_lifetime_densify_ownership_scan_total() noexcept {
 // boundary; matches the existing site_constructs[] bump pattern.
 inline void bump_envframe_lifetime_densify_ownership_scan_total() noexcept {
     ++g_envframe_lifetime_stats.densify_ownership_scan_total;
+}
+
+// Issue #2361: densify ownership scan fail counter (gates envframe_ok).
+[[nodiscard]] inline std::uint64_t envframe_lifetime_densify_ownership_scan_fail_total() noexcept {
+    return g_envframe_lifetime_stats.densify_ownership_scan_fail_total;
+}
+inline void bump_envframe_lifetime_densify_ownership_scan_fail_total() noexcept {
+    ++g_envframe_lifetime_stats.densify_ownership_scan_fail_total;
+}
+// Test inject: force one ownership-scan fail so Phase 5 envframe_ok
+// goes false without needing a real densify + live EnvFrameRef set.
+inline void inject_densify_ownership_scan_fail_for_test() noexcept {
+    bump_envframe_lifetime_densify_ownership_scan_fail_total();
 }
 
 // Build a host from raw function pointers. Use when the wire-up site
