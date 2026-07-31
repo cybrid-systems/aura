@@ -2818,6 +2818,25 @@ def cmd_pcv_tls_scratch_coverage():
     return 0
 
 
+def cmd_aot_linear_literal_noop_coverage():
+    """Issue #2407: AOT move/Linear of Copy literals as no-ops + emit-binary.
+
+    Re-enable emit:move-int/linear/lin-drop; runtime.c weak pin/unpin;
+    lowering elides Move/Linear of literals.
+    """
+    print(f"{B}=== AOT linear literal no-op coverage (#2407) ==={N}")
+    script = ROOT / "scripts" / "check_aot_linear_literal_noop_2407.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("AOT linear literal no-op (#2407) coverage contract rows failed")
+        return 1
+    ok("AOT linear literal no-op (#2407) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3746,6 +3765,7 @@ def cmd_gate():
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
         or cmd_pcv_tls_scratch_coverage()
+        or cmd_aot_linear_literal_noop_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

@@ -99,6 +99,20 @@ aura_jit_linear_epoch_safety_check(const char* fn_name, unsigned char linear_sta
 
 __attribute__((weak)) void aura_deopt_inc(void) {}
 
+// Issue #2407 / #2293: OpLinearWrap emits aura_jit_pin_linear_root;
+// OpMoveOp / OpDropOp emit aura_jit_unpin_linear_root. Standalone
+// --emit-binary does not link aura_jit_runtime.cpp, so weak stubs
+// satisfy the linker. Host/JIT provides strong defs that override.
+// Standalone AOT has no Moving densify linear-root registry — no-ops
+// preserve AC (move/Linear/drop of Copy literals compile to real ELF).
+// Null / non-pointer payloads are safe (real pin early-returns on null).
+__attribute__((weak)) void aura_jit_pin_linear_root(unsigned long long obj_id) {
+    (void)obj_id;
+}
+__attribute__((weak)) void aura_jit_unpin_linear_root(unsigned long long obj_id) {
+    (void)obj_id;
+}
+
 #define IS_PAIR(v) (((v) & 3) == 1)
 #define IS_SPECIAL(v) (((v) & 3) == 3)
 #define IS_FIXNUM(v) (((v) & 1) == 0)

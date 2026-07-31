@@ -46,8 +46,24 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                                                    LinearLowerInner lower_inner) {
     switch (v.tag) {
         case aura::ast::NodeTag::Linear: {
-            // (Linear e): wrap value in linear container (Owned=1)
+            // (Linear e): wrap value in linear container (Owned=1).
+            // Issue #2407: Linear of a Copy/literal is a value-as-Owned
+            // no-op for AOT/emit-binary (interpreter already treats it
+            // as wrap of an immediate). Elide LinearWrap so standalone
+            // AOT does not require pin registry; result is the inner.
             auto inner = lower_inner(v.child(0));
+            if (!v.children.empty()) {
+                const auto cid = v.child(0);
+                if (cid != aura::ast::NULL_NODE && cid < flat.size()) {
+                    auto cv = flat.get(cid);
+                    using NT = aura::ast::NodeTag;
+                    if (cv.tag == NT::LiteralInt || cv.tag == NT::LiteralFloat ||
+                        cv.tag == NT::LiteralString) {
+                        // Copy literal → no ownership transfer surface.
+                        return inner;
+                    }
+                }
+            }
             auto slot = state.alloc_local();
             const auto narrow = state.current_narrowing_evidence;
             state.emit_with_metadata(aura::ir::IROpcode::LinearWrap, 0, 1, 0, narrow, slot, inner);
@@ -68,17 +84,32 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
             //   - clean owned binding under active summary → elide
             //   - no summary (null) → legacy always emit MoveOp
             // #1339 still forbids elision based on narrow_evidence alone.
+            //
+            // Issue #2407: move of Copy/literal is a no-op (like drop of
+            // non-Owned). Elide MoveOp so AOT emit-binary does not emit
+            // unpin_linear_root for imm values; IR executor also no-ops
+            // non-linear Move when state permits.
             auto inner = lower_inner(v.child(0));
             std::string binding_name;
+            bool copy_literal = false;
             if (!v.children.empty()) {
                 const auto cid = v.child(0);
                 if (cid != aura::ast::NULL_NODE && cid < flat.size()) {
                     auto cv = flat.get(cid);
-                    if (cv.tag == aura::ast::NodeTag::Variable &&
-                        cv.sym_id != aura::ast::INVALID_SYM) {
+                    using NT = aura::ast::NodeTag;
+                    if (cv.tag == NT::LiteralInt || cv.tag == NT::LiteralFloat ||
+                        cv.tag == NT::LiteralString) {
+                        copy_literal = true;
+                    } else if (cv.tag == aura::ast::NodeTag::Variable &&
+                               cv.sym_id != aura::ast::INVALID_SYM) {
                         binding_name = std::string(pool.resolve(cv.sym_id));
                     }
                 }
+            }
+            if (copy_literal) {
+                g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
+                ++state.linear_move_elided;
+                return inner;
             }
             if (escape_move_elision_gate_active()) {
                 g_linear_lowering_escape_summary_hit_total.fetch_add(1, std::memory_order_relaxed);

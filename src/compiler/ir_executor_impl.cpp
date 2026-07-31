@@ -1675,6 +1675,19 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::MoveOp: {
+                    // Issue #106: source invalidation after move (clear slot).
+                    // Issue #2407: Copy / non-linear source is a no-op move
+                    // (literal-as-Owned). Do not hard-fail Strict incomplete
+                    // provenance on non-linear payloads — matches interpreter
+                    // and AOT emit-binary elision of Move of literals.
+                    auto val = locals[ops[1]];
+                    if (!types::is_linear(val)) {
+                        if (instr.linear_ownership_state != 0)
+                            record_linear_runtime_safety(metrics_, false);
+                        locals[ops[0]] = val;
+                        locals[ops[1]] = types::make_int(0);
+                        break;
+                    }
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
                     // State-machine gate before heap check (Issue #1515 / #2103).
@@ -1697,7 +1710,6 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // ref-count-decremented above; clearing the
                     // local slot makes the no-double-drop invariant
                     // explicit in the IR.
-                    auto val = locals[ops[1]];
                     if (!state_ok) {
                         std::println(std::cerr, "error: move of non-Owned linear_ownership_state");
                         capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
@@ -1707,40 +1719,33 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         locals[ops[1]] = types::make_int(0);
                         break;
                     }
-                    if (types::is_linear(val)) {
-                        auto lin_id = types::as_linear_id(val);
-                        if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
-                            auto& entry = linear_heap_[lin_id];
-                            if (entry.ref_count <= 0) {
-                                std::println(std::cerr, "error: double move — value already moved");
-                                if (instr.linear_ownership_state != 0)
-                                    capture_linear_runtime_violation(
-                                        metrics_, 0, IROpcode::MoveOp, 0,
-                                        instr.linear_ownership_state, 1);
-                                record_linear_runtime_safety(metrics_, true);
-                                locals[ops[0]] = entry.value;
-                            } else {
-                                auto result = entry.value;
-                                if (--entry.ref_count == 0)
-                                    entry.live = false;
-                                if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, false);
-                                locals[ops[0]] = result;
-                            }
-                        } else {
-                            // Already moved/consumed — error
-                            std::println(std::cerr,
-                                         "error: use after move — value already consumed");
+                    // Linear-typed value: consume heap entry.
+                    auto lin_id = types::as_linear_id(val);
+                    if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
+                        auto& entry = linear_heap_[lin_id];
+                        if (entry.ref_count <= 0) {
+                            std::println(std::cerr, "error: double move — value already moved");
                             if (instr.linear_ownership_state != 0)
                                 capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
                                                                  instr.linear_ownership_state, 1);
                             record_linear_runtime_safety(metrics_, true);
-                            locals[ops[0]] = types::make_int(0);
+                            locals[ops[0]] = entry.value;
+                        } else {
+                            auto result = entry.value;
+                            if (--entry.ref_count == 0)
+                                entry.live = false;
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(metrics_, false);
+                            locals[ops[0]] = result;
                         }
                     } else {
+                        // Already moved/consumed — error
+                        std::println(std::cerr, "error: use after move — value already consumed");
                         if (instr.linear_ownership_state != 0)
-                            record_linear_runtime_safety(metrics_, false);
-                        locals[ops[0]] = val;
+                            capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
+                                                             instr.linear_ownership_state, 1);
+                        record_linear_runtime_safety(metrics_, true);
+                        locals[ops[0]] = types::make_int(0);
                     }
                     // Source slot is now invalid — clear it so a
                     // later DropOp on this slot is a no-op.
