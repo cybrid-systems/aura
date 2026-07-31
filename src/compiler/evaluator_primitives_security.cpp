@@ -19,7 +19,9 @@ module;
 #include "core/workspace_isolation.hh" // #1566: snapshot_tenant_isolation_stats
 #include "core/mutation_audit_wal.hh"  // #1567: snapshot_audit_wal_stats
 #include "core/security_event.hh"      // #2075: shared SecurityEvent schema + ring
+#include "core/security_event_wal.hh"  // #2389: WAL posture for security-health
 #include "core/provenance_tracker.hh"  // #2182: linear enforce mode on enforcement-stats
+#include "compiler/security_health.hh" // #2389: query:security-health score
 
 module aura.compiler.evaluator;
 
@@ -4108,6 +4110,122 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(ring.total.load(std::memory_order_relaxed)));
             insert_kv("typed-trail-size", static_cast<std::int64_t>(trail_size()));
             insert_kv("unified", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2389: query:security-health — single Agent score (basis points)
+    // aggregating effect deny rate, isolation deny rate, epoch-fence health,
+    // WAL posture under Restricted/Strict/multi-tenant, and ring wrap
+    // pressure. Pure/read-only (existing capability / isolation /
+    // security-audit queries unchanged). Score + force_reason priority in
+    // security_health.hh:
+    //   effect-deny > isolation-deny > epoch-fence > wal-off > ring-wrap > ok
+    ObservabilityPrims::register_stats_impl(
+        "query:security-health", [&ev](const auto&) -> EvalValue {
+            using ::aura::compiler::compute_security_health;
+            using ::aura::compiler::kSecurityHealthIssue;
+            using ::aura::compiler::SecurityHealthSnapshot;
+            using ::aura::core::audit_wal::g_mutation_audit_wal;
+            using ::aura::core::capability::snapshot_capability_effect_stats;
+            using ::aura::core::security_event::g_security_event_ring;
+            using ::aura::core::security_event_wal::g_security_event_wal;
+            using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+
+            const auto cap = snapshot_capability_effect_stats();
+            const auto iso = snapshot_tenant_isolation_stats();
+            const auto& ring = g_security_event_ring();
+
+            SecurityHealthSnapshot snap;
+            snap.effect_checks = cap.checks;
+            snap.effect_denied = cap.denied;
+            snap.epoch_fence_hits = cap.epoch_fence_hits;
+            snap.effect_grants = cap.grants;
+            snap.sandbox_mode = cap.sandbox_mode;
+            snap.isolation_checks = iso.checks;
+            snap.isolation_violations = iso.boundary_violations_prevented;
+            snap.isolation_enabled = iso.isolation_enabled;
+            snap.strict_linked = iso.strict_linked;
+            snap.ring_total = ring.total.load(std::memory_order_relaxed);
+            snap.ring_wrap_total = ring.ring_wrap_total.load(std::memory_order_relaxed);
+            snap.security_event_wal_enabled = g_security_event_wal().is_enabled() ? 1 : 0;
+            snap.mutation_wal_enabled = g_mutation_audit_wal().is_enabled() ? 1 : 0;
+
+            const auto scored = compute_security_health(snap);
+
+            // Capacity 64: health keys + component mirrors + schema sentinels.
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        auto vidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(std::string(v_str));
+                        vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            insert_kv("health-bp", static_cast<std::int64_t>(scored.health_bp));
+            insert_kv("health-budget-bp", static_cast<std::int64_t>(scored.health_budget_bp));
+            insert_kv_str("force-reason", scored.force_reason);
+            // Component mirrors (optional additive).
+            insert_kv("component-effect-deny-rate-bp",
+                      static_cast<std::int64_t>(scored.effect_deny_rate_bp));
+            insert_kv("component-isolation-deny-rate-bp",
+                      static_cast<std::int64_t>(scored.isolation_deny_rate_bp));
+            insert_kv("component-fence-health-bp",
+                      static_cast<std::int64_t>(scored.fence_health_bp));
+            insert_kv("component-wal-posture-bp", static_cast<std::int64_t>(scored.wal_posture_bp));
+            insert_kv("component-wrap-pressure-bp",
+                      static_cast<std::int64_t>(scored.wrap_pressure_bp));
+            insert_kv("elevated-posture", scored.elevated_posture);
+            insert_kv("security-health-wired", 1);
+            insert_kv("schema-2389", kSecurityHealthIssue);
+            insert_kv("issue-2389", kSecurityHealthIssue);
+            // Lineage: related security surfaces remain independently queryable.
+            insert_kv("schema-2054", 2054);
+            insert_kv("schema-2225", 2225);
+            insert_kv("schema-2075", 2075);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

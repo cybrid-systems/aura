@@ -3227,6 +3227,11 @@ aura_add_issue_test(test_security_audit_fold_2388)
 aura_issue_test_link_llvm_jit(test_security_audit_fold_2388)
 add_dependencies(all_test_issue_targets test_security_audit_fold_2388)
 
+# Issue #2389: query:security-health single Agent score (deny + fence + WAL + wrap).
+aura_add_issue_test(test_security_health_2389)
+aura_issue_test_link_llvm_jit(test_security_health_2389)
+add_dependencies(all_test_issue_targets test_security_health_2389)
+
 # Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
 aura_add_issue_test(test_mutation_contention_2040)
 aura_issue_test_link_llvm_jit(test_mutation_contention_2040)
