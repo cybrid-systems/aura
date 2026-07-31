@@ -3321,3 +3321,11 @@ aura_add_issue_test(test_fiber_integration_batch)
 aura_issue_test_link_llvm_jit(test_fiber_integration_batch)
 set_target_properties(test_fiber_integration_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 add_dependencies(all_test_issue_targets test_fiber_integration_batch)
+
+# Issue #2467: Fiber::is_done() strictly requires state_==Done (was
+# conflated with reclaimed_ — let joiners call cleanup hook while body
+# was still executing = UAF). JoinStatus::Readded for the
+# reclaimed-but-body-still-running path (joiner defers cleanup).
+aura_add_issue_test(test_fiber_reclaim_safety)
+aura_issue_test_link_llvm_jit(test_fiber_reclaim_safety)
+add_dependencies(all_test_issue_targets test_fiber_reclaim_safety)

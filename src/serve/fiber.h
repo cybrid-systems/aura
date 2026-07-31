@@ -101,6 +101,14 @@ enum class JoinStatus : uint8_t {
     Timeout = 1,   // deadline elapsed before Done
     Cancelled = 2, // joiner cancel requested
     Invalid = 3,   // null / self-join / missing target
+    // Issue #2467: target was force-reclaimed via
+    // Scheduler::reap_orphans_now but the body fiber is still
+    // executing (non-yielding tight loop). Joiner must NOT free
+    // shared resources on this path — the body may still touch
+    // them. Cleanup is deferred until Fiber destructor runs after
+    // state_==Done. Backward-compatible addition (existing callers
+    // pattern-match Ok/Timeout/Cancelled/Invalid won't see change).
+    Reclaimed = 4,
 };
 
 struct JoinResult {
@@ -483,16 +491,24 @@ public:
     FiberState state() const { return state_.load(std::memory_order_acquire); }
     void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
     int eventfd() const { return eventfd_; }
-    // is_done() now also returns true for force-reclaimed fibers
-    // (Issue #2227): a fiber whose hard_deadline elapsed and was
-    // force-reaped by Scheduler::reap_orphans_now. Existing join()
-    // callers treat this as a normal Done so they wake up and
-    // return Ok; the OrchModuleStats.join_drain_residual_reclaim_total
-    // counter tracks the actual force-reclaim path.
-    bool is_done() const {
-        return state_.load(std::memory_order_acquire) == FiberState::Done ||
-               reclaimed_.load(std::memory_order_acquire);
-    }
+    // Issue #2467: is_done() now strictly requires state_==Done.
+    // Previously returned true for force-reclaimed fibers too
+    // (Issue #2227 conflated semantics) — but that let joiners
+    // call the cleanup hook (aura_evaluator_on_fiber_join) +
+    // release shared resources while the body fiber was STILL
+    // EXECUTING on a worker (non-yielding tight loop after the
+    // cooperative drain window expired). Use-after-free.
+    //
+    // New semantics: is_done() means "body has actually finished"
+    // (state_==Done). Reclaimed-but-still-running is observable
+    // via is_reclaimed(). Fiber::join returns JoinStatus::Reclaimed
+    // when the target is reclaimed but state_!=Done (no cleanup
+    // hook is called; the joiner must defer cleanup). Cleanup of
+    // shared resources is deferred until the Fiber's destructor
+    // runs after state_==Done (which only happens when the body
+    // actually finishes; for non-yielding bodies this may never
+    // happen — accept the leak vs the UAF).
+    bool is_done() const { return state_.load(std::memory_order_acquire) == FiberState::Done; }
 
     // ── Issue #1584: structured join ───────────────────
     // Block the current fiber (or host thread) until `target`
@@ -538,6 +554,9 @@ public:
     [[nodiscard]] static std::uint64_t join_total() noexcept;
     [[nodiscard]] static std::uint64_t join_timeout_total() noexcept;
     [[nodiscard]] static std::uint64_t join_cancel_total() noexcept;
+    // Issue #2467: counter for JoinStatus::Reclaimed returns
+    // (target force-reclaimed but body still executing).
+    [[nodiscard]] static std::uint64_t join_reclaim_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_max() noexcept;
     // Issue #1595: times join Ok path invoked linear/StableNodeRef enforcement.
@@ -805,6 +824,8 @@ private:
     static std::atomic<std::uint64_t> join_total_;
     static std::atomic<std::uint64_t> join_timeout_total_;
     static std::atomic<std::uint64_t> join_cancel_total_;
+    // Issue #2467: counter for JoinStatus::Reclaimed returns.
+    static std::atomic<std::uint64_t> join_reclaim_total_;
     static std::atomic<std::uint64_t> join_wait_us_total_;
     static std::atomic<std::uint64_t> join_wait_us_max_;
     static std::atomic<std::uint64_t> join_linear_enforcement_total_;

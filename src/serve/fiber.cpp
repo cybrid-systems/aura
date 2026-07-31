@@ -48,6 +48,12 @@ std::atomic<std::uint64_t> Fiber::join_timeout_total_{0};
 std::atomic<std::uint64_t> Fiber::join_cancel_total_{0};
 std::atomic<std::uint64_t> Fiber::join_wait_us_total_{0};
 std::atomic<std::uint64_t> Fiber::join_wait_us_max_{0};
+// Issue #2467: counter for JoinStatus::Reclaimed returns
+// (target was force-reclaimed via Scheduler::reap_orphans_now
+// but body is still executing). Joiner returned Reclaimed
+// without calling aura_evaluator_on_fiber_join cleanup hook
+// to avoid UAF on shared resources the body may still touch.
+std::atomic<std::uint64_t> Fiber::join_reclaim_total_{0};
 // Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
 std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
 // Issue #1597 join latency histogram.
@@ -765,6 +771,12 @@ std::uint64_t Fiber::join_timeout_total() noexcept {
 std::uint64_t Fiber::join_cancel_total() noexcept {
     return join_cancel_total_.load(std::memory_order_relaxed);
 }
+// Issue #2467: accessor for join_reclaim_total_ counter
+// (JoinStatus::Reclaimed returns when target force-reclaimed
+// but body still executing — joiner must defer cleanup).
+std::uint64_t Fiber::join_reclaim_total() noexcept {
+    return join_reclaim_total_.load(std::memory_order_relaxed);
+}
 std::uint64_t Fiber::join_wait_us_total() noexcept {
     return join_wait_us_total_.load(std::memory_order_relaxed);
 }
@@ -824,6 +836,12 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             join_timeout_total_.fetch_add(1, std::memory_order_relaxed);
         else if (st == JoinStatus::Cancelled)
             join_cancel_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2467: bumped when joiner returns Reclaimed (target
+        // force-reclaimed but body still executing). Surfaces in
+        // (query:fiber-metrics) + dashboards so operators can see
+        // when the UAF-prone path triggers.
+        else if (st == JoinStatus::Reclaimed)
+            join_reclaim_total_.fetch_add(1, std::memory_order_relaxed);
         // Issue #1595: successful join → process counter + host-side probe/repin.
         // Skip deep Evaluator work when called from a fiber stack (small stacks);
         // process counter still advances so dashboards see join-path liveness.
@@ -837,6 +855,17 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
 
     if (!target || target == g_current_fiber)
         return finish(JoinStatus::Invalid);
+    // Issue #2467: reclaimed-but-not-done path. The body fiber is
+    // STILL EXECUTING on a worker (non-yielding tight loop after
+    // the cooperative drain window expired). Return Reclaimed
+    // WITHOUT calling aura_evaluator_on_fiber_join — that hook
+    // releases shared resources (mailbox refs, env frames,
+    // external handles) which the body may still dereference.
+    // Cleanup is deferred until Fiber destructor runs after
+    // state_==Done. For non-yielding bodies this may never happen
+    // (accept the leak vs the UAF).
+    if (target->is_reclaimed() && !target->is_done())
+        return finish(JoinStatus::Reclaimed);
     if (target->is_done())
         return finish(JoinStatus::Ok);
 
@@ -849,6 +878,11 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // Fast re-check under race with completion.
         if (target->is_done())
             return finish(JoinStatus::Ok);
+        // Issue #2467: same Reclaimed check under fiber-context path —
+        // avoids infinite spin when target is reclaimed but body
+        // hasn't yielded (state_ never reaches Done).
+        if (target->is_reclaimed() && !target->is_done())
+            return finish(JoinStatus::Reclaimed);
         if (!g_scheduler->add_joiner(target->id(), g_current_fiber)) {
             // Target vanished or not registered — recheck Done.
             if (target->is_done())
@@ -859,6 +893,11 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // Wait loop: BlockingIO yield parks until target Done wakes us
         // (or we poll for timeout/cancel via Explicit yields when deadline).
         while (!target->is_done()) {
+            // Issue #2467: bail out on reclaim to avoid infinite spin.
+            // body will keep running until it eventually yields/returns,
+            // but our join is done — caller handles Reclaimed status.
+            if (target->is_reclaimed())
+                return finish(JoinStatus::Reclaimed);
             if (g_current_fiber->is_cancel_requested()) {
                 g_scheduler->remove_joiner(target->id(), g_current_fiber);
                 return finish(JoinStatus::Cancelled);
@@ -891,6 +930,9 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
 
     // Host-thread path (tests without active fiber context).
     while (!target->is_done()) {
+        // Issue #2467: same Reclaimed check on host-thread path.
+        if (target->is_reclaimed())
+            return finish(JoinStatus::Reclaimed);
         if (g_current_fiber && g_current_fiber->is_cancel_requested())
             return finish(JoinStatus::Cancelled);
         if (has_deadline && std::chrono::steady_clock::now() >= deadline)
