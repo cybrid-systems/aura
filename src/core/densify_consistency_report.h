@@ -16,6 +16,17 @@
 // increments densify_consistency_fail_total instead. Optional
 // AURA_DENSIFY_CONTRACT=hard env aborts on fail (aligns RootRemap hard
 // contract pattern at root_remap_pass.ixx).
+//
+// ── Issue #2365: densify-success closed-loop order (do not reorder) ──
+// After Moving densify (live_compact / compact_all_moving_pinned):
+//   1. RootRemapPass          (inside densify via RootRemapCallback)
+//   2. pin verify             (pin_contract_held / verify_pins_under_moving)
+//   3. EnvFrame live-ref xfer (#2360/#2362 scan_live_env_frame_refs_after_densify)
+//   4. closure remount scan   (scan_live_closures_for_linear_captures only_if_moved)
+//   5. dual-epoch restamp     (ensure_dual_path_consistent over live EnvFrames)
+//   6. report axes            (root_remap_ok / closure_remount_ok / envframe_ok
+//                              from last-call probes — Soft vacuous true)
+// Soft / empty densify skips 3–5 (zero extra cost).
 
 #ifndef AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 #define AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
@@ -75,6 +86,11 @@ inline std::atomic<std::uint64_t> g_densify_consistency_fail_total{0};
 // Issue #2361: last Phase 5 densify envframe_ok (1=ok, 0=fail). Query
 // surface reads this instead of forcing true; Soft / no densify leaves 1.
 inline std::atomic<std::uint8_t> g_last_densify_envframe_ok{1};
+// Issue #2365: last-call root_remap_ok / closure_remount_ok (Soft → 1).
+// Query surface uses these instead of cumulative process fails that
+// would poison Soft densify after a prior Moving fail.
+inline std::atomic<std::uint8_t> g_last_densify_root_remap_ok{1};
+inline std::atomic<std::uint8_t> g_last_densify_closure_remount_ok{1};
 
 [[nodiscard]] inline std::uint64_t densify_consistency_fail_total() noexcept {
     return g_densify_consistency_fail_total.load(std::memory_order_relaxed);
@@ -90,6 +106,19 @@ inline void note_last_densify_envframe_ok(bool ok) noexcept {
 
 [[nodiscard]] inline bool last_densify_envframe_ok() noexcept {
     return g_last_densify_envframe_ok.load(std::memory_order_relaxed) != 0;
+}
+
+inline void note_last_densify_root_remap_ok(bool ok) noexcept {
+    g_last_densify_root_remap_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool last_densify_root_remap_ok() noexcept {
+    return g_last_densify_root_remap_ok.load(std::memory_order_relaxed) != 0;
+}
+inline void note_last_densify_closure_remount_ok(bool ok) noexcept {
+    g_last_densify_closure_remount_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool last_densify_closure_remount_ok() noexcept {
+    return g_last_densify_closure_remount_ok.load(std::memory_order_relaxed) != 0;
 }
 
 // env-empty branch mirrors #2266 AURA_MOVING_PIN_CONTRACT=hard pattern.
