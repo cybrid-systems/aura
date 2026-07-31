@@ -74,6 +74,7 @@
 #include <atomic>
 #include <concepts>
 #include <cstddef>
+#include <cstdlib>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -85,6 +86,7 @@
 namespace aura::ast {
 
 // Issue #2058: process-wide PCV hot-path metrics (unique in-place vs COW alloc).
+// Issue #2406: optional TLS freelist hits for exclusive short-lived allocs.
 struct PcvHotpathMetrics {
     std::atomic<std::uint64_t> unique_inplace_total{0};
     std::atomic<std::uint64_t> cow_alloc_total{0};
@@ -96,6 +98,10 @@ struct PcvHotpathMetrics {
     // Issue #2140: with_set exclusive vs shared paths.
     std::atomic<std::uint64_t> with_set_exclusive_total{0};
     std::atomic<std::uint64_t> with_set_cow_total{0};
+    // Issue #2406: TLS scratch freelist (AURA_PCV_TLS=1).
+    std::atomic<std::uint64_t> tls_scratch_hit_total{0};
+    std::atomic<std::uint64_t> tls_scratch_miss_total{0};
+    std::atomic<std::uint64_t> tls_scratch_recycle_total{0};
 };
 inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
     static PcvHotpathMetrics m;
@@ -112,11 +118,48 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
     m.cow_push_total.store(0, std::memory_order_relaxed);
     m.with_set_exclusive_total.store(0, std::memory_order_relaxed);
     m.with_set_cow_total.store(0, std::memory_order_relaxed);
+    m.tls_scratch_hit_total.store(0, std::memory_order_relaxed);
+    m.tls_scratch_miss_total.store(0, std::memory_order_relaxed);
+    m.tls_scratch_recycle_total.store(0, std::memory_order_relaxed);
 }
 
 inline constexpr int kPcvHotpathIssue = 2058;
 // Issue #2140: exclusive with_set (refcount==1) in-place, no alloc.
 inline constexpr int kPcvExclusiveSetIssue = 2140;
+// Issue #2406: optional TLS scratch freelist for exclusive PCV allocs.
+inline constexpr int kPcvTlsScratchIssue = 2406;
+
+// Issue #2406: opt-in TLS freelist. Default OFF (AC1: behavior identical).
+// AURA_PCV_TLS=1|true|on enables. Soft / production risk zero until measured.
+[[nodiscard]] inline bool pcv_tls_scratch_enabled() noexcept {
+    static const bool on = [] {
+        if (const char* e = std::getenv("AURA_PCV_TLS")) {
+            return e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y';
+        }
+        return false;
+    }();
+    return on;
+}
+
+// Test override (process-local). nullopt = use env; true/false force.
+inline std::atomic<int>& pcv_tls_scratch_test_override() noexcept {
+    static std::atomic<int> v{-1}; // -1 env, 0 off, 1 on
+    return v;
+}
+[[nodiscard]] inline bool pcv_tls_scratch_active() noexcept {
+    const int o = pcv_tls_scratch_test_override().load(std::memory_order_relaxed);
+    if (o == 0)
+        return false;
+    if (o == 1)
+        return true;
+    return pcv_tls_scratch_enabled();
+}
+inline void set_pcv_tls_scratch_for_test(bool on) noexcept {
+    pcv_tls_scratch_test_override().store(on ? 1 : 0, std::memory_order_relaxed);
+}
+inline void clear_pcv_tls_scratch_for_test() noexcept {
+    pcv_tls_scratch_test_override().store(-1, std::memory_order_relaxed);
+}
 
 template <typename T> class PersistentChildVector {
 public:
@@ -257,7 +300,7 @@ public:
             std::copy(src, src + size_, out->data.get());
         data_ = std::move(out);
         g_pcv_hotpath_metrics().ensure_unique_clone_total.fetch_add(1, std::memory_order_relaxed);
-        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        note_pcv_alloc();
         return true;
     }
 
@@ -305,7 +348,7 @@ public:
         out->data[size_] = v;
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
-        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        note_pcv_alloc(); // Issue #2406: TLS hit skips cow_alloc
         return result;
     }
 
@@ -317,7 +360,7 @@ public:
         out->data[size_] = std::move(v);
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
-        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        note_pcv_alloc();
         return result;
     }
 
@@ -333,7 +376,7 @@ public:
         out->data[pos] = v;
         auto result = from_storage(out, size_ + 1);
         contract_assert(result.size() == size_ + 1);
-        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        note_pcv_alloc();
         return result;
     }
 
@@ -348,7 +391,7 @@ public:
         }
         auto result = from_storage(out, size_ - 1);
         contract_assert(result.size() == size_ - 1);
-        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        note_pcv_alloc();
         return result;
     }
 
@@ -377,7 +420,7 @@ public:
         out->data[i] = v;
         auto result = from_storage(out, size_);
         contract_assert(result.size() == size_);
-        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
+        note_pcv_alloc();
         g_pcv_hotpath_metrics().with_set_cow_total.fetch_add(1, std::memory_order_relaxed);
         return result;
     }
@@ -497,12 +540,91 @@ private:
     StoragePtr data_;
     size_type size_ = 0; // mirrored from data_->size for O(1) access
 
+    // Issue #2406: TLS freelist for exclusive short-lived Storage.
+    // Pool holds Storage of capacity kTlsMaxElems (logical size still n).
+    // Deleter returns to freelist only on the allocating thread; cross-
+    // fiber steal falls back to delete (safe). Default path: make_shared.
+    static constexpr size_type kTlsMaxElems = 64;
+    static constexpr std::size_t kTlsSlots = 4;
+
+    struct TlsFreelist {
+        std::unique_ptr<Storage> slots[kTlsSlots]{};
+        // owner thread id for cross-fiber safety (0 = unset)
+        std::uintptr_t owner_tid = 0;
+    };
+
+    static TlsFreelist& tls_freelist() noexcept {
+        thread_local TlsFreelist fl;
+        return fl;
+    }
+
+    static std::uintptr_t current_tid() noexcept {
+        // Opaque stable id for this thread; not a system tid.
+        thread_local char tls_token{};
+        return reinterpret_cast<std::uintptr_t>(&tls_token);
+    }
+
+    static void tls_recycle(Storage* raw) noexcept {
+        if (!raw) {
+            return;
+        }
+        if (!pcv_tls_scratch_active()) {
+            delete raw;
+            return;
+        }
+        auto& fl = tls_freelist();
+        const auto tid = current_tid();
+        if (fl.owner_tid != 0 && fl.owner_tid != tid) {
+            // Allocated on another thread (fiber steal) — free, do not recycle.
+            delete raw;
+            return;
+        }
+        fl.owner_tid = tid;
+        for (std::size_t i = 0; i < kTlsSlots; ++i) {
+            if (!fl.slots[i]) {
+                // Reset logical fill for reuse (capacity remains kTlsMaxElems).
+                fl.slots[i].reset(raw);
+                g_pcv_hotpath_metrics().tls_scratch_recycle_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                return;
+            }
+        }
+        delete raw; // freelist full
+    }
+
+    static StoragePtr make_from_tls_or_new(size_type n) {
+        // Always allocate/reuse capacity kTlsMaxElems when n <= kTlsMaxElems.
+        (void)n;
+        auto& fl = tls_freelist();
+        const auto tid = current_tid();
+        if (fl.owner_tid == 0)
+            fl.owner_tid = tid;
+        auto recycle_del = [](const Storage* p) { tls_recycle(const_cast<Storage*>(p)); };
+        for (std::size_t i = 0; i < kTlsSlots; ++i) {
+            if (fl.slots[i]) {
+                Storage* raw = fl.slots[i].release();
+                g_pcv_hotpath_metrics().tls_scratch_hit_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                tls_last_alloc_was_hit() = true;
+                return StoragePtr(raw, recycle_del);
+            }
+        }
+        // Miss: fresh alloc into pool capacity (still recyclable).
+        g_pcv_hotpath_metrics().tls_scratch_miss_total.fetch_add(1, std::memory_order_relaxed);
+        tls_last_alloc_was_hit() = false;
+        Storage* raw = new Storage(kTlsMaxElems);
+        return StoragePtr(raw, recycle_del);
+    }
+
     // Allocate a fresh shared storage with the given capacity.
     // The elements are uninitialized (the caller fills them).
     static StoragePtr make_storage(size_type n) {
         if (n == 0) {
             return std::make_shared<Storage>();
         }
+        // Issue #2406: constructors share TLS path when opt-in + small.
+        if (pcv_tls_scratch_active() && n <= kTlsMaxElems)
+            return make_from_tls_or_new(n);
         return std::make_shared<Storage>(n);
     }
 
@@ -512,11 +634,34 @@ private:
     // mutable inside (the unique_ptr<T[]>), so the caller
     // can write to storage->data[i] before the storage is
     // shared out.
+    //
+    // Issue #2406: when AURA_PCV_TLS is on and n is small, prefer
+    // TLS freelist (hit avoids malloc). Callers still may bump
+    // cow_alloc_total; with_* use note_pcv_alloc() so TLS hits
+    // do not inflate cow_alloc (AC2 exclusive stress).
     static StoragePtr make_storage_owned(size_type n) {
         if (n == 0) {
             return std::make_shared<Storage>();
         }
+        if (pcv_tls_scratch_active() && n <= kTlsMaxElems)
+            return make_from_tls_or_new(n);
         return std::make_shared<Storage>(n);
+    }
+
+    // Issue #2406: bump cow_alloc only when the last make_storage_owned
+    // was not a TLS freelist hit (compare hit counter delta is awkward;
+    // use thread_local last-hit flag set in make_from_tls_or_new).
+    static bool& tls_last_alloc_was_hit() noexcept {
+        thread_local bool hit = false;
+        return hit;
+    }
+
+    static void note_pcv_alloc() noexcept {
+        if (tls_last_alloc_was_hit()) {
+            tls_last_alloc_was_hit() = false;
+            return; // TLS freelist hit — not a process heap cow_alloc
+        }
+        g_pcv_hotpath_metrics().cow_alloc_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Convert a freshly-allocated StoragePtr + size to a

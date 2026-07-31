@@ -31,6 +31,7 @@ module;
 #include <chrono>
 #include "typed_mutation_audit.h"
 #include "compiler/mutation_hold_budget.h" // Issue #2313
+#include "core/persistent_child_vector.hh" // Issue #2406: query:pcv-hotpath-stats
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh" // #2224: tenant-isolation-stats primitive
@@ -6248,6 +6249,65 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-depth", [&ev](const auto&) -> EvalValue {
             return make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()));
+        });
+
+    // Issue #2058 / #2140 / #2406: (query:pcv-hotpath-stats) — PCV unique
+    // in-place vs COW alloc vs optional TLS freelist (AURA_PCV_TLS).
+    // Soft default: TLS off; production risk zero until measured.
+    ObservabilityPrims::register_stats_impl(
+        "query:pcv-hotpath-stats", [&ev](const auto&) -> EvalValue {
+            (void)ev;
+            auto& m = aura::ast::g_pcv_hotpath_metrics();
+            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("unique-inplace-total", load(m.unique_inplace_total));
+            insert_kv("cow-alloc-total", load(m.cow_alloc_total));
+            insert_kv("ensure-unique-clone-total", load(m.ensure_unique_clone_total));
+            insert_kv("with-set-exclusive-total", load(m.with_set_exclusive_total));
+            insert_kv("with-set-cow-total", load(m.with_set_cow_total));
+            // Issue #2406 TLS freelist surface
+            insert_kv("tls-scratch-hit-total", load(m.tls_scratch_hit_total));
+            insert_kv("tls-scratch-miss-total", load(m.tls_scratch_miss_total));
+            insert_kv("tls-scratch-recycle-total", load(m.tls_scratch_recycle_total));
+            insert_kv("tls-scratch-enabled", aura::ast::pcv_tls_scratch_active() ? 1 : 0);
+            insert_kv("tls-scratch-wired", 1);
+            insert_kv("schema-2406", aura::ast::kPcvTlsScratchIssue);
+            insert_kv("issue-2406", aura::ast::kPcvTlsScratchIssue);
+            insert_kv("schema-2058", aura::ast::kPcvHotpathIssue);
+            insert_kv("schema-2140", aura::ast::kPcvExclusiveSetIssue);
+            insert_kv("schema", aura::ast::kPcvTlsScratchIssue);
+            insert_kv("active", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Shared builder for safe-yield action surfaces (#1504 / #1591 / #1635).
