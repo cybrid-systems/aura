@@ -240,6 +240,13 @@ concept RequiresSoAViewPass =
 //   (compile-time reject via check_pass_dod_compliance). Prefer PureWrapPass
 //   style (kPureWrap / PureAnalysisPass) so identical inputs + dirty mask
 //   yield identical outputs with no hidden globals.
+//
+// Issue #2434 contract:
+//   EVERY stage in run_pipeline / run_incremental_dirty_pipeline /
+//   run_dirty_pipeline packs must be HotPassDodCompliant (unmarked soft
+//   skip removed). Prefer SoAViewAware + kPureWrap; explicit kLegacyPass
+//   only with a documented sunset. Production config keeps
+//   pass_pipeline_concept_rejection_total == 0.
 template <typename P>
 concept HotPassDodCompliant = SoAViewAwarePass<P> || LegacyPass<P>;
 

@@ -936,6 +936,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::pass_pipeline_concept_rejection_total.load(
                          std::memory_order_relaxed)))},
+                // Issue #2434: hard HotPass for all stages
+                {"schema-2434", make_int(2434)},
+                {"issue-2434", make_int(2434)},
+                {"pass-pipeline-hard-dod-wired", make_int(1)},
+                {"pass-pipeline-production-pack-inventory-wired", make_int(1)},
                 // Issue #1919: intelligent auto-compact policy surface
                 {"schema-1919", make_int(1919)},
                 {"issue-1919", make_int(1919)},

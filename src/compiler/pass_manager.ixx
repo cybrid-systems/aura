@@ -199,13 +199,17 @@ export inline std::atomic<std::uint64_t> run_dirty_pipeline_pass_runs_total{0};
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_clean_skips_total{0};
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_dirty_runs_total{0};
 export inline std::atomic<std::uint64_t> soa_dirty_aware_pass_wired{1};
-// Issue #2258: pure Wrap pipeline metrics + concept-rejection (debug).
+// Issue #2258 / #2434: pure Wrap pipeline metrics + concept-rejection.
 // pure_wrap: stages that are PureWrapPass (kPureWrap / PureAnalysisPass).
-// concept_rejection: Legacy / non-SoA soft path samples (debug migration).
+// concept_rejection: Legacy / uses_soa_view()==false samples (migration).
+// Under production packs (#2434) concept_rejection must stay 0.
 export inline std::atomic<std::uint64_t> pass_pipeline_pure_wrap_total{0};
 export inline std::atomic<std::uint64_t> pass_pipeline_concept_rejection_total{0};
 export inline std::atomic<std::uint64_t> hot_pass_dod_mandatory_wired{1};
 export inline std::atomic<std::uint64_t> pure_wrap_enforcement_wired{1};
+// Issue #2434: hard HotPassDodCompliant for all pipeline stages (no unmarked).
+export inline std::atomic<std::uint64_t> pass_pipeline_hard_dod_wired{1};
+export inline std::atomic<std::uint64_t> pass_pipeline_production_pack_inventory_wired{1};
 
 inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexcept {
     const auto dirty = view.dirty_block_count();
@@ -253,19 +257,27 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 
 // SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
 
-// Issue #1517 / #1619 / #1918 / #2060 / #2258: compile-time DOD compliance.
+// Issue #1517 / #1619 / #1918 / #2060 / #2258 / #2434: compile-time DOD compliance.
 // - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
 // - Soft metrics always: SoA aware → concept_enforcement_hits;
-//   legacy/unmarked → soa_view_pass_skipped.
+//   Legacy / uses_soa_view()false → soa_view_pass_skipped + concept_rejection.
 // - #1619/#1918: pack-level check_pipeline_dod_compliance at every pipeline entry.
-// - #1918: HotPassDodCompliant (SoAViewAware || Legacy) is the production target;
-//   unmarked non-incremental passes remain transitional soft-skip (metric only).
+// - #1918: HotPassDodCompliant (SoAViewAware || Legacy) is the production target.
 // - #2060: kRequireDirtySoAEntry / DirtyAware+SoA hot stages must provide
 //   DirtySoAEntryPass (run_on_dirty_blocks_only or Incremental+Dirty+SoA).
-// - #2258: DirtyAwarePass / IncrementalPass MUST be HotPassDodCompliant
-//   (hard reject at registration). PureWrap preferred (kPureWrap metrics).
+// - #2258: DirtyAwarePass / IncrementalPass MUST be HotPassDodCompliant.
+// - #2434: EVERY pipeline stage must be HotPassDodCompliant (unmarked soft
+//   skip removed). Prefer PureWrap (kPureWrap); explicit kLegacyPass only
+//   with documented sunset. Production packs should keep concept_rejection=0
+//   (all SoAViewAware with uses_soa_view()==true).
 export template <typename P> consteval void check_pass_dod_compliance() {
     using T = std::remove_cvref_t<P>;
+    // Issue #2434 AC1: no unmarked soft-skip stages on any production pack.
+    static_assert(HotPassDodCompliant<T>,
+                  "Pipeline stage must be HotPassDodCompliant: implement uses_soa_view() "
+                  "(preferred + kPureWrap) or explicit static constexpr kLegacyPass=true "
+                  "with a documented sunset issue (#2434). Soft Legacy skips on hot path "
+                  "are no longer allowed without an explicit marker.");
     if constexpr (RequiresSoAViewPass<T>) {
         static_assert(SoAViewAwarePass<T>,
                       "Hot pass declared kRequireSoAView must implement uses_soa_view() "
@@ -315,17 +327,24 @@ export inline std::atomic<std::uint64_t> concept_enforcement_hits_total{0};
 export inline std::atomic<std::uint64_t> soa_view_pass_skipped_total{0};
 export inline std::atomic<std::uint64_t> edsl_soa_migration_progress_total{0};
 
-// Issue #1517 / #2258: per-pass soft enforcement bookkeeping (shared by pipelines).
+// Issue #1517 / #2258 / #2434: per-pass enforcement bookkeeping (shared by pipelines).
+// Unmarked stages are compile-time rejected by check_pass_dod_compliance (#2434).
+// concept_rejection only advances for explicit LegacyPass or uses_soa_view()==false.
 export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept {
     using T = std::remove_cvref_t<P>;
     check_pass_dod_compliance<T>();
-    // Issue #2258 AC4: pure Wrap + concept-rejection (debug) counters.
+    // Issue #2258 AC4 / #2434 AC3: pure Wrap counters.
     if constexpr (PureWrapPass<T>) {
         pass_pipeline_pure_wrap_total.fetch_add(1, std::memory_order_relaxed);
     }
-    if constexpr (LegacyPass<T> || !SoAViewAwarePass<T>) {
-        // Debug migration: Legacy opt-out or unmarked non-SoA stage.
+    if constexpr (LegacyPass<T>) {
+        // Explicit sunset Legacy only — production packs must not include these
+        // if concept_rejection_total is required to stay 0 (#2434 AC2).
         pass_pipeline_concept_rejection_total.fetch_add(1, std::memory_order_relaxed);
+        soa_view_pass_skipped_total.fetch_add(1, std::memory_order_relaxed);
+        soa_view::record_soa_view_pass_skipped();
+        (void)pass;
+        return;
     }
     if constexpr (SoAViewAwarePass<T>) {
         if (pass.uses_soa_view()) {
@@ -337,14 +356,9 @@ export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept {
         } else {
             soa_view_pass_skipped_total.fetch_add(1, std::memory_order_relaxed);
             soa_view::record_soa_view_pass_skipped();
-            // uses_soa_view() false → soft concept rejection (debug).
+            // uses_soa_view() false → concept rejection (migration debt).
             pass_pipeline_concept_rejection_total.fetch_add(1, std::memory_order_relaxed);
         }
-    } else {
-        // Unmarked or explicit LegacyPass → transitional skip.
-        soa_view_pass_skipped_total.fetch_add(1, std::memory_order_relaxed);
-        soa_view::record_soa_view_pass_skipped();
-        (void)pass;
     }
 }
 
@@ -2363,6 +2377,9 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "dce"; }
     std::size_t eliminated_count() const { return eliminated_; }
+    // Issue #2434: HotPassDodCompliant + pure Wrap (column/result-slot pure rules).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 public:
     // Public wrapper for use by other passes (e.g.,
@@ -2932,6 +2949,9 @@ public:
     bool has_error() const { return use_after_move_count_ > 0; }
     std::string_view name() const { return "linear-ownership"; }
     std::size_t use_after_move_count() const { return use_after_move_count_; }
+    // Issue #2434: HotPassDodCompliant + pure analysis Wrap (no IR mutation).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     // True if the opcode is a linear-move-ish op that
@@ -3500,6 +3520,12 @@ static_assert(DirtyAwarePass<ComputeKindWrap>,
 static_assert(IncrementalPass<ComputeKindWrap>, "ComputeKindWrap is IncrementalPass (#1574)");
 static_assert(DirtyAwarePass<ShapeWrap>, "ShapeWrap is DirtyAware for define-mask wiring (#1574)");
 static_assert(IncrementalPass<ShapeWrap>, "ShapeWrap is IncrementalPass (#1574)");
+// Issue #2434: early classic stages (declared above) HotPass + PureWrap.
+static_assert(HotPassDodCompliant<DCEPass>, "DCEPass HotPassDodCompliant (#2434)");
+static_assert(PureWrapPass<DCEPass>, "DCEPass PureWrapPass (#2434)");
+static_assert(HotPassDodCompliant<LinearOwnershipPass>,
+              "LinearOwnershipPass HotPassDodCompliant (#2434)");
+static_assert(PureWrapPass<LinearOwnershipPass>, "LinearOwnershipPass PureWrapPass (#2434)");
 // Issue #2060: DirtySoAEntryPass on production dirty/SoA hot stages.
 static_assert(DirtySoAEntryPass<ConstantFoldingWrap>,
               "ConstantFoldingWrap DirtySoAEntryPass (#2060)");
@@ -3610,6 +3636,9 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "inline"; }
     std::size_t inlined_count() const { return inlined_count_; }
+    // Issue #2434: HotPassDodCompliant + pure Wrap markers for production packs.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
     // Issue #388: macro-hygiene cross-marker skipped counter
     // (callable from Aura via the stats hash).
     std::size_t macro_hygiene_skipped_count() const {
@@ -4565,6 +4594,9 @@ public:
     std::string_view name() const { return "tco"; }
     std::size_t tco_count() const { return tco_count_; }
     std::size_t tco_inter_block_count() const { return tco_inter_block_count_; }
+    // Issue #2434: HotPassDodCompliant + pure Wrap (local Call+Return rewrite).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
 private:
     void run_on_block(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
@@ -4947,6 +4979,9 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "monomorphize"; }
     std::vector<Result> const& results() const { return results_; }
+    // Issue #2434: HotPassDodCompliant + pure Wrap (shape-guard specialization).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
+    static constexpr bool kPureWrap = true;
 
     // Test seam: production code wires this to shape_profiler_.
     // For Cycle 2 scaffolding, the test fills it directly.
@@ -4955,6 +4990,28 @@ public:
 private:
     std::vector<Result> results_;
 };
+
+// Issue #2434: late classic stages + production pack inventories.
+static_assert(HotPassDodCompliant<InlinePass>, "InlinePass HotPassDodCompliant (#2434)");
+static_assert(PureWrapPass<InlinePass>, "InlinePass PureWrapPass (#2434)");
+static_assert(HotPassDodCompliant<TCOPass>, "TCOPass HotPassDodCompliant (#2434)");
+static_assert(PureWrapPass<TCOPass>, "TCOPass PureWrapPass (#2434)");
+static_assert(HotPassDodCompliant<MonomorphizePass>,
+              "MonomorphizePass HotPassDodCompliant (#2434)");
+static_assert(PureWrapPass<MonomorphizePass>, "MonomorphizePass PureWrapPass (#2434)");
+// Full eval pack: TypeSpec → TypeProp → ComputeKind → Arity → ConstFold → DeadCoercion
+// Incremental dirty suite: ComputeKind → ConstFold → TypeProp → Shape
+// Classic opt stages: DCE / LinearOwnership / Inline / TCO / Monomorphize
+consteval void check_production_pipeline_packs_2434() {
+    check_pipeline_dod_compliance<TypeSpecializationWrap, TypePropagationPass, ComputeKindWrap,
+                                  ArityWrap, ConstantFoldingWrap, DeadCoercionEliminationPass>();
+    check_pipeline_dod_compliance<ComputeKindWrap, ConstantFoldingWrap, TypePropagationPass,
+                                  ShapeWrap>();
+    check_pipeline_dod_compliance<DCEPass, LinearOwnershipPass, InlinePass, TCOPass,
+                                  MonomorphizePass>();
+}
+static_assert((check_production_pipeline_packs_2434(), true),
+              "production pipeline packs HotPassDodCompliant (#2434)");
 
 // ── ShapeAwareFoldingPass — Issue #462 / #1661 ────────────────
 //

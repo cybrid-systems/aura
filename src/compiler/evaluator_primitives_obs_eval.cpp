@@ -14651,8 +14651,18 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::pass_pipeline_concept_rejection_total.load(
                          std::memory_order_relaxed)))},
+                // Issue #2434: hard HotPass for all stages + production pack inventory
+                {"schema-2434", make_int(2434)},
+                {"issue-2434", make_int(2434)},
+                {"pass-pipeline-hard-dod-wired",
+                 make_int(static_cast<std::int64_t>(aura::compiler::pass_pipeline_hard_dod_wired
+                                                        .load(std::memory_order_relaxed)))},
+                {"pass-pipeline-production-pack-inventory-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pass_pipeline_production_pack_inventory_wired.load(
+                         std::memory_order_relaxed)))},
                 {"issue", make_int(1619)},
-                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258
+                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258 + #2434
             };
             return build_hash(kv);
         });
