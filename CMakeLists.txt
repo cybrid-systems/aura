@@ -3122,6 +3122,11 @@ aura_add_issue_test(test_sandbox_mode_atomic_2427)
 aura_issue_test_link_llvm_jit(test_sandbox_mode_atomic_2427)
 add_dependencies(all_test_issue_targets test_sandbox_mode_atomic_2427)
 
+# Issue #2428: arm_defer fetch_or first-arm metrics (no load+or double-count).
+aura_add_issue_test(test_gc_defer_arm_fetch_or_2428)
+aura_issue_test_link_llvm_jit(test_gc_defer_arm_fetch_or_2428)
+add_dependencies(all_test_issue_targets test_gc_defer_arm_fetch_or_2428)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
