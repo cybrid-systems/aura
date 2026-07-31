@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib> // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
 
 namespace aura::core::provenance {
 
@@ -34,6 +35,11 @@ inline constexpr int kStableRefTenantCaptureIssue = 2125;
 // through validate_or_refresh / ensure_valid_or_refresh (silent-stale
 // zero-tolerance on query/mutate hot paths).
 inline constexpr int kEdslValidateOrRefreshIssue = 2186;
+// Issue #2404: Agent-facing StableNodeRef *export* must validate_or_refresh
+// before handoff (mailbox / checkpoint / cross-fiber). Soft: metric-only
+// when already valid; AURA_STABLE_REF_EXPORT_HARD_REJECT=1 fails closed
+// with null ref on unrefreshable.
+inline constexpr int kStableRefExportValidateIssue = 2404;
 
 // Policy for ensure_valid_or_refresh (AC).
 enum class AutoRefreshPolicy : std::uint8_t {
@@ -71,6 +77,13 @@ struct ProvenanceEnforcementMetrics {
     // Optional: isolation enabled + principal set but ref.tenant_id still 0
     // at a use-site check (soft counter; no default deny — AC5 permissive).
     std::atomic<std::uint64_t> stable_ref_tenant_stamp_zero_rejected_total{0};
+    // Issue #2404: Agent export path (export_ref / export_held_ref /
+    // query:ensure-ref / query:stable-ref). export_refresh = restamp was
+    // needed; export_valid = already-valid soft path (no restamp beyond
+    // lock-free validate); export_stale_reject = unrefreshable fail-closed.
+    std::atomic<std::uint64_t> stable_ref_export_refresh_total{0};
+    std::atomic<std::uint64_t> stable_ref_export_valid_total{0};
+    std::atomic<std::uint64_t> stable_ref_export_stale_reject_total{0};
     // Issue #2026: linear ownership × provenance consistency closed-loop.
     std::atomic<std::uint64_t> linear_provenance_checks_total{0};
     std::atomic<std::uint64_t> linear_provenance_ok_total{0};
@@ -152,6 +165,30 @@ inline void record_stable_ref_tenant_stamp_capture(std::uint64_t n = 1) noexcept
 inline void record_stable_ref_tenant_stamp_zero_rejected(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().stable_ref_tenant_stamp_zero_rejected_total.fetch_add(
         n, std::memory_order_relaxed);
+}
+inline void record_stable_ref_export_refresh(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_export_refresh_total.fetch_add(n,
+                                                                         std::memory_order_relaxed);
+}
+inline void record_stable_ref_export_valid(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_export_valid_total.fetch_add(n,
+                                                                       std::memory_order_relaxed);
+}
+inline void record_stable_ref_export_stale_reject(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().stable_ref_export_stale_reject_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+
+// Issue #2404: production hard-reject of unrefreshable Agent exports.
+// Env AURA_STABLE_REF_EXPORT_HARD_REJECT=1|true|on → null out failed exports.
+[[nodiscard]] inline bool stable_ref_export_hard_reject() noexcept {
+    static const bool hard = [] {
+        if (const char* e = std::getenv("AURA_STABLE_REF_EXPORT_HARD_REJECT")) {
+            return e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y';
+        }
+        return false;
+    }();
+    return hard;
 }
 
 // Issue #2125: process-wide isolation capture principal for FlatAST
@@ -500,6 +537,10 @@ struct ProvenanceStatsSnapshot {
     // Issue #2125
     std::uint64_t tenant_stamp_capture = 0;
     std::uint64_t tenant_stamp_zero_rejected = 0;
+    // Issue #2404
+    std::uint64_t export_refresh = 0;
+    std::uint64_t export_valid = 0;
+    std::uint64_t export_stale_reject = 0;
     int phase = kProvenanceTrackerPhase;
     int issue = kProvenanceTrackerIssue;
 };
@@ -525,6 +566,9 @@ struct ProvenanceStatsSnapshot {
         m.stable_ref_tenant_preserved_on_refresh_total.load(std::memory_order_relaxed),
         m.stable_ref_tenant_stamp_capture_total.load(std::memory_order_relaxed),
         m.stable_ref_tenant_stamp_zero_rejected_total.load(std::memory_order_relaxed),
+        m.stable_ref_export_refresh_total.load(std::memory_order_relaxed),
+        m.stable_ref_export_valid_total.load(std::memory_order_relaxed),
+        m.stable_ref_export_stale_reject_total.load(std::memory_order_relaxed),
         kProvenanceTrackerPhase,
         kProvenanceTrackerIssue,
     };
@@ -613,6 +657,9 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.stable_ref_tenant_preserved_on_refresh_total.store(0, std::memory_order_relaxed);
     m.stable_ref_tenant_stamp_capture_total.store(0, std::memory_order_relaxed);
     m.stable_ref_tenant_stamp_zero_rejected_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_export_refresh_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_export_valid_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_export_stale_reject_total.store(0, std::memory_order_relaxed);
     set_isolation_capture_tenant(0);
     m.linear_provenance_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_ok_total.store(0, std::memory_order_relaxed);

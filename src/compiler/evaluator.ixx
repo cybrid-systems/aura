@@ -5780,14 +5780,24 @@ public:
     [[nodiscard]] ast::FlatAST::StableNodeRef
     make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id = 0,
                           std::uint32_t fiber_id = 0) const noexcept;
-    // Issue #2224: sole public outbound helper — every StableNodeRef handed
-    // to Agent / user code must go through export_ref / export_ref_safe so
-    // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
-    // required_effects: side effects non-bypassable; isolation should match).
+    // Issue #2224 / #2404: sole public outbound helper — every StableNodeRef
+    // handed to Agent / user code must go through export_ref / export_ref_safe
+    // so tenant + fiber stamp is guaranteed AND validate_or_refresh runs
+    // before return (Agent export contract). Soft: already-valid is
+    // metric-only; unrefreshable bumps export-stale-reject (and nulls ref
+    // when AURA_STABLE_REF_EXPORT_HARD_REJECT=1).
     [[nodiscard]] ast::FlatAST::StableNodeRef export_ref(ast::NodeId id) const noexcept;
     [[nodiscard]] ast::FlatAST::StableNodeRef
     export_ref_safe(ast::NodeId id, std::uint32_t workspace_id = 0,
                     std::uint32_t fiber_id = 0) const noexcept;
+    // Issue #2404: re-export a long-held StableNodeRef (mailbox / handoff).
+    // Runs ensure_valid_or_refresh; on success returns refreshed ref; on
+    // failure returns nullopt and bumps export-stale-reject.
+    [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef>
+    export_held_ref(ast::FlatAST::StableNodeRef ref) noexcept;
+    // Issue #2404: shared finalize for Agent export paths (stamp already applied).
+    [[nodiscard]] ast::FlatAST::StableNodeRef
+    finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept;
     // Issue #2224: shared resolve entry used by query / mutate / ast walk.
     // Runs isolation check on the ref's tenant_id, then FlatAST validity
     // (gen / COW epoch), then returns NodeView via get_safe. On deny:
