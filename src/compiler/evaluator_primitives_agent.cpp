@@ -3034,6 +3034,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 case aura::serve::JoinStatus::Invalid:
                     st = "invalid";
                     break;
+                // Issue #2467: target force-reclaimed but body still
+                // executing. Joiner deferred cleanup (no UAF). Map to
+                // "reclaimed" status string so orch hash surfaces the
+                // new path for dashboards + operator queries.
+                case aura::serve::JoinStatus::Reclaimed:
+                    st = "reclaimed";
+                    break;
             }
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(st);
