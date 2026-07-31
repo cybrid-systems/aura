@@ -783,6 +783,11 @@ function(aura_add_issue_test NAME)
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
     # tests/ for test_harness.hpp and domain/cases/* includes
     target_include_directories(${NAME} PRIVATE src tests)
+    # Source-cite ACs (e.g. #2340/#2360/#2342 wave) resolve repo-root
+    # relative paths via AURA_SOURCE_DIR (std::filesystem::path(AURA_SOURCE_DIR)
+    # / "src/..."). Define it for every issue test target so those
+    # ACs compile regardless of build dir location.
+    target_compile_definitions(${NAME} PRIVATE AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # Fix #2: no FILE_SET .ixx here. The prebuilt BMIs in
     # AURA_MODULE_BMI_DIR (built by aura_test_objects) are made
     # visible in the per-target dir via the launcher-installed
