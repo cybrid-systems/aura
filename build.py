@@ -3143,6 +3143,24 @@ def cmd_subtree_dirty_bounds_coverage():
     return 0
 
 
+def cmd_capability_audit_publish_coverage():
+    """Issue #2425: CapabilityRegistry audit_ring published slots.
+
+    publish_seq release/acquire + audit_ring_mtx_; no torn EffectAuditEntry.
+    """
+    print(f"{B}=== capability audit publish coverage (#2425) ==={N}")
+    script = ROOT / "scripts" / "check_capability_audit_publish_2425.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("capability audit publish (#2425) coverage contract rows failed")
+        return 1
+    ok("capability audit publish (#2425) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4089,6 +4107,7 @@ def cmd_gate():
         or cmd_subtree_gen_atomic_coverage()
         or cmd_dirty_column_lock_coverage()
         or cmd_subtree_dirty_bounds_coverage()
+        or cmd_capability_audit_publish_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

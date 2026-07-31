@@ -43,6 +43,7 @@ using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
 using aura::core::capability::check_and_record_effect;
 using aura::core::capability::Effect;
+using aura::core::capability::EffectAuditEntry;
 using aura::core::capability::EffectProvenance;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
@@ -109,10 +110,12 @@ static void ac1_effect_stamps_mutation() {
     CHECK(ok, "effect allowed under grant");
 
     // Latest capability audit entry carries Mutation epoch.
-    const auto& reg = g_capability_registry();
-    const auto seq = reg.audit_seq.load(std::memory_order_relaxed);
+    // Issue #2425: load via try_load_latest_audit (published slot).
+    auto& reg = g_capability_registry();
+    const auto seq = reg.load_audit_seq();
     CHECK(seq > 0, "audit written");
-    const auto& entry = reg.audit_ring[(seq - 1) % reg.kAuditRing];
+    EffectAuditEntry entry{};
+    CHECK(reg.try_load_latest_audit(entry), "AC1: latest audit published");
     std::println("  audit.prov.epoch={} mutation={} bridge={}", entry.prov.epoch, me, be);
     CHECK(entry.prov.epoch == me || entry.prov.epoch == 1, "AC1: audit epoch = Mutation");
     CHECK(entry.prov.epoch != be || me == be, "AC1: audit epoch is not Bridge-primary");

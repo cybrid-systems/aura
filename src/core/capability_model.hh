@@ -13,6 +13,7 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -138,6 +139,16 @@ struct EffectAuditEntry {
     char op[40]{};
 };
 
+// Issue #2425: per-slot atomic publish so readers never observe a torn
+// multi-field EffectAuditEntry. Writer fills `data` then stores
+// publish_seq = entry.seq + 1 with release. Reader acquire-loads
+// publish_seq, copies data under audit_ring_mtx_, re-checks publish_seq
+// (double-check). 0 = never published / cleared.
+struct PublishedAuditSlot {
+    std::atomic<std::uint64_t> publish_seq{0};
+    EffectAuditEntry data{};
+};
+
 struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_effect_enforced_total{0};
     std::atomic<std::uint64_t> capability_effect_denied_total{0};
@@ -203,7 +214,13 @@ struct CapabilityRegistry {
     EffectSandboxMode sandbox_mode = EffectSandboxMode::Off;
     TenantId default_tenant = 0;
     static constexpr std::size_t kAuditRing = 128;
-    EffectAuditEntry audit_ring[kAuditRing]{};
+    // Issue #2425: published slots (data + atomic publish_seq).
+    // audit_ring_mtx_: exclusive for slot write / clear; shared for
+    // try_load_* so concurrent readers are TSAN-clean with writers.
+    // Global audit_seq is independent (fetch_add only); slot body uses
+    // the mutex + publish_seq release/acquire pair.
+    mutable std::shared_mutex audit_ring_mtx_;
+    PublishedAuditSlot audit_ring[kAuditRing]{};
     std::atomic<std::uint64_t> audit_seq{0};
     // Issue #2074: anti privilege-sticky — min mutation epoch a grant
     // must have been issued at to be considered valid. Grants with
@@ -402,20 +419,33 @@ struct CapabilityRegistry {
     // Issue #2388: private 128-slot ring + dual-write SecurityEvent/WAL so
     // wrap under deny storms remains forensically recoverable (ring 1024 + WAL).
     // reason_hint: optional Agent-stable reason (e.g. fiber-grant-mismatch).
+    //
+    // Issue #2425: build a full EffectAuditEntry locally, then under
+    // exclusive audit_ring_mtx_ store data and publish_seq (release).
+    // Readers use try_load_audit_* (shared lock + acquire double-check).
     void record_audit(Effect required, Effect actual, TenantId tenant, const EffectProvenance& prov,
                       bool denied, std::string_view op, const char* reason_hint = nullptr) {
-        const auto seq = audit_seq.fetch_add(1, std::memory_order_relaxed);
-        auto& slot = audit_ring[seq % kAuditRing];
-        slot.seq = seq;
-        slot.timestamp_ms = 0; // filled by caller if needed
-        slot.required = required;
-        slot.actual = actual;
-        slot.tenant_id = tenant;
-        slot.prov = prov;
-        slot.denied = denied;
-        const auto n = std::min(op.size(), sizeof(slot.op) - 1);
-        std::memcpy(slot.op, op.data(), n);
-        slot.op[n] = '\0';
+        // AC3: release on audit_seq increment pairs with acquire loads.
+        const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
+        EffectAuditEntry entry{};
+        entry.seq = seq;
+        entry.timestamp_ms = 0; // filled by caller if needed
+        entry.required = required;
+        entry.actual = actual;
+        entry.tenant_id = tenant;
+        entry.prov = prov;
+        entry.denied = denied;
+        const auto n = std::min(op.size(), sizeof(entry.op) - 1);
+        std::memcpy(entry.op, op.data(), n);
+        entry.op[n] = '\0';
+        {
+            std::unique_lock<std::shared_mutex> wlock(audit_ring_mtx_);
+            auto& slot = audit_ring[seq % kAuditRing];
+            slot.data = entry;
+            // Publish after full write: readers that observe this value
+            // (acquire) see a complete entry, never a mid-field mix.
+            slot.publish_seq.store(seq + 1, std::memory_order_release);
+        }
         g_capability_effect_metrics().capability_audit_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
 
@@ -445,6 +475,48 @@ struct CapabilityRegistry {
         }
         emit_security_event_durable(kind, tenant, mid, epoch, static_cast<std::uint16_t>(required),
                                     op, reason, denied, static_cast<std::int64_t>(prov.fiber_id));
+    }
+
+    // Issue #2425: acquire load of global audit_seq.
+    [[nodiscard]] std::uint64_t load_audit_seq() const noexcept {
+        return audit_seq.load(std::memory_order_acquire);
+    }
+
+    // Issue #2425: TSAN-clean snapshot of the slot that held `seq`
+    // (seq % kAuditRing). Returns false if never published, overwritten
+    // by a newer wrap, or publish_seq double-check fails.
+    [[nodiscard]] bool try_load_audit_seq(std::uint64_t seq, EffectAuditEntry& out) const noexcept {
+        const auto idx = seq % kAuditRing;
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            std::shared_lock<std::shared_mutex> rlock(audit_ring_mtx_);
+            const auto& slot = audit_ring[idx];
+            const auto pub = slot.publish_seq.load(std::memory_order_acquire);
+            if (pub == 0)
+                return false;
+            // Fully published marker is entry.seq + 1.
+            if (pub != seq + 1) {
+                // Slot reused by a different generation (ring wrap) or
+                // concurrent publish still settling — retry once more.
+                if (attempt + 1 < 8)
+                    continue;
+                return false;
+            }
+            out = slot.data;
+            const auto pub2 = slot.publish_seq.load(std::memory_order_acquire);
+            if (pub2 == pub && out.seq == seq)
+                return true;
+        }
+        return false;
+    }
+
+    // Issue #2425: load the most recently published entry (best-effort
+    // under concurrency / wrap). False when ring is empty.
+    [[nodiscard]] bool try_load_latest_audit(EffectAuditEntry& out) const noexcept {
+        const auto seq = load_audit_seq();
+        if (seq == 0)
+            return false;
+        // audit_seq is next-to-allocate; latest published is seq - 1.
+        return try_load_audit_seq(seq - 1, out);
     }
 
     // Issue #2023 / #2386: grant MacroSelfEvo effect + store policy limits.
@@ -538,7 +610,15 @@ struct CapabilityRegistry {
         by_tenant.clear();
         macro_self_evo_by_tenant.clear();
         sandbox_mode = EffectSandboxMode::Off;
-        audit_seq.store(0, std::memory_order_relaxed);
+        {
+            // Issue #2425: clear published slots under ring mutex.
+            std::unique_lock<std::shared_mutex> wlock(audit_ring_mtx_);
+            for (auto& slot : audit_ring) {
+                slot.data = EffectAuditEntry{};
+                slot.publish_seq.store(0, std::memory_order_relaxed);
+            }
+            audit_seq.store(0, std::memory_order_relaxed);
+        }
         grant_min_valid_epoch_.store(0, std::memory_order_relaxed);
         grant_epoch_retain_window_.store(0, std::memory_order_relaxed);
         hard_fiber_isolation_.store(false, std::memory_order_relaxed);
