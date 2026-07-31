@@ -3117,6 +3117,11 @@ aura_add_issue_test(test_capability_registry_snapshot_2426)
 aura_issue_test_link_llvm_jit(test_capability_registry_snapshot_2426)
 add_dependencies(all_test_issue_targets test_capability_registry_snapshot_2426)
 
+# Issue #2427: sandbox_mode / default_tenant atomic (policy flip race).
+aura_add_issue_test(test_sandbox_mode_atomic_2427)
+aura_issue_test_link_llvm_jit(test_sandbox_mode_atomic_2427)
+add_dependencies(all_test_issue_targets test_sandbox_mode_atomic_2427)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -3179,6 +3179,24 @@ def cmd_capability_registry_snapshot_coverage():
     return 0
 
 
+def cmd_sandbox_mode_atomic_coverage():
+    """Issue #2427: sandbox_mode (and default_tenant) atomic policy fields.
+
+    release/acquire stores/loads; audit stamps sandbox_mode at record time.
+    """
+    print(f"{B}=== sandbox_mode atomic coverage (#2427) ==={N}")
+    script = ROOT / "scripts" / "check_sandbox_mode_atomic_2427.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("sandbox_mode atomic (#2427) coverage contract rows failed")
+        return 1
+    ok("sandbox_mode atomic (#2427) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4127,6 +4145,7 @@ def cmd_gate():
         or cmd_subtree_dirty_bounds_coverage()
         or cmd_capability_audit_publish_coverage()
         or cmd_capability_registry_snapshot_coverage()
+        or cmd_sandbox_mode_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
