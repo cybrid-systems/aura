@@ -64,10 +64,11 @@ def main() -> int:
     must("sync_live_env_frame_refs_ownership", "AC3", mut)
     must("ac3_steal_wire", "AC3", test)
 
-    # AC4 densify
+    # AC4 densify (#2368: Phase 5 calls force_densify_remap_pairing which
+    # owns scan_live_env_frame_refs_after_densify)
     must("scan_live_env_frame_refs_after_densify", "AC4", env)
     must("sync_live_env_frame_refs_ownership", "AC4", env)
-    must("scan_live_env_frame_refs_after_densify", "AC4", emb)
+    must("force_densify_remap_pairing", "AC4", emb)
     must("ac4_densify_scan", "AC4", test)
 
     # AC5 query + hold-pin + gate
