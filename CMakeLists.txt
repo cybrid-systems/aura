@@ -2764,6 +2764,11 @@ aura_add_issue_test(test_type_system_health_2350)
 aura_issue_test_link_llvm_jit(test_type_system_health_2350)
 add_dependencies(all_test_issue_targets test_type_system_health_2350)
 
+# Issue #2379: query:mutation-concurrency-health single Agent score.
+aura_add_issue_test(test_mutation_concurrency_health_2379)
+aura_issue_test_link_llvm_jit(test_mutation_concurrency_health_2379)
+add_dependencies(all_test_issue_targets test_mutation_concurrency_health_2379)
+
 # Issue #2351: steal-complete LayoutStamp dual-check before resume.
 aura_add_issue_test(test_steal_layout_stamp_2351)
 aura_issue_test_link_llvm_jit(test_steal_layout_stamp_2351)

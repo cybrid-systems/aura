@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 526,
-  "frozen_count": 451,
+  "frozen_count": 452,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -246,6 +246,7 @@
     "query:mutation-boundary-log",
     "query:mutation-boundary-safe-yield",
     "query:mutation-boundary-safe-yield-stats",
+    "query:mutation-concurrency-health",
     "query:mutation-coordination-stats",
     "query:mutation-impact-snapshot",
     "query:mutation-log-compact-stats",
@@ -994,7 +995,7 @@
   ],
   "public_stats_via_add": 2,
   "schema": 2,
-  "stats_count": 428,
+  "stats_count": 429,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1222,6 +1223,7 @@
     "query:mutation-boundary-log",
     "query:mutation-boundary-safe-yield",
     "query:mutation-boundary-safe-yield-stats",
+    "query:mutation-concurrency-health",
     "query:mutation-coordination-stats",
     "query:mutation-impact-snapshot",
     "query:mutation-log-compact-stats",

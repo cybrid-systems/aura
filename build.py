@@ -2360,6 +2360,25 @@ def cmd_type_system_health_coverage():
     return 0
 
 
+def cmd_mutation_concurrency_health_coverage():
+    """Issue #2379: query:mutation-concurrency-health single Agent score.
+
+    Aggregates hold SLO, steal force-deopt, residual defer, densify fail,
+    mailbox starvation into health-bp + force-reason priority.
+    """
+    print(f"{B}=== mutation-concurrency-health coverage (#2379) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_concurrency_health_2379.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation-concurrency-health coverage contract rows failed")
+        return 1
+    ok("mutation-concurrency-health coverage clean")
+    return 0
+
+
 def cmd_steal_layout_stamp_coverage():
     """Issue #2351: steal-complete LayoutStamp dual-check before resume.
 
@@ -3134,6 +3153,7 @@ def cmd_gate():
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_type_system_health_coverage()
+        or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
