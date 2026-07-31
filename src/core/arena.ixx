@@ -768,6 +768,8 @@ public:
         return std::move(on_compact_hook_);
     }
     [[nodiscard]] bool has_on_compact_hook() const noexcept {
+        // Issue #2382: observe under hook_mtx_ (same as set/take / invoke copy).
+        std::lock_guard<std::mutex> lock(hook_mtx_);
         return static_cast<bool>(on_compact_hook_);
     }
 
@@ -853,6 +855,27 @@ public:
     }
 
     ~ASTArena() {
+        // Issue #2382: clear installed hooks under their mutexes BEFORE
+        // run_destructors() / member teardown. Concurrent invoke_*_ paths
+        // copy under the same locks and early-return when empty, so they
+        // never fire lambdas that capture caller-side Evaluator /
+        // CompilerService state after this arena begins dying. Lock release
+        // is a release barrier for observers of the cleared std::function.
+        //
+        // Contract: callers should not destroy an arena mid-live_compact;
+        // this is safe-side hardening for uninstall-on-dtor (cheap).
+        {
+            std::lock_guard<std::mutex> lock(hook_mtx_);
+            on_compact_hook_ = nullptr;
+        }
+        {
+            std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
+            on_layout_change_ = nullptr;
+        }
+        {
+            std::lock_guard<std::mutex> lock(root_remap_mtx_);
+            root_remap_ = nullptr;
+        }
         // Call all registered destructors in reverse construction
         // order so each T's owned resources (pmr vector fallback
         // chunks, heap-allocated children) are released BEFORE the
