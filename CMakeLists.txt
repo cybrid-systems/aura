@@ -2061,6 +2061,10 @@ add_dependencies(all_test_issue_targets test_jit_macro_introduced_preserve)
 aura_add_issue_test(test_macro_self_evo_capability)
 aura_issue_test_link_llvm_jit(test_macro_self_evo_capability)
 add_dependencies(all_test_issue_targets test_macro_self_evo_capability)
+# Issue #2386: grant_macro_self_evo stamps grant_epoch + grant_fiber_id (#2055 parity).
+aura_add_issue_test(test_grant_macro_self_evo_stamp_2386)
+aura_issue_test_link_llvm_jit(test_grant_macro_self_evo_stamp_2386)
+add_dependencies(all_test_issue_targets test_grant_macro_self_evo_stamp_2386)
 
 # Issue #2024: occurrence narrowing provenance chain completeness.
 aura_add_issue_test(test_occurrence_provenance_chain_completeness)

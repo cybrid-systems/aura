@@ -134,12 +134,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                                           : ev.capability_tenant_id();
         const auto& name = ev.string_heap_[sidx];
         ev.grant_effect_capability(tenant, name, bits, 0);
-        // Issue #2023: MacroSelfEvo bit / name seeds default policy limits.
+        // Issue #2023 / #2386: MacroSelfEvo bit / name seeds default policy
+        // limits + stamps grant_epoch / fiber via make_grant_provenance.
         if ((bits & aura::compiler::security::kEffectMacroSelfEvo) != 0 ||
             name == "macro-self-evo" || name == "MacroSelfEvo") {
+            using aura::core::capability::effect_fiber_id_or;
             using aura::core::capability::g_capability_registry;
             using aura::core::capability::MacroSelfEvoPolicy;
-            g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{});
+            using aura::core::capability::make_grant_provenance;
+            const auto fiber =
+                effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+            const bool force_bind = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
+            auto prov = make_grant_provenance(/*mid=*/0, force_bind, /*node=*/0, fiber);
+            g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov);
         }
         return make_bool(true);
     });

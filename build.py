@@ -1976,6 +1976,24 @@ def cmd_restricted_unset_principal_coverage():
     return 0
 
 
+def cmd_grant_macro_self_evo_stamp_coverage():
+    """Issue #2386: grant_macro_self_evo stamps grant_epoch + fiber (#2055).
+
+    Macro self-evo grants participate in epoch fence + hard fiber isolation.
+    """
+    print(f"{B}=== grant_macro_self_evo stamp coverage (#2386) ==={N}")
+    script = ROOT / "scripts" / "check_grant_macro_self_evo_stamp_2386.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("grant_macro_self_evo stamp (#2386) coverage contract rows failed")
+        return 1
+    ok("grant_macro_self_evo stamp (#2386) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3326,6 +3344,7 @@ def cmd_gate():
         or cmd_has_on_compact_hook_lock_coverage()
         or cmd_require_effect_live_mid_coverage()
         or cmd_restricted_unset_principal_coverage()
+        or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
