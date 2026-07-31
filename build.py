@@ -2455,6 +2455,25 @@ def cmd_general_object_pin_adopt_coverage():
     return 0
 
 
+def cmd_panic_defer_after_densify_coverage():
+    """Issue #2364: PanicCheckpoint residual × densify closed loop.
+
+    Post-densify audit: re-arm if CP live, force-clear residual if CP gone;
+    Soft free; AURA_PANIC_CONTRACT=hard fail-closed.
+    """
+    print(f"{B}=== panic defer after densify coverage (#2364) ==={N}")
+    script = ROOT / "scripts" / "check_panic_defer_after_densify_2364.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("panic defer after densify (#2364) coverage contract rows failed")
+        return 1
+    ok("panic defer after densify (#2364) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2854,6 +2873,7 @@ def cmd_gate():
         or cmd_densify_envframe_ok_coverage()
         or cmd_envframe_ownership_steal_densify_coverage()
         or cmd_general_object_pin_adopt_coverage()
+        or cmd_panic_defer_after_densify_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

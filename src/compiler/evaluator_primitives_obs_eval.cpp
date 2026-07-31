@@ -5742,7 +5742,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // ~50 fields (#2040 + #2120 + #2121) + 9 histogram buckets
-                auto* ht = FlatHashTable::create(128);
+                // + #2211/#2269/#2296/#2314/#2364 residual/panic densify keys.
+                auto* ht = FlatHashTable::create(256);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -6002,6 +6003,26 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"force-clear-all-gc-defer-wired", make_int(1)},
                 {"schema-2296", make_int(2296)},
                 {"issue-2296", make_int(2296)},
+                // Issue #2364: PanicCheckpoint residual × densify closed loop.
+                {"panic-defer-after-densify-total",
+                 make_int(m ? load(m->panic_defer_after_densify_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::panic_defer_after_densify_total()))},
+                {"panic-defer-after-densify-cleared-total",
+                 make_int(m ? load(m->panic_defer_after_densify_cleared_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::panic_defer_after_densify_cleared_total()))},
+                {"panic-defer-after-densify-rearmed-total",
+                 make_int(m ? load(m->panic_defer_after_densify_rearmed_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::panic_defer_after_densify_rearmed_total()))},
+                {"panic-defer-after-densify-hard-fail-total",
+                 make_int(m ? load(m->panic_defer_after_densify_hard_fail_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::panic_defer_after_densify_hard_fail_total()))},
+                {"panic-defer-after-densify-wired", make_int(1)},
+                {"schema-2364", make_int(2364)},
+                {"issue-2364", make_int(2364)},
                 {"schema-2211", make_int(2211)},
                 {"issue-2211", make_int(2211)},
                 // Issue #2215: RenderFastExit (outermost success under render hotpath).
