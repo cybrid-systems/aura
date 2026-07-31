@@ -1938,6 +1938,25 @@ def cmd_has_on_compact_hook_lock_coverage():
     return 0
 
 
+def cmd_require_effect_live_mid_coverage():
+    """Issue #2384: require_effect stamps live mutation_id (not hardcode 0).
+
+    Bound-grant mismatch denies + provenance_mismatch metric; match allows;
+    SecurityEvent mid non-zero; Off sandbox still allows.
+    """
+    print(f"{B}=== require_effect live mid coverage (#2384) ==={N}")
+    script = ROOT / "scripts" / "check_require_effect_live_mid_2384.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("require_effect live mid (#2384) coverage contract rows failed")
+        return 1
+    ok("require_effect live mid (#2384) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3286,6 +3305,7 @@ def cmd_gate():
         or cmd_arena_compact_hook_stats_coverage()
         or cmd_arena_dtor_clears_hooks_coverage()
         or cmd_has_on_compact_hook_lock_coverage()
+        or cmd_require_effect_live_mid_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

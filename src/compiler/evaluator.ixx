@@ -5699,9 +5699,11 @@ public:
                                                std::string_view op, ast::NodeId target_node = 0,
                                                std::uint64_t tenant_id = 0,
                                                std::uint64_t provenance_mutation_id = 0) noexcept;
-    // Issue #2072: single production entry for new side-effect paths.
+    // Issue #2072 / #2384: single production entry for new side-effect paths.
     // Wraps check_and_record_effect with standard args (required = actual,
-    // tenant = capability_tenant_id_, provenance = active mutation id).
+    // tenant = capability_tenant_id_). Issue #2384: stamps live provenance
+    // mutation id (host stamp / Mutation epoch / non-zero join) — never 0 —
+    // so bound grants + SecurityEvent correlation work on require_effect.
     // All new FFI / network / exec / render / hotpath entry points MUST
     // go through require_effect (not call check_and_record_effect directly)
     // so the audit ring + capability metrics surface stays consistent.
