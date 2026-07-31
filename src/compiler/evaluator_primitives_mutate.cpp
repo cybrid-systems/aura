@@ -155,6 +155,34 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t reemit_deferred_seen_on_steal_last_fiber_id;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
+
+// Issue #2367: ReloadRecovery agent snapshot (C ABI; no HotUpdateRegistry
+// class attach on module partitions — #1956 link discipline).
+struct aura_reload_recovery_snapshot {
+    std::int64_t schema;
+    std::int64_t issue;
+    std::int64_t attempts_left;
+    std::int64_t force_jit_regions_mask;
+    std::int64_t last_reason;
+    std::int64_t pending_dirty_count;
+    std::int64_t deferred_reemit_pending;
+    std::int64_t storm_level;
+    std::int64_t reemit_boundary_policy;
+    std::int64_t emit_region_mask;
+    std::int64_t critical_region_mask;
+    std::int64_t storm_isolation_mode;
+    std::int64_t deopt_storm_region_last_id;
+    std::int64_t deopt_storm_region_detected_total;
+    std::int64_t hard_storm_active;
+    std::int64_t reemit_deferred_pending_boundary;
+    std::int64_t last_force_jit_reason;
+    std::int64_t force_jit_for_reason_total;
+    std::int64_t last_force_jit_at_epoch_notify;
+    std::int64_t epoch_notify_total;
+    std::int64_t recovery_active;
+    std::int64_t reload_recovery_wired;
+};
+void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 }
 
 namespace aura::compiler::primitives_detail {
@@ -6696,7 +6724,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "query:hot-update-registry-stats", [&ev](const auto&) -> EvalValue {
             aura_hot_update_registry_snapshot snap{};
             aura_hot_update_registry_get_snapshot(&snap);
-            auto* ht = FlatHashTable::create(128); // #2035 cascade dirty keys
+            // #2035 cascade + #2367 recovery keys — room for ~90 inserts.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6869,10 +6898,115 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("storm-isolation-per-region-default-wired", 1);
             insert_kv("schema-2274", 2274);
             insert_kv("issue-2274", 2274);
+            // Issue #2367: cross-link ReloadRecovery keys on the existing
+            // hot-update surface (agents that already poll this query get
+            // schema lineage without switching primitives). Full snapshot
+            // lives on query:reload-recovery-state.
+            {
+                aura_reload_recovery_snapshot rs{};
+                aura_hot_update_reload_recovery_get_snapshot(&rs);
+                insert_kv("attempts-left", rs.attempts_left);
+                insert_kv("force-jit-regions-mask", rs.force_jit_regions_mask);
+                insert_kv("reload-recovery-last-reason", rs.last_reason);
+                insert_kv("pending-dirty-count", rs.pending_dirty_count);
+                insert_kv("reload-recovery-deferred-reemit-pending", rs.deferred_reemit_pending);
+                insert_kv("last-force-jit-reason", rs.last_force_jit_reason);
+                insert_kv("force-jit-for-reason-total", rs.force_jit_for_reason_total);
+                insert_kv("last-force-jit-at-epoch-notify", rs.last_force_jit_at_epoch_notify);
+                insert_kv("recovery-active", rs.recovery_active);
+                insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
+                insert_kv("schema-2367", 2367);
+                insert_kv("issue-2367", 2367);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // ── Issue #2367: query:reload-recovery-state ──
+    // First-class agent surface for ReloadRecoveryState + StormLevel +
+    // ReemitBoundaryPolicy + region masks + last force-JIT reason/epoch.
+    // Additive / zero-cost when idle (relaxed atomic snapshot only).
+    // Alias note: early #2302 comments mentioned query:aot-reload-recovery-stats
+    // — both names register to the same snapshot builder.
+    {
+        auto reload_recovery_builder = [&ev](const auto&) -> EvalValue {
+            aura_reload_recovery_snapshot rs{};
+            aura_hot_update_reload_recovery_get_snapshot(&rs);
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", rs.schema);
+            insert_kv("issue", rs.issue);
+            insert_kv("schema-2367", 2367);
+            insert_kv("issue-2367", 2367);
+            insert_kv("schema-2302", 2302);
+            insert_kv("issue-2302", 2302);
+            // ReloadRecoveryState 5-field core
+            insert_kv("attempts-left", rs.attempts_left);
+            insert_kv("force-jit-regions-mask", rs.force_jit_regions_mask);
+            insert_kv("last-reason", rs.last_reason);
+            insert_kv("pending-dirty-count", rs.pending_dirty_count);
+            insert_kv("deferred-reemit-pending", rs.deferred_reemit_pending);
+            // Storm / policy / regions
+            insert_kv("storm-level", rs.storm_level);
+            insert_kv("reemit-boundary-policy", rs.reemit_boundary_policy);
+            insert_kv("emit-region-mask", rs.emit_region_mask);
+            insert_kv("critical-region-mask", rs.critical_region_mask);
+            insert_kv("storm-isolation-mode", rs.storm_isolation_mode);
+            insert_kv("deopt-storm-region-last-id", rs.deopt_storm_region_last_id);
+            insert_kv("deopt-storm-region-detected-total", rs.deopt_storm_region_detected_total);
+            insert_kv("hard-storm-active", rs.hard_storm_active);
+            insert_kv("reemit-deferred-pending-boundary", rs.reemit_deferred_pending_boundary);
+            // Force-JIT fall-back + epoch correlation
+            insert_kv("last-force-jit-reason", rs.last_force_jit_reason);
+            insert_kv("force-jit-for-reason-total", rs.force_jit_for_reason_total);
+            insert_kv("last-force-jit-at-epoch-notify", rs.last_force_jit_at_epoch_notify);
+            insert_kv("epoch-notify-total", rs.epoch_notify_total);
+            insert_kv("recovery-active", rs.recovery_active);
+            insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
+            // Policy enum sentinels (docs)
+            insert_kv("storm-level-none", 0);
+            insert_kv("storm-level-shape", 1);
+            insert_kv("storm-level-global", 2);
+            insert_kv("storm-level-both", 3);
+            insert_kv("reemit-policy-soft-enter", 0);
+            insert_kv("reemit-policy-defer", 1);
+            insert_kv("reemit-policy-require-real", 2);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        ObservabilityPrims::register_stats_impl("query:reload-recovery-state",
+                                                reload_recovery_builder);
+        // Historical name from #2302 comments — same builder.
+        ObservabilityPrims::register_stats_impl("query:aot-reload-recovery-stats",
+                                                reload_recovery_builder);
+    }
 
     // ── Issue #1882: query:aot-hotupdate-audit-stats ──
     // Dedicated AOT hot-update TypedMutationAudit surface (sampled success,
