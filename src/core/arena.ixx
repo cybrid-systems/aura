@@ -768,7 +768,10 @@ public:
         return std::move(on_compact_hook_);
     }
     [[nodiscard]] bool has_on_compact_hook() const noexcept {
-        // Issue #2382: observe under hook_mtx_ (same as set/take / invoke copy).
+        // Issue #2383 / #2382: observe under hook_mtx_ — same lock pattern as
+        // has_on_layout_change / has_root_remap_callback (set/take/invoke copy).
+        // Unsynchronized operator bool on std::function is a TSAN data race
+        // against concurrent set_on_compact_hook.
         std::lock_guard<std::mutex> lock(hook_mtx_);
         return static_cast<bool>(on_compact_hook_);
     }
