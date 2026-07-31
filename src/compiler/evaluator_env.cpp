@@ -1344,7 +1344,12 @@ std::optional<EnvFrameRef> Evaluator::materialize_call_env_ref(const Closure& cl
     // "stamp-fence + frame-alive" check; if the caller needs
     // the full materialization, they should call
     // materialize_call_env directly.
-    return EnvFrameRef(cl.env_id, fr.env_gen_stamp_);
+    // Issue #2360: register a held copy so densify/steal can
+    // restamp or drop (caller's stack copy remains fail-closed
+    // via use_site_check if not re-materialized).
+    EnvFrameRef ref(cl.env_id, fr.env_gen_stamp_);
+    (void)register_live_env_frame_ref(ref);
+    return ref;
 }
 
 // Issue #1545 / #1606: walk tree-walker live closures_ under unique lock so
@@ -2474,6 +2479,9 @@ std::optional<EnvFrameRef> Evaluator::lookup_by_symid_chain_ref(EnvId start,
         }
         return true; // continue walking
     });
+    // Issue #2360: track the held lookup Ref for densify/steal.
+    if (result.has_value())
+        (void)register_live_env_frame_ref(*result);
     return result;
 }
 
@@ -2563,41 +2571,98 @@ void EnvFrameRef::drop(Evaluator& ev) noexcept {
                                                     /*only_if_moved=*/true);
 }
 
-// Issue #2340: live_env_frame_refs() — snapshot of live EnvFrameRefs
-// the evaluator is tracking (those that could point into a densified
-// address set after Moving success in live_compact / Phase 5). Today
-// returns an empty vector — production tracking across
-// materialize_call_env_ref / lookup_by_symid_chain_ref is a follow-up
-// (per #2340 close comment). The hook exists so the densify success
-// wire-up has a stable iteration target.
-std::vector<EnvFrameRef*> Evaluator::live_env_frame_refs() noexcept {
-    return {};
+// Issue #2360 / #2362: production live EnvFrameRef set.
+// register stores a stable slot; densify + steal iterate and
+// transfer_to / drop under sync_live_env_frame_refs_ownership.
+EnvFrameRef* Evaluator::register_live_env_frame_ref(EnvFrameRef ref) const noexcept {
+    if (!ref.has_ownership())
+        return nullptr;
+    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    // Bounded retention (mirrors cow_boundary_pinned_refs_ drop-oldest).
+    if (live_env_frame_ref_slots_.size() >= kMaxLiveEnvFrameRefs)
+        live_env_frame_ref_slots_.pop_front();
+    live_env_frame_ref_slots_.push_back(ref);
+    return &live_env_frame_ref_slots_.back();
 }
 
-// Issue #2340: scan_live_env_frame_refs_after_densify — post-densify
-// ownership-exit scan. Iterates live_env_frame_refs() and calls
-// transfer_to / drop on refs that point into a densified set (per
-// EnvFrameRef::transfer_to / drop). Today the iteration is a no-op
-// (empty live_env_frame_refs() stub); the site counter still bumps
-// via bump_envframe_lifetime_densify_ownership_scan_total() so
-// observability can verify the scan is running at the densify
-// success site. The full per-ref transfer / drop is a follow-up
-// paired with the production live-refs tracking.
-//
-// AC3 happy path: when live_env_frame_refs() is empty (today's
-// production reality), the iteration cost is just one empty-vector
-// iterate + one atomic bump — no transfer / drop atomics touched.
-void Evaluator::scan_live_env_frame_refs_after_densify() noexcept {
-    auto refs = live_env_frame_refs();
-    for (EnvFrameRef* r : refs) {
-        if (!r)
-            continue;
-        // Production logic (follow-up): if r->points_into_densified_set(old_addrs):
-        //   EnvFrameRef restamped{};
-        //   r->transfer_to(*this, restamped); // or r->drop(*this);
-        // For now: no live refs to scan — counter still bumps.
-        (void)r;
+void Evaluator::unregister_live_env_frame_ref(EnvFrameRef* p) const noexcept {
+    if (!p)
+        return;
+    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    for (auto it = live_env_frame_ref_slots_.begin(); it != live_env_frame_ref_slots_.end(); ++it) {
+        if (&*it == p) {
+            live_env_frame_ref_slots_.erase(it);
+            return;
+        }
     }
+}
+
+EnvFrameRef* Evaluator::inject_live_env_frame_ref_for_test(EnvFrameRef ref) noexcept {
+    return register_live_env_frame_ref(ref);
+}
+
+std::size_t Evaluator::live_env_frame_ref_count() const noexcept {
+    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::size_t n = 0;
+    for (const auto& r : live_env_frame_ref_slots_) {
+        if (r.has_ownership())
+            ++n;
+    }
+    return n;
+}
+
+std::vector<EnvFrameRef*> Evaluator::live_env_frame_refs() noexcept {
+    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    std::vector<EnvFrameRef*> out;
+    out.reserve(live_env_frame_ref_slots_.size());
+    for (auto& r : live_env_frame_ref_slots_) {
+        if (r.has_ownership())
+            out.push_back(&r);
+    }
+    return out;
+}
+
+// Issue #2362: shared densify + fiber-steal ownership protocol.
+//   - empty live set → return immediately (Soft / no-hold free)
+//   - still_valid → no-op (no transfer/drop atomics)
+//   - OOB / reclaimed → drop
+//   - generation advanced (in-range, stamp lag) → transfer_to restamp
+//
+// Holds live_env_frame_refs_mtx_ for the whole pass so concurrent
+// register cannot pop_front a slot under our feet. transfer_to/drop
+// must not re-enter this mutex (leaf lock; they only touch metrics +
+// dual-path / linear scan).
+void Evaluator::sync_live_env_frame_refs_ownership() noexcept {
+    std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+    if (live_env_frame_ref_slots_.empty())
+        return; // Soft / no-hold: free
+    for (auto& r : live_env_frame_ref_slots_) {
+        if (!r.has_ownership())
+            continue;
+        if (r.still_valid(*this))
+            continue; // already clean at current gen
+        // Not valid: OOB/reclaimed or gen advanced.
+        // transfer_to: OOB → drop; in-range → restamp into dst.
+        EnvFrameRef restamped;
+        r.transfer_to(*this, restamped);
+        r = restamped; // invalid if dropped; restamped if transferred
+    }
+    // Prune empty slots (post-drop).
+    auto it = live_env_frame_ref_slots_.begin();
+    while (it != live_env_frame_ref_slots_.end()) {
+        if (!it->has_ownership())
+            it = live_env_frame_ref_slots_.erase(it);
+        else
+            ++it;
+    }
+}
+
+// Issue #2340 / #2360 / #2362: post-densify ownership-exit scan.
+// Real transfer/drop via sync_live_env_frame_refs_ownership; always
+// bumps densify_ownership_scan_total so observability sees the site.
+// Soft / empty set: empty early-out + one atomic.
+void Evaluator::scan_live_env_frame_refs_after_densify() noexcept {
+    sync_live_env_frame_refs_ownership();
     aura::core::envframe_lifetime::bump_envframe_lifetime_densify_ownership_scan_total();
 }
 

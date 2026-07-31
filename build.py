@@ -2417,6 +2417,25 @@ def cmd_densify_envframe_ok_coverage():
     return 0
 
 
+def cmd_envframe_ownership_steal_densify_coverage():
+    """Issue #2362: EnvFrameRef ownership under fiber steal + densify.
+
+    Production live set (#2360) + transfer_to/drop on steal and densify
+    boundaries. Soft/empty set free. Hold-pin Guard retained.
+    """
+    print(f"{B}=== envframe ownership steal+densify coverage (#2362) ==={N}")
+    script = ROOT / "scripts" / "check_envframe_ownership_steal_densify_2362.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("envframe ownership steal+densify (#2362) coverage contract rows failed")
+        return 1
+    ok("envframe ownership steal+densify (#2362) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2814,6 +2833,7 @@ def cmd_gate():
         or cmd_castop_density_hard_coverage()
         or cmd_memo_goal_epoch_health_coverage()
         or cmd_densify_envframe_ok_coverage()
+        or cmd_envframe_ownership_steal_densify_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

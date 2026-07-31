@@ -3658,24 +3658,30 @@ public:
     // bindings. Bumps env_gen_use_site_reject_total on
     // stamp-mismatch / OOB / NULL.
     [[nodiscard]] std::optional<EnvFrameRef> materialize_call_env_ref(const Closure& cl);
-    // Issue #2340: post-densify ownership-exit scan hook. Returns the
-    // current snapshot of live EnvFrameRefs that the evaluator is
-    // tracking (those that could point into a densified address set
-    // after Moving success in live_compact / Phase 5). Today this
-    // returns an empty vector (production tracking of live refs across
-    // materialize_call_env_ref / lookup_by_symid_chain_ref is a
-    // follow-up — see #2340 close comment). The hook exists so that
-    // wire-up at the CompactSweep helper has a stable iteration target.
+    // Issue #2340 / #2360 / #2362: production live EnvFrameRef set.
+    // Snapshot of held EnvFrameRef* slots that participate in densify
+    // + fiber-steal ownership protocol (transfer_to restamp / drop).
+    // Empty when nothing is registered (Soft / no-hold → zero extra work).
     [[nodiscard]] std::vector<EnvFrameRef*> live_env_frame_refs() noexcept;
-    // Issue #2340: scan_live_env_frame_refs_after_densify — runs the
-    // post-densify ownership-exit scan. Iterates live_env_frame_refs(),
-    // transfers / drops refs that point into a densified set (per
-    // EnvFrameRef::transfer_to / drop), and bumps
-    // densify_ownership_scan_total via
-    // bump_envframe_lifetime_densify_ownership_scan_total(). For now
-    // the iteration is a no-op (empty live_env_frame_refs() stub);
-    // the counter bumps so observability can verify the scan is
-    // running at the densify success site.
+    // Register a held EnvFrameRef for densify/steal ownership protocol.
+    // Stores a stable slot (deque) and returns a pointer into it; null
+    // when ref has no ownership. Bounded retention (drop-oldest).
+    // materialize_call_env_ref / lookup_by_symid_chain_ref auto-register.
+    // const: live set is observational bookkeeping (mutable slots).
+    [[nodiscard]] EnvFrameRef* register_live_env_frame_ref(EnvFrameRef ref) const noexcept;
+    // Remove a previously registered slot (no drop metric; just untrack).
+    void unregister_live_env_frame_ref(EnvFrameRef* p) const noexcept;
+    // Test inject alias of register (explicit hold across steal/densify).
+    [[nodiscard]] EnvFrameRef* inject_live_env_frame_ref_for_test(EnvFrameRef ref) noexcept;
+    [[nodiscard]] std::size_t live_env_frame_ref_count() const noexcept;
+    // Issue #2362: shared ownership protocol for densify + fiber steal.
+    // For each live ref: OOB/reclaimed → drop; generation advanced →
+    // transfer_to restamp; still_valid → no-op. Soft/empty set free.
+    void sync_live_env_frame_refs_ownership() noexcept;
+    // Issue #2340 / #2360 / #2362: post-densify ownership-exit scan.
+    // Runs sync_live_env_frame_refs_ownership + bumps
+    // densify_ownership_scan_total. Soft empty set → empty iterate +
+    // one atomic only.
     void scan_live_env_frame_refs_after_densify() noexcept;
     // Issue #242: detect a stale EnvFrame (one whose `version_`
     // snapshot is older than the current `defuse_version_`). A
@@ -4464,6 +4470,16 @@ public:
     // always take closures_mtx_ FIRST, then env_frames_mtx_
     // (see closures_mtx_ comment). Solo env_frames acquires OK.
     mutable std::shared_mutex env_frames_mtx_;
+    // Issue #2360 / #2362: live EnvFrameRef ownership slots for
+    // densify + fiber-steal transfer_to / drop protocol. deque so
+    // push_back does not invalidate pointers to existing slots
+    // returned by register_live_env_frame_ref. Mutex is leaf-level
+    // (acquire only after env_frames_mtx_ if both are needed; densify
+    // / steal paths take this alone after dual-epoch refresh).
+    // mutable: register from const lookup paths (observational set).
+    mutable std::deque<EnvFrameRef> live_env_frame_ref_slots_;
+    mutable std::mutex live_env_frame_refs_mtx_;
+    static constexpr std::size_t kMaxLiveEnvFrameRefs = 4096;
     // Issue #206: pair remap table. Rebuilt by compact_pairs().
     // pair_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
     // Empty means no compact has happened yet (identity mapping).

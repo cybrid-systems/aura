@@ -1753,6 +1753,11 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
 
     // 2) EnvFrame dual-epoch refresh under resume hints.
     const auto refreshed = refresh_stale_frames_after_steal(hint_env, expected_epoch);
+    // Issue #2362: close EnvFrameRef ownership across fiber steal —
+    // iterate production live set; OOB → drop, gen advanced → transfer_to
+    // restamp. Empty set (Soft / no-hold) is free. Runs after dual-epoch
+    // refresh so stamps compare against post-steal env_generation.
+    sync_live_env_frame_refs_ownership();
     // 4a) Linear probe/repin (before pin restamp for ownership probes).
     probe_and_repin_linear_on_steal();
 

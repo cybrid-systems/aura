@@ -6445,6 +6445,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("envframe-ownership-drop-wired", 1);
             insert_kv("schema-2295", 2295);
             insert_kv("issue-2295", 2295);
+            // Issue #2360 / #2362: live EnvFrameRef set + densify/steal
+            // ownership protocol (transfer_to restamp / drop). Soft /
+            // empty set free; count is held slots with ownership.
+            insert_kv("live-env-frame-refs-count",
+                      static_cast<std::int64_t>(ev.live_env_frame_ref_count()));
+            insert_kv("live_env_frame_refs_count",
+                      static_cast<std::int64_t>(ev.live_env_frame_ref_count()));
+            insert_kv("live-env-frame-refs-wired", 1);
+            insert_kv("envframe-ownership-protocol-steal-wired", 1);
+            insert_kv("envframe-ownership-protocol-densify-wired", 1);
+            insert_kv("schema-2360", 2360);
+            insert_kv("issue-2360", 2360);
+            insert_kv("schema-2362", 2362);
+            insert_kv("issue-2362", 2362);
             // Issue #2340: post-densify ownership-exit scan counter.
             // Distinct from `scans_run` (Guard dtor mandatory scan) —
             // counts explicit per-call-site densify scans wired at the
