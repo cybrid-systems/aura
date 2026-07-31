@@ -2512,6 +2512,25 @@ def cmd_epoch_invariant_walk_coverage():
     return 0
 
 
+def cmd_reload_recovery_query_coverage():
+    """Issue #2367: ReloadRecovery query primitive + recovery-state snapshot.
+
+    query:reload-recovery-state (+ alias) surfaces ReloadRecoveryState,
+    StormLevel, region masks, reemit policy, last force-JIT reason/epoch.
+    """
+    print(f"{B}=== reload recovery query coverage (#2367) ==={N}")
+    script = ROOT / "scripts" / "check_reload_recovery_query_2367.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reload recovery query (#2367) coverage contract rows failed")
+        return 1
+    ok("reload recovery query (#2367) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2914,6 +2933,7 @@ def cmd_gate():
         or cmd_panic_defer_after_densify_coverage()
         or cmd_densify_root_closure_closed_loop_coverage()
         or cmd_epoch_invariant_walk_coverage()
+        or cmd_reload_recovery_query_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

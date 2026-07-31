@@ -469,6 +469,9 @@ private:
     //   the registry only sees post-clear state (cleaner Agent diffs).
     std::atomic<std::uint64_t> force_jit_for_reason_total_{0};
     std::atomic<std::uint8_t> last_force_jit_reason_{0};
+    // Issue #2367: epoch_notify_ counter snapshot at last force-JIT
+    // (agents correlate recovery reason with epoch fan-out progress).
+    std::atomic<std::uint64_t> last_force_jit_at_epoch_notify_{0};
 
     // Issue #2302: unified ReloadRecovery state machine atomics.
     //   attempts_left_: retry budget remaining for the current
@@ -597,6 +600,16 @@ private:
 
 public:
     [[nodiscard]] ReloadRecoveryState reload_recovery_state() const noexcept;
+    // Issue #2367: force-JIT observability (paired with recovery query).
+    [[nodiscard]] std::uint64_t force_jit_for_reason_total() const noexcept {
+        return force_jit_for_reason_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint8_t last_force_jit_reason() const noexcept {
+        return last_force_jit_reason_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t last_force_jit_at_epoch_notify() const noexcept {
+        return last_force_jit_at_epoch_notify_.load(std::memory_order_relaxed);
+    }
     // Agent-facing API: increment / decrement pending dirty count.
     // Used by Agents that maintain their own dirty-set overlay and
     // want to publish the size via the unified recovery state.
@@ -744,6 +757,42 @@ void aura_hot_update_on_reemit_throttled(void);
 // so external callers can branch on a single recovery-policy value.
 // Result mapping (uint8_t): 0=None, 1=Shape, 2=Global, 3=Both.
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+
+// Issue #2367: agent-facing ReloadRecovery snapshot (C ABI).
+// Module partitions cannot attach HotUpdateRegistry — use this
+// instead of calling reload_recovery_state() from evaluator TUs.
+// Zero-cost when idle: pure relaxed atomic loads, no allocation.
+struct aura_reload_recovery_snapshot {
+    std::int64_t schema; // 2367
+    std::int64_t issue;  // 2367
+    // ReloadRecoveryState (Issue #2302)
+    std::int64_t attempts_left;
+    std::int64_t force_jit_regions_mask;
+    std::int64_t last_reason; // AotReloadFail enum
+    std::int64_t pending_dirty_count;
+    std::int64_t deferred_reemit_pending; // recovery v2 flag
+    // Storm / policy / region context
+    std::int64_t storm_level;            // StormLevel bitmask
+    std::int64_t reemit_boundary_policy; // ReemitBoundaryPolicy
+    std::int64_t emit_region_mask;
+    std::int64_t critical_region_mask;
+    std::int64_t storm_isolation_mode;
+    std::int64_t deopt_storm_region_last_id;
+    std::int64_t deopt_storm_region_detected_total;
+    std::int64_t hard_storm_active;
+    std::int64_t reemit_deferred_pending_boundary; // #2114 handshake flag
+    // Force-JIT / fall-back reason + epoch correlation
+    std::int64_t last_force_jit_reason;
+    std::int64_t force_jit_for_reason_total;
+    std::int64_t last_force_jit_at_epoch_notify;
+    std::int64_t epoch_notify_total;
+    // recovery-active: 1 when any non-idle recovery signal is set
+    // (force-jit mask, attempts_left, pending dirty, deferred reemit,
+    // storm_level != None). Soft empty path → 0.
+    std::int64_t recovery_active;
+    std::int64_t reload_recovery_wired; // always 1 when linked
+};
+void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 
 // Issue #2094: setter for ShapeProfiler (or tests) to publish its
 // deopt_storm_active state without needing to import shape_profiler.h.

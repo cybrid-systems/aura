@@ -617,6 +617,18 @@ aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out) {
     std::memset(out, 0, sizeof(*out));
 }
 
+// Issue #2367: weak no-op ReloadRecovery snapshot for light bundles.
+extern "C" __attribute__((weak)) void
+aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out) {
+    if (!out)
+        return;
+    std::memset(out, 0, sizeof(*out));
+    out->schema = 2367;
+    out->issue = 2367;
+    // reload_recovery_wired stays 0 in the weak stub so agents can
+    // distinguish light-link from production registry linkage.
+}
+
 // Issue #2014: weak no-ops when hot_update_registry.cpp is not linked.
 extern "C" __attribute__((weak)) void aura_hot_update_note_deopt(void) {}
 extern "C" __attribute__((weak)) int aura_hot_update_should_throttle_reemit(void) {

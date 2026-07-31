@@ -129,9 +129,13 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     // invalidation is deferred; counters make the decision observable.
     force_jit_for_reason_total_.fetch_add(1, std::memory_order_relaxed);
     last_force_jit_reason_.store(static_cast<std::uint8_t>(reason), std::memory_order_release);
+    // Issue #2367: stamp epoch_notify_ progress at fall-back so agents
+    // can correlate force-JIT reason with the last recovery epoch.
+    last_force_jit_at_epoch_notify_.store(epoch_notify_.load(std::memory_order_relaxed),
+                                          std::memory_order_relaxed);
     // Issue #2302: set the force_jit_regions_mask bit for this reason
     // (bit N = reason N in the AotReloadFail enum). Agents query the
-    // mask via query:aot-reload-recovery-stats to know which regions
+    // mask via query:reload-recovery-state to know which regions
     // are currently in force-JIT mode without OR'ing per-reason counters.
     force_jit_regions_mask_.fetch_or(static_cast<std::uint64_t>(1)
                                          << static_cast<std::uint8_t>(reason),
@@ -467,6 +471,43 @@ HotUpdateRegistry::ReloadRecoveryState HotUpdateRegistry::reload_recovery_state(
 // (Agent dashboard / linter helpers).
 extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(void) {
     return aura::compiler::hot_update_registry().pending_dirty_count();
+}
+
+// Issue #2367: agent-facing ReloadRecovery snapshot. Pure relaxed
+// atomic loads — free when idle (no alloc, no locks). recovery_active
+// collapses "is anything pending?" into a single branch key.
+extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out) {
+    if (!out)
+        return;
+    auto& reg = aura::compiler::hot_update_registry();
+    const auto rs = reg.reload_recovery_state();
+    const auto snap = reg.snapshot();
+    out->schema = 2367;
+    out->issue = 2367;
+    out->attempts_left = static_cast<std::int64_t>(rs.attempts_left);
+    out->force_jit_regions_mask = static_cast<std::int64_t>(rs.force_jit_regions_mask);
+    out->last_reason = static_cast<std::int64_t>(rs.last_reason);
+    out->pending_dirty_count = static_cast<std::int64_t>(rs.pending_dirty_count);
+    out->deferred_reemit_pending = static_cast<std::int64_t>(rs.deferred_reemit_pending);
+    out->storm_level = snap.storm_level;
+    out->reemit_boundary_policy = snap.reemit_boundary_policy;
+    out->emit_region_mask = snap.emit_region_mask;
+    out->critical_region_mask = snap.critical_region_mask;
+    out->storm_isolation_mode = snap.storm_isolation_mode;
+    out->deopt_storm_region_last_id = snap.deopt_storm_region_last_id;
+    out->deopt_storm_region_detected_total = snap.deopt_storm_region_detected_total;
+    out->hard_storm_active = snap.hard_storm_active;
+    out->reemit_deferred_pending_boundary = snap.reemit_deferred_pending;
+    out->last_force_jit_reason = static_cast<std::int64_t>(reg.last_force_jit_reason());
+    out->force_jit_for_reason_total = static_cast<std::int64_t>(reg.force_jit_for_reason_total());
+    out->last_force_jit_at_epoch_notify =
+        static_cast<std::int64_t>(reg.last_force_jit_at_epoch_notify());
+    out->epoch_notify_total = snap.epoch_notify_total;
+    const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
+                        rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
+                        snap.storm_level != 0 || snap.reemit_deferred_pending != 0;
+    out->recovery_active = active ? 1 : 0;
+    out->reload_recovery_wired = 1;
 }
 
 // Issue #2094: unified StormLevel facade. Combines the global

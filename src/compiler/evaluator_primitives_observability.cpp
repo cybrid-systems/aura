@@ -714,6 +714,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:aot-hotupdate-audit-stats",
     // Issue #1956 — HotUpdateRegistry unified coordination dashboard
     "query:hot-update-registry-stats",
+    // Issue #2367 — ReloadRecoveryState + StormLevel + force-JIT snapshot
+    "query:reload-recovery-state",
+    "query:aot-reload-recovery-stats",
     // Issue #1964 — Phase 2 architectural simplification dashboard
     "query:architectural-simplification-stats",
     // Issue #1884 — TypePropagation / memo ↔ invariant correlation
