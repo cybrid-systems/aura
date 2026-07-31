@@ -7,6 +7,7 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -6626,6 +6627,44 @@ public:
     // mutation calls in EDSL / query / mutate primitives. The
     // raw NodeId API is kept for performance-critical paths
     // where the caller knows the ID is fresh.
+
+    // Issue #2394: copyable atomic u16 so last_validated_generation can
+    // be concurrent-safe without deleting StableNodeRef's aggregate /
+    // copy semantics (std::atomic is not copyable). relaxed load/store
+    // is a single instruction on x86/aarch64 — no hot-path regression.
+    struct CopyableAtomicU16 {
+        std::atomic<std::uint16_t> v{0};
+        CopyableAtomicU16() noexcept = default;
+        CopyableAtomicU16(std::uint16_t x) noexcept
+            : v(x) {}
+        CopyableAtomicU16(const CopyableAtomicU16& o) noexcept
+            : v(o.v.load(std::memory_order_relaxed)) {}
+        CopyableAtomicU16(CopyableAtomicU16&& o) noexcept
+            : v(o.v.load(std::memory_order_relaxed)) {}
+        CopyableAtomicU16& operator=(const CopyableAtomicU16& o) noexcept {
+            v.store(o.v.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            return *this;
+        }
+        CopyableAtomicU16& operator=(CopyableAtomicU16&& o) noexcept {
+            v.store(o.v.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            return *this;
+        }
+        CopyableAtomicU16& operator=(std::uint16_t x) noexcept {
+            v.store(x, std::memory_order_relaxed);
+            return *this;
+        }
+        [[nodiscard]] operator std::uint16_t() const noexcept {
+            return v.load(std::memory_order_relaxed);
+        }
+        void store(std::uint16_t x, std::memory_order m = std::memory_order_relaxed) noexcept {
+            v.store(x, m);
+        }
+        [[nodiscard]] std::uint16_t
+        load(std::memory_order m = std::memory_order_relaxed) const noexcept {
+            return v.load(m);
+        }
+    };
+
     struct StableNodeRef {
         NodeId id = NULL_NODE;
         std::uint16_t gen = 0;
@@ -6661,13 +6700,16 @@ public:
         // candidate stale usage (the lifetime of `fiber_id`
         // is per-mutation-context, not per-evaluator).
         std::uint32_t fiber_id = 0;
-        // Issue #303: last_validated_generation. Updated by
+        // Issue #303 / #2394: last_validated_generation. Updated by
         // validate_with_provenance() to record the generation
         // at which the ref was last checked. Lets us answer
         // "how stale is this ref since last validation" via
         // (query:ref-provenance). Defaults to 0 to match
         // pre-#303 behavior.
-        std::uint16_t last_validated_generation = 0;
+        // Issue #2394: atomic (via CopyableAtomicU16) — concurrent
+        // validate_with_provenance / validate_or_refresh on a shared
+        // ref is a documented lock-free hot path (#1346/#1564).
+        CopyableAtomicU16 last_validated_generation{0};
         // Issue #368: wrap_epoch at capture time. Bumped by
         // FlatAST::bump_generation() every time generation_
         // (uint16_t) wraps back to 1. is_valid() compares this

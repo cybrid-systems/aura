@@ -115,20 +115,21 @@ bool FlatAST::StableNodeRef::is_valid_in_layer(const FlatAST& ast,
 // generation_ and returns the validation result. The
 // side effect of updating the field is the audit trail:
 // subsequent code can compare ref.last_validated_generation
-// against ast.generation_() to detect "ref hasn't been
+// against ast.generation() to detect "ref hasn't been
 // re-checked in a while" (proxy for staleness without
 // requiring a full re-validation).
+//
+// Issue #2394: last_validated_generation is atomic (relaxed store).
+// Concurrent validate_with_provenance on the same ref is safe
+// (lock-free hot path per #1346/#1564; no torn uint16 write).
 bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexcept {
     bool ok = ast.is_valid(*this);
     if (ok) {
         // Issue #379: switched from ast.generation_ (private member
         // access from the original inline body) to ast.generation()
-        // (public accessor at L4527 in ast.ixx). Same uint16_t
-        // value, no behavior change. The switch is required because
-        // this method is no longer defined inside FlatAST's class
-        // body, so it loses implicit access to FlatAST's private
-        // members.
-        last_validated_generation = ast.generation();
+        // (public accessor). Same uint16_t value, no behavior change.
+        // Issue #2394: atomic relaxed store (single instruction).
+        last_validated_generation.store(ast.generation(), std::memory_order_relaxed);
     }
     return ok;
 }
@@ -194,7 +195,7 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     mutation_id_at_capture = fresh.mutation_id_at_capture;
     workspace_id = preserved_ws;
     fiber_id = preserved_fiber;
-    last_validated_generation = ast.generation();
+    last_validated_generation.store(ast.generation(), std::memory_order_relaxed);
     wrap_epoch = fresh.wrap_epoch;
     subtree_gen_at_capture = fresh.subtree_gen_at_capture;
     // Always restamp cow_epoch to the live layer; pin flag is preserved
@@ -212,9 +213,11 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
 }
 
 std::optional<NodeView> FlatAST::StableNodeRef::validate_or_refresh(FlatAST& ast) noexcept {
-    // Issue #1346/#1564: lock-free hot path — pure atomic reads of generation /
-    // free-slot / provenance fields; no workspace_mtx_ acquisition.
-    // Contended mutation paths still take MutationBoundaryGuard elsewhere.
+    // Issue #1346/#1564/#2394: lock-free hot path — pure atomic reads of
+    // generation / free-slot / provenance fields; no workspace_mtx_
+    // acquisition. Concurrent validate on the same ref is safe for
+    // last_validated_generation (atomic relaxed store). Contended
+    // mutation paths still take MutationBoundaryGuard elsewhere.
     // Contract: all EDSL/query/mutate paths that hold StableNodeRef must
     // prefer this entry (or Evaluator::ensure_valid_or_refresh).
     if (!refresh_if_stale(ast))
@@ -229,8 +232,9 @@ std::optional<NodeView> FlatAST::StableNodeRef::validate_or_refresh(FlatAST& ast
 // describing where the ref came from. Pure read — does
 // not validate the ref.
 FlatAST::StableNodeRef::Provenance FlatAST::StableNodeRef::get_provenance() const noexcept {
-    return Provenance{id,           gen,      mutation_id_at_capture,
-                      workspace_id, fiber_id, last_validated_generation};
+    return Provenance{
+        id,           gen,      mutation_id_at_capture,
+        workspace_id, fiber_id, last_validated_generation.load(std::memory_order_relaxed)};
 }
 
 // ── StableNodeRef serialization (moved from ast.ixx) ────────
@@ -271,7 +275,9 @@ std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
     // [16..17] subtree_gen_at_capture
     std::memcpy(out + 16, &ref.subtree_gen_at_capture, sizeof(ref.subtree_gen_at_capture));
     // [18..19] last_validated_generation (v2 header; v1 had reserved zeros)
-    std::memcpy(out + 18, &ref.last_validated_generation, sizeof(ref.last_validated_generation));
+    // Issue #2394: atomic — load to POD before memcpy.
+    const std::uint16_t lvg = ref.last_validated_generation.load(std::memory_order_relaxed);
+    std::memcpy(out + 18, &lvg, sizeof(lvg));
     // [20..23] workspace_id
     std::memcpy(out + 20, &ref.workspace_id, sizeof(ref.workspace_id));
 
@@ -324,7 +330,12 @@ bool FlatAST::deserialize_stable_ref(std::span<const std::uint8_t> buf,
     std::memcpy(&r.subtree_gen_at_capture, buf.data() + 16, sizeof(r.subtree_gen_at_capture));
     // v1: bytes 18..19 were reserved (0). v2: last_validated_generation.
     // Reading them on v1 just yields 0 — safe default.
-    std::memcpy(&r.last_validated_generation, buf.data() + 18, sizeof(r.last_validated_generation));
+    // Issue #2394: atomic — memcpy into POD then store.
+    {
+        std::uint16_t lvg = 0;
+        std::memcpy(&lvg, buf.data() + 18, sizeof(lvg));
+        r.last_validated_generation.store(lvg, std::memory_order_relaxed);
+    }
     std::memcpy(&r.workspace_id, buf.data() + 20, sizeof(r.workspace_id));
 
     const bool is_v2 =

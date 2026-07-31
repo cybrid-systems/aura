@@ -1931,7 +1931,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("workspace-id", static_cast<std::int64_t>(ref.workspace_id));
             insert_kv("fiber-id", static_cast<std::int64_t>(ref.fiber_id));
             insert_kv("last-validated-generation",
-                      static_cast<std::int64_t>(ref.last_validated_generation));
+                      static_cast<std::int64_t>(
+                          static_cast<std::uint16_t>(ref.last_validated_generation)));
             insert_kv("wrap-epoch", static_cast<std::int64_t>(ref.wrap_epoch));
             insert_kv("subtree-gen-at-capture",
                       static_cast<std::int64_t>(ref.subtree_gen_at_capture));
