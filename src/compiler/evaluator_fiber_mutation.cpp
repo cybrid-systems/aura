@@ -1731,7 +1731,9 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
                                   fiber->resume_env_gen() != cur.env_gen ||
                                   fiber->resume_defuse() != cur.defuse_version ||
                                   // Issue #2255: 7th field (ShapeProfiler monotonic gen)
-                                  fiber->resume_shape_version() != cur.shape_version;
+                                  fiber->resume_shape_version() != cur.shape_version ||
+                                  // Issue #2432: 8th field (IR SoA generation fence)
+                                  fiber->resume_ir_soa_generation() != cur.ir_soa_generation;
             if (mismatch) {
                 if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
@@ -1742,6 +1744,9 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
                     if (fiber->resume_shape_version() != cur.shape_version)
                         mm->shape_version_fence_reject_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                    // Issue #2432: dedicated IR SoA generation fence counter.
+                    if (fiber->resume_ir_soa_generation() != cur.ir_soa_generation)
+                        mm->ir_generation_fence_hit_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Force dual-check (mark_invalid=true, only_if_moved=false).
                 scan_live_closures_for_linear_captures(true, std::false_type{});
@@ -1864,7 +1869,9 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                                   fiber->resume_env_gen() != cur.env_gen ||
                                   fiber->resume_defuse() != cur.defuse_version ||
                                   // Issue #2255: 7th field (ShapeProfiler monotonic gen)
-                                  fiber->resume_shape_version() != cur.shape_version;
+                                  fiber->resume_shape_version() != cur.shape_version ||
+                                  // Issue #2432: 8th field (IR SoA generation fence)
+                                  fiber->resume_ir_soa_generation() != cur.ir_soa_generation;
             if (mismatch) {
                 if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
@@ -1872,6 +1879,9 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                     if (fiber->resume_shape_version() != cur.shape_version)
                         mm->shape_version_fence_reject_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                    // Issue #2432: dedicated IR SoA generation fence counter.
+                    if (fiber->resume_ir_soa_generation() != cur.ir_soa_generation)
+                        mm->ir_generation_fence_hit_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 scan_live_closures_for_linear_captures(true, false);
             }
@@ -2333,7 +2343,9 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                                       fiber->resume_mutation_epoch() != cur.mutation_epoch ||
                                       fiber->resume_env_gen() != cur.env_gen ||
                                       fiber->resume_defuse() != cur.defuse_version ||
-                                      fiber->resume_shape_version() != cur.shape_version;
+                                      fiber->resume_shape_version() != cur.shape_version ||
+                                      // Issue #2432: 8th field
+                                      fiber->resume_ir_soa_generation() != cur.ir_soa_generation;
                 if (mismatch) {
                     if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                         m->layout_stamp_steal_mismatch_total.fetch_add(1,
@@ -2341,6 +2353,9 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                         if (fiber->resume_shape_version() != cur.shape_version)
                             m->shape_version_fence_reject_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                        if (fiber->resume_ir_soa_generation() != cur.ir_soa_generation)
+                            m->ir_generation_fence_hit_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                     }
                     // Same fail-closed signal as resume fence (#2250): force
                     // dual-path scan + AOT deopt so generation-behind native

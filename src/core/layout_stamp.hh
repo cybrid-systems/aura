@@ -71,18 +71,26 @@ struct LayoutStamp {
     // is shape-version-less; the fence treats 0 vs current != 0 as
     // a mismatch only when current != 0 (the cold-start exception).
     std::uint64_t shape_version = 0;
+    // Issue #2432: ir_soa_generation is the process-global IR SoA
+    // generation fence (advanced on every mark_*_dirty / bump on
+    // IRFunctionSoA / IRModuleV2). 8th field closes silent-stale
+    // specialized IR under compact×mutate×fiber resume when dirty
+    // bits are false but generation advanced (#2111 lineage).
+    // Default 0 = never stamped / no SoA activity.
+    std::uint64_t ir_soa_generation = 0;
 
     constexpr LayoutStamp() noexcept = default;
     constexpr LayoutStamp(std::uint64_t aid, std::uint64_t agen, std::uint16_t fgen,
                           std::uint64_t mepoch, std::uint64_t egen, std::uint64_t dver,
-                          std::uint64_t sver = 0) noexcept
+                          std::uint64_t sver = 0, std::uint64_t ir_gen = 0) noexcept
         : arena_id(aid)
         , arena_gen(agen)
         , flat_gen(fgen)
         , mutation_epoch(mepoch)
         , env_gen(egen)
         , defuse_version(dver)
-        , shape_version(sver) {}
+        , shape_version(sver)
+        , ir_soa_generation(ir_gen) {}
 
     // operator== — full 6-field equality. A captured stamp matches
     // the current state only if EVERY field matches (per #2170
@@ -119,7 +127,8 @@ struct LayoutStamp {
 // extension's layout-stamp-schema key. Bumped when the LayoutStamp
 // shape gains / loses / reorders fields. Agents use this to
 // detect drift in the dashboard shape.
-inline constexpr std::uint64_t kLayoutStampSchema = 2170;
+// Issue #2432: schema bumped for ir_soa_generation 8th field.
+inline constexpr std::uint64_t kLayoutStampSchema = 2432;
 
 } // namespace aura::core
 

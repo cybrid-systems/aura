@@ -2996,8 +2996,11 @@ struct CompilerMetrics {
     // Independent from layout_stamp_resume_mismatch_total so
     // dashboards can isolate shape-version drift.
     std::atomic<std::uint64_t> shape_version_fence_reject_total{0}; // #2170
-    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0};      // #2170
-    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};       // #2170
+    // Issue #2432: IR SoA generation fence (LayoutStamp 8th field).
+    // Bumped when fiber resume/steal stamp.ir_soa_generation != live fence.
+    std::atomic<std::uint64_t> ir_generation_fence_hit_total{0}; // #2432
+    std::atomic<std::uint64_t> layout_stamp_last_arena_gen{0};   // #2170
+    std::atomic<std::uint64_t> layout_stamp_last_flat_gen{0};    // #2170
 
     // Issue #2099: HygieneCheckpoint save/restore counters for Agent
     // what-if / self-evo rollback semantics.

@@ -12361,6 +12361,8 @@ public:
     // Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
     // field) hard-fence counter accessor for query primitive.
     [[nodiscard]] std::uint64_t get_shape_version_fence_reject_total() const noexcept;
+    // Issue #2432: IR SoA generation fence (8th LayoutStamp field) hit total.
+    [[nodiscard]] std::uint64_t get_ir_generation_fence_hit_total() const noexcept;
     // Bumpers backing the (query:hygiene-checkpoint-stats) primitive
     // (schema = 2099). Cross-fiber reject is a *subset* of restore_fail
     // (also bumped) for easy dashboard drill-down.

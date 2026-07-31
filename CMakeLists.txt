@@ -3142,6 +3142,11 @@ aura_add_issue_test(test_dead_coercion_columnar_2431)
 aura_issue_test_link_llvm_jit(test_dead_coercion_columnar_2431)
 add_dependencies(all_test_issue_targets test_dead_coercion_columnar_2431)
 
+# Issue #2432: IR SoA generation fence on LayoutStamp (fiber resume).
+aura_add_issue_test(test_ir_soa_layout_stamp_2432)
+aura_issue_test_link_llvm_jit(test_ir_soa_layout_stamp_2432)
+add_dependencies(all_test_issue_targets test_ir_soa_layout_stamp_2432)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
