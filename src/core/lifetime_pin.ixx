@@ -475,20 +475,40 @@ private:
 // Restamp every live LifetimePin tied to `arena_id`. arena_id == 0
 // matches all (use for boundary-wide restamp). new_gen == 0 keeps current
 // gen. Returns # restamped (counter-bumped).
+//
+// Issue #2375 (#2342 regression): when arena_id == 0, walk ALL shards in
+// index order (same deadlock-safe order as remap_pins_pointing_to /
+// verify_pins_under_moving_compact). Pre-#2375 only walked shards[0], so
+// boundary-wide restamp (evaluator_mutation_boundary) silently missed
+// pins in shards[1..15] → stale gen / false-positive validate / FFI UAF.
+// arena_id != 0 still walks a single shard (no perf regression).
 inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
                                               std::uint64_t new_gen = 0) noexcept {
-    // Issue #2342: shard by arena_id — restamp walks only the relevant
-    // shard (since LifetimePin routes by arena_id). Reduces lock hold
-    // from O(total pins) to O(shard pins) for arena-specific restamps.
+    if (arena_id == 0) {
+        // "matches all" — every shard, index order (deadlock-safe).
+        std::size_t total = 0;
+        for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+            auto& shard = pin_registry_shards()[i];
+            std::lock_guard<std::mutex> lock(shard.mtx);
+            for (auto* p : shard.pins) {
+                if (!p || !p->pinned())
+                    continue;
+                // restamp(new_gen, 0) keeps each pin's arena_id (0 = keep).
+                p->restamp(new_gen, /*new_arena_id=*/0);
+                ++total;
+            }
+        }
+        return total;
+    }
+    // Arena-specific: single shard only (LifetimePin routes by arena_id).
     const auto idx = pin_registry_shard_index(arena_id);
     auto& shard = pin_registry_shards()[idx];
     std::lock_guard<std::mutex> lock(shard.mtx);
-    auto& reg = shard.pins;
     std::size_t n = 0;
-    for (auto* p : reg) {
+    for (auto* p : shard.pins) {
         if (!p || !p->pinned())
             continue;
-        if (arena_id != 0 && p->arena_id() != arena_id)
+        if (p->arena_id() != arena_id)
             continue;
         p->restamp(new_gen, arena_id);
         ++n;
@@ -497,17 +517,31 @@ inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
 }
 
 // Invalidate every live LifetimePin tied to `arena_id`. Returns # invalidated.
+// Issue #2375: arena_id == 0 walks all shards (GC FFI pin sweep at
+// evaluator_gc.cpp); arena_id != 0 walks one shard only.
 inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcept {
-    // Issue #2342: shard by arena_id — same routing as restamp.
+    if (arena_id == 0) {
+        std::size_t total = 0;
+        for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+            auto& shard = pin_registry_shards()[i];
+            std::lock_guard<std::mutex> lock(shard.mtx);
+            for (auto* p : shard.pins) {
+                if (!p || !p->pinned())
+                    continue;
+                p->unpin_on_compact();
+                ++total;
+            }
+        }
+        return total;
+    }
     const auto idx = pin_registry_shard_index(arena_id);
     auto& shard = pin_registry_shards()[idx];
     std::lock_guard<std::mutex> lock(shard.mtx);
-    auto& reg = shard.pins;
     std::size_t n = 0;
-    for (auto* p : reg) {
+    for (auto* p : shard.pins) {
         if (!p || !p->pinned())
             continue;
-        if (arena_id != 0 && p->arena_id() != arena_id)
+        if (p->arena_id() != arena_id)
             continue;
         p->unpin_on_compact();
         ++n;

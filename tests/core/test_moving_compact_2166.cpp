@@ -287,7 +287,7 @@ void ac2342_5_source_cite() {
     check(std::filesystem::path(AURA_SOURCE_DIR) / "src/core/lifetime_pin.ixx",
           {"Issue #2342", "kPinRegistryShardCount", "PinRegistryShard", "pin_registry_shards",
            "pin_registry_shard_index", "pin_registry_lock_wait_us_total", "shard_index_",
-           "g_root_remap_any_fail" /* fallback if not present */},
+           "Issue #2375"},
           "lifetime_pin.ixx");
     // Issue cite appears in lifetime_pin.ixx; fallback probe for the
     // primary keyword (drop the optional secondary if absent).
@@ -295,6 +295,99 @@ void ac2342_5_source_cite() {
           {"Issue #2342", "pin-registry-shard-count", "pin-registry-shard-wired", "schema-2342",
            "issue-2342"},
           "evaluator_primitives_obs_jit.cpp");
+}
+
+// Issue #2375: (restamp|invalidate)_all_pins_for_arena(0) must visit ALL
+// shards (boundary-wide / GC sweep contract). arena_id != 0 still single-shard.
+void ac2375_all_shards_on_arena_zero() {
+    std::println("\n--- AC_2375: restamp/invalidate_all_pins_for_arena(0) all shards ---");
+    using aura::core::lifetime::g_lifetime_pin_stats;
+    using aura::core::lifetime::invalidate_all_pins_for_arena;
+    using aura::core::lifetime::LifetimePin;
+    using aura::core::lifetime::pin_registry_shard_index;
+    using aura::core::lifetime::restamp_all_pins_for_arena;
+
+    // AC1: pins in shards 0, 1, 8, 15 all restamped when arena_id=0.
+    {
+        CHECK(pin_registry_shard_index(0) == 0, "AC1: arena 0 → shard 0");
+        CHECK(pin_registry_shard_index(1) == 1, "AC1: arena 1 → shard 1");
+        CHECK(pin_registry_shard_index(8) == 8, "AC1: arena 8 → shard 8");
+        CHECK(pin_registry_shard_index(15) == 15, "AC1: arena 15 → shard 15");
+
+        LifetimePin p0, p1, p8, p15;
+        int d0 = 0, d1 = 0, d8 = 0, d15 = 0;
+        p0.pin(&d0, /*gen=*/10, /*arena_id=*/0);
+        p1.pin(&d1, /*gen=*/10, /*arena_id=*/1);
+        p8.pin(&d8, /*gen=*/10, /*arena_id=*/8);
+        p15.pin(&d15, /*gen=*/10, /*arena_id=*/15);
+        CHECK(p0.pinned() && p1.pinned() && p8.pinned() && p15.pinned(), "AC1: 4 pins attached");
+
+        const auto restamps_before = g_lifetime_pin_stats.restamps;
+        const auto n = restamp_all_pins_for_arena(/*arena_id=*/0, /*new_gen=*/42);
+        CHECK(n >= 4, "AC1: restamp_all(0) visits ≥4 pins across shards");
+        CHECK(g_lifetime_pin_stats.restamps >= restamps_before + 4, "AC1: restamps counter +≥4");
+        CHECK(p0.gen() == 42 && p1.gen() == 42 && p8.gen() == 42 && p15.gen() == 42,
+              "AC1: all four pins restamped to gen 42");
+        // arena_id preserved on restamp(new_gen, 0).
+        CHECK(p1.arena_id() == 1 && p8.arena_id() == 8 && p15.arena_id() == 15,
+              "AC1: restamp(0) keeps per-pin arena_id");
+    }
+
+    // AC2: arena_id != 0 walks only the matching shard / pins.
+    {
+        LifetimePin only_a, only_b;
+        int da = 0, db = 0;
+        only_a.pin(&da, /*gen=*/7, /*arena_id=*/3);
+        only_b.pin(&db, /*gen=*/7, /*arena_id=*/5);
+        const auto restamps_before = g_lifetime_pin_stats.restamps;
+        const auto n = restamp_all_pins_for_arena(/*arena_id=*/3, /*new_gen=*/99);
+        CHECK(n >= 1, "AC2: restamp_all(3) visits arena-3 pins");
+        CHECK(only_a.gen() == 99, "AC2: arena-3 pin restamped");
+        CHECK(only_b.gen() == 7, "AC2: arena-5 pin not restamped by arena_id=3");
+        CHECK(g_lifetime_pin_stats.restamps >= restamps_before + 1, "AC2: restamps +≥1");
+    }
+
+    // AC1 (invalidate): arena_id=0 invalidates across shards.
+    {
+        LifetimePin p0, p1, p8, p15;
+        int d0 = 0, d1 = 0, d8 = 0, d15 = 0;
+        p0.pin(&d0, 1, 0);
+        p1.pin(&d1, 1, 1);
+        p8.pin(&d8, 1, 8);
+        p15.pin(&d15, 1, 15);
+        const auto inv_before = g_lifetime_pin_stats.invalidations;
+        const auto n = invalidate_all_pins_for_arena(/*arena_id=*/0);
+        CHECK(n >= 4, "AC1: invalidate_all(0) visits ≥4 pins");
+        CHECK(!p0.pinned() && !p1.pinned() && !p8.pinned() && !p15.pinned(),
+              "AC1: all four pins invalidated");
+        CHECK(g_lifetime_pin_stats.invalidations >= inv_before + 4,
+              "AC1: invalidations counter +≥4");
+    }
+
+    // AC2 (invalidate): arena-specific only.
+    {
+        LifetimePin keep, kill;
+        int dk = 0, dx = 0;
+        keep.pin(&dk, 1, /*arena_id=*/11);
+        kill.pin(&dx, 1, /*arena_id=*/4);
+        const auto n = invalidate_all_pins_for_arena(/*arena_id=*/4);
+        CHECK(n >= 1, "AC2: invalidate_all(4) ≥1");
+        CHECK(!kill.pinned(), "AC2: arena-4 pin invalidated");
+        CHECK(keep.pinned(), "AC2: arena-11 pin preserved");
+    }
+
+    // AC4/AC6 source: all-shard loop + Issue #2375 cite (TSAN path = same
+    // lock order as remap — shards 0..15 sequential).
+    {
+        const auto pin = read_file("src/core/lifetime_pin.ixx");
+        CHECK(pin.find("Issue #2375") != std::string::npos, "AC4: cites #2375");
+        CHECK(pin.find("restamp_all_pins_for_arena") != std::string::npos, "AC4: restamp API");
+        CHECK(pin.find("invalidate_all_pins_for_arena") != std::string::npos,
+              "AC4: invalidate API");
+        // arena_id == 0 branch walks kPinRegistryShardCount
+        CHECK(pin.find("if (arena_id == 0)") != std::string::npos, "AC4: arena_id==0 special case");
+        CHECK(pin.find("kPinRegistryShardCount") != std::string::npos, "AC3: shard count");
+    }
 }
 
 } // namespace
@@ -667,7 +760,8 @@ int main() {
         ac2342_4_query_schema(cs);
     }
     ac2342_5_source_cite();
+    ac2375_all_shards_on_arena_zero();
 
-    std::println("\n=== #2166 + #2342: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2166 + #2342 + #2375: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
