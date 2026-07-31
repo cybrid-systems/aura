@@ -461,6 +461,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_closure_dual_check_total{0};
     std::atomic<std::uint64_t> jit_closure_stale_deopt_total{0};
     std::atomic<std::uint64_t> jit_closure_safe_fallbacks{0};
+    // Issue #2371: cross-COW / dual-epoch soft restamp vs hard-reject.
+    // Soft migrate: read-only restamp of bridge+defuse (+ remount) when
+    // the closure is still safe (live slot, linear OK, drift within cap).
+    // Hard reject: existing safe-fallback path for freed / linear-moved /
+    // far-behind generation. Production default soft path on.
+    std::atomic<std::uint64_t> cross_cow_soft_migrate_total{0};
+    std::atomic<std::uint64_t> cross_cow_hard_reject_total{0};
     // Issue #1522: fn_trackers_ batch_deopt notify (aliases AC names *_total).
     // jit_closure_safe_fallbacks_total mirrors jit_closure_safe_fallbacks
     // (kept as distinct field for Agent queries that use the AC name).

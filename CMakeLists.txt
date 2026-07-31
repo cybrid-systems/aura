@@ -2245,6 +2245,11 @@ aura_add_issue_test(test_specjit_per_eval_storm_isolation_2370)
 aura_issue_test_link_llvm_jit(test_specjit_per_eval_storm_isolation_2370)
 add_dependencies(all_test_issue_targets test_specjit_per_eval_storm_isolation_2370)
 
+# Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.
+aura_add_issue_test(test_cross_cow_soft_migrate_2371)
+aura_issue_test_link_llvm_jit(test_cross_cow_soft_migrate_2371)
+add_dependencies(all_test_issue_targets test_cross_cow_soft_migrate_2371)
+
 # Issue #1930 / #1952 / #2013: incremental reemit + stable func_id + live remap.
 aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)

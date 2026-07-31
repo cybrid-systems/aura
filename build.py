@@ -2588,6 +2588,25 @@ def cmd_specjit_per_eval_storm_isolation_coverage():
     return 0
 
 
+def cmd_cross_cow_soft_migrate_coverage():
+    """Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.
+
+    Soft migrate restamps bridge+defuse (+ remount) when safe; hard reject
+    for freed / linear-moved / far-behind. Production default soft on.
+    """
+    print(f"{B}=== cross-COW soft migrate coverage (#2371) ==={N}")
+    script = ROOT / "scripts" / "check_cross_cow_soft_migrate_2371.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross-COW soft migrate (#2371) coverage contract rows failed")
+        return 1
+    ok("cross-COW soft migrate (#2371) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2994,6 +3013,7 @@ def cmd_gate():
         or cmd_densify_remap_pairing_coverage()
         or cmd_live_closure_stable_id_only_coverage()
         or cmd_specjit_per_eval_storm_isolation_coverage()
+        or cmd_cross_cow_soft_migrate_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
