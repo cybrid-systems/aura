@@ -1,6 +1,7 @@
 # Issue #675: nightly extended fuzz + sanitizer stress (non-blocking on PRs).
 # Issue #1933: LLVM source-based coverage artifact job.
 # Issue #1935: unified fuzz orchestrator.
+# Issue #2380: production-concurrency gate (lock-order canary + full chaos).
 name: Nightly
 
 on:
@@ -14,6 +15,35 @@ env:
   CCACHE_DISABLE: 1
 
 jobs:
+  # Issue #2380: nightly production-concurrency hard gate.
+  # Hard-fail: hang / residual defer / snapshot mismatch / densify fail /
+  # lock-order canary violation / Soft steal enabled. PR CI stays smoke-only.
+  production-concurrency:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build
+      run: python3 build.py build
+
+    - name: production-concurrency gate (#2380)
+      env:
+        AURA_PRODUCTION_CONCURRENCY_GATE: "1"
+        AURA_LOCK_ORDER_CANARY: "1"
+        AURA_CHAOS_FULL: "1"
+        AURA_CHAOS_SEED: "1"
+        AURA_CHAOS_WORKERS: "4"
+        AURA_CHAOS_FIBERS: "64"
+        AURA_CHAOS_DURATION_S: "30"
+      run: |
+        python3 build.py production-concurrency
+        echo "✓ production-concurrency green (canary + full chaos)"
+
   fuzz-extended:
     runs-on: ubuntu-latest
     container:

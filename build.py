@@ -40,6 +40,8 @@ Usage:
   ./build.py coverage --check-tools  # verify llvm-cov tooling only
   ./build.py fuzz --list       # list registered fuzzers (#1935)
   ./build.py fuzz --all --quick  # run fuzz orchestrator
+  ./build.py production-concurrency  # #2380 nightly gate: canary + full chaos soak
+  ./build.py production-concurrency-coverage  # #2380 static AC contract rows
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -2780,6 +2782,98 @@ def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     return 0
 
 
+def cmd_production_concurrency_coverage():
+    """Issue #2380: production-concurrency gate static contract rows.
+
+    Nightly profile: lock-order canary + full chaos + densify + Soft forbid.
+    PR smoke path stays short (no FULL / no PRODUCTION_CONCURRENCY_GATE).
+    """
+    print(f"{B}=== production-concurrency coverage (#2380) ==={N}")
+    script = ROOT / "scripts" / "check_production_concurrency_gate_2380.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production-concurrency coverage contract rows failed")
+        return 1
+    ok("production-concurrency coverage clean")
+    return 0
+
+
+def cmd_production_concurrency():
+    """Issue #2380: nightly / deploy production-concurrency hard gate.
+
+    Env matrix (hard-fail if any criterion fails):
+      AURA_PRODUCTION_CONCURRENCY_GATE=1
+      AURA_LOCK_ORDER_CANARY=1
+      AURA_CHAOS_FULL=1
+      AURA_CHAOS_WORKERS≥4  AURA_CHAOS_DURATION_S≥30
+    Soft steal (AURA_STEAL_SNAPSHOT_SOFT) is forbidden.
+    Builds test_chaos_mutate_steal_gc_mailbox_2352 if needed, then soaks.
+    Not part of PR CI smoke — use nightly or explicit local run.
+    """
+    print(f"{B}═══ production-concurrency gate (#2380) ═══{N}")
+    # Static contract first (fast fail on missing wire-up).
+    rc = cmd_production_concurrency_coverage()
+    if rc != 0:
+        return rc
+
+    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox_2352"
+    if not bin_path.exists():
+        info("building test_chaos_mutate_steal_gc_mailbox_2352…")
+        nproc = os.cpu_count() or 4
+        r = run(
+            [
+                "cmake",
+                "--build",
+                str(BUILD),
+                "--target",
+                "test_chaos_mutate_steal_gc_mailbox_2352",
+                "-j",
+                str(nproc),
+            ],
+            cwd=ROOT,
+        )
+        if r != 0:
+            fail("build test_chaos_mutate_steal_gc_mailbox_2352 failed")
+            return r
+    if not bin_path.exists():
+        fail(f"missing {bin_path} — run ./build.py build first")
+        return 1
+
+    env = os.environ.copy()
+    env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1"
+    env["AURA_LOCK_ORDER_CANARY"] = "1"
+    env["AURA_CHAOS_FULL"] = "1"
+    env.setdefault("AURA_CHAOS_SEED", "1")
+    env.setdefault("AURA_CHAOS_WORKERS", "4")
+    env.setdefault("AURA_CHAOS_FIBERS", "64")
+    env.setdefault("AURA_CHAOS_DURATION_S", "30")
+    # Soft steal forbidden under production gate (also unset by test body).
+    env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)
+
+    info(
+        "env: AURA_PRODUCTION_CONCURRENCY_GATE=1 AURA_LOCK_ORDER_CANARY=1 "
+        f"AURA_CHAOS_FULL=1 workers={env['AURA_CHAOS_WORKERS']} "
+        f"duration={env['AURA_CHAOS_DURATION_S']}s seed={env['AURA_CHAOS_SEED']}"
+    )
+    # Full soak + injects: allow generous wall (duration + watchdog + overhead).
+    timeout_s = max(180, int(env.get("AURA_CHAOS_DURATION_S", "30")) + 120)
+    start = time.time()
+    try:
+        r = subprocess.run([str(bin_path)], cwd=ROOT, env=env, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        fail(f"production-concurrency timed out after {timeout_s}s (hang?)")
+        return 1
+    elapsed = time.time() - start
+    if r.returncode != 0:
+        fail(f"production-concurrency failed exit={r.returncode} in {elapsed:.1f}s")
+        return r.returncode
+    ok(f"production-concurrency green in {elapsed:.1f}s")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -3156,6 +3250,7 @@ def cmd_gate():
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
+        or cmd_production_concurrency_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lock_order_audit_2354_coverage()
         or cmd_type_dep_epoch_prune_coverage()
@@ -3851,6 +3946,8 @@ def main():
         "register-render-hot-prim": cmd_register_render_hot_prim_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
+        "production-concurrency": cmd_production_concurrency,
+        "production-concurrency-coverage": cmd_production_concurrency_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
