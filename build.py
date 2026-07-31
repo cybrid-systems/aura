@@ -2203,6 +2203,25 @@ def cmd_mailbox_bp_recent_window_coverage():
     return 0
 
 
+def cmd_agent_scope_concurrent_coverage():
+    """Issue #2399: AgentScope concurrent misuse detection (metric + optional abort).
+
+    Single-owner assert via owner-tid + re-entry depth; metric path default;
+    AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard abort; no internal mutex.
+    """
+    print(f"{B}=== AgentScope concurrent detect coverage (#2399) ==={N}")
+    script = ROOT / "scripts" / "check_agent_scope_concurrent_2399.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("AgentScope concurrent detect (#2399) coverage contract rows failed")
+        return 1
+    ok("AgentScope concurrent detect (#2399) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3565,6 +3584,7 @@ def cmd_gate():
         or cmd_orphan_reap_tick_coverage()
         or cmd_join_drain_reclaim_still_running_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
+        or cmd_agent_scope_concurrent_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

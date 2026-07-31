@@ -1,7 +1,7 @@
 // agent_scope.h — Issue #2083 / #2161: scoped multi-agent coordination.
 // Issue #2226: promoted from opt-in feature flag to default multi-agent
 // supervision root. AgentScope is now always available under aura::orch
-// (the class body no longer lives inside `#ifdef AURA_ENABLE_AGENT_SCOPE`).
+// (the class body no longer lives inside a feature-flag ifdef; always on).
 //
 // STATUS: Default / Documented multi-agent supervision surface.
 // MVP linter (scripts/check_orch_mvp_scope.py --strict) still forbids
@@ -33,13 +33,24 @@
 
 #include "orch/agent_spawn.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <span>
+#include <thread>
 #include <vector>
 
 namespace aura::orch {
+
+// Issue #2399: optional hard abort on concurrent AgentScope enter.
+// Default OFF (metric-only). Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 enables.
+[[nodiscard]] inline bool agent_scope_concurrent_abort_enabled() noexcept {
+    const char* e = std::getenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+    return e != nullptr && e[0] == '1' && e[1] == '\0';
+}
 
 // Issue #2161: stall response for scope-level watch_all.
 // Restart is out of scope (needs re-spawn + name-table rules).
@@ -65,6 +76,10 @@ struct ScopeWatchResult {
 // Thread-safety: spawn / join_all / cancel_all / watch_all / handles are NOT
 // safe to call concurrently from multiple threads. The owner must serialize
 // access (matches the underlying Scheduler single-owner model).
+//
+// Issue #2399: concurrent enter is *detected* (metric + optional hard abort)
+// but not locked — no internal mutex, no global registry. Same-thread
+// re-entry (e.g. ~AgentScope → cancel_all → join_all) is allowed via depth.
 class AgentScope {
 public:
     explicit AgentScope(serve::Scheduler& sched) noexcept
@@ -84,6 +99,7 @@ public:
     // AgentSpec / name rules. restart_counts_ / consecutive_stall_counts_
     // are parallel vectors for per-handle supervision state.
     AgentHandle& spawn(AgentSpec spec) {
+        ScopeEnterGuard g(this, "spawn");
         handles_.emplace_back(spawn_agent_with_mailbox(sched_, spec));
         // Copy the spec for re-spawn. AgentSpec's body is a
         // std::function (cheap to copy; the body closure is shared
@@ -100,6 +116,7 @@ public:
     // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
     // per-handle reservation release. Release is idempotent (#2009).
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
+        ScopeEnterGuard g(this, "join_all");
         if (handles_.empty()) {
             serve::JoinResult r;
             r.status = serve::JoinStatus::Invalid;
@@ -110,6 +127,7 @@ public:
 
     // Issue #2153: full JoinPolicy (primary + drain_ms).
     [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy) {
+        ScopeEnterGuard g(this, "join_all(policy)");
         if (handles_.empty()) {
             serve::JoinResult r;
             r.status = serve::JoinStatus::Invalid;
@@ -122,6 +140,7 @@ public:
     // NOT wait. Use join_all afterwards to drain. Safe to call multiple
     // times (request_cancel is idempotent).
     void cancel_all() noexcept {
+        ScopeEnterGuard g(this, "cancel_all");
         for (auto& h : handles_) {
             if (h.fiber && !h.fiber->is_done())
                 h.fiber->request_cancel();
@@ -134,6 +153,7 @@ public:
     // StallPolicy::Cancel cancels only Stalled fibers (Done/Alive untouched).
     [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms = 0,
                                              StallPolicy policy = StallPolicy::Cancel) {
+        ScopeEnterGuard g(this, "watch_all");
         ScopeWatchResult r;
         const bool cancel_on_stall = (policy == StallPolicy::Cancel);
         for (auto& h : handles_) {
@@ -181,6 +201,7 @@ public:
     // adopting AgentFailurePolicy incrementally.
     [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms,
                                              const AgentFailurePolicy& policy) {
+        ScopeEnterGuard g(this, "watch_all(policy)");
         ScopeWatchResult r;
         // Map AgentFailureAction::ReportOnly / Cancel to the binary
         // watch_agent_liveness cancel_on_stall flag. RestartN uses
@@ -274,7 +295,11 @@ public:
     // destruction. join_agents handles cancel+drain on non-Ok internally
     // (#2082), and per-handle release_agent_memory_reservation is
     // idempotent so concurrent ~AgentHandle + scope destruction is safe.
+    // Issue #2399: same-thread re-entry of cancel_all/join_all under the
+    // enter guard is allowed (depth); concurrent ~AgentScope from another
+    // thread is detected as misuse.
     ~AgentScope() {
+        ScopeEnterGuard g(this, "~AgentScope");
         if (handles_.empty())
             return;
         cancel_all();
@@ -285,6 +310,64 @@ public:
     }
 
 private:
+    // Issue #2399: RAII enter/leave for concurrent misuse detection.
+    // Same-thread re-entry increments depth (no metric). Concurrent enter
+    // from another thread bumps agent_scope_concurrent_misuse_total and
+    // optionally aborts. Metric path still runs the method body (detect,
+    // don't invent locks). Zero cost beyond one atomic CAS when free.
+    struct ScopeEnterGuard {
+        AgentScope* self = nullptr;
+        bool holds = false;
+        ScopeEnterGuard(AgentScope* s, const char* site) noexcept
+            : self(s) {
+            if (!self)
+                return;
+            holds = self->try_enter(site);
+        }
+        ~ScopeEnterGuard() noexcept {
+            if (holds && self)
+                self->leave();
+        }
+        ScopeEnterGuard(const ScopeEnterGuard&) = delete;
+        ScopeEnterGuard& operator=(const ScopeEnterGuard&) = delete;
+    };
+
+    // Returns true if this thread holds ownership (caller must leave).
+    // Returns false on concurrent misuse after metric/abort path (caller
+    // still runs the method body without tracking ownership).
+    bool try_enter(const char* site) noexcept {
+        const auto tid = std::this_thread::get_id();
+        std::thread::id expected{}; // default-constructed = unowned
+        if (owner_tid_.compare_exchange_strong(expected, tid, std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+            enter_depth_.store(1, std::memory_order_relaxed);
+            return true;
+        }
+        if (expected == tid) {
+            // Same-thread re-entry (~AgentScope → cancel_all → join_all).
+            enter_depth_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        // Another thread owns the scope — concurrent misuse.
+        g_orch_module_stats.agent_scope_concurrent_misuse_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (agent_scope_concurrent_abort_enabled()) {
+            std::fprintf(stderr,
+                         "FATAL: AgentScope concurrent misuse at %s "
+                         "(AURA_AGENT_SCOPE_CONCURRENT_ABORT=1, #2399)\n",
+                         site ? site : "?");
+            std::abort();
+        }
+        return false;
+    }
+
+    void leave() noexcept {
+        const auto d = enter_depth_.fetch_sub(1, std::memory_order_relaxed);
+        if (d == 1) {
+            owner_tid_.store(std::thread::id{}, std::memory_order_release);
+        }
+    }
+
     serve::Scheduler& sched_;
     std::vector<AgentHandle> handles_;
     // Issue #2229: parallel vectors for the RestartN supervision
@@ -297,6 +380,10 @@ private:
     std::vector<AgentSpec> specs_;
     std::vector<std::uint32_t> restart_counts_;
     std::vector<std::uint32_t> consecutive_stall_counts_;
+    // Issue #2399: single-owner detection (not a mutex).
+    // owner_tid_ empty = free; depth tracks same-thread re-entry.
+    mutable std::atomic<std::thread::id> owner_tid_{};
+    mutable std::atomic<std::uint32_t> enter_depth_{0};
 };
 
 } // namespace aura::orch

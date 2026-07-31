@@ -783,7 +783,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
-- `tests/orch/test_agent_scope_2083.cpp` (#2083) [domain_suite, theme_orch] — test_agent_scope_2083.cpp — Issue #2083 AgentScope + #2161 watch_all
+- `tests/orch/test_agent_scope_2083.cpp` (#2083) [large, domain_suite, theme_orch] — test_agent_scope_2083.cpp — Issue #2083 AgentScope + #2161 watch_all
 - `tests/core/test_arena_adaptive_compact_2059.cpp` (#2059) [domain_suite, theme_core] — AC1: compute_adaptive_headroom varies with mutation vs deopt storm
 - `tests/core/test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp` (—) [domain_suite, theme_core] — (aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run). Stays at tests/core/ per
 - `tests/core/test_arena_auto_compact_intelligent.cpp` (—) [domain_suite, theme_core] — Issue #1242/#1621/#187/#1919/#300 (#1978 renamed): issue# moved from filename to header.
