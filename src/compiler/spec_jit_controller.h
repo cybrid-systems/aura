@@ -44,16 +44,26 @@ public:
     // Get the specialized function pointer.
     aura::jit::ScalarFn get_specialized(const std::string& fn_name, ShapeID shape) const;
 
-    // Issue #2276: install a successful specialization. The entry is
-    // stamped with the current process-global shape_version (see
-    // shape_profiler.h current_global_shape_version). get_specialized /
-    // has_specialization treat an entry whose stamped version != the
-    // current shape_version as a miss and return null/false, so after
-    // a deopt-storm enter (bump_shape_version_on_storm_enter) the
-    // generation-behind specialized code is no longer served until
-    // install_specialization is called again with a fresh version.
+    // Issue #2276 / #2370: install a successful specialization. The entry
+    // is stamped with effective_shape_version() — process-global under
+    // Global/PerRegion isolation, or this controller's isolation epoch
+    // under PerEval (#2370). get_specialized / has_specialization treat
+    // an entry whose stamped version != current effective version as a
+    // miss so storm enter invalidates generation-behind specialized code.
     void install_specialization(const std::string& fn_name, ShapeID shape,
                                 aura::jit::ScalarFn fn_ptr);
+
+    // Issue #2370: bind this controller to an eval owner key (typically
+    // CompilerService* / Evaluator*). Under PerEval isolation, storm
+    // clear only applies when TLS current eval matches this owner.
+    void set_eval_owner(void* eval_owner) noexcept { eval_owner_ = eval_owner; }
+    [[nodiscard]] void* eval_owner() const noexcept { return eval_owner_; }
+    // Isolation shape epoch (PerEval). Bumped on local on_deopt_storm.
+    [[nodiscard]] std::uint64_t isolation_shape_epoch() const noexcept {
+        return isolation_shape_epoch_.load(std::memory_order_relaxed);
+    }
+    // Effective version used for stamp / miss (mode-dependent).
+    [[nodiscard]] std::uint64_t effective_shape_version() const noexcept;
 
     // Invalidate all specializations for a function.
     void invalidate(const std::string& fn_name);
@@ -171,6 +181,12 @@ private:
     // Bumped in on_deopt_storm() alongside the process-global
     // g_specjit_storm_clear_total.
     std::atomic<std::uint64_t> storm_clear_count_{0};
+    // Issue #2370: PerEval isolation — owner key + local shape epoch.
+    // Under PerEval, install/get use isolation_shape_epoch_ instead of
+    // process-global shape_version so a storm in eval A cannot invalidate
+    // specializations of eval B.
+    void* eval_owner_ = nullptr;
+    std::atomic<std::uint64_t> isolation_shape_epoch_{0};
 };
 
 // ── Runtime shape guard helper ────────────────────────────────

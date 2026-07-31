@@ -166,26 +166,25 @@ public:
         Hard = 2,           // hard ceiling — no bypass
         CriticalBypass = 3, // allowed despite soft storm
     };
-    // Issue #2236: optional per-region / per-eval deopt-storm isolation.
-    // Default = Global = today's process-wide sliding window behavior
+    // Issue #2236 / #2370: optional per-region / per-eval deopt-storm
+    // isolation. Default = Global = process-wide sliding window
     // (backwards compat — single-workspace MVP). PerRegion = per-region
-    // sliding windows with bounded cap (64 entries, overflow → global);
-    // PerEval is plumbed but requires eval_id threading (#2158) and is
-    // documented as a follow-up. The StormLevel facade + critical
-    // region bypass from #2132 are preserved under isolation mode
-    // (the hard ceiling remains per-region too — "prefer per-region
-    // hard too" per the issue AC2 note).
+    // sliding windows with bounded cap (64 entries, overflow → global).
+    // PerEval (#2370 real): windows keyed by TLS storm eval context
+    // (aura_set_storm_eval_context) so concurrent evals do not share
+    // storm windows; SpecJIT isolation epoch is per-controller.
+    // StormLevel facade + critical region bypass from #2132 preserved.
     enum class StormIsolation : std::uint8_t {
         Global = 0,    // process-wide window (today's behavior)
         PerRegion = 1, // per-region windows; bounded cap; overflow → global
-        PerEval = 2,   // per-evaluator windows (future — eval_id threading needed)
+        PerEval = 2,   // per-evaluator windows (#2370)
     };
     static constexpr std::uint64_t kStormIsolationRegionCap = 64;
     void on_reemit_throttled(ThrottleReason reason) noexcept;
     void on_reemit_critical_bypass() noexcept;
-    // Issue #2236: StormIsolation mode setter / getter. Default = Global.
-    // Setting PerRegion activates per-region windows; setting PerEval is
-    // a no-op today (eval_id threading is plumbed as a follow-up #2158).
+    // Issue #2236 / #2370: StormIsolation mode setter / getter. Default =
+    // Global. PerRegion activates per-region windows; PerEval activates
+    // per-eval windows + SpecJIT isolation epoch (#2370).
     // Hot-path readers (on_stale_deopt / should_throttle_reemit) read the
     // atomic once per call (relaxed, 1 load).
     void set_storm_isolation_mode(StormIsolation mode) noexcept;
@@ -819,6 +818,16 @@ void aura_hot_update_reset_reemit_boundary_handshake_for_test(void);
 int aura_hot_update_soft_reemit_boundary_active(void);
 // 1 if a deferred reemit is pending.
 int aura_hot_update_has_deferred_reemit(void);
+
+// Issue #2370: TLS storm eval context for PerEval isolation.
+// CompilerService / tests publish the current eval owner so PerEval
+// storm windows + SpecJIT clear only apply to the matching eval.
+void aura_set_storm_eval_context(void* eval_ptr) noexcept;
+void* aura_get_storm_eval_context(void) noexcept;
+// SpecJIT PerEval counters (defined in spec_jit_controller.cpp).
+std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void);
+std::uint64_t aura_specjit_per_eval_storm_skip_foreign_total_v_read(void);
+std::uint64_t aura_specjit_storm_clear_total_v_read(void);
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH

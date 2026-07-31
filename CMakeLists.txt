@@ -2240,6 +2240,11 @@ aura_add_issue_test(test_live_closure_stable_id_only_2369)
 aura_issue_test_link_llvm_jit(test_live_closure_stable_id_only_2369)
 add_dependencies(all_test_issue_targets test_live_closure_stable_id_only_2369)
 
+# Issue #2370: real PerEval storm isolation for SpecJIT + shape version.
+aura_add_issue_test(test_specjit_per_eval_storm_isolation_2370)
+aura_issue_test_link_llvm_jit(test_specjit_per_eval_storm_isolation_2370)
+add_dependencies(all_test_issue_targets test_specjit_per_eval_storm_isolation_2370)
+
 # Issue #1930 / #1952 / #2013: incremental reemit + stable func_id + live remap.
 aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)

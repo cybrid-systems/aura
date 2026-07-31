@@ -183,6 +183,10 @@ struct aura_reload_recovery_snapshot {
     std::int64_t reload_recovery_wired;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
+// Issue #2370: SpecJIT PerEval storm counters (spec_jit_controller.cpp).
+std::uint64_t aura_specjit_storm_clear_total_v_read(void);
+std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void);
+std::uint64_t aura_specjit_per_eval_storm_skip_foreign_total_v_read(void);
 }
 
 namespace aura::compiler::primitives_detail {
@@ -6898,6 +6902,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("storm-isolation-per-region-default-wired", 1);
             insert_kv("schema-2274", 2274);
             insert_kv("issue-2274", 2274);
+            // Issue #2370: real PerEval storm isolation (SpecJIT epoch + TLS eval).
+            insert_kv("storm-isolation-per-eval-wired", 1);
+            insert_kv("specjit-storm-clear-total",
+                      static_cast<std::int64_t>(aura_specjit_storm_clear_total_v_read()));
+            insert_kv("specjit-per-eval-storm-clear-total",
+                      static_cast<std::int64_t>(aura_specjit_per_eval_storm_clear_total_v_read()));
+            insert_kv(
+                "specjit-per-eval-storm-skip-foreign-total",
+                static_cast<std::int64_t>(aura_specjit_per_eval_storm_skip_foreign_total_v_read()));
+            insert_kv("schema-2370", 2370);
+            insert_kv("issue-2370", 2370);
             // Issue #2367: cross-link ReloadRecovery keys on the existing
             // hot-update surface (agents that already poll this query get
             // schema lineage without switching primitives). Full snapshot

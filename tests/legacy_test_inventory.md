@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 563 | Preferred destination suites |
-| **Total scanned** | **563** | |
+| `tests/core/test_*.cpp` | 564 | Preferred destination suites |
+| **Total scanned** | **564** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 57 | 57 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 13 | 13 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 61 | 61 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 22 | 22 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 120 | 120 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 31 | 31 | P3 — review case-by-case |
@@ -644,6 +644,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_spawn_quota_no_leak_2155.cpp`
 - `tests/compiler/test_spec_jit.cpp`
 - `tests/stdlib/test_spec_runtime.cpp`
+- `tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp`
 - `tests/compiler/test_stable_ref_batch.cpp`
 - `tests/compiler/test_stable_ref_cow_batch.cpp`
 - `tests/compiler/test_stable_ref_pin_lifecycle_2189.cpp`
@@ -1122,13 +1123,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (61)
+### `jit_incremental` — JIT / AOT / incremental relower (62)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (61)
+#### domain/ (62)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1188,6 +1189,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_shape_storm_partial_relower_2212.cpp` (#2212) [domain_suite, theme_compiler] — AC1: When StormLevel has Shape bit, partial is preferred for a wider
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
+- `tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp` (#2370) [domain_suite, theme_compiler] — AC1: Soft / Global path — process-wide stamp path unchanged
 - `tests/compiler/test_storm_isolation_2236.cpp` (#2236) [domain_suite, theme_compiler] — too — "prefer per-region hard too" per the issue AC2 note).
 - `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
