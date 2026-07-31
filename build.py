@@ -2227,6 +2227,25 @@ def cmd_legacy_pin_registry_cleanup_coverage():
     return 0
 
 
+def cmd_pin_bulk_all_shards_coverage():
+    """Issue #2375: (restamp|invalidate)_all_pins_for_arena(0) all-shard walk.
+
+    #2342 regression fix — arena_id==0 visits all 16 shards; N!=0 still
+    single-shard. Boundary restamp + GC invalidate production callers.
+    """
+    print(f"{B}=== pin bulk all-shard walk coverage (#2375) ==={N}")
+    script = ROOT / "scripts" / "check_pin_bulk_all_shards_2375.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pin bulk all-shard walk coverage contract rows failed")
+        return 1
+    ok("pin bulk all-shard walk coverage clean")
+    return 0
+
+
 def cmd_mutate_mailbox_strict_coverage():
     """Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.
 
@@ -3051,6 +3070,7 @@ def cmd_gate():
         or cmd_steal_snapshot_soft_production_lock_coverage()
         or cmd_render_deopt_throttle_race_coverage()
         or cmd_legacy_pin_registry_cleanup_coverage()
+        or cmd_pin_bulk_all_shards_coverage()
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
