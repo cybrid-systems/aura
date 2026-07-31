@@ -7737,6 +7737,13 @@ struct CompilerMetrics {
     // Idempotent (force_clear_residual_defer_for_evaluator is atomic +
     // CAS-based — calling twice does not double-bump counters).
     std::atomic<std::uint64_t> residual_defer_cleared_on_steal_total{0}; // #2314
+    // Issue #2364: PanicCheckpoint residual × densify closed-loop audit.
+    // Bumped when audit_panic_defer_after_densify runs a non-free path
+    // (densify attempted); cleared/rearmed/hard_fail are outcome counters.
+    std::atomic<std::uint64_t> panic_defer_after_densify_total{0};           // #2364
+    std::atomic<std::uint64_t> panic_defer_after_densify_cleared_total{0};   // #2364
+    std::atomic<std::uint64_t> panic_defer_after_densify_rearmed_total{0};   // #2364
+    std::atomic<std::uint64_t> panic_defer_after_densify_hard_fail_total{0}; // #2364
     // Issue #2194: unified Fiber::resume / steal refresh (pairs with Guard exit).
     // fiber_migration_refresh_total — refresh_after_fiber_migration calls
     // fiber_migration_gc_defer_cleared_total — orphan depths cleared in that helper

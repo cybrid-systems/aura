@@ -1883,6 +1883,33 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        // Issue #2364: PanicCheckpoint residual × densify closed loop.
+        // After densify (success or fail leaving evaluator live), residual
+        // Panic defer must not outlive a cleared checkpoint; a still-live
+        // checkpoint re-arms defer. Soft / no densify / no panic → free.
+        // densify_attempted: Moving was enabled this exit (compact call ran).
+        {
+            const bool densify_attempted = aura::ast::moving_compact_enabled();
+            // Checkpoint may still be live on partial recovery (failed +
+            // !auto_rollback) or if densify raced a concurrent save.
+            const bool has_cp = ev_->has_panic_checkpoint();
+            const auto audit = aura::gc_hooks::audit_panic_defer_after_densify(
+                static_cast<void*>(ev_), has_cp, densify_attempted);
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                if (!audit.free_path)
+                    m->panic_defer_after_densify_total.fetch_add(1, std::memory_order_relaxed);
+                if (audit.cleared)
+                    m->panic_defer_after_densify_cleared_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                if (audit.rearmed)
+                    m->panic_defer_after_densify_rearmed_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                if (audit.hard_fail)
+                    m->panic_defer_after_densify_hard_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+            (void)audit;
+        }
     } else {
         // Nested: depth_slot-- (outermost deferred this to phase 5).
         if (slot)
@@ -1892,6 +1919,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // if we did not commit/restore above (failed + !auto_rollback).
     if (outermost && had_panic_checkpoint_ && !panic_handled) {
         // Leave checkpoint alive for retry (pre-#241 / #2120 partial recovery).
+        // Issue #2364: densify already audited above when outermost; if
+        // densify was skipped (nested), re-arm is still owned by the live
+        // checkpoint + existing GC defer arm from save_panic_checkpoint.
         (void)0;
     }
     // Issue #417 / #1766: verify stack/depth-slot consistency

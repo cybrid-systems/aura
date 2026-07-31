@@ -22,6 +22,7 @@
 #define AURA_CORE_GC_HOOKS_H
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <string_view>
 #include <array>
@@ -877,6 +878,124 @@ inline ResidualClearResult force_clear_residual_defer_for_evaluator(void* evalua
     }
     // Final reconcile after hold release (hold bit ≠ Panic).
     r.bits_reconciled += reconcile_gc_defer_bits_after_clear();
+    return r;
+}
+
+// ── Issue #2364: PanicCheckpoint residual × densify closed loop ──
+// After densify (success or fail that leaves the evaluator live), residual
+// Panic defer must not outlive a cleared PanicCheckpoint, and a still-
+// live checkpoint must keep defer armed so GC/compact stay suppressed.
+// Soft / no-panic / no-densify: free early-out (one relaxed load pair).
+//
+// Policy:
+//   has_checkpoint && !defer_for_eval  → re-arm (try_arm)
+//   !has_checkpoint && defer_for_eval  → clear residual for this eval
+//   AURA_PANIC_CONTRACT=hard && residual outlives cleared CP → abort
+inline std::atomic<std::uint64_t> g_panic_defer_after_densify_total{0};
+inline std::atomic<std::uint64_t> g_panic_defer_after_densify_cleared_total{0};
+inline std::atomic<std::uint64_t> g_panic_defer_after_densify_rearmed_total{0};
+inline std::atomic<std::uint64_t> g_panic_defer_after_densify_hard_fail_total{0};
+[[nodiscard]] inline std::uint64_t panic_defer_after_densify_total() noexcept {
+    return g_panic_defer_after_densify_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t panic_defer_after_densify_cleared_total() noexcept {
+    return g_panic_defer_after_densify_cleared_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t panic_defer_after_densify_rearmed_total() noexcept {
+    return g_panic_defer_after_densify_rearmed_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t panic_defer_after_densify_hard_fail_total() noexcept {
+    return g_panic_defer_after_densify_hard_fail_total.load(std::memory_order_relaxed);
+}
+
+struct PanicDeferDensifyAuditResult {
+    bool residual_found = false;
+    bool cleared = false;
+    bool rearmed = false;
+    bool hard_fail = false;
+    bool free_path = false; // Soft / no-panic / no-densify early-out
+};
+
+[[nodiscard]] inline bool panic_contract_hard_enabled() noexcept {
+    const char* env = std::getenv("AURA_PANIC_CONTRACT");
+    return env != nullptr && *env != '\0' && std::string_view(env) == "hard";
+}
+
+// densify_ran: true when Moving densify was attempted (enabled) this exit.
+// has_panic_checkpoint: Evaluator still holds a live PanicCheckpoint.
+inline PanicDeferDensifyAuditResult audit_panic_defer_after_densify(void* evaluator_id,
+                                                                    bool has_panic_checkpoint,
+                                                                    bool densify_ran) noexcept {
+    PanicDeferDensifyAuditResult r{};
+    // Soft free path: no densify + no checkpoint + no panic bit/depth.
+    if (!densify_ran && !has_panic_checkpoint) {
+        const auto depth = g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
+        const auto reasons = g_gc_defer_reasons.load(std::memory_order_relaxed);
+        const bool panic_bit = (reasons & static_cast<std::uint32_t>(GcDeferReason::Panic)) != 0;
+        if (depth == 0 && !panic_bit) {
+            r.free_path = true;
+            return r;
+        }
+        // Residual panic state without densify / checkpoint is still
+        // interesting for observability, but Phase 5 residual policy
+        // already handled the success path. Only densify-boundary work
+        // runs when densify_ran.
+        if (!densify_ran) {
+            r.free_path = true;
+            return r;
+        }
+    }
+    if (!densify_ran) {
+        r.free_path = true;
+        return r;
+    }
+
+    g_panic_defer_after_densify_total.fetch_add(1, std::memory_order_relaxed);
+    // Use atomic depth directly (accessor is defined later in this header).
+    const auto depth_now = g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
+    const bool deferred_for_eval =
+        evaluator_id ? gc_deferred_for_evaluator(evaluator_id) : (depth_now > 0);
+    const auto reasons = g_gc_defer_reasons.load(std::memory_order_acquire);
+    const bool panic_bit = (reasons & static_cast<std::uint32_t>(GcDeferReason::Panic)) != 0;
+
+    if (has_panic_checkpoint) {
+        // Live checkpoint must keep Panic defer armed across densify.
+        if (!deferred_for_eval) {
+            r.residual_found = true;
+            if (try_arm_gc_defer_pending_panic_for(evaluator_id)) {
+                r.rearmed = true;
+                g_panic_defer_after_densify_rearmed_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return r;
+    }
+
+    // Checkpoint gone: residual panic defer for this eval must not linger.
+    if (deferred_for_eval || panic_bit) {
+        r.residual_found = true;
+        if (panic_contract_hard_enabled()) {
+            r.hard_fail = true;
+            g_panic_defer_after_densify_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr, "[#2364] residual Panic GcDefer after densify outlives "
+                                 "cleared PanicCheckpoint (AURA_PANIC_CONTRACT=hard) — aborting\n");
+            std::abort();
+        }
+        // Soft/clear: force-clear residual for this evaluator (panic table
+        // + depth + bit reconcile). Do NOT release MutationHold here —
+        // densify audit is panic-scoped (hold already released in Phase 5).
+        if (evaluator_id) {
+            const auto fr = force_clear_all_gc_defer_for_evaluator(evaluator_id);
+            (void)fr;
+            r.cleared = true;
+        } else if (panic_bit || depth_now > 0) {
+            (void)release_defer(GcDeferReason::Panic);
+            while (g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed) > 0)
+                release_gc_defer_pending_panic();
+            r.cleared = true;
+        }
+        if (r.cleared)
+            g_panic_defer_after_densify_cleared_total.fetch_add(1, std::memory_order_relaxed);
+    }
     return r;
 }
 

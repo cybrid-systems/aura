@@ -2771,6 +2771,11 @@ aura_add_issue_test(test_general_object_pin_adopt_2363)
 aura_issue_test_link_llvm_jit(test_general_object_pin_adopt_2363)
 add_dependencies(all_test_issue_targets test_general_object_pin_adopt_2363)
 
+# Issue #2364: PanicCheckpoint residual × densify / fiber closed loop.
+aura_add_issue_test(test_panic_defer_after_densify_2364)
+aura_issue_test_link_llvm_jit(test_panic_defer_after_densify_2364)
+add_dependencies(all_test_issue_targets test_panic_defer_after_densify_2364)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)
