@@ -2855,6 +2855,24 @@ def cmd_stringpool_bytes_total_lock_coverage():
     return 0
 
 
+def cmd_stringpool_buf_fragmentation_lock_coverage():
+    """Issue #2409: buf_fragmentation single shared_lock snapshot.
+
+    Sample buf_.size() and string_bytes under one lock; frag in [0,1].
+    """
+    print(f"{B}=== stringpool buf_fragmentation lock coverage (#2409) ==={N}")
+    script = ROOT / "scripts" / "check_stringpool_buf_fragmentation_lock_2409.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("stringpool buf_fragmentation lock (#2409) coverage contract rows failed")
+        return 1
+    ok("stringpool buf_fragmentation lock (#2409) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3785,6 +3803,7 @@ def cmd_gate():
         or cmd_pcv_tls_scratch_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
+        or cmd_stringpool_buf_fragmentation_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

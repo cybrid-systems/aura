@@ -3027,6 +3027,11 @@ aura_add_issue_test(test_stringpool_bytes_total_lock_2408)
 aura_issue_test_link_llvm_jit(test_stringpool_bytes_total_lock_2408)
 add_dependencies(all_test_issue_targets test_stringpool_bytes_total_lock_2408)
 
+# Issue #2409: buf_fragmentation single shared_lock snapshot.
+aura_add_issue_test(test_stringpool_buf_fragmentation_lock_2409)
+aura_issue_test_link_llvm_jit(test_stringpool_buf_fragmentation_lock_2409)
+add_dependencies(all_test_issue_targets test_stringpool_buf_fragmentation_lock_2409)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
