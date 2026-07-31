@@ -143,4 +143,10 @@ __attribute__((weak, used)) void aura_orch_note_agent_steal_skipped_boundary() {
 // evaluator_fiber_mutation.cpp when evaluator/orch is linked).
 __attribute__((weak, used)) void aura_orch_note_mailbox_backpressure() {}
 
+// Issue #2397: reclaimed still-running / body-retired → orch dashboard
+// (strong defs in evaluator_fiber_mutation.cpp when orch is linked).
+__attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_still_running() {}
+__attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_body_retired() {}
+__attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_still_running_drop() {}
+
 } // extern "C"

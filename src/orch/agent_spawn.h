@@ -57,6 +57,8 @@ inline constexpr int kOrchModulePhase = 4; // #1881 orch health observability
 inline constexpr int kOrchModuleIssue = 1881;
 // Issue #2153: configurable secondary drain after non-Ok join cancel.
 inline constexpr int kJoinDrainTimeoutIssue = 2153;
+// Issue #2397: reclaimed vs body-still-running after residual hard-reclaim.
+inline constexpr int kJoinDrainReclaimStillRunningIssue = 2397;
 // Issue #2158: per-Evaluator agent apply mutex (replace process-static orch_eval_mu).
 inline constexpr int kAgentApplyPerEvalMutexIssue = 2158;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
@@ -214,6 +216,15 @@ struct OrchModuleStats {
     // (reset_orch_module_stats_for_test) clears both this and
     // join_drain_residual_total together.
     std::atomic<std::uint64_t> join_drain_residual_reclaim_total{0};
+    // Issue #2397: distinguish logical reclaim from body still
+    // burning CPU/stack. still_running is a process gauge (+1 on
+    // mark_reclaimed while !Done, −1 on body exit or Fiber dtor
+    // abandon). body_retired counts reclaimed bodies that finally
+    // returned (trampoline after set_state Done). Zero cost on Ok
+    // join path (only mark_reclaimed / body-exit / dtor touch these).
+    // Mirrored from Fiber statics via aura_orch_note_join_drain_* hooks.
+    std::atomic<std::uint64_t> join_drain_residual_still_running{0};
+    std::atomic<std::uint64_t> join_drain_residual_body_retired_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
     // Issue #2229: supervision policy metrics (parallel batch
     // FailurePolicy #2007 + RestartN extension). Bumped by

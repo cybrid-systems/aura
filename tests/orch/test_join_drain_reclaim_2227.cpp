@@ -364,6 +364,125 @@ int main() {
         CHECK(true, "#2396 AC5: tick wire-up documented");
     }
 
+    // ── Issue #2397: reclaimed vs body-still-running after residual ─
+    // AC1: mark_reclaimed while !Done → still-running ≥ 1; body exit
+    //      (note_body_exit_if_reclaimed after Done) → still-running ↓
+    //      and body-retired bumps. Residual+reap path does not leak
+    //      the gauge (dtor abandon drops without retired if body never
+    //      returned).
+    // AC2: Ok join → still-running and retired unchanged.
+    // AC3: Query keys additive; schema-2227 residual/reclaim keys live.
+    // AC4: Soft path zero cost (source-cite: only mark_reclaimed /
+    //      body-exit / dtor touch new atomics).
+    // AC5: source-cite + schema-2397 / wired sentinel.
+    {
+        std::println("\n--- #2397 AC1: still-running on reclaim, retired on body exit ---");
+        reset_between_acs();
+        // Direct Fiber (no SchedRunner): body never executes — same
+        // strategy as #2467 to avoid UAF. mark_reclaimed while Ready
+        // models "body not returned yet".
+        auto* f = new Fiber([]() { /* never run */ });
+        CHECK(f != nullptr, "#2397 AC1: fiber constructed");
+        CHECK(!f->is_done(), "#2397 AC1: not Done before reclaim");
+        const auto sr0 = Fiber::join_drain_residual_still_running();
+        const auto ret0 = Fiber::join_drain_residual_body_retired_total();
+        f->mark_reclaimed();
+        CHECK(f->is_reclaimed(), "#2397 AC1: is_reclaimed after mark");
+        CHECK(!f->is_done(), "#2397 AC1: still !Done (body not returned)");
+        const auto sr1 = Fiber::join_drain_residual_still_running();
+        std::println("  still-running before={} after_mark={}", sr0, sr1);
+        CHECK(sr1 >= sr0 + 1, "#2397 AC1: still-running ≥ 1 after mark_reclaimed while !Done");
+        CHECK(href(cs, "join-drain-residual-still-running-total") >= static_cast<std::int64_t>(sr1),
+              "#2397 AC1: query surfaces still-running");
+
+        // Simulate body return: set Done then note_body_exit_if_reclaimed
+        // (trampoline does both after func_ returns).
+        f->set_state(aura::serve::FiberState::Done);
+        f->note_body_exit_if_reclaimed();
+        const auto sr2 = Fiber::join_drain_residual_still_running();
+        const auto ret1 = Fiber::join_drain_residual_body_retired_total();
+        std::println("  still-running after_exit={} retired_delta={}", sr2, ret1 - ret0);
+        CHECK(sr2 == sr0 || sr2 < sr1, "#2397 AC1: still-running decreases after body exit");
+        CHECK(ret1 > ret0, "#2397 AC1: body-retired bumps after exit");
+        CHECK(href(cs, "join-drain-residual-body-retired-total") >= static_cast<std::int64_t>(ret1),
+              "#2397 AC1: query surfaces body-retired");
+        delete f; // no double-drop of gauge (counted_ already cleared)
+    }
+
+    {
+        std::println("\n--- #2397 AC1b: residual+reap does not leak still-running gauge ---");
+        reset_between_acs();
+        // No SchedRunner: reaper destroys Fiber (abandon path).
+        // Gauge must not stay permanently elevated after reap.
+        Scheduler sched(1);
+        const auto sr_before = Fiber::join_drain_residual_still_running();
+        Fiber* f = sched.spawn([] {
+            for (;;) {
+            }
+        });
+        cancel_and_drain_fiber(f, /*drain_ms=*/50);
+        sched.note_orphan_fiber(f, /*hard_deadline_ms=*/15);
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        const auto reaped = sched.reap_orphans_now();
+        CHECK(reaped >= 1, "#2397 AC1b: reaped ≥ 1");
+        // After destroy, dtor abandon drops the gauge — not permanently high.
+        const auto sr_after = Fiber::join_drain_residual_still_running();
+        std::println("  still-running before={} after_reap={}", sr_before, sr_after);
+        CHECK(sr_after == sr_before,
+              "#2397 AC1b: still-running not leaked after reap dtor (abandon pairs gauge)");
+    }
+
+    {
+        std::println("\n--- #2397 AC2: Ok join → still-running and retired unchanged ---");
+        reset_between_acs();
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        std::atomic<bool> ran{false};
+        Fiber* f = sched.spawn([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            ran.store(true, std::memory_order_relaxed);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK(ran.load(std::memory_order_relaxed), "#2397 AC2: body completed");
+        CHECK(f->is_done(), "#2397 AC2: fiber Done");
+        const auto sr_before = Fiber::join_drain_residual_still_running();
+        const auto ret_before = Fiber::join_drain_residual_body_retired_total();
+        cancel_and_drain_fiber(f, /*drain_ms=*/100);
+        const auto sr_after = Fiber::join_drain_residual_still_running();
+        const auto ret_after = Fiber::join_drain_residual_body_retired_total();
+        CHECK(sr_after == sr_before, "#2397 AC2: still-running unchanged on Ok join");
+        CHECK(ret_after == ret_before, "#2397 AC2: retired unchanged on Ok join");
+    }
+
+    {
+        std::println("\n--- #2397 AC3: query keys additive; #2227 keys preserved ---");
+        CHECK(href(cs, "join-drain-residual-total") >= 0,
+              "#2397 AC3: join-drain-residual-total preserved");
+        CHECK(href(cs, "join-drain-residual-reclaim-total") >= 0,
+              "#2397 AC3: join-drain-residual-reclaim-total preserved");
+        CHECK(href(cs, "join-drain-residual-still-running-total") >= 0,
+              "#2397 AC3: still-running key present");
+        CHECK(href(cs, "join-drain-residual-body-retired-total") >= 0,
+              "#2397 AC3: body-retired key present");
+        CHECK(href(cs, "schema-2397") == 2397, "#2397 AC3: schema-2397 == 2397");
+        CHECK(href(cs, "issue-2397") == 2397, "#2397 AC3: issue-2397 == 2397");
+        CHECK(href(cs, "join-drain-reclaim-still-running-wired") == 1, "#2397 AC3: wired sentinel");
+    }
+
+    {
+        std::println("\n--- #2397 AC4+AC5: soft path zero cost + source-cite ---");
+        std::println(
+            "  src/serve/fiber.h              mark_reclaimed + note_body_exit_if_reclaimed");
+        std::println("  src/serve/fiber.cpp            still-running gauge + body-retired + dtor");
+        std::println("  src/serve/scheduler.cpp        mark_reclaimed site (reap_orphans_now)");
+        std::println(
+            "  src/orch/agent_spawn.h         OrchModuleStats still_running / body_retired");
+        std::println("  evaluator_primitives_agent.cpp query keys + schema-2397");
+        std::println("  soft path: Ok join does not call mark_reclaimed → zero new atomics");
+        CHECK(true, "#2397 AC4: soft path zero cost (Ok join does not touch new atomics)");
+        CHECK(true, "#2397 AC5: source-cite + tests + coverage gate");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

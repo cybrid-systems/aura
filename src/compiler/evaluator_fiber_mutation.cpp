@@ -2081,6 +2081,32 @@ extern "C" void aura_orch_note_mailbox_backpressure() {
     aura::orch::g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #2397: Fiber reclaim still-running / body-retired → OrchModuleStats.
+// Strong defs override fiber_bridge weak no-ops when evaluator/orch is linked.
+// Fiber owns the process-truth gauges; these mirrors feed query:orch-module-stats.
+extern "C" void aura_orch_note_join_drain_reclaim_still_running() {
+    aura::orch::g_orch_module_stats.join_drain_residual_still_running.fetch_add(
+        1, std::memory_order_relaxed);
+}
+extern "C" void aura_orch_note_join_drain_reclaim_body_retired() {
+    // still-running −1 already applied on Fiber; mirror both sides here.
+    auto& g = aura::orch::g_orch_module_stats.join_drain_residual_still_running;
+    auto cur = g.load(std::memory_order_relaxed);
+    while (cur > 0 && !g.compare_exchange_weak(cur, cur - 1, std::memory_order_relaxed,
+                                               std::memory_order_relaxed)) {
+    }
+    aura::orch::g_orch_module_stats.join_drain_residual_body_retired_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+extern "C" void aura_orch_note_join_drain_reclaim_still_running_drop() {
+    // Abandon path (~Fiber without body exit): gauge −1, no retired bump.
+    auto& g = aura::orch::g_orch_module_stats.join_drain_residual_still_running;
+    auto cur = g.load(std::memory_order_relaxed);
+    while (cur > 0 && !g.compare_exchange_weak(cur, cur - 1, std::memory_order_relaxed,
+                                               std::memory_order_relaxed)) {
+    }
+}
+
 // Returns 0 if deliverable, 1 if linear/StableNodeRef violation (drop message).
 extern "C" int aura_evaluator_mailbox_linear_check(std::uint64_t from_fiber, std::uint64_t to_fiber,
                                                    const char* payload, std::size_t payload_len) {
