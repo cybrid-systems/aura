@@ -3128,8 +3128,65 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"status", make_string(st_idx)},
             {"payload", make_string(payload_idx)},
             {"correlation-id", make_string(corr_idx)},
-            {"schema", make_int(2231)},
-            {"schema-2231", make_int(2231)},
+            {"schema", make_int(aura::orch::kAgentAskIssue)},
+            {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+        };
+        return build_orch_hash(kv);
+    });
+
+    // Issue #2401: orch:agent-reply corr payload → hash {ok, status, schema-2401}.
+    // Standard worker-side response for orch:agent-ask. Corr is int or
+    // string (correlation id from ask:<id>:… prefix). Looks up the
+    // pending-ask reply mailbox (no AgentRegistry). Unknown corr /
+    // closed → structured fail, no hang.
+    add("orch:agent-reply", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-reply: usage (orch:agent-reply corr payload)",
+                                        ev.primitive_error_counter_ptr());
+        }
+        std::uint64_t corr_id = 0;
+        if (types::is_int(a[0])) {
+            const auto v = types::as_int(a[0]);
+            if (v < 0) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-reply: corr must be non-negative",
+                                            ev.primitive_error_counter_ptr());
+            }
+            corr_id = static_cast<std::uint64_t>(v);
+        } else if (types::is_string(a[0])) {
+            const auto s = heap_str_from(ev.string_heap_, a[0]);
+            try {
+                corr_id = static_cast<std::uint64_t>(std::stoull(s));
+            } catch (...) {
+                // [SILENCE-PRIM-#615] corr parse failure is a typed primitive error.
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-reply: corr string not a number",
+                                            ev.primitive_error_counter_ptr());
+            }
+        } else {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-reply: corr must be int or string",
+                                        ev.primitive_error_counter_ptr());
+        }
+        std::string payload;
+        if (types::is_string(a[1]))
+            payload = heap_str_from(ev.string_heap_, a[1]);
+        else if (types::is_int(a[1]))
+            payload = std::to_string(types::as_int(a[1]));
+        else if (types::is_bool(a[1]))
+            payload = types::as_bool(a[1]) ? "#t" : "#f";
+        else
+            payload = "payload";
+        const auto r = aura::orch::agent_reply(corr_id, payload);
+        auto st_idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(r.status);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(r.ok)},
+            {"status", make_string(st_idx)},
+            {"schema", make_int(aura::orch::kAgentReplyIssue)},
+            {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
+            {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
         };
         return build_orch_hash(kv);
     });
@@ -3436,6 +3493,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("issue-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("agent-scope-concurrent-detect-wired", 1);
+            // Issue #2231 / #2401: agent-ask + agent-reply metrics (additive).
+            insert_kv("agent-ask-total", static_cast<std::int64_t>(
+                                             os.agent_ask_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-ask-timeout-total",
+                      static_cast<std::int64_t>(
+                          os.agent_ask_timeout_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-reply-total", static_cast<std::int64_t>(os.agent_reply_total.load(
+                                               std::memory_order_relaxed)));
+            insert_kv("agent-reply-fail-total",
+                      static_cast<std::int64_t>(
+                          os.agent_reply_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2231", aura::orch::kAgentAskIssue);
+            insert_kv("issue-2231", aura::orch::kAgentAskIssue);
+            insert_kv("schema-2401", aura::orch::kAgentReplyIssue);
+            insert_kv("issue-2401", aura::orch::kAgentReplyIssue);
+            insert_kv("agent-reply-wired", 1);
             insert_kv("send-closed", static_cast<std::int64_t>(
                                          os.send_closed_total.load(std::memory_order_relaxed)));
             insert_kv("recv-empty", static_cast<std::int64_t>(

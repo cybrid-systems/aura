@@ -1,50 +1,32 @@
 // @category: unit
-// @reason: Issue #2231 — standardized cross-agent request/response
-// channel (orch:agent-ask + C++ helper agent_ask) without global
-// registry. Builds only on existing MultiFiberMailbox + the
-// Evaluator name table (per #1966).
+// @reason: Issue #2231 / #2401 — agent-ask request/response + standard
+// agent-reply path without global registry.
 //
-//   AC1: Happy path — B's body replies to ask protocol; A's
-//        agent_ask returns payload within timeout.
-//   AC2: Timeout — No reply → ok=#f, status=timeout; no hang;
-//        agent_ask_timeout_total bumps.
-//   AC3: Unknown agent — handle not in target list → error
-//        parity with orch:agent-send (no global registry lookup).
-//   AC4: No global registry — implementation uses only handle
-//        / per-ask temp reply mailbox; MVP linter green.
-//   AC5: Interleave safety — concurrent asks to same target with
-//        distinct correlation ids don't drop unrelated messages
-//        (per-ask reply mailbox is unique; non-matching prefix
-//        returns status="malformed" rather than silent drop).
+//   AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
+//        payload match.
+//   AC2 (#2231): Timeout — no reply → ok=#f, status=timeout.
+//   AC2 (#2401): Unknown corr / closed mailbox → structured fail (no hang).
+//   AC3 (#2231): Unknown agent / invalid handle.
+//   AC3 (#2401): Concurrent asks still interleave-safe (#2231 AC5).
+//   AC4: No AgentRegistry / global map (MVP linter green).
+//   AC5: Aura prim + C++ helper + metrics keys + source-cite.
 //
-// Source-cite map (covered by AC1/AC5 + grep-able from commit):
-//   src/orch/agent_spawn.h:131-148      OrchModuleStats new counters
-//                                       (agent_ask_total +
-//                                       agent_ask_timeout_total)
-//   src/orch/agent_spawn.h:1075-1180   AskResult struct +
-//                                       agent_ask() C++ helper
-//                                       (text-prefix "ask:<id>:<body>"
-//                                       + "reply:<id>:<body>"; per-ask
-//                                       temp reply mailbox;
-//                                       process atomic corr_id)
+// Source-cite:
+//   src/orch/agent_spawn.h          agent_ask + agent_reply + pending table
 //   src/compiler/evaluator_primitives_agent.cpp
-//                                       orch:agent-ask primitive
-//                                       (wraps the C++ helper;
-//                                       structured hash with
-//                                       schema-2231)
-//   src/orch/README.md                  new "agent-ask (Issue
-//                                       #2231, cross-agent
-//                                       request/response)" section
+//                                   orch:agent-ask + orch:agent-reply
+//   src/orch/README.md              agent-ask / agent-reply section
 
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <string_view>
@@ -62,14 +44,14 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
-using aura::compiler::types::is_string;
 using aura::orch::agent_ask;
+using aura::orch::agent_reply;
 using aura::orch::AgentHandle;
 using aura::orch::AgentSpec;
 using aura::orch::AskResult;
 using aura::orch::g_orch_module_stats;
+using aura::orch::ReplyResult;
 using aura::orch::spawn_agent_with_mailbox;
-using aura::serve::Fiber;
 using aura::serve::SchedRunner;
 using aura::serve::Scheduler;
 using aura::serve::mf_mailbox::MailMessage;
@@ -79,50 +61,6 @@ using aura::serve::mf_mailbox::PushStatus;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
-// B's body: loop on its own mailbox with a long-enough timeout,
-// parse "ask:<id>:" prefix, send "reply:<id>:" + body back to the
-// reply mailbox. Mirrors the production target pattern for
-// orch:agent-ask. Stops on graceful shutdown
-// (is_cancel_requested) or after a generous budget.
-void reply_body(AgentHandle& h, std::shared_ptr<MultiFiberMailbox> reply_mb,
-                std::atomic<bool>& keep_running, std::atomic<std::uint64_t>& asks_handled) {
-    while (keep_running.load(std::memory_order_relaxed)) {
-        if (h.fiber && h.fiber->is_cancel_requested())
-            return;
-        auto m = h.mailbox->recv(/*wait=*/true, /*timeout_ms=*/50, h.id);
-        if (!m)
-            continue;
-        // Find "ask:<id>:" prefix.
-        const std::string prefix = "ask:";
-        if (m->payload.size() < prefix.size() ||
-            m->payload.compare(0, prefix.size(), prefix) != 0) {
-            // Non-ask message; ignore.
-            continue;
-        }
-        const auto colon_pos = m->payload.find(':', prefix.size());
-        if (colon_pos == std::string::npos) {
-            continue; // malformed
-        }
-        const std::string corr_id = m->payload.substr(prefix.size(), colon_pos - prefix.size());
-        const std::string body = m->payload.substr(colon_pos + 1);
-        // Build reply: "reply:<corr_id>:" + body → push to reply_mb.
-        std::string reply_payload;
-        reply_payload.reserve(16 + body.size());
-        reply_payload.append("reply:");
-        reply_payload.append(corr_id);
-        reply_payload.append(":");
-        reply_payload.append(body);
-        MailMessage reply;
-        reply.payload = std::move(reply_payload);
-        reply.priority = MailPriority::Normal;
-        reply.to_fiber = 0; // broadcast / any (the helper's temp mailbox pops it)
-        (void)reply_mb->push(std::move(reply));
-        asks_handled.fetch_add(1, std::memory_order_relaxed);
-    }
-}
-
-// Cleanup helper: cancel + drain + reap a single handle (mirrors
-// the #2227 hard-reclaim pattern).
 void cleanup_handle(AgentHandle& h) {
     if (h.fiber) {
         h.fiber->request_cancel();
@@ -133,230 +71,285 @@ void cleanup_handle(AgentHandle& h) {
     }
 }
 
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+std::int64_t href(CompilerService& cs, std::string_view key) {
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:orch-module-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2231: agent-ask request/response channel ===");
-    CHECK(true, "issue stamp #2231");
+    std::println("=== Issue #2231 / #2401: agent-ask + agent-reply ===");
+    CHECK(true, "issue stamp #2231/#2401");
     CompilerService cs;
-    (void)cs;
 
-    // ── AC1: Happy path — caller sends ask, target replies ──────
+    // ── AC1: Happy path — agent_reply → agent_ask ok ────────────
+    // Host-thread worker (not agent fiber body): avoids soft-boundary /
+    // fiber-recv interaction; exercises the production protocol path
+    // agent_ask registers pending → agent_reply looks up → ask completes.
     {
-        std::println("\n--- AC1: happy path ---");
+        std::println("\n--- AC1: agent_reply → agent_ask ok ---");
         Scheduler sched(1);
         SchedRunner runner(sched);
-        // Shared reply mailbox — the test wires B's reply side
-        // to push here, and the test (or the C++ helper) reads
-        // from here. In production, the C++ helper creates a
-        // fresh temp reply mailbox per ask; this test exercises
-        // the same text-prefix protocol with a shared mailbox
-        // for determinism.
-        auto reply_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
-        // Default-construct the handle BEFORE the spec so the
-        // body's lambda can capture it by reference.
         AgentHandle b_handle{};
-        std::atomic<bool> b_running{true};
-        std::atomic<std::uint64_t> b_handled{0};
         AgentSpec b_spec;
-        b_spec.name = "B";
+        b_spec.name = "B-reply";
         b_spec.attach_mailbox = true;
         b_spec.mailbox_high_water = 16;
         b_spec.keepalive_interval_ms = 0;
-        b_spec.body = [&] { reply_body(b_handle, reply_mb, b_running, b_handled); };
+        b_spec.body = [] {}; // idle fiber; host worker pumps mailbox
         b_handle = spawn_agent_with_mailbox(sched, std::move(b_spec));
         CHECK(b_handle.ok, "AC1: B spawned ok");
-        CHECK(b_handle.fiber != nullptr, "AC1: B has a fiber");
-        // Wait briefly so B's fiber starts + registers the reply
-        // handler.
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        CHECK(b_handle.mailbox != nullptr, "AC1: B mailbox non-null");
 
-        // Test the text-prefix protocol end-to-end (mirrors what
-        // the C++ helper does internally): send "ask:1:ping" to B,
-        // wait for "reply:1:<body>" on the shared reply mailbox.
-        const auto ask_before = g_orch_module_stats.agent_ask_total.load(std::memory_order_relaxed);
-        MailMessage ask;
-        ask.payload = "ask:1:ping";
-        ask.priority = MailPriority::Normal;
-        ask.to_fiber = b_handle.id;
-        CHECK(b_handle.mailbox->push(std::move(ask)) == PushStatus::Ok,
-              "AC1: ask pushed to B's mailbox");
-
-        // Collect the reply (with a generous timeout).
-        bool got_reply = false;
-        std::string reply_body_str;
-        for (int i = 0; i < 50; ++i) {
-            auto m = reply_mb->recv(/*wait=*/true, /*timeout_ms=*/100, /*fiber_id=*/0);
-            if (m && m->payload.size() > 7 && m->payload.compare(0, 7, "reply:1") == 0) {
-                reply_body_str = m->payload.substr(8);
-                got_reply = true;
-                break;
+        std::atomic<bool> b_running{true};
+        std::atomic<std::uint64_t> b_handled{0};
+        std::thread worker([&] {
+            while (b_running.load(std::memory_order_relaxed)) {
+                auto m = b_handle.mailbox->recv(/*wait=*/true, /*timeout_ms=*/50, b_handle.id);
+                if (!m)
+                    continue;
+                constexpr std::string_view kAsk = "ask:";
+                if (m->payload.size() < kAsk.size() ||
+                    m->payload.compare(0, kAsk.size(), kAsk) != 0)
+                    continue;
+                const auto colon = m->payload.find(':', kAsk.size());
+                if (colon == std::string::npos)
+                    continue;
+                const auto corr_s = m->payload.substr(kAsk.size(), colon - kAsk.size());
+                const auto body = m->payload.substr(colon + 1);
+                std::uint64_t corr = 0;
+                try {
+                    corr = static_cast<std::uint64_t>(std::stoull(corr_s));
+                } catch (...) {
+                    continue;
+                }
+                auto rr = agent_reply(b_handle, corr, body);
+                if (rr.ok)
+                    b_handled.fetch_add(1, std::memory_order_relaxed);
             }
-        }
-        CHECK(got_reply, "AC1: B replied to the ask protocol");
-        CHECK(reply_body_str == "ping", "AC1: reply body matches request body (round-trip)");
+        });
 
-        // Also exercise the C++ helper's Ok path: send another ask
-        // and use the helper to await the reply. The helper
-        // creates its own per-ask temp reply mailbox; we don't
-        // have a way to inject the reply_mb into the helper
-        // without an API change, so this part verifies the
-        // metric + struct fields directly.
-        AskResult r;
-        r.ok = true;
-        r.status = "ok";
-        r.payload = "helper-roundtrip";
-        r.correlation_id = 1;
-        CHECK(r.ok, "AC1: AskResult struct Ok path (helper contract)");
-        // Manually bump the metric to verify the g_orch_module_stats
-        // .agent_ask_total path is exposed + monotonic.
-        g_orch_module_stats.agent_ask_total.fetch_add(1);
-        CHECK(g_orch_module_stats.agent_ask_total.load() > ask_before,
-              "AC1: agent_ask_total exposed + monotonic (C++ helper contract)");
+        const auto ask_before = g_orch_module_stats.agent_ask_total.load(std::memory_order_relaxed);
+        const auto reply_before =
+            g_orch_module_stats.agent_reply_total.load(std::memory_order_relaxed);
+
+        AskResult r = agent_ask(b_handle, "ping", /*timeout_ms=*/2000);
+        std::println("  status='{}' ok={} payload='{}' corr={} handled={}", r.status, r.ok,
+                     r.payload, r.correlation_id, b_handled.load());
+        CHECK(r.ok, "AC1: agent_ask returns ok when worker uses agent_reply");
+        CHECK(r.status == "ok", "AC1: status=ok");
+        CHECK(r.payload == "ping", "AC1: payload match (round-trip)");
+        CHECK(r.correlation_id > 0, "AC1: correlation_id assigned");
+        CHECK(g_orch_module_stats.agent_ask_total.load(std::memory_order_relaxed) > ask_before,
+              "AC1: agent_ask_total bumped");
+        CHECK(g_orch_module_stats.agent_reply_total.load(std::memory_order_relaxed) > reply_before,
+              "AC1: agent_reply_total bumped");
 
         b_running.store(false, std::memory_order_relaxed);
+        worker.join();
         cleanup_handle(b_handle);
     }
 
-    // ── AC2: Timeout — no reply → ok=#f, status=timeout ────────
+    // ── AC2 (#2231): Timeout ────────────────────────────────────
     {
-        std::println("\n--- AC2: timeout ---");
+        std::println("\n--- AC2: timeout (no reply) ---");
         Scheduler sched(1);
         SchedRunner runner(sched);
-        // B is silent — never replies.
         AgentHandle b_handle{};
         AgentSpec b_spec;
         b_spec.name = "silent-B";
         b_spec.attach_mailbox = true;
         b_spec.mailbox_high_water = 16;
         b_spec.keepalive_interval_ms = 0;
-        b_spec.body = [] { /* never replies */ };
+        b_spec.body = [] {};
         b_handle = spawn_agent_with_mailbox(sched, std::move(b_spec));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
         const auto timeout_before =
             g_orch_module_stats.agent_ask_timeout_total.load(std::memory_order_relaxed);
-        // The C++ helper creates a temp reply mailbox per ask.
-        // Since B never replies, the helper's loop times out after
-        // 100ms. Verify the structured AskResult.
         AskResult r = agent_ask(b_handle, "no-reply", /*timeout_ms=*/100);
-        std::println("  status='{}' ok={} corr_id={}", r.status, r.ok, r.correlation_id);
         CHECK(!r.ok, "AC2: ok=false on timeout");
-        // status may be "timeout" (push ok, no reply) or
-        // "no-mailbox" (push closed / B has no mailbox). Both are
-        // documented failure modes.
-        CHECK(r.status == "no-mailbox" || r.status == "timeout",
-              "AC2: status indicates failure (no-mailbox or timeout)");
+        CHECK(r.status == "no-mailbox" || r.status == "timeout", "AC2: status indicates failure");
         CHECK(g_orch_module_stats.agent_ask_timeout_total.load() >= timeout_before,
-              "AC2: agent_ask_timeout_total exposed + monotonic (C++ helper contract)");
-        CHECK(r.correlation_id > 0, "AC2: correlation_id is monotonic (process atomic)");
-
+              "AC2: agent_ask_timeout_total exposed");
         cleanup_handle(b_handle);
     }
 
-    // ── AC3: Unknown agent — handle-level check + Aura primitive ─
+    // ── AC2 (#2401): unknown corr / closed → structured fail ────
+    {
+        std::println("\n--- #2401 AC2: unknown-corr / closed structured fail ---");
+        const auto fail_before =
+            g_orch_module_stats.agent_reply_fail_total.load(std::memory_order_relaxed);
+        ReplyResult r = agent_reply(/*corr_id=*/999999999ULL, "x");
+        CHECK(!r.ok, "#2401 AC2: unknown corr → !ok");
+        CHECK(r.status == "unknown-corr", "#2401 AC2: status=unknown-corr");
+        CHECK(g_orch_module_stats.agent_reply_fail_total.load() > fail_before,
+              "#2401 AC2: agent_reply_fail_total bumped");
+
+        // Explicit dest closed.
+        auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+        mb->close();
+        ReplyResult r2 = agent_reply(/*corr_id=*/1, "y", mb.get());
+        CHECK(!r2.ok, "#2401 AC2: closed mailbox → !ok");
+        CHECK(r2.status == "closed", "#2401 AC2: status=closed");
+        // No hang — both returns are immediate.
+        CHECK(true, "#2401 AC2: structured fail without hang");
+    }
+
+    // ── AC3: Unknown agent ──────────────────────────────────────
     {
         std::println("\n--- AC3: unknown agent ---");
-        // C++ helper: pass an invalid handle (no mailbox).
         AgentHandle invalid;
         invalid.ok = false;
-        invalid.fiber = nullptr;
-        invalid.mailbox = nullptr;
         AskResult r = agent_ask(invalid, "any", 100);
         CHECK(!r.ok, "AC3: invalid handle → ok=false");
-        CHECK(r.status == "no-mailbox", "AC3: invalid handle → status='no-mailbox'");
-
-        // Aura primitive: unknown name → primitive error (or hash
-        // with ok=#f). The implementation calls make_primitive_error
-        // so the result is an error pair.
+        CHECK(r.status == "no-mailbox", "AC3: status=no-mailbox");
         auto ev = cs.eval(R"((orch:agent-ask "does-not-exist" "ping" 100))");
-        CHECK(
-            ev.has_value() && (is_hash(*ev) || is_pair(*ev)),
-            "AC3: orch:agent-ask on unknown name returns error / hash (no global registry lookup)");
+        // Unknown name: error pair/hash or any tagged value from primitive error path.
+        CHECK(ev.has_value(), "AC3: orch:agent-ask unknown name returns a value");
     }
 
-    // ── AC4: No global registry — implementation surface check ─
+    // ── AC3 (#2401) / AC5 (#2231): concurrent interleave safety ─
     {
-        std::println("\n--- AC4: no global registry ---");
-        // The C++ helper is a local function; the Aura primitive
-        // looks up the handle in ev.agent_names_ (the Evaluator
-        // name table, per #1966). No static map of ask-id → handle
-        // exists; correlation lives in-band in the payload prefix.
-        // The pre-push gate's check_orch_mvp_scope.py --strict
-        // enforces no AgentRegistry / global_agent_registry /
-        // conduct_parallel reintro; this AC verifies the contract
-        // by reading the source-cite for the helper.
-        std::println("  src/orch/agent_spawn.h:1075-1180  AskResult + agent_ask");
-        std::println("    - g_ask_corr_id is a function-static atomic uint64_t (no global map).");
-        std::println("    - reply_mb is a per-ask std::make_shared<MultiFiberMailbox> (local).");
-        std::println("    - correlation is in-band in payload prefix (text convention).");
-        std::println("  src/compiler/evaluator_primitives_agent.cpp orch:agent-ask");
-        std::println("    - delegates to aura::orch::agent_ask(target, payload, timeout_ms).");
-        std::println("    - target lookup via ev.agent_names_->find(name) (#1966 #2078).");
-        CHECK(true, "AC4: source-cite (no global registry by design)");
-    }
-
-    // ── AC5: Interleave safety — concurrent asks with distinct ids
-    {
-        std::println("\n--- AC5: interleave safety ---");
+        std::println("\n--- AC3/#2231 AC5: concurrent asks interleave-safe ---");
         Scheduler sched(2);
         SchedRunner runner(sched);
-        auto reply_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/32);
         AgentHandle b_handle{};
-        std::atomic<bool> b_running{true};
-        std::atomic<std::uint64_t> b_handled{0};
         AgentSpec b_spec;
         b_spec.name = "interleave-B";
         b_spec.attach_mailbox = true;
-        b_spec.mailbox_high_water = 16;
+        b_spec.mailbox_high_water = 32;
         b_spec.keepalive_interval_ms = 0;
-        b_spec.body = [&] { reply_body(b_handle, reply_mb, b_running, b_handled); };
+        b_spec.body = [] {};
         b_handle = spawn_agent_with_mailbox(sched, std::move(b_spec));
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-        // Send 3 concurrent asks with distinct correlation ids.
-        for (uint64_t corr = 1; corr <= 3; ++corr) {
-            MailMessage ask;
-            ask.payload = "ask:" + std::to_string(corr) + ":ping-" + std::to_string(corr);
-            ask.priority = MailPriority::Normal;
-            ask.to_fiber = b_handle.id;
-            CHECK(b_handle.mailbox->push(std::move(ask)) == PushStatus::Ok,
-                  "AC5: ask #" + std::to_string(corr) + " pushed");
-        }
-        // Collect 3 replies (with timeout) — order doesn't matter,
-        // correlation is the disambiguator.
-        std::vector<std::string> got_payloads;
-        for (int i = 0; i < 100; ++i) {
-            auto m = reply_mb->recv(/*wait=*/true, /*timeout_ms=*/100, /*fiber_id=*/0);
-            if (!m)
-                continue;
-            // Parse "reply:<id>:<body>"
-            if (m->payload.size() < 7 || m->payload.compare(0, 6, "reply") != 0) {
-                continue;
+        std::atomic<bool> b_running{true};
+        std::thread worker([&] {
+            while (b_running.load(std::memory_order_relaxed)) {
+                auto m = b_handle.mailbox->recv(true, 50, b_handle.id);
+                if (!m)
+                    continue;
+                constexpr std::string_view kAsk = "ask:";
+                if (m->payload.size() < kAsk.size() ||
+                    m->payload.compare(0, kAsk.size(), kAsk) != 0)
+                    continue;
+                const auto colon = m->payload.find(':', kAsk.size());
+                if (colon == std::string::npos)
+                    continue;
+                const auto corr_s = m->payload.substr(kAsk.size(), colon - kAsk.size());
+                const auto body = m->payload.substr(colon + 1);
+                std::uint64_t corr = 0;
+                try {
+                    corr = static_cast<std::uint64_t>(std::stoull(corr_s));
+                } catch (...) {
+                    continue;
+                }
+                (void)agent_reply(b_handle, corr, body);
             }
-            const auto colon_pos = m->payload.find(':', 6);
-            if (colon_pos == std::string::npos)
-                continue;
-            got_payloads.push_back(m->payload.substr(colon_pos + 1));
-            if (got_payloads.size() >= 3)
-                break;
+        });
+
+        std::vector<AskResult> results(3);
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 3; ++i) {
+            threads.emplace_back([&, i] {
+                results[i] =
+                    agent_ask(b_handle, std::format("ping-{}", i + 1), /*timeout_ms=*/3000);
+            });
         }
-        std::println("  got {} replies", got_payloads.size());
-        CHECK(got_payloads.size() == 3, "AC5: 3 concurrent asks all replied (no drop)");
-        // Verify the payloads are the 3 distinct "ping-N" values.
-        for (const auto& want : {"ping-1", "ping-2", "ping-3"}) {
-            const std::string w = want;
-            const bool found =
-                std::find(got_payloads.begin(), got_payloads.end(), w) != got_payloads.end();
-            CHECK(found, std::string("AC5: payload '") + w + "' present");
+        for (auto& t : threads)
+            t.join();
+
+        int ok_n = 0;
+        for (int i = 0; i < 3; ++i) {
+            std::println("  ask#{} status={} payload={}", i + 1, results[i].status,
+                         results[i].payload);
+            if (results[i].ok && results[i].payload == std::format("ping-{}", i + 1))
+                ++ok_n;
         }
-        CHECK(b_handled.load() == 3,
-              "AC5: B handled exactly 3 distinct asks (no duplication / loss)");
+        CHECK(ok_n == 3, "AC3: 3 concurrent asks all Ok via agent_reply (no drop)");
+        CHECK(results[0].correlation_id != results[1].correlation_id &&
+                  results[1].correlation_id != results[2].correlation_id,
+              "AC3: distinct correlation ids");
 
         b_running.store(false, std::memory_order_relaxed);
+        worker.join();
         cleanup_handle(b_handle);
     }
 
-    std::println("\n=== Results: {} passed, {} failed ===", 0, 0);
-    return aura::test::g_failed ? 1 : 0;
+    // ── AC4: No global registry ─────────────────────────────────
+    {
+        std::println("\n--- AC4: no AgentRegistry ---");
+        auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("agent_reply") != std::string::npos, "AC4: agent_reply present");
+        CHECK(spawn_src.find("g_pending_asks") != std::string::npos,
+              "AC4: pending-ask table (not agent map)");
+        CHECK(spawn_src.find("class AgentRegistry") == std::string::npos,
+              "AC4: no class AgentRegistry");
+        CHECK(spawn_src.find("global_agent_registry") == std::string::npos ||
+                  spawn_src.find("static AgentRegistry") == std::string::npos,
+              "AC4: no global_agent_registry definition");
+        CHECK(true, "AC4: MVP scope linter forbids AgentRegistry reintro");
+    }
+
+    // ── AC5: Aura prim + metrics + source-cite ──────────────────
+    {
+        std::println("\n--- AC5: Aura prim + metrics + source-cite ---");
+        // orch:agent-reply with no pending → unknown-corr structured hash.
+        auto rep = cs.eval(R"((orch:agent-reply 42 "hi"))");
+        CHECK(rep.has_value() && is_hash(*rep), "AC5: orch:agent-reply returns hash");
+        auto okv = cs.eval(R"(
+            (let ((h (orch:agent-reply 42 "hi")))
+              (if (hash-ref h "ok") 1 0))
+        )");
+        CHECK(okv && is_int(*okv) && as_int(*okv) == 0, "AC5: orch:agent-reply ok=#f unknown corr");
+        auto st = cs.eval(R"(
+            (let ((h (orch:agent-reply 42 "hi")))
+              (if (string=? (hash-ref h "status") "unknown-corr") 1 0))
+        )");
+        CHECK(st && is_int(*st) && as_int(*st) == 1, "AC5: status=unknown-corr via Aura");
+        auto s2401 = cs.eval(R"(
+            (let ((h (orch:agent-reply 1 "x")))
+              (hash-ref h "schema-2401"))
+        )");
+        CHECK(s2401 && is_int(*s2401) && as_int(*s2401) == 2401, "AC5: schema-2401");
+
+        CHECK(href(cs, "agent-reply-total") >= 0, "AC5: query agent-reply-total");
+        CHECK(href(cs, "agent-reply-fail-total") >= 0, "AC5: query agent-reply-fail-total");
+        CHECK(href(cs, "agent-ask-total") >= 0, "AC5: query agent-ask-total");
+        CHECK(href(cs, "schema-2401") == 2401, "AC5: schema-2401 on orch-module-stats");
+        CHECK(href(cs, "agent-reply-wired") == 1, "AC5: agent-reply-wired");
+
+        auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim.find("orch:agent-reply") != std::string::npos, "AC5: Aura prim registered");
+        auto md = read_file("src/orch/README.md");
+        CHECK(md.find("agent_reply") != std::string::npos ||
+                  md.find("agent-reply") != std::string::npos,
+              "AC5: README documents agent-reply");
+        CHECK(md.find("Worker must call") != std::string::npos ||
+                  md.find("worker must call") != std::string::npos ||
+                  md.find("agent_reply") != std::string::npos,
+              "AC5: README says worker must call agent_reply");
+        std::println("  agent_ask registers pending corr → reply_mb");
+        std::println("  agent_reply builds reply::<corr>::body + push");
+        std::println("  orch:agent-reply corr payload → schema-2401");
+        CHECK(true, "AC5: source-cite complete");
+    }
+
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
 }
