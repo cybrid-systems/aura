@@ -27,7 +27,11 @@ AST/mutate safety is preserved across fibers. The batch hash carries `eval-seria
 | Throughput | ~ sequential apply cost + scheduling | concurrent apply for pure thunks |
 | Mutating thunks | safe (always locked) | task error `pure-contract-violated` (+ metric) |
 | Batch hash | `eval-serialized=#t` | `eval-serialized=#f` when any unlocked pure apply; `schema-pure-parallel=2163` |
+| **isolation-level** (Issue #2400) | `serialized` | `best-effort-pure` (never transactional; even if all tasks fallback-locked) |
 | Forced lock | n/a | if mutation boundary already held → lock + `pure_fallback_locked_total` |
+
+**isolation-level enum** (`isolation-level` on every batch hash, schema-2400):
+`serialized` | `best-effort-pure` | `none` (C++ TaskSpec-only path that never touches Evaluator).
 
 **Pure contract (caller guarantees + best-effort probe):**
 
