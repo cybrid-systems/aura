@@ -2184,6 +2184,25 @@ def cmd_join_drain_reclaim_still_running_coverage():
     return 0
 
 
+def cmd_mailbox_bp_recent_window_coverage():
+    """Issue #2398: mailbox_bp_recent_total quiet-period window for BP admit.
+
+    Sliding quiet period after last BP so spawn admit recovers without restart;
+    send_backpressure_total stays cumulative; threshold=0 zero cost.
+    """
+    print(f"{B}=== mailbox BP recent window coverage (#2398) ==={N}")
+    script = ROOT / "scripts" / "check_mailbox_bp_recent_window_2398.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox BP recent window (#2398) coverage contract rows failed")
+        return 1
+    ok("mailbox BP recent window (#2398) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3545,6 +3564,7 @@ def cmd_gate():
         or cmd_stable_ref_wire_endian_coverage()
         or cmd_orphan_reap_tick_coverage()
         or cmd_join_drain_reclaim_still_running_coverage()
+        or cmd_mailbox_bp_recent_window_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

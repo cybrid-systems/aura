@@ -52,6 +52,7 @@ using aura::compiler::types::is_int;
 using aura::orch::AgentHandle;
 using aura::orch::AgentSpec;
 using aura::orch::g_mailbox_bp_last_decay_us;
+using aura::orch::g_mailbox_bp_last_event_us;
 using aura::orch::g_orch_module_stats;
 using aura::orch::kMailboxBpDecayMsDefault;
 using aura::orch::orch_now_us;
@@ -69,19 +70,25 @@ using aura::serve::Scheduler;
 struct ScopedOrchRestore {
     std::uint64_t saved_counter;
     std::uint64_t saved_decay_us;
+    std::uint64_t saved_event_us;
     ScopedOrchRestore()
         : saved_counter(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed))
-        , saved_decay_us(g_mailbox_bp_last_decay_us.load(std::memory_order_relaxed)) {}
+        , saved_decay_us(g_mailbox_bp_last_decay_us.load(std::memory_order_relaxed))
+        , saved_event_us(g_mailbox_bp_last_event_us.load(std::memory_order_relaxed)) {}
     ~ScopedOrchRestore() {
         g_orch_module_stats.mailbox_bp_recent_total.store(saved_counter, std::memory_order_release);
         g_mailbox_bp_last_decay_us.store(saved_decay_us, std::memory_order_release);
+        g_mailbox_bp_last_event_us.store(saved_event_us, std::memory_order_release);
     }
 };
 
-// Bump the counter as if a BP event fired (same atomic op the production
-// emit_keepalive / agent_send paths use). Returns the post-bump value.
+// Bump the counter as if a BP event fired (same helper production push /
+// agent_send / emit_keepalive paths use). Updates last-event clock so
+// quiet-period decay (#2398) can observe the event timestamp.
 std::uint64_t simulate_bp_event(std::uint64_t n = 1) {
-    return g_orch_module_stats.mailbox_bp_recent_total.fetch_add(n, std::memory_order_relaxed);
+    for (std::uint64_t i = 0; i < n; ++i)
+        aura::orch::note_mailbox_bp_recent_event();
+    return g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
 }
 
 // Run a spawn under the current threshold/env settings; return the handle.
@@ -165,9 +172,12 @@ int main() {
         setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
     }
 
-    // ── AC2: after decay interval — counter resets → spawn admitted
+    // ── AC2: after quiet-period window — counter resets → spawn admitted
+    // Issue #2398: quiet period is measured from last BP event, not from
+    // last decay stamp. BP → immediate deny; wait window with no new BP →
+    // admit.
     {
-        std::println("\n--- AC2: after decay interval — counter resets, spawn admitted ---");
+        std::println("\n--- AC2: after quiet-period window — counter resets, spawn admitted ---");
         ScopedOrchRestore restore;
 
         setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
@@ -176,37 +186,25 @@ int main() {
         Scheduler sched(1);
         SchedRunner runner(sched);
 
-        // Prime counter via BP events.
+        // Prime counter via BP events (stamps last_event_us).
         simulate_bp_event(5);
-
-        // Spawn denied (counter > threshold, decay window not yet elapsed
-        // because the test runs fast — first spawn's decay check finds
-        // last_decay_us == 0, CAS sets last_decay_us to now_us, AND
-        // resets the counter. So the first spawn after BP actually
-        // already decays. To verify the wait-decay-and-re-admit path
-        // we bump again after the first spawn, then wait, then spawn.)
-        AgentHandle h_first = try_spawn(sched, "ac2-first");
-        CHECK(h_first.ok, "AC2: first spawn after BP decays + admits (initial decay state=0)");
-
-        // Bump again (simulates a new BP event after the first decay).
-        simulate_bp_event(5);
-        const auto after_second_bp =
+        const auto after_bp =
             g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
-        CHECK(after_second_bp >= 5, "AC2: counter non-zero after second BP event");
+        CHECK(after_bp >= 5, "AC2: counter non-zero after BP events");
 
-        // Without waiting, spawn should be denied (decay window not elapsed).
+        // Without waiting, spawn should be denied (quiet window not elapsed).
         AgentHandle h_denied = try_spawn(sched, "ac2-denied-pre-wait");
         CHECK(!h_denied.ok,
-              "AC2: spawn denied before decay window elapses (counter still >= threshold)");
+              "AC2: spawn denied before quiet window elapses (counter still >= threshold)");
         CHECK(h_denied.quota_dimension == "mailbox-bp",
               "AC2: quota_dimension=\"mailbox-bp\" on pre-wait deny");
 
-        // Wait past the 100ms decay window.
+        // Wait past the 100ms quiet window (no new BP).
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
         // Next spawn should decay + admit.
         AgentHandle h_admitted = try_spawn(sched, "ac2-admitted-post-wait");
-        CHECK(h_admitted.ok, "AC2: spawn admitted after decay window elapsed (counter reset to 0)");
+        CHECK(h_admitted.ok, "AC2: spawn admitted after quiet window elapsed (counter reset to 0)");
 
         const auto last_decay_after = g_mailbox_bp_last_decay_us.load(std::memory_order_relaxed);
         CHECK(last_decay_after > 0, "AC2: g_mailbox_bp_last_decay_us advanced");
@@ -252,9 +250,9 @@ int main() {
         setenv("AURA_ORCH_BP_DECAY_MS", "", 1);
     }
 
-    // ── AC2 multi-cycle: BP / decay / BP / decay (regression) ─────
+    // ── AC2 multi-cycle: BP / quiet / BP / quiet (regression) ─────
     {
-        std::println("\n--- AC2 multi-cycle: BP / decay / BP / decay ---");
+        std::println("\n--- AC2 multi-cycle: BP / quiet / BP / quiet ---");
         ScopedOrchRestore restore;
 
         setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
@@ -263,24 +261,18 @@ int main() {
         Scheduler sched(1);
         SchedRunner runner(sched);
 
-        // Pre-set last_decay_us to "recent" so cycle 0 properly denies
-        // pre-decay. Production code: last_decay_us=0 means "never decayed"
-        // → first spawn decays + admits (intentional, no BP history to
-        // decay from). For the regression loop we need a recent timestamp
-        // so the deny-pre-decay path is exercised on every cycle.
-        g_mailbox_bp_last_decay_us.store(orch_now_us(), std::memory_order_release);
-
         for (int cycle = 0; cycle < 3; ++cycle) {
+            // Each cycle: BP stamps last_event → deny; wait quiet → admit.
             simulate_bp_event(3);
             AgentHandle h_denied = try_spawn(sched, "ac2-multi-denied");
-            CHECK(!h_denied.ok, std::format("AC2-multi cycle {}: denied pre-decay", cycle));
+            CHECK(!h_denied.ok, std::format("AC2-multi cycle {}: denied pre-quiet", cycle));
             if (h_denied.ok && h_denied.fiber) {
                 h_denied.fiber->request_cancel();
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(150));
             AgentHandle h_admitted = try_spawn(sched, "ac2-multi-admitted");
-            CHECK(h_admitted.ok, std::format("AC2-multi cycle {}: admitted post-decay", cycle));
+            CHECK(h_admitted.ok, std::format("AC2-multi cycle {}: admitted post-quiet", cycle));
             if (h_admitted.ok && h_admitted.fiber) {
                 h_admitted.fiber->request_cancel();
             }

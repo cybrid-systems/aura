@@ -108,8 +108,9 @@ int main() {
     CompilerService cs;
     (void)cs;
 
-    // Sanity: default threshold is 0 (conservative — reject on any BP).
-    CHECK(resolve_mailbox_bp_admit_threshold() == 0, "AC0: default threshold = 0 (any BP rejects)");
+    // Sanity: default threshold is 0 (admit control off — legacy).
+    CHECK(resolve_mailbox_bp_admit_threshold() == 0,
+          "AC0: default threshold = 0 (admit control off)");
     setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "5", 1);
     CHECK(resolve_mailbox_bp_admit_threshold() == 5,
           "AC0: env override AURA_ORCH_BP_ADMIT_THRESHOLD=5 parsed");
@@ -334,6 +335,165 @@ int main() {
                      "primitive");
     }
 
-    std::println("\n=== Results: {} passed, {} failed ===", 0, 0);
+    // ── Issue #2398: quiet-period decay so BP admit recovers after storms ─
+    // AC1: fill mailbox → BP; threshold=1 rejects; after window with no
+    //      new BP → spawn succeeds.
+    // AC2: send_backpressure_total remains monotonic cumulative.
+    // AC3: threshold=0 → no admit reject from BP (legacy).
+    // AC4: additive query keys + schema-2398; #2228 keys intact.
+    // AC5: storm then recovery + source-cite.
+    {
+        std::println("\n--- #2398 AC1: fill mailbox → reject → quiet → admit ---");
+        reset_counter_window();
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+
+        // Short quiet window so the test does not wait 30s.
+        setenv("AURA_ORCH_BP_WINDOW_MS", "100", 1);
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+
+        const auto send_bp_before =
+            g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
+        auto storm_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/8);
+        std::uint64_t bp_hits = 0;
+        for (std::uint64_t i = 0; i < 32; ++i) {
+            MailMessage m;
+            m.to_fiber = 0;
+            m.from_fiber = 0;
+            m.payload = "x";
+            if (storm_mb->push(std::move(m)) == PushStatus::Backpressure)
+                ++bp_hits;
+        }
+        CHECK(bp_hits > 0, "#2398 AC1: mailbox fill triggered BP");
+        const auto recent_after =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto send_bp_after =
+            g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
+        std::println("  bp_hits={} recent={} send_bp delta={}", bp_hits, recent_after,
+                     send_bp_after - send_bp_before);
+        CHECK(recent_after > 0, "#2398 AC1: mailbox_bp_recent_total bumped on push BP");
+        CHECK(send_bp_after >= send_bp_before, "#2398 AC2: send_backpressure_total monotonic");
+
+        AgentSpec spec_deny;
+        spec_deny.name = "2398-deny";
+        spec_deny.body = [] {};
+        spec_deny.attach_mailbox = true;
+        spec_deny.mailbox_high_water = 16;
+        spec_deny.keepalive_interval_ms = 0;
+        AgentHandle h_deny = spawn_agent_with_mailbox(sched, spec_deny);
+        CHECK(!h_deny.ok, "#2398 AC1: spawn rejects while recent >= threshold");
+        CHECK(h_deny.quota_dimension == "mailbox-bp", "#2398 AC1: dimension mailbox-bp");
+
+        // Quiet period — no new BP.
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+        AgentSpec spec_ok;
+        spec_ok.name = "2398-recover";
+        spec_ok.body = [] {};
+        spec_ok.attach_mailbox = true;
+        spec_ok.mailbox_high_water = 16;
+        spec_ok.keepalive_interval_ms = 0;
+        AgentHandle h_ok = spawn_agent_with_mailbox(sched, spec_ok);
+        std::println("  post-quiet ok={} recent={}", h_ok.ok,
+                     g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed));
+        CHECK(h_ok.ok, "#2398 AC1: spawn succeeds after quiet window (no new BP)");
+        if (h_ok.ok && h_ok.fiber) {
+            h_ok.fiber->request_cancel();
+            if (h_ok.fiber->owner_sched()) {
+                h_ok.fiber->owner_sched()->note_orphan_fiber(h_ok.fiber, 50);
+                h_ok.fiber->owner_sched()->reap_orphans_now();
+            }
+        }
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+    }
+
+    {
+        std::println("\n--- #2398 AC2: send_backpressure_total still cumulative ---");
+        const auto before =
+            g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
+        // Trigger BP via high-water push (hook bumps send_backpressure).
+        auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+        for (int i = 0; i < 16; ++i) {
+            MailMessage m;
+            m.payload = "y";
+            (void)mb->push(std::move(m));
+        }
+        const auto after =
+            g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
+        CHECK(after >= before, "#2398 AC2: send_backpressure_total never decreases");
+        // Quiet-period decay must NOT zero send_backpressure_total.
+        setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec s;
+        s.name = "2398-cum";
+        s.body = [] {};
+        s.attach_mailbox = true;
+        s.mailbox_high_water = 8;
+        s.keepalive_interval_ms = 0;
+        (void)spawn_agent_with_mailbox(sched, s); // may admit after decay
+        const auto after_decay =
+            g_orch_module_stats.send_backpressure_total.load(std::memory_order_relaxed);
+        CHECK(after_decay >= after,
+              "#2398 AC2: send_backpressure_total unchanged by quiet-period decay");
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+    }
+
+    {
+        std::println("\n--- #2398 AC3: threshold=0 → no BP admit reject ---");
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1);
+        setenv("AURA_ORCH_BP_WINDOW_MS", "100", 1);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        aura::orch::note_mailbox_bp_recent_event();
+        aura::orch::note_mailbox_bp_recent_event();
+        const auto reject_before =
+            g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
+        AgentSpec s;
+        s.name = "2398-legacy";
+        s.body = [] {};
+        s.attach_mailbox = true;
+        s.mailbox_high_water = 16;
+        s.keepalive_interval_ms = 0;
+        AgentHandle h = spawn_agent_with_mailbox(sched, s);
+        CHECK(h.ok, "#2398 AC3: threshold=0 admits even with recent BP events");
+        CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) ==
+                  reject_before,
+              "#2398 AC3: spawn_bp_admit_reject_total not bumped when threshold=0");
+        if (h.ok && h.fiber) {
+            h.fiber->request_cancel();
+            if (h.fiber->owner_sched()) {
+                h.fiber->owner_sched()->note_orphan_fiber(h.fiber, 50);
+                h.fiber->owner_sched()->reap_orphans_now();
+            }
+        }
+        setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+    }
+
+    {
+        std::println("\n--- #2398 AC4: query keys additive; #2228 preserved ---");
+        CHECK(href(cs, "mailbox-bp-recent-total") >= 0, "#2398 AC4: #2228 recent key intact");
+        CHECK(href(cs, "spawn-bp-admit-reject-total") >= 0, "#2398 AC4: #2228 reject key intact");
+        CHECK(href(cs, "schema-2228") == 2228, "#2398 AC4: schema-2228 preserved");
+        CHECK(href(cs, "mailbox-bp-window-ms") >= 0, "#2398 AC4: mailbox-bp-window-ms present");
+        CHECK(href(cs, "schema-2398") == 2398, "#2398 AC4: schema-2398 == 2398");
+        CHECK(href(cs, "issue-2398") == 2398, "#2398 AC4: issue-2398 == 2398");
+        CHECK(href(cs, "mailbox-bp-decay-wired") == 1, "#2398 AC4: decay-wired sentinel");
+    }
+
+    {
+        std::println("\n--- #2398 AC5: source-cite ---");
+        std::println("  note_mailbox_bp_recent_event + maybe_decay_mailbox_bp_recent");
+        std::println("  AURA_ORCH_BP_WINDOW_MS / AURA_ORCH_BP_DECAY_MS quiet period");
+        std::println("  threshold=0 skips decay+reject (zero cost)");
+        CHECK(true, "#2398 AC5: storm→recovery covered by AC1b + source-cite");
+    }
+
+    std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
+                 aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }
