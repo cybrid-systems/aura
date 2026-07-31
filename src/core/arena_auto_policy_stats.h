@@ -96,20 +96,31 @@ inline void record_compact_soft_gated_render() noexcept {
     compact_soft_gated_render_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #1316: return true if deopt should actually fire; false if throttled.
-// Window is k_window_ms (default 500ms per AC1).
+// Issue #1316 / #2373: return true if deopt should actually fire; false if
+// throttled. Window default 500ms (AC1). Issue #2373: CAS loop replaces
+// load/store check-then-act so N concurrent callers within the window get
+// exactly one `true` (applied_total += 1). Uses now_ns >= prev so equal
+// timestamps (same ns sample) still throttle the losers after CAS.
 [[nodiscard]] inline bool try_render_deopt_throttle(std::uint64_t window_ms = 500) noexcept {
     using clock = std::chrono::steady_clock;
     const auto now_ns = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch())
             .count());
     const auto window_ns = window_ms * 1'000'000ull;
-    auto prev = last_render_deopt_ns.load(std::memory_order_relaxed);
-    if (prev != 0 && now_ns > prev && (now_ns - prev) < window_ns) {
-        render_jit_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
-        return false; // throttled
+    while (true) {
+        auto prev = last_render_deopt_ns.load(std::memory_order_relaxed);
+        // Throttle when a prior apply is still inside the window.
+        // `>=` closes the same-ns race: after a winner CAS-es now_ns, losers
+        // that sampled the same now_ns must not both return true.
+        if (prev != 0 && now_ns >= prev && (now_ns - prev) < window_ns) {
+            render_jit_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            return false; // throttled
+        }
+        if (last_render_deopt_ns.compare_exchange_weak(prev, now_ns, std::memory_order_relaxed,
+                                                       std::memory_order_relaxed))
+            break;
+        // CAS failed — another thread raced; re-check against updated prev.
     }
-    last_render_deopt_ns.store(now_ns, std::memory_order_relaxed);
     render_jit_deopt_applied_total.fetch_add(1, std::memory_order_relaxed);
     return true; // apply deopt
 }

@@ -2740,6 +2740,10 @@ aura_add_issue_test(test_steal_snapshot_soft_production_lock_2372)
 aura_issue_test_link_llvm_jit(test_steal_snapshot_soft_production_lock_2372)
 add_dependencies(all_test_issue_targets test_steal_snapshot_soft_production_lock_2372)
 
+# Issue #2373: try_render_deopt_throttle CAS race (header-only concurrency fix).
+aura_add_issue_test(test_render_deopt_throttle_race_2373)
+add_dependencies(all_test_issue_targets test_render_deopt_throttle_race_2373)
+
 # Issue #2348: bidirectional check-mode for ADT match + GuardShape.
 aura_add_issue_test(test_bidirectional_match_check_2348)
 aura_issue_test_link_llvm_jit(test_bidirectional_match_check_2348)
