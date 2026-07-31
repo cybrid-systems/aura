@@ -3035,6 +3035,24 @@ def cmd_structural_metadata_lock_order_coverage():
     return 0
 
 
+def cmd_tag_arity_index_lock_coverage():
+    """Issue #2419: tag_arity_index_ map lock vs concurrent rebuild.
+
+    Dedicated shared_mutex; find shared, rebuild exclusive.
+    """
+    print(f"{B}=== tag_arity_index lock coverage (#2419) ==={N}")
+    script = ROOT / "scripts" / "check_tag_arity_index_lock_2419.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("tag_arity_index lock (#2419) coverage contract rows failed")
+        return 1
+    ok("tag_arity_index lock (#2419) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3975,6 +3993,7 @@ def cmd_gate():
         or cmd_incoming_parent_dirty_atomic_coverage()
         or cmd_binding_gens_atomic_coverage()
         or cmd_structural_metadata_lock_order_coverage()
+        or cmd_tag_arity_index_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
