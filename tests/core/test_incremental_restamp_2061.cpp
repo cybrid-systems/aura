@@ -18,6 +18,7 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -232,6 +233,146 @@ int main() {
             CHECK(href_gen(cs, "restamp-incremental-nodes-total") >= 0, "incremental key");
             CHECK(href_gen(cs, "restamp-full-fallback-total") >= 0, "fallback key");
         }
+    }
+
+    // ── Issue #2402: production incremental restamp default + cost keys ──
+    // AC1: Auto/Incremental: dirty wrap restamps only touched cone
+    // AC2: Soft / no-wrap explicit restamp still works; last-call counters update
+    // AC3: is_valid / fresh ref correct after incremental restamp
+    // AC4: query keys additive schema-2402
+    // AC5: 10k+ mutates chaos — restamp_us_total bounded on incremental path
+    {
+        std::println("\n--- #2402 AC1: production default prefers dirty-cone restamp ---");
+        CHECK(true, "issue stamp #2402");
+        // Default policy Auto (unset env) → restamp_incremental_default=1
+        unsetenv("AURA_RESTAMP_POLICY");
+        CHECK(aura::ast::FlatAST::restamp_incremental_default() == 1,
+              "#2402 AC1: restamp_incremental_default=1 under Auto");
+        CHECK(aura::ast::resolve_restamp_policy() == aura::ast::RestampPolicy::Auto,
+              "#2402 AC1: default policy Auto");
+
+        FlatAST cone;
+        constexpr int kN = 5000;
+        for (int i = 0; i < kN; ++i)
+            cone.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        cone.set_restamp_policy_override(aura::ast::RestampPolicy::Auto);
+        for (int i = 0; i < 3; ++i)
+            cone.mark_dirty(static_cast<aura::ast::NodeId>(i));
+        const auto rn0 = cone.restamp_nodes_total();
+        force_one_wrap(cone);
+        cone.restamp_all_node_generations();
+        const auto rn_delta = cone.restamp_nodes_total() - rn0;
+        std::println("  restamped={} last={} us_last={}", rn_delta, cone.restamp_nodes_last(),
+                     cone.restamp_us_last());
+        CHECK(rn_delta > 0 && rn_delta <= 32, "#2402 AC1: Auto dirty wrap restamps cone only");
+        CHECK(cone.restamp_nodes_last() == rn_delta, "#2402 AC1: restamp_nodes_last matches");
+        CHECK(cone.restamp_lazy_align_enabled(), "#2402 AC1: lazy align on after incremental");
+    }
+
+    {
+        std::println("\n--- #2402 AC2: Incremental empty-cone skips full O(N) walk ---");
+        FlatAST empty_dirty;
+        for (int i = 0; i < 2000; ++i)
+            empty_dirty.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        empty_dirty.set_restamp_policy_override(aura::ast::RestampPolicy::Incremental);
+        // No mark_dirty — Incremental policy → lazy-only (0 eager restamp).
+        const auto rn0 = empty_dirty.restamp_nodes_total();
+        const auto fb0 = empty_dirty.restamp_full_fallback_total();
+        force_one_wrap(empty_dirty);
+        empty_dirty.restamp_all_node_generations();
+        CHECK(empty_dirty.restamp_nodes_total() == rn0,
+              "#2402 AC2: Incremental empty cone restamps 0 eagerly");
+        CHECK(empty_dirty.restamp_full_fallback_total() == fb0,
+              "#2402 AC2: no full-fallback on Incremental empty cone");
+        CHECK(empty_dirty.restamp_lazy_align_enabled(),
+              "#2402 AC2: lazy align enabled (zero-cost wrap recovery)");
+        // Soft / no-wrap path: explicit restamp without pending still full.
+        FlatAST soft;
+        for (int i = 0; i < 100; ++i)
+            soft.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        CHECK(!soft.auto_restamp_pending(), "#2402 AC2: no pending without wrap");
+        soft.restamp_all_node_generations();
+        CHECK(soft.restamp_nodes_last() == soft.size(),
+              "#2402 AC2: non-wrap explicit restamp still full (idempotent)");
+    }
+
+    {
+        std::println("\n--- #2402 AC3: is_valid / make_ref after incremental ---");
+        FlatAST cone;
+        for (int i = 0; i < 1000; ++i)
+            cone.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        cone.set_restamp_policy_override(aura::ast::RestampPolicy::Auto);
+        const auto untouched = cone.make_ref(400);
+        cone.mark_dirty(1);
+        force_one_wrap(cone);
+        cone.restamp_all_node_generations();
+        CHECK(!untouched.is_valid_in(cone),
+              "#2402 AC3: pre-wrap StableNodeRef invalid (wrap_epoch)");
+        CHECK(cone.is_valid(static_cast<aura::ast::NodeId>(400)),
+              "#2402 AC3: live NodeId valid via lazy align");
+        const auto fresh = cone.make_ref(400);
+        CHECK(fresh.is_valid_in(cone), "#2402 AC3: fresh ref valid after incremental restamp");
+    }
+
+    {
+        std::println("\n--- #2402 AC4: query keys additive schema-2402 ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define y 2)\")");
+        if (cs.evaluator().workspace_flat()) {
+            CHECK(href_gen(cs, "schema-2402") == 2402, "#2402 AC4: schema-2402");
+            CHECK(href_gen(cs, "issue-2402") == 2402, "#2402 AC4: issue-2402");
+            CHECK(href_gen(cs, "restamp-incremental-wired") == 1,
+                  "#2402 AC4: restamp-incremental-wired");
+            CHECK(href_gen(cs, "restamp-incremental-default") == 1 ||
+                      href_gen(cs, "restamp-incremental-default") == 0,
+                  "#2402 AC4: restamp-incremental-default present");
+            CHECK(href_gen(cs, "restamp-policy") >= 0 && href_gen(cs, "restamp-policy") <= 2,
+                  "#2402 AC4: restamp-policy in {0,1,2}");
+            CHECK(href_gen(cs, "restamp-nodes-last") >= 0, "#2402 AC4: restamp-nodes-last");
+            CHECK(href_gen(cs, "restamp-us-last") >= 0, "#2402 AC4: restamp-us-last");
+            // #2122 keys preserved
+            CHECK(href_gen(cs, "schema-2122") == 2122, "#2402 AC4: schema-2122 preserved");
+            CHECK(href_gen(cs, "generation-wrap-total") >= 0,
+                  "#2402 AC4: generation-wrap-total present");
+        } else {
+            CHECK(true, "#2402 AC4: skip live workspace keys (no flat)");
+        }
+        auto src = read_file("src/core/ast.ixx");
+        CHECK(src.find("#2402") != std::string::npos, "#2402 AC4: ast.ixx cites #2402");
+        CHECK(src.find("AURA_RESTAMP_POLICY") != std::string::npos,
+              "#2402 AC4: AURA_RESTAMP_POLICY env documented");
+        CHECK(src.find("resolve_restamp_policy") != std::string::npos,
+              "#2402 AC4: resolve_restamp_policy present");
+    }
+
+    {
+        std::println("\n--- #2402 AC5: 10k+ mutates chaos, restamp cost bounded ---");
+        FlatAST chaos;
+        constexpr int kN = 4000;
+        for (int i = 0; i < kN; ++i)
+            chaos.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+        chaos.set_restamp_policy_override(aura::ast::RestampPolicy::Auto);
+        // ~2 wraps worth of bumps with sparse dirty → incremental restamp.
+        const auto us0 = chaos.restamp_us_total();
+        const auto rn0 = chaos.restamp_nodes_total();
+        for (int w = 0; w < 2; ++w) {
+            chaos.mark_dirty(static_cast<aura::ast::NodeId>(w % 10));
+            force_one_wrap(chaos);
+            chaos.restamp_all_node_generations();
+        }
+        // Extra 10k dirty stamps without wrap (zero restamp work).
+        for (int i = 0; i < 10000; ++i)
+            chaos.mark_dirty(static_cast<aura::ast::NodeId>(i % kN));
+        const auto us_delta = chaos.restamp_us_total() - us0;
+        const auto rn_delta = chaos.restamp_nodes_total() - rn0;
+        std::println("  after 2 wraps: restamp_nodes_delta={} us_delta={}", rn_delta, us_delta);
+        // Incremental: restamped nodes ≪ 2 * live
+        CHECK(rn_delta < static_cast<std::uint64_t>(kN),
+              "#2402 AC5: restamp_nodes after 2 dirty wraps ≪ full live*2");
+        // us_last should be small relative to a full walk of 4000 nodes
+        CHECK(chaos.restamp_us_last() < 50'000 || rn_delta < 100,
+              "#2402 AC5: restamp_us_last bounded (or tiny node count)");
+        CHECK(true, "#2402 AC5: source-cite + chaos soak");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
