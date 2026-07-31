@@ -1495,6 +1495,10 @@ aura_issue_test_link_llvm_jit(test_arena_concurrent_mutex)
 # Issue #1989: ASTArena::on_compact_hook_ protected by mutex (A-003).
 aura_add_issue_test(test_arena_compact_hook_concurrent)
 aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
+
+# Issue #2381: concurrent compact_hook shape_inval counter is atomic (TSAN + exact count).
+aura_add_issue_test(test_arena_compact_hook_stats_2381)
+aura_issue_test_link_llvm_jit(test_arena_compact_hook_stats_2381)
 # Issue #2463: summary_flags_ converted to std::atomic<uint32_t> + clear()
 # acquires flatast_mutex_. Concurrent reader (summary_flags() / summary_has())
 # + writer (clear() / summary_add_flags() / summary_recompute()) must not
@@ -1912,6 +1916,8 @@ add_custom_target(all_test_issue_targets ALL)
 # Issue #2315: chaos soak registered above with EXCLUDE_FROM_ALL; opt-in
 # via AURA_CHAOS_STEAL_GC but still buildable under the aggregate target.
 add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
+# Issue #2381: concurrent compact_hook shape_inval atomic stress.
+add_dependencies(all_test_issue_targets test_arena_compact_hook_stats_2381)
 add_dependencies(all_test_issue_targets test_issues_light)
 add_dependencies(all_test_issue_targets test_issues_jit_late1)
 # DISABLED (paired with disabled aura_add_issue_bundle above):
