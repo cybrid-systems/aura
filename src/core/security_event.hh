@@ -16,8 +16,13 @@
 //   - check_and_record_effect always emits (allow and deny) and feeds
 //     TypedMutationAudit so rings stay correlated by mutation_id
 //   - query:security-audit joins security / mutation / typed trails
-// The mutation WAL remains the durable backend; replay rebuilds both
-// mutation_audit_ring_ and g_security_event_ring.
+//
+// #2388: CapabilityRegistry::record_audit and
+// WorkspaceIsolationPolicy::record_audit dual-write into this ring + the
+// optional SecurityEvent WAL (emit_security_event_durable). Private 128-
+// slot rings remain for fine-grained local scrape; under deny storms the
+// durable join key is SecurityEvent (ring 1024 + WAL). Evaluator must not
+// append a second SE for the same check (AC2 single IsolationDeny).
 #pragma once
 
 #include <array>
@@ -26,8 +31,9 @@
 #include <cstring>
 #include <string_view>
 
-#include "core/capability_model.hh"    // Effect, TenantId
-#include "core/workspace_isolation.hh" // IsolationRefProvenance
+// Issue #2388: no include of capability_model / workspace_isolation here —
+// those headers dual-write into this surface; keeping this file leaf-level
+// avoids include cycles.
 
 namespace aura::core::security_event {
 
@@ -56,6 +62,9 @@ inline constexpr int kSecurityAuditUnifyIssue = 2054;
 // Issue #2156: isolation-deny SecurityEvent.mutation_id is Mutation epoch
 // (or non-zero audit mid), never a tenant id.
 inline constexpr int kIsolationAuditMidIssue = 2156;
+// Issue #2388: Capability + Isolation private audit rings dual-write into
+// SecurityEvent ring + WAL (durable forensic trail under wrap).
+inline constexpr int kSecurityAuditFoldIssue = 2388;
 
 // Issue #2075 / #2054: shared SecurityEvent record. Fixed-size, no allocation.
 // check_and_record_effect always appends (allow + deny); isolation deny

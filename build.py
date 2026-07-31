@@ -2013,6 +2013,25 @@ def cmd_capability_string_matrix_unify_coverage():
     return 0
 
 
+def cmd_security_audit_fold_coverage():
+    """Issue #2388: fold Capability + Isolation audit into SecurityEvent WAL.
+
+    Private 128-slot rings dual-write SecurityEvent ring + optional WAL;
+    single IsolationDeny path; Soft/WAL-off short-circuit preserved.
+    """
+    print(f"{B}=== security audit fold coverage (#2388) ==={N}")
+    script = ROOT / "scripts" / "check_security_audit_fold_2388.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("security audit fold (#2388) coverage contract rows failed")
+        return 1
+    ok("security audit fold (#2388) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3365,6 +3384,7 @@ def cmd_gate():
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()
+        or cmd_security_audit_fold_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

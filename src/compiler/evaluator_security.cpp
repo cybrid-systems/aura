@@ -201,12 +201,9 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // When evaluator sandbox is off and effect mode is Off, still record.
     const bool sb_active = sandbox_mode_ || is_strict() || is_sandbox_active();
 
-    // Issue #2151: snapshot hard-deny counter so SecurityEvent can emit
-    // the stable reason "fiber-grant-mismatch" (Agent-recoverable).
-    const auto hard_deny_before =
-        g_capability_effect_metrics().capability_fiber_hard_deny_total.load(
-            std::memory_order_relaxed);
-
+    // Issue #2388: CapabilityRegistry::record_audit dual-writes SecurityEvent
+    // + WAL (single path). fiber-grant-mismatch reason is stamped there via
+    // hard-deny counter delta (#2151). Do not append SE again below.
     const bool ok = aura::core::capability::check_and_record_effect(
         static_cast<Effect>(required_effect_bits), static_cast<Effect>(actual_effect_bits), prov,
         tenant, op, wildcard, sb_active);
@@ -272,47 +269,14 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
             m->sandbox_provenance_records_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Issue #2075 / #2054: always emit correlated SecurityEvent (allow + deny)
-    // so Agents get a complete forensic trail. Use ::aura::core:: (absolute)
-    // because we're inside namespace aura::compiler.
+    // Issue #2388: SecurityEvent ring + WAL come from capability::record_audit
+    // (emit_security_event_durable). Keep TypedMutationAudit correlation only
+    // here so Agents still join by mutation_id without double-counting SE.
+    // mid matches capability dual-write (prov.mutation_id / epoch, not tenant).
     {
-        using aura::compiler::security::kEffectFfi;
-        using aura::compiler::security::kEffectMutate;
-        using aura::compiler::security::kEffectRender;
-        using ::aura::core::security_event::append_security_event;
-        using ::aura::core::security_event::g_security_event_ring;
-        using ::aura::core::security_event::SecurityEventKind;
-        const auto mid =
-            provenance_mutation_id != 0 ? provenance_mutation_id : static_cast<std::uint64_t>(seq);
-        const auto kind = ok ? SecurityEventKind::EffectAllow : SecurityEventKind::EffectDeny;
-        const char* reason_str = "effect-allow";
-        if (!ok) {
-            // Issue #2151: hard fiber isolation deny is Agent-stable.
-            const auto hard_deny_after =
-                g_capability_effect_metrics().capability_fiber_hard_deny_total.load(
-                    std::memory_order_relaxed);
-            if (hard_deny_after > hard_deny_before) {
-                reason_str = "fiber-grant-mismatch";
-            } else {
-                reason_str = "capability-effect-deny";
-                if (required_effect_bits & kEffectMutate)
-                    reason_str = "mutate-deny";
-                else if (required_effect_bits & kEffectFfi)
-                    reason_str = "ffi-deny";
-                else if (required_effect_bits & kEffectRender)
-                    reason_str = "render-deny";
-            }
-        }
-        append_security_event(g_security_event_ring(), kind, tenant, mid, prov.epoch,
-                              required_effect_bits, op, reason_str, /*denied=*/!ok, slot.fiber_id);
-        // #2225: durable mirror — short-circuits when WAL off (~1 ns).
-        ::aura::core::security_event_wal::persist_security_event(
-            kind, tenant, mid, prov.epoch, required_effect_bits, op, reason_str,
-            /*denied=*/!ok, slot.fiber_id,
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                           std::chrono::system_clock::now().time_since_epoch())
-                                           .count()));
-        // #2054: always-on TypedMutationAudit correlation (bypasses Sampled).
+        const auto mid = provenance_mutation_id != 0
+                             ? provenance_mutation_id
+                             : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
         typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/!ok,
                                                        static_cast<std::uint32_t>(target_node),
                                                        slot.fiber_id);
@@ -680,58 +644,19 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
     const bool ok = check_boundary(target, &prov, required_effects, strict, op, restricted);
     if (!ok) {
         bump_capability_denial();
-        // Issue #2075: shared SecurityEvent surface — also append to the
-        // unified audit ring so query:security-audit-trail covers
-        // isolation denies alongside effect denies. Use ::aura::core::
-        // (absolute path) because we're inside namespace aura::compiler
-        // and `aura::core::` would otherwise resolve as nested
-        // (aura::compiler::aura::core::) which doesn't exist.
-        //
-        // Issue #2156: mutation_id must be real Mutation epoch / audit join
-        // space — NEVER a tenant id. Pre-#2156 this path wrote
-        // ref_tenant/target into mutation_id, polluting trail_find_by_mutation_id
-        // and query:security-audit forensic joins. Tenant stays in tenant_id;
-        // foreign ref principal is encoded in the reason string when present.
-        using ::aura::core::security_event::append_security_event;
-        using ::aura::core::security_event::g_security_event_ring;
+        // Issue #2388: IsolationDeny SecurityEvent + WAL dual-written from
+        // WorkspaceIsolationPolicy::record_audit (single path — AC2 no
+        // double-count). Reasons (unset-principal / ref-tenant) stamped
+        // there; mid = Mutation epoch (#2156). Keep TypedMutationAudit only.
         using ::aura::core::security_event::kIsolationAuditMidIssue;
-        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event::kSecurityAuditFoldIssue;
+        (void)kIsolationAuditMidIssue;
+        (void)kSecurityAuditFoldIssue;
         const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
         const auto epoch = ::aura::core::current_mutation_epoch();
-        // Prefer Mutation epoch as mid (join with effect denials on same attempt).
-        // Non-zero stamp: epoch==0 is "unset" — use 1 for joinability (grant paths).
-        const auto mid = epoch != 0 ? epoch : 1;
-        char reason_buf[64];
-        const char* reason_str = "isolation-deny";
-        // Issue #2385: Agent-stable reason when principal was never set.
-        if (!g_workspace_isolation().isolation_enabled && required_effects != 0 &&
-            (strict || restricted)) {
-            reason_str = "isolation-deny:unset-principal";
-        } else if (ref_tenant != 0) {
-            // Keep foreign principal for Agents without polluting mutation_id.
-            std::snprintf(reason_buf, sizeof(reason_buf), "isolation-deny:ref-tenant=%llu",
-                          static_cast<unsigned long long>(ref_tenant));
-            reason_str = reason_buf;
-        }
-        (void)kIsolationAuditMidIssue; // stamp for Agent / docs grep
-        append_security_event(g_security_event_ring(), SecurityEventKind::IsolationDeny, target,
-                              mid, epoch != 0 ? epoch : mid,
-                              static_cast<std::uint16_t>(required_effects), op, reason_str,
-                              /*denied=*/true, fiber);
-        // #2225: durable mirror of the isolation-deny — #2156 mid
-        // (epoch, never tenant) is what the WAL persists so replay
-        // restores the Agent's joinable mutation_id.
-        ::aura::core::security_event_wal::persist_security_event(
-            SecurityEventKind::IsolationDeny, target, mid, epoch != 0 ? epoch : mid,
-            static_cast<std::uint16_t>(required_effects), op, reason_str,
-            /*denied=*/true, fiber,
-            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                           std::chrono::system_clock::now().time_since_epoch())
-                                           .count()));
-        // #2054 / #2156: correlate isolation deny into TypedMutation trail
-        // with the same mid as SecurityEvent (never tenant id).
-        typed_audit::capture_security_correlated_audit(mid, op, epoch != 0 ? epoch : mid,
-                                                       /*denied=*/true, /*target_node=*/0, fiber);
+        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+        typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
+                                                       /*target_node=*/0, fiber);
     }
     return ok;
 }

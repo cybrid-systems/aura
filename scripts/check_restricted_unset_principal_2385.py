@@ -46,7 +46,8 @@ def main() -> int:
     must("need_principal", "AC1", iso)
     must("required_effects != 0", "AC1", iso)
     must("ac1_restricted_unset_denies_side_effect", "AC1", test)
-    must("isolation-deny:unset-principal", "AC1", sec)
+    # #2388: reason dual-written from isolation record_audit (not Evaluator SE).
+    must("isolation-deny:unset-principal", "AC1", iso)
     must("isolation-deny:unset-principal", "AC1", test)
 
     # AC2–AC5 tests
@@ -61,7 +62,9 @@ def main() -> int:
     must("cmd_restricted_unset_principal_coverage", "AC6", build)
     must("ac6_source_and_gate", "AC6", test)
     must("Issue #2385", "AC6", test)
-    must("Issue #2385", "AC6", sec)
+    must("Issue #2385", "AC6", iso)
+    # Evaluator still cites isolation path / fold (#2388 single SE path).
+    must("Issue #2388", "AC6", sec)
 
     if fails:
         for f in fails:
