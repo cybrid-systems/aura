@@ -92,7 +92,25 @@ export inline bool was_no_safepoint_warned() noexcept {
 export inline std::atomic<std::uint64_t> arena_small_tier_fallback_total{0};
 
 // ── ArenaStats — per-arena memory accounting ─────────────────────
+//
+// Issue #2381 — concurrency contract:
+// ArenaStats is a *snapshot* POD returned by ASTArena::stats(). Live
+// writers fall into two classes:
+//
+//   1. Concurrent-safe (atomic on ASTArena, snapshotted here):
+//      shape_inval_on_compact, root_remap_* — written via
+//      fetch_add(relaxed) so concurrent invoke_compact_hook_ /
+//      invoke_root_remap_callback_ never data-race (AC1/AC2).
+//
+//   2. GUARDED_BY(per-arena compact serial) — all other std::size_t
+//      fields below. live_compact / compact buffer mutation is
+//      single-thread-per-arena by design (#1518 / #2166). Do not
+//      convert these to atomic without an explicit race analysis;
+//      static discipline: keep them plain size_t for zero-cost
+//      snapshot/merge.
+//
 export struct ArenaStats {
+    // GUARDED_BY(per-arena compact serial)
     std::size_t capacity = 0;         // total buffer size
     std::size_t used = 0;             // bytes consumed
     std::size_t peak_used = 0;        // historical high-water mark
@@ -102,6 +120,7 @@ export struct ArenaStats {
     // are pure accounting (already shipped). The new 3 are added for
     // production memory stability so we can see whether compaction
     // is helping and trigger auto-compact at the right threshold.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t compaction_count = 0;       // number of compact() calls
     std::size_t last_compaction_saved = 0;  // bytes reclaimed by last compact
     std::size_t total_compaction_saved = 0; // lifetime bytes reclaimed
@@ -113,6 +132,7 @@ export struct ArenaStats {
     // called in a context where yielding would have been
     // appropriate, so AI agents can monitor long-running
     // compaction in fiber-heavy workloads.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t compaction_yield_checks = 0;
     // Issue #300 (P1): live-object defragmentation observability.
     // Hooks for the full live-object-moving defrag path (separate
@@ -122,17 +142,24 @@ export struct ArenaStats {
     // Foundation-only: both stay 0 until the defrag path is
     // implemented in #300 follow-up commits. The (arena:defrag-stats)
     // primitive returns 0 for the defrag slot until then.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t defrag_attempted_count = 0;
     std::size_t last_defrag_saved = 0;
     // Issue #685: alloc-path auto-compact policy observability.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t auto_alloc_trigger_count = 0;
     std::size_t frag_reduced_bp = 0;
+    // Issue #2381: concurrent-safe counter — snapshotted from
+    // ASTArena::shape_inval_on_compact_ atomic (not plain ++ on stats_).
     std::size_t shape_inval_on_compact = 0;
+    // GUARDED_BY(per-arena compact serial)
     std::size_t defrag_savings_alloc = 0;
     // Issue #1467 Phase 1 + #1518: live-object-moving defrag observability.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t live_defrag_attempted_count = 0;
     std::size_t live_objects_marked_total = 0;
     // Issue #1518: live relocate / compact coordination metrics.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t live_relocate_count = 0;         // freelist slots + mark-phase relocates
     std::size_t compact_deopt_triggered = 0;     // Shape/JIT deopt fired post-compact
     std::size_t compact_deopt_throttled = 0;     // deopt storm throttle skips
@@ -141,6 +168,7 @@ export struct ArenaStats {
     // Issue #2004: explicit live_compact observability. Soft / Force counts,
     // bytes reclaimed (sum across all calls), freelist hits, generation
     // restamps, and # LifetimePins invalidated on success.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t live_compact_soft_count = 0;
     std::size_t live_compact_force_count = 0;
     std::size_t live_compact_reclaimed_bytes_total = 0;
@@ -149,17 +177,21 @@ export struct ArenaStats {
     std::size_t live_compact_invalidated_pins_total = 0;
     // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
     // new address under Moving densify (preserve vs invalidate policy).
+    // GUARDED_BY(per-arena compact serial)
     std::size_t live_compact_remapped_pins_total = 0;
-    // Issue #2267: RootRemapPass per-arena counters (mirrors process-level
-    // atomics g_root_remap_* in src/compiler/observability_metrics.h).
+    // Issue #2267 / #2381: RootRemapPass per-arena counters (mirrors
+    // process-level atomics g_root_remap_*). Concurrent-safe via
+    // ASTArena atomics; values snapshotted here by stats().
     std::size_t root_remap_stable_ref_total = 0;
     std::size_t root_remap_stable_ref_fail_total = 0;
     std::size_t root_remap_closure_capture_total = 0;
     std::size_t root_remap_closure_capture_fail_total = 0;
     // Issue #2157: Force blocked by live pin / EnvFrameLifetimeGuard hold.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t force_compact_blocked_by_pin = 0;
     std::size_t force_compact_blocked_by_envframe_guard = 0;
     // Issue #2166: opt-in Moving compact.
+    // GUARDED_BY(per-arena compact serial)
     std::size_t live_compact_moving_count = 0;
     std::size_t objects_moved_total = 0;
     std::size_t moving_blocked_precondition_total = 0;
@@ -909,8 +941,23 @@ public:
         s.capacity = buffer_.size() + small_pool_.capacity();
         s.used = stats_.used + small_pool_.allocated();
         s.peak_used = std::max(s.peak_used, s.used);
+        // Issue #2381: concurrent-safe counters live as atomics; snapshot here.
+        s.shape_inval_on_compact = shape_inval_on_compact_.load(std::memory_order_relaxed);
+        s.root_remap_stable_ref_total =
+            root_remap_stable_ref_total_.load(std::memory_order_relaxed);
+        s.root_remap_stable_ref_fail_total =
+            root_remap_stable_ref_fail_total_.load(std::memory_order_relaxed);
+        s.root_remap_closure_capture_total =
+            root_remap_closure_capture_total_.load(std::memory_order_relaxed);
+        s.root_remap_closure_capture_fail_total =
+            root_remap_closure_capture_fail_total_.load(std::memory_order_relaxed);
         return s;
     }
+
+    // Issue #2381: stress-only path — invoke installed compact hook + bump
+    // shape_inval_on_compact without buffer mutation. Used by concurrent
+    // TSAN tests (N-thread hook stress); production uses compact()/live_compact().
+    void invoke_on_compact_hook_for_test() noexcept { invoke_compact_hook_(); }
 
     // Bytes consumed so far
     [[nodiscard]] std::size_t used() const noexcept {
@@ -1441,17 +1488,23 @@ public:
         return static_cast<std::uint64_t>(stats_.live_compact_remapped_pins_total);
     }
     // Issue #2267: per-arena RootRemapPass counters (mirrors process atomics).
+    // Issue #2381: load concurrent-safe atomics (not plain stats_ size_t).
     [[nodiscard]] std::uint64_t root_remap_stable_ref_total_relaxed() const noexcept {
-        return static_cast<std::uint64_t>(stats_.root_remap_stable_ref_total);
+        return root_remap_stable_ref_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t root_remap_stable_ref_fail_total_relaxed() const noexcept {
-        return static_cast<std::uint64_t>(stats_.root_remap_stable_ref_fail_total);
+        return root_remap_stable_ref_fail_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t root_remap_closure_capture_total_relaxed() const noexcept {
-        return static_cast<std::uint64_t>(stats_.root_remap_closure_capture_total);
+        return root_remap_closure_capture_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t root_remap_closure_capture_fail_total_relaxed() const noexcept {
-        return static_cast<std::uint64_t>(stats_.root_remap_closure_capture_fail_total);
+        return root_remap_closure_capture_fail_total_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #2381: concurrent-safe shape_inval counter (hook invoke total).
+    [[nodiscard]] std::uint64_t shape_inval_on_compact_relaxed() const noexcept {
+        return shape_inval_on_compact_.load(std::memory_order_relaxed);
     }
 
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
@@ -1834,10 +1887,12 @@ private:
         result.root_remap_stable_ref_fail_total += sr_fail;
         result.root_remap_closure_capture_total += cc;
         result.root_remap_closure_capture_fail_total += cc_fail;
-        stats_.root_remap_stable_ref_total += sr;
-        stats_.root_remap_stable_ref_fail_total += sr_fail;
-        stats_.root_remap_closure_capture_total += cc;
-        stats_.root_remap_closure_capture_fail_total += cc_fail;
+        // Issue #2381: concurrent-safe RMW (plain size_t += was a data race
+        // if two densify paths ever overlapped on the same arena).
+        root_remap_stable_ref_total_.fetch_add(sr, std::memory_order_relaxed);
+        root_remap_stable_ref_fail_total_.fetch_add(sr_fail, std::memory_order_relaxed);
+        root_remap_closure_capture_total_.fetch_add(cc, std::memory_order_relaxed);
+        root_remap_closure_capture_fail_total_.fetch_add(cc_fail, std::memory_order_relaxed);
     }
 
     void invoke_compact_hook_() {
@@ -1853,7 +1908,11 @@ private:
             hook_copy = on_compact_hook_;
         }
         hook_copy();
-        stats_.shape_inval_on_compact++;
+        // Issue #2381: relaxed atomic RMW — concurrent compact_hook invokers
+        // must not data-race the per-arena counter (TSAN + no lost updates).
+        // Process-wide arena_policy::record_shape_inval_on_compact() is
+        // already atomic; keep per-arena count consistent under N-thread stress.
+        shape_inval_on_compact_.fetch_add(1, std::memory_order_relaxed);
         aura::core::arena_policy::record_shape_inval_on_compact();
     }
 
@@ -1896,7 +1955,15 @@ private:
     std::vector<std::byte> buffer_;
     std::pmr::monotonic_buffer_resource resource_;
     SmallObjectPool small_pool_;
+    // GUARDED_BY(per-arena compact serial) — see ArenaStats #2381 contract.
     ArenaStats stats_;
+    // Issue #2381: concurrent-safe counters (Option B). Snapshotted into
+    // ArenaStats by stats(); never plain-++ under concurrent hook invoke.
+    std::atomic<std::size_t> shape_inval_on_compact_{0};
+    std::atomic<std::size_t> root_remap_stable_ref_total_{0};
+    std::atomic<std::size_t> root_remap_stable_ref_fail_total_{0};
+    std::atomic<std::size_t> root_remap_closure_capture_total_{0};
+    std::atomic<std::size_t> root_remap_closure_capture_fail_total_{0};
     std::vector<DtorEntry> dtors_;
     // Issue #2166: old→new create-object addresses from last Moving densify.
     // Cleared/rebuilt each Moving call; Soft/Force leave it empty.

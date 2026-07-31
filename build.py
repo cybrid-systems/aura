@@ -1880,6 +1880,25 @@ def cmd_arena_moving_compaction_coverage():
     return 0
 
 
+def cmd_arena_compact_hook_stats_coverage():
+    """Issue #2381: concurrent compact_hook shape_inval counter is race-free.
+
+    Option B for concurrent-hot counters (atomic RMW); GUARDED_BY audit on
+    serial compact/live_compact stats_ fields. N=4 thread stress + exact count.
+    """
+    print(f"{B}=== arena compact_hook stats coverage (#2381) ==={N}")
+    script = ROOT / "scripts" / "check_arena_compact_hook_stats_2381.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("arena compact_hook stats (#2381) coverage contract rows failed")
+        return 1
+    ok("arena compact_hook stats (#2381) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3225,6 +3244,7 @@ def cmd_gate():
         or cmd_soa_single_source_of_truth_coverage()
         or cmd_layout_stamp_shape_version_fence_coverage()
         or cmd_arena_moving_compaction_coverage()
+        or cmd_arena_compact_hook_stats_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
