@@ -2825,7 +2825,7 @@
     {
       "file": "tests/orch/test_agent_ask_2231.cpp",
       "category": "unit",
-      "reason": "Issue #2231 — standardized cross-agent request/response",
+      "reason": "Issue #2231 / #2401 — agent-ask request/response + standard",
       "issue": null
     },
     {

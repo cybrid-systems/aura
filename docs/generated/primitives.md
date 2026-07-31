@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**534** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**535** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 98 primitives (18%)
-- **core**: 380 primitives (71%)
+- **core**: 381 primitives (71%)
 - **internal-observable**: 48 primitives (9%)
 - **convenience**: 8 primitives (1%)
 
@@ -541,11 +541,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
-## Orch: (8)
+## Orch: (9)
 
 - `orch:agent-ask` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-recv` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-reply` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-send` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-touch` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -790,7 +791,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (380)
+### Core builtins (must remain primitive) (381)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -985,6 +986,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `orch:agent-ask` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-recv` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-reply` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-send` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-touch` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`

@@ -191,24 +191,22 @@ Rules (per Issue #2229 AC2-AC3):
    — the `consecutive_stall_limit` cap is the simpler version of
    the same idea and ships in #2229.
 
-### `agent-ask` (Issue #2231, cross-agent request/response)
+### `agent-ask` / `agent-reply` (Issue #2231 / #2401, cross-agent request/response)
 
 Standardized request/response channel between agents without a process-global
 registry (per #1966). Builds only on existing `MultiFiberMailbox` + the
 Evaluator name table (per #2078). The correlation id lives **in-band in the
-payload prefix** — no static map of ask-id → handle.
+payload prefix**. Issue #2401 adds the standard **worker reply** path.
 
 ```cpp
 #include "orch/orch.h"   // pulls in agent_spawn.h
 
-aura::serve::Scheduler sched(2);
-aura::orch::AgentScope scope(sched);
-auto& b = scope.spawn({.name = "worker", .body = [] {
-    // Parse "ask:<id>:<body>" from agent_recv, send back
-    // "reply:<id>:<body>" to the caller's mailbox (e.g. via a
-    // shared reply coordinator, or back to the original
-    // requester's own mailbox if co-located).
-    ...
+// Worker must call agent_reply (Issue #2401) — not hand-build reply:: prefixes.
+// agent_ask registers corr_id → per-ask reply mailbox (pending table, not
+// AgentRegistry). agent_reply(corr, body) looks it up and pushes.
+auto& b = scope.spawn({.name = "worker", .body = [&] {
+    // recv ask:<id>:<body> from own mailbox, then:
+    // aura::orch::agent_reply(corr_id, response_body);
 }});
 aura::orch::AskResult r = aura::orch::agent_ask(b, "ping", /*timeout_ms=*/5000);
 // r.ok / r.status ("ok" | "timeout" | "no-mailbox" | "malformed")
@@ -217,35 +215,33 @@ aura::orch::AskResult r = aura::orch::agent_ask(b, "ping", /*timeout_ms=*/5000);
 // Aura
 // (orch:agent-ask name payload [:timeout-ms n])
 //   → hash {ok, status, payload, correlation-id, schema-2231}
+// (orch:agent-reply corr payload)
+//   → hash {ok, status, schema-2401}  ; corr = int or string
 ```
 
-Rules (per Issue #2231):
-1. **No** process-global registry (the MVP scope linter still forbids
+Rules (per Issue #2231 / #2401):
+1. **No** process-global agent registry (MVP linter still forbids
    `AgentRegistry` / `global_agent_registry` / `conduct_parallel`).
-   The correlation lives in the payload prefix
-   (`"ask:<id>:<body>"` + `"reply:<id>:<body>"`) so the protocol
-   is registry-free.
-2. **Per-ask temp reply mailbox** — the C++ helper creates a fresh
-   `std::shared_ptr<MultiFiberMailbox>` per ask. No risk of
-   interleaving with the caller's or target's normal traffic
-   (AC5 interleave safety). The target replies to the helper's
-   temp mailbox (or the requester's main mailbox if co-located).
-3. **Strict prefix match** — non-matching messages on the reply
-   mailbox surface as `status="malformed"` rather than silent
-   drop. Spurious wake or empty mailbox just loops until the
-   timeout; the helper never blocks past the deadline.
-4. **Backpressure semantics** — if the target's push returns
-   `Backpressure` (target mailbox at high_water), the helper
-   surfaces `status="timeout"` and bumps `agent_ask_timeout_total`.
-   No automatic retry (the issue explicitly defers retry policy
-   to `FailurePolicy` / batch parallel — #2007 / #2228 lineage).
-5. **Process atomic correlation id** — `g_ask_corr_id` is a
-   function-static `std::atomic<uint64_t>`; ids are monotonic
-   and never reused within the process lifetime.
+   Correlation is in-band (`"ask:<id>:<body>"` + `"reply:<id>:<body>"`).
+   A short-lived **pending-ask table** (corr → reply mailbox) is not an
+   agent map — entries exist only for the ask wait window.
+2. **Worker must call `agent_reply`** (C++ or `orch:agent-reply`) so
+   payloads are well-formed and dest lookup is correct. Hand-rolled
+   prefixes still work if pushed to the same pending mailbox, but are
+   error-prone (`malformed` / silent timeout).
+3. **Per-ask temp reply mailbox** — unique per ask (AC5 interleave safety).
+4. **Strict prefix match** on the asker side — non-matching messages on
+   the reply mailbox → `status="malformed"` (no silent drop).
+5. **`agent_reply` structured fail** — unknown corr / closed mailbox /
+   backpressure → `ok=#f` with status (`unknown-corr` | `closed` |
+   `backpressure`); no hang.
+6. **Backpressure on ask push** → `status="timeout"` + `agent_ask_timeout_total`.
+7. **Process atomic correlation id** — monotonic within process lifetime.
 
-Metrics (`query:orch-module-stats`, schema-2231):
+Metrics (`query:orch-module-stats`, schema-2231 / schema-2401):
 - `agent-ask-total` — successful Ok returns.
-- `agent-ask-timeout-total` — wait-window expirations (incl.
-  Backpressure at the target push).
+- `agent-ask-timeout-total` — wait-window expirations (incl. BP at push).
+- `agent-reply-total` — successful reply pushes (#2401).
+- `agent-reply-fail-total` — unknown-corr / closed / backpressure (#2401).
 
 See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.md`](../../docs/wire-formats.md) §10.

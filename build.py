@@ -2241,6 +2241,25 @@ def cmd_parallel_isolation_level_coverage():
     return 0
 
 
+def cmd_agent_reply_coverage():
+    """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
+
+    Standard worker response path for agent-ask; pending-ask table (not
+    AgentRegistry); metrics + schema-2401.
+    """
+    print(f"{B}=== agent-reply coverage (#2401) ==={N}")
+    script = ROOT / "scripts" / "check_agent_reply_2401.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("agent-reply (#2401) coverage contract rows failed")
+        return 1
+    ok("agent-reply (#2401) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3605,6 +3624,7 @@ def cmd_gate():
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()
+        or cmd_agent_reply_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
