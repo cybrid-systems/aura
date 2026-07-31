@@ -3018,6 +3018,9 @@ aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
 # pin_node_for_atomic_batch). Extends #1566 / #81967 coverage.
 aura_add_issue_test(test_workspace_isolation_wire_2073)
 aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
+# Issue #2385: Restricted sandbox denies side-effects when tenant principal unset.
+aura_add_issue_test(test_restricted_unset_principal_2385)
+aura_issue_test_link_llvm_jit(test_restricted_unset_principal_2385)
 
 # Issue #2125: stamp isolation principal on all StableNodeRef capture
 # paths (make_ref / children_stable / non-batch) — extends #2073 / #2056.

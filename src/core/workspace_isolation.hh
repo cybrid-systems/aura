@@ -168,22 +168,34 @@ struct WorkspaceIsolationPolicy {
     // AC1 legacy: simple ID boundary check.
     [[nodiscard]] bool check_boundary(TenantId target) noexcept {
         return check_boundary_ex(target, /*ref_tenant=*/0, /*required_effects=*/0,
-                                 /*sandbox_strict=*/false, "boundary");
+                                 /*sandbox_strict=*/false, "boundary",
+                                 /*sandbox_restricted=*/false);
     }
 
     // AC1–4 enhanced: capability propagation + provenance + Strict sandbox.
+    // Issue #2385: Restricted + unset principal + side-effect deny.
     //
     // Policy:
-    //   - current.id==0 or isolation disabled → allow (still count check)
+    //   - current.id==0 + Off (neither strict nor restricted side-effect):
+    //       allow (pure read / unit Soft path)
+    //   - current.id==0 + Strict → deny (side-effect and pure: principal required)
+    //   - current.id==0 + Restricted + required_effects!=0 → deny
+    //       (production default footgun closed — #2385)
+    //   - current.id==0 + Restricted + required_effects==0 → allow (query-only)
     //   - current.allow_cross_tenant → allow
     //   - current.id == target (or target==0 meaning "same workspace") → allow
     //   - ref_tenant != 0 && ref_tenant != current.id && != target → provenance deny
     //   - cross_grants[current→target] covers required_effects → allow
     //   - sandbox_strict → no soft fallback; deny without grant
     //   - else deny (boundary violation prevented)
+    //
+    // sandbox_restricted: EffectSandboxMode::Restricted (mode==1). Wire from
+    // Evaluator::check_workspace_isolation via g_capability_registry /
+    // effect_sandbox_mode — do not invent a second mode enum.
     [[nodiscard]] bool check_boundary_ex(TenantId target, TenantId ref_tenant,
                                          std::uint16_t required_effects, bool sandbox_strict,
-                                         std::string_view op = "workspace") noexcept {
+                                         std::string_view op = "workspace",
+                                         bool sandbox_restricted = false) noexcept {
         auto& met = g_tenant_isolation_metrics();
         met.tenant_boundary_checks_total.fetch_add(1, std::memory_order_relaxed);
 
@@ -198,17 +210,34 @@ struct WorkspaceIsolationPolicy {
             const bool strict = sandbox_strict || strict_sandbox_linked;
             const TenantId cur = current.id;
 
-            // Disabled / unset tenant: permissive unless Strict forces a tenant.
-            if (cur == 0 && !strict) {
-                record_audit(target, ref_tenant, false, false, false, op);
-                return true;
+            // Issue #2385: unset principal (tenant=0).
+            // Strict always requires a principal. Restricted requires a
+            // principal when the call carries side-effect bits (Mutate/FFI/…).
+            // Pure reads under Restricted stay permissive (legacy query paths).
+            // Off stays fully permissive when principal unset.
+            if (cur == 0) {
+                const bool need_principal = strict || (sandbox_restricted && required_effects != 0);
+                if (!need_principal) {
+                    record_audit(target, ref_tenant, false, false, false, op);
+                    return true;
+                }
+                // Deny: isolation-deny:unset-principal (SecurityEvent reason
+                // set by Evaluator::check_workspace_isolation).
+                allowed = false;
+                ++denials;
+                met.tenant_boundary_violation_prevented_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                if (strict)
+                    met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
+                record_audit(target, ref_tenant, true, false, false, op);
+                return false;
             }
             if (current.allow_cross_tenant) {
                 record_audit(target, ref_tenant, false, false, false, op);
                 return true;
             }
             // Same tenant or unscoped target → ok (still check ref provenance).
-            if (target == 0 || cur == 0 || cur == target) {
+            if (target == 0 || cur == target) {
                 // fall through to provenance
             } else {
                 // Cross-tenant path: need grant covering required effects
@@ -271,14 +300,14 @@ inline WorkspaceIsolationPolicy& g_workspace_isolation() noexcept {
 }
 
 // Free-function convenience (matches issue pseudo-code).
-[[nodiscard]] inline bool check_boundary(TenantId target,
-                                         const IsolationRefProvenance* ref = nullptr,
-                                         std::uint16_t required_effects = 0,
-                                         bool sandbox_strict = false,
-                                         std::string_view op = "workspace") noexcept {
+// Issue #2385: sandbox_restricted wires EffectSandboxMode::Restricted.
+[[nodiscard]] inline bool
+check_boundary(TenantId target, const IsolationRefProvenance* ref = nullptr,
+               std::uint16_t required_effects = 0, bool sandbox_strict = false,
+               std::string_view op = "workspace", bool sandbox_restricted = false) noexcept {
     TenantId ref_t = ref ? ref->tenant_id : 0;
     return g_workspace_isolation().check_boundary_ex(target, ref_t, required_effects,
-                                                     sandbox_strict, op);
+                                                     sandbox_strict, op, sandbox_restricted);
 }
 
 inline void reset_tenant_isolation_for_test() noexcept {

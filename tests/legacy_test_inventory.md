@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 578 | Preferred destination suites |
-| **Total scanned** | **578** | |
+| `tests/core/test_*.cpp` | 579 | Preferred destination suites |
+| **Total scanned** | **579** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 64 | 64 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 161 | 161 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 162 | 162 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 64 | 64 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
@@ -607,6 +607,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_rest_param_hygiene_2169.cpp`
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp`
 - `tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp`
+- `tests/core/test_restricted_unset_principal_2385.cpp`
 - `tests/compiler/test_reverify_expand_2356.cpp`
 - `tests/compiler/test_rollback_by_marker_2237.cpp`
 - `tests/core/test_root_epoch_gc_safety_post_invalidate.cpp`
@@ -836,13 +837,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (161)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (162)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (161)
+#### domain/ (162)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -971,6 +972,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_mutation_checkpoint.cpp` (—) [domain_suite, theme_renderer] — test_render_mutation_checkpoint.cpp — Issue #1355: lightweight mutation in render hot path
 - `tests/compiler/test_require_effect_live_mid_2384.cpp` (#2384) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/compiler/test_residual_gc_defer_assert_2211.cpp` (#2211) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0
+- `tests/core/test_restricted_unset_principal_2385.cpp` (#2385) [domain_suite, theme_core] — AC1: Restricted + tenant=0 + Mutate side-effect → deny + IsolationDeny
 - `tests/compiler/test_security_audit_trail_2075.cpp` (#2075) [domain_suite, theme_compiler] — Issue #2075 — unified SecurityEvent schema + default-on mutation/effect audit WAL.
 - `tests/compiler/test_security_audit_unify_2054.cpp` (#2054) [domain_suite, theme_compiler] — AC1: check_and_record_effect allow + deny both append SecurityEvent
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp — Issue #744:

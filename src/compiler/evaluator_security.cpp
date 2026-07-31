@@ -657,16 +657,22 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
     // inside namespace `aura::compiler` and `aura::core::` would
     // otherwise resolve as nested (`aura::compiler::aura::core::`)
     // which doesn't exist.
+    using ::aura::core::capability::EffectSandboxMode;
+    using ::aura::core::capability::g_capability_registry;
     using ::aura::core::sandbox::is_strict;
     using ::aura::core::workspace_isolation::check_boundary;
     using ::aura::core::workspace_isolation::g_workspace_isolation;
     using ::aura::core::workspace_isolation::IsolationRefProvenance;
     const auto target = target_tenant != 0 ? target_tenant : capability_tenant_id_;
-    const bool strict =
-        effect_sandbox_mode() == 2 || is_strict() || g_workspace_isolation().strict_sandbox_linked;
+    const auto mode = effect_sandbox_mode();
+    const bool strict = mode == 2 || is_strict() || g_workspace_isolation().strict_sandbox_linked;
+    // Issue #2385: Restricted (mode 1 or registry Restricted) must deny
+    // side-effects when principal is unset — production default footgun.
+    const bool restricted =
+        mode == 1 || g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
     IsolationRefProvenance prov{};
     prov.tenant_id = ref_tenant;
-    const bool ok = check_boundary(target, &prov, required_effects, strict, op);
+    const bool ok = check_boundary(target, &prov, required_effects, strict, op, restricted);
     if (!ok) {
         bump_capability_denial();
         // Issue #2075: shared SecurityEvent surface — also append to the
@@ -692,7 +698,11 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         const auto mid = epoch != 0 ? epoch : 1;
         char reason_buf[64];
         const char* reason_str = "isolation-deny";
-        if (ref_tenant != 0) {
+        // Issue #2385: Agent-stable reason when principal was never set.
+        if (!g_workspace_isolation().isolation_enabled && required_effects != 0 &&
+            (strict || restricted)) {
+            reason_str = "isolation-deny:unset-principal";
+        } else if (ref_tenant != 0) {
             // Keep foreign principal for Agents without polluting mutation_id.
             std::snprintf(reason_buf, sizeof(reason_buf), "isolation-deny:ref-tenant=%llu",
                           static_cast<unsigned long long>(ref_tenant));
