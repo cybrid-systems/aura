@@ -3082,6 +3082,11 @@ aura_add_issue_test(test_tag_arity_index_lock_2419)
 aura_issue_test_link_llvm_jit(test_tag_arity_index_lock_2419)
 add_dependencies(all_test_issue_targets test_tag_arity_index_lock_2419)
 
+# Issue #2420: TagArityKeyHash pack + splitmix finalizer.
+aura_add_issue_test(test_tag_arity_key_hash_2420)
+aura_issue_test_link_llvm_jit(test_tag_arity_key_hash_2420)
+add_dependencies(all_test_issue_targets test_tag_arity_key_hash_2420)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
