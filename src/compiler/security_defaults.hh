@@ -30,6 +30,12 @@
 // Declared in runtime_shared.h / aura_jit_runtime.cpp; weak stub in bridge stub.
 extern "C" void aura_set_remap_name_fallback_enabled(int v);
 
+// Issue #2372: production Soft steal-snapshot lock (defined in serve/fiber.cpp).
+// Soft env ignored when locked; strong force-deopt ABI required under production.
+namespace aura::serve {
+void set_steal_snapshot_soft_production_locked(bool v) noexcept;
+}
+
 namespace aura::compiler::security {
 
 // Issue #2076: free-function sandbox env apply for main() before Evaluator.
@@ -369,6 +375,13 @@ inline void apply_production_security_defaults() noexcept {
     // that intentionally fill the table. Lock is captured at first
     // gc_defer_overflow_policy() call (lazy cache).
     aura::gc_hooks::set_gc_defer_production_locked(!dev_off);
+    // Issue #2372: production hard-forbid AURA_STEAL_SNAPSHOT_SOFT under
+    // production security defaults. Soft remains usable under
+    // AURA_SANDBOX=off and via set_steal_snapshot_soft_for_test (test
+    // override wins over lock). Multi-worker production builds must
+    // also link the strong force-deopt ABI (worker.cpp / fiber_bridge
+    // abort on null/weak-noop under this lock).
+    aura::serve::set_steal_snapshot_soft_production_locked(!dev_off);
     if (mutate_type_gate::production_locked() && !mutate_type_gate::is_hard()) {
         // Preview alarm: Soft is set at apply-time and the lock just
         // turned on. Bump the counter now so a mis-deployed binary is

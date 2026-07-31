@@ -2169,6 +2169,25 @@ def cmd_steal_snapshot_hard_invariant_coverage():
     return 0
 
 
+def cmd_steal_snapshot_soft_production_lock_coverage():
+    """Issue #2372: production hard-forbid Soft steal-snapshot + force-deopt ABI.
+
+    Soft env ignored under production lock; missing/weak force-deopt ABI
+    aborts under production; test override / sandbox=off keeps Soft for tests.
+    """
+    print(f"{B}=== steal-snapshot Soft production lock coverage (#2372) ==={N}")
+    script = ROOT / "scripts" / "check_steal_snapshot_soft_production_lock_2372.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal-snapshot Soft production lock coverage contract rows failed")
+        return 1
+    ok("steal-snapshot Soft production lock coverage clean")
+    return 0
+
+
 def cmd_mutate_mailbox_strict_coverage():
     """Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.
 
@@ -2990,6 +3009,7 @@ def cmd_gate():
         or cmd_escape_gate_key_contract_coverage()
         or cmd_composite_empty_cs_hard_coverage()
         or cmd_steal_snapshot_hard_invariant_coverage()
+        or cmd_steal_snapshot_soft_production_lock_coverage()
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()

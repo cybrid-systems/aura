@@ -17,7 +17,19 @@
 // lives in fiber.cpp (next to the static counter).
 
 
+#include <cstdio>
+#include <cstdlib>
+
 import std;
+
+// Issue #2372: weak force-deopt no-op must not silently continue under
+// production (multi-worker builds must resolve the strong ABI in
+// evaluator_fiber_mutation.cpp / aura_jit_bridge.cpp). Forward declare
+// the production Soft lock probe (defined in serve/fiber.cpp).
+namespace aura::serve {
+[[nodiscard]] bool steal_snapshot_soft_production_locked() noexcept;
+}
+
 extern "C" {
 
 // Issue #438: per-thread mutation boundary depth.
@@ -55,15 +67,28 @@ __attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 // that do not link the evaluator TU still resolve the worker path.
 __attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_ptr*/) {}
 
-// Issue #2310: fail-closed force-deopt on steal snapshot inconsistency.
-// Strong def in evaluator_fiber_mutation.cpp (with Evaluator module
-// access — bumps per-CompilerMetrics counter + runs refresh).
-// aura_jit_bridge.cpp provides a file-level atomic fallback when the
-// module TU is not linked. This weak no-op keeps non-evaluator link
-// units (test_concurrent / test_issue_*) resolving without dragging
+// Issue #2310 / #2372: fail-closed force-deopt on steal snapshot
+// inconsistency. Strong def in evaluator_fiber_mutation.cpp (with
+// Evaluator module access — bumps per-CompilerMetrics counter + runs
+// refresh). aura_jit_bridge.cpp provides a file-level atomic fallback
+// when the module TU is not linked. This weak stub keeps non-evaluator
+// link units (test_concurrent / test_issue_*) resolving without dragging
 // the full module into their link unit.
+//
+// Issue #2372 AC2: under production Soft lock the weak no-op MUST NOT
+// silently return (that would resume generation-behind code after a
+// mismatch bump). Abort so mis-linked multi-worker production builds
+// fail closed. Light/test binaries without production lock still get
+// the empty no-op for link ergonomics.
 __attribute__((weak, used)) void
-aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) noexcept {}
+aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) noexcept {
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr, "FATAL: weak aura_force_deopt_on_steal_snapshot_mismatch resolved "
+                             "under production (#2372); multi-worker builds must link the "
+                             "strong force-deopt ABI\n");
+        std::abort();
+    }
+}
 
 // Issue #485: deferred steal violation + resume migration.
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}

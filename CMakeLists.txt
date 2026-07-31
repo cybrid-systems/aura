@@ -2735,6 +2735,11 @@ aura_add_issue_test(test_steal_snapshot_hard_invariant_2346)
 aura_issue_test_link_llvm_jit(test_steal_snapshot_hard_invariant_2346)
 add_dependencies(all_test_issue_targets test_steal_snapshot_hard_invariant_2346)
 
+# Issue #2372: production hard-forbid Soft steal-snapshot + require force-deopt ABI.
+aura_add_issue_test(test_steal_snapshot_soft_production_lock_2372)
+aura_issue_test_link_llvm_jit(test_steal_snapshot_soft_production_lock_2372)
+add_dependencies(all_test_issue_targets test_steal_snapshot_soft_production_lock_2372)
+
 # Issue #2348: bidirectional check-mode for ADT match + GuardShape.
 aura_add_issue_test(test_bidirectional_match_check_2348)
 aura_issue_test_link_llvm_jit(test_bidirectional_match_check_2348)

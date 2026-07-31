@@ -87,6 +87,9 @@ extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total();
 }
 
+// Issue #2372: steal_snapshot_soft_production_locked() is declared in
+// serve/fiber.h (pulled via serve/gc_coordinator.h in the global fragment).
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -12489,7 +12492,7 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // Phase 1 only (steal split shipped)
             else
                 recommendation = 3;               // early-stage (no steal activity yet)
-            auto* ht = FlatHashTable::create(32); // #2184 schema keys
+            auto* ht = FlatHashTable::create(64); // #2184/#2310/#2346/#2372 schema keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -12565,6 +12568,15 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("steal-snapshot-hard-wired", 1);
             insert_kv("schema-2346", 2346);
             insert_kv("issue-2346", 2346);
+            // Issue #2372: production hard-forbid Soft steal-snapshot +
+            // require force-deopt ABI. soft-forbidden-wired=1 is a compile-
+            // time sentinel that the production lock path exists;
+            // soft-production-locked mirrors the live lock flag (0/1).
+            insert_kv("steal-snapshot-soft-forbidden-wired", 1);
+            insert_kv("steal-snapshot-soft-production-locked",
+                      aura::serve::steal_snapshot_soft_production_locked() ? 1 : 0);
+            insert_kv("schema-2372", 2372);
+            insert_kv("issue-2372", 2372);
             insert_kv("schema", 783);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

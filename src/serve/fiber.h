@@ -913,28 +913,40 @@ struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
 
-// Issue #2310 / #2346: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only mode
-// for unit tests. Production default is fail-closed (force-deopt + full
-// refresh under exclusive recovery). Live getenv (not process-static)
-// so tests can toggle Soft/Hard without restart; only consulted on the
-// rare mismatch / steal-inconsistency path.
-[[nodiscard]] inline bool is_steal_snapshot_soft_mode() noexcept {
-    const char* v = std::getenv("AURA_STEAL_SNAPSHOT_SOFT");
-    return v && v[0] == '1';
-}
+// Issue #2310 / #2346 / #2372: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only
+// mode for unit tests. Production default is fail-closed (force-deopt + full
+// refresh under exclusive recovery). Under production security defaults
+// (apply_production_security_defaults, sandbox != off) Soft env is IGNORED
+// (production lock — mirror #2338 gc_defer). Test override wins over lock
+// (set_steal_snapshot_soft_for_test) for unit Soft-path ergonomics.
+// Happy path cost: one relaxed load of the production-locked flag, then
+// getenv only when unlocked. Only consulted on the rare mismatch path.
+//
+// Decision table (steal Soft + resume Hard):
+//
+// | Mode / lock | Trigger | Soft (steal force-deopt) | Resume Hard |
+// | Soft env    | AURA_STEAL_SNAPSHOT_SOFT=1 && !production_locked | metric-only continue |
+// overrides Hard | | Soft test   | set_steal_snapshot_soft_for_test(true) | metric-only continue |
+// overrides Hard | | Production lock | set_steal_snapshot_soft_production_locked(true) | Soft env
+// ignored | Hard canary | | Soft default | neither HARD nor production canary | (not Soft) | Soft
+// continue | | Hard env    | AURA_STEAL_SNAPSHOT_HARD=1 && !Soft | force-deopt | mark Done/cancel |
+// | Production canary | production_defaults probe && !Soft | force-deopt | same as Hard |
+// | Hard+abort  | AURA_STEAL_SNAPSHOT_HARD_ABORT=1 under Hard | force-deopt | std::abort |
+// | Missing ABI | production_locked && force-deopt symbol null/weak-noop | std::abort (#2372) | n/a
+// |
+//
+// Steal path (#2310 force-deopt / #2372 production ABI) is separate from
+// Fiber::resume hard-invariant (#2346). Implementation in fiber.cpp.
+[[nodiscard]] bool is_steal_snapshot_soft_mode() noexcept;
+// Issue #2372: production Soft lock (set by apply_production_security_defaults).
+void set_steal_snapshot_soft_production_locked(bool v) noexcept;
+[[nodiscard]] bool steal_snapshot_soft_production_locked() noexcept;
+// Issue #2372: test override — when set Soft, Soft wins over production lock
+// (mirror set_gc_defer_overflow_policy_for_test). reset clears override.
+void set_steal_snapshot_soft_for_test(bool soft) noexcept;
+void reset_steal_snapshot_soft_for_test() noexcept;
 
-// Issue #2346: resume MutationSafetySnapshot hard-invariant decision table.
-//
-// | Mode        | Trigger                                              | Resume on mismatch | |
-// Soft        | AURA_STEAL_SNAPSHOT_SOFT=1 (overrides HARD)          | bump mismatch; continue | |
-// Soft        | default when neither HARD nor production canary      | bump mismatch; continue | |
-// Hard        | AURA_STEAL_SNAPSHOT_HARD=1                           | hard-fail (mark
-// Done/cancel)| | Production  | production_defaults canary (see probe) && !SOFT      | same as Hard
-// | | Hard+abort  | AURA_STEAL_SNAPSHOT_HARD_ABORT=1 under Hard          | std::abort after
-// mark-fail  |
-//
-// Steal path (#2310 force-deopt) is separate; this table governs Fiber::resume
-// post-sync only. Happy path cost: one existing mutation_safety_snapshot load.
+// Issue #2346: resume MutationSafetySnapshot hard-invariant (see table above).
 // Implementation in fiber.cpp (production canary via typed_mutation_audit).
 [[nodiscard]] bool is_steal_snapshot_hard_mode() noexcept;
 [[nodiscard]] bool is_steal_snapshot_hard_abort() noexcept;
