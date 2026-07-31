@@ -203,6 +203,62 @@ inline CapabilityEffectMetrics& g_capability_effect_metrics() noexcept {
     return m;
 }
 
+// Issue #2426: atomic-backed fields with assignment + conversion so
+// existing `reg.sandbox_mode = M` / `reg.sandbox_mode == M` keep working
+// while snapshot_registry_state() can double-check acquire loads.
+struct AtomicEffectSandboxMode {
+    std::atomic<std::uint8_t> v{static_cast<std::uint8_t>(EffectSandboxMode::Off)};
+    AtomicEffectSandboxMode() noexcept = default;
+    AtomicEffectSandboxMode(EffectSandboxMode m) noexcept {
+        v.store(static_cast<std::uint8_t>(m), std::memory_order_relaxed);
+    }
+    AtomicEffectSandboxMode(const AtomicEffectSandboxMode&) = delete;
+    AtomicEffectSandboxMode& operator=(const AtomicEffectSandboxMode&) = delete;
+    AtomicEffectSandboxMode& operator=(EffectSandboxMode m) noexcept {
+        v.store(static_cast<std::uint8_t>(m), std::memory_order_release);
+        return *this;
+    }
+    [[nodiscard]] operator EffectSandboxMode() const noexcept {
+        return static_cast<EffectSandboxMode>(v.load(std::memory_order_acquire));
+    }
+    [[nodiscard]] EffectSandboxMode
+    load(std::memory_order o = std::memory_order_acquire) const noexcept {
+        return static_cast<EffectSandboxMode>(v.load(o));
+    }
+    void store(EffectSandboxMode m, std::memory_order o = std::memory_order_release) noexcept {
+        v.store(static_cast<std::uint8_t>(m), o);
+    }
+};
+
+struct AtomicTenantId {
+    std::atomic<TenantId> v{0};
+    AtomicTenantId() noexcept = default;
+    explicit AtomicTenantId(TenantId t) noexcept { v.store(t, std::memory_order_relaxed); }
+    AtomicTenantId(const AtomicTenantId&) = delete;
+    AtomicTenantId& operator=(const AtomicTenantId&) = delete;
+    AtomicTenantId& operator=(TenantId t) noexcept {
+        v.store(t, std::memory_order_release);
+        return *this;
+    }
+    [[nodiscard]] operator TenantId() const noexcept { return v.load(std::memory_order_acquire); }
+    [[nodiscard]] TenantId load(std::memory_order o = std::memory_order_acquire) const noexcept {
+        return v.load(o);
+    }
+    void store(TenantId t, std::memory_order o = std::memory_order_release) noexcept {
+        v.store(t, o);
+    }
+};
+
+// Issue #2426: consistent multi-field view (#1840 snapshot_verify_dirty_totals).
+struct RegistryStateSnapshot {
+    EffectSandboxMode sandbox_mode = EffectSandboxMode::Off;
+    TenantId default_tenant = 0;
+    std::uint64_t grant_min_valid_epoch = 0;
+    std::uint64_t grant_epoch_retain_window = 0;
+    bool hard_fiber_isolation = false;
+    std::uint64_t audit_seq = 0;
+};
+
 // Process-wide grant registry + audit ring.
 struct CapabilityRegistry {
     std::mutex mtx;
@@ -211,8 +267,9 @@ struct CapabilityRegistry {
     // Issue #2023: per-tenant MacroSelfEvo policy limits (paired with
     // Effect::MacroSelfEvo grant bit). Absent entry → no grant.
     std::unordered_map<TenantId, MacroSelfEvoPolicy> macro_self_evo_by_tenant;
-    EffectSandboxMode sandbox_mode = EffectSandboxMode::Off;
-    TenantId default_tenant = 0;
+    // Issue #2426: atomic (was plain enum / TenantId — torn vs other atomics).
+    AtomicEffectSandboxMode sandbox_mode{};
+    AtomicTenantId default_tenant{};
     static constexpr std::size_t kAuditRing = 128;
     // Issue #2425: published slots (data + atomic publish_seq).
     // audit_ring_mtx_: exclusive for slot write / clear; shared for
@@ -280,6 +337,33 @@ struct CapabilityRegistry {
     }
     [[nodiscard]] bool hard_fiber_isolation() const noexcept {
         return hard_fiber_isolation_.load(std::memory_order_acquire);
+    }
+
+    // Issue #2426: multi-field consistent snapshot (#1840 pattern).
+    // Double-check acquire on all atomic policy fields so concurrent
+    // set_hard_fiber / set_grant_min_valid / sandbox_mode writes cannot
+    // yield a torn mix (e.g. new min_valid with old hard_fiber flag).
+    [[nodiscard]] RegistryStateSnapshot snapshot_registry_state() const noexcept {
+        RegistryStateSnapshot s;
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            s.sandbox_mode = sandbox_mode.load(std::memory_order_acquire);
+            s.default_tenant = default_tenant.load(std::memory_order_acquire);
+            s.grant_min_valid_epoch = grant_min_valid_epoch_.load(std::memory_order_acquire);
+            s.grant_epoch_retain_window =
+                grant_epoch_retain_window_.load(std::memory_order_acquire);
+            s.hard_fiber_isolation = hard_fiber_isolation_.load(std::memory_order_acquire);
+            s.audit_seq = audit_seq.load(std::memory_order_acquire);
+            if (sandbox_mode.load(std::memory_order_acquire) == s.sandbox_mode &&
+                default_tenant.load(std::memory_order_acquire) == s.default_tenant &&
+                grant_min_valid_epoch_.load(std::memory_order_acquire) == s.grant_min_valid_epoch &&
+                grant_epoch_retain_window_.load(std::memory_order_acquire) ==
+                    s.grant_epoch_retain_window &&
+                hard_fiber_isolation_.load(std::memory_order_acquire) == s.hard_fiber_isolation &&
+                audit_seq.load(std::memory_order_acquire) == s.audit_seq) {
+                return s;
+            }
+        }
+        return s; // best-effort after retries
     }
 
     // Grant effects to a tenant (OR into named grant).
@@ -665,7 +749,8 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
     met.capability_check_total.fetch_add(1, std::memory_order_relaxed);
 
     bool allowed = true;
-    const auto mode = reg.sandbox_mode;
+    // Issue #2426: acquire load of atomic sandbox mode.
+    const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
     const bool need_grant = (mode == EffectSandboxMode::Strict) ||
                             (mode == EffectSandboxMode::Restricted && sandbox_active);
 
@@ -807,7 +892,7 @@ struct CapabilityEffectStatsSnapshot {
         m.capability_audit_total.load(std::memory_order_relaxed),
         kCapabilityModelPhase,
         kCapabilityModelIssue,
-        static_cast<int>(reg.sandbox_mode),
+        static_cast<int>(reg.sandbox_mode.load(std::memory_order_acquire)),
         m.macro_self_evo_check_total.load(std::memory_order_relaxed),
         m.macro_self_evo_allowed_total.load(std::memory_order_relaxed),
         m.macro_self_evo_denied_total.load(std::memory_order_relaxed),
@@ -849,7 +934,8 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
     met.macro_self_evo_check_total.fetch_add(1, std::memory_order_relaxed);
 
     MacroSelfEvoCheck out;
-    const auto mode = reg.sandbox_mode;
+    // Issue #2426: acquire load of atomic sandbox mode.
+    const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
     const bool need_grant = (mode == EffectSandboxMode::Strict) ||
                             (mode == EffectSandboxMode::Restricted && sandbox_active);
 

@@ -513,7 +513,8 @@ void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
 }
 
 std::uint8_t Evaluator::effect_sandbox_mode() const noexcept {
-    return static_cast<std::uint8_t>(aura::core::capability::g_capability_registry().sandbox_mode);
+    return static_cast<std::uint8_t>(
+        aura::core::capability::g_capability_registry().sandbox_mode.load());
 }
 
 // Issue #2076: unified Agent-readable deny reason formatter.
@@ -563,8 +564,8 @@ void Evaluator::apply_env_sandbox() noexcept {
     // Relative security:: is correct inside namespace aura::compiler.
     security::apply_production_security_defaults();
     // Mirror process-wide mode onto this Evaluator (sandbox_mode_, Strict link).
-    const auto mode =
-        static_cast<std::uint8_t>(::aura::core::capability::g_capability_registry().sandbox_mode);
+    const auto mode = static_cast<std::uint8_t>(
+        ::aura::core::capability::g_capability_registry().sandbox_mode.load());
     set_effect_sandbox_mode(mode);
     // Issue #2150: if production enabled WAL (env path OR forced multi-tenant
     // / Strict default dir), attach this Evaluator's ring + replay SecurityEvent.
