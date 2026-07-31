@@ -3087,6 +3087,11 @@ aura_add_issue_test(test_tag_arity_key_hash_2420)
 aura_issue_test_link_llvm_jit(test_tag_arity_key_hash_2420)
 add_dependencies(all_test_issue_targets test_tag_arity_key_hash_2420)
 
+# Issue #2421: restamp_lazy_align_enabled_ is std::atomic<bool>.
+aura_add_issue_test(test_restamp_lazy_align_atomic_2421)
+aura_issue_test_link_llvm_jit(test_restamp_lazy_align_atomic_2421)
+add_dependencies(all_test_issue_targets test_restamp_lazy_align_atomic_2421)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

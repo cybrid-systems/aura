@@ -3071,6 +3071,24 @@ def cmd_tag_arity_key_hash_coverage():
     return 0
 
 
+def cmd_restamp_lazy_align_atomic_coverage():
+    """Issue #2421: restamp_lazy_align_enabled_ is std::atomic<bool>.
+
+    acquire/release loads/stores; match auto_restamp_pending_ pattern.
+    """
+    print(f"{B}=== restamp_lazy_align atomic coverage (#2421) ==={N}")
+    script = ROOT / "scripts" / "check_restamp_lazy_align_atomic_2421.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restamp_lazy_align atomic (#2421) coverage contract rows failed")
+        return 1
+    ok("restamp_lazy_align atomic (#2421) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4013,6 +4031,7 @@ def cmd_gate():
         or cmd_structural_metadata_lock_order_coverage()
         or cmd_tag_arity_index_lock_coverage()
         or cmd_tag_arity_key_hash_coverage()
+        or cmd_restamp_lazy_align_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
