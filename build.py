@@ -2146,6 +2146,25 @@ def cmd_stable_ref_wire_endian_coverage():
     return 0
 
 
+def cmd_orphan_reap_tick_coverage():
+    """Issue #2396: production tick periodically reaps orphan fibers.
+
+    Wire maybe_reap_orphans_on_tick into Scheduler::run; zero cost when
+    orphan_count_cached_ == 0; AURA_ORPHAN_REAP_INTERVAL_MS (default 50).
+    """
+    print(f"{B}=== orphan reap tick coverage (#2396) ==={N}")
+    script = ROOT / "scripts" / "check_orphan_reap_tick_2396.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("orphan reap tick (#2396) coverage contract rows failed")
+        return 1
+    ok("orphan reap tick (#2396) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3505,6 +3524,7 @@ def cmd_gate():
         or cmd_fixup_deltas_coverage()
         or cmd_last_validated_generation_atomic_coverage()
         or cmd_stable_ref_wire_endian_coverage()
+        or cmd_orphan_reap_tick_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

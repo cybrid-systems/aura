@@ -399,10 +399,14 @@ void Scheduler::note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noex
     for (auto& e : orphan_fibers_) {
         if (e.fiber == f) {
             e.hard_deadline = deadline;
+            // Size unchanged; still publish for desync safety.
+            orphan_count_cached_.store(orphan_fibers_.size(), std::memory_order_relaxed);
             return;
         }
     }
     orphan_fibers_.push_back(OrphanEntry{f, deadline});
+    // Issue #2396: publish size for zero-cost empty tick check.
+    orphan_count_cached_.store(orphan_fibers_.size(), std::memory_order_relaxed);
 }
 
 // Issue #2227: force-reap all orphans past their hard_deadline.
@@ -457,6 +461,8 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
             to_reap.push_back(std::move(*it));
             it = orphan_fibers_.erase(it);
         }
+        // Issue #2396: keep empty-check atomic in sync after extract/erase.
+        orphan_count_cached_.store(orphan_fibers_.size(), std::memory_order_relaxed);
     } // orphan_mutex_ released here
 
     // Phase 2: per-fiber cleanup WITHOUT orphan_mutex_ held.
@@ -530,13 +536,58 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
 }
 
 std::size_t Scheduler::orphan_count() const noexcept {
-    ::aura::compiler::lock_order::AuditedMutexLock lock(
-        orphan_mutex_, ::aura::compiler::lock_order::Level::Orphan);
-    return orphan_fibers_.size();
+    // Issue #2396: single relaxed load (no orphan_mutex_ on hot/tick path).
+    return orphan_count_cached_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t Scheduler::orphans_reaped_total() const noexcept {
     return orphans_reaped_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Scheduler::orphans_tick_reap_total() const noexcept {
+    return orphans_tick_reap_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Scheduler::tick_orphan_mutex_acquired_total() const noexcept {
+    return tick_orphan_mutex_acquired_total_.load(std::memory_order_relaxed);
+}
+
+// Issue #2396: AURA_ORPHAN_REAP_INTERVAL_MS — min gap between tick-driven
+// reaps (default 50ms). Clamped to [1, 5000] so tests can force fast cadence
+// without spinning and production cannot set multi-minute gaps by accident.
+std::uint64_t Scheduler::orphan_reap_interval_ms() noexcept {
+    const char* e = std::getenv("AURA_ORPHAN_REAP_INTERVAL_MS");
+    if (e == nullptr || e[0] == '\0')
+        return 50;
+    std::uint64_t v = 0;
+    for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+        v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+    if (v == 0)
+        return 50;
+    if (v > 5000)
+        return 5000;
+    return v;
+}
+
+// Issue #2396: production tick entry for residual hard-reclaim.
+// Zero cost when orphan_count_cached_ == 0 (no mutex). Interval-gated
+// when non-empty. Invoked from Scheduler::run() every IO loop pass and
+// available to tests as the production path (prefer over ad-hoc
+// reap_orphans_now when asserting tick-driven convergence).
+std::size_t Scheduler::maybe_reap_orphans_on_tick() noexcept {
+    if (orphan_count_cached_.load(std::memory_order_relaxed) == 0)
+        return 0; // AC2: no orphan_mutex_ when empty
+    const auto now = std::chrono::steady_clock::now();
+    const auto interval = std::chrono::milliseconds(orphan_reap_interval_ms());
+    if (last_orphan_reap_tp_.time_since_epoch().count() != 0 &&
+        now - last_orphan_reap_tp_ < interval) {
+        return 0;
+    }
+    last_orphan_reap_tp_ = now;
+    // About to take orphan_mutex_ inside reap_orphans_now.
+    tick_orphan_mutex_acquired_total_.fetch_add(1, std::memory_order_relaxed);
+    orphans_tick_reap_total_.fetch_add(1, std::memory_order_relaxed);
+    return reap_orphans_now();
 }
 
 // Issue #119: lookup a fiber by ID. Returns nullptr if no
@@ -701,8 +752,16 @@ void Scheduler::run() {
 
     while (running_.load(std::memory_order_acquire)) {
         // Block on epoll_wait for events
-        // Timeout: check running_ periodically (in case all fibers are busy)
-        int n = ::epoll_wait(epoll_fd_, events, 64, 1000);
+        // Timeout: check running_ periodically (in case all fibers are busy).
+        // Issue #2396: when orphans are pending, shrink timeout to the
+        // orphan reap interval so residual hard-reclaim is not delayed by
+        // a full 1s idle wait (cancel-storm convergence).
+        int wait_ms = 1000;
+        if (orphan_count_cached_.load(std::memory_order_relaxed) > 0) {
+            const auto iv = static_cast<int>(orphan_reap_interval_ms());
+            wait_ms = iv > 0 ? iv : 50;
+        }
+        int n = ::epoll_wait(epoll_fd_, events, 64, wait_ms);
 
         if (!running_.load(std::memory_order_acquire))
             break;
@@ -838,6 +897,11 @@ void Scheduler::run() {
                 }
             }
         }
+
+        // Issue #2396: production residual hard-reclaim is tick-driven.
+        // Zero cost when orphan_count_cached_ == 0; interval-gated when set.
+        // Cancel storms converge without test-only reap_orphans_now calls.
+        (void)maybe_reap_orphans_on_tick();
     }
 #else
     // macOS: no epoll. Workers start then immediately stop.
