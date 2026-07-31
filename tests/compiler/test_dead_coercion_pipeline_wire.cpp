@@ -188,9 +188,11 @@ static void ac5_query_keys() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:optimization-passes-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    // Lineage: 1576 opt-passes → 2025 DeadCoercion → 2106 cascade-skip synergy.
-    CHECK(href(cs, "schema") == 2106 || href(cs, "schema") == 2025 || href(cs, "schema") == 1576,
-          "schema 2106|2025|1576");
+    // Lineage: 1576 opt-passes → 2025 DeadCoercion → 2106 cascade-skip
+    // → 2130 shape/linear dirty peel (primary schema).
+    CHECK(href(cs, "schema") == 2130 || href(cs, "schema") == 2106 || href(cs, "schema") == 2025 ||
+              href(cs, "schema") == 1576,
+          "schema 2130|2106|2025|1576");
     CHECK(href(cs, "schema-2025") == 2025, "schema-2025");
     CHECK(href(cs, "issue-2025") == 2025, "issue-2025");
     CHECK(href(cs, "dead-coercion-wired") == 1, "wired");
