@@ -660,13 +660,33 @@ export constexpr std::array<NodeMeta, kNodeTagNameCount> kNodeMeta = {{
     {NodeTag::Class, kNodeTagNames[34], 0, true, false, false, false, false},
 }};
 
-export constexpr const NodeMeta& meta(NodeTag tag) {
-    return kNodeMeta[static_cast<std::size_t>(tag) - 1];
+// Issue #2410: last valid NodeTag value (Class = 0x23). Index into
+// kNodeMeta is (tag - 1); valid tags are [0x01, kNodeTagMax].
+export constexpr std::uint32_t kNodeTagMax = static_cast<std::uint32_t>(NodeTag::Class);
+
+// Issue #2410: true when tag is in the dense table range [0x01, Class].
+// Note: 0x0C is a reserved gap but still has a table entry (name "<gap>").
+export [[nodiscard]] constexpr bool is_valid_node_tag(NodeTag tag) noexcept {
+    const auto idx = static_cast<std::uint32_t>(tag);
+    return idx >= 1 && idx <= kNodeTagMax;
+}
+
+// Issue #2410: bounds-checked tag→metadata. Invalid tags (0 / >Class)
+// return kNodeMeta[0] (LiteralInt) as a well-defined sentinel — never
+// OOB into kNodeMeta. Hot path: single compare, still constexpr.
+export constexpr const NodeMeta& meta(NodeTag tag) noexcept {
+    const auto idx = static_cast<std::uint32_t>(tag);
+    if (idx == 0 || idx > kNodeTagMax)
+        return kNodeMeta[0]; // sentinel — AC1/AC2
+    return kNodeMeta[static_cast<std::size_t>(idx) - 1];
 }
 
 // Compile-time validation: shape flags + name table anchors
 consteval bool validate_node_meta() {
     if (kNodeMeta.size() != kNodeTagNameCount)
+        return false;
+    // Issue #2410 AC5: table size tracks last enum value (Class).
+    if (kNodeMeta.size() != static_cast<std::size_t>(kNodeTagMax))
         return false;
     // Sole true hole in the tag space
     if (kNodeMeta[kNodeTagGapIndex].name != "<gap>")
@@ -705,9 +725,26 @@ consteval bool validate_node_meta() {
     // Name pointers alias shared table
     if (meta(NodeTag::Call).name.data() != kNodeTagNames[2].data())
         return false;
+    // Issue #2410 AC1/AC2: OOB tags return sentinel (no UB).
+    if (meta(static_cast<NodeTag>(0)).name != "LiteralInt")
+        return false;
+    if (meta(static_cast<NodeTag>(0xFF)).name != "LiteralInt")
+        return false;
+    // Issue #2410 AC3: last tag still correct.
+    if (meta(NodeTag::Class).tag != NodeTag::Class || meta(NodeTag::Class).name != "Class")
+        return false;
+    if (!is_valid_node_tag(NodeTag::LiteralInt) || !is_valid_node_tag(NodeTag::Class))
+        return false;
+    if (is_valid_node_tag(static_cast<NodeTag>(0)) || is_valid_node_tag(static_cast<NodeTag>(0xFF)))
+        return false;
     return true;
 }
 static_assert(validate_node_meta(), "kNodeMeta misaligned with NodeTag enum");
+// Issue #2410 AC5: catch table/index drift at compile time.
+static_assert(kNodeMeta.size() == static_cast<std::size_t>(NodeTag::Class),
+              "kNodeMeta.size() must equal NodeTag::Class (0x23)");
+static_assert(kNodeMeta.size() == kNodeTagNameCount,
+              "kNodeMeta.size() must equal kNodeTagNameCount");
 
 // ── NodeView — lightweight non-owning read view ────────────────
 export struct NodeView {
