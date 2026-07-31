@@ -2398,6 +2398,25 @@ def cmd_memo_goal_epoch_health_coverage():
     return 0
 
 
+def cmd_densify_envframe_ok_coverage():
+    """Issue #2361: densify envframe_ok real per-call check.
+
+    Stop forcing DensifyConsistencyReport.envframe_ok = true; wire ownership
+    scan + dual-path clean into Phase 5 overall_ok gate.
+    """
+    print(f"{B}=== densify envframe_ok coverage (#2361) ==={N}")
+    script = ROOT / "scripts" / "check_densify_envframe_ok_2361.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("densify envframe_ok (#2361) coverage contract rows failed")
+        return 1
+    ok("densify envframe_ok (#2361) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2794,6 +2813,7 @@ def cmd_gate():
         or cmd_linear_synth_violation_coverage()
         or cmd_castop_density_hard_coverage()
         or cmd_memo_goal_epoch_health_coverage()
+        or cmd_densify_envframe_ok_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
