@@ -137,8 +137,8 @@ std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
 
     auto& m = kNodeMeta[raw_idx];
 
-    // Gap sentinel check
-    if (m.name == "<gap>") {
+    // Gap sentinel check (Issue #2411: prefer is_gap over name spoof)
+    if (m.is_gap) {
         auto msg = make_node_error(id, "node has gap tag (unused tag value)");
         if (fail_on_error)
             throw std::logic_error(msg);
