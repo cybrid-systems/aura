@@ -5703,10 +5703,11 @@ public:
     // Validate all nodes, populating errors vector instead of asserting.
     std::size_t validate_all_nodes(std::vector<ValidationError>& errors) const;
 
-    // Issue #263: post-restore consistency check. Verifies generation_
-    // / node_gen_ alignment, parent/child bidirectional integrity, and
-    // that all child spans reference live nodes. Populates `errors` when
-    // non-null. Returns violation count (0 = consistent).
+    // Issue #263 / #2391: post-restore consistency check. Verifies
+    // SoA column size lockstep (#2391), generation_ / node_gen_
+    // alignment, parent/child bidirectional integrity, and that all
+    // child spans reference live nodes. Populates `errors` when
+    // non-null. Returns PostRestoreReport (violations == 0 = consistent).
     [[nodiscard]] PostRestoreReport
     validate_post_restore(std::vector<ValidationError>* errors = nullptr) const;
 
