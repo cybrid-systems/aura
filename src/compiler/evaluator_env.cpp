@@ -2666,6 +2666,26 @@ void Evaluator::scan_live_env_frame_refs_after_densify() noexcept {
     aura::core::envframe_lifetime::bump_envframe_lifetime_densify_ownership_scan_total();
 }
 
+// Issue #2365: dual-epoch closed-loop after densify (step 5 of the
+// densify-success order). Shared lock so concurrent readers can still
+// resolve; ensure_dual_path_consistent is const and bumps desync
+// counters on drift. Empty / all-INVALID → true (vacuous).
+bool Evaluator::revalidate_dual_epoch_after_densify() noexcept {
+    const auto desync0 = envframe_desync_detected_.load(std::memory_order_relaxed);
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    if (env_frames_.empty())
+        return true;
+    bool ok = true;
+    for (const auto& fr : env_frames_) {
+        if (fr.version_ == INVALID_VERSION)
+            continue;
+        if (!fr.ensure_dual_path_consistent())
+            ok = false;
+    }
+    const auto desync1 = envframe_desync_detected_.load(std::memory_order_relaxed);
+    return ok && (desync1 == desync0);
+}
+
 void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
                                      std::vector<std::int64_t>& closure_roots_out) const {
     // De-dup: a pair/closure may be bound in multiple envs.

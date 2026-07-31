@@ -3683,6 +3683,12 @@ public:
     // densify_ownership_scan_total. Soft empty set → empty iterate +
     // one atomic only.
     void scan_live_env_frame_refs_after_densify() noexcept;
+    // Issue #2365: post-densify dual-epoch closed-loop. Walks live
+    // EnvFrames with ensure_dual_path_consistent under env_frames_mtx_
+    // shared lock. Soft / empty frames → true with zero desync bumps
+    // beyond the per-frame asserted counter. Returns false if any
+    // frame desyncs (envframe_desync_detected_ advances).
+    [[nodiscard]] bool revalidate_dual_epoch_after_densify() noexcept;
     // Issue #242: detect a stale EnvFrame (one whose `version_`
     // snapshot is older than the current `defuse_version_`). A
     // closure captured against env_frames_[id] whose frame.version_

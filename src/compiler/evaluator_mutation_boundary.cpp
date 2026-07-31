@@ -1823,38 +1823,53 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                               : false;
         densify_consistency.linear_ok = linear_type_ok;
         densify_consistency.type_ok = linear_type_ok;
-        // root_remap_ok: last_root_remap_any_fail reads the most recent
-        // run_root_remap_pass() any_fail() result (per #2341 design).
-        densify_consistency.root_remap_ok = !aura::compiler::last_root_remap_any_fail();
-        // closure_remount_ok: 0 cell-remap fails since process start
-        // (cumulative fail-total accessor per #2297). Note: cumulative
-        // semantics — production wire-up of "last-call" gating is a
-        // follow-up per the #2341 close comment.
-        densify_consistency.closure_remount_ok =
-            ev_->get_closure_capture_cell_remap_fail_total() == 0;
-        // Issue #2361: real envframe_ok (stop forcing true).
-        // Soft / no Moving densify → vacuous true (AC3 zero extra cost).
-        // After Moving densify: run densify ownership scan + require
-        // no ownership-scan fails + linear/dual-path revalidate clean.
+        // Issue #2365: densify-success closed-loop (document order — do not
+        // reorder). Soft / no Moving densify → root_remap / closure /
+        // envframe vacuous true (zero extra cost). After Moving densify:
+        //   1 RootRemap (inside live_compact) → last_root_remap_any_fail
+        //   2 pin verify (pin_contract_held above)
+        //   3 EnvFrame live-ref transfer (scan_live_env_frame_refs)
+        //   4 closure remount scan (scan_live_closures only_if_moved)
+        //   5 dual-epoch restamp (revalidate_dual_epoch_after_densify)
+        //   6 report axes from last-call probes
+        // Issue #2361: real envframe_ok (stop forcing true) remains step 3+6.
         if (had_moving_densify && pin_contract_held) {
+            // (1) RootRemap last-call — densify's run_root_remap_pass result.
+            densify_consistency.root_remap_ok = !aura::compiler::last_root_remap_any_fail();
+
+            // (4) closure remount: last-call fail delta (not process-lifetime).
+            const auto cl_fail0 = ev_->get_closure_capture_cell_remap_fail_total();
+            (void)ev_->scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                              /*only_if_moved=*/true);
+            const auto cl_fail1 = ev_->get_closure_capture_cell_remap_fail_total();
+
+            // (5) dual-epoch restamp under densify generation stamp.
+            const bool dual_ok = ev_->revalidate_dual_epoch_after_densify();
+            densify_consistency.closure_remount_ok = (cl_fail1 == cl_fail0) && dual_ok;
+
+            // (3) EnvFrame live-ref ownership transfer (#2360/#2362).
             using aura::core::envframe_lifetime::
                 envframe_lifetime_densify_ownership_scan_fail_total;
             using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
             const auto scan0 = envframe_lifetime_densify_ownership_scan_total();
             const auto fail0 = envframe_lifetime_densify_ownership_scan_fail_total();
-            // Post-densify ownership-exit scan (#2340 site; also runs on
-            // CompactSweep). Explicit Phase 5 call so envframe axis is
-            // observed even when densify took the pinned compact path.
             ev_->scan_live_env_frame_refs_after_densify();
             const auto scan1 = envframe_lifetime_densify_ownership_scan_total();
             const auto fail1 = envframe_lifetime_densify_ownership_scan_fail_total();
-            // Scan ran (counter advanced) and no ownership fails this call.
-            // linear_type_ok covers dual-path / linear_post_mutate clean.
-            densify_consistency.envframe_ok = (scan1 > scan0) && (fail1 == fail0) && linear_type_ok;
+            densify_consistency.envframe_ok =
+                (scan1 > scan0) && (fail1 == fail0) && linear_type_ok && dual_ok;
         } else {
+            // Soft / empty densify / pin fail: vacuous axes (do not read
+            // stale last_root_remap or cumulative closure fails).
+            densify_consistency.root_remap_ok = true;
+            densify_consistency.closure_remount_ok = true;
             densify_consistency.envframe_ok = true;
         }
-        // Publish last envframe axis for query:lifetime-contract-snapshot.
+        // Publish last densify axes for query:lifetime-contract-snapshot.
+        aura::core::densify_consistency::note_last_densify_root_remap_ok(
+            densify_consistency.root_remap_ok);
+        aura::core::densify_consistency::note_last_densify_closure_remount_ok(
+            densify_consistency.closure_remount_ok);
         aura::core::densify_consistency::note_last_densify_envframe_ok(
             densify_consistency.envframe_ok);
         if (!densify_consistency.overall_ok()) {

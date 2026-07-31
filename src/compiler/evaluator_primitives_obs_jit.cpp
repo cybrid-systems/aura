@@ -11083,9 +11083,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const bool densify_linear_ok = densify_pin_ok && (post_densify_fail == 0);
             // type_ok: #2353 ownership/type revalidate — vacuous ok when never failed.
             const bool densify_type_ok = densify_pin_ok && (post_densify_fail == 0);
-            const bool densify_root_remap_ok = !aura::compiler::last_root_remap_any_fail();
+            // Issue #2365: last-call densify axes (Soft vacuous true) —
+            // not cumulative process fails that poison Soft densify.
+            const bool densify_root_remap_ok =
+                aura::core::densify_consistency::last_densify_root_remap_ok();
             const bool densify_closure_remount_ok =
-                (ev.get_closure_capture_cell_remap_fail_total() == 0);
+                aura::core::densify_consistency::last_densify_closure_remount_ok();
             // Issue #2361: real envframe axis from last Phase 5 densify
             // (Soft / no densify leaves last=true). Fail-closed when
             // densify ownership scan fails or dual-path revalidate fails.
@@ -11143,6 +11146,13 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-envframe-axis-wired", 1);
             insert_kv("schema-2361", 2361);
             insert_kv("issue-2361", 2361);
+            // Issue #2365: RootRemap + closure remount last-call closed-loop
+            // (Soft vacuous; Moving uses last densify publish).
+            insert_kv("densify-root-remap-axis-wired", 1);
+            insert_kv("densify-closure-remount-axis-wired", 1);
+            insert_kv("densify-dual-epoch-closed-loop-wired", 1);
+            insert_kv("schema-2365", 2365);
+            insert_kv("issue-2365", 2365);
             // Issue #2353: post-densify / post-steal Linear+Type revalidate counters.
             insert_kv("post-densify-linear-type-revalidate-total",
                       static_cast<std::int64_t>(post_densify_reval));

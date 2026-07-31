@@ -2781,6 +2781,11 @@ aura_add_issue_test(test_panic_defer_after_densify_2364)
 aura_issue_test_link_llvm_jit(test_panic_defer_after_densify_2364)
 add_dependencies(all_test_issue_targets test_panic_defer_after_densify_2364)
 
+# Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.
+aura_add_issue_test(test_densify_root_closure_closed_loop_2365)
+aura_issue_test_link_llvm_jit(test_densify_root_closure_closed_loop_2365)
+add_dependencies(all_test_issue_targets test_densify_root_closure_closed_loop_2365)
+
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
 aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)

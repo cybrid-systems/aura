@@ -2474,6 +2474,25 @@ def cmd_panic_defer_after_densify_coverage():
     return 0
 
 
+def cmd_densify_root_closure_closed_loop_coverage():
+    """Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.
+
+    Last-call root_remap_ok / closure_remount_ok; Soft vacuous; dual-epoch
+    revalidate after densify; documented densify-success order.
+    """
+    print(f"{B}=== densify root+closure closed-loop coverage (#2365) ==={N}")
+    script = ROOT / "scripts" / "check_densify_root_closure_closed_loop_2365.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("densify root+closure closed-loop (#2365) coverage contract rows failed")
+        return 1
+    ok("densify root+closure closed-loop (#2365) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2874,6 +2893,7 @@ def cmd_gate():
         or cmd_envframe_ownership_steal_densify_coverage()
         or cmd_general_object_pin_adopt_coverage()
         or cmd_panic_defer_after_densify_coverage()
+        or cmd_densify_root_closure_closed_loop_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

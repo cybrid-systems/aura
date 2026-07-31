@@ -309,6 +309,13 @@ inline void set_root_remap_pass_test_metrics(CompilerMetrics* m) noexcept {
     return root_remap_detail::g_last_root_remap_any_fail.load(std::memory_order_relaxed) != 0;
 }
 
+// Issue #2365: test inject — force last densify RootRemap axis fail
+// without a real densify (negative path for DensifyConsistencyReport).
+inline void inject_last_root_remap_any_fail_for_test(bool fail = true) noexcept {
+    root_remap_detail::g_last_root_remap_any_fail.store(fail ? std::uint8_t{1} : std::uint8_t{0},
+                                                        std::memory_order_relaxed);
+}
+
 // Issue #2339: auto-register / auto-unregister accessors.
 [[nodiscard]] inline std::uint64_t root_remap_auto_register_total() noexcept {
     return g_root_remap_auto_register_total.load(std::memory_order_relaxed);
