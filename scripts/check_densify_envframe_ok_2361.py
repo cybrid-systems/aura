@@ -45,9 +45,10 @@ def main() -> int:
     must("envframe_ok = true", "AC1", emb)
     must("ac1_soft_envframe_ok", "AC1", test)
 
-    # AC2 fail-closed
+    # AC2 fail-closed (#2368: scan lives inside force_densify_remap_pairing)
     must("Issue #2361", "AC2", emb)
-    must("scan_live_env_frame_refs_after_densify", "AC2", emb)
+    must("force_densify_remap_pairing", "AC2", emb)
+    must("scan_live_env_frame_refs_after_densify", "AC2", env)
     must("densify_ownership_scan_fail_total", "AC2", efl)
     must("inject_densify_ownership_scan_fail_for_test", "AC2", efl)
     must("force_reason", "AC2", test)

@@ -207,8 +207,9 @@ static void ac4_densify_scan() {
           "AC4: densify scan uses shared protocol");
     CHECK(env.find("scan_live_env_frame_refs_after_densify") != std::string::npos,
           "AC4: densify scan present");
-    CHECK(emb.find("scan_live_env_frame_refs_after_densify") != std::string::npos,
-          "AC4: Phase 5 calls densify ownership scan");
+    // #2368: Phase 5 force_densify_remap_pairing owns the densify ownership scan.
+    CHECK(emb.find("force_densify_remap_pairing") != std::string::npos,
+          "AC4: Phase 5 forced pairing owns densify ownership scan");
 
     CompilerService local;
     auto& ev = local.evaluator();

@@ -158,8 +158,9 @@ static void ac5_source_cite() {
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
 
     CHECK(emb.find("Issue #2361") != std::string::npos, "AC5: Phase 5 cites #2361");
-    CHECK(emb.find("scan_live_env_frame_refs_after_densify") != std::string::npos,
-          "AC5: Phase 5 calls densify ownership scan");
+    // #2368: Phase 5 forces pairing (scan lives inside force_densify_remap_pairing).
+    CHECK(emb.find("force_densify_remap_pairing") != std::string::npos,
+          "AC5: Phase 5 forced pairing owns densify ownership scan");
     CHECK(emb.find("envframe_ok") != std::string::npos, "AC5: Phase 5 sets envframe_ok");
     CHECK(emb.find("note_last_densify_envframe_ok") != std::string::npos,
           "AC5: Phase 5 publishes last envframe ok");
