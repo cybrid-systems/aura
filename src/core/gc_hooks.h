@@ -407,6 +407,11 @@ inline std::atomic<std::uint64_t> g_gc_defer_orphan_cleared_on_steal_total{0}; /
 // that invoked the residual interlock (once per entry, regardless of
 // bits cleared).
 inline std::atomic<std::uint64_t> g_residual_defer_cleared_on_steal_total{0}; // #2314
+// Issue #2377: steal-complete strong entry missing (weak no-op or null
+// under light/sandbox). Bumped when production would abort but Soft/
+// sandbox path takes weak stub or legacy N-call fallback. Production
+// multi-worker must never bump this (fail-closed instead).
+inline std::atomic<std::uint64_t> g_steal_complete_entry_missing_total{0}; // #2377
 [[nodiscard]] inline std::uint64_t steal_complete_total() noexcept {
     return g_steal_complete_total.load(std::memory_order_relaxed);
 }
@@ -415,6 +420,12 @@ inline std::atomic<std::uint64_t> g_residual_defer_cleared_on_steal_total{0}; //
 }
 [[nodiscard]] inline std::uint64_t residual_defer_cleared_on_steal_total() noexcept {
     return g_residual_defer_cleared_on_steal_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t steal_complete_entry_missing_total() noexcept {
+    return g_steal_complete_entry_missing_total.load(std::memory_order_relaxed);
+}
+inline void bump_steal_complete_entry_missing_total() noexcept {
+    g_steal_complete_entry_missing_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2314: force_clear_residual_defer_for_evaluator is defined below

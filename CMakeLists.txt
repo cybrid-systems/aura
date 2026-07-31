@@ -2549,6 +2549,11 @@ aura_add_issue_test(test_steal_complete_gc_defer_2203)
 aura_issue_test_link_llvm_jit(test_steal_complete_gc_defer_2203)
 add_dependencies(all_test_issue_targets test_steal_complete_gc_defer_2203)
 
+# Issue #2377: force single steal-complete entry (no weak legacy under production).
+aura_add_issue_test(test_steal_complete_strong_entry_2377)
+aura_issue_test_link_llvm_jit(test_steal_complete_strong_entry_2377)
+add_dependencies(all_test_issue_targets test_steal_complete_strong_entry_2377)
+
 # Issue #2204: GcDeferReason::MutationHold on outermost MutationBoundaryGuard.
 aura_add_issue_test(test_gc_defer_mutation_hold_2204)
 aura_issue_test_link_llvm_jit(test_gc_defer_mutation_hold_2204)

@@ -3,6 +3,7 @@
 #include "scheduler.h"
 #include "aura_platform.h"
 #include "compiler/lock_order_audit.h" // Issue #2354: FiberRegistry rank
+#include "core/gc_hooks.h"             // Issue #2377: steal-complete missing counter
 
 #include <cstdio>
 #include <unistd.h>
@@ -56,13 +57,31 @@ static inline void call_probe_linear_on_steal() noexcept {
     if (aura_evaluator_probe_linear_on_steal)
         aura_evaluator_probe_linear_on_steal();
 }
-// Issue #2203: prefer single steal-complete entry when linked; fall back
-// to legacy N weak calls for light binaries without evaluator TU.
+// Issue #2203 / Issue #2377: single steal-complete entry is mandatory for
+// multi-worker production. Strong def (evaluator_fiber_mutation.cpp)
+// runs the full steal-complete transaction:
+//   Panic orphan clear → residual interlock (#2314) → LayoutStamp dual-
+//   check (#2351) → linear/outermost metrics.
+// Weak no-op / null ABI under production → fail-closed (never legacy-only
+// path that skips residual + stamp). Light/sandbox (production Soft lock
+// off) may use weak no-op or legacy N-call fallback with metric bump.
 static inline void call_steal_complete(Fiber* stolen) noexcept {
     if (aura_evaluator_on_steal_complete) {
+        // Strong wins over weak when linked. Weak no-op under production
+        // aborts inside fiber_bridge (#2377); under sandbox it bumps
+        // steal_complete_entry_missing_total and returns.
         aura_evaluator_on_steal_complete(stolen);
         return;
     }
+    // Null ABI: production multi-worker must link strong steal-complete.
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr, "FATAL: aura_evaluator_on_steal_complete unresolved under "
+                             "production (#2377); multi-worker builds must link the "
+                             "strong steal-complete ABI (no legacy residual-less path)\n");
+        std::abort();
+    }
+    // Light/sandbox: legacy N weak calls + observability for missing entry.
+    aura::gc_hooks::bump_steal_complete_entry_missing_total();
     call_probe_linear_on_steal();
     call_steal_outermost_enforced();
 }
@@ -342,9 +361,9 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 if (aura_evaluator_bump_boundary_held_steal_safe)
                     aura_evaluator_bump_boundary_held_steal_safe();
             }
-            // Issue #2203: single mandatory steal-complete entry (clear
-            // orphan GcDeferReason::Panic from previous host + metrics).
-            // Falls back to probe_linear + outermost when weak/null.
+            // Issue #2203 / #2377: single mandatory steal-complete entry
+            // (full transaction under strong ABI). Production forbids
+            // weak-null legacy residual-less path.
             call_steal_complete(stolen);
             local_queue_.push(stolen);
             return true;

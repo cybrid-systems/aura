@@ -10930,9 +10930,11 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       aura::gc_hooks::gc_defer_production_locked() ? 1 : 0);
             insert_kv("schema-2338", 2338);
             insert_kv("issue-2338", 2338);
-            // Issue #2203: steal-complete single entry metrics (lineage retained;
-            // schema-2088 primary keys unchanged). Process-wide atomics are
-            // the source of truth; CompilerMetrics mirrors when present.
+            // Issue #2203 / #2377: steal-complete single entry metrics
+            // (lineage retained; schema-2088 primary keys unchanged).
+            // Process-wide atomics are the source of truth; CompilerMetrics
+            // mirrors when present. #2377: entry-missing counts light/
+            // sandbox weak-no-op or null ABI (production must stay 0).
             insert_kv("schema-2203", 2203);
             insert_kv("issue-2203", 2203);
             insert_kv("steal-complete-wired", 1);
@@ -10946,6 +10948,15 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gc_defer_orphan_cleared_on_steal_total",
                       static_cast<std::int64_t>(
                           aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+            insert_kv(
+                "steal-complete-entry-missing-total",
+                static_cast<std::int64_t>(aura::gc_hooks::steal_complete_entry_missing_total()));
+            insert_kv(
+                "steal_complete_entry_missing_total",
+                static_cast<std::int64_t>(aura::gc_hooks::steal_complete_entry_missing_total()));
+            insert_kv("steal-complete-strong-required-wired", 1);
+            insert_kv("schema-2377", 2377);
+            insert_kv("issue-2377", 2377);
             // Issue #2351: steal-complete LayoutStamp dual-check (lineage with #2203).
             {
                 std::int64_t steal_mm = 0;

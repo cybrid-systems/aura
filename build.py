@@ -2246,6 +2246,25 @@ def cmd_pin_bulk_all_shards_coverage():
     return 0
 
 
+def cmd_steal_complete_strong_entry_coverage():
+    """Issue #2377: force single steal-complete entry under production.
+
+    Production multi-worker must link strong steal-complete (Panic clear →
+    residual → LayoutStamp); weak/null fail-closed. Light sandbox metric.
+    """
+    print(f"{B}=== steal-complete strong entry coverage (#2377) ==={N}")
+    script = ROOT / "scripts" / "check_steal_complete_strong_entry_2377.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal-complete strong entry (#2377) coverage contract rows failed")
+        return 1
+    ok("steal-complete strong entry (#2377) coverage clean")
+    return 0
+
+
 def cmd_mutate_mailbox_strict_coverage():
     """Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.
 
@@ -3090,6 +3109,7 @@ def cmd_gate():
         or cmd_render_deopt_throttle_race_coverage()
         or cmd_legacy_pin_registry_cleanup_coverage()
         or cmd_pin_bulk_all_shards_coverage()
+        or cmd_steal_complete_strong_entry_coverage()
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
