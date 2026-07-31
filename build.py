@@ -2909,6 +2909,24 @@ def cmd_node_meta_gap_coverage():
     return 0
 
 
+def cmd_reset_slot_parent_edges_coverage():
+    """Issue #2412: reset_node_slot always clears incoming_parent_edges_.
+
+    Edge clear is not gated on !incoming_parent_index_dirty_.
+    """
+    print(f"{B}=== reset slot parent edges coverage (#2412) ==={N}")
+    script = ROOT / "scripts" / "check_reset_slot_parent_edges_2412.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reset slot parent edges (#2412) coverage contract rows failed")
+        return 1
+    ok("reset slot parent edges (#2412) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3842,6 +3860,7 @@ def cmd_gate():
         or cmd_stringpool_buf_fragmentation_lock_coverage()
         or cmd_node_meta_bounds_coverage()
         or cmd_node_meta_gap_coverage()
+        or cmd_reset_slot_parent_edges_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
