@@ -2945,6 +2945,24 @@ def cmd_flatast_add_node_lock_coverage():
     return 0
 
 
+def cmd_summary_recompute_sym_coverage():
+    """Issue #2414: summary_recompute(pool) restores sym_id summary bits.
+
+    HasKeywordVar + HasQueryOrMutateCall after heavy recompute.
+    """
+    print(f"{B}=== summary_recompute sym coverage (#2414) ==={N}")
+    script = ROOT / "scripts" / "check_summary_recompute_sym_2414.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("summary_recompute sym (#2414) coverage contract rows failed")
+        return 1
+    ok("summary_recompute sym (#2414) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3880,6 +3898,7 @@ def cmd_gate():
         or cmd_node_meta_gap_coverage()
         or cmd_reset_slot_parent_edges_coverage()
         or cmd_flatast_add_node_lock_coverage()
+        or cmd_summary_recompute_sym_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

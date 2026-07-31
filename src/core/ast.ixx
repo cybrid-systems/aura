@@ -1262,25 +1262,41 @@ public:
     }
     // Clear (used by reset() and the heavy recompute path).
     void summary_clear() noexcept { summary_flags_.store(0, std::memory_order_release); }
-    // Issue #402: rebuild the bit-set from scratch by walking
-    // the entire tag_ column. O(n) but only called from test
-    // code or after heavy structural mutations that may have
-    // invalidated the eager-update assumptions. NEVER call
-    // this on the fast path of every eval — the whole point
-    // of #402 is to avoid that.
-    void summary_recompute() {
+    // Issue #402 / #2414: rebuild the bit-set from scratch by
+    // walking SoA columns. O(n) — only after heavy structural
+    // mutation or tests. NEVER on the per-eval fast path.
+    //
+    // Issue #2414: pass `pool` so HasKeywordVar +
+    // HasQueryOrMutateCall are restored. Without the pool those
+    // bits stay false after recompute → needs_tree_walker_fallback
+    // wrongly takes the "summary_flags==0" fast path and may skip
+    // a whole-flat slow scan that would have found keyword /
+    // query:/mutate: nodes outside the root subtree.
+    //
+    // `pool == nullptr` keeps tag+int bits only (legacy / pool-less
+    // call sites). Prefer always passing the workspace pool.
+    void summary_recompute(const StringPool* pool = nullptr) {
         std::uint32_t f = 0;
         for (std::size_t i = 0; i < tag_.size(); ++i) {
             if (i < node_gen_.size() && node_gen_[i] == 0)
                 continue; // free slot, skip
             const auto t = tag_[i];
             f |= summary_flags_for_tag(t);
-            f |= summary_flags_for_int_value(t, int_val_[i]);
-            // Note: sym_id-based bits (keyword / query: /
-            // mutate:) require pool resolution and are NOT
-            // recomputed here. They are caught by the
-            // fast-path subtree walk (which has the pool via
-            // its caller).
+            if (i < int_val_.size())
+                f |= summary_flags_for_int_value(t, int_val_[i]);
+            // Issue #2414 AC1: sym_id-based bits need pool resolve.
+            if (pool && i < sym_id_.size() && sym_id_[i] != INVALID_SYM) {
+                f |= summary_flags_for_sym_id(t, pool->resolve(sym_id_[i]));
+            }
+            // query:/mutate: names usually live on the Call's callee
+            // Variable child, not Call.sym_id — mirror needs_tree_walker.
+            if (pool && t == NodeTag::Call && i < children_.size() && !children_[i].empty()) {
+                const auto cid = children_[i][0];
+                if (cid != NULL_NODE && cid < tag_.size() && tag_[cid] == NodeTag::Variable &&
+                    cid < sym_id_.size() && sym_id_[cid] != INVALID_SYM) {
+                    f |= summary_flags_for_sym_id(NodeTag::Call, pool->resolve(sym_id_[cid]));
+                }
+            }
         }
         summary_flags_.store(f, std::memory_order_release);
     }
