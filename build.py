@@ -2108,6 +2108,25 @@ def cmd_fixup_deltas_coverage():
     return 0
 
 
+def cmd_last_validated_generation_atomic_coverage():
+    """Issue #2394: last_validated_generation concurrent-safe atomic.
+
+    CopyableAtomicU16 enables lock-free concurrent validate_with_provenance
+    without torn uint16 writes (TSAN-clean shared-ref hot path).
+    """
+    print(f"{B}=== last_validated_generation atomic coverage (#2394) ==={N}")
+    script = ROOT / "scripts" / "check_last_validated_generation_atomic_2394.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("last_validated_generation atomic (#2394) coverage contract rows failed")
+        return 1
+    ok("last_validated_generation atomic (#2394) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3465,6 +3484,7 @@ def cmd_gate():
         or cmd_validate_node_no_abort_coverage()
         or cmd_validate_post_restore_soa_coverage()
         or cmd_fixup_deltas_coverage()
+        or cmd_last_validated_generation_atomic_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

@@ -111,7 +111,9 @@ static void ac1_v2_roundtrip() {
     CHECK(out.cow_epoch_at_capture == in.cow_epoch_at_capture, "cow_epoch_at_capture");
     CHECK(out.wrap_epoch == in.wrap_epoch, "wrap_epoch");
     CHECK(out.subtree_gen_at_capture == in.subtree_gen_at_capture, "subtree_gen");
-    CHECK(out.last_validated_generation == in.last_validated_generation, "last_validated");
+    CHECK(static_cast<std::uint16_t>(out.last_validated_generation) ==
+              static_cast<std::uint16_t>(in.last_validated_generation),
+          "last_validated");
 }
 
 // ── AC2: v1 backward compat ─────────────────────────────────
