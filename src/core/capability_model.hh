@@ -409,33 +409,61 @@ struct CapabilityRegistry {
                                                                        std::memory_order_relaxed);
     }
 
-    // Issue #2023: grant MacroSelfEvo effect + store policy limits.
+    // Issue #2023 / #2386: grant MacroSelfEvo effect + store policy limits.
+    // Issue #2386: stamp grant_epoch / grant_fiber_id / bound_mutation_id
+    // with the same apply discipline as grant() (#2055) so retain-window
+    // (#2154) and hard fiber isolation (#2151) apply to macro expand grants.
     // Single lock scope (grant/revoke also lock — do not nest).
-    void grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {}) {
+    // Callers should pass make_grant_provenance(...) when available; empty
+    // prov is filled with non-zero Mutation epoch (force-bind style).
+    void grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {},
+                              const EffectProvenance& prov_in = {}) {
+        EffectProvenance prov = prov_in;
+        // Always ensure non-zero epoch stamp (parity with make_grant_provenance).
+        if (prov.epoch == 0) {
+            const auto me = ::aura::core::current_mutation_epoch();
+            prov.epoch = me != 0 ? me : 1;
+        }
+        if (prov.mutation_id == 0)
+            prov.mutation_id = prov.epoch;
+        if (prov.fiber_id == 0)
+            prov.fiber_id = effect_fiber_id_or(0);
+
         std::lock_guard<std::mutex> lock(mtx);
         auto& vec = by_tenant[tenant];
-        bool found = false;
+        auto apply = [&](CapabilityGrant& g) {
+            g.effects = g.effects | Effect::MacroSelfEvo;
+            g.revoked = false;
+            g.bound_mutation_id = prov.mutation_id;
+            g.bound_node_id = prov.node_id;
+            g.grant_epoch = prov.epoch;
+            g.grant_fiber_id = prov.fiber_id;
+            g.revoke_epoch = 0;
+            auto& met = g_capability_effect_metrics();
+            met.capability_grant_total.fetch_add(1, std::memory_order_relaxed);
+            if (prov.epoch != 0)
+                met.capability_grant_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+            if (prov.fiber_id != 0)
+                met.capability_grant_fiber_bound_total.fetch_add(1, std::memory_order_relaxed);
+        };
         for (auto& g : vec) {
             if (g.name == "macro-self-evo") {
-                g.effects = g.effects | Effect::MacroSelfEvo;
-                g.revoked = false;
-                found = true;
-                break;
+                apply(g);
+                macro_self_evo_by_tenant[tenant] = policy;
+                return;
             }
         }
-        if (!found) {
-            CapabilityGrant g;
-            g.name = "macro-self-evo";
-            g.effects = Effect::MacroSelfEvo;
-            g.tenant_id = tenant;
-            vec.push_back(std::move(g));
-        }
+        CapabilityGrant g;
+        g.name = "macro-self-evo";
+        g.effects = Effect::MacroSelfEvo;
+        g.tenant_id = tenant;
+        apply(g);
+        vec.push_back(std::move(g));
         macro_self_evo_by_tenant[tenant] = policy;
-        g_capability_effect_metrics().capability_grant_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
     }
 
-    void revoke_macro_self_evo(TenantId tenant) {
+    // Issue #2023 / #2386: revoke MacroSelfEvo + stamp revoke_epoch (#2055).
+    void revoke_macro_self_evo(TenantId tenant, std::uint64_t revoke_at_epoch = 0) {
         std::lock_guard<std::mutex> lock(mtx);
         auto it = by_tenant.find(tenant);
         if (it != by_tenant.end()) {
@@ -443,8 +471,15 @@ struct CapabilityRegistry {
                 if (g.name == "macro-self-evo") {
                     g.revoked = true;
                     g.effects = Effect::None;
-                    g_capability_effect_metrics().capability_revoke_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    auto ep = revoke_at_epoch;
+                    if (ep == 0)
+                        ep = ::aura::core::current_mutation_epoch();
+                    if (ep == 0)
+                        ep = 1;
+                    g.revoke_epoch = ep;
+                    auto& met = g_capability_effect_metrics();
+                    met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                    met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
                 }
             }
         }
@@ -670,7 +705,7 @@ struct CapabilityEffectStatsSnapshot {
     };
 }
 
-// Issue #2023: consult MacroSelfEvo capability at macro expand entry.
+// Issue #2023 / #2386: consult MacroSelfEvo capability at macro expand entry.
 //
 // Policy:
 //   Sandbox Off: always allow; effective.max_* = 0 means "no clamp"
@@ -678,12 +713,15 @@ struct CapabilityEffectStatsSnapshot {
 //   Strict / Restricted+active without MacroSelfEvo grant: deny.
 //   Granted with max_depth==0 or max_expansion_passes==0: deny (zero limits).
 //   Granted with positive limits: allow + return policy for clamping.
+//   Issue #2386: provenance_ok (epoch fence / hard fiber) after bit check —
+//   same fence as Mutate grants (#2055/#2151/#2154).
 //
 // wildcard_ok: kCapWildcard holders inherit default permissive MacroSelfEvo
 // with default policy (32 passes / 256 depth) when no explicit grant.
-[[nodiscard]] inline MacroSelfEvoCheck check_macro_self_evo(TenantId tenant,
-                                                            bool sandbox_active = false,
-                                                            bool wildcard_ok = false) noexcept {
+// call_fiber_id: live fiber for hard isolation / audit (0 → effect override only).
+[[nodiscard]] inline MacroSelfEvoCheck
+check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard_ok = false,
+                     std::uint32_t call_fiber_id = 0) noexcept {
     auto& reg = g_capability_registry();
     auto& met = g_capability_effect_metrics();
     met.macro_self_evo_check_total.fetch_add(1, std::memory_order_relaxed);
@@ -692,6 +730,15 @@ struct CapabilityEffectStatsSnapshot {
     const auto mode = reg.sandbox_mode;
     const bool need_grant = (mode == EffectSandboxMode::Strict) ||
                             (mode == EffectSandboxMode::Restricted && sandbox_active);
+
+    // Issue #2386: non-empty EffectProvenance for audit + provenance_ok.
+    EffectProvenance call_prov{};
+    {
+        const auto me = ::aura::core::current_mutation_epoch();
+        call_prov.epoch = me != 0 ? me : 1;
+        call_prov.mutation_id = call_prov.epoch;
+        call_prov.fiber_id = effect_fiber_id_or(call_fiber_id);
+    }
 
     if (!need_grant) {
         // Off / Restricted-inactive: preserve historical unconstrained behaviour.
@@ -721,7 +768,17 @@ struct CapabilityEffectStatsSnapshot {
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo capability not granted";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, {}, true, "macro-self-evo");
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
+        return out;
+    }
+
+    // Issue #2386: epoch fence / hard fiber isolation / bound mid (parity grant()).
+    if (!reg.provenance_ok(tenant, call_prov)) {
+        out.allowed = false;
+        out.deny_reason = "MacroSelfEvo provenance fence (epoch/fiber/mid)";
+        met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }
 
@@ -735,7 +792,7 @@ struct CapabilityEffectStatsSnapshot {
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo policy missing";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, {}, true, "macro-self-evo");
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }
 
@@ -744,14 +801,14 @@ struct CapabilityEffectStatsSnapshot {
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo limits are zero";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-        reg.record_audit(Effect::MacroSelfEvo, held, tenant, {}, true, "macro-self-evo");
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }
 
     out.allowed = true;
     out.effective = pol;
     met.macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
-    reg.record_audit(Effect::MacroSelfEvo, held | Effect::MacroSelfEvo, tenant, {}, false,
+    reg.record_audit(Effect::MacroSelfEvo, held | Effect::MacroSelfEvo, tenant, call_prov, false,
                      "macro-self-evo");
     return out;
 }
