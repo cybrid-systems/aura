@@ -2927,6 +2927,24 @@ def cmd_reset_slot_parent_edges_coverage():
     return 0
 
 
+def cmd_flatast_add_node_lock_coverage():
+    """Issue #2413: FlatAST add_node multi-column SoA lock + reader contract.
+
+    Documents flatast_mutex_ vs lock-free SoA readers; audit findings.
+    """
+    print(f"{B}=== flatast add_node lock coverage (#2413) ==={N}")
+    script = ROOT / "scripts" / "check_flatast_add_node_lock_2413.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("flatast add_node lock (#2413) coverage contract rows failed")
+        return 1
+    ok("flatast add_node lock (#2413) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3861,6 +3879,7 @@ def cmd_gate():
         or cmd_node_meta_bounds_coverage()
         or cmd_node_meta_gap_coverage()
         or cmd_reset_slot_parent_edges_coverage()
+        or cmd_flatast_add_node_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
