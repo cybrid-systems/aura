@@ -1611,21 +1611,20 @@ public:
     // entries that don't depend on the mutated binding
     // from being re-inferred.
     //
-    // Non-pmr / non-atomic — std::pmr allocator's
-    // uses_allocator_args + std::atomic + std::tuple
-    // don't compose well. The mutation primitives
-    // synchronize via the mutation lock
-    // (enter_mutation_boundary), so concurrent access
-    // isn't a concern. The map is small (only the
-    // bindings that have been touched are in it), so
-    // std::unordered_map's default allocator is fine.
-    // COW path creates a fresh map on the clone so
-    // mutations on the clone don't affect the parent.
+    // Issue #2417: std::atomic<shared_ptr> so readers can
+    // snapshot a stable map without holding flatast_mutex_
+    // or the mutation boundary. Published maps are treated
+    // as immutable; bump_binding_gen COW-copies + CAS so
+    // concurrent lookup never races unordered_map mutation.
+    // Compact/clone stores a fresh empty map (mutations on
+    // the clone don't invalidate the parent). Map is small
+    // (only touched bindings) — default unordered_map ok.
     struct BindingGenMap {
         std::unordered_map<aura::ast::SymId, std::uint32_t> gens;
         BindingGenMap() = default;
     };
-    std::shared_ptr<BindingGenMap> binding_gens_ = std::make_shared<BindingGenMap>();
+    mutable std::atomic<std::shared_ptr<BindingGenMap>> binding_gens_{
+        std::make_shared<BindingGenMap>()};
     // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
     // enum value. Populated by the type-checker and runtime evaluator;
     // queryable via the AuraQuery `(has-error? N)` clause.
@@ -2830,7 +2829,8 @@ public:
         , type_id_(std::move(other.type_id_))
         , type_cache_gen_(std::move(other.type_cache_gen_))
         , type_cache_binding_gen_(std::move(other.type_cache_binding_gen_))
-        , binding_gens_(std::move(other.binding_gens_))
+        , binding_gens_(other.binding_gens_.exchange(std::make_shared<BindingGenMap>(),
+                                                     std::memory_order_acq_rel))
         , error_kind_(std::move(other.error_kind_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
@@ -2935,7 +2935,10 @@ public:
             type_id_ = std::move(other.type_id_);
             type_cache_gen_ = std::move(other.type_cache_gen_);
             type_cache_binding_gen_ = std::move(other.type_cache_binding_gen_);
-            binding_gens_ = std::move(other.binding_gens_);
+            // Issue #2417: transfer atomic shared_ptr via exchange.
+            binding_gens_.store(other.binding_gens_.exchange(std::make_shared<BindingGenMap>(),
+                                                             std::memory_order_acq_rel),
+                                std::memory_order_release);
             error_kind_ = std::move(other.error_kind_);
             node_gen_ = std::move(other.node_gen_);
             free_list_ = std::move(other.free_list_);
@@ -3029,7 +3032,7 @@ public:
         , type_cache_gen_(other.type_cache_gen_)
         , type_cache_binding_gen_(other.type_cache_binding_gen_)
         , schema_cache_(other.schema_cache_)
-        , binding_gens_(other.binding_gens_)
+        , binding_gens_(other.binding_gens_.load(std::memory_order_acquire))
         , error_kind_(other.error_kind_)
         , value_cache_(other.value_cache_)
         , mutation_log_(other.mutation_log_)
@@ -3126,7 +3129,9 @@ public:
             type_id_ = other.type_id_;
             type_cache_gen_ = other.type_cache_gen_;
             type_cache_binding_gen_ = other.type_cache_binding_gen_;
-            binding_gens_ = other.binding_gens_;
+            // Issue #2417: share snapshot (copy) of atomic shared_ptr.
+            binding_gens_.store(other.binding_gens_.load(std::memory_order_acquire),
+                                std::memory_order_release);
             schema_cache_ = other.schema_cache_;
             error_kind_ = other.error_kind_;
             node_gen_ = other.node_gen_;
@@ -4983,21 +4988,14 @@ public:
         macro_dirty_ = std::move(new_macro_dirty);
         type_id_ = std::move(new_type_id);
         type_cache_gen_ = std::move(new_type_cache_gen);
-        // Issue #412 follow-up #1: COW the
-        // per-binding cache gen column. The
-        // binding_gens_ map is NOT COW'd — the new flat
-        // starts with an empty map and only entries
-        // that the clone's mutations touch are added.
-        // This ensures mutations on the clone don't
-        // invalidate the parent's cache.
+        // Issue #412 follow-up #1: COW the per-binding cache
+        // gen column. The binding_gens_ map is replaced with a
+        // fresh empty map below (#2417 atomic store).
         type_cache_binding_gen_ = std::move(new_type_cache_binding_gen);
-        // Issue #412 follow-up #1: COW the
-        // binding_gens_ map. The clone gets a fresh
-        // empty map (the COW contract is that mutations
-        // on the clone don't affect the parent). The
-        // existing entries will be re-built lazily as
-        // the clone's mutations bump them.
-        binding_gens_ = std::make_shared<BindingGenMap>();
+        // Issue #412 follow-up #1 / #2417: store a fresh empty
+        // map (atomic publish). Mutations on the clone don't
+        // affect the parent; entries rebuild lazily on bump.
+        binding_gens_.store(std::make_shared<BindingGenMap>(), std::memory_order_release);
         error_kind_ = std::move(new_error_kind);
         node_first_mutation_ = std::move(new_node_first_mutation);
         node_gen_ = std::move(new_node_gen);
@@ -8572,18 +8570,28 @@ public:
     // yet (the default-constructed gen). The 0 sentinel
     // matches the global gen's pre-#412 behavior (0 =
     // no cache entry yet).
+    // Issue #2417: snapshot load — map is immutable after publish.
     std::uint32_t binding_gen(SymId sym) const {
-        if (!binding_gens_)
+        const auto snap = binding_gens_.load(std::memory_order_acquire);
+        if (!snap)
             return 0;
-        auto it = binding_gens_->gens.find(sym);
-        if (it == binding_gens_->gens.end())
+        auto it = snap->gens.find(sym);
+        if (it == snap->gens.end())
             return 0;
         return it->second;
     }
+    // Issue #2417: COW + CAS so concurrent readers keep a stable map.
     void bump_binding_gen(SymId sym) {
-        if (!binding_gens_)
-            binding_gens_ = std::make_shared<BindingGenMap>();
-        binding_gens_->gens[sym]++;
+        for (;;) {
+            auto cur = binding_gens_.load(std::memory_order_acquire);
+            auto next = std::make_shared<BindingGenMap>();
+            if (cur)
+                next->gens = cur->gens;
+            next->gens[sym]++;
+            if (binding_gens_.compare_exchange_weak(cur, next, std::memory_order_release,
+                                                    std::memory_order_acquire))
+                break;
+        }
         binding_gen_bumps_total_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #412 follow-up #1: per-binding gen bump

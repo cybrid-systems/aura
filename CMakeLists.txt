@@ -3067,6 +3067,11 @@ aura_add_issue_test(test_incoming_parent_dirty_atomic_2416)
 aura_issue_test_link_llvm_jit(test_incoming_parent_dirty_atomic_2416)
 add_dependencies(all_test_issue_targets test_incoming_parent_dirty_atomic_2416)
 
+# Issue #2417: binding_gens_ atomic shared_ptr + COW bump.
+aura_add_issue_test(test_binding_gens_atomic_2417)
+aura_issue_test_link_llvm_jit(test_binding_gens_atomic_2417)
+add_dependencies(all_test_issue_targets test_binding_gens_atomic_2417)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
