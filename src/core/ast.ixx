@@ -1664,18 +1664,22 @@ public:
             return tag == o.tag && arity_min == o.arity_min && arity_max == o.arity_max;
         }
     };
+    // Issue #2420: pack tag|arity_min|arity_max then splitmix64-style
+    // avalanche. Prefer packing over separate FNV mixes of zero-padded
+    // uint64_t fields (tag only has ~35 distinct values; high bits were
+    // wasted entropy). tag in high 32, arity_min/max as full uint16 each.
     struct TagArityKeyHash {
         std::size_t operator()(const TagArityKey& k) const noexcept {
-            // FNV-1a style mix of tag + arity range.
-            std::uint64_t h = 14695981039346656037ull;
-            auto mix = [&](std::uint64_t x) noexcept {
-                h ^= x;
-                h *= 1099511628211ull;
-            };
-            mix(static_cast<std::uint64_t>(k.tag));
-            mix(static_cast<std::uint64_t>(k.arity_min));
-            mix(static_cast<std::uint64_t>(k.arity_max));
-            return static_cast<std::size_t>(h);
+            std::uint64_t packed = (static_cast<std::uint64_t>(k.tag) << 32) |
+                                   (static_cast<std::uint64_t>(k.arity_min) << 16) |
+                                   static_cast<std::uint64_t>(k.arity_max);
+            // splitmix64 finalizer (Stafford / Steele et al.)
+            packed ^= packed >> 30;
+            packed *= 0xbf58476d1ce4e5b9ull;
+            packed ^= packed >> 27;
+            packed *= 0x94d049bb133111ebull;
+            packed ^= packed >> 31;
+            return static_cast<std::size_t>(packed);
         }
     };
     using TagArityIndexMap =
