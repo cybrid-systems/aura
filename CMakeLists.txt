@@ -2213,6 +2213,11 @@ aura_add_issue_test(test_epoch_bump_invariant_2304)
 aura_issue_test_link_llvm_jit(test_epoch_bump_invariant_2304)
 add_dependencies(all_test_issue_targets test_epoch_bump_invariant_2304)
 
+# Issue #2366: per-entry stale-stamp + MustDeopt walk (#2304 follow-up).
+aura_add_issue_test(test_epoch_invariant_walk_2366)
+aura_issue_test_link_llvm_jit(test_epoch_invariant_walk_2366)
+add_dependencies(all_test_issue_targets test_epoch_invariant_walk_2366)
+
 # Issue #1930 / #1952 / #2013: incremental reemit + stable func_id + live remap.
 aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)

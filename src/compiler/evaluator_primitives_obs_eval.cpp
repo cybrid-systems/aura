@@ -13636,9 +13636,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         // ev.compiler_metrics_ was null — agents still want the live value).
         storm_level = static_cast<std::uint64_t>(::aura_hot_update_current_storm_level());
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Capacity 128: #2046/#2093/#2095/#2165/#2271/#2299 keys
+            // Capacity 256: #2046/#2093/#2095/#2165/#2271/#2299/#2366 keys
             // (power-of-2 probe; 64 was >80% load after #2299).
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -13774,6 +13774,22 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-fall-back-slot-invalidate-per-eval-wired", make_int(1)},
             {"schema-2299", make_int(2299)},
             {"issue-2299", make_int(2299)},
+            // Issue #2304 / #2366: post-bump epoch invariant walk
+            // (per-entry AOT/IR/closure MustDeopt). Soft metric-only;
+            // hard aborts. Mode + counters process-level.
+            {"epoch-invariant-mode",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_mode()))},
+            {"epoch-invariant-walks-total",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_walks_total_v_read()))},
+            {"epoch-invariant-violation-total",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_violation_total_v_read()))},
+            {"epoch-invariant-live-aot-behind-slots",
+             make_int(static_cast<std::int64_t>(aura_aot_count_live_generation_behind_slots()))},
+            {"epoch-invariant-wired", make_int(1)},
+            {"schema-2366", make_int(2366)},
+            {"issue-2366", make_int(2366)},
+            {"schema-2304", make_int(2304)},
+            {"issue-2304", make_int(2304)},
             // Issue #2275 wiring shipped in commit d0a6509f as a separate
             // primitive (`query:cross-workspace-reject-stats`); the dirty
             // tree had it stranded mid-string here. Removed.
