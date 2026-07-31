@@ -2194,13 +2194,20 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
-// Issue #2203: single mandatory steal-complete entry.
-// Called from WorkerThread::try_steal_from on every successful cross-worker
-// steal (strong symbol linked). Responsibilities:
-//   1. clear_gc_defer_for_evaluator(prev host from yield CP evaluator_id)
-//   2. ensure mutation_stack_storage_ is published (pointer already on Fiber)
-//   3. bump steal_complete_total + orphan_cleared_on_steal if clear>0
-//   4. fold probe_linear + outermost-enforced (avoid N weak calls from worker)
+// Issue #2203 / #2314 / #2351 / Issue #2377: single mandatory steal-complete
+// entry. Called from WorkerThread::try_steal_from on every successful
+// cross-worker steal (strong symbol linked). Production multi-worker MUST
+// link this strong def (Issue #2377) — weak no-op / null ABI is fail-closed
+// under production.
+//
+// ── steal-complete transaction (one atomic migration path; do not reorder) ──
+//   1. Publish mutation_stack / yield-CP handoff (acquire touch)
+//   2. Panic orphan clear for previous host (#2203 clear_gc_defer_for_evaluator)
+//      + bit reconcile
+//   3. Residual GcDefer interlock when snapshot != 0 (#2314)
+//   4. LayoutStamp dual-check when stamp set (#2351); mismatch → deopt path
+//   5. Fold linear probe + outermost-enforced metrics
+// Soft: steps 3–4 are free when residual zero / stamp unset (relaxed loads).
 // Does NOT reemit / SoftEnter (leave to Guard / #2114) and does NOT run
 // full post-resume Env/bridge refresh (leave to #1490 / #2194 resume path).
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
@@ -2212,13 +2219,13 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
     void* prev_eval_id = nullptr;
     if (fiber) {
-        // (2) mutation_stack_storage_ handoff: fiber already carries the
+        // (1) mutation_stack_storage_ handoff: fiber already carries the
         // pointer across steal (#588/#1992). Touch under acquire so the
         // thief worker observes a published storage after the push.
         (void)fiber->mutation_stack_ptr();
         (void)fiber->yield_checkpoint_ptr();
 
-        // (1) Prefer yield-checkpoint evaluator_id (previous host at yield).
+        // Prefer yield-checkpoint evaluator_id (previous host at yield).
         if (void* yp = fiber->yield_checkpoint_ptr()) {
             auto& ystack = fiber_stack_pool_detail::yield_stack_from_ptr(yp);
             if (!ystack.empty())
@@ -2227,8 +2234,7 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     }
 
     if (prev_eval_id != nullptr) {
-        // Issue #2203 / #2296: orphan clear + explicit bit reconcile so
-        // multi-eval Panic bit tracks process depth after steal (AC2).
+        // (2) Issue #2203 / #2296: orphan Panic clear + bit reconcile.
         const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(prev_eval_id);
         const auto reconciled = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
         if (cleared > 0) {
@@ -2255,16 +2261,10 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                         reconciled, std::memory_order_relaxed);
             }
         }
-        // Issue #2314 AC1.2: residual defer interlock. After the #2203
-        // orphan Panic clear, if defer_reasons_snapshot() != 0 (residual
-        // bits attributable to this eval/fiber remain), invoke the same
-        // residual clear path as outermost Guard success exit — closes
-        // the brief window between Guard Phase-5 residual clear and a
-        // concurrent steal-complete that could re-arm or leave orphan
-        // bits accumulating across long AI sessions.
-        // Idempotent (force_clear_residual_defer_for_evaluator is atomic
-        // + CAS-based — calling twice does not double-bump counters).
-        // Per AC3: zero cost when snapshot is zero (single relaxed load).
+        // (3) Issue #2314: residual defer interlock — after Panic clear,
+        // if defer_reasons_snapshot() != 0, force residual clear. AC4:
+        // zero cost when snapshot is zero (single relaxed load).
+        // Idempotent (force_clear_residual_defer_for_evaluator is atomic).
         if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
             if (auto* ev = evaluator_for_scheduler_hooks()) {
                 const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
@@ -2290,13 +2290,10 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Issue #2351: eager LayoutStamp / defuse dual-check at steal-complete
-    // (before fiber is pushed local and later resumed). Prevents generation-
-    // behind AOT when densify raced on the previous host.
-    //
-    // AC3: zero cost when no stamp set (single has_resume_layout_stamp load).
-    // Does NOT clear the stamp — resume path (#2250) still dual-checks and
-    // clears (defense in depth).
+    // (4) Issue #2351: LayoutStamp dual-check at steal-complete (before
+    // fiber is pushed local and later resumed). AC3/AC4: zero cost when no
+    // stamp set (single has_resume_layout_stamp load). Does NOT clear the stamp
+    // — resume path (#2250) still dual-checks and clears (defense in depth).
     if (fiber) {
         if (fiber->has_resume_layout_stamp()) {
             if (auto* ev = evaluator_for_scheduler_hooks()) {
@@ -2354,8 +2351,9 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         }
     }
 
-    // Fold legacy weak-call sites so worker only needs one entry (AC5 still
-    // keeps weak stubs for light binaries that never link this strong def).
+    // (5) Fold linear + outermost metrics into the same transaction so
+    // worker never needs the legacy N-call residual-less path under a
+    // full link (#2377). Weak stubs remain for light binaries only.
     aura_evaluator_probe_linear_on_steal();
     aura_evaluator_bump_steal_outermost_enforced();
 }

@@ -17,15 +17,17 @@
 // lives in fiber.cpp (next to the static counter).
 
 
+#include "core/gc_hooks.h" // Issue #2377: steal_complete_entry_missing
+
 #include <cstdio>
 #include <cstdlib>
 
 import std;
 
-// Issue #2372: weak force-deopt no-op must not silently continue under
-// production (multi-worker builds must resolve the strong ABI in
-// evaluator_fiber_mutation.cpp / aura_jit_bridge.cpp). Forward declare
-// the production Soft lock probe (defined in serve/fiber.cpp).
+// Issue #2372 / #2377: weak force-deopt / steal-complete no-ops must not
+// silently continue under production (multi-worker builds must resolve
+// the strong ABI in evaluator_fiber_mutation.cpp / aura_jit_bridge.cpp).
+// Forward declare the production Soft lock probe (defined in serve/fiber.cpp).
 namespace aura::serve {
 [[nodiscard]] bool steal_snapshot_soft_production_locked() noexcept;
 }
@@ -62,10 +64,24 @@ __attribute__((weak)) void aura_evaluator_wait_for_safepoint(std::uint64_t /*tim
 // Issue #683: linear ownership probe on fiber steal.
 __attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 
-// Issue #2203: steal-complete single entry (strong def in
-// evaluator_fiber_mutation.cpp). Weak no-op so light test binaries
-// that do not link the evaluator TU still resolve the worker path.
-__attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_ptr*/) {}
+// Issue #2203 / #2377: steal-complete single entry (strong def in
+// evaluator_fiber_mutation.cpp runs Panic clear → residual → LayoutStamp
+// → linear/outermost as one transaction). Weak stub keeps light test
+// binaries resolving without the evaluator TU.
+//
+// Issue #2377 AC1/AC3: under production Soft lock the weak no-op MUST
+// NOT silently return (that skips residual #2314 + stamp #2351). Abort
+// so mis-linked multi-worker production builds fail closed. Light /
+// AURA_SANDBOX=off binaries bump steal_complete_entry_missing_total.
+__attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_ptr*/) {
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr, "FATAL: weak aura_evaluator_on_steal_complete resolved under "
+                             "production (#2377); multi-worker builds must link the strong "
+                             "steal-complete ABI (Panic clear + residual + LayoutStamp)\n");
+        std::abort();
+    }
+    aura::gc_hooks::bump_steal_complete_entry_missing_total();
+}
 
 // Issue #2310 / #2372: fail-closed force-deopt on steal snapshot
 // inconsistency. Strong def in evaluator_fiber_mutation.cpp (with
