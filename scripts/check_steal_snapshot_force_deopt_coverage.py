@@ -65,6 +65,12 @@ def main() -> int:
             "fiber.h has C-linkage shim decl",
         ),
         (ROOT / "src/serve/fiber.h", "is_steal_snapshot_soft_mode", "fiber.h has soft-mode accessor"),
+        # Issue #2372: Soft production lock (Soft env ignored under production).
+        (
+            ROOT / "src/serve/fiber.h",
+            "set_steal_snapshot_soft_production_locked",
+            "fiber.h has Soft production lock setter (#2372)",
+        ),
         (ROOT / "src/serve/fiber.h", "Issue #2310", "fiber.h cites 2310"),
         # fiber.cpp C-linkage shim def
         (

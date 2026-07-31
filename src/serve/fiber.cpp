@@ -168,6 +168,46 @@ extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noe
     return 0;
 }
 
+// Issue #2372: production Soft lock + test override.
+// production_locked: set by apply_production_security_defaults when
+// sandbox != off — Soft env is ignored under the lock.
+// test_override: 0 = consult env/lock, 1 = force Soft, 2 = force non-Soft.
+// Test override wins (mirror set_gc_defer_overflow_policy_for_test).
+namespace {
+    std::atomic<std::uint8_t> g_steal_snapshot_soft_production_locked{0};
+    std::atomic<std::uint8_t> g_steal_snapshot_soft_test_override{0};
+} // namespace
+
+void set_steal_snapshot_soft_production_locked(bool v) noexcept {
+    g_steal_snapshot_soft_production_locked.store(v ? 1 : 0, std::memory_order_release);
+}
+
+bool steal_snapshot_soft_production_locked() noexcept {
+    return g_steal_snapshot_soft_production_locked.load(std::memory_order_acquire) != 0;
+}
+
+void set_steal_snapshot_soft_for_test(bool soft) noexcept {
+    g_steal_snapshot_soft_test_override.store(soft ? 1 : 2, std::memory_order_release);
+}
+
+void reset_steal_snapshot_soft_for_test() noexcept {
+    g_steal_snapshot_soft_test_override.store(0, std::memory_order_release);
+}
+
+bool is_steal_snapshot_soft_mode() noexcept {
+    // Issue #2372 AC3: test override wins over production lock + env.
+    const auto ov = g_steal_snapshot_soft_test_override.load(std::memory_order_acquire);
+    if (ov == 1)
+        return true;
+    if (ov == 2)
+        return false;
+    // Issue #2372 AC1: under production lock Soft env is ignored.
+    if (g_steal_snapshot_soft_production_locked.load(std::memory_order_acquire) != 0)
+        return false;
+    const char* v = std::getenv("AURA_STEAL_SNAPSHOT_SOFT");
+    return v && v[0] == '1';
+}
+
 bool is_steal_snapshot_hard_mode() noexcept {
     if (is_steal_snapshot_soft_mode())
         return false;

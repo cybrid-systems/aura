@@ -4,6 +4,7 @@
 #include "aura_platform.h"
 #include "compiler/lock_order_audit.h" // Issue #2354: FiberRegistry rank
 
+#include <cstdio>
 #include <unistd.h>
 
 import std;
@@ -234,14 +235,27 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         const auto snap = stolen->mutation_safety_snapshot();
         if (stolen->mutation_safety_snapshot_inconsistent(snap)) {
             Fiber::bump_mutation_steal_snapshot_mismatch();
-            // Issue #2310 AC1: fail-closed on inconsistency. Production
-            // default is force-deopt + full refresh under exclusive
-            // recovery (NOT silent resume of generation-behind code).
-            // Optional AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only for
-            // unit tests (must not be production default).
+            // Issue #2310 AC1 / #2372: fail-closed on inconsistency.
+            // Production default is force-deopt + full refresh under
+            // exclusive recovery (NOT silent resume of generation-behind
+            // code). Soft env is ignored under production lock (#2372);
+            // test override still allows Soft under AURA_SANDBOX=off.
+            // Missing strong force-deopt ABI under production → abort
+            // (never silent continue after mismatch bump only).
             if (!aura::serve::is_steal_snapshot_soft_mode()) {
-                if (aura_force_deopt_on_steal_snapshot_mismatch)
+                if (aura_force_deopt_on_steal_snapshot_mismatch) {
                     aura_force_deopt_on_steal_snapshot_mismatch(stolen);
+                } else if (aura::serve::steal_snapshot_soft_production_locked()) {
+                    // Issue #2372 AC2: production requires strong force-deopt
+                    // ABI. Weak-null under production must not resume
+                    // generation-behind code after a mismatch bump.
+                    std::fprintf(stderr, "FATAL: aura_force_deopt_on_steal_snapshot_mismatch "
+                                         "unresolved under production (#2372); multi-worker "
+                                         "builds must link the strong ABI\n");
+                    std::abort();
+                }
+                // Light/test without production lock: null ABI still
+                // continues after mismatch bump (legacy light-link path).
             }
             // Do not normal-enqueue until refresh completes (under
             // exclusive recovery). The fiber is dropped from this steal
