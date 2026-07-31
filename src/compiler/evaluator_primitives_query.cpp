@@ -13370,8 +13370,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 }
             }
             // Capacity must be power-of-two (open-address mask).
-            // ~55 keys with #2297; use 128 for headroom (64 was tight).
-            auto* ht = FlatHashTable::create(128);
+            // ~70 keys with #2297 + #2369; use 256 for headroom.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -13511,6 +13511,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("live-closure-remap-wired", 1);
             insert_kv("adaptive-region-mask-wired", 1);
             insert_kv("pipeline-phase", 6); // + must-deopt-before-next-call (#2128)
+            // Issue #2369: stable_func_id sole primary for live-closure remap;
+            // name-fallback rewrite is legacy opt-in only (default off).
+            {
+                auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());
+                const std::uint64_t name_fb =
+                    m ? m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed)
+                      : 0;
+                insert_kv("live-closure-remap-name-fallback-total",
+                          static_cast<std::int64_t>(name_fb));
+                insert_kv("live_closure_remap_name_fallback_total",
+                          static_cast<std::int64_t>(name_fb));
+                insert_kv("remap-name-fallback-enabled",
+                          static_cast<std::int64_t>(aura_get_remap_name_fallback_enabled()));
+                insert_kv("remap-name-fallback-default-off", 1);
+                insert_kv("stable-func-id-sole-primary-wired", 1);
+                insert_kv("schema-2369", 2369);
+                insert_kv("issue-2369", 2369);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
