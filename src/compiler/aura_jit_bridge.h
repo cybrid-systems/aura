@@ -527,6 +527,26 @@ std::uint64_t aura_jit_closure_stale_deopt_total(void);
 std::uint64_t aura_jit_closure_safe_fallbacks(void);
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
+
+// Issue #2304 / #2366: epoch invariant mode (process-level).
+//   0 = off (production default; single relaxed load, zero walk cost)
+//   1 = soft (walk + metric only)
+//   2 = hard (walk + metric + abort on violation)
+// Env AURA_EPOCH_INVARIANT=soft|1 → 1; =hard → 2; unset → 0.
+void aura_set_epoch_invariant_mode(int mode);
+int aura_epoch_invariant_mode(void);
+// Backward-compat: enabled≠0 → mode 2 (hard).
+void aura_set_epoch_invariant_hard_enabled(int enabled);
+std::uint64_t aura_epoch_invariant_violation_total_v_read(void);
+std::uint64_t aura_epoch_invariant_walks_total_v_read(void);
+// Mirror service-side counters into C-readable totals (called after walk).
+void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept;
+// Count live generation-behind AOT slots (fn_ptr≠0 && gen≠current epoch).
+// Empty slots (fn_ptr==0) are not violations.
+[[nodiscard]] std::size_t aura_aot_count_live_generation_behind_slots(void);
+// Test inject: live non-null slot with table_generation behind current epoch.
+void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id);
+void aura_aot_clear_slot_for_test(std::int64_t func_id);
 // Issue #2271 / #2299: physically invalidate generation-behind AOT slots
 // (close #2232 / #2271 follow-up). For each slot in g_aot_func_slots whose
 // table_generation != aura_aot_func_table_epoch(), set fn_ptr empty

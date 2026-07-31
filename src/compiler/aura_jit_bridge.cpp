@@ -3806,19 +3806,14 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 }
 
 
-// Issue #2304: C-linkage readers + setter for the post-bump epoch
-// invariant walk infrastructure. File-level atomics in aura_jit_bridge.cpp
-// mirror the CompilerService member atomics (kept in sync via the
-// public setter). The CompilerService walk (service.ixx:
-// run_epoch_invariant_if_enabled) reads the same hard-enabled flag
-// via the CompilerService member + bumps its own counters; the file
-// level atomics here are exposed to test harnesses via extern "C".
-// Keeping them file-local avoids the module-include-in-non-module
-// pitfall (service.ixx is a C++20 module — non-module TUs can't
-// #include it).
+// Issue #2304 / #2366: process-level epoch invariant mode + counters.
+// Mode is the source of truth for run_epoch_invariant_if_enabled (service
+// reads via aura_epoch_invariant_mode). Soft=metric only; hard=abort.
+// File-local atomics keep non-module tests free of service.ixx include.
 static std::atomic<std::uint64_t> g_epoch_invariant_violation_total{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_walks_total{0};
-static std::atomic<std::uint8_t> g_epoch_invariant_hard_enabled{0};
+// 0=off, 1=soft, 2=hard
+static std::atomic<std::uint8_t> g_epoch_invariant_mode{0};
 
 extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
     return g_epoch_invariant_violation_total.load(std::memory_order_relaxed);
@@ -3828,20 +3823,79 @@ extern "C" std::uint64_t aura_epoch_invariant_walks_total_v_read(void) {
     return g_epoch_invariant_walks_total.load(std::memory_order_relaxed);
 }
 
-extern "C" void aura_set_epoch_invariant_hard_enabled(int enabled) {
-    g_epoch_invariant_hard_enabled.store(enabled != 0 ? 1 : 0, std::memory_order_relaxed);
+extern "C" void aura_set_epoch_invariant_mode(int mode) {
+    if (mode < 0)
+        mode = 0;
+    if (mode > 2)
+        mode = 2;
+    g_epoch_invariant_mode.store(static_cast<std::uint8_t>(mode), std::memory_order_relaxed);
 }
 
-// Issue #2304: AURA_EPOCH_INVARIANT env-var bridge. Reads the env var
-// at module init and forwards to the global flag. Mirrors the
-// AURA_AOT_RELOAD_AUTO_RETRY / AURA_BRIDGE_EPOCH_LEGACY_TRUST pattern
-// at the top of this file.
+extern "C" int aura_epoch_invariant_mode(void) {
+    return static_cast<int>(g_epoch_invariant_mode.load(std::memory_order_relaxed));
+}
+
+extern "C" void aura_set_epoch_invariant_hard_enabled(int enabled) {
+    // Backward-compat (#2304): enabled → hard (2); disabled → off (0).
+    aura_set_epoch_invariant_mode(enabled != 0 ? 2 : 0);
+}
+
+extern "C" void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept {
+    g_epoch_invariant_walks_total.fetch_add(1, std::memory_order_relaxed);
+    if (violations > 0)
+        g_epoch_invariant_violation_total.fetch_add(violations, std::memory_order_relaxed);
+}
+
+// Issue #2366: count live generation-behind AOT slots (fn_ptr≠0 && gen≠cur).
+extern "C" std::size_t aura_aot_count_live_generation_behind_slots(void) {
+    const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
+    std::size_t n = 0;
+    for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
+        auto& slot = g_aot_func_slots[i];
+        if (slot.fn_ptr.load(std::memory_order_acquire) == 0)
+            continue;
+        if (slot.table_generation.load(std::memory_order_acquire) != cur)
+            ++n;
+    }
+    return n;
+}
+
+extern "C" void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id) {
+    if (func_id < 0)
+        return;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return;
+    auto& slot = g_aot_func_slots[idx];
+    // Non-null sentinel + generation one behind current (or 0 if epoch is 0).
+    const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
+    slot.fn_ptr.store(static_cast<std::uintptr_t>(0xDEADBEEF), std::memory_order_release);
+    slot.table_generation.store(cur > 0 ? cur - 1 : 0, std::memory_order_release);
+}
+
+extern "C" void aura_aot_clear_slot_for_test(std::int64_t func_id) {
+    if (func_id < 0)
+        return;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return;
+    auto& slot = g_aot_func_slots[idx];
+    slot.fn_ptr.store(0, std::memory_order_release);
+    slot.table_generation.store(0, std::memory_order_release);
+    slot.owner_eval.store(0, std::memory_order_release);
+}
+
+// Issue #2304 / #2366: AURA_EPOCH_INVARIANT env-var bridge.
+// soft|1 → soft mode; hard → hard mode; unset → off.
 namespace {
 struct EpochInvariantEnvInit {
     EpochInvariantEnvInit() noexcept {
         if (const char* e = std::getenv("AURA_EPOCH_INVARIANT")) {
-            if (std::string(e) == "hard")
-                aura_set_epoch_invariant_hard_enabled(1);
+            const std::string v(e);
+            if (v == "hard")
+                aura_set_epoch_invariant_mode(2);
+            else if (v == "soft" || v == "1" || v == "true" || v == "on")
+                aura_set_epoch_invariant_mode(1);
         }
     }
 };
