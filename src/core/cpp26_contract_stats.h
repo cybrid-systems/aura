@@ -1,48 +1,98 @@
-// cpp26_contract_stats.h — Issue #742 / #2142: runtime observability for
-// C++26 Contracts + consteval hot-path invariants (zero release cost).
+// cpp26_contract_stats.h — Issue #742 / #2142 / #2435: runtime observability
+// for C++26 Contracts + consteval hot-path invariants (zero release cost).
 //
 // Plain header (not a module) so contract_handler.cpp, value_tags.h,
 // arena.ixx, and pass_manager can all bump counters without crossing
 // module boundaries.
 //
-// ── Issue #2142: unified hot-path contract policy ───────────────────────
-// Single observe-first API for value/arena/ir_soa (and related) tight loops:
+// ── Issue #2142 / #2435: unified hot-path contract policy ────────────────
 //
-//   AURA_HOT_RECORD()           — always bump hotpath_invariant_hits_total
-//   AURA_HOT_CHECK(expr)        — enforce or no-op per build policy
+// Tier classification (Issue #2435):
+//
+//   **Hot** — absolute hottest loops (per-instr as_*, IRInstructionView
+//   column access, view_at, eval_flat apply, mark_block_dirty cascade,
+//   walk_soa hotpath). Use only AURA_HOT_* macros. Production default:
+//   **off** (no atomic record, no assert) so 1e6-instr eval stays ≤1%
+//   overhead vs fully disabled contracts.
+//
+//   **Cold** — mutation boundaries, pass pipeline entry (`pre`/`post`),
+//   compact/remap, fiber resume fences, public API edges. Keep full
+//   C++26 `pre`/`post`/`contract_assert` (language contracts) or
+//   AURA_COLD_CONTRACT. These are not on the absolute hot loop.
+//
+// Single observe-first API for value/arena/ir_soa tight loops:
+//
+//   AURA_HOT_RECORD()           — bump hotpath_invariant_hits_total
+//   AURA_HOT_CHECK(expr)        — enforce / observe / no-op per hot mode
 //   AURA_HOT_CONTRACT(expr)     — RECORD + CHECK (preferred one-liner)
+//   AURA_COLD_CONTRACT(expr)    — cold-edge enforce (debug/enforce only)
+//   AURA_HOT_CHECK_CONSTEXPR    — constexpr-friendly column bounds (hot)
 //
-// Build policy:
-//   * Debug / non-NDEBUG (default) OR -DAURA_CONTRACTS_ENFORCE:
-//       CHECK → contract_assert(expr)  (fail-closed on violation)
-//   * Release (NDEBUG) without AURA_CONTRACTS_ENFORCE:
-//       CHECK → no-op  (happy path pays only atomic record; no assert)
-//   * Optional -DAURA_CONTRACTS_OBSERVE (with NDEBUG):
-//       CHECK → if (!(expr)) record_contract_violation_hotpath() (no abort)
+// Hot-mode selection (Issue #2435 AC1 — production default OFF):
+//   * -DAURA_CONTRACTS_HOT_MODE_ENFORCE  or -DAURA_CONTRACTS_ENFORCE
+//       or debug (!NDEBUG) without OFF/OBSERVE override:
+//         RECORD + CHECK → contract_assert  (fail-closed)
+//   * -DAURA_CONTRACTS_HOT_MODE_OBSERVE  or -DAURA_CONTRACTS_OBSERVE:
+//         RECORD + CHECK → metrics only (no abort)
+//   * -DAURA_CONTRACTS_HOT_MODE_OFF  or production (NDEBUG) default:
+//         RECORD + CHECK → no-op  (zero cost on happy path)
 //
-// Do NOT scatter bare contract_assert + record_hotpath_invariant_hit pairs
-// on new hot paths — use AURA_HOT_CONTRACT / AURA_HOT_RECORD + AURA_HOT_CHECK.
+// Do NOT scatter bare contract_assert on new absolute-hot accessors —
+// use AURA_HOT_CHECK / AURA_HOT_CHECK_CONSTEXPR so interpreter/JIT walks
+// pay nothing under production OFF. Cold edges keep language pre/post.
 //
 #ifndef AURA_CORE_CPP26_CONTRACT_STATS_H
 #define AURA_CORE_CPP26_CONTRACT_STATS_H
 
 #include <atomic>
 #include <cstdint>
-// contract_assert for enforce builds (no-op path never needs it at runtime).
-#if !defined(NDEBUG) || defined(AURA_CONTRACTS_ENFORCE) || defined(AURA_CONTRACTS_OBSERVE)
+
+// ── Hot mode preprocessor selection (Issue #2435) ───────────────────────
+// Priority: explicit HOT_MODE_* > ENFORCE/OBSERVE legacy flags > NDEBUG.
+#if defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) || defined(AURA_CONTRACTS_ENFORCE)
+#define AURA_HOT_MODE_ENFORCE 1
+#elif defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) || defined(AURA_CONTRACTS_OBSERVE)
+#define AURA_HOT_MODE_OBSERVE 1
+#elif defined(AURA_CONTRACTS_HOT_MODE_OFF)
+#define AURA_HOT_MODE_OFF 1
+#elif !defined(NDEBUG)
+// Debug default: enforce (fail-closed) — matches pre-#2435 developer UX.
+#define AURA_HOT_MODE_ENFORCE 1
+#else
+// Issue #2435 AC1: production (NDEBUG) default — hot contracts OFF.
+#define AURA_HOT_MODE_OFF 1
+#endif
+
+// contract_assert for enforce/observe builds (off path never needs it).
+#if defined(AURA_HOT_MODE_ENFORCE) || defined(AURA_HOT_MODE_OBSERVE)
 #include <contracts>
 #endif
 
 namespace aura::core::cpp26 {
 
 inline constexpr int kHotContractUnifyIssue = 2142;
+// Issue #2435: hot vs cold tier policy + production OFF default.
+inline constexpr int kHotContractPlacementIssue = 2435;
+
+// Hot-mode enum for query surface (0=off, 1=observe, 2=enforce).
+inline constexpr int kHotModeOff = 0;
+inline constexpr int kHotModeObserve = 1;
+inline constexpr int kHotModeEnforce = 2;
+
+#if defined(AURA_HOT_MODE_ENFORCE)
+inline constexpr int kHotContractsMode = kHotModeEnforce;
+#elif defined(AURA_HOT_MODE_OBSERVE)
+inline constexpr int kHotContractsMode = kHotModeObserve;
+#else
+inline constexpr int kHotContractsMode = kHotModeOff;
+#endif
 
 // Runtime contract violations caught by handle_contract_violation
 // (enforce/observe semantic). Stats-only; relaxed ordering.
 inline std::atomic<std::uint64_t> contract_violations_caught_total{0};
 
 // Hot-path invariant probes (Arena alloc, Value classify, SoA view,
-// Shape inline, Pass dirty-skip). Zero cost in release — advisory only.
+// Shape inline, Pass dirty-skip). Zero cost when hot mode is OFF.
 inline std::atomic<std::uint64_t> hotpath_invariant_hits_total{0};
 
 // Compile-time consteval/static_assert count baked into the binary.
@@ -61,6 +111,7 @@ inline constexpr std::int64_t kConstevalChecksTotal = 77;
 // Issue #1620: raised 48 → 56 (FlatAST get/type_id + mark_dirty +
 // shape bit-test + arena tier overflow path).
 // Issue #2142: unified AURA_HOT_CONTRACT surface (value/arena/ir_soa).
+// Issue #2435: placement policy (hot off in production); count unchanged.
 inline constexpr std::int64_t kContractHotPathsShipped = 62;
 
 // Issue #1321 Phase 1: coverage flags — hot accessors that gained contracts.
@@ -79,6 +130,10 @@ inline std::atomic<std::uint64_t> hotpath_contracts_1620_active{1};
 // Issue #2142: unified AURA_HOT_CONTRACT helper wired on primary hot paths.
 inline std::atomic<std::uint64_t> hotpath_contracts_2142_active{1};
 inline std::atomic<std::uint64_t> aura_hot_contract_wired{1};
+// Issue #2435: hot/cold placement policy + production OFF wired.
+inline std::atomic<std::uint64_t> hotpath_contracts_2435_active{1};
+inline std::atomic<std::uint64_t> hot_contract_placement_wired{1};
+inline std::atomic<std::uint64_t> hot_contracts_production_off_default{1};
 inline std::atomic<std::uint64_t> arena_tier_contracts_active{1};
 inline std::atomic<std::uint64_t> value_as_star_contracts_active{1};
 inline std::atomic<std::uint64_t> shape_bit_test_contracts_active{1};
@@ -115,33 +170,58 @@ inline void observe_hot_contract_false() noexcept {
     record_contract_violation_hotpath();
 }
 
+[[nodiscard]] inline int current_hot_contracts_mode() noexcept {
+    return kHotContractsMode;
+}
+
 } // namespace aura::core::cpp26
 
-// ── Issue #2142: AURA_HOT_* macros (see file header policy) ───────────────
-// Always record a hot-path invariant probe (relaxed atomic).
-#define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit()
+// ── Issue #2142 / #2435: AURA_HOT_* macros (see file header policy) ─────
 
-// Enforce / observe / ignore the predicate per build flags.
-#if defined(AURA_CONTRACTS_ENFORCE) || (!defined(NDEBUG) && !defined(AURA_CONTRACTS_OBSERVE))
-// Debug default + explicit enforce: fail-closed.
+// Hot RECORD — atomic probe. Elided under production OFF (#2435).
+#if defined(AURA_HOT_MODE_OFF)
+#define AURA_HOT_RECORD() ((void)0)
+#else
+#define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit()
+#endif
+
+// Hot CHECK — enforce / observe / ignore per hot mode.
+#if defined(AURA_HOT_MODE_ENFORCE)
 #define AURA_HOT_CHECK(expr) contract_assert(expr)
-#elif defined(AURA_CONTRACTS_OBSERVE)
-// Release observe: metrics only, no abort.
+#elif defined(AURA_HOT_MODE_OBSERVE)
 #define AURA_HOT_CHECK(expr)                                                                       \
     do {                                                                                           \
         if (!(expr))                                                                               \
             ::aura::core::cpp26::observe_hot_contract_false();                                     \
     } while (0)
 #else
-// Release (NDEBUG): zero assert cost on happy path.
+// Production OFF: zero cost.
 #define AURA_HOT_CHECK(expr) ((void)0)
 #endif
 
-// Preferred one-liner: record + check.
+// Preferred one-liner: record + check (both respect hot mode).
 #define AURA_HOT_CONTRACT(expr)                                                                    \
     do {                                                                                           \
         AURA_HOT_RECORD();                                                                         \
         AURA_HOT_CHECK(expr);                                                                      \
     } while (0)
+
+// Issue #2435: cold-edge contract — mutation / pass / compact style edges.
+// Enforce in debug + explicit ENFORCE; no-op in production OFF (language
+// pre/post on those edges remain the primary cold gate).
+#if defined(AURA_HOT_MODE_ENFORCE)
+#define AURA_COLD_CONTRACT(expr) contract_assert(expr)
+#else
+#define AURA_COLD_CONTRACT(expr) ((void)0)
+#endif
+
+// Constexpr-friendly hot bounds check for IRInstructionView column access.
+// Production OFF / observe: no check (observe not constexpr-friendly).
+// Debug/enforce: contract_assert (constexpr-OK with contracts).
+#if defined(AURA_HOT_MODE_ENFORCE)
+#define AURA_HOT_CHECK_CONSTEXPR(expr) contract_assert(expr)
+#else
+#define AURA_HOT_CHECK_CONSTEXPR(expr) ((void)0)
+#endif
 
 #endif // AURA_CORE_CPP26_CONTRACT_STATS_H

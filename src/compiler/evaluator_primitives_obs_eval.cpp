@@ -8697,8 +8697,8 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t consteval_checks = aura::core::cpp26::kConstevalChecksTotal;
             const std::int64_t hotpath_hits = static_cast<std::int64_t>(
                 aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed));
-            // #1620: more keys — create(32) headroom.
-            auto* ht = FlatHashTable::create(32);
+            // #1620 / #2435: more keys — create(64) headroom.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8754,6 +8754,25 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(aura::core::cpp26::kHotContractUnifyIssue));
             insert_kv("schema-2142", 2142);
             insert_kv("issue-2142", 2142);
+            // Issue #2435: hot vs cold placement + production OFF default
+            insert_kv("schema-2435", 2435);
+            insert_kv("issue-2435", 2435);
+            insert_kv("hot-contract-placement-issue",
+                      static_cast<std::int64_t>(aura::core::cpp26::kHotContractPlacementIssue));
+            insert_kv("hot-contracts-mode",
+                      static_cast<std::int64_t>(aura::core::cpp26::kHotContractsMode));
+            insert_kv(
+                "hotpath-contracts-2435-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_2435_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "hot-contract-placement-wired",
+                static_cast<std::int64_t>(aura::core::cpp26::hot_contract_placement_wired.load(
+                    std::memory_order_relaxed)));
+            insert_kv("hot-contracts-production-off-default",
+                      static_cast<std::int64_t>(
+                          aura::core::cpp26::hot_contracts_production_off_default.load(
+                              std::memory_order_relaxed)));
             insert_kv("arena-tier-contracts-active",
                       static_cast<std::int64_t>(aura::core::cpp26::arena_tier_contracts_active.load(
                           std::memory_order_relaxed)));

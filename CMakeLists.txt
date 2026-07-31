@@ -3157,6 +3157,11 @@ aura_add_issue_test(test_hot_pass_hard_dod_2434)
 aura_issue_test_link_llvm_jit(test_hot_pass_hard_dod_2434)
 add_dependencies(all_test_issue_targets test_hot_pass_hard_dod_2434)
 
+# Issue #2435: hot vs cold contract placement (production hot OFF)
+aura_add_issue_test(test_hot_contract_placement_2435)
+aura_issue_test_link_llvm_jit(test_hot_contract_placement_2435)
+add_dependencies(all_test_issue_targets test_hot_contract_placement_2435)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
