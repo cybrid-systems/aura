@@ -453,6 +453,26 @@ void Fiber::resume() {
                      (unsigned long)id_);
         return;
     }
+    // Issue #2468: pre-check state to prevent UB on Done/Reclaimed
+    // fibers. ~Fiber() unmaps the stack (stack_ via munmap) when the
+    // fiber is destroyed (e.g., owned_fibers_.clear() in ~Scheduler()).
+    // If a caller invokes resume() on a fiber whose state_==Done
+    // (body already finished) or reclaimed_==true (hard-reclaimed by
+    // Scheduler::reap_orphans_now), swapcontext would be called on
+    // unmapped memory → undefined behavior (typically SIGSEGV).
+    // Early-return with a stderr message so the misuse is visible in
+    // logs but doesn't crash the process. The WorkerThread dispatch
+    // loop and Fiber::join host-thread path are the documented callers.
+    if (state_.load(std::memory_order_acquire) == FiberState::Done) {
+        std::fprintf(stderr, "fiber[%lu]: resume on Done fiber (no-op, UB guard #2468)\n",
+                     (unsigned long)id_);
+        return;
+    }
+    if (reclaimed_.load(std::memory_order_acquire)) {
+        std::fprintf(stderr, "fiber[%lu]: resume on reclaimed fiber (no-op, UB guard #2468)\n",
+                     (unsigned long)id_);
+        return;
+    }
 
     // Issue #2119: close MutationBoundary yield hold-time sample.
     if (last_yield_reason() == YieldReason::MutationBoundary) {

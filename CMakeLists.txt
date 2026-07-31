@@ -3339,3 +3339,10 @@ add_dependencies(all_test_issue_targets test_fiber_integration_batch)
 aura_add_issue_test(test_fiber_reclaim_safety)
 aura_issue_test_link_llvm_jit(test_fiber_reclaim_safety)
 add_dependencies(all_test_issue_targets test_fiber_reclaim_safety)
+
+# Issue #2468: Fiber::resume() pre-check for state_==Done + reclaimed_
+# (was: no pre-check, swapcontext on freed stack = UB). Early-return
+# with stderr message so misuse is visible in logs but doesn't crash.
+aura_add_issue_test(test_fiber_resume_state)
+aura_issue_test_link_llvm_jit(test_fiber_resume_state)
+add_dependencies(all_test_issue_targets test_fiber_resume_state)
