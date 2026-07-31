@@ -3215,6 +3215,24 @@ def cmd_gc_defer_arm_fetch_or_coverage():
     return 0
 
 
+def cmd_gc_defer_overflow_policy_atomic_coverage():
+    """Issue #2429: overflow policy check+arm atomic (HardFail no bypass race).
+
+    Policy setters take g_gc_defer_armed_mtx with try_arm overflow path.
+    """
+    print(f"{B}=== gc defer overflow policy atomic coverage (#2429) ==={N}")
+    script = ROOT / "scripts" / "check_gc_defer_overflow_policy_atomic_2429.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("gc defer overflow policy atomic (#2429) coverage contract rows failed")
+        return 1
+    ok("gc defer overflow policy atomic (#2429) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4165,6 +4183,7 @@ def cmd_gate():
         or cmd_capability_registry_snapshot_coverage()
         or cmd_sandbox_mode_atomic_coverage()
         or cmd_gc_defer_arm_fetch_or_coverage()
+        or cmd_gc_defer_overflow_policy_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

@@ -3127,6 +3127,11 @@ aura_add_issue_test(test_gc_defer_arm_fetch_or_2428)
 aura_issue_test_link_llvm_jit(test_gc_defer_arm_fetch_or_2428)
 add_dependencies(all_test_issue_targets test_gc_defer_arm_fetch_or_2428)
 
+# Issue #2429: overflow policy check+arm atomic under g_gc_defer_armed_mtx.
+aura_add_issue_test(test_gc_defer_overflow_policy_atomic_2429)
+aura_issue_test_link_llvm_jit(test_gc_defer_overflow_policy_atomic_2429)
+add_dependencies(all_test_issue_targets test_gc_defer_overflow_policy_atomic_2429)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
