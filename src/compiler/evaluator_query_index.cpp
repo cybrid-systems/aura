@@ -494,6 +494,27 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
     return out;
 }
 
+// Issue #2403: collect all (tag, *) buckets for by-marker :where / tag
+// composite path. Marker dimension stays parallel (user-only map when
+// skip_macro_introduced) — same composite contract as query:pattern.
+std::vector<aura::ast::NodeId>
+Evaluator::snapshot_tag_all_arities(std::uint32_t tag, std::uint8_t trigger,
+                                    bool skip_macro_introduced) const {
+    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
+    build_tag_arity_index_unlocked(trigger);
+    const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
+    if (skip_macro_introduced)
+        tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);
+    std::vector<aura::ast::NodeId> out;
+    const std::uint64_t tag_hi = static_cast<std::uint64_t>(tag) << 32;
+    for (const auto& [key, bucket] : map) {
+        if ((key & 0xFFFF'FFFF'0000'0000ull) != tag_hi)
+            continue;
+        out.insert(out.end(), bucket.begin(), bucket.end());
+    }
+    return out;
+}
+
 void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, EvalValue result,
                                               bool with_markers) noexcept {
     auto walk = [&](EvalValue cur) {

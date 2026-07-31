@@ -1440,6 +1440,11 @@ AURA_COMPILER_METRICS_FIELD(pattern_hygiene_default_exclude)
 AURA_COMPILER_METRICS_FIELD(pattern_hygiene_end_to_end)
 // Issue #2123: default MacroIntroduced filter AC counters
 AURA_COMPILER_METRICS_FIELD(pattern_hygiene_filtered_total)
+// Issue #2403: composite index hit/miss + shared_lock hold SLO
+AURA_COMPILER_METRICS_FIELD(query_index_composite_hit_total)
+AURA_COMPILER_METRICS_FIELD(query_index_composite_miss_total)
+AURA_COMPILER_METRICS_FIELD(query_shared_lock_us_total)
+AURA_COMPILER_METRICS_FIELD(query_shared_lock_us_max)
 AURA_COMPILER_METRICS_FIELD(pattern_include_macro_opt_in_total)
 AURA_COMPILER_METRICS_FIELD(pattern_hygiene_filter_hits)
 AURA_COMPILER_METRICS_FIELD(production_sweep_1281_1285_active)
