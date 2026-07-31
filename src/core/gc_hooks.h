@@ -332,22 +332,26 @@ inline constexpr std::uint32_t kGcDeferReasonNone = 0;
 // bit; release_defer clears the bit (no depth on the bitmask itself).
 inline std::atomic<std::uint32_t> g_gc_defer_reasons{0};
 
+// Issue #2088 / #2428: first-arm metrics (defined below; called from arm_defer).
+inline void note_defer_reason_armed(GcDeferReason r, std::uint32_t prev_mask) noexcept;
+
 // Issue #2088: set/clear a single reason bit. arm_defer / release_defer
 // are idempotent — arming an already-set bit is a no-op; releasing
 // an unset bit is a no-op. Returns the resulting bitmask.
+//
+// Issue #2428: use fetch_or so `prev` is the mask BEFORE this arm.
+// Concurrent arms of the same bit: exactly one thread sees bit clear in
+// prev (first-arm metric +1); others see bit already set (nested no-op).
+// Callers must NOT separately load g_gc_defer_reasons then call arm_defer
+// + note_defer_reason_armed (that double-counts under race).
 inline std::uint32_t arm_defer(GcDeferReason r) noexcept {
     const auto bit = static_cast<std::uint32_t>(r);
     if (bit == kGcDeferReasonNone)
         return g_gc_defer_reasons.load(std::memory_order_acquire);
-    auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
-    while (true) {
-        const auto next = prev | bit;
-        if (next == prev)
-            return prev;
-        if (g_gc_defer_reasons.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
-                                                     std::memory_order_relaxed))
-            return next;
-    }
+    // Atomic prev capture + set (Issue #2428).
+    const auto prev = g_gc_defer_reasons.fetch_or(bit, std::memory_order_acq_rel);
+    note_defer_reason_armed(r, prev);
+    return prev | bit;
 }
 inline std::uint32_t release_defer(GcDeferReason r) noexcept {
     const auto bit = static_cast<std::uint32_t>(r);
@@ -443,7 +447,8 @@ inline std::atomic<std::uint64_t> g_gc_defer_arm_mutation_hold_total{0}; // #220
 inline std::atomic<std::uint64_t> g_gc_defer_any_total{0};
 
 // Note first arm of a reason (bit was clear). Updates process-wide arm
-// counters. Called under successful arm_defer 0→set transitions only.
+// counters. Called from arm_defer with the atomic prev mask from fetch_or
+// (Issue #2428) — bumps exactly once per bit transition 0→1.
 inline void note_defer_reason_armed(GcDeferReason r, std::uint32_t prev_mask) noexcept {
     const auto bit = static_cast<std::uint32_t>(r);
     if (bit == kGcDeferReasonNone)
@@ -462,14 +467,19 @@ inline void note_defer_reason_armed(GcDeferReason r, std::uint32_t prev_mask) no
         g_gc_defer_arm_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #2428: test-only zero of first-arm metrics (does not touch depths).
+inline void reset_gc_defer_arm_metrics_for_test() noexcept {
+    g_gc_defer_arm_panic_total.store(0, std::memory_order_relaxed);
+    g_gc_defer_arm_ffi_pin_total.store(0, std::memory_order_relaxed);
+    g_gc_defer_arm_render_pin_total.store(0, std::memory_order_relaxed);
+    g_gc_defer_arm_mutation_hold_total.store(0, std::memory_order_relaxed);
+    g_gc_defer_any_total.store(0, std::memory_order_relaxed);
+}
+
 inline void arm_gc_defer_pending_panic() noexcept {
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
-    // Issue #2088: also toggle the Panic bit on the unified reason
-    // bitmask. Idempotent — arm_defer is a no-op when the bit is
-    // already set. Per-reason depth stays for nesting observability.
-    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    // Issue #2088 / #2428: arm_defer fetch_or + first-arm metrics.
     (void)arm_defer(GcDeferReason::Panic);
-    note_defer_reason_armed(GcDeferReason::Panic, prev);
 }
 
 inline void release_gc_defer_pending_panic() noexcept {
@@ -510,10 +520,8 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         if (e.id == evaluator_id) {
             ++e.depth;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
-            // Issue #2088: keep Panic bit set for per-eval nested arm.
-            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+            // Issue #2088 / #2428: keep Panic bit set for per-eval nested arm.
             (void)arm_defer(GcDeferReason::Panic);
-            note_defer_reason_armed(GcDeferReason::Panic, prev);
             return;
         }
     }
@@ -523,10 +531,8 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             e.id = evaluator_id;
             e.depth = 1;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
-            // Issue #2088: first per-eval slot → arm Panic bit.
-            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+            // Issue #2088 / #2428: first per-eval slot → arm Panic bit.
             (void)arm_defer(GcDeferReason::Panic);
-            note_defer_reason_armed(GcDeferReason::Panic, prev);
             return;
         }
     }
@@ -544,9 +550,8 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     // process-wide depth + table_overflow_total + arm Panic bit.
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
     g_gc_defer_table_overflow_total.fetch_add(1, std::memory_order_relaxed);
-    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    // Issue #2428: arm_defer owns atomic prev + first-arm metric.
     (void)arm_defer(GcDeferReason::Panic);
-    note_defer_reason_armed(GcDeferReason::Panic, prev);
 }
 
 // Issue #2173: try-arm variant. Same semantics as arm_gc_defer_pending_panic_for
@@ -566,9 +571,7 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
         if (e.id == evaluator_id) {
             ++e.depth;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
-            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
-            (void)arm_defer(GcDeferReason::Panic);
-            note_defer_reason_armed(GcDeferReason::Panic, prev);
+            (void)arm_defer(GcDeferReason::Panic); // Issue #2428
             return true;
         }
     }
@@ -578,9 +581,7 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             e.id = evaluator_id;
             e.depth = 1;
             g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
-            const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
-            (void)arm_defer(GcDeferReason::Panic);
-            note_defer_reason_armed(GcDeferReason::Panic, prev);
+            (void)arm_defer(GcDeferReason::Panic); // Issue #2428
             return true;
         }
     }
@@ -592,9 +593,7 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     }
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
     g_gc_defer_table_overflow_total.fetch_add(1, std::memory_order_relaxed);
-    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
-    (void)arm_defer(GcDeferReason::Panic);
-    note_defer_reason_armed(GcDeferReason::Panic, prev);
+    (void)arm_defer(GcDeferReason::Panic); // Issue #2428
     return true;
 }
 // Issue #2005: explicit ffi-pin defer — increments while any
@@ -606,10 +605,8 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
 inline std::atomic<std::uint32_t> g_ffi_pin_defer_depth{0};
 inline void arm_ffi_pin_defer() noexcept {
     g_ffi_pin_defer_depth.fetch_add(1, std::memory_order_acq_rel);
-    // Issue #2088: also toggle FfiPin bit on the unified bitmask.
-    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    // Issue #2088 / #2428: FfiPin bit + first-arm metric via arm_defer.
     (void)arm_defer(GcDeferReason::FfiPin);
-    note_defer_reason_armed(GcDeferReason::FfiPin, prev);
 }
 inline void release_ffi_pin_defer() noexcept {
     auto prev = g_ffi_pin_defer_depth.load(std::memory_order_relaxed);
@@ -646,9 +643,8 @@ inline std::atomic<std::uint64_t> g_defer_because_render_total{0};
 
 inline void arm_render_pin_defer() noexcept {
     g_render_pin_defer_depth.fetch_add(1, std::memory_order_acq_rel);
-    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    // Issue #2428: RenderPin bit + first-arm metric via arm_defer.
     (void)arm_defer(GcDeferReason::RenderPin);
-    note_defer_reason_armed(GcDeferReason::RenderPin, prev);
 }
 inline void release_render_pin_defer() noexcept {
     auto prev = g_render_pin_defer_depth.load(std::memory_order_relaxed);
@@ -691,9 +687,8 @@ inline std::atomic<std::uint64_t> g_defer_because_mutation_hold_total{0};
 
 inline void arm_mutation_hold_defer() noexcept {
     g_mutation_hold_defer_depth.fetch_add(1, std::memory_order_acq_rel);
-    const auto prev = g_gc_defer_reasons.load(std::memory_order_relaxed);
+    // Issue #2428: MutationHold bit + first-arm metric via arm_defer.
     (void)arm_defer(GcDeferReason::MutationHold);
-    note_defer_reason_armed(GcDeferReason::MutationHold, prev);
 }
 inline void release_mutation_hold_defer() noexcept {
     auto prev = g_mutation_hold_defer_depth.load(std::memory_order_relaxed);

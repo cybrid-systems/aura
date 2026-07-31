@@ -3197,6 +3197,24 @@ def cmd_sandbox_mode_atomic_coverage():
     return 0
 
 
+def cmd_gc_defer_arm_fetch_or_coverage():
+    """Issue #2428: arm_defer fetch_or first-arm metrics (no load+or race).
+
+    Concurrent arm_*_defer same reason bumps first-arm total exactly once.
+    """
+    print(f"{B}=== gc defer arm fetch_or coverage (#2428) ==={N}")
+    script = ROOT / "scripts" / "check_gc_defer_arm_fetch_or_2428.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("gc defer arm fetch_or (#2428) coverage contract rows failed")
+        return 1
+    ok("gc defer arm fetch_or (#2428) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4146,6 +4164,7 @@ def cmd_gate():
         or cmd_capability_audit_publish_coverage()
         or cmd_capability_registry_snapshot_coverage()
         or cmd_sandbox_mode_atomic_coverage()
+        or cmd_gc_defer_arm_fetch_or_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
