@@ -85,6 +85,8 @@ inline constexpr std::uint64_t kMailboxBpAdmitThresholdDefault = 0;
 // Issue #2398 / #2228 lineage sentinel for query:orch-module-stats.
 inline constexpr int kMailboxBpAdmitIssue = 2228;
 inline constexpr int kMailboxBpRecentWindowIssue = 2398;
+// Issue #2399: AgentScope concurrent access detection (metric + optional abort).
+inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
 
 // Issue #2228: env resolution for the BP admit threshold. Returns
 // the configured threshold (0 = admit control off). Parses
@@ -281,6 +283,12 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> pure_contract_violated_total{0};
     // pure=#t requested but this task forced the lock (boundary held / unsafe).
     std::atomic<std::uint64_t> pure_fallback_locked_total{0};
+    // Issue #2399: AgentScope concurrent misuse detection (metric path).
+    // Bumped when a second thread enters spawn/join_all/watch_all/cancel_all
+    // while another thread already holds the scope. Default metric-only;
+    // AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts. Not a lock —
+    // ownership model stays single-owner serialize (no internal mutex).
+    std::atomic<std::uint64_t> agent_scope_concurrent_misuse_total{0};
 };
 
 // Issue #2008: conventional mailbox keepalive payload prefix.
