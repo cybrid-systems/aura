@@ -1495,6 +1495,13 @@ aura_issue_test_link_llvm_jit(test_arena_concurrent_mutex)
 # Issue #1989: ASTArena::on_compact_hook_ protected by mutex (A-003).
 aura_add_issue_test(test_arena_compact_hook_concurrent)
 aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
+# Issue #2463: summary_flags_ converted to std::atomic<uint32_t> + clear()
+# acquires flatast_mutex_. Concurrent reader (summary_flags() / summary_has())
+# + writer (clear() / summary_add_flags() / summary_recompute()) must not
+# observe a torn mid-write. Pattern family #1 (SoA column race); sibling
+# of #2444/#2445/#2446/#2447/#2449/#2450/#2451/#2452/#2453.
+aura_add_issue_test(test_ast_concurrency)
+aura_issue_test_link_llvm_jit(test_ast_concurrency)
 # Issue #2089: live_compact non-moving contract + LiveCompactResult.moved_live_objects
 # + optional on_layout_change callback (fires only on gen bumps). Schema bump on
 # (arena:live-compact) hash: 2004 → 2009 + new moved-live-objects field. AC1..AC4
