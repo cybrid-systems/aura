@@ -259,8 +259,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
                                                     waits, tmo, lchk, lviol, &fbp, &rej_bound,
                                                     &def_mh);
-            // Capacity 32→48→64: #2188/#2312/#2347 keys fit without silent drop.
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 64→128: #2188/#2312/#2347/#2378 drain-SLA keys.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -322,6 +322,49 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-mutation-hold-gate-wired", 1);
             insert_kv("schema-2312", 2312);
             insert_kv("issue-2312", 2312);
+            // Issue #2378: defer drain SLA — depth / HWM / flush latency /
+            // starvation (last-call + cumulative). Happy path depth=0 free.
+            insert_kv("mailbox-deferred-depth",
+                      static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_deferred_depth.load(
+                          std::memory_order_relaxed)));
+            insert_kv("mailbox_deferred_depth",
+                      static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_deferred_depth.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-deferred-depth-high-water",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_deferred_depth_high_water.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox_deferred_depth_high_water",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_deferred_depth_high_water.load(
+                    std::memory_order_relaxed)));
+            insert_kv("mailbox-deferred-flush-latency-us-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-deferred-flush-samples",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_deferred_flush_samples.load(
+                    std::memory_order_relaxed)));
+            insert_kv("mailbox-deferred-flush-latency-us-max",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_max.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-defer-starvation-total",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox_defer_starvation_total",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("mailbox-deferred-drain-opportunity-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_deferred_drain_opportunity_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-defer-drain-sla-wired", 1);
+            insert_kv("schema-2378", 2378);
+            insert_kv("issue-2378", 2378);
             // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
             // Soft path leaves hard-total / force-rollback-total at 0; Policy A
             // soft reject remains on recv-rejected-in-mutation-boundary.

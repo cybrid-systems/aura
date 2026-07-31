@@ -17,6 +17,13 @@
 //   AC3 Threshold: N rejects in one Guard → success_flag=false
 //   AC4 Happy path (depth==0): hard-total unchanged on try/recv
 //   AC5 schema-2347 + Agent contract cite + window clear on exit
+//
+// #2378 ACs (defer drain SLA):
+//   AC1 defer → deferred_depth ≥ 1 + hold total
+//   AC2 outermost exit + later Ok push → flush latency sample
+//   AC3 no-defer Ok path → depth stays 0 (zero extra maps)
+//   AC4 query schema-2378 depth/latency/starvation keys
+//   AC5 source-cite + chaos-safe (no hang)
 
 #include "test_harness.hpp"
 
@@ -55,6 +62,9 @@ using aura::serve::mf_mailbox::g_mf_mailbox_stats;
 using aura::serve::mf_mailbox::g_recv_boundary_reject_window;
 using aura::serve::mf_mailbox::MailMessage;
 using aura::serve::mf_mailbox::MultiFiberMailbox;
+using aura::serve::mf_mailbox::note_mailbox_mutation_hold_defer;
+using aura::serve::mf_mailbox::note_mailbox_outermost_exit_drain;
+using aura::serve::mf_mailbox::note_mailbox_push_ok_drain_progress;
 using aura::serve::mf_mailbox::PushStatus;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -460,6 +470,115 @@ static void ac2347_happy_path_no_hard() {
 }
 
 // ── Issue #2347 AC5: schema + Agent contract cite ──
+// ── Issue #2378 AC1: mutation-hold defer opens depth window ──
+static void ac2378_defer_depth() {
+    std::println("\n--- #2378 AC1: defer → deferred_depth ≥ 1 ---");
+    // Reset depth window via draining any open depth (best-effort).
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto d0 = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    const auto tot0 =
+        g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(std::memory_order_relaxed);
+    const auto hwm0 =
+        g_mf_mailbox_stats.mailbox_deferred_depth_high_water.load(std::memory_order_relaxed);
+    note_mailbox_mutation_hold_defer();
+    note_mailbox_mutation_hold_defer();
+    const auto d1 = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    const auto tot1 =
+        g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(std::memory_order_relaxed);
+    const auto hwm1 =
+        g_mf_mailbox_stats.mailbox_deferred_depth_high_water.load(std::memory_order_relaxed);
+    CHECK(d1 == d0 + 2, "AC1: deferred_depth +2");
+    CHECK(tot1 == tot0 + 2, "AC1: hold total +2");
+    CHECK(hwm1 >= hwm0 && hwm1 >= d1, "AC1: high-water tracks depth");
+}
+
+// ── Issue #2378 AC2: exit + Ok drain → flush latency sample ──
+static void ac2378_flush_latency_after_exit() {
+    std::println("\n--- #2378 AC2: outermost exit + drain → latency sample ---");
+    // Ensure open window with depth ≥ 1.
+    if (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) == 0)
+        note_mailbox_mutation_hold_defer();
+    const auto samples0 =
+        g_mf_mailbox_stats.mailbox_deferred_flush_samples.load(std::memory_order_relaxed);
+    const auto opp0 =
+        g_mf_mailbox_stats.mailbox_deferred_drain_opportunity_total.load(std::memory_order_relaxed);
+    note_mailbox_outermost_exit_drain();
+    CHECK(g_mf_mailbox_stats.mailbox_deferred_drain_opportunity_total.load(
+              std::memory_order_relaxed) >= opp0 + 1,
+          "AC2: drain opportunity +1 when depth open");
+    // Drain all open defers (each Ok resolves one).
+    std::uint64_t guard = 64;
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0 &&
+           guard-- > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto samples1 =
+        g_mf_mailbox_stats.mailbox_deferred_flush_samples.load(std::memory_order_relaxed);
+    CHECK(samples1 >= samples0 + 1, "AC2: flush latency sample recorded");
+    CHECK(g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) == 0,
+          "AC2: depth closed after drain");
+    CHECK(g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_total.load(
+              std::memory_order_relaxed) >= 0,
+          "AC2: latency total loadable");
+}
+
+// ── Issue #2378 AC3: happy path Ok without defer ──
+static void ac2378_happy_path_zero_extra() {
+    std::println("\n--- #2378 AC3: no-defer Ok path → depth stays 0 ---");
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto d0 = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    const auto samples0 =
+        g_mf_mailbox_stats.mailbox_deferred_flush_samples.load(std::memory_order_relaxed);
+    MultiFiberMailbox mb(8);
+    MailMessage msg;
+    msg.payload = "happy";
+    CHECK(mb.push(std::move(msg)) == PushStatus::Ok, "AC3: push Ok");
+    CHECK(g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) == d0,
+          "AC3: depth unchanged on no-defer path");
+    CHECK(g_mf_mailbox_stats.mailbox_deferred_flush_samples.load(std::memory_order_relaxed) ==
+              samples0,
+          "AC3: no flush sample without open defer");
+}
+
+// ── Issue #2378 AC4: query keys ──
+static void ac2378_query_schema() {
+    std::println("\n--- #2378 AC4: query schema-2378 ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2378") == 2378, "AC4: schema-2378");
+    CHECK(href(cs, "issue-2378") == 2378, "AC4: issue-2378");
+    CHECK(href(cs, "mailbox-defer-drain-sla-wired") == 1, "AC4: drain SLA wired");
+    CHECK(href(cs, "mailbox-deferred-depth") >= 0, "AC4: deferred-depth");
+    CHECK(href(cs, "mailbox-deferred-depth-high-water") >= 0, "AC4: depth HWM");
+    CHECK(href(cs, "mailbox-deferred-flush-samples") >= 0, "AC4: flush samples");
+    CHECK(href(cs, "mailbox-deferred-flush-latency-us-total") >= 0, "AC4: latency total");
+    CHECK(href(cs, "mailbox-deferred-flush-latency-us-max") >= 0, "AC4: latency max");
+    CHECK(href(cs, "mailbox-defer-starvation-total") >= 0, "AC4: starvation total");
+    CHECK(href(cs, "mailbox-deferred-drain-opportunity-total") >= 0, "AC4: drain opportunity");
+    CHECK(href(cs, "schema-2312") == 2312, "AC4: 2312 retained");
+    CHECK(href(cs, "schema-2347") == 2347, "AC4: 2347 retained");
+}
+
+// ── Issue #2378 AC5: source-cite ──
+static void ac2378_source_cite() {
+    std::println("\n--- #2378 AC5: source-cite ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto epm = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(mb.find("Issue #2378") != std::string::npos, "AC5: mailbox cites #2378");
+    CHECK(mb.find("note_mailbox_mutation_hold_defer") != std::string::npos, "AC5: defer note");
+    CHECK(mb.find("note_mailbox_push_ok_drain_progress") != std::string::npos,
+          "AC5: drain progress");
+    CHECK(mb.find("note_mailbox_outermost_exit_drain") != std::string::npos, "AC5: exit drain");
+    CHECK(mb.find("mailbox_defer_starvation_total") != std::string::npos,
+          "AC5: starvation counter");
+    CHECK(emb.find("note_mailbox_outermost_exit_drain") != std::string::npos,
+          "AC5: Guard dtor drain note");
+    CHECK(epm.find("schema-2378") != std::string::npos, "AC5: query schema");
+    CHECK(epm.find("mailbox-deferred-depth") != std::string::npos, "AC5: query depth key");
+}
+
 static void ac2347_schema_and_contract() {
     std::println("\n--- #2347 AC5: schema-2347 + Agent contract ---");
     const auto hdr = read_file("src/serve/multi_fiber_mailbox.h");
@@ -522,6 +641,12 @@ int main() {
     ac2347_threshold_force_rollback();
     ac2347_happy_path_no_hard();
     ac2347_schema_and_contract();
+    // Issue #2378: defer drain SLA (depth / latency / starvation).
+    ac2378_defer_depth();
+    ac2378_flush_latency_after_exit();
+    ac2378_happy_path_zero_extra();
+    ac2378_query_schema();
+    ac2378_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -2284,6 +2284,25 @@ def cmd_mutate_mailbox_strict_coverage():
     return 0
 
 
+def cmd_mailbox_defer_drain_sla_coverage():
+    """Issue #2378: mailbox defer drain SLA + hold-blocked latency.
+
+    deferred_depth / HWM, flush latency after outermost exit, starvation
+    signal; zero cost when no open defer.
+    """
+    print(f"{B}=== mailbox defer drain SLA coverage (#2378) ==={N}")
+    script = ROOT / "scripts" / "check_mailbox_defer_drain_sla_2378.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox defer drain SLA (#2378) coverage contract rows failed")
+        return 1
+    ok("mailbox defer drain SLA (#2378) coverage clean")
+    return 0
+
+
 def cmd_bidirectional_match_coverage():
     """Issue #2348: bidirectional check-mode for ADT match + GuardShape.
 
@@ -3111,6 +3130,7 @@ def cmd_gate():
         or cmd_pin_bulk_all_shards_coverage()
         or cmd_steal_complete_strong_entry_coverage()
         or cmd_mutate_mailbox_strict_coverage()
+        or cmd_mailbox_defer_drain_sla_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_type_system_health_coverage()
