@@ -115,9 +115,25 @@ def check() -> list:
         "AC2: LiveCompactResult.remapped_pins must be set in wire-up",
         fails,
     )
+    # Issue #2374: selective invalidate moved to sharded helper
+    # invalidate_pins_not_in_new_addrs (legacy pin_registry() walk removed).
     _must(
-        "new_addrs" in arena and "unpin_on_compact" in arena,
-        "AC2: selective invalidate must skip remapped pins via new_addrs lookup",
+        "new_addrs" in arena and ("invalidate_pins_not_in_new_addrs" in arena or "unpin_on_compact" in arena),
+        "AC2: selective invalidate must skip remapped pins via new_addrs / sharded helper",
+        fails,
+    )
+    _must(
+        "invalidate_pins_not_in_new_addrs" in pin or "unpin_on_compact" in pin,
+        "AC2: LifetimePin side must implement selective invalidate / unpin_on_compact",
+        fails,
+    )
+    # Issue #2374: no legacy empty pin_registry() densify walk (call sites).
+    # Comments may still mention the removed API.
+    _must(
+        "pin_registry_mtx()" not in arena
+        and "lifetime::pin_registry()" not in arena
+        and "lifetime::pin_registry_mtx()" not in arena,
+        "AC2/#2374: densify must not walk legacy pin_registry() (empty post-#2342)",
         fails,
     )
     # Wire-up must be AFTER gen restamp (since remap needs new_gen).

@@ -22,9 +22,11 @@
 //   - remap(new_ptr, new_gen): Phase 3 (#2265) — densify rewrote the
 //     pointee; pin updates ptr_ (and gen when new_gen != 0) to track the
 //     new address without going through unpin+repin. Bumps remap counter.
-//   - Active registry (function-static vector + mutex) so compact hooks
-//     can iterate all live LifetimePin instances tied to an arena and
-//     restamp / invalidate / remap them in one pass (no per-pin coordination).
+//   - Active sharded registry (Issue #2342) so compact hooks can iterate
+//     all live LifetimePin instances tied to an arena and restamp /
+//     invalidate / remap them in one pass (no per-pin coordination).
+//     Legacy process-wide pin_registry() removed in #2374 (always empty
+//     after #2342; densify selective-invalidate walks pin_registry_shards).
 //   - Three new stats counters: invalidations, restamps, remaps
 //     (Phase 1 retained pins, unpins, ffi_handoffs).
 //   - kLifetimePinPhase bumps from 2 to 3.
@@ -156,26 +158,16 @@ enum class PinOwner : std::uint8_t {
 
 class LifetimePin;
 
-// Active pin registry (function-static so LifetimePin ctor can reference
-// it without forward-declaration ordering concerns). Initialized on first
-// use; cleared on module unload.
-inline std::vector<LifetimePin*>& pin_registry() {
-    static std::vector<LifetimePin*> v;
-    return v;
-}
-inline std::mutex& pin_registry_mtx() {
-    static std::mutex m;
-    return m;
-}
-
-// Issue #2342: sharded pin registry. Replaces the process-wide
-// `pin_registry()` + `pin_registry_mtx()` pair with N independent
+// Issue #2342 / #2374: sharded pin registry. Replaces the process-wide
+// `pin_registry()` + `pin_registry_mtx()` pair (removed in #2374 — always
+// empty after LifetimePin registered only into shards) with N independent
 // shards. Each shard owns its own mutex + vector; LifetimePin
 // ctor/dtor/move/pin route to one shard by arena_id (default
 // shard 0 for arena_id=0). Compact walks that target a specific
 // arena touch only the relevant shard; walks that need every pin
-// (remap_pins_pointing_to, verify_pins_under_moving_compact) take
-// all N shard locks in shard-index order (deadlock-safe).
+// (remap_pins_pointing_to, verify_pins_under_moving_compact,
+// invalidate_pins_not_in_new_addrs) take all N shard locks in
+// shard-index order (deadlock-safe).
 //
 // Shard count is a power of 2 so arena_id-based routing is a single
 // AND. 16 shards is enough to spread FFI/render pin churn across
@@ -521,6 +513,35 @@ inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcep
         ++n;
     }
     return n;
+}
+
+// Issue #2374 / #2265: selective invalidate after Moving densify.
+// Walks all pin_registry_shards (legacy pin_registry() was empty post-#2342
+// and the densify walk there was a no-op). Skips pins whose ptr_ is already
+// a remapped new address (in `new_addrs`). Non-remapped pins for this arena
+// are fail-closed via unpin_on_compact. Distinct from verify_pins_under_
+// moving_compact (which only detects pins still pointing at *old* densified
+// addresses). Returns # invalidated.
+inline std::size_t
+invalidate_pins_not_in_new_addrs(std::uint64_t arena_id,
+                                 const std::unordered_set<void*>& new_addrs) noexcept {
+    std::size_t invalidated = 0;
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& shard = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        for (auto* p : shard.pins) {
+            if (!p || !p->pinned())
+                continue;
+            if (arena_id != 0 && p->arena_id() != arena_id)
+                continue;
+            // Skip remapped pins (their ptr_ is in new_addrs).
+            if (new_addrs.count(p->ptr()) > 0)
+                continue;
+            p->unpin_on_compact();
+            ++invalidated;
+        }
+    }
+    return invalidated;
 }
 
 // Issue #2265: Moving densify walks `last_object_remap_` (built by
