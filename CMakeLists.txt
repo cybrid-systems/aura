@@ -3155,6 +3155,9 @@ aura_issue_test_link_llvm_jit(test_predicate_meet_join_lattice_2148)
 # render3d:create-volume wired at primitive entry points.
 aura_add_issue_test(test_capability_effect_force_2072)
 aura_issue_test_link_llvm_jit(test_capability_effect_force_2072)
+# Issue #2384: require_effect stamps live mutation_id (not hardcode 0).
+aura_add_issue_test(test_require_effect_live_mid_2384)
+aura_issue_test_link_llvm_jit(test_require_effect_live_mid_2384)
 
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in

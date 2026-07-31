@@ -11,6 +11,7 @@ module;
 #include "security_defaults.hh" // #2076/#2053 production defaults (header-inline)
 #include "typed_mutation_audit.h"
 #include "core/capability_model.hh"
+#include "core/resource_quota.hh" // #2384: host provenance_mutation_id for require_effect
 #include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
@@ -319,17 +320,34 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     return ok;
 }
 
-// Issue #2072: single production entry for new side-effect paths.
+// Issue #2072 / #2384: single production entry for new side-effect paths.
 // Wraps check_and_record_effect with the standard arguments (required =
-// actual = req_bits, tenant = capability_tenant_id_, provenance = 0
-// when no active mutation). All new FFI / network / exec / render /
-// hotpath entry points MUST go through require_effect (not call
-// check_and_record_effect directly) so the audit ring + capability
-// metrics surface stays consistent. Returns true on allow, false on deny.
+// actual = req_bits, tenant = capability_tenant_id_).
+//
+// Issue #2384: NEVER hardcode provenance_mutation_id=0. Live mid is
+// required so CapabilityGrant::bound_mutation_id / provenance_ok can
+// fire on FFI/network/exec/render/hotpath, and so SecurityEvent +
+// TypedMutationAudit join by mutation_id (not seq-only fallback).
+// Stamp order (WorkspaceEpoch Mutation vocabulary, #2149):
+//   1. process ResourceQuota host provenance_mutation_id when set
+//   2. current_mutation_epoch() when non-zero
+//   3. non-zero join stamp 1 (process origin)
+// Soft / Off paths unchanged beyond filling mid (still allow when no
+// grant required). Callers that already pass a real mid keep using
+// check_and_record_effect directly.
+// All new FFI / network / exec / render / hotpath entry points MUST
+// go through require_effect (not call check_and_record_effect
+// directly) so the audit ring + capability metrics surface stays
+// consistent. Returns true on allow, false on deny.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op,
                                ast::NodeId target_node) noexcept {
-    return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_,
-                                   /*provenance_mutation_id=*/0);
+    std::uint64_t mid =
+        aura::core::resource_quota::process_resource_quota_manager().provenance_mutation_id;
+    if (mid == 0)
+        mid = ::aura::core::current_mutation_epoch();
+    if (mid == 0)
+        mid = 1; // non-zero join stamp (process origin)
+    return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_, mid);
 }
 
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.
