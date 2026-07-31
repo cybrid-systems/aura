@@ -2837,6 +2837,24 @@ def cmd_aot_linear_literal_noop_coverage():
     return 0
 
 
+def cmd_stringpool_bytes_total_lock_coverage():
+    """Issue #2408: string_bytes_total single shared_lock + resolve_unlocked.
+
+    Fixes UAF under concurrent intern and O(capacity) lock churn.
+    """
+    print(f"{B}=== stringpool string_bytes_total lock coverage (#2408) ==={N}")
+    script = ROOT / "scripts" / "check_stringpool_bytes_total_lock_2408.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("stringpool string_bytes_total lock (#2408) coverage contract rows failed")
+        return 1
+    ok("stringpool string_bytes_total lock (#2408) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3766,6 +3784,7 @@ def cmd_gate():
         or cmd_mutation_hold_estimate_coverage()
         or cmd_pcv_tls_scratch_coverage()
         or cmd_aot_linear_literal_noop_coverage()
+        or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
