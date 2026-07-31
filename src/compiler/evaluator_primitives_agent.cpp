@@ -3399,9 +3399,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("spawn-bp-admit-reject-total",
                       static_cast<std::int64_t>(
                           os.spawn_bp_admit_reject_total.load(std::memory_order_relaxed)));
-            // Issue #2228: schema lineage.
-            insert_kv("schema-2228", 2228);
-            insert_kv("issue-2228", 2228);
+            // Issue #2228: schema lineage (preserved by #2398).
+            insert_kv("schema-2228", aura::orch::kMailboxBpAdmitIssue);
+            insert_kv("issue-2228", aura::orch::kMailboxBpAdmitIssue);
+            // Issue #2398: quiet-period window for mailbox_bp_recent_total
+            // so BP admit recovers after storms without process restart.
+            // Additive keys; #2228 residual keys intact. threshold=0 skips
+            // decay work on the admit path (zero cost when gate off).
+            insert_kv("mailbox-bp-window-ms",
+                      static_cast<std::int64_t>(aura::orch::resolve_mailbox_bp_window_ms()));
+            insert_kv("mailbox-bp-admit-threshold",
+                      static_cast<std::int64_t>(aura::orch::resolve_mailbox_bp_admit_threshold()));
+            insert_kv("schema-2398", aura::orch::kMailboxBpRecentWindowIssue);
+            insert_kv("issue-2398", aura::orch::kMailboxBpRecentWindowIssue);
+            insert_kv("mailbox-bp-decay-wired", 1);
             insert_kv("send-closed", static_cast<std::int64_t>(
                                          os.send_closed_total.load(std::memory_order_relaxed)));
             insert_kv("recv-empty", static_cast<std::int64_t>(

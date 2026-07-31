@@ -2075,10 +2075,13 @@ extern "C" void aura_orch_note_agent_steal_skipped_boundary() {
     }
 }
 
-// Issue #2010: MultiFiberMailbox backpressure → OrchModuleStats dashboard.
+// Issue #2010 / #2228 / #2398: MultiFiberMailbox backpressure → OrchModuleStats.
 // Strong def overrides fiber_bridge weak no-op when evaluator/orch is linked.
+// send_backpressure_total is cumulative; note_mailbox_bp_recent_event feeds
+// the admit "recent" gauge + last-event clock for quiet-period decay (#2398).
 extern "C" void aura_orch_note_mailbox_backpressure() {
     aura::orch::g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
+    aura::orch::note_mailbox_bp_recent_event();
 }
 
 // Issue #2397: Fiber reclaim still-running / body-retired → OrchModuleStats.

@@ -79,13 +79,15 @@ inline constexpr std::uint64_t kJoinDrainResidualHardMsDefault = 30000;
 // Issue #2228: mailbox-backpressure admit threshold default.
 // spawn_agent_with_mailbox soft-rejects new agents (with attach_mailbox)
 // when the process-wide mailbox_bp_recent_total is >= this threshold.
-// Default = 0 means "reject on any recent BP event" (conservative;
-// matches the issue's "BP observable but not admission-coupled" gap).
-// Env override: AURA_ORCH_BP_ADMIT_THRESHOLD=N (0 disables admission).
+// Default = 0 disables the admit gate (legacy callers unchanged unless
+// env set). Env: AURA_ORCH_BP_ADMIT_THRESHOLD=N (N>0 enables gate).
 inline constexpr std::uint64_t kMailboxBpAdmitThresholdDefault = 0;
+// Issue #2398 / #2228 lineage sentinel for query:orch-module-stats.
+inline constexpr int kMailboxBpAdmitIssue = 2228;
+inline constexpr int kMailboxBpRecentWindowIssue = 2398;
 
 // Issue #2228: env resolution for the BP admit threshold. Returns
-// the configured threshold (0 = reject on any BP). Parses
+// the configured threshold (0 = admit control off). Parses
 // AURA_ORCH_BP_ADMIT_THRESHOLD as a uint64; invalid input falls
 // back to kMailboxBpAdmitThresholdDefault.
 inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
@@ -100,37 +102,54 @@ inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
     }
 }
 
-// Issue #2465: mailbox BP counter decay window. Without decay,
-// mailbox_bp_recent_total is process-wide monotonic forever —
-// once a deployment sets AURA_ORCH_BP_ADMIT_THRESHOLD > 0, the
-// first BP event causes permanent admission denial (DoS for AI
-// agent frameworks). Periodic decay reset (simplest fix; matches
-// the existing kJoinDrainResidualHardMsDefault env-override
-// pattern from #2155 / #2227).
+// Issue #2465 / #2398: quiet-period window for mailbox_bp_recent_total.
+// Without decay, the "recent" counter is process-wide cumulative forever —
+// once AURA_ORCH_BP_ADMIT_THRESHOLD > 0, a past storm permanently soft-rejects
+// attach_mailbox spawns until process restart. #2398 makes it a real recent
+// signal: if no new BP events for window_ms, the next admit preflight zeros
+// the gauge (quiet-period reset). send_backpressure_total stays cumulative.
 //
-// Default = 30s (matches kJoinDrainResidualHardMsDefault).
-// Env override: AURA_ORCH_BP_DECAY_MS=N (0 disables decay; counter
-// is then truly monotonic forever — only useful for diagnostic
-// captures, not admission gating).
+// Default = 30s (matches kJoinDrainResidualHardMsDefault / #2465).
+// Env (either name; WINDOW preferred per #2398):
+//   AURA_ORCH_BP_WINDOW_MS=N  — sliding quiet-period window
+//   AURA_ORCH_BP_DECAY_MS=N   — alias kept for #2465 deployments
+// N=0 disables decay (diagnostic-only; counter truly monotonic).
 inline constexpr std::uint64_t kMailboxBpDecayMsDefault = 30000;
+inline constexpr std::uint64_t kMailboxBpWindowMsDefault = kMailboxBpDecayMsDefault;
 
 inline std::uint64_t resolve_mailbox_bp_decay_ms() noexcept {
+    // Prefer #2398 WINDOW_MS; fall back to #2465 DECAY_MS; else default.
+    const char* window = std::getenv("AURA_ORCH_BP_WINDOW_MS");
+    if (window && *window) {
+        try {
+            return static_cast<std::uint64_t>(std::stoull(window));
+        } catch (...) {
+            // fall through to DECAY_MS / default
+        }
+    }
     const char* env = std::getenv("AURA_ORCH_BP_DECAY_MS");
     if (!env || !*env)
-        return kMailboxBpDecayMsDefault;
+        return kMailboxBpWindowMsDefault;
     try {
         return static_cast<std::uint64_t>(std::stoull(env));
     } catch (...) {
-        return kMailboxBpDecayMsDefault;
+        return kMailboxBpWindowMsDefault;
     }
 }
+// Issue #2398: alias — window_ms is the public name for the quiet period.
+inline std::uint64_t resolve_mailbox_bp_window_ms() noexcept {
+    return resolve_mailbox_bp_decay_ms();
+}
 
-// Last decay timestamp in microseconds (orch_now_us time base).
-// 0 means "never decayed" — the first decay check after process
-// start is a no-op (the counter is also 0 at that point).
-// compare_exchange_strong in the preflight ensures only one thread
-// does the reset per decay window.
+// Last time mailbox_bp_recent_total was quiet-period reset (orch_now_us).
+// compare_exchange_strong ensures only one thread zeros per window.
+// Helpers note_mailbox_bp_recent_event / maybe_decay_mailbox_bp_recent
+// live after orch_now_us + g_orch_module_stats (below).
 inline std::atomic<std::uint64_t> g_mailbox_bp_last_decay_us{0};
+// Issue #2398: last BP event timestamp (orch_now_us). Quiet-period
+// decay triggers when now - last_event > window_ms (no new BP).
+inline std::atomic<std::uint64_t> g_mailbox_bp_last_event_us{0};
+
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
 
@@ -323,6 +342,35 @@ inline void fiber_sleep_ms(std::uint32_t ms) noexcept {
 }
 
 inline OrchModuleStats g_orch_module_stats{};
+
+// Issue #2228 / #2398: record one process-wide mailbox BP event for the
+// admit "recent" gauge + last-event clock. Called from push/fanout BP
+// sites (via aura_orch_note_mailbox_backpressure strong def) and from
+// orch agent_send / emit_keepalive when those paths already counted BP.
+inline void note_mailbox_bp_recent_event() noexcept {
+    g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
+    g_mailbox_bp_last_event_us.store(orch_now_us(), std::memory_order_release);
+}
+
+// Issue #2398: quiet-period decay of mailbox_bp_recent_total.
+// Zero-cost when window_ms==0. Admit preflight calls this only when
+// threshold>0 (zero cost when admit control is off). One CAS winner zeros.
+inline void maybe_decay_mailbox_bp_recent() noexcept {
+    const auto window_ms = resolve_mailbox_bp_window_ms();
+    if (window_ms == 0)
+        return;
+    const auto now_us = orch_now_us();
+    const auto last_bp = g_mailbox_bp_last_event_us.load(std::memory_order_acquire);
+    if (last_bp == 0)
+        return; // never saw a BP event
+    if (now_us - last_bp <= window_ms * 1000ULL)
+        return; // still inside quiet window after last BP
+    auto last_decay = g_mailbox_bp_last_decay_us.load(std::memory_order_acquire);
+    if (g_mailbox_bp_last_decay_us.compare_exchange_strong(last_decay, now_us,
+                                                           std::memory_order_acq_rel)) {
+        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
+    }
+}
 
 inline void snapshot_orch_stats(std::uint64_t& spawned, std::uint64_t& joined, std::uint64_t& sends,
                                 std::uint64_t& recvs, std::uint64_t& failures,
@@ -542,11 +590,17 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         g_orch_module_stats.keepalive_emitted_total.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
     } else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
+        // Cumulative send BP (hook also bumps when push notes BP;
+        // keep explicit path so emit_keepalive remains self-contained
+        // if the weak hook is a no-op in serve-only links).
         g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
-        // Issue #2228: process-wide BP event for spawn admission
-        // preflight. Same strong-def site as the cumulative
-        // send_backpressure_total; separated for the admit gate.
-        g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2228 / #2398: recent gauge + last-event for quiet-period.
+        // push() already calls note_backpressure → hook which also notes
+        // recent when orch is linked; this path covers serve-only links
+        // where the weak hook is a no-op. Double-count under full orch
+        // link is acceptable for admit (threshold is rate-ish) and
+        // send_backpressure remains monotonic (AC2).
+        note_mailbox_bp_recent_event();
     } else {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -641,52 +695,42 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // (quota_dimension = "fibers" / "memory"); BP is a separate
     // admission dimension so Agent frameworks can branch on it.
     if (spec.attach_mailbox) {
-        // Issue #2465: decay reset before reading the counter.
-        // Without decay, the first BP event in a process's lifetime
-        // permanently denies every subsequent spawn_agent_with_mailbox
-        // call (DoS for AI agent frameworks). Periodic decay reset
-        // (default 30s, env AURA_ORCH_BP_DECAY_MS) keeps the metric
-        // meaningful and the admission gate bounded. compare_exchange_strong
-        // claims the decay slot so concurrent preflights only reset once
-        // per window. Counter can race-increment between reset and read
-        // below — acceptable since admission is best-effort: a one-off
-        // admit-when-should-deny is far better than permanent-denial.
-        const auto decay_ms = resolve_mailbox_bp_decay_ms();
-        if (decay_ms > 0) {
-            const auto now_us = orch_now_us();
-            auto last_us = g_mailbox_bp_last_decay_us.load(std::memory_order_acquire);
-            if (last_us == 0 || now_us - last_us > decay_ms * 1000) {
-                if (g_mailbox_bp_last_decay_us.compare_exchange_strong(last_us, now_us,
-                                                                       std::memory_order_acq_rel)) {
-                    g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
-                }
-            }
-        }
-        const auto bp_recent =
-            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        // Issue #2228 / #2398: mailbox-BP admit gate.
+        // threshold==0 → admit control off (legacy); zero cost beyond
+        // the single threshold load (no decay work, no BP reject).
         const auto threshold = resolve_mailbox_bp_admit_threshold();
-        if (threshold > 0 && bp_recent >= threshold) {
-            g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
-            g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(1, std::memory_order_relaxed);
-            h.quota_exceeded = true;
-            h.quota_dimension = "mailbox-bp";
-            h.quota_used = bp_recent;
-            h.quota_limit = threshold;
-            h.retry_after_ms = 50;
-            h.error =
-                "AdmissionRejected: mailbox backpressure (bp_recent=" + std::to_string(bp_recent) +
-                " >= threshold=" + std::to_string(threshold) + ")";
-            // #2155 parity: reserved never set on BP reject
-            // (h.reserved_memory_bytes still holds the planned
-            // mem_cost, but finalize_spawn_quota_reject is no-leak
-            // for the !ok path: it only releases if reserved != 0,
-            // and BP reject happens before the arena reservation is
-            // actually committed via the Scheduler; we explicitly
-            // zero reserved here so no future code path can release
-            // a phantom allocation).
-            h.reserved_memory_bytes = 0;
-            finalize_spawn_quota_reject(h);
-            return h;
+        if (threshold > 0) {
+            // Issue #2398: quiet-period decay — if no BP events for
+            // window_ms (AURA_ORCH_BP_WINDOW_MS / AURA_ORCH_BP_DECAY_MS),
+            // zero mailbox_bp_recent_total so storms self-heal without
+            // process restart. send_backpressure_total stays cumulative.
+            maybe_decay_mailbox_bp_recent();
+            const auto bp_recent =
+                g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+            if (bp_recent >= threshold) {
+                g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+                g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                h.quota_exceeded = true;
+                h.quota_dimension = "mailbox-bp";
+                h.quota_used = bp_recent;
+                h.quota_limit = threshold;
+                h.retry_after_ms = 50;
+                h.error = "AdmissionRejected: mailbox backpressure (bp_recent=" +
+                          std::to_string(bp_recent) + " >= threshold=" + std::to_string(threshold) +
+                          ")";
+                // #2155 parity: reserved never set on BP reject
+                // (h.reserved_memory_bytes still holds the planned
+                // mem_cost, but finalize_spawn_quota_reject is no-leak
+                // for the !ok path: it only releases if reserved != 0,
+                // and BP reject happens before the arena reservation is
+                // actually committed via the Scheduler; we explicitly
+                // zero reserved here so no future code path can release
+                // a phantom allocation).
+                h.reserved_memory_bytes = 0;
+                finalize_spawn_quota_reject(h);
+                return h;
+            }
         }
     }
 
@@ -1120,10 +1164,8 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
     else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
         g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
-        // Issue #2228: process-wide BP event for spawn admission
-        // preflight (broadcast_fanout strong-def site; mirrors
-        // the push strong-def site above).
-        g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2228 / #2398: recent gauge + last-event (see emit_keepalive).
+        note_mailbox_bp_recent_event();
     } else
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     return st;
