@@ -118,7 +118,7 @@ int main() {
         reset_process();
         apply_production_security_defaults();
         CHECK(static_cast<std::uint8_t>(g_sandbox_state().mode) == 1, "sandbox Restricted");
-        CHECK(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode) == 1,
+        CHECK(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()) == 1,
               "effect sandbox Restricted");
         CHECK(get_strategy() == AuditStrategy::Full, "audit strategy Full");
         CHECK(get_sample_ratio() == 1, "sample ratio 1 under Full");
@@ -133,7 +133,8 @@ int main() {
         CompilerService cs;
         auto& ev = cs.evaluator();
         // Mirror process mode onto this Evaluator instance.
-        ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode));
+        ev.set_effect_sandbox_mode(
+            static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()));
         CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         auto r = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" \"prod-deny\")");
@@ -152,7 +153,7 @@ int main() {
         set_env("AURA_MULTI_TENANT", "1");
         apply_production_security_defaults();
         CHECK(static_cast<std::uint8_t>(g_sandbox_state().mode) == 2, "Strict under multi-tenant");
-        CHECK(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode) == 2,
+        CHECK(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()) == 2,
               "effect Strict");
         clear_env("AURA_MULTI_TENANT");
     }
@@ -201,7 +202,7 @@ int main() {
         apply_production_security_defaults();
         CompilerService cs;
         cs.evaluator().set_effect_sandbox_mode(
-            static_cast<std::uint8_t>(g_capability_registry().sandbox_mode));
+            static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()));
         auto h = cs.eval("(engine:metrics \"query:capability-effect-stats\")");
         CHECK(h && is_hash(*h), "capability-effect-stats hash");
         CHECK(href_cap(cs, "schema-2053") == 2053, "cap schema-2053");

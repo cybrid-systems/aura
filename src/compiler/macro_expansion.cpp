@@ -272,7 +272,7 @@ int effective_hygiene_depth_limit() noexcept {
     ensure_runtime_caps_env_loaded();
     using aura::core::capability::check_macro_self_evo;
     using aura::core::capability::g_capability_registry;
-    const auto tenant = g_capability_registry().default_tenant;
+    const auto tenant = g_capability_registry().default_tenant.load();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
     const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
     int cap_depth = 0;
@@ -291,7 +291,7 @@ int effective_hygiene_pass_cap() noexcept {
     ensure_runtime_caps_env_loaded();
     using aura::core::capability::check_macro_self_evo;
     using aura::core::capability::g_capability_registry;
-    const auto tenant = g_capability_registry().default_tenant;
+    const auto tenant = g_capability_registry().default_tenant.load();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
     const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
     int lim = 0; // 0 = no extra clamp
@@ -976,7 +976,7 @@ aura::ast::NodeId clone_macro_body(
                 return;
             using aura::core::capability::check_macro_self_evo;
             using aura::core::capability::g_capability_registry;
-            const auto tenant = g_capability_registry().default_tenant;
+            const auto tenant = g_capability_registry().default_tenant.load();
             const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
             const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
             if (!chk.allowed) {
@@ -1860,7 +1860,7 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
         using aura::core::capability::check_macro_self_evo;
         using aura::core::capability::g_capability_effect_metrics;
         using aura::core::capability::g_capability_registry;
-        const auto tenant = g_capability_registry().default_tenant;
+        const auto tenant = g_capability_registry().default_tenant.load();
         const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
         const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
         if (!chk.allowed) {

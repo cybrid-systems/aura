@@ -3112,6 +3112,11 @@ aura_add_issue_test(test_capability_audit_publish_2425)
 aura_issue_test_link_llvm_jit(test_capability_audit_publish_2425)
 add_dependencies(all_test_issue_targets test_capability_audit_publish_2425)
 
+# Issue #2426: CapabilityRegistry::snapshot_registry_state (#1840 pattern).
+aura_add_issue_test(test_capability_registry_snapshot_2426)
+aura_issue_test_link_llvm_jit(test_capability_registry_snapshot_2426)
+add_dependencies(all_test_issue_targets test_capability_registry_snapshot_2426)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
