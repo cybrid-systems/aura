@@ -5,6 +5,8 @@
 #define AURA_CORE_CAPABILITY_MODEL_HH
 
 #include "core/workspace_epoch.hh"
+#include "core/security_event.hh"     // #2388 dual-write kinds
+#include "core/security_event_wal.hh" // #2388 emit_security_event_durable
 
 #include <atomic>
 #include <cstdint>
@@ -397,8 +399,11 @@ struct CapabilityRegistry {
         return false;
     }
 
+    // Issue #2388: private 128-slot ring + dual-write SecurityEvent/WAL so
+    // wrap under deny storms remains forensically recoverable (ring 1024 + WAL).
+    // reason_hint: optional Agent-stable reason (e.g. fiber-grant-mismatch).
     void record_audit(Effect required, Effect actual, TenantId tenant, const EffectProvenance& prov,
-                      bool denied, std::string_view op) {
+                      bool denied, std::string_view op, const char* reason_hint = nullptr) {
         const auto seq = audit_seq.fetch_add(1, std::memory_order_relaxed);
         auto& slot = audit_ring[seq % kAuditRing];
         slot.seq = seq;
@@ -413,6 +418,33 @@ struct CapabilityRegistry {
         slot.op[n] = '\0';
         g_capability_effect_metrics().capability_audit_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+
+        // Dual-write unified SecurityEvent surface (#2075/#2054/#2225/#2388).
+        using ::aura::core::security_event::kSecurityAuditFoldIssue;
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        (void)kSecurityAuditFoldIssue;
+        const auto mid = prov.mutation_id != 0
+                             ? prov.mutation_id
+                             : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
+        const auto epoch = prov.epoch != 0 ? prov.epoch : mid;
+        const auto kind = denied ? SecurityEventKind::EffectDeny : SecurityEventKind::EffectAllow;
+        const char* reason = reason_hint;
+        if (reason == nullptr) {
+            reason = denied ? "capability-effect-deny" : "effect-allow";
+            if (denied) {
+                const auto bits = static_cast<std::uint16_t>(required);
+                if (has_effect(required, Effect::Mutate))
+                    reason = "mutate-deny";
+                else if (has_effect(required, Effect::Ffi))
+                    reason = "ffi-deny";
+                else if (has_effect(required, Effect::Render))
+                    reason = "render-deny";
+                (void)bits;
+            }
+        }
+        emit_security_event_durable(kind, tenant, mid, epoch, static_cast<std::uint16_t>(required),
+                                    op, reason, denied, static_cast<std::int64_t>(prov.fiber_id));
     }
 
     // Issue #2023 / #2386: grant MacroSelfEvo effect + store policy limits.
@@ -559,6 +591,7 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
 
     {
         std::lock_guard<std::mutex> lock(reg.mtx);
+        const auto hard0 = met.capability_fiber_hard_deny_total.load(std::memory_order_relaxed);
         if (need_grant && required != Effect::None && !wildcard_ok) {
             const Effect held = reg.effects_for(tenant);
             // Require full coverage of required bits (not just any overlap).
@@ -578,7 +611,10 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        reg.record_audit(required, actual, tenant, prov, !allowed, op);
+        const auto hard1 = met.capability_fiber_hard_deny_total.load(std::memory_order_relaxed);
+        // Issue #2151 / #2388: Agent-stable reason when hard fiber isolation denies.
+        const char* reason_hint = (!allowed && hard1 > hard0) ? "fiber-grant-mismatch" : nullptr;
+        reg.record_audit(required, actual, tenant, prov, !allowed, op, reason_hint);
     }
 
     if (allowed)

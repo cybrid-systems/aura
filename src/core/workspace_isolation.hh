@@ -16,6 +16,9 @@
 #include <vector>
 
 #include "core/provenance_tracker.hh" // #2125: set_isolation_capture_tenant
+#include "core/security_event.hh"     // #2388 dual-write kinds
+#include "core/security_event_wal.hh" // #2388 emit_security_event_durable
+#include "core/workspace_epoch.hh"    // #2388 / #2156 isolation mid = Mutation epoch
 
 namespace aura::core::workspace_isolation {
 
@@ -148,8 +151,12 @@ struct WorkspaceIsolationPolicy {
         return it->second;
     }
 
+    // Issue #2388: private 128-slot ring + dual-write IsolationDeny into
+    // SecurityEvent/WAL when denied (single SE per deny — callers must not
+    // also append IsolationDeny). Allows stay private-ring only.
     void record_audit(TenantId target, TenantId ref_tenant, bool denied, bool prov_deny,
-                      bool cap_deny, std::string_view op) noexcept {
+                      bool cap_deny, std::string_view op,
+                      std::uint16_t required_effects = 0) noexcept {
         const auto seq = audit_seq.fetch_add(1, std::memory_order_relaxed);
         auto& slot = audit_ring[seq % kAuditRing];
         slot.seq = seq;
@@ -163,6 +170,34 @@ struct WorkspaceIsolationPolicy {
         std::memcpy(slot.op, op.data(), n);
         slot.op[n] = '\0';
         g_tenant_isolation_metrics().isolation_audit_total.fetch_add(1, std::memory_order_relaxed);
+
+        if (!denied)
+            return; // AC2: one SE only on deny (not on allow)
+
+        using ::aura::core::current_mutation_epoch;
+        using ::aura::core::security_event::kIsolationAuditMidIssue;
+        using ::aura::core::security_event::kSecurityAuditFoldIssue;
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        (void)kIsolationAuditMidIssue;
+        (void)kSecurityAuditFoldIssue;
+        const auto epoch = current_mutation_epoch();
+        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+        char reason_buf[64];
+        const char* reason = "isolation-deny";
+        // Issue #2385: unset principal under Restricted/Strict side-effect path.
+        if (current.id == 0) {
+            reason = "isolation-deny:unset-principal";
+        } else if (ref_tenant != 0) {
+            std::snprintf(reason_buf, sizeof(reason_buf), "isolation-deny:ref-tenant=%llu",
+                          static_cast<unsigned long long>(ref_tenant));
+            reason = reason_buf;
+        }
+        // Tenant stays in tenant_id field; mid is Mutation epoch (#2156).
+        // effect_bits preserves required side-effect mask for forensic join.
+        emit_security_event_durable(SecurityEventKind::IsolationDeny, target, mid, mid,
+                                    required_effects, op, reason, /*denied=*/true,
+                                    /*fiber_id=*/0);
     }
 
     // AC1 legacy: simple ID boundary check.
@@ -218,22 +253,22 @@ struct WorkspaceIsolationPolicy {
             if (cur == 0) {
                 const bool need_principal = strict || (sandbox_restricted && required_effects != 0);
                 if (!need_principal) {
-                    record_audit(target, ref_tenant, false, false, false, op);
+                    record_audit(target, ref_tenant, false, false, false, op, required_effects);
                     return true;
                 }
-                // Deny: isolation-deny:unset-principal (SecurityEvent reason
-                // set by Evaluator::check_workspace_isolation).
+                // Deny: isolation-deny:unset-principal (reason dual-written
+                // into SecurityEvent from record_audit — #2388 single path).
                 allowed = false;
                 ++denials;
                 met.tenant_boundary_violation_prevented_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
                 if (strict)
                     met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
-                record_audit(target, ref_tenant, true, false, false, op);
+                record_audit(target, ref_tenant, true, false, false, op, required_effects);
                 return false;
             }
             if (current.allow_cross_tenant) {
-                record_audit(target, ref_tenant, false, false, false, op);
+                record_audit(target, ref_tenant, false, false, false, op, required_effects);
                 return true;
             }
             // Same tenant or unscoped target → ok (still check ref provenance).
@@ -275,7 +310,7 @@ struct WorkspaceIsolationPolicy {
                 if (strict)
                     met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
             }
-            record_audit(target, ref_tenant, !allowed, prov_deny, cap_deny, op);
+            record_audit(target, ref_tenant, !allowed, prov_deny, cap_deny, op, required_effects);
         }
         return allowed;
     }

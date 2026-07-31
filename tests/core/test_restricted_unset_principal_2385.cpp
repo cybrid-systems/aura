@@ -162,10 +162,14 @@ static void ac6_source_and_gate() {
     CHECK(iso.find("required_effects != 0") != std::string::npos,
           "AC6: side-effect gate on unset principal");
 
-    const auto sec = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(sec.find("isolation-deny:unset-principal") != std::string::npos,
+    // #2388: IsolationDeny dual-written from isolation record_audit — reason
+    // lives there (Evaluator no longer re-appends SE).
+    CHECK(iso.find("isolation-deny:unset-principal") != std::string::npos,
           "AC6: SecurityEvent reason isolation-deny:unset-principal");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
     CHECK(sec.find("Issue #2385") != std::string::npos, "AC6: evaluator_security cites #2385");
+    CHECK(sec.find("Issue #2388") != std::string::npos,
+          "AC6: evaluator cites #2388 single SE fold path");
 
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_restricted_unset_principal_2385") != std::string::npos,

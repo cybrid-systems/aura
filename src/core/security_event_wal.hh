@@ -408,6 +408,27 @@ inline bool persist_security_event(SecurityEventKind kind, std::uint64_t tenant_
     return g_security_event_wal().append(rec);
 }
 
+// Issue #2388: single dual-write entry for private capability / isolation
+// audit rings → SecurityEvent ring + optional WAL. Prefer this over
+// separate append + persist at each call site so Agents get one durable
+// trail under wrap (ring 1024 + WAL). WAL off: persist short-circuits
+// (~1 ns bool load, no syscalls — AC3).
+inline void emit_security_event_durable(SecurityEventKind kind, std::uint64_t tenant_id,
+                                        std::uint64_t mutation_id, std::uint64_t epoch,
+                                        std::uint16_t effect_bits, std::string_view op,
+                                        std::string_view reason, bool denied,
+                                        std::int64_t fiber_id = 0) noexcept {
+    using ::aura::core::security_event::append_security_event;
+    using ::aura::core::security_event::g_security_event_ring;
+    append_security_event(g_security_event_ring(), kind, tenant_id, mutation_id, epoch, effect_bits,
+                          op, reason, denied, fiber_id);
+    // Timestamp optional for forensic ordering; 0 is accepted when clock
+    // not needed (WAL still stores fields). Avoid pulling <chrono> into
+    // every capability include — 0 is fine for durability of content.
+    (void)persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, reason,
+                                 denied, fiber_id, /*timestamp_ms=*/0);
+}
+
 struct SecurityEventWalStatsSnapshot {
     std::uint64_t persisted = 0;
     std::uint64_t replay_count = 0;

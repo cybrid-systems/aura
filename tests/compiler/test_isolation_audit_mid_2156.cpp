@@ -192,15 +192,22 @@ int main() {
         (void)epoch;
     }
 
-    // ── AC3: effect path source still uses provenance/seq mid ──
+    // ── AC3: effect/isolation mid sources (#2388 fold + TypedMutation join) ──
     {
         std::println("\n--- AC3: effect path source unchanged ---");
         const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto cap = read_file("src/core/capability_model.hh");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
         CHECK(!sec.empty(), "evaluator_security.cpp readable");
-        CHECK(sec.find("provenance_mutation_id != 0 ? provenance_mutation_id") != std::string::npos,
-              "AC3: effect mid prefers provenance then seq");
+        // #2388: SE mid comes from capability record_audit (prov.mutation_id /
+        // epoch). Evaluator TypedMutationAudit mid prefers provenance then
+        // epoch (not tenant).
+        CHECK(sec.find("provenance_mutation_id != 0") != std::string::npos ||
+                  cap.find("prov.mutation_id != 0") != std::string::npos,
+              "AC3: effect mid prefers provenance then epoch");
         CHECK(sec.find("kIsolationAuditMidIssue") != std::string::npos ||
-                  sec.find("2156") != std::string::npos,
+                  sec.find("2156") != std::string::npos ||
+                  iso.find("kIsolationAuditMidIssue") != std::string::npos,
               "AC3: isolation path cites #2156");
         // Old pollution pattern must be gone.
         CHECK(sec.find("ref_tenant != 0 ? ref_tenant : target") == std::string::npos,
@@ -208,6 +215,9 @@ int main() {
         CHECK(sec.find("capture_security_correlated_audit(mid") != std::string::npos ||
                   sec.find("capture_security_correlated_audit(mid,") != std::string::npos,
               "AC3: isolation uses mid variable");
+        // Isolation dual-write uses Mutation epoch as mid (#2156).
+        CHECK(iso.find("current_mutation_epoch") != std::string::npos,
+              "AC3: isolation record_audit mid from Mutation epoch");
     }
 
     // ── Query surface ──
