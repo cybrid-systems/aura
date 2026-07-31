@@ -26,6 +26,10 @@
 #include <string>
 #include <string_view>
 
+// Issue #2369: force live-closure remap name-fallback off under production.
+// Declared in runtime_shared.h / aura_jit_runtime.cpp; weak stub in bridge stub.
+extern "C" void aura_set_remap_name_fallback_enabled(int v);
+
 namespace aura::compiler::security {
 
 // Issue #2076: free-function sandbox env apply for main() before Evaluator.
@@ -228,6 +232,13 @@ inline void apply_production_security_defaults() noexcept {
         else
             ::aura::compiler::hot_update_registry().set_reemit_boundary_policy(P::Defer);
     }
+
+    // 5c) Issue #2369: live-closure remap sole primary = stable_func_id.
+    //     Force name-fallback rewrite off under production (not sandbox=off).
+    //     Migration tests may re-enable via aura_set_remap_name_fallback_enabled(1)
+    //     only under AURA_SANDBOX=off or after explicitly opting in.
+    if (!dev_off)
+        ::aura_set_remap_name_fallback_enabled(0);
 
     // 6) Issue #2151: hard fiber isolation policy.
     //    Soft default preserves #2055 (same-tenant multi-fiber share grants;

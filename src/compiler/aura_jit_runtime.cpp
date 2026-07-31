@@ -895,11 +895,12 @@ static std::vector<std::uint8_t> g_closure_linear_state;
 // closure_captures consults this as PRIMARY (defuse remains secondary).
 static std::vector<std::uint64_t> g_closure_env_gen;
 
-// Issue #2092: process-global toggle for the legacy name-fallback
-// path in aura_remap_live_closures_after_reemit. Off by default
-// (AC3) — wired hosts set this to 1 only when they want pre-#2092
-// behavior for legacy closures. Atomic for lock-free reads from the
-// remap hot path.
+// Issue #2092 / #2369: process-global toggle for the LEGACY name-fallback
+// rewrite path in aura_remap_live_closures_after_reemit. Off by default
+// (production sole primary = stable_func_id). Enable only for migration
+// tests via aura_set_remap_name_fallback_enabled(1). Production security
+// defaults force off (apply_production_security_defaults / #2369).
+// Atomic for lock-free reads from the remap hot path.
 static std::atomic<bool> g_remap_name_fallback_enabled{false};
 
 extern "C" void aura_set_remap_name_fallback_enabled(int v) {
@@ -1566,25 +1567,33 @@ extern "C" int aura_closure_check_aot_stable_id_policy(int64_t closure_id) noexc
     return 1;
 }
 
-// Issue #2092: live-closure remap after successful reemit, keyed by
-// stable_func_id (NOT display name). Display name is unstable under
-// redefine / gensym / multi-define same name; a name-only match can
-// silently attach an old closure to a new define's stable id (or
-// miss remap for an anonymous lambda that never enters the stable map
-// by name). Primary key = closure's stored stable_func_id (stamped
-// in aura_closure_set_name). Secondary = name fallback (off by
-// default, gated by aura_set_remap_name_fallback_enabled), for
-// legacy closures that never had their stable_func_id stamped.
+// Issue #2092 / #2369: live-closure remap after successful reemit.
+//
+// Contract (Issue #2369 — production sole primary key):
+//   After reemit, a live closure is either:
+//     (A) remapped by stored/backfilled stable_func_id, or
+//     (B) MustDeopt + batch_deopt_for(name) — never name-rewritten.
+//   Name-fallback rewrite is LEGACY ONLY, off by default, gated by
+//   aura_set_remap_name_fallback_enabled (migration tests). Production
+//   security defaults force the flag off (#2369).
+//
+// Display name is unstable under redefine / gensym / multi-define same
+// name; a name-only rewrite can silently attach an old closure to a new
+// define's stable id. Primary key = closure's stored stable_func_id
+// (stamped in aura_closure_set_name). #2175 backfill may stamp sid=0
+// closures from the live name→sid map, then remaps by that sid (still
+// stable_func_id path — not name-fallback rewrite).
+//
 // Hold the exclusive table lock so concurrent calls observe either
 // fully-old or fully-new (func_id + epoch) for each slot (AC4 —
 // preserves #2013 torn-write contract).
 //
 // Issue #2128: two-phase candidate handling —
 //   1) Mark MustDeoptBeforeNextCall on every live closure that matches
-//      the reemit set (stable_id or name→id).
-//   2) Remap when possible and clear the flag; leave the flag set when
-//      remap cannot retarget (e.g. name-match with fallback off) so the
-//      next aura_closure_call force-deopts instead of running old native.
+//      the reemit set (stable_id or name→id candidate).
+//   2) Remap when stable_func_id matches and clear the flag; on miss
+//      keep MustDeopt + batch_deopt_for so the next aura_closure_call
+//      force-deopts instead of running old native.
 extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch) {
@@ -1679,8 +1688,16 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             ++must_deopt_set;
         }
 
-        if (match_id == 0)
-            continue; // name candidate with fallback off — flag stays set
+        if (match_id == 0) {
+            // Issue #2369 / #2233 miss path: no name-based rewrite.
+            // MustDeopt stays set; batch_deopt sibling natives by name;
+            // bump must_deopt_kept so Agents see hit vs miss explicitly.
+            if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
+                aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), new_bridge_epoch);
+            }
+            aura_bump_live_closure_must_deopt_kept_total(1);
+            continue;
+        }
 
         // Atomic-from-callers' view: all fields under exclusive table lock.
         g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);

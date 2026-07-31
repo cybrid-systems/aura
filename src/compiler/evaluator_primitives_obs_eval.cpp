@@ -13849,7 +13849,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             ev.string_heap_.push_back(kDebugDir);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                // #2369 keys expand this surface — capacity 64 for headroom.
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -13887,6 +13888,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 g_hash_tables.push_back(ht);
                 return make_hash(hidx);
             };
+            std::uint64_t name_fb = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
+            }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
                 {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
@@ -13903,6 +13909,17 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"aot-incremental-reemit-stats-lineage", make_int(2095)},
                 {"schema-2252", make_int(2252)},
                 {"issue-2252", make_int(2252)},
+                // Issue #2369: stable_func_id sole primary (production surface).
+                {"live-closure-remap-name-fallback-total",
+                 make_int(static_cast<std::int64_t>(name_fb))},
+                {"live_closure_remap_name_fallback_total",
+                 make_int(static_cast<std::int64_t>(name_fb))},
+                {"remap-name-fallback-enabled",
+                 make_int(static_cast<std::int64_t>(aura_get_remap_name_fallback_enabled()))},
+                {"remap-name-fallback-default-off", make_int(1)},
+                {"stable-func-id-sole-primary-wired", make_int(1)},
+                {"schema-2369", make_int(2369)},
+                {"issue-2369", make_int(2369)},
             };
             return build_hash(kv);
         });
