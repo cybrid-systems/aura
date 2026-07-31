@@ -1914,7 +1914,9 @@ public:
     // Parallel to live slots; resized lazily with size().
     std::vector<std::uint8_t> restamp_touched_;
     // After incremental wrap restamp, enable lazy gen-align on access.
-    mutable bool restamp_lazy_align_enabled_{false};
+    // Issue #2421: atomic (match auto_restamp_pending_ / #2416 dirty flags).
+    // store(true, release) on incremental wrap; load(acquire) on is_valid/make_ref.
+    mutable std::atomic<bool> restamp_lazy_align_enabled_{false};
     // Density threshold: if touched/live > this (basis points), full restamp.
     // Default 3000 = 30%. Configurable for tests.
     std::uint32_t restamp_incremental_density_threshold_bp_{3000};
@@ -6908,7 +6910,9 @@ public:
             // Issue #2122: lazy gen-align after incremental wrap for live
             // (non-free) slots. Free slots keep node_gen_==0 and stay invalid
             // when generation_ != 0 (the common post-wrap case).
-            if (restamp_lazy_align_enabled_ && node_gen_[id] != 0 && !is_free_slot(id)) {
+            // Issue #2421: acquire load pairs with wrap-path release store.
+            if (restamp_lazy_align_enabled_.load(std::memory_order_acquire) && node_gen_[id] != 0 &&
+                !is_free_slot(id)) {
                 // node_gen_ is not declared mutable; cast is intentional for
                 // lazy-align after wrap (const is_valid is the hot path).
                 const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
@@ -7204,8 +7208,10 @@ public:
         // Callers that want provenance should use make_safe_ref().
         // Issue #2122: lazy-align node_gen_ after incremental wrap so
         // ref.gen == node_gen_[id] == generation_ for live slots.
-        if (restamp_lazy_align_enabled_ && id != NULL_NODE && id < node_gen_.size() &&
-            node_gen_[id] != 0 && node_gen_[id] != generation_ && !is_free_slot(id)) {
+        // Issue #2421: acquire load pairs with wrap-path release store.
+        if (restamp_lazy_align_enabled_.load(std::memory_order_acquire) && id != NULL_NODE &&
+            id < node_gen_.size() && node_gen_[id] != 0 && node_gen_[id] != generation_ &&
+            !is_free_slot(id)) {
             const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
             restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -7492,7 +7498,7 @@ public:
         return restamp_lazy_align_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] bool restamp_lazy_align_enabled() const noexcept {
-        return restamp_lazy_align_enabled_;
+        return restamp_lazy_align_enabled_.load(std::memory_order_acquire);
     }
     void set_restamp_incremental_density_threshold_bp(std::uint32_t bp) noexcept {
         restamp_incremental_density_threshold_bp_ = bp > 10000 ? 10000 : bp;
@@ -7616,7 +7622,8 @@ public:
             // Issue #2402: wrap with no dirty under Incremental policy —
             // enable lazy gen-align only (zero eager restamp). wrap_epoch
             // still invalidates pre-wrap StableNodeRefs.
-            restamp_lazy_align_enabled_ = true;
+            // Issue #2421: release so is_valid/make_ref see the enable.
+            restamp_lazy_align_enabled_.store(true, std::memory_order_release);
             restamped = 0;
         } else if (use_incremental) {
             // Issue #2122 / #2402 AC1: restamp only dirty/touched cone.
@@ -7629,7 +7636,7 @@ public:
                 }
             }
             restamp_incremental_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
-            restamp_lazy_align_enabled_ = true;
+            restamp_lazy_align_enabled_.store(true, std::memory_order_release);
         } else {
             // Full live restamp (Auto empty/dense fallback / Full / non-wrap).
             if (wrap_recovery)
@@ -7640,7 +7647,7 @@ public:
                     ++restamped;
                 }
             }
-            restamp_lazy_align_enabled_ = false;
+            restamp_lazy_align_enabled_.store(false, std::memory_order_release);
         }
         // Clear touched window after wrap recovery consume.
         if (wrap_recovery && !restamp_touched_.empty())
