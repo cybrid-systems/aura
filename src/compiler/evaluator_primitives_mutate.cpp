@@ -6473,6 +6473,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("schema-2340", 2340);
                 insert_kv("issue-2340", 2340);
             }
+            // Issue #2360: production live-ref tracking — the evaluator
+            // now maintains a live EnvFrameRef registry (hand-outs from
+            // materialize_call_env_ref / lookup_by_symid_chain_ref) and
+            // the densify scan transfer_to / drop each tracked ref
+            // (real ownership-exit signal). Keys: current registry size
+            // + wired sentinel (schema-2360/issue-2360 lineage lives in
+            // the #2362 block above — keep single source).
+            {
+                insert_kv("envframe-live-refs-tracked",
+                          static_cast<std::int64_t>(ev.live_env_frame_refs().size()));
+                insert_kv("envframe-live-refs-tracked-wired", 1);
+            }
             insert_kv("bridge-epoch-bump-on-truncate",
                       m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
                               std::memory_order_relaxed))

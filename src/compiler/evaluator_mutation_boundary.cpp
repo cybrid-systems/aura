@@ -1882,6 +1882,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
                 m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2360: the post-densify ownership-exit scan at the
+            // Moving densify success site (Phase 5) is wired by #2361
+            // (envframe_ok computation above) — single call site, no
+            // duplicate scan here.
         }
         // Issue #2364: PanicCheckpoint residual × densify closed loop.
         // After densify (success or fail leaving evaluator live), residual

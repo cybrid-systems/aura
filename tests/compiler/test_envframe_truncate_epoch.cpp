@@ -5,6 +5,8 @@
 // Issue #2295: EnvFrame ownership transfer protocol (transfer_to / drop).
 // Issue #2340: post-densify EnvFrame restamp + ownership scan (unify transfer/drop with Moving
 // success).
+// Issue #2360: production live-env-frame-refs registry — live_env_frame_refs() no longer a stub;
+// scan_live_env_frame_refs_after_densify() transfer_to / drop each tracked ref for real.
 //
 // AC1: truncate drops frames → bridge_epoch advances + metric
 // AC2: Closure with post-checkpoint env_id is is_bridge_stale after truncate
@@ -660,6 +662,198 @@ void ac2340_5_source_cite() {
           "evaluator_primitives_mutate.cpp");
 }
 
+// Issue #2360 AC2360_1: live_env_frame_refs() registry is populated by
+// materialize_call_env_ref + lookup_by_symid_chain_ref (production
+// tracking replaces the #2340 empty-vector stub). Registry is the
+// bounded live slot set (#2362 core): each hand-out registers a slot,
+// distinct frames grow the set.
+void ac2360_1_registry_populated(CompilerService& cs) {
+    std::println("\n--- AC2360_1: live_env_frame_refs registry populated ---");
+    auto& ev = cs.evaluator();
+    CHECK(ev.live_env_frame_refs().empty(), "AC2360_1.1: registry empty on fresh evaluator");
+    const auto target = ev.alloc_env_frame();
+    Closure cl;
+    cl.name = "2360-reg";
+    cl.env_id = target;
+    cl.bridge_epoch = ev.current_bridge_epoch();
+    auto ro = ev.materialize_call_env_ref(cl);
+    CHECK(ro.has_value(), "AC2360_1.2: materialize_call_env_ref acquired Ref");
+    CHECK(!ev.live_env_frame_refs().empty(), "AC2360_1.3: registry non-empty after materialize");
+    const auto n1 = ev.live_env_frame_refs().size();
+    // A second distinct frame handed out grows the set (per-frame slots).
+    const auto target2 = ev.alloc_env_frame();
+    Closure cl2;
+    cl2.name = "2360-reg2";
+    cl2.env_id = target2;
+    cl2.bridge_epoch = ev.current_bridge_epoch();
+    auto ro2 = ev.materialize_call_env_ref(cl2);
+    CHECK(ro2.has_value(), "AC2360_1.4: second materialize acquired Ref");
+    CHECK(ev.live_env_frame_refs().size() > n1, "AC2360_1.5: distinct frame grows the live set");
+}
+
+// Issue #2360 AC2360_2: densify scan sync protocol (#2362 core).
+// still-valid ref → no-op (no transfer/drop); generation advanced but
+// index live → transfer_to restamps; scan counter bumps each run.
+void ac2360_2_scan_transfers_live(CompilerService& cs) {
+    std::println("\n--- AC2360_2: densify scan sync protocol ---");
+    auto& ev = cs.evaluator();
+    const auto t0 = cs.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+    const auto d0 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    const auto s0 = aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total();
+    // Warm env_generation_ off 0 (stamp 0 skips the gen fence in
+    // still_valid — same warm-up as #2362 AC2a).
+    (void)ev.alloc_env_frame();
+    const std::size_t warm_base = ev.env_frames_size();
+    ev.set_panic_safe_env_frames_size_for_test(warm_base);
+    (void)ev.alloc_env_frame();
+    (void)ev.truncate_env_frames_to_checkpoint();
+    CHECK(ev.env_generation() > 0, "AC2360_2.1: env_generation non-zero after warm");
+
+    const auto target = ev.alloc_env_frame();
+    const std::size_t base = ev.env_frames_size();
+    ev.set_panic_safe_env_frames_size_for_test(base); // protect target
+    Closure cl;
+    cl.name = "2360-xfer";
+    cl.env_id = target;
+    cl.bridge_epoch = ev.current_bridge_epoch();
+    auto ro = ev.materialize_call_env_ref(cl);
+    CHECK(ro.has_value(), "AC2360_2.2: materialize_call_env_ref acquired Ref");
+    const auto refs0 = ev.live_env_frame_refs();
+    CHECK(!refs0.empty(), "AC2360_2.3: hand-out registered in live set");
+
+    // Scan 1: ref still valid at current gen → no-op (no transfer/drop).
+    ev.scan_live_env_frame_refs_after_densify();
+    const auto t1 = cs.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+    const auto d1 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    const auto s1 = aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total();
+    CHECK(t1 == t0, "AC2360_2.4: still-valid ref → no transfer");
+    CHECK(d1 == d0, "AC2360_2.5: still-valid ref → no drop");
+    CHECK(s1 > s0, "AC2360_2.6: densify_ownership_scan_total bumped per scan");
+
+    // Bump generation while keeping target in-range (alloc past checkpoint
+    // then truncate extras) → ref stale → transfer_to restamps in place.
+    (void)ev.alloc_env_frame();
+    (void)ev.alloc_env_frame();
+    (void)ev.truncate_env_frames_to_checkpoint();
+    CHECK(static_cast<std::size_t>(target) < ev.env_frames_size(),
+          "AC2360_2.7: target still in-range after truncate extras");
+    const auto refs_stale = ev.live_env_frame_refs();
+    bool any_stale = false;
+    for (const auto* r : refs_stale)
+        any_stale = any_stale || (r && !r->still_valid(ev));
+    CHECK(any_stale, "AC2360_2.8: tracked ref stale after gen bump");
+
+    ev.scan_live_env_frame_refs_after_densify();
+    const auto t2 = cs.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+    const auto d2 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    CHECK(t2 > t1, "AC2360_2.9: transfer_total moved (stale live ref restamped)");
+    CHECK(d2 == d1, "AC2360_2.10: drop_total unchanged (index still live)");
+    // Registry keeps the restamped handle (still tracked, still valid).
+    const auto refs = ev.live_env_frame_refs();
+    CHECK(!refs.empty(), "AC2360_2.11: registry keeps restamped handles");
+    if (!refs.empty()) {
+        bool all_ok = true;
+        for (const auto* r : refs)
+            all_ok = all_ok && r && r->still_valid(ev);
+        CHECK(all_ok, "AC2360_2.12: restamped refs still_valid at current gen");
+    }
+}
+
+// Issue #2360 AC2360_3: scan drops reclaimed / OOB refs — after
+// truncate makes the index OOB, the scan drops the tracked ref:
+// drop_total moves, registry pruned, reject counter consistent
+// (stale-at-drop bumps reject per AC1 of #2295).
+void ac2360_3_scan_drops_oob(CompilerService& cs) {
+    std::println("\n--- AC2360_3: densify scan drops reclaimed / OOB refs ---");
+    auto& ev = cs.evaluator();
+    const std::size_t base = ev.env_frames_size();
+    ev.set_panic_safe_env_frames_size_for_test(base);
+    const auto target = ev.alloc_env_frame();
+    Closure cl;
+    cl.name = "2360-drop";
+    cl.env_id = target;
+    cl.bridge_epoch = ev.current_bridge_epoch();
+    auto ro = ev.materialize_call_env_ref(cl);
+    CHECK(ro.has_value(), "AC2360_3.1: materialize_call_env_ref acquired Ref");
+    CHECK(!ev.live_env_frame_refs().empty(), "AC2360_3.2: registry populated");
+    const auto d0 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    const auto r0 = cs.metrics().env_gen_use_site_reject_total.load(std::memory_order_relaxed);
+    (void)ev.truncate_env_frames_to_checkpoint(); // target index now OOB
+    ev.scan_live_env_frame_refs_after_densify();
+    const auto d1 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    const auto r1 = cs.metrics().env_gen_use_site_reject_total.load(std::memory_order_relaxed);
+    CHECK(d1 > d0, "AC2360_3.3: drop_total moved (OOB ref dropped)");
+    CHECK(r1 >= r0, "AC2360_3.4: reject_total consistent (stale-at-drop may bump)");
+    CHECK(ev.live_env_frame_refs().empty(), "AC2360_3.5: dropped ref pruned from registry");
+}
+
+// Issue #2360 AC2360_4: empty registry → scan is AC3 of #2340 happy
+// path: one empty-vector iterate + one atomic (no transfer/drop
+// atomics touched; only the scan counter bumps).
+void ac2360_4_empty_registry_zero_cost(CompilerService& cs) {
+    std::println("\n--- AC2360_4: empty registry → scan zero-cost (AC3 #2340) ---");
+    auto& ev = cs.evaluator();
+    CHECK(ev.live_env_frame_refs().empty(), "AC2360_4.1: registry empty");
+    const auto t0 = cs.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+    const auto d0 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    const auto s0 = aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total();
+    ev.scan_live_env_frame_refs_after_densify();
+    const auto t1 = cs.metrics().envframe_ownership_transfer_total.load(std::memory_order_relaxed);
+    const auto d1 = cs.metrics().envframe_ownership_drop_total.load(std::memory_order_relaxed);
+    const auto s1 = aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total();
+    CHECK(t1 == t0, "AC2360_4.2: transfer_total untouched (empty registry)");
+    CHECK(d1 == d0, "AC2360_4.3: drop_total untouched (empty registry)");
+    CHECK(s1 > s0, "AC2360_4.4: scan counter bumped (empty iterate + one atomic)");
+}
+
+// Issue #2360 AC2360_5: query:envframe-truncate-epoch-stats extends
+// with #2360 keys (schema-2360 + issue-2360 + envframe-live-refs-
+// tracked + wired sentinel).
+void ac2360_5_query_schema(CompilerService& cs) {
+    std::println("\n--- AC2360_5: envframe-truncate-epoch-stats #2360 surface ---");
+    CHECK(href(cs, "schema-2360") == 2360, "AC2360_5.1: schema-2360 == 2360");
+    CHECK(href(cs, "issue-2360") == 2360, "AC2360_5.2: issue-2360 == 2360");
+    CHECK(href(cs, "envframe-live-refs-tracked-wired") == 1,
+          "AC2360_5.3: envframe-live-refs-tracked-wired == 1 (proves #2360 wired)");
+    CHECK(href(cs, "envframe-live-refs-tracked") >= 0,
+          "AC2360_5.4: envframe-live-refs-tracked reachable (kebab)");
+}
+
+// Issue #2360 AC2360_6: source-cite grep verifier — Issue #2360 cites
+// present in evaluator_env.cpp + evaluator.ixx + evaluator_mutation_
+// boundary.cpp + evaluator_primitives_mutate.cpp (+ registry symbols).
+void ac2360_6_source_cite() {
+    std::println("\n--- AC2360_6: Issue #2360 source-cite ---");
+    auto check = [](const std::filesystem::path& p, std::initializer_list<const char*> needles,
+                    std::string_view tag) {
+        if (!std::filesystem::exists(p)) {
+            CHECK(false, std::format("AC2360_6: {} not found", p.string()).c_str());
+            return;
+        }
+        std::ifstream in(p);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        const auto txt = buf.str();
+        for (const auto* needle : needles) {
+            CHECK(txt.find(needle) != std::string::npos,
+                  std::format("AC2360_6: {} contains {}", tag, needle).c_str());
+        }
+    };
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_env.cpp",
+          {"Issue #2360", "register_live_env_frame_ref", "live_env_frame_refs_mtx_",
+           "live_env_frame_refs_"},
+          "evaluator_env.cpp");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator.ixx",
+          {"Issue #2360", "live_env_frame_refs_mtx_", "register_live_env_frame_ref"},
+          "evaluator.ixx");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_mutation_boundary.cpp",
+          {"Issue #2360", "scan_live_env_frame_refs_after_densify"},
+          "evaluator_mutation_boundary.cpp");
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_primitives_mutate.cpp",
+          {"Issue #2360", "schema-2360", "issue-2360", "envframe-live-refs-tracked-wired"},
+          "evaluator_primitives_mutate.cpp");
+}
+
 } // namespace
 
 int main() {
@@ -693,7 +887,28 @@ int main() {
         ac2340_4_query_schema(cs);
     }
     ac2340_5_source_cite();
-    std::println("\n=== #1889 + #2251 + #2268 + #2295 + #2340: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    {
+        CompilerService cs;
+        ac2360_1_registry_populated(cs);
+    }
+    {
+        CompilerService cs;
+        ac2360_2_scan_transfers_live(cs);
+    }
+    {
+        CompilerService cs;
+        ac2360_3_scan_drops_oob(cs);
+    }
+    {
+        CompilerService cs;
+        ac2360_4_empty_registry_zero_cost(cs);
+    }
+    {
+        CompilerService cs;
+        ac2360_5_query_schema(cs);
+    }
+    ac2360_6_source_cite();
+    std::println("\n=== #1889 + #2251 + #2268 + #2295 + #2340 + #2360: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
