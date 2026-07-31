@@ -1383,6 +1383,16 @@ extern "C" void aura_jit_closure_record_safe_fallback(void) {
     }
 }
 
+// Issue #2371: cross-COW soft migrate / hard reject counters.
+extern "C" void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
+    if (aot_metrics())
+        aot_metrics()->cross_cow_soft_migrate_total.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" void aura_bump_cross_cow_hard_reject_total(void) noexcept {
+    if (aot_metrics())
+        aot_metrics()->cross_cow_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 extern "C" std::uint64_t aura_jit_closure_dual_check_total(void) {
     auto* m = aot_metrics();
     return m ? m->jit_closure_dual_check_total.load(std::memory_order_relaxed) : 0;

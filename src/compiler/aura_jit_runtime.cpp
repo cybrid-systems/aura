@@ -1102,6 +1102,99 @@ static void stamp_closure_provenance_locked(size_t cid) {
     g_closure_env_gen[cid] = env_gen;
 }
 
+// Issue #2371: production-default-on soft migrate policy.
+// AURA_CROSS_COW_SOFT_MIGRATE=0 disables; unset / 1 → on.
+static bool cross_cow_soft_migrate_enabled_() noexcept {
+    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE"))
+        return e[0] != '0' && e[0] != '\0';
+    return true;
+}
+
+// Max generation lag for soft migrate (0 = unlimited). Default 4096.
+// Far-behind stamps hard-reject (COW clone long detached from live gen).
+static std::uint64_t cross_cow_soft_migrate_max_drift_() noexcept {
+    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT")) {
+        char* end = nullptr;
+        const auto v = std::strtoull(e, &end, 10);
+        if (end != e)
+            return static_cast<std::uint64_t>(v);
+    }
+    return 4096;
+}
+
+static bool cross_cow_drift_within_cap_(std::uint64_t captured, std::uint64_t current) noexcept {
+    if (current == 0 || captured == 0)
+        return true; // inactive domain or unstamped → restamp OK
+    const auto max_d = cross_cow_soft_migrate_max_drift_();
+    if (max_d == 0)
+        return true;
+    const auto lag = (current > captured) ? (current - captured) : (captured - current);
+    return lag <= max_d;
+}
+
+// Forward decl: remount body (defined later in this TU).
+static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
+                                                  std::uint64_t live_env_gen,
+                                                  std::uint8_t linear_fp);
+static int aura_closure_has_env_or_linear_captures_unlocked(std::int64_t closure_id);
+
+// Issue #2371: exclusive soft restamp of dual-epoch (+ remount). Caller
+// must NOT hold g_closure_table_mtx or workspace read. Returns 1 on success
+// (caller should re-take shared locks and continue native path).
+static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
+    if (!cross_cow_soft_migrate_enabled_())
+        return 0;
+    std::unique_lock<std::shared_mutex> wlock(g_closure_table_mtx);
+    aura_lock_workspace_write();
+    if (cid >= g_closure_func_ids.size()) {
+        aura_unlock_workspace_write();
+        return 0;
+    }
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+        aura_unlock_workspace_write();
+        return 0;
+    }
+    const std::uint64_t cap_bridge =
+        cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+    const std::uint64_t cap_defuse =
+        cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+    const std::uint64_t cur_bridge = aura_aot_func_table_epoch();
+    const std::uint64_t cur_defuse = aura_get_aot_defuse_version();
+    if (!cross_cow_drift_within_cap_(cap_bridge, cur_bridge) ||
+        !cross_cow_drift_within_cap_(cap_defuse, cur_defuse)) {
+        aura_unlock_workspace_write();
+        return 0;
+    }
+    const std::uint8_t lin = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
+    if (lin != 0) {
+        const char* cname = (cid < g_closure_names.size() && !g_closure_names[cid].empty())
+                                ? g_closure_names[cid].c_str()
+                                : nullptr;
+        if (aura_jit_linear_epoch_safety_check(cname, lin, /*opcode=*/0) != 0) {
+            aura_unlock_workspace_write();
+            return 0;
+        }
+    }
+    if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid))) {
+        const auto live_env = aura_get_aot_live_env_frame_version();
+        const auto live_lin = aura_get_aot_live_linear_state_fingerprint();
+        // Align env_gen stamp so remount PRIMARY axis can pass after COW.
+        if (cid >= g_closure_env_gen.size())
+            g_closure_env_gen.resize(g_closure_func_ids.size(), 0);
+        g_closure_env_gen[cid] = live_env;
+        if (aura_remount_closure_captures_unlocked(static_cast<std::int64_t>(cid), live_env,
+                                                   live_lin) == 0) {
+            aura_unlock_workspace_write();
+            return 0;
+        }
+    }
+    stamp_closure_provenance_locked(cid);
+    invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+    aura_bump_cross_cow_soft_migrate_total();
+    aura_unlock_workspace_write();
+    return 1;
+}
+
 // Issue #2272: per-closure env_generation setter (used by restamp
 // on reemit + alloc). cid<0 / OOB is a no-op (returns 0 for OOB read).
 extern "C" void aura_closure_set_env_gen(std::int64_t closure_id, std::uint64_t gen) {
@@ -1980,9 +2073,11 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         }
     }
 
-    // Issue #1508: dual check (bridge_epoch + defuse/env version) before any
-    // JIT dispatch. Every OpApply / OpCall lowers to aura_closure_call, so
-    // this is the JIT "prologue" safety gate. Stale → deopt/refuse (no UAF).
+    // Issue #1508 / #2371: dual check (bridge_epoch + defuse/env version)
+    // before any JIT dispatch. Every OpApply / OpCall lowers to
+    // aura_closure_call, so this is the JIT "prologue" safety gate.
+    // Stale → try soft restamp (cross-COW migrate) when safe; else
+    // hard-reject safe-fallback (no UAF).
     {
         size_t cid = static_cast<size_t>(closure_id);
         const std::uint64_t cap_bridge =
@@ -1992,14 +2087,23 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         // Acquire fence so epoch loads see latest host bumps under steal.
         aura_jit_epoch_acquire_fence();
         if (!aura_is_jit_closure_fresh(cap_bridge, cap_defuse)) {
-            aura_jit_closure_record_stale_deopt();
-            aura_jit_closure_record_safe_fallback();
-            aura_deopt_inc();
-            invalidate_closure_cache_for(closure_id);
+            // Drop shared locks before exclusive soft migrate.
+            tlock.unlock();
             aura_unlock_workspace_read();
-            // Safe fallback: refuse native JIT call (interpreter path
-            // re-enters via host after deopt; never run stale env).
-            return 0;
+            if (try_cross_cow_soft_migrate_(cid) != 0) {
+                // Soft restamp succeeded — re-acquire shared and continue.
+                tlock.lock();
+                aura_lock_workspace_read();
+            } else {
+                aura_bump_cross_cow_hard_reject_total();
+                // Hard reject: invalidate_closure_cache_for takes its own locks.
+                aura_jit_closure_record_stale_deopt();
+                aura_jit_closure_record_safe_fallback();
+                aura_deopt_inc();
+                invalidate_closure_cache_for(closure_id);
+                // Safe fallback: refuse native JIT call (no shared lock held).
+                return 0;
+            }
         }
         // Issue #2129: linear ownership dual-check when stamp is non-zero.
         // Host tracks linear ⇒ refuse native on epoch/frame drift (#2043).

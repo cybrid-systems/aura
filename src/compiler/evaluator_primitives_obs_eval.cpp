@@ -10236,7 +10236,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
         "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             // Capacity must be power-of-two (open-address mask hcap-1).
-            auto* ht = FlatHashTable::create(128); // #1660 AC aliases
+            // #1660 AC aliases + #2371 soft-migrate keys.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10280,6 +10281,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                       m ? L(&m->compiler_closure_safe_fallbacks) : 0);
             // #1604 / #1626: JIT-side dual-check counters (same dashboard).
             insert_kv("jit_closure_dual_check_total", m ? L(&m->jit_closure_dual_check_total) : 0);
+            // Issue #2371: cross-COW soft restamp vs hard-reject.
+            insert_kv("cross-cow-soft-migrate-total", m ? L(&m->cross_cow_soft_migrate_total) : 0);
+            insert_kv("cross_cow_soft_migrate_total", m ? L(&m->cross_cow_soft_migrate_total) : 0);
+            insert_kv("cross-cow-hard-reject-total", m ? L(&m->cross_cow_hard_reject_total) : 0);
+            insert_kv("cross_cow_hard_reject_total", m ? L(&m->cross_cow_hard_reject_total) : 0);
+            insert_kv("cross-cow-soft-migrate-wired", 1);
+            insert_kv("schema-2371", 2371);
+            insert_kv("issue-2371", 2371);
             insert_kv("jit_closure_stale_deopt_total",
                       m ? L(&m->jit_closure_stale_deopt_total) : 0);
             insert_kv("jit_closure_safe_fallbacks", m ? L(&m->jit_closure_safe_fallbacks) : 0);

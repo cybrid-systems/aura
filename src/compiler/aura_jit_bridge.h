@@ -525,6 +525,9 @@ void aura_jit_closure_record_safe_fallback(void);
 std::uint64_t aura_jit_closure_dual_check_total(void);
 std::uint64_t aura_jit_closure_stale_deopt_total(void);
 std::uint64_t aura_jit_closure_safe_fallbacks(void);
+// Issue #2371: cross-COW soft restamp vs hard-reject counters.
+void aura_bump_cross_cow_soft_migrate_total(void) noexcept;
+void aura_bump_cross_cow_hard_reject_total(void) noexcept;
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
 
