@@ -3032,6 +3032,11 @@ aura_add_issue_test(test_stringpool_buf_fragmentation_lock_2409)
 aura_issue_test_link_llvm_jit(test_stringpool_buf_fragmentation_lock_2409)
 add_dependencies(all_test_issue_targets test_stringpool_buf_fragmentation_lock_2409)
 
+# Issue #2410: meta(NodeTag) bounds-checked OOB sentinel.
+aura_add_issue_test(test_node_meta_bounds_2410)
+aura_issue_test_link_llvm_jit(test_node_meta_bounds_2410)
+add_dependencies(all_test_issue_targets test_node_meta_bounds_2410)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

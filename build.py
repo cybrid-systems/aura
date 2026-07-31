@@ -2873,6 +2873,24 @@ def cmd_stringpool_buf_fragmentation_lock_coverage():
     return 0
 
 
+def cmd_node_meta_bounds_coverage():
+    """Issue #2410: meta(NodeTag) bounds-checked OOB sentinel.
+
+    Invalid tags return kNodeMeta[0]; static_assert table size == Class.
+    """
+    print(f"{B}=== node meta bounds coverage (#2410) ==={N}")
+    script = ROOT / "scripts" / "check_node_meta_bounds_2410.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("node meta bounds (#2410) coverage contract rows failed")
+        return 1
+    ok("node meta bounds (#2410) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3804,6 +3822,7 @@ def cmd_gate():
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()
+        or cmd_node_meta_bounds_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
