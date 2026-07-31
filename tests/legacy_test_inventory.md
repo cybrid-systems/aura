@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 569 | Preferred destination suites |
-| **Total scanned** | **569** | |
+| `tests/core/test_*.cpp` | 570 | Preferred destination suites |
+| **Total scanned** | **570** | |
 
 ### Related artifacts
 
@@ -35,7 +35,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 61 | 61 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 160 | 160 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 60 | 60 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 13 | 13 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 22 | 22 | P2 — small-medium; soa_batch precedent |
@@ -265,6 +265,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp`
 - `tests/compiler/test_defuse_version_closed_loop.cpp`
 - `tests/compiler/test_densify_envframe_ok_2361.cpp`
+- `tests/compiler/test_densify_last_call_axes_2376.cpp`
 - `tests/compiler/test_densify_remap_pairing_2368.cpp`
 - `tests/compiler/test_densify_root_closure_closed_loop_2365.cpp`
 - `tests/core/test_dep_graph_concurrent.cpp`
@@ -1062,15 +1063,16 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held_2200.cpp` (#2200) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (13)
+### `linear_ownership` — Linear ownership / borrow / consume (14)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (13)
+#### domain/ (14)
 
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_densify_last_call_axes_2376.cpp` (#2376) [domain_suite, theme_compiler] — for envframe + closure remount axes (seal #2361/#2365 last-call contract).
 - `tests/compiler/test_hardware_resource_linear_ownership.cpp` (—) [domain_suite, theme_compiler] — test_hardware_resource_linear_ownership.cpp — Issue #306:
 - `tests/compiler/test_lifetime_contract_snapshot_2300.cpp` (#2300) [domain_suite, theme_compiler] — for pin / linear / EnvFrame / GC-defer / residual contract.
 - `tests/compiler/test_linear_escape_commit_hardblock_2108.cpp` (#2108) [domain_suite, theme_compiler] — AC1: Cross-batch escape → commit fails; blocked + escape counters
