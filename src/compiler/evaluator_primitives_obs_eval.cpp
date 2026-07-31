@@ -6094,6 +6094,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"mutation-hold-slo-wired", make_int(1)},
                 {"schema-2349", make_int(2349)},
                 {"issue-2349", make_int(2349)},
+                // Issue #2405: predictive estimate surface (separate pure query);
+                // discovery key here so Agents find hold-estimate from hold-stats.
+                {"hold-estimate-wired", make_int(1)},
+                {"schema-2405", make_int(2405)},
+                {"issue-2405", make_int(2405)},
                 // Issue #2314: residual defer cleared on steal (orphan
                 // interlock). Mirrors query:gc-defer-reason-stats (which
                 // also exposes the same counter for cross-subsystem view).
@@ -6104,6 +6109,136 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"residual-defer-steal-interlock-wired", make_int(1)},
                 {"schema-2314", make_int(2314)},
                 {"issue-2314", make_int(2314)},
+            };
+            return build_hash(kv);
+        });
+
+    // Issue #2405: (query:mutation-hold-estimate) — predictive pure query
+    // for Agent batch planning. Surfaces recent outermost hold p50/p99,
+    // live budget/slo config, dirty-scope estimate, and recommend-split
+    // (estimate > 0.7 * budget). Soft: no side effects; zeros when no
+    // recent holds / empty dirty. Does not change Guard dtor / SLO policy.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-hold-estimate", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const auto budget =
+                static_cast<std::int64_t>(aura::compiler::mutation_hold_budget_us());
+            const auto slo = static_cast<std::int64_t>(aura::compiler::mutation_hold_slo_us());
+
+            // Snapshot recent hold samples (ring).
+            std::array<std::uint64_t, CompilerMetrics::kMutationHoldSampleRing> samples{};
+            std::size_t n = 0;
+            if (m) {
+                const auto total = m->mutation_hold_sample_count.load(std::memory_order_relaxed);
+                n = static_cast<std::size_t>(std::min(
+                    total, static_cast<std::uint64_t>(CompilerMetrics::kMutationHoldSampleRing)));
+                if (n > 0) {
+                    if (total < CompilerMetrics::kMutationHoldSampleRing) {
+                        for (std::size_t i = 0; i < n; ++i)
+                            samples[i] =
+                                m->mutation_hold_sample_ring[i].load(std::memory_order_relaxed);
+                    } else {
+                        // Full ring: all slots valid; order does not matter for percentiles.
+                        for (std::size_t i = 0; i < CompilerMetrics::kMutationHoldSampleRing; ++i)
+                            samples[i] =
+                                m->mutation_hold_sample_ring[i].load(std::memory_order_relaxed);
+                        n = CompilerMetrics::kMutationHoldSampleRing;
+                    }
+                }
+            }
+            std::int64_t p50 = 0;
+            std::int64_t p99 = 0;
+            std::int64_t avg = 0;
+            if (n > 0) {
+                std::sort(samples.begin(), samples.begin() + static_cast<std::ptrdiff_t>(n));
+                p50 = static_cast<std::int64_t>(samples[(n - 1) / 2]);
+                const auto p99_idx =
+                    static_cast<std::size_t>((static_cast<std::uint64_t>(n) * 99 + 99) / 100);
+                p99 = static_cast<std::int64_t>(samples[std::min(p99_idx, n - 1)]);
+                std::uint64_t sum = 0;
+                for (std::size_t i = 0; i < n; ++i)
+                    sum += samples[i];
+                avg = static_cast<std::int64_t>(sum / n);
+            }
+
+            // Dirty-scope estimates (cheap live read; zero when no workspace).
+            std::int64_t dirty_nodes = 0;
+            std::int64_t dirty_upward_calls = 0;
+            if (auto* ws = ev.workspace_flat()) {
+                dirty_nodes = static_cast<std::int64_t>(ws->dirty_nodes_in_range(0, ws->size()));
+                dirty_upward_calls = static_cast<std::int64_t>(ws->mark_dirty_upward_call_count());
+            }
+
+            // Heuristic expected hold for next outermost batch:
+            // prefer p99 when samples exist; else 0 (soft empty).
+            // Mild dirty scale: +1% per 10 dirty nodes (capped ×2).
+            std::int64_t estimate = p99 > 0 ? p99 : avg;
+            if (estimate > 0 && dirty_nodes > 0) {
+                const auto scale_bp =
+                    std::min<std::int64_t>(10000, 10000 + (dirty_nodes / 10) * 100);
+                estimate = (estimate * scale_bp) / 10000;
+            }
+            // recommend-split when estimate > 0.7 * budget (and budget > 0).
+            const std::int64_t recommend = (budget > 0 && estimate * 10 > budget * 7) ? 1 : 0;
+
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"dirty-node-estimate", make_int(dirty_nodes)},
+                {"dirty-upward-call-estimate", make_int(dirty_upward_calls)},
+                {"hold-us-p50", make_int(p50)},
+                {"hold-us-p99", make_int(p99)},
+                {"hold-us-avg", make_int(avg)},
+                {"hold-sample-count", make_int(static_cast<std::int64_t>(n))},
+                {"hold-us-estimate", make_int(estimate)},
+                {"budget-us", make_int(budget)},
+                {"slo-us", make_int(slo)},
+                {"recommend-split", make_int(recommend)},
+                {"hold-estimate-wired", make_int(1)},
+                {"schema-2405", make_int(2405)},
+                {"issue-2405", make_int(2405)},
+                {"schema", make_int(2405)},
+                {"active", make_int(1)},
             };
             return build_hash(kv);
         });

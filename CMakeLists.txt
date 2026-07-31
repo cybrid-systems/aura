@@ -2779,6 +2779,11 @@ aura_add_issue_test(test_mutation_hold_slo_2349)
 aura_issue_test_link_llvm_jit(test_mutation_hold_slo_2349)
 add_dependencies(all_test_issue_targets test_mutation_hold_slo_2349)
 
+# Issue #2405: query:mutation-hold-estimate Agent batch planning.
+aura_add_issue_test(test_mutation_hold_estimate_2405)
+aura_issue_test_link_llvm_jit(test_mutation_hold_estimate_2405)
+add_dependencies(all_test_issue_targets test_mutation_hold_estimate_2405)
+
 # Issue #2350: query:type-system-health single Agent score.
 aura_add_issue_test(test_type_system_health_2350)
 aura_issue_test_link_llvm_jit(test_type_system_health_2350)

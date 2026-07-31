@@ -7577,6 +7577,13 @@ struct CompilerMetrics {
     // from long_mutation_forced_abort_total (#2199 opt-in STRICT) and
     // mutation_hold_over_budget_total (#2313 signal-only).
     std::atomic<std::uint64_t> mutation_hold_slo_violation_total{0}; // #2349
+    // Issue #2405: recent outermost hold sample ring for Agent batch
+    // planning (query:mutation-hold-estimate p50/p99). Lock-free: write
+    // at dtor, sort-on-read. Zero cost when no holds (count stays 0).
+    static constexpr std::size_t kMutationHoldSampleRing = 32;
+    std::atomic<std::uint64_t> mutation_hold_sample_ring[kMutationHoldSampleRing]{};
+    std::atomic<std::uint64_t> mutation_hold_sample_seq{0};   // write index
+    std::atomic<std::uint64_t> mutation_hold_sample_count{0}; // total samples ever
     // Issue #1373: cross-fiber yield + hold observability (Agent dashboard)
     //   - yield_same_thread: yield while boundary held, same OS thread
     //   - cross_thread_migration: yield checkpoint resume on different thread
