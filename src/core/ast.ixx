@@ -474,13 +474,7 @@ public:
     [[nodiscard]] std::size_t string_bytes_total() const noexcept {
         std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
         g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
-        std::size_t total = 1; // leading \0
-        for (std::uint32_t i = 0; i < hash_capacity_; ++i) {
-            if (hash_tbl_[i] != INVALID_SYM) {
-                total += resolve_unlocked(hash_tbl_[i]).size() + 1; // +1 for NUL
-            }
-        }
-        return total;
+        return string_bytes_total_unlocked();
     }
     // Total memory footprint of this StringPool (buf_ + hash_tbl_ +
     // entry_count_ + hash_capacity_ bookkeeping). For the
@@ -494,10 +488,34 @@ public:
     // appended strings dominate; older strings can leave gaps if the
     // pool has been reset-then-rebuilt. In typical steady state
     // (no reset), buf_ grows monotonically and fragmentation ~0.
+    //
+    // Issue #2409: sample buf_.size() and string_bytes under ONE
+    // shared_lock. Previously data_size() was lock-free while
+    // string_bytes_total() locked separately — concurrent intern
+    // could make (ds - sb)/ds inconsistent (or >1). Also closed the
+    // F1 UAF propagation from pre-#2408 string_bytes_total.
     [[nodiscard]] double buf_fragmentation() const noexcept {
-        std::size_t ds = data_size();
-        return ds == 0 ? 0.0
-                       : static_cast<double>(ds - string_bytes_total()) / static_cast<double>(ds);
+        std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
+        g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
+        const std::size_t ds = buf_.size();
+        if (ds == 0)
+            return 0.0;
+        const std::size_t sb = string_bytes_total_unlocked();
+        // Under the same lock ds >= live string packing; clamp for AC2.
+        if (sb >= ds)
+            return 0.0;
+        return static_cast<double>(ds - sb) / static_cast<double>(ds);
+    }
+
+    // Issue #2408 / #2409: string_bytes walk under caller-held lock.
+    [[nodiscard]] std::size_t string_bytes_total_unlocked() const noexcept {
+        std::size_t total = 1; // leading \0
+        for (std::uint32_t i = 0; i < hash_capacity_; ++i) {
+            if (hash_tbl_[i] != INVALID_SYM) {
+                total += resolve_unlocked(hash_tbl_[i]).size() + 1; // +1 for NUL
+            }
+        }
+        return total;
     }
 
     // Issue #187 (P0): conservative compact() that rebuilds the
