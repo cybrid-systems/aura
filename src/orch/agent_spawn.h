@@ -97,6 +97,38 @@ inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
         return kMailboxBpAdmitThresholdDefault;
     }
 }
+
+// Issue #2465: mailbox BP counter decay window. Without decay,
+// mailbox_bp_recent_total is process-wide monotonic forever —
+// once a deployment sets AURA_ORCH_BP_ADMIT_THRESHOLD > 0, the
+// first BP event causes permanent admission denial (DoS for AI
+// agent frameworks). Periodic decay reset (simplest fix; matches
+// the existing kJoinDrainResidualHardMsDefault env-override
+// pattern from #2155 / #2227).
+//
+// Default = 30s (matches kJoinDrainResidualHardMsDefault).
+// Env override: AURA_ORCH_BP_DECAY_MS=N (0 disables decay; counter
+// is then truly monotonic forever — only useful for diagnostic
+// captures, not admission gating).
+inline constexpr std::uint64_t kMailboxBpDecayMsDefault = 30000;
+
+inline std::uint64_t resolve_mailbox_bp_decay_ms() noexcept {
+    const char* env = std::getenv("AURA_ORCH_BP_DECAY_MS");
+    if (!env || !*env)
+        return kMailboxBpDecayMsDefault;
+    try {
+        return static_cast<std::uint64_t>(std::stoull(env));
+    } catch (...) {
+        return kMailboxBpDecayMsDefault;
+    }
+}
+
+// Last decay timestamp in microseconds (orch_now_us time base).
+// 0 means "never decayed" — the first decay check after process
+// start is a no-op (the counter is also 0 at that point).
+// compare_exchange_strong in the preflight ensures only one thread
+// does the reset per decay window.
+inline std::atomic<std::uint64_t> g_mailbox_bp_last_decay_us{0};
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
 
@@ -598,6 +630,27 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // (quota_dimension = "fibers" / "memory"); BP is a separate
     // admission dimension so Agent frameworks can branch on it.
     if (spec.attach_mailbox) {
+        // Issue #2465: decay reset before reading the counter.
+        // Without decay, the first BP event in a process's lifetime
+        // permanently denies every subsequent spawn_agent_with_mailbox
+        // call (DoS for AI agent frameworks). Periodic decay reset
+        // (default 30s, env AURA_ORCH_BP_DECAY_MS) keeps the metric
+        // meaningful and the admission gate bounded. compare_exchange_strong
+        // claims the decay slot so concurrent preflights only reset once
+        // per window. Counter can race-increment between reset and read
+        // below — acceptable since admission is best-effort: a one-off
+        // admit-when-should-deny is far better than permanent-denial.
+        const auto decay_ms = resolve_mailbox_bp_decay_ms();
+        if (decay_ms > 0) {
+            const auto now_us = orch_now_us();
+            auto last_us = g_mailbox_bp_last_decay_us.load(std::memory_order_acquire);
+            if (last_us == 0 || now_us - last_us > decay_ms * 1000) {
+                if (g_mailbox_bp_last_decay_us.compare_exchange_strong(last_us, now_us,
+                                                                       std::memory_order_acq_rel)) {
+                    g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
+                }
+            }
+        }
         const auto bp_recent =
             g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
         const auto threshold = resolve_mailbox_bp_admit_threshold();

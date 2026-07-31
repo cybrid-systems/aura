@@ -3246,6 +3246,14 @@ aura_add_issue_test(test_mailbox_bp_admit_2228)
 aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_2228)
 add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 
+# Issue #2465: decay window on mailbox_bp_recent_total so the #2228 admission
+# gate doesn't permanently deny every spawn_agent_with_mailbox after the first
+# BP event. Default 30s (matches kJoinDrainResidualHardMsDefault); env override
+# AURA_ORCH_BP_DECAY_MS (0 disables decay; counter then truly monotonic).
+aura_add_issue_test(test_orch_admission_decay)
+aura_issue_test_link_llvm_jit(test_orch_admission_decay)
+add_dependencies(all_test_issue_targets test_orch_admission_decay)
+
 # Issue #2188: forbid blocking mailbox recv under live MutationBoundary.
 aura_add_issue_test(test_mailbox_recv_mutation_boundary_2188)
 aura_issue_test_link_llvm_jit(test_mailbox_recv_mutation_boundary_2188)
