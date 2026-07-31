@@ -3167,6 +3167,11 @@ aura_add_issue_test(test_post_compact_lifecycle_2436)
 aura_issue_test_link_llvm_jit(test_post_compact_lifecycle_2436)
 add_dependencies(all_test_issue_targets test_post_compact_lifecycle_2436)
 
+# Issue #2437: reconcile_gc_defer_bits_after_clear CAS fence + repair
+aura_add_issue_test(test_gc_defer_reconcile_cas_2437)
+aura_issue_test_link_llvm_jit(test_gc_defer_reconcile_cas_2437)
+add_dependencies(all_test_issue_targets test_gc_defer_reconcile_cas_2437)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

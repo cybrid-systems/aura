@@ -837,23 +837,47 @@ inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
 // Multi-eval + high-frequency steal can leave the Panic bit set while
 // process depth has already drained to 0 (arm/release race lag). Returns
 // the number of bits force-cleared (0 = already consistent).
+//
+// Issue #2437: check-then-act TOCTOU — a concurrent arm (depth 0→1 + set
+// Panic bit) between the depth==0 load and release_defer could have its
+// just-set bit cleared. Fix: CAS fence on depth (0→0 fails if armed) +
+// post-clear repair (re-arm Panic bit if depth became non-zero).
 inline std::atomic<std::uint64_t> g_gc_defer_bit_reconcile_total{0};
+// Issue #2437: reconcile aborted because concurrent arm won (bit restored).
+inline std::atomic<std::uint64_t> g_gc_defer_bit_reconcile_aborted_total{0};
 [[nodiscard]] inline std::uint64_t gc_defer_bit_reconcile_total() noexcept {
     return g_gc_defer_bit_reconcile_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t gc_defer_bit_reconcile_aborted_total() noexcept {
+    return g_gc_defer_bit_reconcile_aborted_total.load(std::memory_order_relaxed);
+}
 
 [[nodiscard]] inline std::uint32_t reconcile_gc_defer_bits_after_clear() noexcept {
-    std::uint32_t fixed = 0;
     // Panic bit must track process-wide panic depth.
-    if (g_gc_defer_pending_panic_depth.load(std::memory_order_acquire) == 0) {
-        const auto mask = g_gc_defer_reasons.load(std::memory_order_acquire);
-        if ((mask & static_cast<std::uint32_t>(GcDeferReason::Panic)) != 0) {
-            (void)release_defer(GcDeferReason::Panic);
-            g_gc_defer_bit_reconcile_total.fetch_add(1, std::memory_order_relaxed);
-            ++fixed;
-        }
+    //
+    // Issue #2437 AC1: CAS 0→0 on depth — if a concurrent arm already moved
+    // depth off zero, CAS fails and we leave the Panic bit alone.
+    auto depth_expected = std::uint32_t{0};
+    if (!g_gc_defer_pending_panic_depth.compare_exchange_strong(depth_expected, std::uint32_t{0},
+                                                                std::memory_order_acq_rel,
+                                                                std::memory_order_acquire)) {
+        // depth > 0: someone holds Panic — do not clear.
+        return 0;
     }
-    return fixed;
+    // Depth was 0 at CAS. Still possible concurrent arm *after* CAS.
+    const auto mask = g_gc_defer_reasons.load(std::memory_order_acquire);
+    if ((mask & static_cast<std::uint32_t>(GcDeferReason::Panic)) == 0)
+        return 0;
+    (void)release_defer(GcDeferReason::Panic);
+    // Repair: if concurrent arm raised depth after our clear, restore bit
+    // so (depth>0) ⇒ Panic bit set. Do not count as a successful reconcile.
+    if (g_gc_defer_pending_panic_depth.load(std::memory_order_acquire) > 0) {
+        (void)arm_defer(GcDeferReason::Panic);
+        g_gc_defer_bit_reconcile_aborted_total.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+    g_gc_defer_bit_reconcile_total.fetch_add(1, std::memory_order_relaxed);
+    return 1;
 }
 
 // Issue #2296: Phase-5 Clear / multi-eval force-clear for one evaluator.
