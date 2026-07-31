@@ -1823,47 +1823,35 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                               : false;
         densify_consistency.linear_ok = linear_type_ok;
         densify_consistency.type_ok = linear_type_ok;
-        // Issue #2365: densify-success closed-loop (document order — do not
-        // reorder). Soft / no Moving densify → root_remap / closure /
-        // envframe vacuous true (zero extra cost). After Moving densify:
-        //   1 RootRemap (inside live_compact) → last_root_remap_any_fail
+        // Issue #2365 / #2368: densify-success closed-loop. Soft / no Moving
+        // densify → root_remap / closure / envframe vacuous true (zero cost).
+        // Moving + pin held → force_densify_remap_pairing() encodes permanent
+        // order (do not open-code steps 3–5 here — pairing is never optional):
+        //   1 RootRemap probe (inside densify) → last_root_remap_any_fail
         //   2 pin verify (pin_contract_held above)
-        //   3 EnvFrame live-ref transfer (scan_live_env_frame_refs)
-        //   4 closure remount scan (scan_live_closures only_if_moved)
-        //   5 dual-epoch restamp (revalidate_dual_epoch_after_densify)
-        //   6 report axes from last-call probes
-        // Issue #2361: real envframe_ok (stop forcing true) remains step 3+6.
+        //   3 EnvFrame live-ref transfer
+        //   4 closure remount scan
+        //   5 dual-epoch restamp (always last before report)
+        //   6 report axes from pairing result + linear_type_ok
+        // Issue #2361: real envframe_ok remains ownership scan + dual-epoch.
         if (had_moving_densify && pin_contract_held) {
-            // (1) RootRemap last-call — densify's run_root_remap_pass result.
-            densify_consistency.root_remap_ok = !aura::compiler::last_root_remap_any_fail();
-
-            // (4) closure remount: last-call fail delta (not process-lifetime).
-            const auto cl_fail0 = ev_->get_closure_capture_cell_remap_fail_total();
-            (void)ev_->scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
-                                                              /*only_if_moved=*/true);
-            const auto cl_fail1 = ev_->get_closure_capture_cell_remap_fail_total();
-
-            // (5) dual-epoch restamp under densify generation stamp.
-            const bool dual_ok = ev_->revalidate_dual_epoch_after_densify();
-            densify_consistency.closure_remount_ok = (cl_fail1 == cl_fail0) && dual_ok;
-
-            // (3) EnvFrame live-ref ownership transfer (#2360/#2362).
-            using aura::core::envframe_lifetime::
-                envframe_lifetime_densify_ownership_scan_fail_total;
-            using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
-            const auto scan0 = envframe_lifetime_densify_ownership_scan_total();
-            const auto fail0 = envframe_lifetime_densify_ownership_scan_fail_total();
-            ev_->scan_live_env_frame_refs_after_densify();
-            const auto scan1 = envframe_lifetime_densify_ownership_scan_total();
-            const auto fail1 = envframe_lifetime_densify_ownership_scan_fail_total();
-            densify_consistency.envframe_ok =
-                (scan1 > scan0) && (fail1 == fail0) && linear_type_ok && dual_ok;
+            // Issue #2368: single forced pairing entry (order encoded in body).
+            const auto pairing = ev_->force_densify_remap_pairing();
+            densify_consistency.root_remap_ok = pairing.root_remap_ok;
+            densify_consistency.closure_remount_ok = pairing.closure_remount_ok;
+            densify_consistency.envframe_ok = pairing.envframe_ok && linear_type_ok;
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
+            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
         } else {
             // Soft / empty densify / pin fail: vacuous axes (do not read
             // stale last_root_remap or cumulative closure fails).
             densify_consistency.root_remap_ok = true;
             densify_consistency.closure_remount_ok = true;
             densify_consistency.envframe_ok = true;
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+            // Soft never forced pairing (agents distinguish Soft vacuous
+            // from Moving forced-ok).
+            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
         }
         // Publish last densify axes for query:lifetime-contract-snapshot.
         aura::core::densify_consistency::note_last_densify_root_remap_ok(

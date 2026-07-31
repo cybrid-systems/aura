@@ -128,10 +128,11 @@ static void ac3_dual_epoch_closure() {
     CHECK(std::string_view(r.force_reason()) == "closure", "AC3: force_reason closure");
     note_last_densify_closure_remount_ok(true);
 
-    // Order constants present in densify_consistency_report.h
+    // Order constants present in densify_consistency_report.h (#2365/#2368)
     const auto dcr = read_file("src/core/densify_consistency_report.h");
-    CHECK(dcr.find("Issue #2365: densify-success closed-loop order") != std::string::npos,
+    CHECK(dcr.find("densify-success closed-loop order") != std::string::npos,
           "AC3: order documented in densify_consistency_report.h");
+    CHECK(dcr.find("Issue #2365") != std::string::npos, "AC3: #2365 lineage");
     CHECK(dcr.find("RootRemapPass") != std::string::npos, "AC3: step1 RootRemap");
     CHECK(dcr.find("dual-epoch restamp") != std::string::npos, "AC3: step5 dual-epoch");
 }
@@ -169,18 +170,19 @@ static void ac5_source_cite() {
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
 
     CHECK(emb.find("Issue #2365") != std::string::npos, "AC5: Phase 5 cites #2365");
-    CHECK(emb.find("revalidate_dual_epoch_after_densify") != std::string::npos,
-          "AC5: Phase 5 dual-epoch");
-    CHECK(emb.find("scan_live_closures_for_linear_captures") != std::string::npos,
-          "AC5: Phase 5 closure remount scan");
+    // #2368 folds remount + dual-epoch into force_densify_remap_pairing().
+    CHECK(emb.find("force_densify_remap_pairing") != std::string::npos,
+          "AC5: Phase 5 forced pairing (#2368)");
+    CHECK(env.find("revalidate_dual_epoch_after_densify") != std::string::npos,
+          "AC5: dual-epoch impl");
+    CHECK(env.find("scan_live_closures_for_linear_captures") != std::string::npos,
+          "AC5: closure remount in force pairing");
     CHECK(emb.find("note_last_densify_root_remap_ok") != std::string::npos, "AC5: publish root");
     CHECK(emb.find("note_last_densify_closure_remount_ok") != std::string::npos,
           "AC5: publish closure");
     CHECK(emb.find("root_remap_ok = true") != std::string::npos ||
               emb.find("root_remap_ok = true;") != std::string::npos,
           "AC5: Soft vacuous root_remap");
-    CHECK(env.find("revalidate_dual_epoch_after_densify") != std::string::npos,
-          "AC5: dual-epoch impl");
     CHECK(dcr.find("last_densify_root_remap_ok") != std::string::npos, "AC5: last root accessor");
     CHECK(dcr.find("last_densify_closure_remount_ok") != std::string::npos,
           "AC5: last closure accessor");

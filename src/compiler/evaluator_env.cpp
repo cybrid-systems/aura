@@ -7,14 +7,16 @@ module;
 #include "observability_metrics.h"
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
+#include "core/densify_consistency_report.h" // Issue #2368: DensifyRemapPairingResult
 
 module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
 import aura.core.error;
-import aura.core.envframe_lifetime; // Issue #2164: hold-pin compact gate
-import aura.core.lifetime_pin;      // Issue #2353: linear_root_snapshot for revalidate
+import aura.core.envframe_lifetime;   // Issue #2164: hold-pin compact gate
+import aura.core.lifetime_pin;        // Issue #2353: linear_root_snapshot for revalidate
+import aura.compiler.root_remap_pass; // Issue #2368: last_root_remap_any_fail
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -2684,6 +2686,49 @@ bool Evaluator::revalidate_dual_epoch_after_densify() noexcept {
     }
     const auto desync1 = envframe_desync_detected_.load(std::memory_order_relaxed);
     return ok && (desync1 == desync0);
+}
+
+// Issue #2368: force densify remap-context pairing. Single Moving-success
+// entry that encodes the permanent order so future changes cannot skip or
+// reorder into a partial-remap window:
+//   1 RootRemap probe (remaps already ran inside densify)
+//   2 EnvFrame live-ref transfer
+//   3 closure remount scan
+//   4 dual-epoch restamp (always last before report axes)
+// Soft densify never calls this (Phase 5 leaves axes vacuous true).
+aura::core::densify_consistency::DensifyRemapPairingResult
+Evaluator::force_densify_remap_pairing() noexcept {
+    using aura::core::densify_consistency::DensifyRemapPairingResult;
+    DensifyRemapPairingResult r;
+    r.forced = true;
+
+    // (1) RootRemap last-call probe — densify's run_root_remap_pass result.
+    r.root_remap_ok = !last_root_remap_any_fail();
+
+    // (2) EnvFrame live-ref ownership transfer (#2360/#2362).
+    using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_fail_total;
+    using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
+    const auto scan0 = envframe_lifetime_densify_ownership_scan_total();
+    const auto fail0 = envframe_lifetime_densify_ownership_scan_fail_total();
+    scan_live_env_frame_refs_after_densify();
+    const auto scan1 = envframe_lifetime_densify_ownership_scan_total();
+    const auto fail1 = envframe_lifetime_densify_ownership_scan_fail_total();
+    const bool env_scan_ok = (scan1 > scan0) && (fail1 == fail0);
+
+    // (3) closure remount: last-call fail delta (not process-lifetime).
+    const auto cl_fail0 = get_closure_capture_cell_remap_fail_total();
+    (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                 /*only_if_moved=*/true);
+    const auto cl_fail1 = get_closure_capture_cell_remap_fail_total();
+    const bool cl_ok = (cl_fail1 == cl_fail0);
+
+    // (4) dual-epoch restamp — always last under densify generation stamp.
+    r.dual_epoch_ok = revalidate_dual_epoch_after_densify();
+
+    // Axes from real probes; dual-epoch feeds remount + envframe fail-closed.
+    r.envframe_ok = env_scan_ok && r.dual_epoch_ok;
+    r.closure_remount_ok = cl_ok && r.dual_epoch_ok;
+    return r;
 }
 
 void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,

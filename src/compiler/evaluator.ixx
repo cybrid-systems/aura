@@ -21,7 +21,8 @@ module;
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
-#include "core/resource_quota.hh" // Issue #1579
+#include "core/densify_consistency_report.h" // Issue #2368: DensifyRemapPairingResult
+#include "core/resource_quota.hh"            // Issue #1579
 // Issue #1416: capability names for invoke_prim_with_telemetry gate
 #include "security_capabilities.h"
 // Issue #2057 / #2152: side-effect name inference + dispatch required_effects
@@ -3689,6 +3690,16 @@ public:
     // beyond the per-frame asserted counter. Returns false if any
     // frame desyncs (envframe_desync_detected_ advances).
     [[nodiscard]] bool revalidate_dual_epoch_after_densify() noexcept;
+    // Issue #2368: force densify remap-context pairing on Moving success.
+    // Permanent order (do not reorder — encoded in the body):
+    //   1 RootRemap probe (last_root_remap_any_fail; remaps ran inside densify)
+    //   2 EnvFrame live-ref transfer (scan_live_env_frame_refs_after_densify)
+    //   3 closure remount scan (scan_live_closures only_if_moved)
+    //   4 dual-epoch restamp (revalidate_dual_epoch_after_densify) — last
+    // Soft densify must NOT call this (vacuous axes at Phase 5 driver).
+    // Precondition: pin_contract_held && had_moving_densify.
+    [[nodiscard]] aura::core::densify_consistency::DensifyRemapPairingResult
+    force_densify_remap_pairing() noexcept;
     // Issue #242: detect a stale EnvFrame (one whose `version_`
     // snapshot is older than the current `defuse_version_`). A
     // closure captured against env_frames_[id] whose frame.version_
