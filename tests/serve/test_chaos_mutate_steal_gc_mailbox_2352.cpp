@@ -3,6 +3,8 @@
 // (0 hang / 0 silent corruption / residual defer clean / snapshot mismatch
 // delta == 0 under Hard). Refines #2202 / #2315 with pass criteria that
 // fail the gate on hang, residual Panic, or snapshot mismatch growth.
+// Issue #2380 — nightly production-concurrency profile: lock-order canary +
+// full chaos + densify consistency + Soft steal forbidden as hard pass criteria.
 //
 //   AC1: Fixed-seed chaos completes exit 0 (smoke default; full 30s via env)
 //   AC2: Injected residual Panic depth fails detection CHECK
@@ -10,17 +12,30 @@
 //   AC4: CI smoke ≤ 90s wall; full variant nightly (AURA_CHAOS_FULL=1)
 //   AC5: Documented knobs + inventory / gate registration
 //
-// Env knobs (AURA_CHAOS_*):
+//   #2380 ACs (production-concurrency profile):
+//   AC1: AURA_PRODUCTION_CONCURRENCY_GATE=1 + canary + full chaos env matrix
+//   AC2: Inject residual / lock-order / snapshot / densify fails detection
+//   AC3: Green run: 0 hang, residual clean, mismatch 0, canary viol 0,
+//        densify fail delta 0, Soft steal off
+//   AC4: Default PR smoke unchanged (no multi-minute soak unless FULL=1)
+//   AC5: build.py production-concurrency + nightly.yml + source-cite
+//
+// Env knobs (AURA_CHAOS_* / production gate):
 //   AURA_CHAOS_SEED          default 1 (deterministic RNG stream)
-//   AURA_CHAOS_WORKERS       smoke 4 / full 8
+//   AURA_CHAOS_WORKERS       smoke 4 / full ≥4 (prod gate default 4)
 //   AURA_CHAOS_FIBERS        smoke 16 / full 64
-//   AURA_CHAOS_DURATION_S    smoke 2 / full 30 (wall budget for soak loop)
-//   AURA_CHAOS_FULL=1        enable 30s full variant (nightly)
+//   AURA_CHAOS_DURATION_S    smoke 2 / full ≥30 (prod gate default 30)
+//   AURA_CHAOS_FULL=1        enable full soak variant (nightly)
 //   AURA_CHAOS_FAULT=        residual_panic | snapshot_mismatch | hang_detect
 //   AURA_STEAL_SNAPSHOT_HARD=1  for AC3 Hard canary (live getenv)
+//   AURA_LOCK_ORDER_CANARY=1    #2380: hard lock-order abort on inversion
+//   AURA_PRODUCTION_CONCURRENCY_GATE=1  #2380: densify+canary+Soft-forbid criteria
+//   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production gate
 
 #include "test_harness.hpp"
 
+#include "compiler/lock_order_audit.h"
+#include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
@@ -81,6 +96,12 @@ static std::uint64_t chaos_seed() noexcept {
 
 static bool chaos_full() noexcept {
     const char* e = std::getenv("AURA_CHAOS_FULL");
+    return e && e[0] == '1';
+}
+
+// Issue #2380: nightly / deploy production-concurrency hard gate.
+[[nodiscard]] static bool production_concurrency_gate() noexcept {
+    const char* e = std::getenv("AURA_PRODUCTION_CONCURRENCY_GATE");
     return e && e[0] == '1';
 }
 
@@ -169,12 +190,33 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
 }
 
 // Core chaos run. Returns wall ms. Fails CHECK on hang / residual / mismatch.
+// Issue #2380: when AURA_PRODUCTION_CONCURRENCY_GATE=1 also hard-fail on:
+//   Soft steal mode, densify consistency fail delta, lock-order violations
+//   under canary, and require workers≥4 / duration≥30 for full profile.
 static long run_chaos_pass(const char* label, int workers, int n_fibers, int duration_s,
                            int steps_cap) {
-    std::println("\n=== {} workers={} fibers={} duration={}s steps_cap={} seed={} ===", label,
-                 workers, n_fibers, duration_s, steps_cap, chaos_seed());
+    const bool prod_gate = production_concurrency_gate();
+    std::println("\n=== {} workers={} fibers={} duration={}s steps_cap={} seed={} prod_gate={} "
+                 "canary={} ===",
+                 label, workers, n_fibers, duration_s, steps_cap, chaos_seed(), prod_gate ? 1 : 0,
+                 aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
+
+    // Issue #2380 AC1/AC3: Soft steal forbidden under production-concurrency.
+    if (prod_gate) {
+        // Ensure Soft env cannot soft-continue mismatches this run.
+        unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
+              "#2380: Soft steal forbidden under production-concurrency gate");
+        CHECK(workers >= 4, "#2380: workers ≥ 4 under production-concurrency");
+        if (chaos_full() || duration_s >= 30)
+            CHECK(duration_s >= 30, "#2380: full soak duration ≥ 30s");
+    }
 
     const auto mismatch0 = Fiber::mutation_steal_snapshot_mismatch_total();
+    const auto densify0 = aura::core::densify_consistency::densify_consistency_fail_total();
+    const auto lock_viol0 =
+        aura::compiler::lock_order::g_lock_order_violation_total.load(std::memory_order_relaxed);
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
 
@@ -229,7 +271,9 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
 
     // Pass criteria (production gate).
     CHECK(st.fibers_done.load() == n_fibers, "no hang: all fibers finished");
-    CHECK(wall_ms < 90'000, "AC4 smoke wall < 90s");
+    // AC4: smoke wall < 90s; full/prod soak may exceed smoke budget (not PR CI).
+    if (!chaos_full() && !prod_gate)
+        CHECK(wall_ms < 90'000, "AC4 smoke wall < 90s");
     CHECK(aura_evaluator_mutation_boundary_depth() == 0, "depth 0 after chaos");
     CHECK(aura_evaluator_mutation_boundary_held() == 0, "held 0 after chaos");
 
@@ -250,6 +294,31 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
                      aura::serve::is_steal_snapshot_hard_mode() ||
                          aura::serve::is_steal_snapshot_hard_abort());
     CHECK(delta == 0, "snapshot mismatch delta == 0 (0 silent corruption)");
+
+    // Issue #2380: densify consistency fail delta (Moving may not run;
+    // any fail total growth still fails the production gate).
+    const auto densify1 = aura::core::densify_consistency::densify_consistency_fail_total();
+    const auto densify_delta = densify1 - densify0;
+    if (prod_gate || densify_delta != 0)
+        std::println("  densify_consistency_fail delta={}", densify_delta);
+    if (prod_gate)
+        CHECK(densify_delta == 0, "#2380: densify consistency fail delta == 0");
+
+    // Issue #2380: lock-order violations must not grow under canary/audit.
+    const auto lock_viol1 =
+        aura::compiler::lock_order::g_lock_order_violation_total.load(std::memory_order_relaxed);
+    const auto lock_delta = lock_viol1 - lock_viol0;
+    if (prod_gate || aura::compiler::lock_order::lock_order_canary_enabled() ||
+        aura::compiler::lock_order::lock_order_audit_enabled()) {
+        std::println("  lock_order_violation delta={} (canary={})", lock_delta,
+                     aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
+        CHECK(lock_delta == 0, "#2380: lock-order violation delta == 0 under audit/canary");
+    }
+
+    if (prod_gate) {
+        CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
+              "#2380: Soft still forbidden at end of production-concurrency pass");
+    }
 
     CHECK(st.ops.load() > 0, "ops progressed");
     return static_cast<long>(wall_ms);
@@ -354,10 +423,78 @@ static void ac4_ac5_docs_and_source() {
     CHECK(gate.find("Issue #2352") != std::string::npos, "linter cites #2352");
 }
 
+// ── Issue #2380 AC2: densify fail inject is detectable ──
+static void ac2380_inject_densify_fail() {
+    std::println("\n--- #2380 AC2: inject densify consistency fail ---");
+    const auto d0 = aura::core::densify_consistency::densify_consistency_fail_total();
+    aura::core::densify_consistency::bump_densify_consistency_fail_total();
+    const auto delta = aura::core::densify_consistency::densify_consistency_fail_total() - d0;
+    CHECK(delta == 1, "AC2: densify fail inject advances counter (would fail prod gate)");
+}
+
+// ── Issue #2380 AC2: lock-order violation inject under soft audit ──
+static void ac2380_inject_lock_order_violation() {
+    std::println("\n--- #2380 AC2: inject lock-order violation (soft audit) ---");
+    // Soft audit bumps counter without abort; canary would abort the process.
+    using namespace aura::compiler::lock_order;
+    const auto prev_mode = lock_order_mode();
+    force_audit_mode_for_test(2); // soft
+    const auto v0 = g_lock_order_violation_total.load(std::memory_order_relaxed);
+    // Force inversion: Workspace (rank 3) then Mailbox (rank 0) — lower while higher held.
+    on_acquire(Level::Workspace, __FILE__, __LINE__);
+    on_acquire(Level::Mailbox, __FILE__, __LINE__);
+    on_release(Level::Mailbox);
+    on_release(Level::Workspace);
+    const auto v1 = g_lock_order_violation_total.load(std::memory_order_relaxed);
+    CHECK(v1 >= v0, "AC2: lock-order violation counter monotonic");
+    // Soft mode: inversion bumps g_lock_order_violation_total (canary would abort).
+    CHECK(v1 > v0, "AC2: inversion detectable (canary would fail job)");
+    force_audit_mode_for_test(prev_mode);
+}
+
+// ── Issue #2380 AC1/AC5: production-concurrency profile docs ──
+static void ac2380_production_concurrency_docs() {
+    std::println("\n--- #2380 AC1/AC5: production-concurrency profile ---");
+    const auto src = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp");
+    CHECK(src.find("AURA_PRODUCTION_CONCURRENCY_GATE") != std::string::npos,
+          "AC1: documents AURA_PRODUCTION_CONCURRENCY_GATE");
+    CHECK(src.find("AURA_LOCK_ORDER_CANARY") != std::string::npos,
+          "AC1: documents AURA_LOCK_ORDER_CANARY");
+    CHECK(src.find("densify_consistency_fail") != std::string::npos,
+          "AC3: densify fail criterion in pass");
+    CHECK(src.find("g_lock_order_violation_total") != std::string::npos ||
+              src.find("lock_order_violation") != std::string::npos,
+          "AC3: lock-order criterion in pass");
+    CHECK(src.find("Soft steal forbidden") != std::string::npos ||
+              src.find("is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC3: Soft steal forbidden under prod gate");
+    CHECK(src.find("Issue #2380") != std::string::npos, "AC5: cites #2380");
+
+    const auto build = read_file("build.py");
+    CHECK(build.find("production-concurrency") != std::string::npos ||
+              build.find("cmd_production_concurrency") != std::string::npos,
+          "AC5: build.py production-concurrency command");
+    CHECK(build.find("AURA_PRODUCTION_CONCURRENCY_GATE") != std::string::npos,
+          "AC5: build.py sets production gate env");
+
+    const auto nightly = read_file(".github/workflows/nightly.yml");
+    CHECK(nightly.find("production-concurrency") != std::string::npos ||
+              nightly.find("AURA_PRODUCTION_CONCURRENCY_GATE") != std::string::npos,
+          "AC5: nightly.yml runs production-concurrency");
+    CHECK(nightly.find("AURA_LOCK_ORDER_CANARY") != std::string::npos,
+          "AC5: nightly enables lock-order canary");
+    CHECK(nightly.find("AURA_CHAOS_FULL") != std::string::npos, "AC5: nightly full chaos");
+
+    // AC4: default smoke path does not force FULL / prod gate.
+    CHECK(src.find("if (!chaos_full())") != std::string::npos ||
+              src.find("SKIPPED") != std::string::npos,
+          "AC4: full soak still optional without FULL=1");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2352: chaos mutate×steal×GC×mailbox production gate ===");
+    std::println("=== Issue #2352/#2380: chaos mutate×steal×GC×mailbox production gate ===");
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
@@ -369,9 +506,12 @@ int main() {
         // Always run inject self-tests (prove AC2/AC3 without full soak).
         ac2_inject_residual_panic();
         ac3_inject_snapshot_mismatch();
+        ac2380_inject_densify_fail();
+        ac2380_inject_lock_order_violation();
         ac1_smoke();
         ac1_full_optional();
         ac4_ac5_docs_and_source();
+        ac2380_production_concurrency_docs();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

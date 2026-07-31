@@ -33,8 +33,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 61 | 61 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 161 | 161 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 62 | 62 | P1 — domain suite already collapses many obs gates |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 160 | 160 | P0 — high volume; strong domain suite foothold |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 63 | 63 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
@@ -828,13 +828,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (161)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (160)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (161)
+#### domain/ (160)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -851,7 +851,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_capability_sandbox_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_capability_sandbox_batch.cpp
 - `tests/compiler/test_capability_unified_2077.cpp` (#2077) [domain_suite, theme_compiler] — AC1: has_capability("mutate") under Strict consults the effect matrix,
 - `tests/compiler/test_cascade_skip_metrics_2106.cpp` (#2106) [domain_suite, theme_compiler] — AC1: summary-dirty cascade skip → cascade_skip_subtree_total via metrics
-- `tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp` (#2352) [domain_suite, theme_serve] — AC1: Fixed-seed chaos completes exit 0 (smoke default; full 30s via env)
 - `tests/compiler/test_closure_bridge_lifetime.cpp` (—) [domain_suite, theme_compiler] — Issue #1888/#1895/#1926/#1928/#1929/#1947 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_coercion_ban_weak_ir_2261.cpp` (#2261) [domain_suite, theme_compiler] — AC1: Sampled + no active_mutation_id / no log → no CoercionNode; miss reject;
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp` (—) [domain_suite, theme_compiler] — test_coercion_dead_elim_castop_flow_zerooverhead.cpp
@@ -998,19 +997,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (62)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (63)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (62)
+#### domain/ (63)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1: Happy path — B's body replies to ask protocol; A's
 - `tests/orch/test_agent_failure_policy_2229.cpp` (#2229) [domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/serve/test_boundary_yield_steal_metrics_2119.cpp` (#2119) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
+- `tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp` (#2352) [domain_suite, theme_serve] — Issue #2380 — nightly production-concurrency profile: lock-order canary +
 - `tests/serve/test_chaos_steal_mutation_gc.cpp` (—) [domain_suite, theme_serve] — test_chaos_steal_mutation_gc_2315.cpp — Issue #2315:
 - `tests/compiler/test_compile_primitive_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1896 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_concurrent.cpp` (—) [large, domain_suite, theme_serve] — test_concurrent.cpp — Concurrency model unit tests
