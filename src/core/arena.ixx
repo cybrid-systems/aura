@@ -1324,22 +1324,16 @@ public:
                 // g_moving_compact_pin_contract_fail_total on failure (single
                 // counter source-of-truth in lifetime_pin.ixx).
             }
-            std::size_t invalidated = 0;
-            {
-                std::lock_guard<std::mutex> lock(aura::core::lifetime::pin_registry_mtx());
-                auto& reg = aura::core::lifetime::pin_registry();
-                for (auto* p : reg) {
-                    if (!p || !p->pinned())
-                        continue;
-                    if (p->arena_id() != arena_id_)
-                        continue;
-                    // Skip remapped pins (their ptr_ is in new_addrs).
-                    if (new_addrs.count(p->ptr()) > 0)
-                        continue;
-                    p->unpin_on_compact();
-                    ++invalidated;
-                }
-            }
+            // Issue #2374: selective invalidate via sharded registry (not the
+            // legacy pin_registry() which was always empty post-#2342).
+            // invalidate_pins_not_in_new_addrs walks all shards and unpins
+            // non-remapped pins for this arena; remapped pins (ptr_ in
+            // new_addrs) are skipped. verify_pins_under_moving_compact above
+            // is fail-closed for pins still on *old* densified addresses —
+            // this pass is the complementary "null non-remapped / non-arena
+            // pins" path (e.g. AC_M5 local-buffer pins).
+            const std::size_t invalidated =
+                aura::core::lifetime::invalidate_pins_not_in_new_addrs(arena_id_, new_addrs);
             stats_.live_compact_invalidated_pins_total += invalidated;
             invoke_layout_change_(result.new_gen);
             // Issue #2267 / #2294: RootRemapPass — fires AFTER

@@ -12,8 +12,10 @@
 //   preference). Foundation already present (#2166/#2265/#2266/#2280
 //   pin-or-remap contract); this round ships the sharded surface so
 //   hot-path pin ctor/dtor traffic no longer serializes on the global
-//   pin_registry_mtx. Refines #2265 (Phase 3 remap) · #2270 (PinOwner)
-//   · #2160 (RenderPin) · #2298 (GeneralObjectPin adoption).
+//   pin_registry_mtx (removed entirely in #2374 once densify selective-
+//   invalidate migrated to pin_registry_shards). Refines #2265 (Phase 3
+//   remap) · #2270 (PinOwner) · #2160 (RenderPin) · #2298 (GeneralObjectPin
+//   adoption) · #2374 (legacy pin_registry cleanup).
 //   AC_2342_1: kPinRegistryShardCount == 16 + max_pin_count +
 //              total_pinned_count accessors queryable.
 //   AC_2342_2: pin ctor/dtor routes to shard 0 for arena_id=0 default;
@@ -596,6 +598,36 @@ int main() {
               "AC_M6: lifetime_pin_contract_fail_total bumped by 1 on contract fail");
     }
 
+    // ── Issue #2374: sharded selective invalidate (direct helper) ──
+    // AC_M5 densify-with-live-pin is pre-existing AC-drift (Moving blocks
+    // when live_pin_count()>0). Exercise the #2374 helper directly so
+    // non-remapped pin invalidation is covered without densify.
+    {
+        std::println("\n--- #2374: invalidate_pins_not_in_new_addrs sharded ---");
+        int local_a = 1;
+        int local_b = 2;
+        LifetimePin pin_a;
+        LifetimePin pin_b;
+        pin_a.pin(&local_a, /*gen=*/1, /*arena_id=*/7);
+        pin_b.pin(&local_b, /*gen=*/1, /*arena_id=*/7);
+        CHECK(pin_a.pinned() && pin_b.pinned(), "Issue #2374: pins attached");
+        // Simulate remap of pin_b only: new_addrs contains pin_b's ptr.
+        std::unordered_set<void*> new_addrs;
+        new_addrs.insert(&local_b);
+        const auto n =
+            aura::core::lifetime::invalidate_pins_not_in_new_addrs(/*arena_id=*/7, new_addrs);
+        CHECK(n == 1, "Issue #2374: exactly one non-remapped pin invalidated");
+        CHECK(!pin_a.pinned(), "Issue #2374: pin_a (not in new_addrs) unpinned");
+        CHECK(pin_b.pinned(), "Issue #2374: pin_b (in new_addrs) preserved");
+        // Wrong arena_id → no-op
+        LifetimePin pin_c;
+        pin_c.pin(&local_a, 1, /*arena_id=*/9);
+        const auto n2 =
+            aura::core::lifetime::invalidate_pins_not_in_new_addrs(/*arena_id=*/7, new_addrs);
+        CHECK(n2 == 0, "Issue #2374: wrong-arena filter skips pin_c");
+        CHECK(pin_c.pinned(), "Issue #2374: pin_c still pinned (arena 9)");
+    }
+
     // ── Source contract ──
     {
         const auto ar = read_file("src/core/arena.ixx");
@@ -605,6 +637,19 @@ int main() {
         CHECK(ar.find("relocate_tracked_objects_for_moving_") != std::string::npos, "densify fn");
         CHECK(ar.find("AURA_ARENA_MOVING_COMPACT") != std::string::npos, "env flag");
         CHECK(ar.find("moved_live_objects") != std::string::npos, "result flag");
+        // Issue #2374: densify selective-invalidate is sharded, not legacy pin_registry().
+        CHECK(ar.find("invalidate_pins_not_in_new_addrs") != std::string::npos,
+              "Issue #2374: sharded selective invalidate helper");
+        CHECK(ar.find("Issue #2374") != std::string::npos, "arena cites #2374");
+        CHECK(ar.find("pin_registry_mtx()") == std::string::npos,
+              "Issue #2374: no legacy pin_registry_mtx densify walk");
+        const auto pin = read_file("src/core/lifetime_pin.ixx");
+        CHECK(pin.find("invalidate_pins_not_in_new_addrs") != std::string::npos,
+              "Issue #2374: helper in lifetime_pin.ixx");
+        CHECK(pin.find("inline std::vector<LifetimePin*>& pin_registry()") == std::string::npos,
+              "Issue #2374: pin_registry() removed from module");
+        CHECK(pin.find("inline std::mutex& pin_registry_mtx()") == std::string::npos,
+              "Issue #2374: pin_registry_mtx() removed from module");
     }
 
     set_moving_compact_enabled(0);
