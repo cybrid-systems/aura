@@ -12,6 +12,10 @@
 //        recv(wait=false) or exit MutationBoundary first. Policy A stays
 //        non-blocking; Strict bumps hard counter and may force-rollback
 //        after N rejects in one outermost Guard window.
+// #2312: push/fanout defer (Backpressure) when target holds MutationBoundary.
+// #2378: defer drain SLA — deferred_depth / HWM, flush latency after
+//        outermost Guard exit, starvation signal if depth stays open.
+//        Zero cost when deferred_depth==0 (single relaxed load on Ok path).
 // #2316: wire mu_ acquire to lock_order::on_acquire(Level::Mailbox) for
 //        rank-table audit + AURA_LOCK_ORDER_CANARY inversion detection.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
@@ -26,6 +30,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -100,10 +105,126 @@ struct MultiFiberMailboxStats {
     // truth table. Distinct from recv_rejected_in_mutation_boundary which
     // is the recv-side gate (#2188) — this is the push-side gate.
     std::atomic<std::uint64_t> mailbox_deferred_mutation_hold_total{0}; // #2312
+    // Issue #2378: drain SLA (process-wide; local mirrors optional).
+    // deferred_depth = outstanding mutation-hold defers (sender retries).
+    // Not a message queue — #2312 still returns Backpressure (no drop).
+    std::atomic<std::uint64_t> mailbox_deferred_depth{0};                   // #2378
+    std::atomic<std::uint64_t> mailbox_deferred_depth_high_water{0};        // #2378
+    std::atomic<std::uint64_t> mailbox_deferred_flush_latency_us_total{0};  // #2378
+    std::atomic<std::uint64_t> mailbox_deferred_flush_samples{0};           // #2378
+    std::atomic<std::uint64_t> mailbox_deferred_flush_latency_us_max{0};    // #2378
+    std::atomic<std::uint64_t> mailbox_defer_starvation_total{0};           // #2378
+    std::atomic<std::uint64_t> mailbox_deferred_drain_opportunity_total{0}; // #2378
 };
 
 // Process-wide aggregate (tests / observability).
 inline MultiFiberMailboxStats g_mf_mailbox_stats{};
+
+// Issue #2378: open-window timers for flush latency (zero when no open defer).
+// first_open_defer_ns: set on depth 0→1; cleared when depth returns to 0.
+// last_outermost_exit_ns: set on Guard outermost exit (drain opportunity).
+inline std::atomic<std::uint64_t> g_mailbox_first_open_defer_ns{0};
+inline std::atomic<std::uint64_t> g_mailbox_last_outermost_exit_ns{0};
+
+// Default starvation: deferred_depth > 0 for ≥100ms after first open defer
+// and at least one outermost exit was observed. Override ms via
+// AURA_MAILBOX_DEFER_STARVATION_MS (0 disables).
+[[nodiscard]] inline std::uint64_t mailbox_defer_starvation_ms() noexcept {
+    const char* e = std::getenv("AURA_MAILBOX_DEFER_STARVATION_MS");
+    if (e == nullptr || e[0] == '\0')
+        return 100;
+    std::uint64_t v = 0;
+    for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+        v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+    return v;
+}
+
+[[nodiscard]] inline std::uint64_t mailbox_steady_ns() noexcept {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+// Issue #2378: note a mutation-hold defer (push/fanout returned BP).
+// AC3: only called on the defer path (not on happy Ok push).
+inline void note_mailbox_mutation_hold_defer() noexcept {
+    g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
+    const auto d =
+        g_mf_mailbox_stats.mailbox_deferred_depth.fetch_add(1, std::memory_order_relaxed) + 1;
+    // High-water (relaxed CAS-free: max via loop is fine for metrics).
+    auto hwm = g_mf_mailbox_stats.mailbox_deferred_depth_high_water.load(std::memory_order_relaxed);
+    while (d > hwm && !g_mf_mailbox_stats.mailbox_deferred_depth_high_water.compare_exchange_weak(
+                          hwm, d, std::memory_order_relaxed)) {
+    }
+    // Open window start (only first open defer).
+    std::uint64_t expected = 0;
+    const auto now = mailbox_steady_ns();
+    (void)g_mailbox_first_open_defer_ns.compare_exchange_strong(expected, now,
+                                                                std::memory_order_relaxed);
+}
+
+// Issue #2378: successful enqueue after possible open defer window.
+// AC3: when deferred_depth==0, single relaxed load then return (no maps).
+inline void note_mailbox_push_ok_drain_progress() noexcept {
+    const auto depth = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    if (depth == 0)
+        return; // happy path — zero extra work beyond this load
+    // Resolve one outstanding defer (sender retry succeeded).
+    auto cur = depth;
+    while (cur > 0 && !g_mf_mailbox_stats.mailbox_deferred_depth.compare_exchange_weak(
+                          cur, cur - 1, std::memory_order_relaxed)) {
+    }
+    if (cur == 0)
+        return; // raced to zero
+    // Flush latency sample when window closes (depth was 1 → 0).
+    if (cur == 1) {
+        const auto now = mailbox_steady_ns();
+        const auto first = g_mailbox_first_open_defer_ns.exchange(0, std::memory_order_relaxed);
+        const auto exit_ns = g_mailbox_last_outermost_exit_ns.load(std::memory_order_relaxed);
+        // Prefer exit→deliver when outermost exit was observed (AC2);
+        // else first-open→deliver.
+        std::uint64_t start = first;
+        if (exit_ns != 0 && exit_ns >= first)
+            start = exit_ns;
+        if (start != 0 && now >= start) {
+            const auto us = (now - start) / 1000ull;
+            g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_total.fetch_add(
+                us, std::memory_order_relaxed);
+            g_mf_mailbox_stats.mailbox_deferred_flush_samples.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            auto mx = g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_max.load(
+                std::memory_order_relaxed);
+            while (us > mx &&
+                   !g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_max.compare_exchange_weak(
+                       mx, us, std::memory_order_relaxed)) {
+            }
+        }
+    }
+}
+
+// Issue #2378: outermost Guard exit — drain opportunity + starvation canary.
+// Called from MutationBoundaryGuard dtor (Phase 5 unlock) next to #2347
+// window clear. Soft / no open defer: just stamps exit_ns (one store).
+inline void note_mailbox_outermost_exit_drain() noexcept {
+    const auto now = mailbox_steady_ns();
+    g_mailbox_last_outermost_exit_ns.store(now, std::memory_order_relaxed);
+    const auto depth = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    if (depth == 0)
+        return;
+    g_mf_mailbox_stats.mailbox_deferred_drain_opportunity_total.fetch_add(
+        1, std::memory_order_relaxed);
+    // Starvation: open defer window older than threshold after an exit.
+    const auto thr_ms = mailbox_defer_starvation_ms();
+    if (thr_ms == 0)
+        return;
+    const auto first = g_mailbox_first_open_defer_ns.load(std::memory_order_relaxed);
+    if (first == 0)
+        return;
+    const auto age_ms = (now > first) ? (now - first) / 1'000'000ull : 0;
+    if (age_ms >= thr_ms) {
+        g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
 
 // Issue #2347: rejects in the current outermost Guard window (TLS).
 // Cleared on outermost Guard exit so multi-round mutates do not carry
@@ -254,8 +375,8 @@ public:
                 if (a && a->id() == msg.to_fiber) {
                     const auto snap = a->mutation_safety_snapshot();
                     if (!a->is_at_mutation_boundary_safe(snap)) {
-                        g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        // Issue #2312 defer + #2378 depth/SLA (not dropped).
+                        note_mailbox_mutation_hold_defer();
                         local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                             1, std::memory_order_relaxed);
                         return PushStatus::Backpressure;
@@ -279,6 +400,9 @@ public:
             queue_.push_front(std::move(msg));
         else
             queue_.push_back(std::move(msg));
+        // Issue #2378: successful enqueue may close an open defer window
+        // (AC3: free when deferred_depth==0 — single relaxed load).
+        note_mailbox_push_ok_drain_progress();
         notify_all_unlocked();
         return PushStatus::Ok;
     }
@@ -312,8 +436,8 @@ public:
                 continue;
             const auto snap = a->mutation_safety_snapshot();
             if (!a->is_at_mutation_boundary_safe(snap)) {
-                g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                // Issue #2312 / #2378: whole fan-out deferred (depth SLA).
+                note_mailbox_mutation_hold_defer();
                 local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                     1, std::memory_order_relaxed);
                 note_backpressure(&local_stats_, /*from_fanout=*/true);
@@ -348,6 +472,8 @@ public:
                     queue_.push_back(std::move(m));
             }
         }
+        // Issue #2378: fan-out success may close open defer window.
+        note_mailbox_push_ok_drain_progress();
         notify_all_unlocked();
         return PushStatus::Ok;
     }
