@@ -88,10 +88,12 @@ struct DensifyConsistencyReport {
 // the query surface (query:lifetime-contract-snapshot additive keys).
 inline std::atomic<std::uint64_t> g_densify_consistency_fail_total{0};
 
-// Issue #2361: last Phase 5 densify envframe_ok (1=ok, 0=fail). Query
-// surface reads this instead of forcing true; Soft / no densify leaves 1.
+// Issue #2361 / #2376: last Phase 5 densify envframe_ok (1=ok, 0=fail).
+// Query surface reads this instead of forcing true; Soft / no densify leaves 1.
+// #2376 seals last-call semantics (not cumulative / not trivial true) as the
+// production densify-consistency contract for envframe + closure axes.
 inline std::atomic<std::uint8_t> g_last_densify_envframe_ok{1};
-// Issue #2365: last-call root_remap_ok / closure_remount_ok (Soft → 1).
+// Issue #2365 / #2376: last-call root_remap_ok / closure_remount_ok (Soft → 1).
 // Query surface uses these instead of cumulative process fails that
 // would poison Soft densify after a prior Moving fail.
 inline std::atomic<std::uint8_t> g_last_densify_root_remap_ok{1};
@@ -101,6 +103,24 @@ inline std::atomic<std::uint8_t> g_last_densify_closure_remount_ok{1};
 // Moving success path always sets pairing_forced=1 after force_densify_remap_pairing.
 inline std::atomic<std::uint8_t> g_last_densify_dual_epoch_ok{1};
 inline std::atomic<std::uint8_t> g_last_densify_remap_pairing_forced{0};
+
+// Issue #2376: densify last-call sequence + fail-reason codes (Agent debug).
+// call_seq bumps once per Phase 5 densify report publish (Soft or Moving)
+// so dashboards can detect stale last-axis samples.
+// Fail codes (0 = none / ok):
+//   envframe: 1=ownership_scan, 2=dual_epoch, 3=linear_type (composed at Phase 5)
+//   closure:  1=capture_remap_delta, 2=dual_epoch
+inline std::atomic<std::uint64_t> g_last_densify_call_seq{0};
+inline std::atomic<std::uint8_t> g_last_densify_envframe_fail_code{0};
+inline std::atomic<std::uint8_t> g_last_densify_closure_fail_code{0};
+
+// Fail-reason codes for last densify axes (#2376).
+inline constexpr std::uint8_t kDensifyFailNone = 0;
+inline constexpr std::uint8_t kDensifyEnvframeFailOwnershipScan = 1;
+inline constexpr std::uint8_t kDensifyEnvframeFailDualEpoch = 2;
+inline constexpr std::uint8_t kDensifyEnvframeFailLinearType = 3;
+inline constexpr std::uint8_t kDensifyClosureFailCaptureRemap = 1;
+inline constexpr std::uint8_t kDensifyClosureFailDualEpoch = 2;
 
 // Result of Evaluator::force_densify_remap_pairing() — permanent step order
 // encoded in the helper body (Issue #2368 pairing guarantee).
@@ -120,12 +140,18 @@ inline void bump_densify_consistency_fail_total() noexcept {
     g_densify_consistency_fail_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-inline void note_last_densify_envframe_ok(bool ok) noexcept {
+inline void note_last_densify_envframe_ok(bool ok,
+                                          std::uint8_t fail_code = kDensifyFailNone) noexcept {
     g_last_densify_envframe_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+    g_last_densify_envframe_fail_code.store(ok ? kDensifyFailNone : fail_code,
+                                            std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline bool last_densify_envframe_ok() noexcept {
     return g_last_densify_envframe_ok.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint8_t last_densify_envframe_fail_code() noexcept {
+    return g_last_densify_envframe_fail_code.load(std::memory_order_relaxed);
 }
 
 inline void note_last_densify_root_remap_ok(bool ok) noexcept {
@@ -134,11 +160,25 @@ inline void note_last_densify_root_remap_ok(bool ok) noexcept {
 [[nodiscard]] inline bool last_densify_root_remap_ok() noexcept {
     return g_last_densify_root_remap_ok.load(std::memory_order_relaxed) != 0;
 }
-inline void note_last_densify_closure_remount_ok(bool ok) noexcept {
+inline void
+note_last_densify_closure_remount_ok(bool ok, std::uint8_t fail_code = kDensifyFailNone) noexcept {
     g_last_densify_closure_remount_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+    g_last_densify_closure_fail_code.store(ok ? kDensifyFailNone : fail_code,
+                                           std::memory_order_relaxed);
 }
 [[nodiscard]] inline bool last_densify_closure_remount_ok() noexcept {
     return g_last_densify_closure_remount_ok.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint8_t last_densify_closure_fail_code() noexcept {
+    return g_last_densify_closure_fail_code.load(std::memory_order_relaxed);
+}
+
+// Issue #2376: bump densify last-call sequence (Phase 5 report publish).
+inline void bump_last_densify_call_seq() noexcept {
+    g_last_densify_call_seq.fetch_add(1, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t last_densify_call_seq() noexcept {
+    return g_last_densify_call_seq.load(std::memory_order_relaxed);
 }
 inline void note_last_densify_dual_epoch_ok(bool ok) noexcept {
     g_last_densify_dual_epoch_ok.store(ok ? 1 : 0, std::memory_order_relaxed);

@@ -2688,24 +2688,31 @@ bool Evaluator::revalidate_dual_epoch_after_densify() noexcept {
     return ok && (desync1 == desync0);
 }
 
-// Issue #2368: force densify remap-context pairing. Single Moving-success
-// entry that encodes the permanent order so future changes cannot skip or
-// reorder into a partial-remap window:
+// Issue #2368 / #2376: force densify remap-context pairing. Single Moving-
+// success entry that encodes the permanent order so future changes cannot
+// skip or reorder into a partial-remap window:
 //   1 RootRemap probe (remaps already ran inside densify)
-//   2 EnvFrame live-ref transfer
-//   3 closure remount scan
+//   2 EnvFrame live-ref transfer  (last-call envframe_ok — #2361/#2376)
+//   3 closure remount scan        (last-call fail delta — #2365/#2376)
 //   4 dual-epoch restamp (always last before report axes)
 // Soft densify never calls this (Phase 5 leaves axes vacuous true).
+// Issue #2376: axes are always last-call (never cumulative process fails;
+// never trivial true under Moving). Fail codes published for Agent debug.
 aura::core::densify_consistency::DensifyRemapPairingResult
 Evaluator::force_densify_remap_pairing() noexcept {
     using aura::core::densify_consistency::DensifyRemapPairingResult;
+    using aura::core::densify_consistency::kDensifyClosureFailCaptureRemap;
+    using aura::core::densify_consistency::kDensifyClosureFailDualEpoch;
+    using aura::core::densify_consistency::kDensifyEnvframeFailDualEpoch;
+    using aura::core::densify_consistency::kDensifyEnvframeFailOwnershipScan;
+    using aura::core::densify_consistency::kDensifyFailNone;
     DensifyRemapPairingResult r;
     r.forced = true;
 
     // (1) RootRemap last-call probe — densify's run_root_remap_pass result.
     r.root_remap_ok = !last_root_remap_any_fail();
 
-    // (2) EnvFrame live-ref ownership transfer (#2360/#2362).
+    // (2) EnvFrame live-ref ownership transfer (#2360/#2362) — last-call.
     using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_fail_total;
     using aura::core::envframe_lifetime::envframe_lifetime_densify_ownership_scan_total;
     const auto scan0 = envframe_lifetime_densify_ownership_scan_total();
@@ -2725,9 +2732,25 @@ Evaluator::force_densify_remap_pairing() noexcept {
     // (4) dual-epoch restamp — always last under densify generation stamp.
     r.dual_epoch_ok = revalidate_dual_epoch_after_densify();
 
-    // Axes from real probes; dual-epoch feeds remount + envframe fail-closed.
+    // Axes from real last-call probes; dual-epoch feeds remount + envframe.
     r.envframe_ok = env_scan_ok && r.dual_epoch_ok;
     r.closure_remount_ok = cl_ok && r.dual_epoch_ok;
+
+    // Issue #2376: publish fail codes with last-call axes (Phase 5 also
+    // notes overall ok after linear_type composition).
+    std::uint8_t env_code = kDensifyFailNone;
+    if (!env_scan_ok)
+        env_code = kDensifyEnvframeFailOwnershipScan;
+    else if (!r.dual_epoch_ok)
+        env_code = kDensifyEnvframeFailDualEpoch;
+    std::uint8_t cl_code = kDensifyFailNone;
+    if (!cl_ok)
+        cl_code = kDensifyClosureFailCaptureRemap;
+    else if (!r.dual_epoch_ok)
+        cl_code = kDensifyClosureFailDualEpoch;
+    aura::core::densify_consistency::note_last_densify_envframe_ok(r.envframe_ok, env_code);
+    aura::core::densify_consistency::note_last_densify_closure_remount_ok(r.closure_remount_ok,
+                                                                          cl_code);
     return r;
 }
 

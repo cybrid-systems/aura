@@ -2811,6 +2811,11 @@ aura_add_issue_test(test_densify_envframe_ok_2361)
 aura_issue_test_link_llvm_jit(test_densify_envframe_ok_2361)
 add_dependencies(all_test_issue_targets test_densify_envframe_ok_2361)
 
+# Issue #2376: densify last-call envframe + closure axes (seal #2361/#2365).
+aura_add_issue_test(test_densify_last_call_axes_2376)
+aura_issue_test_link_llvm_jit(test_densify_last_call_axes_2376)
+add_dependencies(all_test_issue_targets test_densify_last_call_axes_2376)
+
 # Issue #2362: EnvFrameRef ownership protocol under fiber steal + densify
 # (depends on #2360 live set tracking).
 aura_add_issue_test(test_envframe_ownership_steal_densify_2362)

@@ -1854,12 +1854,35 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
         }
         // Publish last densify axes for query:lifetime-contract-snapshot.
+        // Issue #2376: last-call envframe + closure are the production
+        // contract (not cumulative / not force-true under Moving). Soft
+        // vacuous true is published only on the Soft branch above.
+        // Call-seq bumps every Phase 5 report so Agents detect stale samples.
+        using aura::core::densify_consistency::kDensifyEnvframeFailLinearType;
+        using aura::core::densify_consistency::kDensifyFailNone;
         aura::core::densify_consistency::note_last_densify_root_remap_ok(
             densify_consistency.root_remap_ok);
-        aura::core::densify_consistency::note_last_densify_closure_remount_ok(
-            densify_consistency.closure_remount_ok);
+        // Envframe fail code: Soft → 0; Moving pairing set ownership/dual;
+        // linear_type composition can force envframe_ok false with code 3.
+        std::uint8_t env_fc = kDensifyFailNone;
+        if (!densify_consistency.envframe_ok) {
+            if (had_moving_densify && pin_contract_held && !linear_type_ok &&
+                aura::core::densify_consistency::last_densify_envframe_fail_code() ==
+                    kDensifyFailNone) {
+                env_fc = kDensifyEnvframeFailLinearType;
+            } else {
+                env_fc = aura::core::densify_consistency::last_densify_envframe_fail_code();
+            }
+        }
         aura::core::densify_consistency::note_last_densify_envframe_ok(
-            densify_consistency.envframe_ok);
+            densify_consistency.envframe_ok, env_fc);
+        const std::uint8_t cl_fc =
+            densify_consistency.closure_remount_ok
+                ? kDensifyFailNone
+                : aura::core::densify_consistency::last_densify_closure_fail_code();
+        aura::core::densify_consistency::note_last_densify_closure_remount_ok(
+            densify_consistency.closure_remount_ok, cl_fc);
+        aura::core::densify_consistency::bump_last_densify_call_seq();
         if (!densify_consistency.overall_ok()) {
             // Issue #2341 AC2: unified fail — mirror pin_contract_held
             // gating above. Bump fail counter; optional hard abort

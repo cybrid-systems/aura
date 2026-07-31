@@ -2494,6 +2494,25 @@ def cmd_densify_envframe_ok_coverage():
     return 0
 
 
+def cmd_densify_last_call_axes_coverage():
+    """Issue #2376: densify last-call envframe + closure axes.
+
+    Seals per-call last-result (not cumulative / not force-true under Moving);
+    call-seq + fail codes; schema-2376 on lifetime-contract-snapshot.
+    """
+    print(f"{B}=== densify last-call axes coverage (#2376) ==={N}")
+    script = ROOT / "scripts" / "check_densify_last_call_axes_2376.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("densify last-call axes (#2376) coverage contract rows failed")
+        return 1
+    ok("densify last-call axes (#2376) coverage clean")
+    return 0
+
+
 def cmd_envframe_ownership_steal_densify_coverage():
     """Issue #2362: EnvFrameRef ownership under fiber steal + densify.
 
@@ -3085,6 +3104,7 @@ def cmd_gate():
         or cmd_castop_density_hard_coverage()
         or cmd_memo_goal_epoch_health_coverage()
         or cmd_densify_envframe_ok_coverage()
+        or cmd_densify_last_call_axes_coverage()
         or cmd_envframe_ownership_steal_densify_coverage()
         or cmd_general_object_pin_adopt_coverage()
         or cmd_panic_defer_after_densify_coverage()

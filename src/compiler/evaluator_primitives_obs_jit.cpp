@@ -11166,6 +11166,31 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-remap-pairing-forced-wired", 1);
             insert_kv("schema-2368", 2368);
             insert_kv("issue-2368", 2368);
+            // Issue #2376: densify last-call contract sealed for envframe +
+            // closure axes (not cumulative / not force-true under Moving).
+            // call-seq + fail codes for Agent debug; Soft leaves seq advancing
+            // on Phase 5 publish with fail-code 0.
+            insert_kv("densify-last-call-seq",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::last_densify_call_seq()));
+            insert_kv("densify_last_call_seq",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::last_densify_call_seq()));
+            insert_kv("densify-envframe-fail-code",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::last_densify_envframe_fail_code()));
+            insert_kv("densify_envframe_fail_code",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::last_densify_envframe_fail_code()));
+            insert_kv("densify-closure-fail-code",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::last_densify_closure_fail_code()));
+            insert_kv("densify_closure_fail_code",
+                      static_cast<std::int64_t>(
+                          aura::core::densify_consistency::last_densify_closure_fail_code()));
+            insert_kv("densify-last-call-axes-wired", 1);
+            insert_kv("schema-2376", 2376);
+            insert_kv("issue-2376", 2376);
             // Issue #2353: post-densify / post-steal Linear+Type revalidate counters.
             insert_kv("post-densify-linear-type-revalidate-total",
                       static_cast<std::int64_t>(post_densify_reval));
