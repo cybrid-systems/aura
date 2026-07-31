@@ -60,6 +60,7 @@ import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
 import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
 import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
+import aura.compiler.ir_soa;          // Issue #2432: current_ir_soa_generation_fence
 
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
@@ -1758,9 +1759,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2250: current fiber via g_current_fiber / get_current_fiber.
         if (auto* cur_fiber = aura::serve::g_current_fiber) {
             const auto stamp = ev_->current_layout_stamp();
-            cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
-                                               stamp.mutation_epoch, stamp.env_gen,
-                                               stamp.defuse_version, stamp.shape_version);
+            cur_fiber->set_resume_layout_stamp(
+                stamp.arena_id, stamp.arena_gen, stamp.flat_gen, stamp.mutation_epoch,
+                stamp.env_gen, stamp.defuse_version, stamp.shape_version, stamp.ir_soa_generation);
         }
         // Issue #2256 + #2257: trigger Moving compaction after
         // outermost Guard exit (post-publish). Honors the pin-or-
@@ -2479,8 +2480,12 @@ aura::core::LayoutStamp Evaluator::current_layout_stamp() const noexcept {
     // bump counter so all ShapeProfiler instances share a single
     // monotonic source of truth for the resume fence.
     const auto sver = aura::compiler::shape::current_global_shape_version();
+    // Issue #2432: IR SoA generation fence (8th field) — closes silent-
+    // stale specialized IR under compact×mutate×fiber resume.
+    const auto ir_gen = aura::compiler::current_ir_soa_generation_fence();
     return aura::core::LayoutStamp(arena_id, arena_gen, flat_gen,
-                                   aura::core::current_mutation_epoch(), env_gen, dver, sver);
+                                   aura::core::current_mutation_epoch(), env_gen, dver, sver,
+                                   ir_gen);
 }
 
 aura::core::LayoutStamp Evaluator::publish_layout_stamp() noexcept {
@@ -2548,6 +2553,12 @@ std::uint64_t Evaluator::get_layout_stamp_steal_missing_total() const noexcept {
 std::uint64_t Evaluator::get_shape_version_fence_reject_total() const noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     return m ? m->shape_version_fence_reject_total.load(std::memory_order_relaxed) : 0;
+}
+
+// Issue #2432: IR SoA generation fence (8th LayoutStamp field).
+std::uint64_t Evaluator::get_ir_generation_fence_hit_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->ir_generation_fence_hit_total.load(std::memory_order_relaxed) : 0;
 }
 
 } // namespace aura::compiler

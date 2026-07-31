@@ -649,7 +649,8 @@ public:
     void set_resume_layout_stamp(std::uint64_t arena_id, std::uint64_t arena_gen,
                                  std::uint64_t flat_gen, std::uint64_t mutation_epoch,
                                  std::uint64_t env_gen, std::uint64_t defuse,
-                                 std::uint64_t shape_version) noexcept {
+                                 std::uint64_t shape_version,
+                                 std::uint64_t ir_soa_generation = 0) noexcept {
         resume_arena_id_ = arena_id;
         resume_arena_gen_ = arena_gen;
         resume_flat_gen_ = flat_gen;
@@ -657,6 +658,7 @@ public:
         resume_env_gen_ = env_gen;
         resume_defuse_ = defuse;
         resume_shape_version_ = shape_version;
+        resume_ir_soa_generation_ = ir_soa_generation;
         resume_layout_stamp_set_ = 1;
     }
     [[nodiscard]] std::uint64_t resume_arena_id() const noexcept { return resume_arena_id_; }
@@ -670,6 +672,10 @@ public:
     [[nodiscard]] std::uint64_t resume_shape_version() const noexcept {
         return resume_shape_version_;
     }
+    // Issue #2432: 8th LayoutStamp field (IR SoA generation fence).
+    [[nodiscard]] std::uint64_t resume_ir_soa_generation() const noexcept {
+        return resume_ir_soa_generation_;
+    }
     [[nodiscard]] bool has_resume_layout_stamp() const noexcept {
         return resume_layout_stamp_set_ != 0;
     }
@@ -681,6 +687,7 @@ public:
         resume_env_gen_ = 0;
         resume_defuse_ = 0;
         resume_shape_version_ = 0;
+        resume_ir_soa_generation_ = 0;
         resume_layout_stamp_set_ = 0;
     }
 
@@ -796,6 +803,7 @@ private:
     // OR this field forces scan_live_closures_for_linear_captures +
     // bumps shape_version_fence_reject_total.
     std::uint64_t resume_shape_version_ = 0;
+    std::uint64_t resume_ir_soa_generation_ = 0; // Issue #2432
     std::uint32_t resume_layout_stamp_set_ = 0;
     // Issue #1584: cooperative cancel flag.
     std::atomic<bool> cancel_requested_{false};

@@ -65,10 +65,14 @@ def check() -> list:
         fails,
     )
 
-    # AC1 - Phase 5 wire passes 7 args
+    # AC1 - Phase 5 wire passes shape_version (7th) + optional ir_soa_generation (8th, #2432).
+    # clang-format may put the open paren alone on its line once arg count grows;
+    # match the call + arg names rather than a single-line contiguous substring.
     _must(
-        mut_boundary.find("stamp.shape_version") != -1
-        and mut_boundary.find("set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen") != -1,
+        "set_resume_layout_stamp" in mut_boundary
+        and "stamp.arena_id" in mut_boundary
+        and "stamp.arena_gen" in mut_boundary
+        and "stamp.shape_version" in mut_boundary,
         "AC1: Phase 5 wire passes shape_version as 7th arg",
         fails,
     )

@@ -3269,6 +3269,24 @@ def cmd_dead_coercion_columnar_coverage():
     return 0
 
 
+def cmd_ir_soa_layout_stamp_coverage():
+    """Issue #2432: IR SoA generation fence on LayoutStamp (fiber resume).
+
+    8th field ir_soa_generation; ir_generation_fence_hit_total metric.
+    """
+    print(f"{B}=== ir soa layout stamp coverage (#2432) ==={N}")
+    script = ROOT / "scripts" / "check_ir_soa_layout_stamp_2432.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ir soa layout stamp (#2432) coverage contract rows failed")
+        return 1
+    ok("ir soa layout stamp (#2432) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4222,6 +4240,7 @@ def cmd_gate():
         or cmd_gc_defer_overflow_policy_atomic_coverage()
         or cmd_capability_effect_stats_snapshot_coverage()
         or cmd_dead_coercion_columnar_coverage()
+        or cmd_ir_soa_layout_stamp_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

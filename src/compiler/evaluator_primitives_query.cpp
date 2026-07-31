@@ -10,7 +10,8 @@ module;
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
 #include "compiler/value_tags.h"
-#include "core/gc_hooks.h" // #1593 safepoint wait linkage
+#include "core/gc_hooks.h"      // #1593 safepoint wait linkage
+#include "core/layout_stamp.hh" // Issue #2432: kLayoutStampSchema
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "serve/multi_fiber_mailbox.h"             // #1597 orch readiness
@@ -1284,8 +1285,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(ev.get_layout_stamp_last_arena_gen()));
             insert_kv("layout-stamp-last-flat-gen",
                       static_cast<std::int64_t>(ev.get_layout_stamp_last_flat_gen()));
-            insert_kv("layout-stamp-schema", static_cast<std::int64_t>(2170));
-            insert_kv("layout-stamp-issue", 2170);
+            insert_kv("layout-stamp-schema",
+                      static_cast<std::int64_t>(aura::core::kLayoutStampSchema));
+            insert_kv("layout-stamp-issue",
+                      static_cast<std::int64_t>(aura::core::kLayoutStampSchema));
             insert_kv("layout-stamp-active", 1);
             // Issue #2250: LayoutStamp fence on Fiber resume/steal
             insert_kv("layout-stamp-resume-mismatch-total",
@@ -1312,6 +1315,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("shape-version-fence-wired", 1);
             insert_kv("schema-2255", 2255);
             insert_kv("issue-2255", 2255);
+            // Issue #2432: IR SoA generation fence (8th LayoutStamp field).
+            insert_kv("layout-stamp-ir-soa-generation",
+                      static_cast<std::int64_t>(stamp.ir_soa_generation));
+            insert_kv("ir-generation-fence-hit-total",
+                      static_cast<std::int64_t>(ev.get_ir_generation_fence_hit_total()));
+            insert_kv("ir-generation-fence-wired", 1);
+            insert_kv("schema-2432", 2432);
+            insert_kv("issue-2432", 2432);
             // Issue #738: cross-COW + boundary pinning observability.
             insert_kv("cross-cow-invalidations",
                       static_cast<std::int64_t>(ev.get_cross_cow_invalidations()));

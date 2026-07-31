@@ -73,6 +73,18 @@ export inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() n
     return v;
 }
 
+// Issue #2432: process-global IR SoA generation fence (LayoutStamp 8th field).
+// Advanced on every IRFunctionSoA / IRModuleV2 generation bump so Fiber
+// resume / steal can hard-compare against the stamp captured at Phase-5
+// boundary exit. Zero cost when no dirty marks (fence idle).
+export inline std::atomic<std::uint64_t>& g_ir_soa_generation_fence() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+export [[nodiscard]] inline std::uint64_t current_ir_soa_generation_fence() noexcept {
+    return g_ir_soa_generation_fence().load(std::memory_order_acquire);
+}
+
 // Compile-time SoA-only default (macro lives in this TU + consumers that
 // #include the GMF define block or set -DAURA_IR_SOA_ONLY). Exported for
 // importers that cannot see the preprocessor macro across modules.
@@ -177,9 +189,11 @@ export struct IRFunctionSoA {
     // mark_*_dirty / restamp. Cached IR stores generation at lower time;
     // should_relower forces re-lower when live gen advanced even if
     // dirty==false (silent-stale under self-evo compact/mutate).
+    // Issue #2432: also advances process-global g_ir_soa_generation_fence
+    // so LayoutStamp / fiber resume participate in the same fence.
     std::uint64_t generation_ = 0;
 
-    void bump_generation() noexcept { ++generation_; }
+    void bump_generation() noexcept;
     [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
 
     // Number of instructions currently stored
@@ -375,6 +389,12 @@ export struct BasicBlockSoA {
 // `block.start_idx` and `block.end_idx`. Marked `inline` so
 // downstream importers get the same definition without ODR
 // violations.
+// Issue #2111 / #2432: per-function gen + process-global fence.
+inline void IRFunctionSoA::bump_generation() noexcept {
+    ++generation_;
+    g_ir_soa_generation_fence().fetch_add(1, std::memory_order_relaxed);
+}
+
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     // Issue #2142: unified hot-path contract (record + enforce/observe).
     AURA_HOT_CONTRACT(block_id < blocks_.size() || block_dirty_.empty() ||
@@ -398,7 +418,7 @@ inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
             }
         }
     }
-    // Issue #2111: generation fence on block dirty (and instr cascade).
+    // Issue #2111 / #2432: generation fence on block dirty (and instr cascade).
     bump_generation();
 }
 
