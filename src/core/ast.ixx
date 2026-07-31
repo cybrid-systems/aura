@@ -1545,6 +1545,11 @@ public:
     // unchanged and lets us add provenance at any time
     // without touching every FlatAST consumer.
     std::pmr::vector<std::uint32_t> provenance_;
+    // Issue #2423: dirty_ column concurrent access (shared readers /
+    // exclusive writers). Dedicated mutex — NOT structural_mtx_ — so
+    // mark_dirty under StructuralMutationGuard cannot deadlock.
+    // LOCK ORDER if combined with structural: structural → dirty_column.
+    mutable OwnedSharedMutex dirty_column_mtx_;
     std::pmr::vector<std::uint8_t> dirty_;
     // Issue #277: per-node PPA dirty bitmask (orthogonal to DirtyReason
     // which is full at 8 bits). OR'd with kPpaHintDirty on dirty_ when set.
@@ -2016,16 +2021,23 @@ public:
     //   nodes in [start, end). Useful for batch-query invocations
     //   that want to skip a range when count == 0.
     // Returns false / 0 if the AST is not yet dirty-tracked
-    // (dirty_ column not built). Both are const and thread-safe.
+    // (dirty_ column not built).
+    // Issue #2423: both take shared dirty_column_mtx_ so concurrent
+    // mark_dirty writers (exclusive) cannot race the dirty_ scan.
+    // Uncontended shared_lock is acceptable on the hot short-circuit path.
     bool is_subtree_dirty_node(NodeId id) const noexcept {
         if (id == NULL_NODE || id >= size())
             return false;
-        if (dirty_.empty())
-            return false; // not built
-        return dirty_[static_cast<std::size_t>(id)];
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
+        if (dirty_.empty() || static_cast<std::size_t>(id) >= dirty_.size())
+            return false; // not built / not yet grown
+        return dirty_[static_cast<std::size_t>(id)] != 0;
     }
     std::size_t dirty_nodes_in_range(NodeId start, NodeId end) const noexcept {
-        if (start >= end || dirty_.empty())
+        if (start >= end)
+            return 0;
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
+        if (dirty_.empty())
             return 0;
         const auto s = static_cast<std::size_t>(start);
         const auto e = static_cast<std::size_t>(end);
@@ -5828,13 +5840,20 @@ public:
     // contract catches genuine OOB like passing a stale NodeId from
     // a released child.
     void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) pre(id < tag_.size()) {
-        if (id >= dirty_.size())
-            dirty_.resize(id + 1, 0);
-        dirty_[id] |= reasons;
+        // Issue #2423: exclusive dirty_column_mtx_ for resize + RMW of
+        // dirty_[id]. Readers (is_subtree_dirty_node / dirty_nodes_in_range)
+        // hold shared. Side effects outside dirty_ (cache clear, restamp
+        // touch, occurrence stale, epoch bump) run after unlock.
+        {
+            std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+            if (id >= dirty_.size())
+                dirty_.resize(id + 1, 0);
+            dirty_[id] |= reasons;
+            // Issue #1519: post — requested reason bits are set after stamp.
+            contract_assert(reasons == 0 || (dirty_[id] & reasons) == reasons);
+        }
         // Issue #2122: seed wrap-window touched set for incremental restamp.
         note_restamp_touched(id);
-        // Issue #1519: post — requested reason bits are set after stamp.
-        contract_assert(reasons == 0 || (dirty_[id] & reasons) == reasons);
         aura::core::cpp26::record_hotpath_invariant_hit();
         clear_cached_value(id); // invalidate result cache
         // Issue #1455: kOccurrenceDirty implies the occurrence-

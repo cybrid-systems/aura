@@ -3107,6 +3107,24 @@ def cmd_subtree_gen_atomic_coverage():
     return 0
 
 
+def cmd_dirty_column_lock_coverage():
+    """Issue #2423: dirty_ column shared/exclusive lock for short-circuit APIs.
+
+    is_subtree_dirty_node / dirty_nodes_in_range take shared; mark_dirty exclusive.
+    """
+    print(f"{B}=== dirty_column lock coverage (#2423) ==={N}")
+    script = ROOT / "scripts" / "check_dirty_column_lock_2423.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dirty_column lock (#2423) coverage contract rows failed")
+        return 1
+    ok("dirty_column lock (#2423) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4051,6 +4069,7 @@ def cmd_gate():
         or cmd_tag_arity_key_hash_coverage()
         or cmd_restamp_lazy_align_atomic_coverage()
         or cmd_subtree_gen_atomic_coverage()
+        or cmd_dirty_column_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
