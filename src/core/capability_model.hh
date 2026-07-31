@@ -136,6 +136,8 @@ struct EffectAuditEntry {
     TenantId tenant_id = 0;
     EffectProvenance prov{};
     bool denied = false;
+    // Issue #2427 AC4: sandbox_mode observed at record time (policy flip audit).
+    EffectSandboxMode sandbox_mode = EffectSandboxMode::Off;
     char op[40]{};
 };
 
@@ -203,9 +205,15 @@ inline CapabilityEffectMetrics& g_capability_effect_metrics() noexcept {
     return m;
 }
 
-// Issue #2426: atomic-backed fields with assignment + conversion so
+// Issue #2426 / #2427: atomic-backed fields with assignment + conversion so
 // existing `reg.sandbox_mode = M` / `reg.sandbox_mode == M` keep working
-// while snapshot_registry_state() can double-check acquire loads.
+// (AC3 signature preservation) while lock-free readers use acquire loads.
+// #2427 F3: sandbox_mode was plain EffectSandboxMode (uint8) — policy flip race.
+// #2427 F4: default_tenant was plain TenantId — same pattern; fixed together.
+static_assert(std::atomic<std::uint8_t>::is_always_lock_free,
+              "Issue #2427: uint8 atomic for sandbox_mode must be lock-free");
+static_assert(std::atomic<TenantId>::is_always_lock_free,
+              "Issue #2427: TenantId atomic for default_tenant must be lock-free");
 struct AtomicEffectSandboxMode {
     std::atomic<std::uint8_t> v{static_cast<std::uint8_t>(EffectSandboxMode::Off)};
     AtomicEffectSandboxMode() noexcept = default;
@@ -214,10 +222,12 @@ struct AtomicEffectSandboxMode {
     }
     AtomicEffectSandboxMode(const AtomicEffectSandboxMode&) = delete;
     AtomicEffectSandboxMode& operator=(const AtomicEffectSandboxMode&) = delete;
+    // Writers: release store (Issue #2427 AC1/AC3).
     AtomicEffectSandboxMode& operator=(EffectSandboxMode m) noexcept {
         v.store(static_cast<std::uint8_t>(m), std::memory_order_release);
         return *this;
     }
+    // Readers: acquire load.
     [[nodiscard]] operator EffectSandboxMode() const noexcept {
         return static_cast<EffectSandboxMode>(v.load(std::memory_order_acquire));
     }
@@ -267,7 +277,7 @@ struct CapabilityRegistry {
     // Issue #2023: per-tenant MacroSelfEvo policy limits (paired with
     // Effect::MacroSelfEvo grant bit). Absent entry → no grant.
     std::unordered_map<TenantId, MacroSelfEvoPolicy> macro_self_evo_by_tenant;
-    // Issue #2426: atomic (was plain enum / TenantId — torn vs other atomics).
+    // Issue #2426 / #2427: atomic (was plain enum / TenantId — policy flip race).
     AtomicEffectSandboxMode sandbox_mode{};
     AtomicTenantId default_tenant{};
     static constexpr std::size_t kAuditRing = 128;
@@ -519,6 +529,8 @@ struct CapabilityRegistry {
         entry.tenant_id = tenant;
         entry.prov = prov;
         entry.denied = denied;
+        // Issue #2427 AC4: stamp policy mode observed at audit time.
+        entry.sandbox_mode = sandbox_mode.load(std::memory_order_acquire);
         const auto n = std::min(op.size(), sizeof(entry.op) - 1);
         std::memcpy(entry.op, op.data(), n);
         entry.op[n] = '\0';
