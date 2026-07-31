@@ -699,19 +699,65 @@ Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
     return ref;
 }
 
-// Issue #2224: sole public outbound helper — every StableNodeRef handed to
-// Agent / user code MUST go through export_ref / export_ref_safe so the
-// tenant + fiber stamp is guaranteed. Parity with #2152 dispatch
+// Issue #2224 / #2404: sole public outbound helper — every StableNodeRef
+// handed to Agent / user code MUST go through export_ref / export_ref_safe
+// so the tenant + fiber stamp is guaranteed AND validate_or_refresh runs
+// before return (Agent export contract). Parity with #2152 dispatch
 // required_effects: side effects are non-bypassable; isolation should match.
-// Underlying call still routes through make_stamped_* so semantics are
-// identical; export_ref just locks the Agent-facing surface.
 ast::FlatAST::StableNodeRef Evaluator::export_ref(ast::NodeId id) const noexcept {
-    return make_stamped_ref(id);
+    // const surface kept for #2224 call sites; finalize mutates only the
+    // returned ref + process-wide atomics (via non-const ensure helper).
+    return const_cast<Evaluator*>(this)->finalize_agent_export(make_stamped_ref(id));
 }
 
 ast::FlatAST::StableNodeRef Evaluator::export_ref_safe(ast::NodeId id, std::uint32_t workspace_id,
                                                        std::uint32_t fiber_id) const noexcept {
-    return make_stamped_safe_ref(id, workspace_id, fiber_id);
+    return const_cast<Evaluator*>(this)->finalize_agent_export(
+        make_stamped_safe_ref(id, workspace_id, fiber_id));
+}
+
+// Issue #2404: stamp is already applied; run ensure_valid_or_refresh and
+// classify export metrics (valid soft / refresh / stale-reject).
+ast::FlatAST::StableNodeRef
+Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept {
+    using aura::core::provenance::record_stable_ref_export_refresh;
+    using aura::core::provenance::record_stable_ref_export_stale_reject;
+    using aura::core::provenance::record_stable_ref_export_valid;
+    using aura::core::provenance::stable_ref_export_hard_reject;
+
+    auto* ws = workspace_flat_;
+    if (!ws || ref.id == aura::ast::NULL_NODE) {
+        record_stable_ref_export_stale_reject();
+        if (stable_ref_export_hard_reject())
+            return {};
+        return ref;
+    }
+    // AC3: already-valid → no restamp work beyond lock-free validate in
+    // ensure_valid_or_refresh / validate_or_refresh (refresh_if_stale early-outs).
+    const bool already_valid = ref.is_valid_in(*ws);
+    auto view = ensure_valid_or_refresh(ref, /*auto_refresh=*/true);
+    if (!view) {
+        record_stable_ref_export_stale_reject();
+        if (stable_ref_export_hard_reject())
+            return {};
+        return ref; // soft: return unrefreshable stamped handle for Agent error path
+    }
+    if (already_valid)
+        record_stable_ref_export_valid();
+    else
+        record_stable_ref_export_refresh();
+    return ref;
+}
+
+std::optional<ast::FlatAST::StableNodeRef>
+Evaluator::export_held_ref(ast::FlatAST::StableNodeRef ref) noexcept {
+    // Re-export long-held handle (mailbox / cross-fiber). finalize_agent_export
+    // owns export metrics; callers get nullopt on unrefreshable.
+    auto out = finalize_agent_export(std::move(ref));
+    auto* ws = workspace_flat_;
+    if (!ws || out.id == aura::ast::NULL_NODE || !out.is_valid_in(*ws))
+        return std::nullopt;
+    return out;
 }
 
 // Issue #2224: shared resolve entry — query / mutate / ast-walk paths

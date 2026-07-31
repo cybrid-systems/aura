@@ -51,8 +51,32 @@ RAW_MAKE_REF_RE = re.compile(r"(?:workspace_flat_->make_ref\(|->make_ref\(|->mak
 STAMPED_HELPERS = (
     "ev.export_ref(",
     "ev.export_ref_safe(",
+    "ev.export_held_ref(",
+    "ev.finalize_agent_export(",
     "ev.make_stamped_ref(",
     "ev.make_stamped_safe_ref(",
+)
+
+# Issue #2404: Agent export return-path helpers that force
+# validate_or_refresh before handoff.
+EXPORT_VALIDATE_HELPERS = (
+    "ev.export_ref(",
+    "ev.export_ref_safe(",
+    "ev.export_held_ref(",
+    "ev.finalize_agent_export(",
+    "ensure_valid_or_refresh(",
+    "validate_or_refresh(",
+)
+
+# Prim names that *return* StableNodeRef-shaped values to Agents and
+# therefore must call one of EXPORT_VALIDATE_HELPERS (#2404 AC1).
+# children-stable uses for_each_stable_child (fresh live-gen capture at
+# walk time — documented #2404 soft path; not in this list).
+EXPORT_RETURN_PRIMS = (
+    "query:stable-ref",
+    "query:ensure-ref",
+    "query:parent-stable",
+    "ast:stable-ref",
 )
 
 
@@ -151,6 +175,7 @@ def main() -> int:
 
     allowlist = load_allowlist(ALLOWLIST_PATH)
     violations: list[tuple[Path, str, int, str]] = []
+    export_missing: list[tuple[Path, str, int]] = []
     scanned = 0
 
     for path in sorted(ROOT.glob(PRIM_GLOB)):
@@ -162,15 +187,29 @@ def main() -> int:
                 continue
             for offset, snippet in find_raw_make_refs(body):
                 violations.append((path, prim_name, start_line + offset, snippet))
+            # Issue #2404 AC1: return-path export prims must validate.
+            if prim_name in EXPORT_RETURN_PRIMS and not any(h in body for h in EXPORT_VALIDATE_HELPERS):
+                export_missing.append((path, prim_name, start_line))
 
     print(f"scanned {scanned} prim TU(s) under {PRIM_GLOB}")
-    if not violations:
+    ok_stamp = not violations
+    ok_export = not export_missing
+    if ok_stamp:
         print("OK — all Agent-facing prims route through export_ref / make_stamped_*")
+    else:
+        print(f"FOUND {len(violations)} raw make_ref violation(s):")
+        for path, prim_name, line_no, snippet in violations:
+            rel = path.relative_to(ROOT)
+            print(f"  {rel}:{line_no}  {prim_name}  →  {snippet}")
+    if ok_export:
+        print("OK — #2404 export return-path prims call validate/export helpers")
+    else:
+        print(f"FOUND {len(export_missing)} #2404 export-return coverage gap(s):")
+        for path, prim_name, line_no in export_missing:
+            rel = path.relative_to(ROOT)
+            print(f"  {rel}:{line_no}  {prim_name}  missing export/validate helper")
+    if ok_stamp and ok_export:
         return 0
-    print(f"FOUND {len(violations)} violation(s):")
-    for path, prim_name, line_no, snippet in violations:
-        rel = path.relative_to(ROOT)
-        print(f"  {rel}:{line_no}  {prim_name}  →  {snippet}")
     print(f"\nAllowlist (if a violation is intentional): {ALLOWLIST_PATH.relative_to(ROOT)}")
     return 1 if args.strict else 0
 

@@ -260,6 +260,8 @@ void register_workspace_query_primitives(
     // (mutate:check-stable-ref) or pass it back to a mutate
     // primitive that supports stable-ref inputs.
     // Issue #2186: parent handle goes through ensure_valid_or_refresh.
+    // Issue #2404 soft path: for_each_stable_child captures at live gen
+    // (already-valid export); re-export of stored pairs uses query:ensure-ref.
     add("query:children-stable",
         [ws, mev, resolve_query_node_arg, begin_query_epoch,
          end_query_epoch](const auto& a) -> EvalValue {
@@ -323,7 +325,7 @@ void register_workspace_query_primitives(
     // parent as a (node-id . generation) stable-ref pair. Returns
     // an empty list if the node has no parent.
     // Issue #2186: resolve via ensure_valid_or_refresh.
-    add("query:parent-stable", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
+    add("query:parent-stable", [ws, mev, resolve_query_node_arg, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !ws.workspace_flat)
             return mev("bad-arg", "usage: (query:parent-stable node-id|stable-ref)");
@@ -336,12 +338,16 @@ void register_workspace_query_primitives(
         auto pref = flat.parent_stable(node);
         if (pref.id == aura::ast::NULL_NODE)
             return make_void();
-        auto gen = flat.generation();
+        // Issue #2404: Agent export of parent handle via export_ref_safe.
+        const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+        auto exported = ev.export_ref_safe(pref.id, /*workspace_id=*/0, cur_fiber);
+        if (exported.id == aura::ast::NULL_NODE || !exported.is_valid_in(flat))
+            return mev("stale-ref", "query:parent-stable: Agent export failed");
         // Build (parent-id . gen) pair
         auto gen_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
+        ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.gen)), make_void()});
         auto pair_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(pref.id)), make_pair(gen_pid)});
+        ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
         return make_pair(pair_pid);
     });
 
@@ -404,7 +410,7 @@ void register_workspace_query_primitives(
         return result;
     });
 
-    // Issue #235: (query:stable-ref node-id) — Returns a
+    // Issue #235 / #2404: (query:stable-ref node-id) — Returns a
     // stable reference to a node as (node-id . current-gen).
     // The stable-ref can be passed back to mutate:* primitives
     // which will verify the generation matches before applying
@@ -412,6 +418,10 @@ void register_workspace_query_primitives(
     // structural mutation has happened since the ref was
     // captured), the primitive fails with a "stale-ref" error
     // instead of silently operating on a wrong node.
+    //
+    // Issue #2404 Agent export contract: routes through export_ref_safe
+    // (stamp + validate_or_refresh) so long-lived Agent state never
+    // ships a pre-mutate handle without forced refresh classification.
     //
     // The result is a 2-element list `(id . gen)` so the agent
     // can capture it as a single value and pass it through
@@ -427,27 +437,137 @@ void register_workspace_query_primitives(
         if (node >= flat.size())
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
-        auto gen = flat.generation();
-        // Issue #738 / #1630: auto-pin captured refs with full provenance
-        // (fiber_id + cow/wrap) and force ensure_valid_or_refresh so query
-        // returns only refs that survived full validation.
+        // Issue #738 / #1630 / #2404: export_ref_safe stamps + finalize_agent_export.
         std::uint32_t layer = 0;
         if (ev.workspace_tree()) {
             auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
             layer = wt->active_idx();
         }
         const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-        // Issue #2056: mandate tenant + fiber stamp on Agent-facing capture.
-        auto ref = ev.make_stamped_safe_ref(node, layer, cur_fiber);
-        if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
-            return mev("stale-ref", "query:stable-ref: provenance ensure failed");
+        auto ref = ev.export_ref_safe(node, layer, cur_fiber);
+        if (ref.id == aura::ast::NULL_NODE || !ref.is_valid_in(flat))
+            return mev("stale-ref", "query:stable-ref: Agent export validate_or_refresh failed");
         ev.pin_stable_ref_for_cow_boundary(ref);
-        // Build (node-id . gen) pair
+        // Build (node-id . gen) pair using post-refresh gen.
         auto gen_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});
+        ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
         auto pair_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(node)), make_pair(gen_pid)});
+        ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
         return make_pair(pair_pid);
+    });
+
+    // Issue #2404: (query:ensure-ref node-id|stable-ref) — force
+    // validate_or_refresh on an Agent-held handle and return a diagnostic
+    // hash: valid / id / gen / refreshed / provenance snapshot keys +
+    // schema-2404. Soft path: already-valid is metric-only (export-valid).
+    add("query:ensure-ref", [ws, mev, &ev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty())
+            return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto& flat = *ws.workspace_flat;
+
+        aura::ast::FlatAST::StableNodeRef held{};
+        bool from_packed = false;
+        if (is_int(a[0])) {
+            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            if (node >= flat.size())
+                return mev("out-of-range", "node ID out of range");
+            std::uint32_t layer = 0;
+            if (ev.workspace_tree()) {
+                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                layer = wt->active_idx();
+            }
+            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+            held = ev.make_stamped_safe_ref(node, layer, cur_fiber);
+        } else if (is_pair(a[0])) {
+            from_packed = true;
+            auto& outer = ws.pairs[as_pair_idx(a[0])];
+            if (!is_int(outer.car) || !is_pair(outer.cdr))
+                return mev("bad-arg", "stable-ref shape: (id . (gen . _))");
+            auto& inner = ws.pairs[as_pair_idx(outer.cdr)];
+            if (!is_int(inner.car))
+                return mev("bad-arg", "stable-ref gen must be int");
+            held.id = static_cast<aura::ast::NodeId>(as_int(outer.car));
+            held.gen = static_cast<std::uint16_t>(as_int(inner.car));
+            // Partial packed form: remake stamp then refresh.
+            std::uint32_t layer = 0;
+            if (ev.workspace_tree()) {
+                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                layer = wt->active_idx();
+            }
+            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+            // Preserve captured gen for staleness; stamp fiber/tenant.
+            auto stamped = ev.make_stamped_safe_ref(held.id, layer, cur_fiber);
+            // If packed gen is older, force stale so refresh path runs.
+            if (held.gen != 0 && held.gen != stamped.gen) {
+                stamped.gen = held.gen;
+                // wrap 0 allows refresh across gen mismatch (legacy pack).
+                stamped.wrap_epoch = 0;
+            }
+            held = stamped;
+        } else {
+            return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
+        }
+
+        const bool was_valid = held.is_valid_in(flat);
+        auto exported = ev.export_held_ref(held);
+        // Build result hash via FlatHashTable (same pattern as obs stats).
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ws.string_heap.size();
+                    ws.string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        if (!exported) {
+            insert_kv("valid", 0);
+            insert_kv("id", static_cast<std::int64_t>(held.id));
+            insert_kv("gen", static_cast<std::int64_t>(held.gen));
+            insert_kv("refreshed", 0);
+            insert_kv("from-packed", from_packed ? 1 : 0);
+            insert_kv("schema-2404", 2404);
+            insert_kv("issue-2404", 2404);
+            insert_kv("stable-ref-export-wired", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        }
+        insert_kv("valid", 1);
+        insert_kv("id", static_cast<std::int64_t>(exported->id));
+        insert_kv("gen", static_cast<std::int64_t>(exported->gen));
+        insert_kv("refreshed", was_valid ? 0 : 1);
+        insert_kv("from-packed", from_packed ? 1 : 0);
+        insert_kv("fiber-id", static_cast<std::int64_t>(exported->fiber_id));
+        insert_kv("tenant-id", static_cast<std::int64_t>(exported->tenant_id));
+        insert_kv("wrap-epoch", static_cast<std::int64_t>(exported->wrap_epoch));
+        insert_kv("schema-2404", 2404);
+        insert_kv("issue-2404", 2404);
+        insert_kv("stable-ref-export-wired", 1);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #347 follow-up #1 / #393: (query:ref-valid? stable-ref)

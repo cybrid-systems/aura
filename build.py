@@ -2298,6 +2298,25 @@ def cmd_query_index_composite_coverage():
     return 0
 
 
+def cmd_stable_ref_export_coverage():
+    """Issue #2404: Agent export validate_or_refresh contract.
+
+    export_ref/export_held_ref/query:ensure-ref; export-refresh/stale-reject
+    metrics; schema-2404; stamp-resolve return-path coverage.
+    """
+    print(f"{B}=== stable-ref export validate coverage (#2404) ==={N}")
+    script = ROOT / "scripts" / "check_stable_ref_export_2404.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("stable-ref export validate (#2404) coverage contract rows failed")
+        return 1
+    ok("stable-ref export validate (#2404) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3665,6 +3684,7 @@ def cmd_gate():
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()
+        or cmd_stable_ref_export_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

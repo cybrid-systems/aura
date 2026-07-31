@@ -3022,6 +3022,11 @@ aura_add_issue_test(test_query_index_composite_2403)
 aura_issue_test_link_llvm_jit(test_query_index_composite_2403)
 add_dependencies(all_test_issue_targets test_query_index_composite_2403)
 
+# Issue #2404: Agent StableNodeRef export validate_or_refresh contract.
+aura_add_issue_test(test_stable_ref_export_validate_2404)
+aura_issue_test_link_llvm_jit(test_stable_ref_export_validate_2404)
+add_dependencies(all_test_issue_targets test_stable_ref_export_validate_2404)
+
 # Issue #2073: wire check_workspace_isolation + stamp_ref_tenant on
 # mutate / StableNodeRef hot paths (stamp_ref_tenant at
 # pin_node_for_atomic_batch). Extends #1566 / #81967 coverage.

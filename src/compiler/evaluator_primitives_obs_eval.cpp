@@ -10468,9 +10468,9 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->cross_cow_provenance_enforced_total.load(std::memory_order_relaxed))
                   : static_cast<std::int64_t>(snap.cross_cow_provenance_enforced);
-            // Capacity 64: #1630/#2056/#2125/#2186 keys (was 32; #2186
-            // fold-in overflowed and silently dropped schema-2186).
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: #1630/#2056/#2125/#2186/#2404 keys (was 64;
+            // #2404 export keys need headroom under open addressing).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10550,6 +10550,18 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-2186", aura::core::provenance::kEdslValidateOrRefreshIssue);
             insert_kv("edsl-validate-or-refresh-enforced", 1);
             insert_kv("edsl-query-consume-via-ensure", 1);
+            // Issue #2404: Agent export contract (export_ref / ensure-ref).
+            insert_kv("schema-2404", aura::core::provenance::kStableRefExportValidateIssue);
+            insert_kv("issue-2404", aura::core::provenance::kStableRefExportValidateIssue);
+            insert_kv("stable-ref-export-refresh-total",
+                      static_cast<std::int64_t>(snap.export_refresh));
+            insert_kv("stable-ref-export-valid-total",
+                      static_cast<std::int64_t>(snap.export_valid));
+            insert_kv("stable-ref-export-stale-reject-total",
+                      static_cast<std::int64_t>(snap.export_stale_reject));
+            insert_kv("stable-ref-export-wired", 1);
+            insert_kv("stable-ref-export-hard-reject",
+                      aura::core::provenance::stable_ref_export_hard_reject() ? 1 : 0);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
