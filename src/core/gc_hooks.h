@@ -28,6 +28,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
+#include <thread> // Issue #2438: this_thread::yield in clear_arena_compact_notify_hooks
 
 namespace aura::gc_hooks {
 
@@ -1097,26 +1098,81 @@ inline void note_gc_request_deferred_pending_panic() noexcept {
     return gc_deferred_for_pending_panic();
 }
 
-// ── Arena auto-compact notification (Issue #743) ────────────
+// ── Arena auto-compact notification (Issue #743 / #2438) ────
 // Called from arena.ixx when allocate_raw auto-compact fires
 // or fiber-safe compact/defrag coordinates a safepoint.
 // Wired by CompilerService at startup to bump CompilerMetrics.
+//
+// Issue #2438 lifecycle invariant (Option A + in-flight drain):
+//   * Function pointers are static (no capture of CompilerService*).
+//     Callables load g_current_compiler_service at call time.
+//   * Teardown MUST: (1) store nullptr hooks, (2) wait until
+//     g_arena_compact_hook_in_flight == 0, (3) null g_current_compiler_service,
+//     (4) destroy CompilerService. clear_arena_compact_notify_hooks()
+//     implements (1)+(2). CompilerService::~CompilerService calls it
+//     before clearing g_current (AC2).
+//   * notify_* increments in_flight around the load+call so a concurrent
+//     clear waits for any in-progress call that may still read g_current.
+//   * Without the drain, load(fn) → dtor frees service → fn() uses
+//     g_current_compiler_service → UAF on metrics().
 using ArenaAutoCompactTriggerFn = void (*)();
 inline std::atomic<ArenaAutoCompactTriggerFn> g_arena_auto_compact_trigger{nullptr};
 
 using ArenaFiberSafeCompactFn = void (*)();
 inline std::atomic<ArenaFiberSafeCompactFn> g_arena_fiber_safe_compact{nullptr};
 
+// Issue #2438: in-flight notify_* count (teardown wait target).
+inline std::atomic<std::uint32_t> g_arena_compact_hook_in_flight{0};
+// Observability: how many times teardown waited for in-flight notify.
+inline std::atomic<std::uint64_t> g_arena_compact_hook_clear_wait_total{0};
+inline std::atomic<std::uint64_t> g_arena_compact_hook_clear_total{0};
+// Wired sentinel for query / coverage.
+inline std::atomic<std::uint64_t> arena_compact_notify_lifecycle_wired{1};
+inline constexpr int kArenaCompactNotifyLifecycleIssue = 2438;
+
+[[nodiscard]] inline std::uint32_t arena_compact_hook_in_flight() noexcept {
+    return g_arena_compact_hook_in_flight.load(std::memory_order_acquire);
+}
+
+// Issue #2438: store nullptr on both hooks, then wait for in-flight
+// notify_* to finish before the caller may free CompilerService /
+// null g_current_compiler_service.
+inline void clear_arena_compact_notify_hooks() noexcept {
+    g_arena_auto_compact_trigger.store(nullptr, std::memory_order_release);
+    g_arena_fiber_safe_compact.store(nullptr, std::memory_order_release);
+    g_arena_compact_hook_clear_total.fetch_add(1, std::memory_order_relaxed);
+    // Drain: any notify that loaded a non-null fn and entered the call
+    // still holds in_flight until return.
+    std::uint32_t spins = 0;
+    while (g_arena_compact_hook_in_flight.load(std::memory_order_acquire) != 0) {
+        if (spins == 0)
+            g_arena_compact_hook_clear_wait_total.fetch_add(1, std::memory_order_relaxed);
+        ++spins;
+        // Avoid busy-hot spinning forever under load; yield cooperatively.
+#if defined(__cpp_lib_atomic_wait)
+        // No atomic_wait on the counter without notify; spin-yield is fine.
+#endif
+        std::this_thread::yield();
+    }
+}
+
 inline void notify_auto_compact_trigger() noexcept {
+    // Issue #2438: hold in_flight for the entire load+call so teardown
+    // drain cannot free CompilerService while we may still touch it via
+    // g_current_compiler_service inside fn().
+    g_arena_compact_hook_in_flight.fetch_add(1, std::memory_order_acq_rel);
     auto fn = g_arena_auto_compact_trigger.load(std::memory_order_acquire);
     if (fn)
         fn();
+    g_arena_compact_hook_in_flight.fetch_sub(1, std::memory_order_release);
 }
 
 inline void notify_fiber_safe_compact() noexcept {
+    g_arena_compact_hook_in_flight.fetch_add(1, std::memory_order_acq_rel);
     auto fn = g_arena_fiber_safe_compact.load(std::memory_order_acquire);
     if (fn)
         fn();
+    g_arena_compact_hook_in_flight.fetch_sub(1, std::memory_order_release);
 }
 
 } // namespace aura::gc_hooks

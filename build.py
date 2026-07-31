@@ -3377,6 +3377,24 @@ def cmd_gc_defer_reconcile_cas_coverage():
     return 0
 
 
+def cmd_arena_compact_notify_lifecycle_coverage():
+    """Issue #2438: arena compact notify_* TOCTOU / teardown drain.
+
+    clear_arena_compact_notify_hooks + in_flight wait before free.
+    """
+    print(f"{B}=== arena compact notify lifecycle coverage (#2438) ==={N}")
+    script = ROOT / "scripts" / "check_arena_compact_notify_lifecycle_2438.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("arena compact notify lifecycle (#2438) coverage contract rows failed")
+        return 1
+    ok("arena compact notify lifecycle (#2438) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4336,6 +4354,7 @@ def cmd_gate():
         or cmd_hot_contract_placement_coverage()
         or cmd_post_compact_lifecycle_coverage()
         or cmd_gc_defer_reconcile_cas_coverage()
+        or cmd_arena_compact_notify_lifecycle_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

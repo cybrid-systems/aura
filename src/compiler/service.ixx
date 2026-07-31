@@ -645,20 +645,27 @@ public:
                 aura::core::post_compact_lifecycle::note_lifecycle_ir_sync();
             });
         }
-        aura::gc_hooks::g_arena_auto_compact_trigger.store(+[]() noexcept {
-            auto* raw = aura::messaging::g_current_compiler_service;
-            if (!raw)
-                return;
-            auto& m = static_cast<CompilerService*>(raw)->metrics();
-            m.arena_auto_compact_trigger_total.fetch_add(1, std::memory_order_relaxed);
-        });
-        aura::gc_hooks::g_arena_fiber_safe_compact.store(+[]() noexcept {
-            auto* raw = aura::messaging::g_current_compiler_service;
-            if (!raw)
-                return;
-            auto& m = static_cast<CompilerService*>(raw)->metrics();
-            m.arena_live_move_yield_total.fetch_add(1, std::memory_order_relaxed);
-        });
+        // Issue #743 / #2438: static lambdas (no capture) load
+        // g_current_compiler_service at call time. Teardown clears hooks
+        // via clear_arena_compact_notify_hooks() before nulling g_current.
+        aura::gc_hooks::g_arena_auto_compact_trigger.store(
+            +[]() noexcept {
+                auto* raw = aura::messaging::g_current_compiler_service;
+                if (!raw)
+                    return;
+                auto& m = static_cast<CompilerService*>(raw)->metrics();
+                m.arena_auto_compact_trigger_total.fetch_add(1, std::memory_order_relaxed);
+            },
+            std::memory_order_release);
+        aura::gc_hooks::g_arena_fiber_safe_compact.store(
+            +[]() noexcept {
+                auto* raw = aura::messaging::g_current_compiler_service;
+                if (!raw)
+                    return;
+                auto& m = static_cast<CompilerService*>(raw)->metrics();
+                m.arena_live_move_yield_total.fetch_add(1, std::memory_order_relaxed);
+            },
+            std::memory_order_release);
         // Issue #686: shape stability loss / invalidate → IRSoA block_dirty_.
         shape_profiler_.set_dirty_hook([this](shape::FnKey fn_key, std::uint32_t dirty_scope) {
             (void)dirty_scope;
@@ -10656,20 +10663,19 @@ public:
         // happens to own the live pointer (multi-service scenario)
         // is preserved.
         aura_clear_jit_batch_deopt_target(&jit_);
-        // Issue #765 (ASan-verify fix): reset the global
-        // g_current_compiler_service hook so the arena
-        // auto-compact-trigger + fiber-safe-compact lambdas
-        // stored in aura::gc_hooks don't dereference a
-        // dangling this-pointer after the last CompilerService
-        // in a test scope goes out of scope. Without this
-        // reset, a subsequent arena auto-compact (e.g. a
-        // small allocator cap hit) reads from the destroyed
-        // CompilerService's metrics() — ASan flags it as
-        // stack-use-after-scope on the lambda's local 'raw'
-        // stack frame. Always reset if we still own it;
-        // never blindly zero (other services may have set
-        // it concurrently in a multi-service scenario).
+        // Issue #2438 (extends #765): clear arena auto-compact notify hooks and
+        // drain in-flight notify_* before nulling g_current_compiler_service.
+        // Without the drain, concurrent notify_auto_compact_trigger can
+        // load g_current, then we free this service, then the notify body
+        // touches metrics() → UAF (TOCTOU on the process-wide service ptr).
+        // Order (do not reverse):
+        //   1. clear_arena_compact_notify_hooks() — nullptr + wait in_flight
+        //   2. g_current_compiler_service = nullptr (if we own it)
+        //   3. member destruction continues
+        // Only clear process-wide hooks when we still own g_current (another
+        // live CompilerService may have re-wired them).
         if (aura::messaging::g_current_compiler_service == this) {
+            aura::gc_hooks::clear_arena_compact_notify_hooks();
             aura::messaging::g_current_compiler_service = nullptr;
             // Issue #2100: drop deopt restore hook with the owning service.
             aura_jit_set_macro_deopt_restore_fn(nullptr);
