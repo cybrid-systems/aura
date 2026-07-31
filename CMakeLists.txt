@@ -1502,6 +1502,9 @@ aura_issue_test_link_llvm_jit(test_arena_compact_hook_stats_2381)
 # Issue #2382: ASTArena dtor clears hooks under mutex before teardown (no dangling invoke).
 aura_add_issue_test(test_arena_dtor_clears_hooks_2382)
 aura_issue_test_link_llvm_jit(test_arena_dtor_clears_hooks_2382)
+# Issue #2383: has_on_compact_hook locks hook_mtx_ (parity with layout/root_remap has_*).
+aura_add_issue_test(test_has_on_compact_hook_lock_2383)
+aura_issue_test_link_llvm_jit(test_has_on_compact_hook_lock_2383)
 # Issue #2463: summary_flags_ converted to std::atomic<uint32_t> + clear()
 # acquires flatast_mutex_. Concurrent reader (summary_flags() / summary_has())
 # + writer (clear() / summary_add_flags() / summary_recompute()) must not
@@ -1923,6 +1926,8 @@ add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
 add_dependencies(all_test_issue_targets test_arena_compact_hook_stats_2381)
 # Issue #2382: ASTArena dtor clears hooks before teardown.
 add_dependencies(all_test_issue_targets test_arena_dtor_clears_hooks_2382)
+# Issue #2383: has_on_compact_hook lock parity.
+add_dependencies(all_test_issue_targets test_has_on_compact_hook_lock_2383)
 add_dependencies(all_test_issue_targets test_issues_light)
 add_dependencies(all_test_issue_targets test_issues_jit_late1)
 # DISABLED (paired with disabled aura_add_issue_bundle above):

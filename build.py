@@ -1919,6 +1919,25 @@ def cmd_arena_dtor_clears_hooks_coverage():
     return 0
 
 
+def cmd_has_on_compact_hook_lock_coverage():
+    """Issue #2383: has_on_compact_hook locks hook_mtx_ (has_* lock parity).
+
+    Matches has_on_layout_change / has_root_remap_callback; TSAN-clean
+    concurrent set+has.
+    """
+    print(f"{B}=== has_on_compact_hook lock coverage (#2383) ==={N}")
+    script = ROOT / "scripts" / "check_has_on_compact_hook_lock_2383.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("has_on_compact_hook lock (#2383) coverage contract rows failed")
+        return 1
+    ok("has_on_compact_hook lock (#2383) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3266,6 +3285,7 @@ def cmd_gate():
         or cmd_arena_moving_compaction_coverage()
         or cmd_arena_compact_hook_stats_coverage()
         or cmd_arena_dtor_clears_hooks_coverage()
+        or cmd_has_on_compact_hook_lock_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
