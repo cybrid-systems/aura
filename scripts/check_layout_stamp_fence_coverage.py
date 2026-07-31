@@ -73,8 +73,11 @@ def check() -> list:
     # AC1 ordering: publish_layout_stamp must come before set_resume_layout_stamp
     # (with possible metric bumps + Fiber-set code in between). Both
     # calls must be inside the outermost Phase 5 path.
-    pub_idx = mut_boundary.find("publish_layout_stamp();")
+    # Issue #2436: stamp is re-published *after* densify so the first
+    # publish_layout_stamp() may be early; require the publish immediately
+    # preceding set_resume (rfind) within proximity, not the file's first.
     set_idx = mut_boundary.find("set_resume_layout_stamp(")
+    pub_idx = mut_boundary.rfind("publish_layout_stamp();", 0, set_idx if set_idx != -1 else 0)
     _must(
         pub_idx != -1 and set_idx != -1 and pub_idx < set_idx and (set_idx - pub_idx) < 1500,
         "AC1: set_resume_layout_stamp must come AFTER publish_layout_stamp (Phase 5 ordering)",

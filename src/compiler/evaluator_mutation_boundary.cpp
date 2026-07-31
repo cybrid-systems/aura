@@ -36,6 +36,7 @@ module;
 #include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
 #include "core/arena_auto_policy_stats.h"    // in_render_hotpath
 #include "core/densify_consistency_report.h" // Issue #2341: DensifyConsistencyReport + counter
+#include "core/post_compact_lifecycle.hh"    // Issue #2436: canonical post-compact order
 #include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
 #include "compiler/mutation_hold_budget.h"   // Issue #2313: mutation_hold_budget_us()
 #include "serve/fiber.h"                     // Issue #2184: publish MutationSafetySnapshot
@@ -1756,13 +1757,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Fiber::resume / refresh_stale_frames_after_steal). 6-field
         // POD copied by value (LayoutStamp is trivially copyable
         // per #2170 contract).
-        // Issue #2250: current fiber via g_current_fiber / get_current_fiber.
-        if (auto* cur_fiber = aura::serve::g_current_fiber) {
-            const auto stamp = ev_->current_layout_stamp();
-            cur_fiber->set_resume_layout_stamp(
-                stamp.arena_id, stamp.arena_gen, stamp.flat_gen, stamp.mutation_epoch,
-                stamp.env_gen, stamp.defuse_version, stamp.shape_version, stamp.ir_soa_generation);
-        }
+        // Issue #2436: LayoutStamp is published *after* Moving densify +
+        // ShapeProfiler/IR dirty close (step 9 of post_compact_lifecycle.hh)
+        // so shape_version + ir_soa_generation fences see post-compact truth.
+        // Soft / no-compact still publishes once below (same POD cost).
+        //
         // Issue #2256 + #2257: trigger Moving compaction after
         // outermost Guard exit (post-publish). Honors the pin-or-
         // remap hard contract: compact_all_moving_pinned() (issue #2266)
@@ -1928,6 +1927,27 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Moving densify success site (Phase 5) is wired by #2361
             // (envframe_ok computation above) — single call site, no
             // duplicate scan here.
+            // Issue #2436: lifecycle close steps 9–10 after densify 1–6 +
+            // arena hook (steps 7–8 Shape + IR dirty). Soft densify → soft_skip.
+            if (had_moving_densify) {
+                aura::core::post_compact_lifecycle::note_lifecycle_run();
+            } else {
+                aura::core::post_compact_lifecycle::note_lifecycle_soft_skip();
+            }
+        } else if (!pin_contract_held) {
+            aura::core::post_compact_lifecycle::note_lifecycle_pin_fail();
+        }
+        // Issue #2436 AC4: LayoutStamp re-publish AFTER compact + shape/IR
+        // close so fiber resume fences observe post-compact shape_version +
+        // ir_soa_generation (lifecycle step 9). publish + set_resume stay
+        // adjacent (#2250 Phase 5 ordering proximity).
+        (void)ev_->publish_layout_stamp();
+        if (auto* cur_fiber = aura::serve::g_current_fiber) {
+            const auto stamp = ev_->current_layout_stamp();
+            cur_fiber->set_resume_layout_stamp(
+                stamp.arena_id, stamp.arena_gen, stamp.flat_gen, stamp.mutation_epoch,
+                stamp.env_gen, stamp.defuse_version, stamp.shape_version, stamp.ir_soa_generation);
+            aura::core::post_compact_lifecycle::note_lifecycle_stamp_publish();
         }
         // Issue #2364: PanicCheckpoint residual × densify closed loop.
         // After densify (success or fail leaving evaluator live), residual

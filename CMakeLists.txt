@@ -3162,6 +3162,11 @@ aura_add_issue_test(test_hot_contract_placement_2435)
 aura_issue_test_link_llvm_jit(test_hot_contract_placement_2435)
 add_dependencies(all_test_issue_targets test_hot_contract_placement_2435)
 
+# Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle
+aura_add_issue_test(test_post_compact_lifecycle_2436)
+aura_issue_test_link_llvm_jit(test_post_compact_lifecycle_2436)
+add_dependencies(all_test_issue_targets test_post_compact_lifecycle_2436)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
