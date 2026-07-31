@@ -3137,6 +3137,11 @@ aura_add_issue_test(test_capability_effect_stats_snapshot_2430)
 aura_issue_test_link_llvm_jit(test_capability_effect_stats_snapshot_2430)
 add_dependencies(all_test_issue_targets test_capability_effect_stats_snapshot_2430)
 
+# Issue #2431: pure columnar DeadCoercionElimination on IRModuleV2.
+aura_add_issue_test(test_dead_coercion_columnar_2431)
+aura_issue_test_link_llvm_jit(test_dead_coercion_columnar_2431)
+add_dependencies(all_test_issue_targets test_dead_coercion_columnar_2431)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

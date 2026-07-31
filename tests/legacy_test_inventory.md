@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 615 | Preferred destination suites |
-| **Total scanned** | **615** | |
+| `tests/core/test_*.cpp` | 616 | Preferred destination suites |
+| **Total scanned** | **616** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 32 | 32 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 33 | 33 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 123 | 123 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 33 | 33 | P3 — review case-by-case |
 
@@ -266,6 +266,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_cross_cow_soft_migrate_2371.cpp`
 - `tests/stdlib/test_datetime.cpp`
 - `tests/compiler/test_dead_coercion_batch.cpp`
+- `tests/compiler/test_dead_coercion_columnar_2431.cpp`
 - `tests/compiler/test_dead_coercion_elim.cpp`
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp`
 - `tests/compiler/test_dead_coercion_layered_2282.cpp`
@@ -1281,18 +1282,19 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 
-### `shape_soa` — Shape / SoA / column layout (32)
+### `shape_soa` — Shape / SoA / column layout (33)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (32)
+#### domain/ (33)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — contract / regression guard rather than a failure catch.
 - `tests/core/test_binding_gens_atomic_2417.cpp` (#2417) [domain_suite, theme_core] — AC1: atomic shared_ptr snapshot for readers
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
+- `tests/compiler/test_dead_coercion_columnar_2431.cpp` (#2431) [domain_suite, theme_compiler] — AC1: residual_aos_bridge_total unchanged by DCE SoA path; columnar_total bumps
 - `tests/core/test_fixup_deltas_2392.cpp` (#2392) [domain_suite, theme_core] — AC1: valid deltas → absolute children restored correctly
 - `tests/core/test_flatast_add_node_lock_2413.cpp` (#2413) [domain_suite, theme_core] — AC1: class contract documents flatast_mutex_ reader invariant
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp — Issue #658:
