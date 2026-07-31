@@ -3218,6 +3218,9 @@ aura_issue_test_link_llvm_jit(test_isolation_audit_mid_2156)
 # explicit-string-grant path so existing "*" grants stay meaningful.
 aura_add_issue_test(test_capability_unified_2077)
 aura_issue_test_link_llvm_jit(test_capability_unified_2077)
+# Issue #2387: tenant-admin / syscall join Effect matrix (has_capability single source).
+aura_add_issue_test(test_capability_string_matrix_unify_2387)
+aura_issue_test_link_llvm_jit(test_capability_string_matrix_unify_2387)
 
 # Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
 aura_add_issue_test(test_mutation_contention_2040)

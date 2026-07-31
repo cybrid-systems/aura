@@ -67,6 +67,9 @@ inline constexpr std::uint16_t kEffectNetwork = 1 << 4;
 inline constexpr std::uint16_t kEffectFfi = 1 << 5;
 inline constexpr std::uint16_t kEffectRender = 1 << 6;
 inline constexpr std::uint16_t kEffectMacroSelfEvo = 1 << 7; // Issue #2023
+// Issue #2387: previously string-only sensitive caps in the Effect matrix.
+inline constexpr std::uint16_t kEffectTenantAdmin = 1 << 8;
+inline constexpr std::uint16_t kEffectSyscall = 1 << 9;
 
 // Issue #2076: unified Agent-readable deny reason formatter.
 // Shape: "effect-denied: <EffectName> not granted tenant=<id> op=<op>"
@@ -94,6 +97,10 @@ inline std::string format_deny_reason(std::uint16_t effect_bits, std::uint64_t t
             return "read";
         if (effect_bits & kEffectMacroSelfEvo)
             return "macro-self-evo";
+        if (effect_bits & kEffectTenantAdmin)
+            return "tenant-admin";
+        if (effect_bits & kEffectSyscall)
+            return "syscall";
         return "unknown";
     };
     return std::format("effect-denied: {} not granted tenant={} op={}", name(), tenant_id, op);

@@ -31,7 +31,7 @@ namespace aura::compiler {
 // Issue #918: explicit using-declarations (no using-namespace).
 using security::kCapWildcard;
 
-// Issue #2077: unify has_capability string path with Effect matrix
+// Issue #2077 / #2387: unify has_capability string path with Effect matrix
 // (single source of truth). When `effect_for_cap_name(needed) != None`
 // the Effect bit in `g_capability_registry().effects_for(tenant)` is
 // consulted — grant_capability / grant_effect_capability already mirror
@@ -39,11 +39,12 @@ using security::kCapWildcard;
 // from there too. Wildcard "*" still grants everything via the
 // explicit string-grant path; it also maps to the full effect mask
 // so an effect-only grant (without pushing "*" as a string) can
-// satisfy wildcard queries if every bit is held. Caps with
-// `effect_for_cap_name == None` (tenant-admin, compile-stats, agent,
-// workspace, fiber, exception-control, macro, query, capability,
-// sys-read/write/open/syscall, self-evo, synthesize, strategy,
-// sandbox) keep the legacy string-list path.
+// satisfy wildcard queries if every bit is held.
+// Issue #2387: tenant-admin + syscall promoted into the matrix (epoch /
+// fiber bind). Caps that remain intentionally string-only
+// (effect_for_cap_name == None): compile-stats, compile*, fiber,
+// workspace, agent, exception-control, macro, query, capability,
+// sys-read/write/open, self-evo, synthesize, strategy, sandbox.
 bool Evaluator::has_capability(std::string_view needed) const noexcept {
     // Sandbox fully off (Evaluator sandbox + global registry effect mode)
     // preserves legacy "always allow" semantics — matches check_and_record_effect.
@@ -571,6 +572,10 @@ static const char* effect_name_str(std::uint16_t effect_bits) noexcept {
         return "read";
     if (effect_bits & aura::compiler::security::kEffectMacroSelfEvo)
         return "macro-self-evo";
+    if (effect_bits & aura::compiler::security::kEffectTenantAdmin)
+        return "tenant-admin";
+    if (effect_bits & aura::compiler::security::kEffectSyscall)
+        return "syscall";
     return "unknown";
 }
 

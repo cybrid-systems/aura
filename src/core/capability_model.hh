@@ -41,6 +41,12 @@ enum class Effect : std::uint16_t {
     // Distinct from Mutate — expand can run without mutate, but still needs
     // MacroSelfEvo when sandbox is Strict / Restricted+active.
     MacroSelfEvo = 1 << 7,
+    // Issue #2387: previously string-only sensitive caps promoted into the
+    // Effect matrix so has_capability / grant_epoch / fiber bind share one
+    // authority with Mutate/FFI. Non-security compile-stats / fiber / query
+    // display names stay string-list only (staged).
+    TenantAdmin = 1 << 8, // tenant-admin
+    Syscall = 1 << 9,     // syscall (high-risk arbitrary syscall)
 };
 
 // Issue #2023: policy limits for macro expansion (capability layer).
@@ -814,6 +820,11 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
 }
 
 // Map security cap name → Effect bit.
+// Issue #2387: tenant-admin + syscall join the matrix (epoch/fiber bind).
+// Intentionally string-only (effect_for_cap_name == None): compile-stats,
+// fiber, workspace, agent, query, capability, sandbox, sys-read/write/open,
+// self-evo, synthesize, strategy, exception-control, macro, compile* —
+// staged; SECURITY_EXEMPT display / low-risk paths.
 [[nodiscard]] inline Effect effect_for_cap_name(std::string_view name) noexcept {
     if (name == "mutate")
         return Effect::Mutate;
@@ -831,9 +842,14 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         return Effect::Render;
     if (name == "macro-self-evo" || name == "macro_self_evo" || name == "MacroSelfEvo")
         return Effect::MacroSelfEvo;
+    if (name == "tenant-admin")
+        return Effect::TenantAdmin;
+    if (name == "syscall")
+        return Effect::Syscall;
     if (name == "*")
         return Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate | Effect::Network |
-               Effect::Ffi | Effect::Render | Effect::MacroSelfEvo;
+               Effect::Ffi | Effect::Render | Effect::MacroSelfEvo | Effect::TenantAdmin |
+               Effect::Syscall;
     return Effect::None;
 }
 
