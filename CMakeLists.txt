@@ -3107,6 +3107,11 @@ aura_add_issue_test(test_subtree_dirty_bounds_2424)
 aura_issue_test_link_llvm_jit(test_subtree_dirty_bounds_2424)
 add_dependencies(all_test_issue_targets test_subtree_dirty_bounds_2424)
 
+# Issue #2425: capability audit_ring published slots (no torn EffectAuditEntry).
+aura_add_issue_test(test_capability_audit_publish_2425)
+aura_issue_test_link_llvm_jit(test_capability_audit_publish_2425)
+add_dependencies(all_test_issue_targets test_capability_audit_publish_2425)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
