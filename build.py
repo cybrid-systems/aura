@@ -3017,6 +3017,24 @@ def cmd_binding_gens_atomic_coverage():
     return 0
 
 
+def cmd_structural_metadata_lock_order_coverage():
+    """Issue #2418: structural_mtx_ → metadata_mtx_ lock order.
+
+    Combined guard + audit against reverse nest.
+    """
+    print(f"{B}=== structural/metadata lock order coverage (#2418) ==={N}")
+    script = ROOT / "scripts" / "check_structural_metadata_lock_order_2418.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("structural/metadata lock order (#2418) coverage contract rows failed")
+        return 1
+    ok("structural/metadata lock order (#2418) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3956,6 +3974,7 @@ def cmd_gate():
         or cmd_summary_flags_guard_coverage()
         or cmd_incoming_parent_dirty_atomic_coverage()
         or cmd_binding_gens_atomic_coverage()
+        or cmd_structural_metadata_lock_order_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
