@@ -17,7 +17,7 @@
 // AURA_DENSIFY_CONTRACT=hard env aborts on fail (aligns RootRemap hard
 // contract pattern at root_remap_pass.ixx).
 //
-// ── Issue #2365: densify-success closed-loop order (do not reorder) ──
+// ── Issue #2365 / #2368: densify-success closed-loop order (do not reorder) ──
 // After Moving densify (live_compact / compact_all_moving_pinned):
 //   1. RootRemapPass          (inside densify via RootRemapCallback)
 //   2. pin verify             (pin_contract_held / verify_pins_under_moving)
@@ -27,6 +27,11 @@
 //   6. report axes            (root_remap_ok / closure_remount_ok / envframe_ok
 //                              from last-call probes — Soft vacuous true)
 // Soft / empty densify skips 3–5 (zero extra cost).
+//
+// Issue #2368: remap-context pairing is **never optional** on the production
+// Moving success path. Call sites MUST use Evaluator::force_densify_remap_pairing()
+// (or the Phase 5 driver that invokes it) so steps 1+3–5 cannot be reordered
+// into a partial-remap window. Dual-epoch restamp is always last before report.
 
 #ifndef AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 #define AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
@@ -91,6 +96,21 @@ inline std::atomic<std::uint8_t> g_last_densify_envframe_ok{1};
 // would poison Soft densify after a prior Moving fail.
 inline std::atomic<std::uint8_t> g_last_densify_root_remap_ok{1};
 inline std::atomic<std::uint8_t> g_last_densify_closure_remount_ok{1};
+// Issue #2368: dual-epoch restamp last-call + pairing-forced flag.
+// Soft densify leaves dual_epoch_ok=1 and pairing_forced=0 (never ran).
+// Moving success path always sets pairing_forced=1 after force_densify_remap_pairing.
+inline std::atomic<std::uint8_t> g_last_densify_dual_epoch_ok{1};
+inline std::atomic<std::uint8_t> g_last_densify_remap_pairing_forced{0};
+
+// Result of Evaluator::force_densify_remap_pairing() — permanent step order
+// encoded in the helper body (Issue #2368 pairing guarantee).
+struct DensifyRemapPairingResult {
+    bool root_remap_ok = true;
+    bool envframe_ok = true;
+    bool closure_remount_ok = true;
+    bool dual_epoch_ok = true;
+    bool forced = false; // true iff helper ran (Moving success path)
+};
 
 [[nodiscard]] inline std::uint64_t densify_consistency_fail_total() noexcept {
     return g_densify_consistency_fail_total.load(std::memory_order_relaxed);
@@ -119,6 +139,18 @@ inline void note_last_densify_closure_remount_ok(bool ok) noexcept {
 }
 [[nodiscard]] inline bool last_densify_closure_remount_ok() noexcept {
     return g_last_densify_closure_remount_ok.load(std::memory_order_relaxed) != 0;
+}
+inline void note_last_densify_dual_epoch_ok(bool ok) noexcept {
+    g_last_densify_dual_epoch_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool last_densify_dual_epoch_ok() noexcept {
+    return g_last_densify_dual_epoch_ok.load(std::memory_order_relaxed) != 0;
+}
+inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
+    g_last_densify_remap_pairing_forced.store(forced ? 1 : 0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool last_densify_remap_pairing_forced() noexcept {
+    return g_last_densify_remap_pairing_forced.load(std::memory_order_relaxed) != 0;
 }
 
 // env-empty branch mirrors #2266 AURA_MOVING_PIN_CONTRACT=hard pattern.

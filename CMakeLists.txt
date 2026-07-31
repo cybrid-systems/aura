@@ -2223,6 +2223,11 @@ aura_add_issue_test(test_reload_recovery_query_2367)
 aura_issue_test_link_llvm_jit(test_reload_recovery_query_2367)
 add_dependencies(all_test_issue_targets test_reload_recovery_query_2367)
 
+# Issue #2368: force densify remap-context pairing on Moving success paths.
+aura_add_issue_test(test_densify_remap_pairing_2368)
+aura_issue_test_link_llvm_jit(test_densify_remap_pairing_2368)
+add_dependencies(all_test_issue_targets test_densify_remap_pairing_2368)
+
 # Issue #1930 / #1952 / #2013: incremental reemit + stable func_id + live remap.
 aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)

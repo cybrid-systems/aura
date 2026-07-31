@@ -52,11 +52,12 @@ def main() -> int:
     must("note_last_densify_root_remap_ok", "AC2", emb)
     must("ac2_root_remap_fail", "AC2", test)
 
-    # AC3 dual-epoch + order
-    must("revalidate_dual_epoch_after_densify", "AC3", emb)
+    # AC3 dual-epoch + order (#2368 folds remount/dual into force_densify_remap_pairing)
+    must("force_densify_remap_pairing", "AC3", emb)
     must("revalidate_dual_epoch_after_densify", "AC3", env)
-    must("Issue #2365: densify-success closed-loop order", "AC3", dcr)
-    must("scan_live_closures_for_linear_captures", "AC3", emb)
+    must("densify-success closed-loop order", "AC3", dcr)
+    must("Issue #2365", "AC3", dcr)
+    must("scan_live_closures_for_linear_captures", "AC3", env)
     must("ac3_dual_epoch_closure", "AC3", test)
 
     # AC4 query

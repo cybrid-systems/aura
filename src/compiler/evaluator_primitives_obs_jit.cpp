@@ -11009,10 +11009,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 residual_hard, aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total(),
                 aura::core::lifetime_contract::residual_defer_policy_from_env(), moving_on);
 
-            // Capacity 64: #2300 base + #2341 densify axes + #2342 pin shards +
-            // #2353 post-densify linear/type keys (~47 inserts). create(32)
-            // silently dropped late keys when the open-address table filled.
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: #2300 base + #2341 densify axes + #2342 pin shards +
+            // #2353 post-densify linear/type + #2365/#2368 pairing keys.
+            // create(32) silently dropped late keys when the open-address table filled.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11153,6 +11153,19 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-dual-epoch-closed-loop-wired", 1);
             insert_kv("schema-2365", 2365);
             insert_kv("issue-2365", 2365);
+            // Issue #2368: forced remap-context pairing (order never optional
+            // on Moving success). Soft leaves pairing-forced=0 / dual-ok=1.
+            insert_kv("densify-dual-epoch-ok",
+                      aura::core::densify_consistency::last_densify_dual_epoch_ok() ? 1 : 0);
+            insert_kv("densify_dual_epoch_ok",
+                      aura::core::densify_consistency::last_densify_dual_epoch_ok() ? 1 : 0);
+            insert_kv("densify-remap-pairing-forced",
+                      aura::core::densify_consistency::last_densify_remap_pairing_forced() ? 1 : 0);
+            insert_kv("densify_remap_pairing_forced",
+                      aura::core::densify_consistency::last_densify_remap_pairing_forced() ? 1 : 0);
+            insert_kv("densify-remap-pairing-forced-wired", 1);
+            insert_kv("schema-2368", 2368);
+            insert_kv("issue-2368", 2368);
             // Issue #2353: post-densify / post-steal Linear+Type revalidate counters.
             insert_kv("post-densify-linear-type-revalidate-total",
                       static_cast<std::int64_t>(post_densify_reval));
