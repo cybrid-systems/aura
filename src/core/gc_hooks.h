@@ -274,16 +274,26 @@ enum class GcDeferOverflowPolicy : std::uint8_t {
 
 // Issue #2173: test setters (per-process override). Reset to use env
 // default by calling the reset variant (sets override back to 0).
+//
+// Issue #2429: policy / max-armed writers take g_gc_defer_armed_mtx so
+// the overflow path's (policy load + arm/reject) under that same mutex
+// is atomic w.r.t. concurrent set_gc_defer_overflow_policy_* flips.
+// Without the lock, HardFail can land between the policy check and the
+// ProcessWide arm → depth bumped under HardFail (safety bypass).
 inline void set_gc_defer_max_armed_for_test(std::size_t n) noexcept {
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_max_armed_override.store(n, std::memory_order_release);
 }
 inline void reset_gc_defer_max_armed_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_max_armed_override.store(0, std::memory_order_release);
 }
 inline void set_gc_defer_overflow_policy_for_test(GcDeferOverflowPolicy p) noexcept {
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_overflow_policy_override.store(static_cast<int>(p), std::memory_order_release);
 }
 inline void reset_gc_defer_overflow_policy_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_overflow_policy_override.store(0, std::memory_order_release);
 }
 
@@ -291,7 +301,10 @@ inline void reset_gc_defer_overflow_policy_for_test() noexcept {
 // apply_production_security_defaults when sandbox != off. Tests use the
 // existing set_gc_defer_overflow_policy_for_test(p) which wins over
 // the lock (override > 0 check in gc_defer_overflow_policy).
+// Issue #2429: also under g_gc_defer_armed_mtx (affects policy when
+// override is unset and env cache has not locked in).
 inline void set_gc_defer_production_locked(bool v) noexcept {
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
     detail::g_production_locked.store(v ? 1 : 0, std::memory_order_release);
 }
 [[nodiscard]] inline bool gc_defer_production_locked() noexcept {
@@ -536,7 +549,11 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             return;
         }
     }
-    // Overflow: dispatch on policy (Issue #2173).
+    // Overflow: dispatch on policy (Issue #2173 / #2429).
+    // Policy load is under g_gc_defer_armed_mtx (held above). Policy
+    // writers (set_gc_defer_overflow_policy_for_test /
+    // set_gc_defer_production_locked) take the same mutex — so
+    // check + arm/reject is atomic w.r.t. concurrent HardFail flips.
     const auto policy = gc_defer_overflow_policy();
     if (policy == GcDeferOverflowPolicy::HardFail) {
         // HardFail: don't bump process-wide depth; bump dedicated counter.
@@ -585,7 +602,7 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
             return true;
         }
     }
-    // Overflow: dispatch on policy.
+    // Overflow: policy check + arm under g_gc_defer_armed_mtx (Issue #2429).
     const auto policy = gc_defer_overflow_policy();
     if (policy == GcDeferOverflowPolicy::HardFail) {
         g_gc_defer_arm_rejected_overflow_total.fetch_add(1, std::memory_order_relaxed);
