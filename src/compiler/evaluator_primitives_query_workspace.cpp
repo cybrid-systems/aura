@@ -1233,7 +1233,20 @@ void register_workspace_query_primitives(
     //     e.g. (query:by-marker "User" :where "Define")
     //   :limit N — keyword form of limit
     add("query:by-marker", [ws, mev, &ev](const auto& a) -> EvalValue {
+        // Issue #2403: time shared_lock hold; composite index when :where tag set.
+        const auto lock_t0 = std::chrono::steady_clock::now();
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        struct QuerySharedLockTimer {
+            Evaluator& ev;
+            std::chrono::steady_clock::time_point t0;
+            ~QuerySharedLockTimer() {
+                const auto us = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count());
+                ev.note_query_shared_lock_us(us);
+            }
+        } lock_timer{ev, lock_t0};
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
                                   "[:where|:tag tag-name] [:limit N])");
@@ -1337,30 +1350,49 @@ void register_workspace_query_primitives(
         EvalValue result = make_void();
         std::int64_t emitted = 0;
         std::int64_t where_hits = 0;
+
+        // Issue #2403 AC1: constrained (marker + :where tag) hits composite
+        // index (tag across arities ± marker via user-only map when User).
+        // Unconstrained marker-only remains full walk → composite miss.
+        if (have_where_tag) {
+            const bool skip_macro = (target == aura::ast::SyntaxMarker::User);
+            const auto candidates = ev.snapshot_tag_all_arities(
+                static_cast<std::uint32_t>(where_tag), /*trigger=*/0, skip_macro);
+            ev.bump_query_index_composite_hit();
+            for (aura::ast::NodeId id : candidates) {
+                if (limit >= 0 && emitted >= limit)
+                    break;
+                if (id >= flat.size())
+                    continue;
+                if (flat.marker(id) != target)
+                    continue;
+                // Defense-in-depth: re-check tag (bucket is tag-keyed).
+                if (flat.get(id).tag != where_tag)
+                    continue;
+                ++where_hits;
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+                ++emitted;
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->by_marker_where_filter_hits.fetch_add(
+                    static_cast<std::uint64_t>(where_hits > 0 ? where_hits : 1),
+                    std::memory_order_relaxed);
+            return result;
+        }
+
+        // Unconstrained marker-only: full walk (no tag arity key).
+        ev.bump_query_index_composite_miss();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (limit >= 0 && emitted >= limit)
                 break;
             if (flat.marker(id) != target)
                 continue;
-            if (have_where_tag) {
-                if (id >= flat.size())
-                    continue;
-                auto view = flat.get(id);
-                if (view.tag != where_tag)
-                    continue;
-                ++where_hits;
-            }
             auto pid = ws.pairs.size();
             ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
             result = make_pair(pid);
             ++emitted;
-        }
-        // Issue #1914: observability for :where composition.
-        if (have_where_tag) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->by_marker_where_filter_hits.fetch_add(
-                    static_cast<std::uint64_t>(where_hits > 0 ? where_hits : 1),
-                    std::memory_order_relaxed);
         }
         return result;
     });
@@ -1803,7 +1835,24 @@ void register_workspace_query_primitives(
     //   pattern_include_macro_opt_in_total (query:pattern-hygiene-stats).
     add("query:pattern",
         [ws, mev, &ev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
+            // Issue #2403: shared_lock spans QueryEpoch capture + match.
+            // Topology is not COW-fenced for free concurrent match outside
+            // the lock (mid-match node rewrites would be UB); index path
+            // keeps hold O(candidates) via composite (tag,arity±marker)
+            // bucket, not O(N). Lock hold is timed for Agent SLO (RAII).
+            const auto lock_t0 = std::chrono::steady_clock::now();
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            struct QuerySharedLockTimer {
+                Evaluator& ev;
+                std::chrono::steady_clock::time_point t0;
+                ~QuerySharedLockTimer() {
+                    const auto us = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count());
+                    ev.note_query_shared_lock_us(us);
+                }
+            } lock_timer{ev, lock_t0};
             if (a.empty())
                 return mev("bad-arg",
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"
@@ -2126,8 +2175,13 @@ void register_workspace_query_primitives(
                 // snapshot_tag_arity_bucket — eliminates the race
                 // window between build's lock release and shared
                 // find. Match iterates the returned snapshot outside
-                // the lock (reader parallelism preserved for match
-                // work; only the short build+copy is exclusive).
+                // the tag_arity lock (workspace shared_lock still held
+                // for QueryEpoch fencing — Issue #2403 documents why
+                // full match stays under workspace_mtx).
+                //
+                // Issue #2403: constrained (tag+arity±marker) ALWAYS
+                // hits composite index. Empty bucket is still a hit
+                // (index used; miss counter only for unconstrained).
                 const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
                 const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
                                               static_cast<std::uint64_t>(pat_child_count);
@@ -2137,11 +2191,14 @@ void register_workspace_query_primitives(
                 const auto bucket = ev.snapshot_tag_arity_bucket(
                     pat_key, /*trigger=*/0,
                     /*skip_macro_introduced=*/!include_macro_introduced);
+                // #2403 AC1: composite hit for constrained path (incl. empty).
+                ev.bump_query_index_composite_hit();
                 if (bucket.empty()) {
                     // No nodes match the pattern's (tag, arity).
-                    // Skip the full walk.
+                    // Skip the full walk. Structural miss kept for #423
+                    // empty-bucket fast-exit telemetry.
                     ev.bump_pattern_structural_index_miss();
-                    return make_void();
+                    return end_query_epoch(qe, ws.workspace_flat, make_void());
                 }
                 ev.bump_pattern_structural_index_hit();
                 ev.bump_total_query_calls();
@@ -2190,6 +2247,8 @@ void register_workspace_query_primitives(
                 }
             } else {
                 // Full walk (Kleene + ellipsis, or wildcard root).
+                // Issue #2403 AC1: unconstrained → composite miss only.
+                ev.bump_query_index_composite_miss();
                 ev.bump_total_query_calls();
                 for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                     if (!include_macro_introduced && flat.is_macro_introduced(id)) {

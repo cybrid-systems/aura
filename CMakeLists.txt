@@ -3017,6 +3017,11 @@ aura_issue_test_link_llvm_jit(test_stringpool_concurrent_intern)
 aura_add_issue_test(test_incremental_restamp_2061)
 aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
 
+# Issue #2403: composite query index (tag+arity±marker) + shared_lock SLO.
+aura_add_issue_test(test_query_index_composite_2403)
+aura_issue_test_link_llvm_jit(test_query_index_composite_2403)
+add_dependencies(all_test_issue_targets test_query_index_composite_2403)
+
 # Issue #2073: wire check_workspace_isolation + stamp_ref_tenant on
 # mutate / StableNodeRef hot paths (stamp_ref_tenant at
 # pin_node_for_atomic_batch). Extends #1566 / #81967 coverage.

@@ -1381,6 +1381,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> provenance_query_total{0};
     std::atomic<std::uint64_t> macro_introduced_in_pattern_violations{0};
     std::atomic<std::uint64_t> by_marker_where_filter_hits{0};
+    // Issue #2403: composite query index (tag+arity±marker) + shared_lock
+    // hold SLO. Miss = unconstrained full walk only; empty-bucket index
+    // use still counts as hit. Soft path leaves counters at 0.
+    std::atomic<std::uint64_t> query_index_composite_hit_total{0};
+    std::atomic<std::uint64_t> query_index_composite_miss_total{0};
+    std::atomic<std::uint64_t> query_shared_lock_us_total{0};
+    std::atomic<std::uint64_t> query_shared_lock_us_max{0};
     std::atomic<std::uint64_t> hygiene_provenance_stats_queries_total{0};
     // Issue #1915: fine-grained ir_cache_v2 block dirty / minimal re-lower.
     // relower_block_count: # of basic blocks that took partial re-lower path.

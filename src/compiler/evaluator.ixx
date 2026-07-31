@@ -5279,6 +5279,12 @@ private:
     // fast-path observability on the Evaluator-side index.
     std::atomic<std::uint64_t> pattern_structural_index_hits_{0};
     std::atomic<std::uint64_t> pattern_structural_index_misses_{0};
+    // Issue #2403: composite index (tag+arity±marker) hit/miss +
+    // workspace shared_lock hold. Miss only on unconstrained full walk.
+    mutable std::atomic<std::uint64_t> query_index_composite_hit_total_{0};
+    mutable std::atomic<std::uint64_t> query_index_composite_miss_total_{0};
+    mutable std::atomic<std::uint64_t> query_shared_lock_us_total_{0};
+    mutable std::atomic<std::uint64_t> query_shared_lock_us_max_{0};
     mutable std::atomic<std::uint64_t> pattern_index_consistency_violations_{0};
     // Issue #424: StableNodeRef / WorkspaceTree cross-layer
     // COW consistency observability.
@@ -12123,6 +12129,13 @@ public:
         std::uint64_t key,
         std::uint8_t trigger = static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery),
         bool skip_macro_introduced = false) const;
+    // Issue #2403: composite index by tag across all arities (for
+    // query:by-marker :where / :tag without fixed arity). Optional
+    // marker filter applied after bucket serve (User → user-only map).
+    [[nodiscard]] std::vector<ast::NodeId> snapshot_tag_all_arities(
+        std::uint32_t tag,
+        std::uint8_t trigger = static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery),
+        bool skip_macro_introduced = false) const;
     // Issue #1372: race-window hits (0 with snapshot path). Exposed
     // via query:pattern-index-stats-hash "race-window-hits".
     [[nodiscard]] std::uint64_t get_tag_arity_index_race_window_hits() const noexcept {
@@ -12488,6 +12501,51 @@ public:
     }
     [[nodiscard]] std::uint64_t get_pattern_structural_index_misses() const noexcept {
         return pattern_structural_index_misses_.load(std::memory_order_relaxed);
+    }
+    // Issue #2403: composite index hit (constrained tag+arity±marker path)
+    // vs miss (unconstrained full walk only). Empty-bucket index serve = hit.
+    void bump_query_index_composite_hit(std::uint64_t n = 1) const noexcept {
+        query_index_composite_hit_total_.fetch_add(n, std::memory_order_relaxed);
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_index_composite_hit_total.fetch_add(n, std::memory_order_relaxed);
+            m->pattern_match_index_hits_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_query_index_composite_miss(std::uint64_t n = 1) const noexcept {
+        query_index_composite_miss_total_.fetch_add(n, std::memory_order_relaxed);
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_index_composite_miss_total.fetch_add(n, std::memory_order_relaxed);
+            m->pattern_match_linear_scans_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void note_query_shared_lock_us(std::uint64_t us) const noexcept {
+        query_shared_lock_us_total_.fetch_add(us, std::memory_order_relaxed);
+        auto prev = query_shared_lock_us_max_.load(std::memory_order_relaxed);
+        while (us > prev && !query_shared_lock_us_max_.compare_exchange_weak(
+                                prev, us, std::memory_order_relaxed)) {
+        }
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_shared_lock_us_total.fetch_add(us, std::memory_order_relaxed);
+            auto pmax = m->query_shared_lock_us_max.load(std::memory_order_relaxed);
+            while (us > pmax && !m->query_shared_lock_us_max.compare_exchange_weak(
+                                    pmax, us, std::memory_order_relaxed)) {
+            }
+        }
+    }
+    [[nodiscard]] std::uint64_t get_query_index_composite_hit_total() const noexcept {
+        return query_index_composite_hit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_query_index_composite_miss_total() const noexcept {
+        return query_index_composite_miss_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_query_shared_lock_us_total() const noexcept {
+        return query_shared_lock_us_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_query_shared_lock_us_max() const noexcept {
+        return query_shared_lock_us_max_.load(std::memory_order_relaxed);
     }
     void ensure_pattern_index_consistency(const aura::ast::FlatAST& flat) const noexcept;
     [[nodiscard]] std::uint64_t get_pattern_index_consistency_violations() const noexcept {

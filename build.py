@@ -2279,6 +2279,25 @@ def cmd_restamp_incremental_coverage():
     return 0
 
 
+def cmd_query_index_composite_coverage():
+    """Issue #2403: composite index + shared_lock hold SLO for pattern/where.
+
+    Constrained tag+arity±marker hits composite index; miss only on
+    unconstrained; query-index-hit-rate + shared-lock-us keys schema-2403.
+    """
+    print(f"{B}=== query-index composite coverage (#2403) ==={N}")
+    script = ROOT / "scripts" / "check_query_index_composite_2403.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-index composite (#2403) coverage contract rows failed")
+        return 1
+    ok("query-index composite (#2403) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3645,6 +3664,7 @@ def cmd_gate():
         or cmd_parallel_isolation_level_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
+        or cmd_query_index_composite_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

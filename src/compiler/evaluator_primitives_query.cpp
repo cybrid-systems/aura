@@ -2536,38 +2536,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #621: query:pattern-index-stats-hash — Agent-discoverable
+    // Issue #621 / #2403: query:pattern-index-stats-hash — Agent-discoverable
     // structured form of (query:pattern-index-stats). The legacy
     // primitive (#547) returns an int = sum of 6 counters; this
-    // version returns the full 10-field hash so the AI Agent can
+    // version returns the full field hash so the AI Agent can
     // react to each category independently.
     //
-    // Fields (10):
-    //   - hits               lifetime find_by_tag_arity hits
-    //   - misses             lifetime find_by_tag_arity misses
-    //   - rebuilds           lifetime full rebuilds (#547)
-    //   - dirty-marks        lifetime mark_dirty_upward() calls
-    //                        that flipped the dirty flag (#554)
-    //   - rebuild-time-us    cumulative rebuild wall time (#554)
-    //   - delta-hits         incremental-patch hits (#554)
-    //   - linear-fallbacks   == misses (count of queries that
-    //                        fell through to a linear scan)
-    //   - arity-accuracy     hits / (hits + misses) * 100
-    //                        (0 if both are 0; rounded to int)
-    //   - delta-hit-rate     delta_hits / (delta_hits +
-    //                        rebuilds) * 100; measures how often
-    //                        incremental patches satisfy lookups
-    //                        vs requiring a full rebuild
-    //   - recommendation     int 0=healthy, 1=high-miss-rate,
-    //                        2=rebuild-bound (rebuild_time_us
-    //                        dominates delta_hits)
-    //   - schema == 621 sentinel
-    //
-    // P0 ships the structured form with derived metrics
-    // computed inline (no new C++ atomics). The actual
-    // tag_arity_index rebuild/patch + query:pattern hot-path
-    // wiring are follow-ups (hot-path changes that need
-    // benchmarking + perf regression coverage first).
+    // Base fields (#621):
+    //   - hits / misses / rebuilds / dirty-marks / rebuild-time-us
+    //   - delta-hits / linear-fallbacks / arity-accuracy / delta-hit-rate
+    //   - recommendation / race-window-hits / schema
+    // Issue #2403 additive:
+    //   - query-index-hit-rate / query-index-miss-total / query-index-hit-total
+    //   - query-shared-lock-us-total / query-shared-lock-us-max
+    //   - schema-2403 / issue-2403 / query-index-composite-wired
     ObservabilityPrims::register_stats_impl(
         "query:pattern-index-stats-hash",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -2601,7 +2583,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             else if (rebuilds > 0 &&
                      rebuild_time_us > static_cast<std::uint64_t>(delta_hits + 1) * 100)
                 recommendation = 2;
-            auto* ht = FlatHashTable::create(32);
+            // Issue #2403: composite query path hit rate (miss = unconstrained only).
+            const std::uint64_t q_hit = ev->get_query_index_composite_hit_total();
+            const std::uint64_t q_miss = ev->get_query_index_composite_miss_total();
+            const std::uint64_t q_total = q_hit + q_miss;
+            const std::int64_t query_index_hit_rate =
+                q_total == 0 ? 0 : static_cast<std::int64_t>((q_hit * 100) / q_total);
+            // Capacity power-of-two; 64 slots for #2403 additive keys.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2642,6 +2631,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("race-window-hits",
                       static_cast<std::int64_t>(ev->get_tag_arity_index_race_window_hits()));
             insert_kv("schema", 621);
+            // Issue #2403 additive keys (no schema break of base schema=621).
+            insert_kv("query-index-hit-total", static_cast<std::int64_t>(q_hit));
+            insert_kv("query-index-miss-total", static_cast<std::int64_t>(q_miss));
+            insert_kv("query-index-hit-rate", query_index_hit_rate);
+            insert_kv("query-shared-lock-us-total",
+                      static_cast<std::int64_t>(ev->get_query_shared_lock_us_total()));
+            insert_kv("query-shared-lock-us-max",
+                      static_cast<std::int64_t>(ev->get_query_shared_lock_us_max()));
+            insert_kv("query-index-composite-wired", 1);
+            insert_kv("schema-2403", 2403);
+            insert_kv("issue-2403", 2403);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
