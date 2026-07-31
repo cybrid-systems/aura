@@ -3524,6 +3524,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("join-drain-residual-reclaim-total",
                       static_cast<std::int64_t>(
                           os.join_drain_residual_reclaim_total.load(std::memory_order_relaxed)));
+            // Issue #2397: reclaimed vs body-still-running (additive; #2227 keys preserved).
+            // Prefer Fiber process-truth gauges when available so serve-only and
+            // orch-linked binaries agree; orch mirrors track the same transitions.
+            insert_kv(
+                "join-drain-residual-still-running-total",
+                static_cast<std::int64_t>(aura::serve::Fiber::join_drain_residual_still_running()));
+            insert_kv("join-drain-residual-body-retired-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::join_drain_residual_body_retired_total()));
+            insert_kv("schema-2397", aura::orch::kJoinDrainReclaimStillRunningIssue);
+            insert_kv("issue-2397", aura::orch::kJoinDrainReclaimStillRunningIssue);
+            insert_kv("join-drain-reclaim-still-running-wired", 1);
             insert_kv("join-drain-us-total", static_cast<std::int64_t>(os.join_drain_us_total.load(
                                                  std::memory_order_relaxed)));
             insert_kv("join-drain-default-ms",

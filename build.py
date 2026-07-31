@@ -2165,6 +2165,25 @@ def cmd_orphan_reap_tick_coverage():
     return 0
 
 
+def cmd_join_drain_reclaim_still_running_coverage():
+    """Issue #2397: reclaimed vs body-still-running after join-drain residual.
+
+    still-running gauge + body-retired counter; query:orch-module-stats keys;
+    zero cost on Ok join path.
+    """
+    print(f"{B}=== join-drain reclaim still-running coverage (#2397) ==={N}")
+    script = ROOT / "scripts" / "check_join_drain_reclaim_still_running_2397.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("join-drain reclaim still-running (#2397) coverage contract rows failed")
+        return 1
+    ok("join-drain reclaim still-running (#2397) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3525,6 +3544,7 @@ def cmd_gate():
         or cmd_last_validated_generation_atomic_coverage()
         or cmd_stable_ref_wire_endian_coverage()
         or cmd_orphan_reap_tick_coverage()
+        or cmd_join_drain_reclaim_still_running_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

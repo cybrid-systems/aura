@@ -548,7 +548,15 @@ public:
     [[nodiscard]] bool is_reclaimed() const noexcept {
         return reclaimed_.load(std::memory_order_acquire);
     }
-    void mark_reclaimed() noexcept { reclaimed_.store(true, std::memory_order_release); }
+    // Issue #2227 / #2397: set reclaimed_ (idempotent). When the body
+    // has not yet returned (state_!=Done), bumps process-wide
+    // still-running gauge so operators can distinguish logical
+    // reclaim from body still burning CPU/stack. Body exit (or
+    // Fiber dtor if abandoned) pairs the gauge.
+    void mark_reclaimed() noexcept;
+    // Issue #2397: body returned after reclaimed — still-running −1,
+    // body-retired +1. Safe to call when not reclaimed (no-op).
+    void note_body_exit_if_reclaimed() noexcept;
 
     // Process-wide join metrics (#1584 / #1595).
     [[nodiscard]] static std::uint64_t join_total() noexcept;
@@ -557,6 +565,9 @@ public:
     // Issue #2467: counter for JoinStatus::Reclaimed returns
     // (target force-reclaimed but body still executing).
     [[nodiscard]] static std::uint64_t join_reclaim_total() noexcept;
+    // Issue #2397: reclaimed-but-body-not-returned gauge + retired counter.
+    [[nodiscard]] static std::uint64_t join_drain_residual_still_running() noexcept;
+    [[nodiscard]] static std::uint64_t join_drain_residual_body_retired_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_max() noexcept;
     // Issue #1595: times join Ok path invoked linear/StableNodeRef enforcement.
@@ -819,6 +830,10 @@ private:
     // documented limitation, same as #2153 cooperative cancel
     // protocol.
     std::atomic<bool> reclaimed_{false};
+    // Issue #2397: true iff this fiber contributed +1 to the
+    // still-running gauge (mark_reclaimed while !Done). Cleared by
+    // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).
+    std::atomic<bool> still_running_after_reclaim_counted_{false};
 
     // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;
@@ -826,6 +841,9 @@ private:
     static std::atomic<std::uint64_t> join_cancel_total_;
     // Issue #2467: counter for JoinStatus::Reclaimed returns.
     static std::atomic<std::uint64_t> join_reclaim_total_;
+    // Issue #2397: process-wide still-running gauge + body-retired counter.
+    static std::atomic<std::uint64_t> join_drain_residual_still_running_;
+    static std::atomic<std::uint64_t> join_drain_residual_body_retired_total_;
     static std::atomic<std::uint64_t> join_wait_us_total_;
     static std::atomic<std::uint64_t> join_wait_us_max_;
     static std::atomic<std::uint64_t> join_linear_enforcement_total_;

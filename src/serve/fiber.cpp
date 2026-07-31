@@ -54,8 +54,29 @@ std::atomic<std::uint64_t> Fiber::join_wait_us_max_{0};
 // without calling aura_evaluator_on_fiber_join cleanup hook
 // to avoid UAF on shared resources the body may still touch.
 std::atomic<std::uint64_t> Fiber::join_reclaim_total_{0};
+// Issue #2397: reclaimed-but-body-not-returned gauge + retired counter.
+// Bumped in mark_reclaimed / note_body_exit_if_reclaimed / ~Fiber.
+// Mirrored into OrchModuleStats via weak C hooks when orch is linked.
+std::atomic<std::uint64_t> Fiber::join_drain_residual_still_running_{0};
+std::atomic<std::uint64_t> Fiber::join_drain_residual_body_retired_total_{0};
 // Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
 std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
+
+// Issue #2397: optional orch dashboard mirror (weak no-op when orch not linked;
+// strong defs in evaluator_fiber_mutation.cpp bump OrchModuleStats).
+extern "C" void aura_orch_note_join_drain_reclaim_still_running() __attribute__((weak));
+extern "C" void aura_orch_note_join_drain_reclaim_body_retired() __attribute__((weak));
+extern "C" void aura_orch_note_join_drain_reclaim_still_running_drop() __attribute__((weak));
+
+namespace {
+    // Saturating decrement for still-running gauge (never wraps under 0).
+    void still_running_dec_one(std::atomic<std::uint64_t>& g) noexcept {
+        auto cur = g.load(std::memory_order_relaxed);
+        while (cur > 0 && !g.compare_exchange_weak(cur, cur - 1, std::memory_order_relaxed,
+                                                   std::memory_order_relaxed)) {
+        }
+    }
+} // namespace
 // Issue #1597 join latency histogram.
 std::atomic<std::uint64_t> Fiber::join_latency_hist_[Fiber::kJoinLatencyHistBuckets]{};
 
@@ -402,9 +423,57 @@ extern "C" void aura_scheduler_init_record_err() {
     g_scheduler_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
 }
 
+// ── Issue #2397: reclaimed vs body-still-running ─────
+
+void Fiber::mark_reclaimed() noexcept {
+    // Idempotent: only the first transition reclaimed_ false→true
+    // may bump still-running (avoids double-count on repeated reap).
+    const bool was = reclaimed_.exchange(true, std::memory_order_acq_rel);
+    if (was)
+        return;
+    // Body already returned — logical reclaim of a finished fiber
+    // is a no-op for the still-running gauge (zero extra cost beyond
+    // the exchange already paid by the reclaim path).
+    if (state_.load(std::memory_order_acquire) == FiberState::Done)
+        return;
+    still_running_after_reclaim_counted_.store(true, std::memory_order_release);
+    join_drain_residual_still_running_.fetch_add(1, std::memory_order_relaxed);
+    if (aura_orch_note_join_drain_reclaim_still_running)
+        aura_orch_note_join_drain_reclaim_still_running();
+}
+
+void Fiber::note_body_exit_if_reclaimed() noexcept {
+    if (!reclaimed_.load(std::memory_order_acquire))
+        return;
+    // Pair the still-running +1 from mark_reclaimed (exactly once).
+    const bool counted =
+        still_running_after_reclaim_counted_.exchange(false, std::memory_order_acq_rel);
+    if (!counted)
+        return;
+    still_running_dec_one(join_drain_residual_still_running_);
+    join_drain_residual_body_retired_total_.fetch_add(1, std::memory_order_relaxed);
+    if (aura_orch_note_join_drain_reclaim_body_retired)
+        aura_orch_note_join_drain_reclaim_body_retired();
+}
+
+std::uint64_t Fiber::join_drain_residual_still_running() noexcept {
+    return join_drain_residual_still_running_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_drain_residual_body_retired_total() noexcept {
+    return join_drain_residual_body_retired_total_.load(std::memory_order_relaxed);
+}
+
 // ── Destructor ───────────────────────────────────────
 
 Fiber::~Fiber() {
+    // Issue #2397: reaper destroyed Fiber while body never returned
+    // (or body never started). Drop still-running gauge without
+    // bumping retired — body did not exit cleanly after reclaim.
+    if (still_running_after_reclaim_counted_.exchange(false, std::memory_order_acq_rel)) {
+        still_running_dec_one(join_drain_residual_still_running_);
+        if (aura_orch_note_join_drain_reclaim_still_running_drop)
+            aura_orch_note_join_drain_reclaim_still_running_drop();
+    }
     if (eventfd_ >= 0)
         ::close(eventfd_);
     if (stack_) {
@@ -775,6 +844,9 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
         g_current_fiber->func_();
         // Function returned — fiber is done
         g_current_fiber->set_state(FiberState::Done);
+        // Issue #2397: if hard-reclaimed while body was still
+        // executing, pair still-running gauge + bump retired.
+        g_current_fiber->note_body_exit_if_reclaimed();
     }
     // Yield back to worker's loop context
     Fiber::yield();
