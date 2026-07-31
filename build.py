@@ -3287,6 +3287,24 @@ def cmd_ir_soa_layout_stamp_coverage():
     return 0
 
 
+def cmd_shape_high_mutation_storm_coverage():
+    """Issue #2433: HighMutation default-on + deopt-storm × LayoutStamp.
+
+    apply_preset knobs, storm enter isolation, query:shape-storm-health.
+    """
+    print(f"{B}=== shape high mutation storm coverage (#2433) ==={N}")
+    script = ROOT / "scripts" / "check_shape_high_mutation_storm_2433.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape high mutation storm (#2433) coverage contract rows failed")
+        return 1
+    ok("shape high mutation storm (#2433) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4241,6 +4259,7 @@ def cmd_gate():
         or cmd_capability_effect_stats_snapshot_coverage()
         or cmd_dead_coercion_columnar_coverage()
         or cmd_ir_soa_layout_stamp_coverage()
+        or cmd_shape_high_mutation_storm_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

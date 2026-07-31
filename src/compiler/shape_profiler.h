@@ -78,9 +78,10 @@ inline std::atomic<std::uint64_t>& g_deopt_storm_isolations_total_atomic() noexc
     return v;
 }
 
-// Issue #2257: production-default HighMutation preset. Off for
+// Issue #2257 / #2433: production-default HighMutation preset. Off for
 // unit tests via AURA_SHAPE_HIGH_MUTATION=0 env override (test
-// harness sets this in main()).
+// harness sets this in main()). Production builds always apply
+// kHighMutationPreset knobs (window/threshold) unless env=0.
 inline int shape_high_mutation_default_enabled() noexcept {
     if (const char* e = std::getenv("AURA_SHAPE_HIGH_MUTATION")) {
         if (e[0] == '0')
@@ -89,6 +90,29 @@ inline int shape_high_mutation_default_enabled() noexcept {
             return 1;
     }
     return 1; // production default ON
+}
+
+// Issue #2433: shape_version captured at last deopt-storm enter
+// (process-global). LayoutStamp / Agents read this for closed-loop
+// throttle; soft path never writes it (only storm-enter transition).
+inline std::atomic<std::uint64_t>& g_shape_version_at_storm_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+[[nodiscard]] inline std::uint64_t shape_version_at_last_storm() noexcept {
+    return g_shape_version_at_storm_atomic().load(std::memory_order_acquire);
+}
+
+// Issue #2433: force-reason codes for query:shape-storm-health.
+// 0 = none / quiet; 1 = deopt-ring threshold trip (storm enter).
+inline constexpr std::uint32_t kShapeStormForceReasonNone = 0;
+inline constexpr std::uint32_t kShapeStormForceReasonThreshold = 1;
+inline std::atomic<std::uint32_t>& g_shape_storm_force_reason_atomic() noexcept {
+    static std::atomic<std::uint32_t> v{kShapeStormForceReasonNone};
+    return v;
+}
+[[nodiscard]] inline std::uint32_t shape_storm_force_reason() noexcept {
+    return g_shape_storm_force_reason_atomic().load(std::memory_order_acquire);
 }
 
 class ShapeProfiler {

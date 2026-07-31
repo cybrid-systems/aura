@@ -11638,7 +11638,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultWindowSize);
             constexpr std::int64_t k_ratio_bp =
                 static_cast<std::int64_t>(shape::ShapeProfiler::kDefaultStabilityRatio * 10000.0);
-            auto* ht = FlatHashTable::create(16);
+            // Issue #2433: capacity 32 (≥24 keys incl. schema-2257 + schema-2433).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11699,6 +11700,81 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("shape-version-wired", 1);
             insert_kv("schema-2257", 2257);
             insert_kv("issue-2257", 2257);
+            // Issue #2433: additive storm-health keys (same hash, no extra
+            // public primitive). shape-version-at-storm + shape-storm-active
+            // + force-reason for Agent closed-loop throttle.
+            insert_kv("shape-version-at-storm",
+                      static_cast<std::int64_t>(shape::shape_version_at_last_storm()));
+            // force-reason non-zero while storm published; soft-clear resets to 0.
+            insert_kv("shape-storm-active",
+                      static_cast<std::int64_t>(shape::shape_storm_force_reason() !=
+                                                shape::kShapeStormForceReasonNone));
+            insert_kv("shape-storm-force-reason",
+                      static_cast<std::int64_t>(shape::shape_storm_force_reason()));
+            insert_kv("schema-2433", 2433);
+            insert_kv("issue-2433", 2433);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2433: query:shape-storm-health — compact Agent-facing score
+    // for closed-loop throttle (health-bp + force-reason + version snapshot).
+    // Soft path: pure atomic loads; zero writes.
+    ObservabilityPrims::register_stats_impl(
+        "query:shape-storm-health", [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            (void)ev;
+            const auto isolations =
+                shape::g_deopt_storm_isolations_total_atomic().load(std::memory_order_relaxed);
+            const auto force = shape::shape_storm_force_reason();
+            const bool storm_active = force != shape::kShapeStormForceReasonNone;
+            // health-bp: 10000 quiet; −2500 when storm active; −min(4000, isolations*100)
+            std::int64_t health_bp = 10000;
+            if (storm_active)
+                health_bp -= 2500;
+            const auto iso_pen =
+                static_cast<std::int64_t>(std::min<std::uint64_t>(isolations, 40) * 100);
+            health_bp -= iso_pen;
+            if (health_bp < 0)
+                health_bp = 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("health-bp", health_bp);
+            insert_kv("force-reason", static_cast<std::int64_t>(force));
+            insert_kv("shape-version-at-storm",
+                      static_cast<std::int64_t>(shape::shape_version_at_last_storm()));
+            insert_kv("shape-storm-active", storm_active ? 1 : 0);
+            insert_kv("deopt-storm-isolations-total", static_cast<std::int64_t>(isolations));
+            insert_kv("high-mutation-default",
+                      static_cast<std::int64_t>(shape::shape_high_mutation_default_enabled()));
+            insert_kv("schema-2433", 2433);
+            insert_kv("issue-2433", 2433);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

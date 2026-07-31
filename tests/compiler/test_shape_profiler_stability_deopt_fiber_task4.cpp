@@ -388,7 +388,8 @@ int run_tests() {
         // AC1: HighMutation production default
         CHECK(sph.find("shape_high_mutation_default_enabled") != std::string::npos,
               "AC1: HighMutation production default enabled");
-        CHECK(spc.find("active_preset_ = kHighMutationPreset") != std::string::npos,
+        CHECK(spc.find("apply_preset(kHighMutationPreset)") != std::string::npos ||
+                  spc.find("active_preset_ = kHighMutationPreset") != std::string::npos,
               "AC1: HighMutation preset applied in ctor");
         // AC4: stability_ratio file-scope + helpers
         CHECK(ir.find("g_shape_stability_ratio_atomic") != std::string::npos &&

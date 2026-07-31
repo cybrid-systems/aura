@@ -57,9 +57,11 @@ def check() -> list:
         "AC1: bump wired in update_deopt_storm_state_ missing",
         fails,
     )
-    # AC1 — HighMutation production default
+    # AC1 — HighMutation production default (Issue #2433: apply_preset knobs)
     _must(
-        "shape_high_mutation_default_enabled" in sph and "kHighMutationPreset" in spc,
+        "shape_high_mutation_default_enabled" in sph
+        and "kHighMutationPreset" in spc
+        and ("apply_preset(kHighMutationPreset)" in spc or "active_preset_ = kHighMutationPreset" in spc),
         "AC1: HighMutation production default missing",
         fails,
     )
