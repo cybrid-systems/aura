@@ -6802,26 +6802,27 @@ public:
     //   0/1 = v1 (24 bytes, #291/#392)
     //   2   = v2 (56 bytes, #2198 — tenant/fiber/pin/cow/wrap/full mid)
     //
-    // v1 layout (24 bytes, little-endian):
-    //   [0..3]   u32 magic
-    //   [4..7]   u32 id
-    //   [8..9]   u16 gen
-    //   [10..11] u8 version | u8 pad
-    //   [12..15] u32 mutation_id low
-    //   [16..17] u16 subtree_gen_at_capture
-    //   [18..19] reserved (v1) / last_validated_generation (v2 header)
-    //   [20..23] u32 workspace_id
+    // v1 layout (24 bytes). Issue #2395: ALL multi-byte integer fields
+    // are little-endian on the wire (host-endian memcpy is not used).
+    //   [0..3]   u32 magic (LE)
+    //   [4..7]   u32 id (LE)
+    //   [8..9]   u16 gen (LE)
+    //   [10..11] u8 version | u8 flags
+    //   [12..15] u32 mutation_id low (LE)
+    //   [16..17] u16 subtree_gen_at_capture (LE)
+    //   [18..19] reserved (v1) / last_validated_generation (v2 header, LE)
+    //   [20..23] u32 workspace_id (LE)
     //
-    // v2 extension (bytes 24..55) — no silent tenant truncation:
-    //   [24..27] u32 mutation_id high
-    //   [28..31] u32 fiber_id
-    //   [32..39] u64 tenant_id
-    //   [40..43] u32 wrap_epoch
-    //   [44..51] u64 cow_epoch_at_capture
+    // v2 extension (bytes 24..55) — no silent tenant truncation; multi-byte LE:
+    //   [24..27] u32 mutation_id high (LE)
+    //   [28..31] u32 fiber_id (LE)
+    //   [32..39] u64 tenant_id (LE)
+    //   [40..43] u32 wrap_epoch (LE)
+    //   [44..51] u64 cow_epoch_at_capture (LE)
     //   [52..55] reserved (0)
     // Flags (byte 11): bit0 = boundary_pinned
     //
-    // serialize_stable_ref always writes v2 (56 bytes).
+    // serialize_stable_ref always writes v2 (56 bytes), LE multi-byte fields.
     // deserialize_stable_ref accepts v1 (24) and v2 (56+); missing
     // v2 fields default safely (tenant=0, pin=false, fiber=0, …).
     static constexpr std::size_t kStableRefSerializedSizeV1 = 24;

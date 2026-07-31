@@ -2127,6 +2127,25 @@ def cmd_last_validated_generation_atomic_coverage():
     return 0
 
 
+def cmd_stable_ref_wire_endian_coverage():
+    """Issue #2395: StableNodeRef wire multi-byte fields little-endian.
+
+    Portable LE encode/decode for id/gen/mid/tenant/…; golden LE bytes
+    + swap-corruption case; host-endian memcpy removed from multi-byte lanes.
+    """
+    print(f"{B}=== StableNodeRef wire endian coverage (#2395) ==={N}")
+    script = ROOT / "scripts" / "check_stable_ref_wire_endian_2395.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("StableNodeRef wire endian (#2395) coverage contract rows failed")
+        return 1
+    ok("StableNodeRef wire endian (#2395) coverage clean")
+    return 0
+
+
 def cmd_lifetime_pin_remap_coverage():
     """Issue #2265: LifetimePin Phase 3 — real ptr remap under Moving densify.
 
@@ -3485,6 +3504,7 @@ def cmd_gate():
         or cmd_validate_post_restore_soa_coverage()
         or cmd_fixup_deltas_coverage()
         or cmd_last_validated_generation_atomic_coverage()
+        or cmd_stable_ref_wire_endian_coverage()
         or cmd_moving_pin_contract_fail_closed_coverage()
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()

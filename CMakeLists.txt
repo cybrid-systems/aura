@@ -3252,6 +3252,11 @@ aura_add_issue_test(test_last_validated_generation_atomic_2394)
 aura_issue_test_link_llvm_jit(test_last_validated_generation_atomic_2394)
 add_dependencies(all_test_issue_targets test_last_validated_generation_atomic_2394)
 
+# Issue #2395: StableNodeRef wire multi-byte fields little-endian (portable).
+aura_add_issue_test(test_stable_ref_wire_endian_2395)
+aura_issue_test_link_llvm_jit(test_stable_ref_wire_endian_2395)
+add_dependencies(all_test_issue_targets test_stable_ref_wire_endian_2395)
+
 # Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
 aura_add_issue_test(test_mutation_contention_2040)
 aura_issue_test_link_llvm_jit(test_mutation_contention_2040)
