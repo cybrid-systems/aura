@@ -3057,6 +3057,11 @@ aura_add_issue_test(test_summary_recompute_sym_2414)
 aura_issue_test_link_llvm_jit(test_summary_recompute_sym_2414)
 add_dependencies(all_test_issue_targets test_summary_recompute_sym_2414)
 
+# Issue #2415: summary_flags_ thread-safety annotation (atomic) + free_list audit.
+aura_add_issue_test(test_summary_flags_guard_2415)
+aura_issue_test_link_llvm_jit(test_summary_flags_guard_2415)
+add_dependencies(all_test_issue_targets test_summary_flags_guard_2415)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

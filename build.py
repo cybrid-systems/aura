@@ -2963,6 +2963,24 @@ def cmd_summary_recompute_sym_coverage():
     return 0
 
 
+def cmd_summary_flags_guard_coverage():
+    """Issue #2415: summary_flags_ thread-safety annotation + FlatAST audit.
+
+    Atomic (not GUARDED_BY mutex); free_list_ / SoA GUARDED_BY comments.
+    """
+    print(f"{B}=== summary_flags guard coverage (#2415) ==={N}")
+    script = ROOT / "scripts" / "check_summary_flags_guard_2415.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("summary_flags guard (#2415) coverage contract rows failed")
+        return 1
+    ok("summary_flags guard (#2415) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3899,6 +3917,7 @@ def cmd_gate():
         or cmd_reset_slot_parent_edges_coverage()
         or cmd_flatast_add_node_lock_coverage()
         or cmd_summary_recompute_sym_coverage()
+        or cmd_summary_flags_guard_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
