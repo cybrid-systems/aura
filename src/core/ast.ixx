@@ -465,11 +465,19 @@ public:
     }
     // Sum of byte lengths of all interned strings (excludes the
     // trailing NUL per string but includes the leading \0 sentinel).
+    //
+    // Issue #2408: hold one shared_lock for the whole walk and use
+    // resolve_unlocked. Previously each resolve() took its own lock
+    // and returned a string_view into buf_ after unlock — concurrent
+    // intern() could realloc buf_ between iterations (UAF) and cost
+    // O(capacity) lock ops. find_by_name() already uses this pattern.
     [[nodiscard]] std::size_t string_bytes_total() const noexcept {
+        std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
+        g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
         std::size_t total = 1; // leading \0
         for (std::uint32_t i = 0; i < hash_capacity_; ++i) {
             if (hash_tbl_[i] != INVALID_SYM) {
-                total += resolve(hash_tbl_[i]).size() + 1; // +1 for NUL
+                total += resolve_unlocked(hash_tbl_[i]).size() + 1; // +1 for NUL
             }
         }
         return total;
