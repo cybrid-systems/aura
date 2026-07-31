@@ -1432,7 +1432,16 @@ public:
         return id;
     }
 
-    // SoA storage (all pmr::vector = arena allocated)
+    // SoA storage (all pmr::vector = arena allocated).
+    //
+    // Issue #2415 audit (thread-safety annotations):
+    // GUARDED_BY(flatast_mutex_) for *size* mutations (push_back /
+    // clear / free-list reset_node_slot) — see add_node / clear.
+    // Per-slot field writes on already-published ids (set_int /
+    // set_sym / tag=) use the single-thread mutation contract or
+    // structural_mtx_ as documented in FlatAST #2413 — not every
+    // column access takes flatast_mutex_. Do not assume lock-free
+    // concurrent add_node vs tag_[id] (reallocation race).
     std::pmr::vector<NodeTag> tag_;
     std::pmr::vector<std::int64_t> int_val_;
     std::pmr::vector<double> float_val_;
@@ -1730,13 +1739,21 @@ public:
     // Variables / query:/mutate: Calls still need
     // verification — those are caught by the subtree
     // walk (also added in #402).
-    // Issue #2463: atomic so concurrent reader of
-    // summary_flags() / summary_has() never observes a
-    // torn mid-write during clear() / summary_recompute() /
-    // summary_add_flags(). Const member accessors load with
-    // acquire; mutator paths use acq_rel / release (see
-    // individual call sites). Mutable because the loaders
-    // are const noexcept (per #402 contract).
+    // Issue #2463 + #2415: thread-safety model for summary_flags_.
+    //
+    // GUARDED_BY(flatast_mutex_): N/A — field is std::atomic, not a
+    // plain uint32_t. Issue #2415 originally proposed GUARDED_BY for a
+    // non-atomic flag; #2463 already upgraded to atomic so concurrent
+    // summary_has() vs clear/add_node/summary_recompute never tears
+    // without requiring readers to take flatast_mutex_.
+    //
+    //   writers: store / fetch_or (release / acq_rel / relaxed under
+    //            add_node which also holds flatast_mutex_ for SoA size)
+    //   readers: load(acquire) — lock-free, intentional
+    //
+    // Do NOT regress to plain uint32_t + mutex-only access without
+    // revisiting test_ast_concurrency (#2463) and this annotation.
+    // Mutable so const summary_flags()/summary_has() can load.
     mutable std::atomic<std::uint32_t> summary_flags_{0};
     std::pmr::vector<std::uint32_t> node_first_mutation_;
     // Issue #320: per-node epoch tracking. Records the
@@ -1769,6 +1786,13 @@ public:
     // Issue #261: free-list of recycled NodeId slots. Slots on the
     // free list have node_gen_[id] == 0 (tombstone). add_node()
     // pops from here before bump-appending new slots.
+    //
+    // GUARDED_BY(flatast_mutex_) — Issue #2415 audit: push/pop on the
+    // add_node recycle path holds flatast_mutex_. Other mutators
+    // (recycle_dead_nodes / free_orphan_nodes_from / compact) must be
+    // externally serialized with add_node (workspace_mtx / single-
+    // thread mutation contract — see FlatAST #2413 concurrent access
+    // contract). Not atomic: vector reallocation is not lock-free.
     std::pmr::vector<NodeId> free_list_;
     // Issue #255: reference stability observability counters.
     // The reference stability mechanism (generation_ + node_gen_
