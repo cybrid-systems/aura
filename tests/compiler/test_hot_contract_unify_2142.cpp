@@ -122,6 +122,8 @@ int main() {
     }
 
     // ── AC4: hits move under microbench ──
+    // Issue #2435: production hot mode OFF elides AURA_HOT_RECORD — hits
+    // stay flat; debug/observe/enforce still move the counter.
     {
         std::println("\n--- AC4: hotpath hits move ---");
         const auto h0 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
@@ -141,9 +143,15 @@ int main() {
         mod.functions[0].mark_block_dirty(0);
 
         const auto h1 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
-        std::println("  hits {} → {}", h0, h1);
-        CHECK(h1 > h0, "hotpath_invariant_hits moved");
-        CHECK(h1 - h0 >= 1000, "at least one hit per make/as_int pair");
+        std::println("  hits {} → {} (mode={})", h0, h1, aura::core::cpp26::kHotContractsMode);
+        if constexpr (aura::core::cpp26::kHotContractsMode == aura::core::cpp26::kHotModeOff) {
+            // #2435 production OFF: RECORD is no-op; semantics still correct.
+            CHECK(h1 == h0, "production OFF: hits unchanged (zero record cost)");
+            CHECK(true, "hotpath hits policy: off");
+        } else {
+            CHECK(h1 > h0, "hotpath_invariant_hits moved");
+            CHECK(h1 - h0 >= 1000, "at least one hit per make/as_int pair");
+        }
     }
 
     // ── AC5: valid programs + schema ──

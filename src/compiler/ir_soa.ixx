@@ -396,7 +396,8 @@ inline void IRFunctionSoA::bump_generation() noexcept {
 }
 
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
-    // Issue #2142: unified hot-path contract (record + enforce/observe).
+    // Issue #2142 / #2435: hot-tier contract (production OFF = zero cost;
+    // dirty cascade still runs; cold edges keep language pre/post).
     AURA_HOT_CONTRACT(block_id < blocks_.size() || block_dirty_.empty() ||
                       block_id <= block_dirty_.size());
     if (block_id >= block_dirty_.size()) {
@@ -460,12 +461,14 @@ export struct IRInstructionView {
         , idx(i) {}
 
     // Accessors — all O(1), one SoA column access each.
+    // Issue #2435: absolute-hot column access uses AURA_HOT_CHECK_CONSTEXPR
+    // (production OFF = zero cost; debug/enforce still fail-closed).
     constexpr aura::ir::IROpcode opcode() const {
-        contract_assert(idx < func->opcodes_.size());
+        AURA_HOT_CHECK_CONSTEXPR(func != nullptr && idx < func->opcodes_.size());
         return func->opcodes_[idx];
     }
     constexpr std::uint32_t operand(std::size_t i) const {
-        contract_assert(i < 4); // only 4 operand columns exist
+        AURA_HOT_CHECK_CONSTEXPR(i < 4); // only 4 operand columns exist
         switch (i) {
             case 0:
                 return func->operand0_[idx];
@@ -665,9 +668,11 @@ export struct IRModuleV2 {
     // Get a view of the i-th instruction in a function.
     // The view is non-owning; it stays valid as long as the
     // function is not modified.
+    // Issue #2435: cold edge bounds via language pre; hot RECORD elided
+    // under production OFF (absolute-hot view construction).
     IRInstructionView view_at(std::size_t func_idx, std::uint32_t idx) const
         pre(func_idx < functions.size()) pre(idx < functions[func_idx].size()) {
-        AURA_HOT_RECORD(); // Issue #2142 (pre already enforces bounds)
+        AURA_HOT_RECORD(); // Issue #2142 / #2435 (pre = cold enforce edge)
         return IRInstructionView(functions[func_idx], idx);
     }
 
