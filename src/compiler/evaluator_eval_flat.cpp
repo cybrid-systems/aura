@@ -15,6 +15,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.type;
+import aura.core.lifetime_pin; // Issue #2363: GeneralObjectPin adopt on intermediate create
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
@@ -2216,6 +2217,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     auto alloc = temp_arena_->allocator();
     auto* pat_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
     auto* pat_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
+    // Issue #2363: GeneralObjectPin adopt (site 2/7) — batch :replace-pattern.
+    aura::core::lifetime::GeneralObjectPin pat_pool_pin;
+    aura::core::lifetime::GeneralObjectPin pat_flat_pin;
+    (void)aura::core::lifetime::wire_general_object_create_pair(
+        pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool), static_cast<void*>(pat_flat));
     auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
     if (!pat_pr.success || pat_pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
@@ -3486,6 +3492,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto alloc = temp_arena_->allocator();
                                 auto* ipool = temp_arena_->create<aura::ast::StringPool>(alloc);
                                 auto* iflat = temp_arena_->create<aura::ast::FlatAST>(alloc);
+                                // Issue #2363: GeneralObjectPin adopt (site 3/7) — require import.
+                                aura::core::lifetime::GeneralObjectPin ipool_pin;
+                                aura::core::lifetime::GeneralObjectPin iflat_pin;
+                                (void)aura::core::lifetime::wire_general_object_create_pair(
+                                    ipool_pin, iflat_pin, static_cast<void*>(ipool),
+                                    static_cast<void*>(iflat));
                                 auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
                                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                                     return std::unexpected(Diagnostic{ErrorKind::ParseError,

@@ -51,8 +51,25 @@ export namespace aura::core::lifetime {
 inline constexpr int kLifetimePinPhase = 3;
 // Issue #2298: general (non-render) object pin-or-remap protocol issue stamp.
 inline constexpr int kGeneralObjectPinIssue = 2298;
+// Issue #2363: complete GeneralObjectPin adoption for mutate/agent/scratch
+// intermediate create sites (refines #2337 single-site demo).
+inline constexpr int kGeneralObjectPinAdoptIssue = 2363;
+// Expected adopted wire sites (mutate/agent/scratch intermediate create).
+// Bumped when a new site calls wire_general_object_create_pair /
+// note_general_object_pin_mutate_wire. Dashboard compares wire total
+// growth against this inventory for coverage.
+//   1 mutate:replace-pattern          (evaluator_primitives_mutate.cpp)
+//   2 batch :replace-pattern          (evaluator_eval_flat.cpp)
+//   3 require import parse            (evaluator_eval_flat.cpp)
+//   4 query:pattern                   (evaluator_primitives_query_workspace.cpp)
+//   5 query:pattern guard             (evaluator_primitives_query_workspace.cpp)
+//   6 load                            (evaluator_primitives_eval.cpp)
+//   7 eval-expr                       (evaluator_primitives_eval.cpp)
+// Agent create paths funnel through eval/mutate (no separate temp_arena
+// create in evaluator_primitives_agent.cpp).
+inline constexpr std::uint64_t kGeneralObjectPinAdoptSiteCount = 7;
 
-// ── Object class × required protocol inventory (#2298 AC5) ────────────
+// ── Object class × required protocol inventory (#2298 AC5 / #2363) ────
 // | Class                         | Protocol                          |
 // | AST nodes / StableNodeRef     | generation + StableNodeRef fence  |
 // | EnvFrame SoA / EnvFrameRef    | env_gen fence (#2268) + transfer  |
@@ -63,8 +80,10 @@ inline constexpr int kGeneralObjectPinIssue = 2298;
 // |                               | #2270) + PresentGuard / RenderPin |
 // | Linear roots (Move/Drop)      | pin_linear_root (#2280)           |
 // | Intermediate general buffers  | pin_or_fail / GeneralObjectPin    |
-// | (mutate/agent/scratch create) | (#2298) — pin-or-remap under      |
-// |                               | Moving densify                    |
+// | (mutate/agent/scratch create) | (#2298/#2337/#2363) — pin-or-     |
+// |                               | remap under Moving densify;       |
+// |                               | complete adopt via                |
+// |                               | wire_general_object_create_pair   |
 // Soft/Force do not relocate create objects → zero remap work (AC4).
 // Prefer RootRemapPass (#2294) for densify-tracked roots already in
 // object_remap; LifetimePin for external / cross-boundary consumers.
@@ -104,13 +123,13 @@ struct LifetimePinStats {
     std::uint64_t general_object_pin_total = 0;               // pin_or_fail / GeneralObjectPin::pin
     std::uint64_t general_object_pin_validate_fail_total = 0; // validate failed
     std::uint64_t general_object_pin_remap_ok_total = 0;      // validate ok after Moving densify
-    // Issue #2337: adoption wire-up counter for mutate/agent create paths.
-    // Bumped per call site that wraps a GeneralObjectPin around an
-    // intermediate create buffer per the #2337 adoption pattern. Distinct
-    // from general_object_pin_total (per-allocate) — this is per-site
-    // (per call site that adopts the pattern), so dashboard can spot
-    // which create paths have been adopted.
-    std::uint64_t general_object_pin_mutate_wire_total = 0; // #2337
+    // Issue #2337 / #2363: adoption wire-up counter for mutate/agent/
+    // scratch create paths. Bumped once per call site that wraps
+    // GeneralObjectPin(s) around intermediate create buffers (via
+    // note_general_object_pin_mutate_wire / wire_general_object_create_pair).
+    // Distinct from general_object_pin_total (per-allocate) — this is
+    // per-site so dashboards track adoption coverage (#2363 complete).
+    std::uint64_t general_object_pin_mutate_wire_total = 0; // #2337/#2363
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};
@@ -865,6 +884,9 @@ public:
     GeneralObjectPin& operator=(GeneralObjectPin&&) = default;
 
     // Pin buffer; returns false on null. Arena ownership (not FFI).
+    // NOTE: replaces any prior ptr on this pin (LifetimePin::pin overwrites).
+    // For pool+flat pairs use two GeneralObjectPin instances (see
+    // wire_general_object_create_pair — Issue #2363).
     bool pin(void* p, std::uint64_t gen, std::uint64_t arena_id = 0) noexcept {
         return pin_or_fail(pin_, p, gen, arena_id);
     }
@@ -882,6 +904,24 @@ public:
 private:
     LifetimePin pin_;
 };
+
+// Issue #2337 / #2363: bump wire counter once per adopted create site.
+inline void note_general_object_pin_mutate_wire() noexcept {
+    ++g_lifetime_pin_stats.general_object_pin_mutate_wire_total;
+}
+
+// Issue #2363: pin both intermediate create buffers (typically
+// StringPool + FlatAST). Uses two GeneralObjectPin objects because
+// LifetimePin::pin replaces the prior pointer. Bumps wire total once
+// per call site. Soft / null args still bump wire (site was adopted).
+inline bool wire_general_object_create_pair(GeneralObjectPin& pin_a, GeneralObjectPin& pin_b,
+                                            void* a, void* b, std::uint64_t gen = 0,
+                                            std::uint64_t arena_id = 0) noexcept {
+    const bool ok_a = a ? pin_a.pin(a, gen, arena_id) : false;
+    const bool ok_b = b ? pin_b.pin(b, gen, arena_id) : false;
+    note_general_object_pin_mutate_wire();
+    return ok_a && ok_b;
+}
 
 // Issue #2280: linear pin check under Moving compact. Returns true if
 // every live linear root is either remapped (not in old_addresses) or

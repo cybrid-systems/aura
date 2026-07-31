@@ -16,6 +16,7 @@ import std;
 import aura.core.ast;
 import aura.core.type;
 import aura.core.mutation;
+import aura.core.lifetime_pin; // Issue #2363: GeneralObjectPin adopt on intermediate create
 import aura.compiler.value;
 import aura.compiler.matcher;
 import aura.parser.parser;
@@ -1938,6 +1939,12 @@ void register_workspace_query_primitives(
             auto alloc = ws.temp_arena->allocator();
             auto* pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
             auto* pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+            // Issue #2363: GeneralObjectPin adopt (site 4/7) — query:pattern.
+            aura::core::lifetime::GeneralObjectPin pat_pool_pin;
+            aura::core::lifetime::GeneralObjectPin pat_flat_pin;
+            (void)aura::core::lifetime::wire_general_object_create_pair(
+                pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool),
+                static_cast<void*>(pat_flat));
             auto pr = aura::parser::parse_to_flat(ws.string_heap[idx], *pat_flat, *pat_pool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE)
                 return make_void();
@@ -2021,6 +2028,12 @@ void register_workspace_query_primitives(
                 auto alloc = ws.temp_arena->allocator();
                 auto* guard_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
                 auto* guard_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+                // Issue #2363: GeneralObjectPin adopt (site 5/7) — query:pattern guard.
+                aura::core::lifetime::GeneralObjectPin guard_pool_pin;
+                aura::core::lifetime::GeneralObjectPin guard_flat_pin;
+                (void)aura::core::lifetime::wire_general_object_create_pair(
+                    guard_pool_pin, guard_flat_pin, static_cast<void*>(guard_pool),
+                    static_cast<void*>(guard_flat));
                 auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
                 bool ok = false;
                 if (pr.success && pr.root != aura::ast::NULL_NODE) {
