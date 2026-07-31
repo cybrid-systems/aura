@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 573 | Preferred destination suites |
-| **Total scanned** | **573** | |
+| `tests/core/test_*.cpp` | 574 | Preferred destination suites |
+| **Total scanned** | **574** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 61 | 61 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 160 | 160 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 63 | 63 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 64 | 64 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
@@ -503,6 +503,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_orch_admission_decay.cpp`
 - `tests/serve/test_orch_agent_mutation_boundary_2118.cpp`
 - `tests/serve/test_orchestration_steal_boost.cpp`
+- `tests/serve/test_orphan_reap_stress.cpp`
 - `tests/compiler/test_outermost_exit_order_2120.cpp`
 - `tests/core/test_pair_slot_lock.cpp`
 - `tests/core/test_pair_unchecked_safety.cpp`
@@ -997,13 +998,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (63)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (64)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (63)
+#### domain/ (64)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1: Happy path — B's body replies to ask protocol; A's
@@ -1045,6 +1046,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_orch_admission_decay.cpp` (—) [domain_suite, theme_orch] — AC1: decay window — BP event → counter > 0 → spawn denied
 - `tests/serve/test_orch_agent_mutation_boundary_2118.cpp` (#2118) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false
 - `tests/serve/test_orchestration_steal_boost.cpp` (—) [domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
+- `tests/serve/test_orphan_reap_stress.cpp` (—) [domain_suite, theme_serve] — AC1: orphan_mutex_ held for minimal time (just iterate + decide
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp` (—) [domain_suite, theme_serve] — test_panic_checkpoint_fiber_resume_safety.cpp — Issue #592:
 - `tests/compiler/test_pcv_children_safe_default_migration.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2036; children_ is PersistentChildVector; children_default
 - `tests/compiler/test_per_defuse_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_per_defuse_batch.cpp — batch driver for per_defuse_index family.

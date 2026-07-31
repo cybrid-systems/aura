@@ -425,26 +425,45 @@ void Scheduler::note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noex
 // worker's own internal mutex; order across workers doesn't matter.
 std::size_t Scheduler::reap_orphans_now() noexcept {
     const auto now = std::chrono::steady_clock::now();
-    std::size_t reaped = 0;
-    ::aura::compiler::lock_order::AuditedMutexLock lock(
-        orphan_mutex_, ::aura::compiler::lock_order::Level::Orphan);
-    // Two-pass: first pass identifies candidates under the lock;
-    // second pass removes them after the per-fiber cleanup
-    // (which may release other locks). Cleanup is done under the
-    // orphan_mutex_ to keep the orphan list consistent.
-    for (auto it = orphan_fibers_.begin(); it != orphan_fibers_.end();) {
-        Fiber* f = it->fiber;
-        if (!f) {
+    // Issue #2469: two-phase extraction to minimize orphan_mutex_
+    // hold time under cancel storms. Phase 1 (under orphan_mutex_):
+    // identify candidates + move them out of orphan_fibers_ into a
+    // local vector. Phase 2 (orphan_mutex_ RELEASED): do the
+    // per-fiber cleanup (mark_reclaimed + wait_map/joiner_map/
+    // owned_fibers mutex acquisitions + quota release + metrics)
+    // without holding orphan_mutex_. This lets concurrent
+    // note_orphan_fiber() interleave instead of blocking for the
+    // entire reaping pass (which could be many milliseconds under
+    // N=100 parallel timeouts all timing out simultaneously).
+    std::vector<OrphanEntry> to_reap;
+    {
+        ::aura::compiler::lock_order::AuditedMutexLock lock(
+            orphan_mutex_, ::aura::compiler::lock_order::Level::Orphan);
+        // Phase 1: identify candidates and extract them
+        for (auto it = orphan_fibers_.begin(); it != orphan_fibers_.end();) {
+            Fiber* f = it->fiber;
+            if (!f) {
+                it = orphan_fibers_.erase(it);
+                continue;
+            }
+            if (it->hard_deadline > now || f->is_done() || f->is_reclaimed()) {
+                // Not yet due, or already cleaned up by on_fiber_done.
+                // Keep the entry (will be removed on next pass if still
+                // stale after its deadline).
+                ++it;
+                continue;
+            }
+            // Extract under lock; per-fiber cleanup happens after release.
+            to_reap.push_back(std::move(*it));
             it = orphan_fibers_.erase(it);
-            continue;
         }
-        if (it->hard_deadline > now || f->is_done() || f->is_reclaimed()) {
-            // Not yet due, or already cleaned up by on_fiber_done.
-            // Keep the entry (will be removed on next pass if still
-            // stale after its deadline).
-            ++it;
-            continue;
-        }
+    } // orphan_mutex_ released here
+
+    // Phase 2: per-fiber cleanup WITHOUT orphan_mutex_ held.
+    // note_orphan_fiber() can interleave freely during this loop.
+    std::size_t reaped = 0;
+    for (auto& entry : to_reap) {
+        Fiber* f = entry.fiber;
         // Force-reclaim path. Mark reclaimed_ first so any
         // concurrent joiner sees the flag before they observe
         // removal from the maps.
@@ -506,7 +525,6 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         }
         orphans_reaped_total_.fetch_add(1, std::memory_order_relaxed);
         ++reaped;
-        it = orphan_fibers_.erase(it);
     }
     return reaped;
 }
