@@ -1248,6 +1248,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             m->mutation_boundary_holds_total.fetch_add(b.holds, std::memory_order_relaxed);
             m->mutation_boundary_hold_histogram[b.hist_bucket].fetch_add(1,
                                                                          std::memory_order_relaxed);
+            // Issue #2405: feed recent outermost hold sample ring for
+            // query:mutation-hold-estimate p50/p99 (Agent batch planning).
+            // One atomic seq + store; no lock. Query sorts a snapshot.
+            {
+                const auto seq =
+                    m->mutation_hold_sample_seq.fetch_add(1, std::memory_order_relaxed);
+                const auto slot =
+                    static_cast<std::size_t>(seq % CompilerMetrics::kMutationHoldSampleRing);
+                m->mutation_hold_sample_ring[slot].store(b.hold_us, std::memory_order_relaxed);
+                m->mutation_hold_sample_count.fetch_add(1, std::memory_order_relaxed);
+            }
             if (b.update_max) {
                 // Issue #1765: CAS loop so a concurrent higher sample
                 // cannot be overwritten by a lower load+store race.

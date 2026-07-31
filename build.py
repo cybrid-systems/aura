@@ -2780,6 +2780,25 @@ def cmd_mutation_hold_slo_coverage():
     return 0
 
 
+def cmd_mutation_hold_estimate_coverage():
+    """Issue #2405: query:mutation-hold-estimate for Agent batch planning.
+
+    Recent outermost hold p50/p99 sample ring; budget/slo; dirty estimate;
+    recommend-split heuristic; schema-2405.
+    """
+    print(f"{B}=== mutation hold estimate coverage (#2405) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_hold_estimate_2405.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation hold estimate (#2405) coverage contract rows failed")
+        return 1
+    ok("mutation hold estimate (#2405) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -3706,6 +3725,7 @@ def cmd_gate():
         or cmd_mailbox_defer_drain_sla_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
+        or cmd_mutation_hold_estimate_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
