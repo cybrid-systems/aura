@@ -3092,6 +3092,11 @@ aura_add_issue_test(test_restamp_lazy_align_atomic_2421)
 aura_issue_test_link_llvm_jit(test_restamp_lazy_align_atomic_2421)
 add_dependencies(all_test_issue_targets test_restamp_lazy_align_atomic_2421)
 
+# Issue #2422: subtree_gen_ 32-bit cells + atomic_ref (+ resize mutex).
+aura_add_issue_test(test_subtree_gen_atomic_2422)
+aura_issue_test_link_llvm_jit(test_subtree_gen_atomic_2422)
+add_dependencies(all_test_issue_targets test_subtree_gen_atomic_2422)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

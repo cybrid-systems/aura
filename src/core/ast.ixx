@@ -1842,7 +1842,13 @@ public:
     // subtree_gen_ is the per-top-level-Define generation map
     // (only meaningful for Define roots; other slots stay at 0).
     mutable std::atomic<std::uint64_t> subtree_bump_count_{0};
-    std::pmr::vector<std::uint16_t> subtree_gen_;
+    // Issue #2422: 32-bit cells (low 16 = subtree gen) accessed via
+    // std::atomic_ref so concurrent load/store is well-defined.
+    // mutable: const is_valid_subtree / subtree_generation load via
+    // atomic_ref; resize exclusive under subtree_gen_mtx_.
+    // LOCK ORDER if combined with structural: structural → subtree_gen.
+    mutable OwnedSharedMutex subtree_gen_mtx_;
+    mutable std::pmr::vector<std::uint32_t> subtree_gen_;
     // Issue #457: generation_ / node_gen_ lifecycle
     // observability counters. All stats-only (relaxed
     // ordering). Bumped in bump_generation() (wrap
@@ -7437,9 +7443,10 @@ public:
         auto top = top_define_of(ref.id);
         if (top == NULL_NODE)
             return true; // no enclosing Define → can't be scope-invalidated
-        if (top >= subtree_gen_.size())
-            return true; // subtree_gen_ not populated → no scoped bump yet
-        return subtree_gen_[top] == ref.subtree_gen_at_capture;
+        // Issue #2422: atomic load of 32-bit cell (low 16 = gen).
+        // If vector not yet grown for `top`, treat as gen 0 (no scoped bump).
+        const auto cur = load_subtree_gen(top);
+        return cur == ref.subtree_gen_at_capture;
     }
     [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept
         post(r : !r.has_value() || is_valid(ref)) {
@@ -7975,28 +7982,61 @@ public:
     // subtree_root must be a node inside the target subtree
     // (the walk-up handles arbitrary nesting). Pass NULL_NODE
     // to no-op safely.
+    // Issue #2422: atomic_ref helpers for subtree_gen_ cells.
+    // Low 16 bits = gen value (high bits reserved 0). Resize of
+    // the vector is exclusive under subtree_gen_mtx_.
+    static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
+                  "Issue #2422: uint32 atomic must be lock-free on target");
+    void ensure_subtree_gen_capacity() {
+        if (subtree_gen_.size() >= size())
+            return;
+        std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
+        if (subtree_gen_.size() < size())
+            subtree_gen_.resize(size(), 0);
+    }
+    [[nodiscard]] std::uint16_t load_subtree_gen(NodeId top) const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(subtree_gen_mtx_.mutable_get());
+        if (top == NULL_NODE || top >= subtree_gen_.size())
+            return 0;
+        // atomic_ref: no torn 32-bit read; gen lives in low 16 bits.
+        const auto word =
+            std::atomic_ref<std::uint32_t>(subtree_gen_[top]).load(std::memory_order_acquire);
+        return static_cast<std::uint16_t>(word & 0xFFFFu);
+    }
+    void store_subtree_gen(NodeId top, std::uint16_t gen) noexcept {
+        // Caller holds exclusive subtree_gen_mtx_ (or has unique ownership).
+        std::atomic_ref<std::uint32_t>(subtree_gen_[top])
+            .store(static_cast<std::uint32_t>(gen), std::memory_order_release);
+    }
+
     void bump_generation_subtree(NodeId subtree_root) noexcept {
         if (subtree_root == NULL_NODE || subtree_root >= size())
             return;
         auto top = top_define_of(subtree_root);
         if (top == NULL_NODE)
             return; // no enclosing Define → cannot scope
-        // Lazily grow the per-node subtree_gen_ vector.
-        if (subtree_gen_.size() < size())
-            subtree_gen_.resize(size(), 0);
+        // Issue #2422: exclusive for resize + atomic store of gen cell.
+        {
+            std::unique_lock<std::shared_mutex> wlock(subtree_gen_mtx_.mutable_get());
+            if (subtree_gen_.size() < size())
+                subtree_gen_.resize(size(), 0);
+            // Advance the per-subtree counter for this top-level
+            // Define. Same uint16_t wrap semantics as the global
+            // generation_ (1..65535, skip 0).
+            auto word =
+                std::atomic_ref<std::uint32_t>(subtree_gen_[top]).load(std::memory_order_relaxed);
+            auto sg = static_cast<std::uint16_t>(word & 0xFFFFu);
+            ++sg;
+            if (sg == 0) {
+                sg = 1;
+                subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
+            }
+            std::atomic_ref<std::uint32_t>(subtree_gen_[top])
+                .store(static_cast<std::uint32_t>(sg), std::memory_order_release);
+        }
         // Bump the global generation_ so existing is_valid()
         // continues to behave as before (backward compat).
         bump_generation();
-        // Advance the per-subtree counter for this top-level
-        // Define. Same uint16_t wrap semantics as the global
-        // generation_ (1..65535, skip 0, bump wrap_count_
-        // + wrap_epoch_ on wrap).
-        std::uint16_t& sg = subtree_gen_[top];
-        ++sg;
-        if (sg == 0) {
-            sg = 1;
-            subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
-        }
         subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
         // Issue #392 fix: restamp node_gen_ for the entire
         // subtree so that refs captured AFTER the bump can
@@ -8025,9 +8065,10 @@ public:
         if (subtree_root == NULL_NODE || subtree_root >= size())
             return 0;
         auto top = top_define_of(subtree_root);
-        if (top == NULL_NODE || top >= subtree_gen_.size())
+        if (top == NULL_NODE)
             return 0;
-        return subtree_gen_[top];
+        // Issue #2422: atomic load via load_subtree_gen.
+        return load_subtree_gen(top);
     }
 
     // Issue #392: walk up the parent chain to find the

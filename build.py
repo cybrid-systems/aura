@@ -3089,6 +3089,24 @@ def cmd_restamp_lazy_align_atomic_coverage():
     return 0
 
 
+def cmd_subtree_gen_atomic_coverage():
+    """Issue #2422: subtree_gen_ atomic cells (uint32 + atomic_ref).
+
+    Resize under subtree_gen_mtx_; low 16 bits = gen; is_always_lock_free.
+    """
+    print(f"{B}=== subtree_gen atomic coverage (#2422) ==={N}")
+    script = ROOT / "scripts" / "check_subtree_gen_atomic_2422.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("subtree_gen atomic (#2422) coverage contract rows failed")
+        return 1
+    ok("subtree_gen atomic (#2422) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4032,6 +4050,7 @@ def cmd_gate():
         or cmd_tag_arity_index_lock_coverage()
         or cmd_tag_arity_key_hash_coverage()
         or cmd_restamp_lazy_align_atomic_coverage()
+        or cmd_subtree_gen_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
