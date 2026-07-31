@@ -3102,6 +3102,11 @@ aura_add_issue_test(test_dirty_column_lock_2423)
 aura_issue_test_link_llvm_jit(test_dirty_column_lock_2423)
 add_dependencies(all_test_issue_targets test_dirty_column_lock_2423)
 
+# Issue #2424: is_subtree_dirty_node bounds via dirty_.size() (not size()).
+aura_add_issue_test(test_subtree_dirty_bounds_2424)
+aura_issue_test_link_llvm_jit(test_subtree_dirty_bounds_2424)
+add_dependencies(all_test_issue_targets test_subtree_dirty_bounds_2424)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

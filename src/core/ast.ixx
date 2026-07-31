@@ -1324,18 +1324,22 @@ public:
         // sufficient (the mutex provides happens-before
         // ordering vs concurrent writers).
         summary_flags_.fetch_or(summary_flags_for_tag(tag), std::memory_order_relaxed);
-        // Issue #399: pre-reserve the per-node "dirty"
+        // Issue #399 / #2424: pre-reserve the per-node "dirty"
         // side-table columns to the upcoming size. The
         // push_back(0) calls below would otherwise trigger
         // occasional 2x reallocations during AI-driven
         // structural mutations; reserving up-front makes
         // them O(1) size updates and keeps the mark_dirty
-        // hot path free of any dirty_.resize() call. Also
-        // keeps the invariant dirty_.size() == tag_.size()
-        // explicit (not just implicit from push_back
-        // ordering).
+        // hot path free of any dirty_.resize() call.
+        //
+        // INVARIANT (Issue #2424 AC4): after every add_node
+        // path returns, dirty_.size() == tag_.size(). Free-list
+        // reuse keeps size equal (clears dirty_[id] only).
+        // is_subtree_dirty_node bounds solely via dirty_.size()
+        // (never tag_.size()) so concurrent readers cannot OOB
+        // when tag_ grows before dirty_ push completes.
+        // LOCK ORDER: flatast_mutex_ → dirty_column_mtx_.
         const auto upcoming_size = static_cast<std::size_t>(tag_.size()) + 1;
-        dirty_.reserve(upcoming_size);
         ppa_dirty_.reserve(upcoming_size);
         verify_dirty_.reserve(upcoming_size);
         verification_dirty_.reserve(upcoming_size);
@@ -1343,7 +1347,12 @@ public:
         if (!free_list_.empty()) {
             auto id = free_list_.back();
             free_list_.pop_back();
-            reset_node_slot(id, tag, m);
+            // Issue #2424: exclusive dirty_column while clearing
+            // dirty_[id] (free-list reuse; size unchanged).
+            {
+                std::unique_lock<std::shared_mutex> dirty_wlock(dirty_column_mtx_.mutable_get());
+                reset_node_slot(id, tag, m);
+            }
             node_slot_reuse_count_.fetch_add(1, std::memory_order_relaxed);
             return id;
         }
@@ -1376,7 +1385,15 @@ public:
         // structural changes to the binding the cache
         // entry is for.
         type_cache_binding_gen_.push_back(0);
-        dirty_.push_back(0);
+        // Issue #2424: grow dirty_ under exclusive dirty_column_mtx_
+        // so concurrent is_subtree_dirty_node / dirty_nodes_in_range
+        // (shared) never race reallocation or size(). After this
+        // push, dirty_.size() == tag_.size() (append path).
+        {
+            std::unique_lock<std::shared_mutex> dirty_wlock(dirty_column_mtx_.mutable_get());
+            dirty_.reserve(upcoming_size);
+            dirty_.push_back(0);
+        }
         ppa_dirty_.push_back(0);
         // Issue #437: verify_dirty_ column. Mirrors ppa_dirty_'s
         // push_back(0) pattern; populated by apply_verify_dirty_bits.
@@ -2024,18 +2041,25 @@ public:
     // (dirty_ column not built).
     // Issue #2423: both take shared dirty_column_mtx_ so concurrent
     // mark_dirty writers (exclusive) cannot race the dirty_ scan.
+    // Issue #2424: bounds checks use dirty_.size() only — never
+    // size()/tag_.size() — so concurrent add_node cannot OOB the
+    // dirty_ column (tag_ may grow before dirty_ push completes).
     // Uncontended shared_lock is acceptable on the hot short-circuit path.
     bool is_subtree_dirty_node(NodeId id) const noexcept {
-        if (id == NULL_NODE || id >= size())
+        // Issue #2424 Option B: do not call size() (non-atomic tag_).
+        // NULL_NODE is ~0u and fails the dirty_.size() check below.
+        if (id == NULL_NODE)
             return false;
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
-        if (dirty_.empty() || static_cast<std::size_t>(id) >= dirty_.size())
-            return false; // not built / not yet grown
+        if (static_cast<std::size_t>(id) >= dirty_.size())
+            return false; // not built / not yet grown / OOB
         return dirty_[static_cast<std::size_t>(id)] != 0;
     }
     std::size_t dirty_nodes_in_range(NodeId start, NodeId end) const noexcept {
         if (start >= end)
             return 0;
+        // Issue #2424: cap against dirty_.size() under shared lock
+        // (same Option B invariant as is_subtree_dirty_node).
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (dirty_.empty())
             return 0;
