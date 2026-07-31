@@ -1074,15 +1074,22 @@ private:
     // scan calls summary_recompute() after every structural
     // mutation to keep the bit-set in sync.
 public:
-    [[nodiscard]] std::uint32_t summary_flags() const noexcept { return summary_flags_; }
+    [[nodiscard]] std::uint32_t summary_flags() const noexcept {
+        return summary_flags_.load(std::memory_order_acquire);
+    }
     [[nodiscard]] bool summary_has(SummaryFlag flag) const noexcept {
-        return (summary_flags_ & static_cast<std::uint32_t>(flag)) != 0;
+        return (summary_flags_.load(std::memory_order_acquire) &
+                static_cast<std::uint32_t>(flag)) != 0;
     }
     // OR-in additional bits (used by add_node + the lazy
-    // set_int_value / set_sym_id sites).
-    void summary_add_flags(std::uint32_t bits) noexcept { summary_flags_ |= bits; }
+    // set_int_value / set_sym_id sites). fetch_or is atomic
+    // so concurrent reader + writer (e.g. clear()) sees
+    // either pre-OR or post-OR value, never a torn mix.
+    void summary_add_flags(std::uint32_t bits) noexcept {
+        summary_flags_.fetch_or(bits, std::memory_order_acq_rel);
+    }
     // Clear (used by reset() and the heavy recompute path).
-    void summary_clear() noexcept { summary_flags_ = 0; }
+    void summary_clear() noexcept { summary_flags_.store(0, std::memory_order_release); }
     // Issue #402: rebuild the bit-set from scratch by walking
     // the entire tag_ column. O(n) but only called from test
     // code or after heavy structural mutations that may have
@@ -1103,7 +1110,7 @@ public:
             // fast-path subtree walk (which has the pool via
             // its caller).
         }
-        summary_flags_ = f;
+        summary_flags_.store(f, std::memory_order_release);
     }
 
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
@@ -1119,7 +1126,10 @@ public:
         // Issue #402: tag-based summary flags. Update eagerly
         // before allocation so a fast-path consumer (next
         // add_node's caller) sees the correct bit-set.
-        summary_flags_ |= summary_flags_for_tag(tag);
+        // Held under flatast_mutex_; relaxed fetch_or is
+        // sufficient (the mutex provides happens-before
+        // ordering vs concurrent readers).
+        summary_flags_.fetch_or(summary_flags_for_tag(tag), std::memory_order_relaxed);
         // Issue #399: pre-reserve the per-node "dirty"
         // side-table columns to the upcoming size. The
         // push_back(0) calls below would otherwise trigger
@@ -1534,7 +1544,14 @@ public:
     // Variables / query:/mutate: Calls still need
     // verification — those are caught by the subtree
     // walk (also added in #402).
-    std::uint32_t summary_flags_ = 0;
+    // Issue #2463: atomic so concurrent reader of
+    // summary_flags() / summary_has() never observes a
+    // torn mid-write during clear() / summary_recompute() /
+    // summary_add_flags(). Const member accessors load with
+    // acquire; mutator paths use acq_rel / release (see
+    // individual call sites). Mutable because the loaders
+    // are const noexcept (per #402 contract).
+    mutable std::atomic<std::uint32_t> summary_flags_{0};
     std::pmr::vector<std::uint32_t> node_first_mutation_;
     // Issue #320: per-node epoch tracking. Records the
     // last mutation_epoch_ at which this node was
@@ -4839,6 +4856,14 @@ public:
     [[nodiscard]] std::size_t max_live_nodes_warn() const noexcept { return max_live_nodes_warn_; }
 
     void clear() {
+        // Issue #2463: assert the single-threaded mutation
+        // contract by holding flatast_mutex_ across the
+        // entire clear(). Other mutators (add_node, etc.)
+        // also hold this recursive_mutex; concurrent clear()
+        // + add_node() is serialized here, so readers using
+        // the atomic summary_flags_ see either pre-clear or
+        // post-clear values but never a torn mix.
+        std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);
         tag_.clear();
         int_val_.clear();
         float_val_.clear();
@@ -4855,8 +4880,11 @@ public:
         marker_.clear();
         // Issue #402: clear summary flags alongside the
         // per-node columns. The next add_node will rebuild
-        // the bit-set from scratch.
-        summary_flags_ = 0;
+        // the bit-set from scratch. Issue #2463: atomic
+        // store with release so a concurrent reader of
+        // summary_flags() sees 0 (not a torn mid-write) once
+        // this call returns.
+        summary_flags_.store(0, std::memory_order_release);
         dirty_.clear();
         ppa_dirty_.clear();
         // Issue #437: clear verify_dirty_ alongside ppa_dirty_
