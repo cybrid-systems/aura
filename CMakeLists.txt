@@ -3072,6 +3072,11 @@ aura_add_issue_test(test_binding_gens_atomic_2417)
 aura_issue_test_link_llvm_jit(test_binding_gens_atomic_2417)
 add_dependencies(all_test_issue_targets test_binding_gens_atomic_2417)
 
+# Issue #2418: structural_mtx_ → metadata_mtx_ lock order.
+aura_add_issue_test(test_structural_metadata_lock_order_2418)
+aura_issue_test_link_llvm_jit(test_structural_metadata_lock_order_2418)
+add_dependencies(all_test_issue_targets test_structural_metadata_lock_order_2418)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -1064,6 +1064,14 @@ export class FlatAST {
     //
     // 3) metadata_mtx_ — marker_ / provenance_ only (#1783).
     //
+    // Issue #2418 LOCK ORDER (deadlock prevention):
+    //   Always acquire structural_mtx_ BEFORE metadata_mtx_
+    //   when both are needed. Reverse order deadlocks under
+    //   concurrent combined mutators. Prefer
+    //   begin_structural_and_metadata_mutation() for dual holds.
+    //   Single-lock paths (structural-only or metadata-only) are
+    //   fine; never nest metadata → then structural.
+    //
     // summary_flags_ is atomic (#2463) and safe for concurrent
     // summary_flags() vs clear/add_node flag updates.
     //
@@ -1486,6 +1494,8 @@ public:
     // independent mutation isolation), and the move constructor
     // transfers ownership (the moved-from FlatAST keeps its
     // mutex as nullptr; the moved-to owns it).
+    //
+    // Issue #2418: LOCK ORDER rank 1 — always before metadata_mtx_.
     OwnedSharedMutex structural_mtx_;
     // Issue #1783: shared_mutex for marker_ / provenance_ columns.
     // Metadata-only — does NOT bump generation_ (unlike
@@ -1494,6 +1504,10 @@ public:
     // try_acquire_metadata_reader_lock(). Serializes cross-fiber
     // syntax:set-marker / set-provenance / propagate-marker vs
     // syntax-marker / get-provenance without invalidating StableNodeRef.
+    //
+    // Issue #2418: LOCK ORDER rank 2 — after structural_mtx_ only.
+    // Never acquire while another thread holds this and waits for
+    // structural (classic AB-BA deadlock).
     OwnedSharedMutex metadata_mtx_;
     std::pmr::vector<NodeId> parent_;
     // Issue #1689: inverted multi-parent edge index.
@@ -4394,6 +4408,10 @@ public:
     // Issue #1783: exclusive lock on metadata_mtx_ (marker_ /
     // provenance_). Unlike StructuralMutationGuard, does NOT bump
     // generation_ — marker/provenance are observational metadata.
+    //
+    // Issue #2418: if the caller also needs structural_mtx_, it MUST
+    // already hold structural (or use CombinedStructuralMetadataWriteGuard).
+    // Acquiring metadata first then structural is forbidden.
     class MetadataWriteGuard {
     public:
         MetadataWriteGuard() noexcept = default;
@@ -4428,6 +4446,36 @@ public:
         std::unique_lock<std::shared_mutex> lock_;
     };
     [[nodiscard]] MetadataWriteGuard begin_metadata_mutation() { return MetadataWriteGuard(this); }
+
+    // Issue #2418: dual exclusive hold in canonical order
+    // (structural_mtx_ → metadata_mtx_). Use when a mutator must
+    // update children topology and marker_/provenance_ together.
+    // Destruction releases metadata first, then structural.
+    class CombinedStructuralMetadataWriteGuard {
+    public:
+        CombinedStructuralMetadataWriteGuard() noexcept = default;
+        explicit CombinedStructuralMetadataWriteGuard(FlatAST* ast) noexcept
+            : structural_(ast)
+            , metadata_(ast) {}
+        CombinedStructuralMetadataWriteGuard(const CombinedStructuralMetadataWriteGuard&) = delete;
+        CombinedStructuralMetadataWriteGuard&
+        operator=(const CombinedStructuralMetadataWriteGuard&) = delete;
+        CombinedStructuralMetadataWriteGuard(CombinedStructuralMetadataWriteGuard&&) noexcept =
+            default;
+        CombinedStructuralMetadataWriteGuard&
+        operator=(CombinedStructuralMetadataWriteGuard&&) noexcept = default;
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return static_cast<bool>(structural_) && static_cast<bool>(metadata_);
+        }
+
+    private:
+        // Construction order = lock order; reverse dtor = unlock order.
+        StructuralMutationGuard structural_;
+        MetadataWriteGuard metadata_;
+    };
+    [[nodiscard]] CombinedStructuralMetadataWriteGuard begin_structural_and_metadata_mutation() {
+        return CombinedStructuralMetadataWriteGuard(this);
+    }
 
     // Issue #1783: shared (reader) lock on metadata_mtx_.
     class MetadataReadGuard {
@@ -4594,6 +4642,7 @@ public:
         structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #2418: ACQUIRES(structural_mtx_) only — never nests metadata.
     void set_child(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
         // Issue #222: acquire the structural mutation guard. The
         // guard's dtor bumps generation_ + releases the lock.
@@ -4604,6 +4653,7 @@ public:
 
     // Insert a child at position idx (0 = first, child_count = append)
     // Shifts all subsequent children and updates child_begin_ for later nodes.
+    // Issue #2418: ACQUIRES(structural_mtx_) only.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
         // Issue #222: acquire the structural mutation guard.
         StructuralMutationGuard guard(this);
@@ -4611,6 +4661,7 @@ public:
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
+    // Issue #2418: ACQUIRES(structural_mtx_) only.
     void remove_child(NodeId id, std::uint32_t idx) {
         // Issue #222: acquire the structural mutation guard.
         StructuralMutationGuard guard(this);
@@ -5587,6 +5638,9 @@ public:
 
     // ── Marker access ─────────────────────────────────────────
 
+    // Issue #2418 / #1783: REQUIRES metadata write lock held by
+    // caller (begin_metadata_mutation / CombinedStructuralMetadataWriteGuard).
+    // Does not acquire locks itself (allows multi-set under one hold).
     void set_marker(NodeId id, SyntaxMarker m)
         // Issue #144: markers are a hygiene signal used by
         // query:pattern and mutate:replace-subtree (Issue #140,
@@ -5912,6 +5966,8 @@ public:
     // provenance_id is an index into the FlatAST's own
     // MarkerProvenanceTable (so it's per-FlatAST — no cross-AST
     // lookup required). 0 means "no provenance recorded".
+    // Issue #2418 / #1783: REQUIRES metadata write lock held by
+    // caller (begin_metadata_mutation / CombinedStructuralMetadataWriteGuard).
     void set_provenance(NodeId id, std::uint32_t prov_id) noexcept {
         if (id < provenance_.size())
             provenance_[id] = prov_id;
