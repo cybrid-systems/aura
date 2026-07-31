@@ -128,6 +128,10 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #2350 — single Agent type-system health score (provenance +
     // timeout + pin + layered DCE). Zero-arity facade via engine:metrics.
     "query:type-system-health",
+    // Issue #2379 — single Agent mutation-concurrency health score
+    // (hold + steal + residual + mailbox + densify). Pure reads of existing
+    // atomics; does not replace per-subsystem queries.
+    "query:mutation-concurrency-health",
     // Issue #509 — solve_delta touched_roots soundness
     "query:constraint-delta-stats",
     // Issue #628 — solve_delta clean-conflict safety

@@ -13,15 +13,17 @@ module;
 #include "core/gc_hooks.h" // #1593 safepoint wait linkage
 #include "serve/fiber.h"
 #include "serve/metrics.h"
-#include "serve/multi_fiber_mailbox.h"      // #1597 orch readiness
-#include "serve/parallel_orch.h"            // #1597 orch readiness
-#include "hash_meta.h"                      // FNV constants (#901)
-#include "typed_mutation_audit.h"           // Issue #1613 macro hygiene audit trail
-#include "linear_occurrence_mutate_stats.h" // Issue #2030 occurrence hit-rate ratios
-#include "basis_points.h"                   // Issue #2030 ratio bp helpers
-#include "core/provenance_tracker.hh"       // Issue #2030 linear-provenance consistency bp
-#include "mutate_type_gate.hh"              // Issue #2219 Soft/Hard post-mutate type gate
-#include "compiler/type_system_health.hh"   // Issue #2350: query:type-system-health score
+#include "serve/multi_fiber_mailbox.h"             // #1597 orch readiness
+#include "serve/parallel_orch.h"                   // #1597 orch readiness
+#include "hash_meta.h"                             // FNV constants (#901)
+#include "typed_mutation_audit.h"                  // Issue #1613 macro hygiene audit trail
+#include "linear_occurrence_mutate_stats.h"        // Issue #2030 occurrence hit-rate ratios
+#include "basis_points.h"                          // Issue #2030 ratio bp helpers
+#include "core/provenance_tracker.hh"              // Issue #2030 linear-provenance consistency bp
+#include "mutate_type_gate.hh"                     // Issue #2219 Soft/Hard post-mutate type gate
+#include "compiler/type_system_health.hh"          // Issue #2350: query:type-system-health score
+#include "compiler/mutation_concurrency_health.hh" // Issue #2379: mutation-concurrency-health
+#include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
 
 #include <filesystem>
 #include <fstream>
@@ -7598,6 +7600,152 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2282", 2282);
             insert_kv("schema-2284", 2284);
             insert_kv("schema-2287", 2287);
+
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2379: query:mutation-concurrency-health — single Agent score
+    // for runtime mutation safety (hold + steal + residual + mailbox + densify).
+    // Pure reads of existing atomics (AC4 zero extra hot-path cost). Formula +
+    // force_reason priority in mutation_concurrency_health.hh.
+    // Priority: steal-mismatch > residual-defer > densify-fail > hold-slo >
+    // mailbox-starvation > none.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-concurrency-health",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* __qev_ = Evaluator::get_query_evaluator();
+            const auto* m =
+                __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
+
+            MutationConcurrencyHealthSnapshot snap;
+            // Steal force-deopt / hard-fail (process Fiber statics; always present).
+            snap.steal_force_deopt_total =
+                aura::serve::Fiber::steal_snapshot_mismatch_force_deopt_total();
+            snap.steal_hard_fail_total = aura::serve::Fiber::steal_snapshot_hard_fail_total();
+            // Residual GC defer.
+            snap.residual_defer_cleared_on_steal_total =
+                aura::gc_hooks::residual_defer_cleared_on_steal_total();
+            if (m)
+                snap.residual_hard_fail_total =
+                    m->mutation_boundary_residual_defer_hard_fail_total.load(
+                        std::memory_order_relaxed);
+            // Densify consistency last-call + cumulative fail.
+            snap.densify_consistency_fail_total =
+                aura::core::densify_consistency::densify_consistency_fail_total();
+            snap.last_densify_envframe_ok =
+                aura::core::densify_consistency::last_densify_envframe_ok() ? 1 : 0;
+            snap.last_densify_closure_remount_ok =
+                aura::core::densify_consistency::last_densify_closure_remount_ok() ? 1 : 0;
+            // Hold SLO / over-budget.
+            if (m) {
+                snap.hold_slo_violation_total =
+                    m->mutation_hold_slo_violation_total.load(std::memory_order_relaxed);
+                snap.hold_over_budget_total =
+                    m->mutation_hold_over_budget_total.load(std::memory_order_relaxed);
+            }
+            // Mailbox defer SLA.
+            using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+            snap.mailbox_defer_starvation_total =
+                g_mf_mailbox_stats.mailbox_defer_starvation_total.load(std::memory_order_relaxed);
+            snap.mailbox_deferred_depth =
+                g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+            snap.mailbox_deferred_mutation_hold_total =
+                g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(
+                    std::memory_order_relaxed);
+
+            const auto scored = compute_mutation_concurrency_health(snap);
+
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        auto vidx = string_heap.size();
+                        string_heap.push_back(std::string(v_str));
+                        vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            insert_kv("health-bp", static_cast<std::int64_t>(scored.health_bp));
+            insert_kv("health-budget-bp", static_cast<std::int64_t>(scored.health_budget_bp));
+            insert_kv_str("force-reason", scored.force_reason);
+            insert_kv("force-reason-code", scored.force_reason_code);
+            // Component raw totals (additive; subsystem queries unchanged).
+            insert_kv("component-steal-force-deopt-total",
+                      static_cast<std::int64_t>(snap.steal_force_deopt_total));
+            insert_kv("component-steal-hard-fail-total",
+                      static_cast<std::int64_t>(snap.steal_hard_fail_total));
+            insert_kv("component-residual-defer-cleared-on-steal-total",
+                      static_cast<std::int64_t>(snap.residual_defer_cleared_on_steal_total));
+            insert_kv("component-residual-hard-fail-total",
+                      static_cast<std::int64_t>(snap.residual_hard_fail_total));
+            insert_kv("component-densify-consistency-fail-total",
+                      static_cast<std::int64_t>(snap.densify_consistency_fail_total));
+            insert_kv("component-last-densify-envframe-ok",
+                      static_cast<std::int64_t>(snap.last_densify_envframe_ok));
+            insert_kv("component-last-densify-closure-remount-ok",
+                      static_cast<std::int64_t>(snap.last_densify_closure_remount_ok));
+            insert_kv("component-hold-slo-violation-total",
+                      static_cast<std::int64_t>(snap.hold_slo_violation_total));
+            insert_kv("component-hold-over-budget-total",
+                      static_cast<std::int64_t>(snap.hold_over_budget_total));
+            insert_kv("component-mailbox-defer-starvation-total",
+                      static_cast<std::int64_t>(snap.mailbox_defer_starvation_total));
+            insert_kv("component-mailbox-deferred-depth",
+                      static_cast<std::int64_t>(snap.mailbox_deferred_depth));
+            insert_kv("component-mailbox-deferred-mutation-hold-total",
+                      static_cast<std::int64_t>(snap.mailbox_deferred_mutation_hold_total));
+            insert_kv("mutation-concurrency-health-wired", 1);
+            insert_kv("schema-2379", 2379);
+            insert_kv("issue-2379", 2379);
+            // Lineage sentinels (existing queries remain authoritative).
+            insert_kv("schema-2310", 2310);
+            insert_kv("schema-2341", 2341);
+            insert_kv("schema-2349", 2349);
+            insert_kv("schema-2312", 2312);
+            insert_kv("schema-2378", 2378);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
