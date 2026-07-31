@@ -3097,6 +3097,11 @@ aura_add_issue_test(test_subtree_gen_atomic_2422)
 aura_issue_test_link_llvm_jit(test_subtree_gen_atomic_2422)
 add_dependencies(all_test_issue_targets test_subtree_gen_atomic_2422)
 
+# Issue #2423: dirty_ column shared/exclusive lock (short-circuit APIs).
+aura_add_issue_test(test_dirty_column_lock_2423)
+aura_issue_test_link_llvm_jit(test_dirty_column_lock_2423)
+add_dependencies(all_test_issue_targets test_dirty_column_lock_2423)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
