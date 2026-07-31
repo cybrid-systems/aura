@@ -327,6 +327,22 @@ extern "C" __attribute__((weak)) void aura_set_remap_name_fallback_enabled(int /
 extern "C" __attribute__((weak)) int aura_get_remap_name_fallback_enabled(void) {
     return 0;
 }
+// Issue #2370: weak stubs for PerEval storm TLS + SpecJIT counters.
+extern "C" __attribute__((weak)) void aura_set_storm_eval_context(void* /*eval_ptr*/) noexcept {}
+extern "C" __attribute__((weak)) void* aura_get_storm_eval_context(void) noexcept {
+    return nullptr;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_specjit_storm_clear_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_specjit_per_eval_storm_clear_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_specjit_per_eval_storm_skip_foreign_total_v_read(void) {
+    return 0;
+}
 // Issue #2092: weak stub for the name-fallback counter bumper (the
 // real impl lives in aura_jit_bridge.cpp; this satisfies light test
 // binaries that don't link the production TU).

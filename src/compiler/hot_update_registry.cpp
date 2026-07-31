@@ -253,14 +253,18 @@ bool HotUpdateRegistry::should_throttle_reemit(std::uint64_t region_or_priority)
             return false;
         return true;
     }
-    // Issue #2236: PerRegion (PerEval is plumbed but eval_id threading
-    // is a #2158 follow-up; same code path for now). Critical bypass is
-    // checked first (still global per #2132 contract — critical mask is
-    // a single process-wide bitmask). Then we read this region's window
-    // (if any); a region with no recorded window was never observed →
-    // safe to fall through to the global flag.
+    // Issue #2236 / #2370: PerRegion + PerEval. Critical bypass first
+    // (still global per #2132). Then read this region's window; under
+    // PerEval fold TLS storm eval context into the key (#2370).
     if (is_critical_region(region_or_priority))
         return false;
+    std::uint64_t key = region_or_priority;
+    if (mode == StormIsolation::PerEval) {
+        const auto eval_key = reinterpret_cast<std::uintptr_t>(aura_get_storm_eval_context());
+        key = (eval_key << 16) ^ region_or_priority;
+        if (key == 0)
+            key = 1;
+    }
     RegionWindow* w = nullptr;
     {
         // Issue #2316: wire HotUpdateRegistry region_windows_mtx_
@@ -268,7 +272,7 @@ bool HotUpdateRegistry::should_throttle_reemit(std::uint64_t region_or_priority)
         (void)::aura::compiler::lock_order::on_acquire(
             ::aura::compiler::lock_order::Level::HotUpdate, __builtin_FILE(), __builtin_LINE());
         std::lock_guard<std::mutex> lock(region_windows_mtx_);
-        auto it = region_windows_.find(region_or_priority);
+        auto it = region_windows_.find(key);
         if (it != region_windows_.end() && it->second)
             w = it->second.get();
     }
@@ -305,12 +309,10 @@ void HotUpdateRegistry::on_reemit_critical_bypass() noexcept {
     reemit_critical_bypass_.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #2236: StormIsolation mode setter / getter. Default = Global
-// (process-wide window) — preserves today's behavior. Setting
-// PerRegion activates per-region windows (bounded 64 cap). PerEval
-// is plumbed but eval_id threading is a future #2158 follow-up;
-// the current PerEval selection is the same code path as PerRegion
-// (per-region surrogate until eval_id is threaded through).
+// Issue #2236 / #2370: StormIsolation mode setter / getter. Default =
+// Global (process-wide window). PerRegion = per-region windows (cap 64).
+// PerEval (#2370): per-eval windows keyed by TLS storm eval context
+// (aura_set_storm_eval_context); SpecJIT isolation epoch is per-controller.
 void HotUpdateRegistry::set_storm_isolation_mode(StormIsolation mode) noexcept {
     storm_isolation_mode_.store(static_cast<std::uint8_t>(mode), std::memory_order_relaxed);
 }
@@ -402,15 +404,24 @@ bool HotUpdateRegistry::feed_region_deopt_locked(RegionWindow& w, std::uint64_t 
     return true;
 }
 
-// Issue #2236: region-aware feed. When isolation mode is Global (default),
-// routes to the no-arg on_stale_deopt() (process-wide window preserved).
-// When PerRegion, feeds the per-region window; if the map cap (64) is
-// reached AND the region is new, falls back to global to bound memory.
+// Issue #2236 / #2370: region/eval-aware feed. Global → process-wide
+// window. PerRegion → per-region window. PerEval (#2370) → per-eval
+// window keyed by (TLS storm eval context XOR region) so concurrent
+// evals do not share sliding windows.
 void HotUpdateRegistry::on_stale_deopt(std::uint64_t region) noexcept {
     const auto mode = storm_isolation_mode();
     if (mode == StormIsolation::Global || region == 0) {
         on_stale_deopt();
         return;
+    }
+    // Issue #2370: under PerEval, fold TLS eval context into the key so
+    // two evals using the same region id do not share a storm window.
+    if (mode == StormIsolation::PerEval) {
+        const auto eval_key = reinterpret_cast<std::uintptr_t>(aura_get_storm_eval_context());
+        // Mix eval identity into the high bits; keep region in low bits.
+        region = (eval_key << 16) ^ region;
+        if (region == 0)
+            region = 1; // avoid Global fallback for empty TLS
     }
     const auto threshold = deopt_storm_threshold_.load(std::memory_order_relaxed);
     const auto window_ms = deopt_storm_window_ms_.load(std::memory_order_relaxed);
@@ -1041,9 +1052,9 @@ extern "C" std::uint8_t aura_hot_update_current_storm_level(void) {
 // value is Global (=0) — preserves today's process-wide deopt-storm
 // behavior. Set PerRegion (=1) to activate per-region sliding windows
 // with bounded 64 cap; overflow falls back to global per the issue
-// AC2 note. PerEval (=2) is plumbed but eval_id threading is a
-// #2158 follow-up; the current PerEval selection uses the same code
-// path as PerRegion (per-region surrogate until eval_id threaded).
+// AC2 note. PerEval (=2) is real as of #2370 (TLS storm eval context +
+// SpecJIT isolation epoch); PerRegion remains the multi-eval default
+// when AURA_STORM_ISOLATION is unset.
 extern "C" void aura_set_storm_isolation_mode(int mode) noexcept {
     aura::compiler::hot_update_registry().set_storm_isolation_mode(
         static_cast<aura::compiler::HotUpdateRegistry::StormIsolation>(mode));

@@ -3,13 +3,27 @@
 // Phase 2: L1 type specialization (#53 Shape-based Speculative JIT)
 //
 #include "spec_jit_controller.h"
-#include "shape_profiler.h" // Issue #2276: current_global_shape_version()
+#include "shape_profiler.h"       // Issue #2276: current_global_shape_version()
+#include "hot_update_registry.hh" // Issue #2370: StormIsolation mode
 #include "value_tags.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+
+// Issue #2370: TLS current eval context for PerEval storm isolation.
+// CompilerService sets this when wiring SpecJIT / on eval entry.
+namespace {
+thread_local void* g_tls_storm_eval_context = nullptr;
+} // namespace
+
+extern "C" void aura_set_storm_eval_context(void* eval_ptr) noexcept {
+    g_tls_storm_eval_context = eval_ptr;
+}
+extern "C" void* aura_get_storm_eval_context(void) noexcept {
+    return g_tls_storm_eval_context;
+}
 
 // Shape guard runtime — checks runtime arg values against expected shape map.
 // Returns true if all args match. Used at the call site before invoking
@@ -135,9 +149,33 @@ extern "C" std::uint64_t aura_specjit_shape_version_miss_total_v_read(void) {
 // dashboard via the existing spec_jit / shape_profiler stats
 // surface (additive query key path).
 static std::atomic<std::uint64_t> g_specjit_storm_clear_total{0};
+// Issue #2370: per-eval storm clears only (isolation mode PerEval).
+static std::atomic<std::uint64_t> g_specjit_per_eval_storm_clear_total{0};
+// Issue #2370: foreign-eval storm skips under PerEval (listener no-op).
+static std::atomic<std::uint64_t> g_specjit_per_eval_storm_skip_foreign_total{0};
 
 extern "C" std::uint64_t aura_specjit_storm_clear_total_v_read(void) {
     return g_specjit_storm_clear_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void) {
+    return g_specjit_per_eval_storm_clear_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_specjit_per_eval_storm_skip_foreign_total_v_read(void) {
+    return g_specjit_per_eval_storm_skip_foreign_total.load(std::memory_order_relaxed);
+}
+
+static bool storm_isolation_is_per_eval() noexcept {
+    using SI = aura::compiler::HotUpdateRegistry::StormIsolation;
+    return aura::compiler::hot_update_registry().storm_isolation_mode() == SI::PerEval;
+}
+
+// Issue #2370: effective shape version for stamp/miss.
+// PerEval → controller-local isolation epoch (no cross-eval leakage).
+// Global/PerRegion → process-global shape_version (legacy process-wide).
+std::uint64_t SpecJITController::effective_shape_version() const noexcept {
+    if (storm_isolation_is_per_eval())
+        return isolation_shape_epoch_.load(std::memory_order_relaxed);
+    return current_global_shape_version();
 }
 
 SpecJITController::SpecJITController(aura::jit::AuraJIT& jit)
@@ -249,15 +287,13 @@ bool SpecJITController::has_specialization(const std::string& fn_name, ShapeID s
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
         return false;
-    // Issue #2276: stale entry whose stamped version != current
-    // process-global shape_version = cache miss. Bumps the
-    // specjit_shape_version_miss_total counter so the Agent
-    // dashboard can observe how often the storm-driven version
-    // invalidation path triggers.
-    const auto cur_ver = current_global_shape_version();
+    // Issue #2276 / #2370: stale entry whose stamped version != current
+    // effective shape version = cache miss. Under PerEval the effective
+    // version is this controller's isolation epoch (no cross-eval leak).
+    const auto cur_ver = effective_shape_version();
     for (auto& e : it->second) {
         if (e.shape == shape && e.fn_ptr != nullptr) {
-            if (e.version != cur_ver) {
+            if (e.version != static_cast<std::uint32_t>(cur_ver)) {
                 g_specjit_shape_version_miss_total.fetch_add(1, std::memory_order_relaxed);
                 return false;
             }
@@ -272,13 +308,11 @@ aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_nam
     auto it = specializations_.find(fn_name);
     if (it == specializations_.end())
         return nullptr;
-    // Issue #2276: version check — see has_specialization above
-    // for the rationale. Returns nullptr on version mismatch so the
-    // caller falls back to the generic (non-specialized) path.
-    const auto cur_ver = current_global_shape_version();
+    // Issue #2276 / #2370: version check — see has_specialization.
+    const auto cur_ver = effective_shape_version();
     for (auto& e : it->second) {
         if (e.shape == shape && e.fn_ptr != nullptr) {
-            if (e.version != cur_ver) {
+            if (e.version != static_cast<std::uint32_t>(cur_ver)) {
                 g_specjit_shape_version_miss_total.fetch_add(1, std::memory_order_relaxed);
                 return nullptr;
             }
@@ -288,19 +322,15 @@ aura::jit::ScalarFn SpecJITController::get_specialized(const std::string& fn_nam
     return nullptr;
 }
 
-// Issue #2276: install a successful specialization. Stamps the
-// entry with current_global_shape_version() so subsequent get / has
-// can detect stale entries after a deopt-storm-driven version bump
-// (bump_shape_version_on_storm_enter). Update-existing path refreshes
-// the version stamp + last_used; new path creates a SpecEntry with
-// the current version. Null fn_ptr is rejected (Issue #986 invariant:
-// no null placeholders kept in specializations_).
+// Issue #2276 / #2370: install stamps with effective_shape_version() so
+// PerEval isolation uses the controller-local epoch and Global/PerRegion
+// keeps process-global shape_version pairing with storm enter bumps.
 void SpecJITController::install_specialization(const std::string& fn_name, ShapeID shape,
                                                aura::jit::ScalarFn fn_ptr) {
     if (!fn_ptr)
         return;
     auto& entries = specializations_[fn_name];
-    const auto cur_ver = current_global_shape_version();
+    const auto cur_ver = effective_shape_version();
     for (auto& e : entries) {
         if (e.shape == shape) {
             e.fn_ptr = fn_ptr;
@@ -347,9 +377,31 @@ void SpecJITController::clear() {
 // on the process-global) so no additional memory barrier
 // is needed.
 void SpecJITController::on_deopt_storm() noexcept {
+    // Issue #2370: under PerEval isolation, skip foreign eval storms so
+    // one noisy agent cannot clear another eval's specializations.
+    if (storm_isolation_is_per_eval()) {
+        const void* cur = g_tls_storm_eval_context;
+        if (eval_owner_ != nullptr && cur != eval_owner_) {
+            g_specjit_per_eval_storm_skip_foreign_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
     clear();
+    // Bump controller-local isolation epoch so re-install after storm
+    // is the only path that serves specialized code again under PerEval
+    // (#2370). Global/PerRegion still primarily use process-global
+    // shape_version (ShapeProfiler storm enter); local epoch advances
+    // either way for agents that read isolation_shape_epoch().
+    isolation_shape_epoch_.fetch_add(1, std::memory_order_relaxed);
     storm_clear_count_.fetch_add(1, std::memory_order_relaxed);
     g_specjit_storm_clear_total.fetch_add(1, std::memory_order_relaxed);
+    if (storm_isolation_is_per_eval()) {
+        g_specjit_per_eval_storm_clear_total.fetch_add(1, std::memory_order_relaxed);
+        // PerEval: do NOT bump process-global shape_version — that would
+        // invalidate other evals' specializations via stamp miss.
+    }
+    // Global/PerRegion: ShapeProfiler::update_deopt_storm_state_ still
+    // owns bump_shape_version_on_storm_enter() (#2257).
 }
 
 // Issue #170 Phase 2 / item #1: deopt signal for the shape

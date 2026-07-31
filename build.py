@@ -2569,6 +2569,25 @@ def cmd_live_closure_stable_id_only_coverage():
     return 0
 
 
+def cmd_specjit_per_eval_storm_isolation_coverage():
+    """Issue #2370: real PerEval storm isolation for SpecJIT.
+
+    Per-eval isolation epoch + TLS storm eval context; foreign storms skip;
+    ShapeProfiler does not bump global shape_version under PerEval.
+    """
+    print(f"{B}=== SpecJIT PerEval storm isolation coverage (#2370) ==={N}")
+    script = ROOT / "scripts" / "check_specjit_per_eval_storm_isolation_2370.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("SpecJIT PerEval storm isolation (#2370) coverage contract rows failed")
+        return 1
+    ok("SpecJIT PerEval storm isolation (#2370) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -2974,6 +2993,7 @@ def cmd_gate():
         or cmd_reload_recovery_query_coverage()
         or cmd_densify_remap_pairing_coverage()
         or cmd_live_closure_stable_id_only_coverage()
+        or cmd_specjit_per_eval_storm_isolation_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()

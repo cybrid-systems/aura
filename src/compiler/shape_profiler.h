@@ -63,6 +63,9 @@ inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
 // deopt rate bounded because every storm enter isolates the
 // speculative opt (next observation cycle must re-profile under
 // the new version).
+// Issue #2370: under StormIsolation::PerEval this must NOT be called
+// from ShapeProfiler storm enter — use per-eval SpecJIT isolation
+// epoch instead so concurrent evals are not cross-invalidated.
 inline void bump_shape_version_on_storm_enter() noexcept {
     extern std::atomic<std::uint64_t> shape_version_bump_count;
     shape_version_bump_count.fetch_add(1, std::memory_order_acq_rel);

@@ -18,6 +18,10 @@
 #include <unordered_set>
 #include "hash_meta.h" // FNV constants (#901)
 
+// Issue #2370: StormIsolation mode (defined in hot_update_registry.cpp).
+// Avoid including full HotUpdateRegistry header from this TU.
+extern "C" int aura_get_storm_isolation_mode(void) noexcept;
+
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).
 // The actual EvalValue struct and tag helpers are inline in value.ixx.
@@ -734,8 +738,15 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
         // atomic) so any speculative opt from the previous version is
         // invalidated on the next observation cycle. Mirrors the
         // per-CompilerMetrics deopt_storm_isolations_total field.
+        //
+        // Issue #2370: under StormIsolation::PerEval do NOT bump the
+        // process-global shape_version — SpecJITController uses a
+        // per-eval isolation epoch so concurrent evals are not
+        // cross-invalidated by one noisy agent.
         g_deopt_storm_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
-        bump_shape_version_on_storm_enter();
+        // StormIsolation::PerEval = 2 (hot_update_registry.hh).
+        if (aura_get_storm_isolation_mode() != 2)
+            bump_shape_version_on_storm_enter();
     }
 }
 
