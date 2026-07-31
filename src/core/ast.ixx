@@ -1034,19 +1034,49 @@ export template <typename Id, typename C, typename Tag>
 }
 
 export class FlatAST {
-    // Issue #1431 follow-up (Race #2): FlatAST parser race. Two
-    // threads concurrently calling CompilerService::eval share
-    // the same workspace_flat_ FlatAST and race on add_node /
-    // reset_node_slot push_backs, corrupting std::pmr memory_resource
-    // and surfacing as SIGSEGV at pmr::memory_resource::allocate
-    // (called from push_back via _M_realloc_append via the
-    // polymorphic_allocator inside the NodeTag vector). TypeRegistry
-    // Race #1 (the previous fix) used to crash first, hiding this
-    // one. recursive_mutex because reset_node_slot is invoked from
-    // inside add_node on the recycled-slot path.
+    // ── Issue #2413 — concurrent access contract (read this) ───
+    //
+    // FlatAST has three distinct synchronization domains:
+    //
+    // 1) flatast_mutex_ (recursive_mutex) — SoA SIZE mutations
+    //    Held for the entire multi-column push/clear sequence in
+    //    add_node / free-list reset_node_slot / clear so no other
+    //    *writer* observes a partially grown SoA. ~25 sequential
+    //    push_backs mean a concurrent lock-free reader of
+    //    tag_/int_val_/… can see a half-initialized new id if it
+    //    races add_node without external serialization.
+    //
+    //    Reader contract (#2413 AC1): any thread that observes
+    //    SoA columns concurrently with add_node/clear MUST either:
+    //      (a) be externally serialized with those writers
+    //          (CompilerService workspace_mtx exclusive path /
+    //           single-threaded mutation contract), or
+    //      (b) hold flatast_mutex_ for the multi-column read
+    //          (today private — see follow-up for public shared
+    //           reader guard / shared_mutex upgrade).
+    //    Holding structural_mtx_ (try_acquire_reader_lock) does
+    //    NOT serialize against add_node.
+    //
+    // 2) structural_mtx_ (shared_mutex) — child topology
+    //    set_child / insert_child / remove_child. Readers may use
+    //    try_acquire_reader_lock() or generation_ re-check for
+    //    PCV COW spans. Independent of flatast_mutex_.
+    //
+    // 3) metadata_mtx_ — marker_ / provenance_ only (#1783).
+    //
+    // summary_flags_ is atomic (#2463) and safe for concurrent
+    // summary_flags() vs clear/add_node flag updates.
+    //
+    // Publish rule: a NodeId returned from add_node is fully
+    // initialized only after add_node returns. Do not hand a
+    // half-built id to another thread mid-call.
+    //
+    // Issue #1431 follow-up (Race #2): two CompilerService::eval
+    // threads sharing workspace_flat_ raced add_node push_backs,
+    // corrupting pmr. recursive_mutex because reset_node_slot is
+    // invoked from inside add_node on the free-list path.
     mutable std::recursive_mutex flatast_mutex_;
 
-public:
 public:
     // Issue #261 / #1299: node_gen_[id] == 0 marks a recycled (free-list)
     // or ghost-orphan slot. Public so query:* can skip freed ghosts after
@@ -1256,21 +1286,19 @@ public:
     }
 
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
-        // Issue #1431 follow-up Race #2: serialize FlatAST node
-        // allocation across threads. Two CompilerService::eval
-        // callers share workspace_flat_ and race on the per-node
-        // push_backs (tag_ / int_val_ / float_val_ / sym_id_ /
-        // children_ / etc.), corrupting std::pmr memory_resource
-        // and crashing at pmr::memory_resource::allocate from
-        // _M_realloc_append. recursive_mutex because reset_node_slot
-        // is invoked on the recycled-slot path (free_list_.back()).
+        // Issue #1431 Race #2 + #2413: hold flatast_mutex_ across
+        // the full multi-column SoA append (or free-list reset).
+        // Writers are serialized; lock-free SoA readers must still
+        // be externally serialized (workspace_mtx / single-thread)
+        // — see FlatAST class contract (#2413 AC1). NodeId is fully
+        // published only on return from this function.
         std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);
         // Issue #402: tag-based summary flags. Update eagerly
         // before allocation so a fast-path consumer (next
         // add_node's caller) sees the correct bit-set.
         // Held under flatast_mutex_; relaxed fetch_or is
         // sufficient (the mutex provides happens-before
-        // ordering vs concurrent readers).
+        // ordering vs concurrent writers).
         summary_flags_.fetch_or(summary_flags_for_tag(tag), std::memory_order_relaxed);
         // Issue #399: pre-reserve the per-node "dirty"
         // side-table columns to the upcoming size. The
@@ -3885,6 +3913,9 @@ public:
 
     // ── Access ─────────────────────────────────────────────────
 
+    // Issue #2413: multi-column SoA snapshot. Not synchronized with
+    // flatast_mutex_ — concurrent with add_node/clear requires
+    // external serialization (workspace_mtx) or a stable pre-sized id.
     NodeView get(NodeId id) const {
         // Issue #1620: hot-path SoA column access invariant probe
         // (zero cost under release observe; Agents track hits).
@@ -3958,6 +3989,8 @@ public:
     // FlatAST::subtree_uses_sym.
     // Issue #1321: hot SoA column accessors — contract pre(id valid) in debug
     // so AI mutation corruption is caught early (release: no-op).
+    // Issue #2413: single-column reads are lock-free w.r.t. flatast_mutex_;
+    // concurrent with add_node/clear requires external serialization.
     [[nodiscard]] NodeTag tag(NodeId id) const noexcept {
         contract_assert(id < tag_.size());
         return tag_[id];

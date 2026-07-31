@@ -3047,6 +3047,11 @@ aura_add_issue_test(test_reset_slot_parent_edges_2412)
 aura_issue_test_link_llvm_jit(test_reset_slot_parent_edges_2412)
 add_dependencies(all_test_issue_targets test_reset_slot_parent_edges_2412)
 
+# Issue #2413: FlatAST add_node multi-column SoA lock + reader contract.
+aura_add_issue_test(test_flatast_add_node_lock_2413)
+aura_issue_test_link_llvm_jit(test_flatast_add_node_lock_2413)
+add_dependencies(all_test_issue_targets test_flatast_add_node_lock_2413)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
