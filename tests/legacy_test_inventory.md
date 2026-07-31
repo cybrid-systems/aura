@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 587 | Preferred destination suites |
-| **Total scanned** | **587** | |
+| `tests/core/test_*.cpp` | 588 | Preferred destination suites |
+| **Total scanned** | **588** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 66 | 66 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 165 | 165 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 166 | 166 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 64 | 64 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 38 | 38 | P1 — domain hygiene suite exists |
@@ -671,6 +671,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp`
 - `tests/core/test_stable_ref_tenant_capture_2125.cpp`
 - `tests/compiler/test_stable_ref_tenant_mandate_2056.cpp`
+- `tests/core/test_stable_ref_wire_endian_2395.cpp`
 - `tests/compiler/test_stable_ref_wire_v2_2198.cpp`
 - `tests/compiler/test_stale_closure_fallback.cpp`
 - `tests/core/test_stale_ref_string_heap.cpp`
@@ -847,13 +848,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (165)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (166)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (165)
+#### domain/ (166)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -1001,6 +1002,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp` (—) [domain_suite, theme_serve] — test_stable_ref_provenance_fiber_cow.cpp — Merged #457/#497/#527/#540/#549 + #551/#552 (#1978).
 - `tests/core/test_stable_ref_tenant_capture_2125.cpp` (#2125) [domain_suite, theme_core] — AC1: Source cites #2125; make_ref stamps when isolation principal active
 - `tests/compiler/test_stable_ref_tenant_mandate_2056.cpp` (#2056) [domain_suite, theme_compiler] — AC1: make_stamped_ref / stamp_stable_ref set tenant_id from principal
+- `tests/core/test_stable_ref_wire_endian_2395.cpp` (#2395) [domain_suite, theme_core] — AC1: round-trip serialize → deserialize recovers full ref
 - `tests/compiler/test_stable_ref_wire_v2_2198.cpp` (#2198) [domain_suite, theme_compiler] — AC1: v2 round-trips tenant_id, fiber_id, boundary_pinned,
 - `tests/core/test_stale_ref_string_heap.cpp` (—) [domain_suite, theme_core] — Issue #1681 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.

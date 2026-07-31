@@ -50,6 +50,7 @@
 
 module;
 
+#include <cstdint>
 #include <cstring>
 #include "core/provenance_tracker.hh"
 
@@ -58,6 +59,38 @@ import std;
 import aura.core.type;
 
 namespace aura::ast {
+
+// ── Issue #2395: StableNodeRef wire multi-byte fields are little-endian ──
+// Host-endian memcpy is not portable (BE host ↔ LE host corrupts id/gen/…).
+// Always emit/consume LE via explicit byte lanes (no std::endian branch needed).
+namespace stable_ref_wire_le {
+    inline void write_u16_le(std::uint8_t* p, std::uint16_t v) noexcept {
+        p[0] = static_cast<std::uint8_t>(v & 0xFF);
+        p[1] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
+    }
+    inline void write_u32_le(std::uint8_t* p, std::uint32_t v) noexcept {
+        p[0] = static_cast<std::uint8_t>(v & 0xFF);
+        p[1] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
+        p[2] = static_cast<std::uint8_t>((v >> 16) & 0xFF);
+        p[3] = static_cast<std::uint8_t>((v >> 24) & 0xFF);
+    }
+    inline void write_u64_le(std::uint8_t* p, std::uint64_t v) noexcept {
+        write_u32_le(p, static_cast<std::uint32_t>(v & 0xFFFFFFFFu));
+        write_u32_le(p + 4, static_cast<std::uint32_t>((v >> 32) & 0xFFFFFFFFu));
+    }
+    [[nodiscard]] inline std::uint16_t read_u16_le(const std::uint8_t* p) noexcept {
+        return static_cast<std::uint16_t>(static_cast<std::uint16_t>(p[0]) |
+                                          (static_cast<std::uint16_t>(p[1]) << 8));
+    }
+    [[nodiscard]] inline std::uint32_t read_u32_le(const std::uint8_t* p) noexcept {
+        return static_cast<std::uint32_t>(p[0]) | (static_cast<std::uint32_t>(p[1]) << 8) |
+               (static_cast<std::uint32_t>(p[2]) << 16) | (static_cast<std::uint32_t>(p[3]) << 24);
+    }
+    [[nodiscard]] inline std::uint64_t read_u64_le(const std::uint8_t* p) noexcept {
+        return static_cast<std::uint64_t>(read_u32_le(p)) |
+               (static_cast<std::uint64_t>(read_u32_le(p + 4)) << 32);
+    }
+} // namespace stable_ref_wire_le
 
 // ── StableNodeRef methods (moved from ast.ixx) ──────────────
 
@@ -239,8 +272,12 @@ FlatAST::StableNodeRef::Provenance FlatAST::StableNodeRef::get_provenance() cons
 
 // ── StableNodeRef serialization (moved from ast.ixx) ────────
 //
-// Issue #291 / #392 / #2198: pack a StableNodeRef into the
+// Issue #291 / #392 / #2198 / #2395: pack a StableNodeRef into the
 // current wire format (v2, 56 bytes). Returns bytes written.
+//
+// Issue #2395: all multi-byte integer fields are little-endian on
+// the wire (portable across LE/BE hosts). Magic was already LE via
+// per-byte write; id/gen/mid/… now use write_u*_le as well.
 //
 // v1 (24 bytes) is still accepted on deserialize with safe
 // defaults for tenant/fiber/pin/cow/wrap (AC2). v2 round-trips
@@ -251,49 +288,47 @@ FlatAST::StableNodeRef::Provenance FlatAST::StableNodeRef::get_provenance() cons
 // ast.ixx — keep that comment in sync when changing the blob.
 std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
                                           std::uint8_t* out) const noexcept {
+    using namespace stable_ref_wire_le;
     // Zero the full v2 record so reserved/trailing bytes are
     // deterministic (and v1 readers that only look at 24 bytes
     // still see a valid header if they ignore trailing data).
     std::memset(out, 0, kStableRefSerializedSizeV2);
 
-    // [0..3] magic
-    out[0] = static_cast<std::uint8_t>(kStableRefMagic & 0xFF);
-    out[1] = static_cast<std::uint8_t>((kStableRefMagic >> 8) & 0xFF);
-    out[2] = static_cast<std::uint8_t>((kStableRefMagic >> 16) & 0xFF);
-    out[3] = static_cast<std::uint8_t>((kStableRefMagic >> 24) & 0xFF);
+    // [0..3] magic — LE (explicit byte lanes)
+    write_u32_le(out + 0, kStableRefMagic);
     // [4..7] id
-    std::memcpy(out + 4, &ref.id, sizeof(ref.id));
+    write_u32_le(out + 4, ref.id);
     // [8..9] gen
-    std::memcpy(out + 8, &ref.gen, sizeof(ref.gen));
+    write_u16_le(out + 8, ref.gen);
     // [10] version = 2  [11] flags
     out[10] = kStableRefWireVersionV2;
     out[11] = ref.boundary_pinned ? kStableRefFlagBoundaryPinned : static_cast<std::uint8_t>(0);
     // [12..15] mutation_id low 32 (v1-compatible slot)
     const std::uint32_t mid_lo =
         static_cast<std::uint32_t>(ref.mutation_id_at_capture & 0xFFFFFFFFu);
-    std::memcpy(out + 12, &mid_lo, sizeof(mid_lo));
+    write_u32_le(out + 12, mid_lo);
     // [16..17] subtree_gen_at_capture
-    std::memcpy(out + 16, &ref.subtree_gen_at_capture, sizeof(ref.subtree_gen_at_capture));
+    write_u16_le(out + 16, ref.subtree_gen_at_capture);
     // [18..19] last_validated_generation (v2 header; v1 had reserved zeros)
-    // Issue #2394: atomic — load to POD before memcpy.
+    // Issue #2394: atomic — load to POD before LE write.
     const std::uint16_t lvg = ref.last_validated_generation.load(std::memory_order_relaxed);
-    std::memcpy(out + 18, &lvg, sizeof(lvg));
+    write_u16_le(out + 18, lvg);
     // [20..23] workspace_id
-    std::memcpy(out + 20, &ref.workspace_id, sizeof(ref.workspace_id));
+    write_u32_le(out + 20, ref.workspace_id);
 
     // ── v2 extension ───────────────────────────────────────
     // [24..27] mutation_id high 32 — full mid without silent truncation
     const std::uint32_t mid_hi =
         static_cast<std::uint32_t>((ref.mutation_id_at_capture >> 32) & 0xFFFFFFFFu);
-    std::memcpy(out + 24, &mid_hi, sizeof(mid_hi));
+    write_u32_le(out + 24, mid_hi);
     // [28..31] fiber_id
-    std::memcpy(out + 28, &ref.fiber_id, sizeof(ref.fiber_id));
+    write_u32_le(out + 28, ref.fiber_id);
     // [32..39] tenant_id — never silently dropped (AC1 / #2056)
-    std::memcpy(out + 32, &ref.tenant_id, sizeof(ref.tenant_id));
+    write_u64_le(out + 32, ref.tenant_id);
     // [40..43] wrap_epoch
-    std::memcpy(out + 40, &ref.wrap_epoch, sizeof(ref.wrap_epoch));
+    write_u32_le(out + 40, ref.wrap_epoch);
     // [44..51] cow_epoch_at_capture
-    std::memcpy(out + 44, &ref.cow_epoch_at_capture, sizeof(ref.cow_epoch_at_capture));
+    write_u64_le(out + 44, ref.cow_epoch_at_capture);
     // [52..55] reserved (already zeroed)
 
     return kStableRefSerializedSizeV2;
@@ -307,49 +342,43 @@ std::size_t FlatAST::serialize_stable_ref(const StableNodeRef& ref,
 // cow_epoch_at_capture / wrap_epoch / full mutation_id.
 bool FlatAST::deserialize_stable_ref(std::span<const std::uint8_t> buf,
                                      StableNodeRef& out) const noexcept {
+    using namespace stable_ref_wire_le;
     // Minimum is always the v1 header (24 bytes). Larger buffers
     // may be v2; smaller than v1 is hard reject.
     if (buf.size() < kStableRefSerializedSizeV1)
         return false;
-    std::uint32_t magic = 0;
-    std::memcpy(&magic, buf.data(), 4);
+    // Issue #2395: multi-byte fields are little-endian on the wire.
+    const std::uint32_t magic = read_u32_le(buf.data());
     if (magic != kStableRefMagic)
         return false;
 
     StableNodeRef r{};
-    std::memcpy(&r.id, buf.data() + 4, sizeof(r.id));
-    std::memcpy(&r.gen, buf.data() + 8, sizeof(r.gen));
+    r.id = read_u32_le(buf.data() + 4);
+    r.gen = read_u16_le(buf.data() + 8);
 
     const std::uint8_t version = buf[10];
     const std::uint8_t flags = buf[11];
 
-    std::uint32_t mid_lo = 0;
-    std::memcpy(&mid_lo, buf.data() + 12, sizeof(mid_lo));
+    const std::uint32_t mid_lo = read_u32_le(buf.data() + 12);
     r.mutation_id_at_capture = static_cast<std::uint64_t>(mid_lo);
 
-    std::memcpy(&r.subtree_gen_at_capture, buf.data() + 16, sizeof(r.subtree_gen_at_capture));
+    r.subtree_gen_at_capture = read_u16_le(buf.data() + 16);
     // v1: bytes 18..19 were reserved (0). v2: last_validated_generation.
-    // Reading them on v1 just yields 0 — safe default.
-    // Issue #2394: atomic — memcpy into POD then store.
-    {
-        std::uint16_t lvg = 0;
-        std::memcpy(&lvg, buf.data() + 18, sizeof(lvg));
-        r.last_validated_generation.store(lvg, std::memory_order_relaxed);
-    }
-    std::memcpy(&r.workspace_id, buf.data() + 20, sizeof(r.workspace_id));
+    // Issue #2394: atomic store after LE read.
+    r.last_validated_generation.store(read_u16_le(buf.data() + 18), std::memory_order_relaxed);
+    r.workspace_id = read_u32_le(buf.data() + 20);
 
     const bool is_v2 =
         (version == kStableRefWireVersionV2) && (buf.size() >= kStableRefSerializedSizeV2);
     if (is_v2) {
         // Flags: boundary_pinned
         r.boundary_pinned = (flags & kStableRefFlagBoundaryPinned) != 0;
-        std::uint32_t mid_hi = 0;
-        std::memcpy(&mid_hi, buf.data() + 24, sizeof(mid_hi));
+        const std::uint32_t mid_hi = read_u32_le(buf.data() + 24);
         r.mutation_id_at_capture |= (static_cast<std::uint64_t>(mid_hi) << 32);
-        std::memcpy(&r.fiber_id, buf.data() + 28, sizeof(r.fiber_id));
-        std::memcpy(&r.tenant_id, buf.data() + 32, sizeof(r.tenant_id));
-        std::memcpy(&r.wrap_epoch, buf.data() + 40, sizeof(r.wrap_epoch));
-        std::memcpy(&r.cow_epoch_at_capture, buf.data() + 44, sizeof(r.cow_epoch_at_capture));
+        r.fiber_id = read_u32_le(buf.data() + 28);
+        r.tenant_id = read_u64_le(buf.data() + 32);
+        r.wrap_epoch = read_u32_le(buf.data() + 40);
+        r.cow_epoch_at_capture = read_u64_le(buf.data() + 44);
     } else {
         // v1 path: safe defaults for fields not on the wire.
         // tenant_id / fiber_id / boundary_pinned / wrap_epoch /
