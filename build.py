@@ -3671,6 +3671,25 @@ def cmd_ir_soa_layout_stamp_coverage():
     return 0
 
 
+def cmd_layout_stamp_equality_8field_coverage():
+    """Issue #2519: LayoutStamp::operator== full 8-field equality.
+
+    shape_version + ir_soa_generation in ==; fiber fence uses is_fully_fresh;
+    Agents see layout-stamp-equality-8-field / schema-2519.
+    """
+    print(f"{B}=== layout stamp equality 8-field coverage (#2519) ==={N}")
+    script = ROOT / "scripts" / "check_layout_stamp_equality_8field_2519.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("layout stamp equality 8-field (#2519) coverage contract rows failed")
+        return 1
+    ok("layout stamp equality 8-field (#2519) coverage clean")
+    return 0
+
+
 def cmd_shape_high_mutation_storm_coverage():
     """Issue #2433: HighMutation default-on + deopt-storm × LayoutStamp.
 
@@ -5596,6 +5615,7 @@ def cmd_gate():
         or cmd_capability_effect_stats_snapshot_coverage()
         or cmd_dead_coercion_columnar_coverage()
         or cmd_ir_soa_layout_stamp_coverage()
+        or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
         or cmd_hot_contract_placement_coverage()

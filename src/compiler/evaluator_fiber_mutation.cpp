@@ -19,7 +19,8 @@ module;
 #include "core/sandbox.hh"                 // #2056: is_strict for cross-tenant ensure
 #include "compiler/hot_update_registry.hh" // Issue #2162: aura_hot_update_has_deferred_reemit
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
-#include <algorithm> // Issue #2189: remove_if for pin table invalidate
+#include "core/layout_stamp.hh" // Issue #2519: full 8-field LayoutStamp equality
+#include <algorithm>            // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
 #include <memory> // Issue #1880: unique_ptr for orch agent body guard
@@ -36,6 +37,16 @@ std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
 }
 
 namespace aura::compiler {
+
+// Issue #2519: reconstruct LayoutStamp from fiber resume fence fields.
+// Uses full 8-field operator== for freshness (not legacy core-6).
+[[nodiscard]] inline aura::core::LayoutStamp
+layout_stamp_from_fiber_resume(const aura::serve::Fiber& f) noexcept {
+    return aura::core::LayoutStamp(f.resume_arena_id(), f.resume_arena_gen(),
+                                   static_cast<std::uint16_t>(f.resume_flat_gen() & 0xFFFFu),
+                                   f.resume_mutation_epoch(), f.resume_env_gen(), f.resume_defuse(),
+                                   f.resume_shape_version(), f.resume_ir_soa_generation());
+}
 
 namespace fiber_stack_pool_detail {
 
@@ -1719,22 +1730,14 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
         auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
         hint_env = fiber->resume_env_hint();
         expected_epoch = fiber->resume_bridge_epoch_hint();
-        // Issue #2250: LayoutStamp fence — hard compare fiber-stored
-        // stamp vs current. Any 6-field mismatch -> bump
-        // layout_stamp_resume_mismatch_total + force dual-check
-        // (must not execute generation-behind AOT native code).
+        // Issue #2250 / #2519: LayoutStamp fence — hard compare fiber-stored
+        // stamp vs current via full 8-field operator== (core 6 + shape +
+        // ir_soa_generation). Must not execute generation-behind AOT.
         if (fiber->has_resume_layout_stamp()) {
             const auto cur = current_layout_stamp();
-            const bool mismatch = fiber->resume_arena_id() != cur.arena_id ||
-                                  fiber->resume_arena_gen() != cur.arena_gen ||
-                                  fiber->resume_flat_gen() != cur.flat_gen ||
-                                  fiber->resume_mutation_epoch() != cur.mutation_epoch ||
-                                  fiber->resume_env_gen() != cur.env_gen ||
-                                  fiber->resume_defuse() != cur.defuse_version ||
-                                  // Issue #2255: 7th field (ShapeProfiler monotonic gen)
-                                  fiber->resume_shape_version() != cur.shape_version ||
-                                  // Issue #2432: 8th field (IR SoA generation fence)
-                                  fiber->resume_ir_soa_generation() != cur.ir_soa_generation;
+            const auto stored = layout_stamp_from_fiber_resume(*fiber);
+            // Issue #2519: is_fully_fresh / operator== — all 8 fields.
+            const bool mismatch = !stored.is_fully_fresh(cur);
             if (mismatch) {
                 if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
@@ -1860,19 +1863,12 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
         hint_env = fiber->resume_env_hint();
         expected_epoch = fiber->resume_bridge_epoch_hint();
-        // Issue #2250: same LayoutStamp fence for post-join path.
+        // Issue #2250 / #2519: same LayoutStamp fence for post-join path
+        // (full 8-field operator==).
         if (fiber->has_resume_layout_stamp()) {
             const auto cur = current_layout_stamp();
-            const bool mismatch = fiber->resume_arena_id() != cur.arena_id ||
-                                  fiber->resume_arena_gen() != cur.arena_gen ||
-                                  fiber->resume_flat_gen() != cur.flat_gen ||
-                                  fiber->resume_mutation_epoch() != cur.mutation_epoch ||
-                                  fiber->resume_env_gen() != cur.env_gen ||
-                                  fiber->resume_defuse() != cur.defuse_version ||
-                                  // Issue #2255: 7th field (ShapeProfiler monotonic gen)
-                                  fiber->resume_shape_version() != cur.shape_version ||
-                                  // Issue #2432: 8th field (IR SoA generation fence)
-                                  fiber->resume_ir_soa_generation() != cur.ir_soa_generation;
+            const auto stored = layout_stamp_from_fiber_resume(*fiber);
+            const bool mismatch = !stored.is_fully_fresh(cur);
             if (mismatch) {
                 if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                     mm->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
@@ -2422,15 +2418,9 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         if (fiber->has_resume_layout_stamp()) {
             if (auto* ev = evaluator_for_scheduler_hooks()) {
                 const auto cur = ev->current_layout_stamp();
-                const bool mismatch = fiber->resume_arena_id() != cur.arena_id ||
-                                      fiber->resume_arena_gen() != cur.arena_gen ||
-                                      fiber->resume_flat_gen() != cur.flat_gen ||
-                                      fiber->resume_mutation_epoch() != cur.mutation_epoch ||
-                                      fiber->resume_env_gen() != cur.env_gen ||
-                                      fiber->resume_defuse() != cur.defuse_version ||
-                                      fiber->resume_shape_version() != cur.shape_version ||
-                                      // Issue #2432: 8th field
-                                      fiber->resume_ir_soa_generation() != cur.ir_soa_generation;
+                // Issue #2519: full 8-field equality (not core-6).
+                const auto stored = layout_stamp_from_fiber_resume(*fiber);
+                const bool mismatch = !stored.is_fully_fresh(cur);
                 if (mismatch) {
                     if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                         m->layout_stamp_steal_mismatch_total.fetch_add(1,

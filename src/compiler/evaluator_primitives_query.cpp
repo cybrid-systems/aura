@@ -1298,6 +1298,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(aura::core::kLayoutStampSchema));
             insert_kv("layout-stamp-issue",
                       static_cast<std::int64_t>(aura::core::kLayoutStampSchema));
+            // Issue #2519: operator== is full 8-field (Agents / fiber freshness).
+            insert_kv("layout-stamp-equality-8-field", 1);
+            insert_kv("layout-stamp-equality-schema",
+                      static_cast<std::int64_t>(aura::core::kLayoutStampEqualitySchema));
+            insert_kv("schema-2519", 2519);
+            insert_kv("issue-2519", 2519);
             insert_kv("layout-stamp-active", 1);
             // Issue #2250: LayoutStamp fence on Fiber resume/steal
             insert_kv("layout-stamp-resume-mismatch-total",
