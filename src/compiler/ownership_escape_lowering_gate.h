@@ -58,6 +58,11 @@ extern "C" void aura_escape_move_gate_publish_for_key(void* eval, std::uint64_t 
                                                       const char* const* names,
                                                       std::size_t n) noexcept;
 extern "C" void aura_escape_move_gate_clear_key(void* eval, std::uint64_t cow_gen) noexcept;
+// Issue #2507: clear ALL keys for a given eval identity (metrics*). Used on
+// steal-complete / Moving densify success so a stale summary under an
+// un-advanced cache_epoch cannot elide MoveOp after remap/handoff.
+// Returns number of map entries erased (0 when soft-empty — single walk).
+extern "C" std::size_t aura_escape_move_gate_clear_eval(void* eval) noexcept;
 extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t cow_gen,
                                                        const char* binding) noexcept;
 
@@ -81,6 +86,13 @@ extern std::atomic<std::uint32_t> g_linear_escape_gate_key_contract_wired;
 // could survive into a subsequent independent mutate in the same
 // process / same eval).
 extern std::atomic<std::uint64_t> g_linear_escape_gate_clear_on_rollback_total;
+// Issue #2507: steal-complete / densify-success clear-by-eval counters.
+// Bumped once per production site call (path wired); map erase is free
+// when no matching entries (single walk under lock).
+extern std::atomic<std::uint64_t> g_linear_escape_gate_steal_clear_total;
+extern std::atomic<std::uint64_t> g_linear_escape_gate_densify_clear_total;
+extern std::atomic<std::uint64_t> g_linear_escape_gate_steal_clear_entries_total;
+extern std::atomic<std::uint64_t> g_linear_escape_gate_densify_clear_entries_total;
 
 namespace detail {
     // Issue #2286: thread-local current key set by Evaluator before lowering
@@ -150,6 +162,32 @@ publish_escape_move_elision_gate_for_key(void* eval, std::uint64_t cow_gen, bool
 
 inline void clear_escape_move_elision_gate_for_key(void* eval, std::uint64_t cow_gen) noexcept {
     aura_escape_move_gate_clear_key(eval, cow_gen);
+}
+
+// Issue #2507: clear every (eval, cow_gen) entry for this eval identity.
+// Prefer over process-wide wipe so #2286 cross-eval isolation is preserved.
+[[nodiscard]] inline std::size_t clear_escape_move_elision_gate_for_eval(void* eval) noexcept {
+    return aura_escape_move_gate_clear_eval(eval);
+}
+
+// Production helpers: clear + bump path counters. metrics is the
+// CompilerMetrics* used as EscapeGateKey::eval (same as publish).
+inline void note_escape_gate_clear_on_steal(void* metrics) noexcept {
+    if (!metrics)
+        return;
+    const auto n = aura_escape_move_gate_clear_eval(metrics);
+    g_linear_escape_gate_steal_clear_total.fetch_add(1, std::memory_order_relaxed);
+    if (n > 0)
+        g_linear_escape_gate_steal_clear_entries_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+inline void note_escape_gate_clear_on_densify(void* metrics) noexcept {
+    if (!metrics)
+        return;
+    const auto n = aura_escape_move_gate_clear_eval(metrics);
+    g_linear_escape_gate_densify_clear_total.fetch_add(1, std::memory_order_relaxed);
+    if (n > 0)
+        g_linear_escape_gate_densify_clear_entries_total.fetch_add(n, std::memory_order_relaxed);
 }
 
 // Issue #2286: lookup using the thread-local current key. The lowering

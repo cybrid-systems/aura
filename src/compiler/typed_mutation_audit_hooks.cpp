@@ -39,6 +39,11 @@ std::atomic<std::uint64_t> g_linear_escape_gate_miss_conservative_block_total{0}
 std::atomic<std::uint32_t> g_linear_escape_gate_key_contract_wired{1};
 // Issue #2309: rollback-clear counter (see ownership_escape_lowering_gate.h).
 std::atomic<std::uint64_t> g_linear_escape_gate_clear_on_rollback_total{0};
+// Issue #2507: steal / densify clear-by-eval path counters.
+std::atomic<std::uint64_t> g_linear_escape_gate_steal_clear_total{0};
+std::atomic<std::uint64_t> g_linear_escape_gate_densify_clear_total{0};
+std::atomic<std::uint64_t> g_linear_escape_gate_steal_clear_entries_total{0};
+std::atomic<std::uint64_t> g_linear_escape_gate_densify_clear_entries_total{0};
 
 namespace detail {
     // Issue #2286: thread-local current key — Evaluator sets before lowering,
@@ -85,6 +90,26 @@ extern "C" void aura_escape_move_gate_clear_key(void* eval, std::uint64_t cow_ge
     auto& s = escape_move_gate_state();
     std::lock_guard lock(s.mu);
     s.entries.erase({eval, cow_gen});
+}
+
+// Issue #2507: erase all map entries whose EscapeGateKey::eval matches.
+// Soft empty: single walk under lock, no alloc. Prefer over process wipe
+// so other evals' summaries stay (#2286 isolation).
+extern "C" std::size_t aura_escape_move_gate_clear_eval(void* eval) noexcept {
+    if (!eval)
+        return 0;
+    auto& s = escape_move_gate_state();
+    std::lock_guard lock(s.mu);
+    std::size_t erased = 0;
+    for (auto it = s.entries.begin(); it != s.entries.end();) {
+        if (it->first.eval == eval) {
+            it = s.entries.erase(it);
+            ++erased;
+        } else {
+            ++it;
+        }
+    }
+    return erased;
 }
 
 // Issue #2286 / #2344: keyed lookup for MoveOp elision gate.

@@ -1955,6 +1955,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
                 m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2507: Moving densify success → invalidate escape /
+            // MoveOp elision gate for this eval. Remap may invalidate
+            // escape-clean assumptions under the same cache_epoch.
+            // Soft densify / no Moving: skip (zero cost). Clear by metrics*
+            // identity (all cow_gen) to preserve #2286 cross-eval isolation.
+            if (had_moving_densify) {
+                if (void* m = ev_->compiler_metrics())
+                    aura::compiler::note_escape_gate_clear_on_densify(m);
+            }
             // Issue #2360: the post-densify ownership-exit scan at the
             // Moving densify success site (Phase 5) is wired by #2361
             // (envframe_ok computation above) — single call site, no

@@ -3423,6 +3423,11 @@ aura_add_issue_test(test_aot_hot_update_health_2506)
 aura_issue_test_link_llvm_jit(test_aot_hot_update_health_2506)
 add_dependencies(all_test_issue_targets test_aot_hot_update_health_2506)
 
+# Issue #2507: clear escape MoveOp elision gate on steal-complete + densify.
+aura_add_issue_test(test_escape_gate_steal_densify_clear_2507)
+aura_issue_test_link_llvm_jit(test_escape_gate_steal_densify_clear_2507)
+add_dependencies(all_test_issue_targets test_escape_gate_steal_densify_clear_2507)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
