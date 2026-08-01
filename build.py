@@ -3665,6 +3665,24 @@ def cmd_get_nodeview_snapshot_coverage():
     return 0
 
 
+def cmd_raii_guard_flatast_lifetime_coverage():
+    """Issue #2454: RAII mutation guards FlatAST-move lifetime contract.
+
+    Guards must not outlive FlatAST; drop before move/swap.
+    """
+    print(f"{B}=== RAII guard FlatAST lifetime coverage (#2454) ==={N}")
+    script = ROOT / "scripts" / "check_raii_guard_flatast_lifetime_2454.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("RAII guard FlatAST lifetime (#2454) coverage contract rows failed")
+        return 1
+    ok("RAII guard FlatAST lifetime (#2454) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4640,6 +4658,7 @@ def cmd_gate():
         or cmd_param_begin_count_publish_coverage()
         or cmd_incoming_parent_dirty_atomic_2452_coverage()
         or cmd_get_nodeview_snapshot_coverage()
+        or cmd_raii_guard_flatast_lifetime_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

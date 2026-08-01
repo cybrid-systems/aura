@@ -4587,8 +4587,20 @@ public:
     //
     // Move-only. The dtor is the single point that releases the
     // lock + bumps the generation, so even exception paths are safe.
+    //
+    // Issue #2454 — FlatAST lifetime contract (all RAII guards below):
+    //   Guards store a raw FlatAST* and a unique_lock/shared_lock
+    //   that references ast_->structural_mtx_ or metadata_mtx_
+    //   (OwnedSharedMutex keeps a fresh mutex on FlatAST move, so
+    //   the locked mutex identity is the original object). The
+    //   guard MUST NOT outlive the FlatAST it protects. Holding a
+    //   guard across FlatAST move (std::swap, vector reallocation,
+    //   mutate:clone rebuild of the parent buffer) is undefined
+    //   behavior: dtor may unlock a destroyed mutex. Drop the guard
+    //   before any move. Scoped single-block use is the safe default.
     class StructuralMutationGuard {
     public:
+        // Issue #2454: must not outlive *ast_ (see class contract).
         StructuralMutationGuard() noexcept = default;
         explicit StructuralMutationGuard(FlatAST* ast) noexcept
             : ast_(ast)
@@ -4653,6 +4665,8 @@ public:
     // need a consistent view of children_ across multiple
     // calls. For short reads (one children(id) call), the
     // PCV's COW semantics + generation_ check are sufficient.
+    // Issue #2454: must not outlive *ast_ (FlatAST-move lifetime
+    // contract — see StructuralMutationGuard).
     class ReaderLockGuard {
     public:
         ReaderLockGuard() noexcept = default;
@@ -4695,6 +4709,8 @@ public:
     // Issue #2418: if the caller also needs structural_mtx_, it MUST
     // already hold structural (or use CombinedStructuralMetadataWriteGuard).
     // Acquiring metadata first then structural is forbidden.
+    // Issue #2454: must not outlive *ast_ (FlatAST-move lifetime
+    // contract — see StructuralMutationGuard).
     class MetadataWriteGuard {
     public:
         MetadataWriteGuard() noexcept = default;
@@ -4761,6 +4777,8 @@ public:
     }
 
     // Issue #1783: shared (reader) lock on metadata_mtx_.
+    // Issue #2454: must not outlive *ast_ (FlatAST-move lifetime
+    // contract — see StructuralMutationGuard).
     class MetadataReadGuard {
     public:
         MetadataReadGuard() noexcept = default;
