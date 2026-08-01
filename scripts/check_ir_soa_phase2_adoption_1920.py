@@ -25,6 +25,8 @@ STATS = ROOT / "src" / "compiler" / "jit_typed_mutation_stats.h"
 SOA = ROOT / "src" / "compiler" / "soa_view.ixx"
 IRSOA = ROOT / "src" / "compiler" / "ir_soa.ixx"
 PM = ROOT / "src" / "compiler" / "pass_manager.ixx"
+PM_CORE = ROOT / "src" / "compiler" / "pass_pipeline_core.ixx"
+PM_IMPLS = ROOT / "src" / "compiler" / "pass_impls.ixx"
 LOW = ROOT / "src" / "compiler" / "lowering_impl.cpp"
 SVC = ROOT / "src" / "compiler" / "service.ixx"
 OBS = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
@@ -36,7 +38,12 @@ def main() -> int:
     stats = STATS.read_text(encoding="utf-8", errors="replace")
     soa = SOA.read_text(encoding="utf-8", errors="replace")
     irsoa = IRSOA.read_text(encoding="utf-8", errors="replace")
+    # Issue #2524: pass bodies live in pass_impls / pipeline core.
     pm = PM.read_text(encoding="utf-8", errors="replace")
+    if PM_CORE.is_file():
+        pm += PM_CORE.read_text(encoding="utf-8", errors="replace")
+    if PM_IMPLS.is_file():
+        pm += PM_IMPLS.read_text(encoding="utf-8", errors="replace")
     low = LOW.read_text(encoding="utf-8", errors="replace")
     svc = SVC.read_text(encoding="utf-8", errors="replace")
     obs = OBS.read_text(encoding="utf-8", errors="replace")
