@@ -195,10 +195,11 @@ int main() {
         CHECK(ast.find("dirty_column_mtx_") != std::string::npos &&
                   ast.find("apply_verification_dirty_bits") != std::string::npos,
               "lock used in apply_verification");
-        // newly_set computed under lock (unique_lock before newly_set)
-        CHECK(ast.find("newly_set = static_cast<std::uint8_t>(reasons & ~verification_dirty_") !=
-                  std::string::npos,
-              "newly_set under exclusive path");
+        // newly_set from atomic fetch_or prev (Issue #2440 strengthens #2439)
+        CHECK(ast.find("fetch_or(reasons") != std::string::npos &&
+                  ast.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
+                      std::string::npos,
+              "newly_set under exclusive path via fetch_or");
     }
 
     std::println("\n=== #2439 results: {} passed, {} failed ===", g_passed, g_failed);

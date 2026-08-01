@@ -3182,6 +3182,11 @@ aura_add_issue_test(test_verification_dirty_bits_lock_2439)
 aura_issue_test_link_llvm_jit(test_verification_dirty_bits_lock_2439)
 add_dependencies(all_test_issue_targets test_verification_dirty_bits_lock_2439)
 
+# Issue #2440: 4 SoA side-table columns atomic_ref + dirty_column_mtx_
+aura_add_issue_test(test_soa_column_atomic_2440)
+aura_issue_test_link_llvm_jit(test_soa_column_atomic_2440)
+add_dependencies(all_test_issue_targets test_soa_column_atomic_2440)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
