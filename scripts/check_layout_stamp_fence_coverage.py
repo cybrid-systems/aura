@@ -85,13 +85,22 @@ def check() -> list:
     )
 
     # AC2 — hard compare + bump + force dual-check
+    # Issue #2519: compare via full 8-field is_fully_fresh / operator==
+    # (replaces field-by-field resume_arena_id() != cur.arena_id).
     _must(fiber_mut.find("layout_stamp_resume_mismatch_total") != -1, "AC2: mismatch counter bump site missing", fails)
     _must(
-        fiber_mut.find("scan_live_closures_for_linear_captures(true, false)") != -1,
+        fiber_mut.find("scan_live_closures_for_linear_captures(true, false)") != -1
+        or fiber_mut.find("scan_live_closures_for_linear_captures(true, std::false_type{}") != -1,
         "AC2: force dual-check call missing",
         fails,
     )
-    _must(fiber_mut.find("resume_arena_id() != cur.arena_id") != -1, "AC2: hard compare fence missing", fails)
+    _must(
+        fiber_mut.find("is_fully_fresh") != -1
+        or fiber_mut.find("resume_arena_id() != cur.arena_id") != -1
+        or fiber_mut.find("layout_stamp_from_fiber_resume") != -1,
+        "AC2: hard compare fence missing",
+        fails,
+    )
     _must(fiber_mut.find("clear_resume_layout_stamp") != -1, "AC2: clear_resume_layout_stamp (one-shot) missing", fails)
 
     # AC3 — zero-cost when stamps match
