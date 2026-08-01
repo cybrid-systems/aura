@@ -1099,18 +1099,24 @@ export class FlatAST {
     //   concurrent_vector) across the entire builder body before
     //   concurrent builders are enabled — deferred until then.
     //
-    // Issue #2449 / #2450 — param_data_ / param_annot_data_ mutation
-    //   contract: Shared param arena grown via param_data_.insert
-    //   and param_annot_data_.resize from add_lambda,
-    //   set_lambda_params, add_define_type, add_define_module,
-    //   add_modport, add_coverpoint, add_constraint, add_class, …
-    //   Readers slice both vectors with param_begin_[id] +
-    //   param_count_[id]. Concurrent insert/resize + slice read is
-    //   UB (vector reallocation). Same single-threaded mutation
-    //   contract as #2445: parse/build exclusive (workspace_mtx);
-    //   lowering/IR reads post-parse-join. Parallel parse must
-    //   serialize both arenas before concurrent builders are
-    //   enabled. Issue #2450 focuses param_annot_data_ resize.
+    // Issue #2449 / #2450 / #2451 — param arena mutation contract:
+    //   Shared param arena grown via param_data_.insert and
+    //   param_annot_data_.resize from add_lambda, set_lambda_params,
+    //   add_define_type, add_define_module, add_modport,
+    //   add_coverpoint, add_constraint, add_class, … Readers slice
+    //   both vectors with param_begin_[id] + param_count_[id].
+    //   Concurrent insert/resize + slice read is UB (reallocation).
+    //   Same single-threaded mutation contract as #2445: parse/build
+    //   exclusive (workspace_mtx); lowering/IR reads post-parse-join.
+    //
+    //   Issue #2451 (TOCTOU): param_begin_[id] + param_count_[id] are
+    //   a non-atomic publish pair. Builders MUST write order:
+    //     1) push/fill param_data_ (+ param_annot_data_) fully
+    //     2) param_begin_[id] = pstart
+    //     3) param_count_[id] = n   ← publish last
+    //   Readers that observe count > 0 under the post-parse contract
+    //   may assume the [begin, begin+count) arena slice is complete.
+    //   Concurrent builder vs get() mid-publish is out of contract.
     //
     // Issue #1431 follow-up (Race #2): two CompilerService::eval
     // threads sharing workspace_flat_ raced add_node push_backs,
@@ -1591,6 +1597,9 @@ public:
     mutable std::atomic<std::uint64_t> incoming_parent_index_rebuilds_{0};
     mutable std::atomic<std::uint64_t> incoming_parent_index_lookups_{0};
     mutable std::atomic<std::uint64_t> incoming_parent_index_hits_{0};
+    // Issue #2451: (param_begin_, param_count_) is a non-atomic
+    // publish pair. Writers set begin then count last (after arena
+    // data is complete); readers under post-parse contract only.
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
     std::pmr::vector<std::uint32_t> cap_require_count_;
@@ -3577,6 +3586,7 @@ public:
         param_annot_data_.resize(param_annot_data_.size() + params.size(), aura::ast::NULL_NODE);
         for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
             param_annot_data_[pstart + i] = annots[i];
+        // Issue #2451: publish begin then count last (TOCTOU-safe order).
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         children_[id] =
@@ -3585,9 +3595,9 @@ public:
         return id;
     }
 
-    // Issue #1266 / #2449 / #2450: set params on an existing Lambda
-    // (mutate:inline-call clone path). param_data_ + param_annot_data_
-    // growth under single-threaded mutation contract.
+    // Issue #1266 / #2449 / #2450 / #2451: set params on an existing
+    // Lambda (mutate:inline-call clone path). Arena fill then begin,
+    // then count last under single-threaded mutation contract.
     void set_lambda_params(NodeId id, std::span<const SymId> params,
                            std::span<const NodeId> annots = {}) {
         if (id >= param_begin_.size() || id >= param_count_.size())
@@ -3601,6 +3611,7 @@ public:
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
             param_annot_data_[pstart + i] = annots[i];
+        // Issue #2451: publish begin then count last.
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
     }
@@ -4284,6 +4295,8 @@ public:
             // lookup. Same value as flat.type_id(id).
             .type_id = id < type_id_.size() ? type_id_[id] : 0u,
             .children = std::span<const NodeId>(children_[id].data(), children_[id].size()),
+            // Issue #2451: read begin/count under post-parse contract
+            // (pair published with count last after arena fill).
             .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
             .param_annotations =
                 std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),

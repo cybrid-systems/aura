@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 632 | Preferred destination suites |
-| **Total scanned** | **632** | |
+| `tests/core/test_*.cpp` | 633 | Preferred destination suites |
+| **Total scanned** | **633** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 36 | 36 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 37 | 37 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 124 | 124 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 33 | 33 | P3 — review case-by-case |
 
@@ -542,6 +542,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_parallel_intend_pure_2163.cpp`
 - `tests/orch/test_parallel_intend_pure_contract_2230.cpp`
 - `tests/core/test_param_annot_mutation_contract_2450.cpp`
+- `tests/core/test_param_begin_count_publish_2451.cpp`
 - `tests/core/test_param_data_mutation_contract_2449.cpp`
 - `tests/compiler/test_partial_cs_single_source_2262.cpp`
 - `tests/compiler/test_partial_relower_cascade_2041.cpp`
@@ -1310,13 +1311,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 
-### `shape_soa` — Shape / SoA / column layout (36)
+### `shape_soa` — Shape / SoA / column layout (37)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (36)
+#### domain/ (37)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
@@ -1331,6 +1332,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #254/#403/#404/#506 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp` (—) [domain_suite, theme_compiler] — test_list_vector_soa_hotpath_ai_loops.cpp — Issue #752:
 - `tests/compiler/test_matcher_stable_captures.cpp` (—) [domain_suite, theme_compiler] — Issue #1695 (#1978 renamed): issue# moved from filename to header.
+- `tests/core/test_param_begin_count_publish_2451.cpp` (#2451) [domain_suite, theme_core] — (count last after arena fill) under post-parse contract.
 - `tests/core/test_region_dense_atomic_2443.cpp` (#2443) [domain_suite, theme_core] — AC1: concurrent writer + reader does not tear dense uint8 cells
 - `tests/core/test_restamp_lazy_align_atomic_2421.cpp` (#2421) [domain_suite, theme_core] — AC1: flag is atomic (store/load with acquire/release)
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
