@@ -3541,6 +3541,13 @@ aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation_2490)
 aura_add_issue_test(test_tenant_scope_fiber_mandate_2491)
 aura_issue_test_link_llvm_jit(test_tenant_scope_fiber_mandate_2491)
 
+# Issue #2492: force SecurityEvent WAL under Restricted (not only
+# multi-tenant/Strict). Single-tenant Restricted commercial deploys were
+# silent under deny storms because force_wal only fired for multi-tenant
+# or Strict — closed by adding `restricted` to the force_wal predicate.
+aura_add_issue_test(test_security_audit_wal_force_restricted_2492)
+aura_issue_test_link_llvm_jit(test_security_audit_wal_force_restricted_2492)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.

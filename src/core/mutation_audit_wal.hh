@@ -60,6 +60,10 @@ struct AuditWalMetrics {
     std::atomic<std::uint64_t> audit_wal_segments{0};
     // Issue #2150: WAL force-enabled under multi-tenant / Strict production.
     std::atomic<std::uint64_t> audit_wal_forced_by_multi_tenant_total{0};
+    // Issue #2492: Restricted-only force counter (single-tenant Restricted
+    // commercial deploys — distinct from multi-tenant/Strict so dashboards
+    // can break out single-tenant vs multi-tenant WAL pressure).
+    std::atomic<std::uint64_t> audit_wal_forced_by_restricted_total{0};
     std::atomic<std::uint64_t> audit_wal_using_default_dir{0};
 };
 
@@ -296,6 +300,7 @@ struct MutationAuditWal {
         m.audit_wal_enabled.store(0, std::memory_order_relaxed);
         m.audit_wal_segments.store(0, std::memory_order_relaxed);
         m.audit_wal_forced_by_multi_tenant_total.store(0, std::memory_order_relaxed);
+        m.audit_wal_forced_by_restricted_total.store(0, std::memory_order_relaxed);
         m.audit_wal_using_default_dir.store(0, std::memory_order_relaxed);
         last_seq_persisted = 0;
         segment_index = 0;
@@ -368,6 +373,7 @@ struct AuditWalStatsSnapshot {
         kAuditWalPhase,
         kAuditWalIssue,
         m.audit_wal_forced_by_multi_tenant_total.load(std::memory_order_relaxed),
+        m.audit_wal_forced_by_restricted_total.load(std::memory_order_relaxed),
         m.audit_wal_using_default_dir.load(std::memory_order_relaxed),
     };
 }
