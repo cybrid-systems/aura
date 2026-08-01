@@ -8,6 +8,7 @@ module;
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
 #include "core/densify_consistency_report.h" // Issue #2368: DensifyRemapPairingResult
+#include "serve/fiber.h" // Issue #2498: orphan_root_release registration on fiber context
 
 module aura.compiler.evaluator;
 
@@ -2584,7 +2585,22 @@ EnvFrameRef* Evaluator::register_live_env_frame_ref(EnvFrameRef ref) const noexc
     if (live_env_frame_ref_slots_.size() >= kMaxLiveEnvFrameRefs)
         live_env_frame_ref_slots_.pop_front();
     live_env_frame_ref_slots_.push_back(ref);
-    return &live_env_frame_ref_slots_.back();
+    auto* slot = &live_env_frame_ref_slots_.back();
+    // Issue #2498: register a drop callback with the current Fiber so
+    // that on hard-reclaim (JoinStatus::Reclaimed path) the global table
+    // entry is released without touching the body's running stack. The
+    // body's local stack copies remain valid; only the global table
+    // entries (which the body isn't directly accessing) are released.
+    // Off-stack / host-thread (g_current_fiber == nullptr) registrations
+    // are unchanged — lifetime is tied to the Evaluator, not a Fiber.
+    // capture-by-value via std::function is safe: the callback only runs
+    // before the Fiber is destroyed, and the Evaluator outlives all fibers
+    // in production (scheduler teardown ensures fibers stop first).
+    if (auto* f = aura::serve::g_current_fiber) {
+        f->register_orphan_root_release(
+            [this, slot]() noexcept { this->unregister_live_env_frame_ref(slot); });
+    }
+    return slot;
 }
 
 void Evaluator::unregister_live_env_frame_ref(EnvFrameRef* p) const noexcept {

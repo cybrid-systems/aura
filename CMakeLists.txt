@@ -3862,6 +3862,16 @@ aura_add_issue_test(test_fiber_reclaim_safety)
 aura_issue_test_link_llvm_jit(test_fiber_reclaim_safety)
 add_dependencies(all_test_issue_targets test_fiber_reclaim_safety)
 
+# Issue #2498: epoch-scoped off-stack orphan-root table. Non-yielding
+# body + hard reclaim → Fiber::release_orphan_roots() drops the global
+# table entries (EnvFrame/mailbox refs) without touching the body's
+# running stack (Option A — no UAF regression vs #2467/#2468/#2469).
+# Fiber::join Reclaimed path + ~Fiber safety net + register on
+# Evaluator::register_live_env_frame_ref under g_current_fiber.
+aura_add_issue_test(test_fiber_reclaim_orphan_release_2498)
+aura_issue_test_link_llvm_jit(test_fiber_reclaim_orphan_release_2498)
+add_dependencies(all_test_issue_targets test_fiber_reclaim_orphan_release_2498)
+
 # Issue #2468: Fiber::resume() pre-check for state_==Done + reclaimed_
 # (was: no pre-check, swapcontext on freed stack = UB). Early-return
 # with stderr message so misuse is visible in logs but doesn't crash.

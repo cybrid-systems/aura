@@ -64,6 +64,13 @@ std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
 // Issue #2491: process-wide TenantScope install mismatch counter
 // (resume detects current capability_tenant_id_ != assigned_tenant_id_).
 std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_total_{0};
+// Issue #2498: process-wide orphan-root drops on Reclaimed (summed
+// across all fibers). Accessor Fiber::orphan_roots_dropped_on_reclaim_total().
+// HWM tracks the peak count of pending orphan roots across all fibers
+// (snapshot when register adds; cleared when release drops). Surface
+// for AC1 root count bound + dashboards.
+std::atomic<std::uint64_t> Fiber::orphan_roots_dropped_on_reclaim_total_{0};
+std::atomic<std::uint64_t> Fiber::orphan_roots_hwm_{0};
 
 // Issue #2397: optional orch dashboard mirror (weak no-op when orch not linked;
 // strong defs in evaluator_fiber_mutation.cpp bump OrchModuleStats).
@@ -477,6 +484,16 @@ Fiber::~Fiber() {
         if (aura_orch_note_join_drain_reclaim_still_running_drop)
             aura_orch_note_join_drain_reclaim_still_running_drop();
     }
+    // Issue #2498: safety-net release. If the Fiber reaches dtor
+    // without ever being joined (test fixture dropped the pointer,
+    // scheduler owning_fibers_.clear path, etc.), any pending orphan
+    // root callbacks still need to fire — otherwise the global table
+    // entries they wrap (EnvFrame refs, mailbox refs) leak until the
+    // Evaluator / mailbox itself is destroyed. Idempotent: if the
+    // join paths already invoked release_orphan_roots(), the table is
+    // empty and this is a no-op. Same fail-safe shape as the Reclaimed
+    // path inside Fiber::join.
+    release_orphan_roots();
     if (eventfd_ >= 0)
         ::close(eventfd_);
     if (stack_) {
@@ -880,6 +897,80 @@ std::uint64_t Fiber::join_cancel_total() noexcept {
 std::uint64_t Fiber::join_reclaim_total() noexcept {
     return join_reclaim_total_.load(std::memory_order_relaxed);
 }
+
+// Issue #2498: epoch-scoped off-stack orphan-root table. Body code
+// (running under Fiber::resume) registers a drop callback for each
+// global table entry it adds (EnvFrame ref, mailbox ref, external
+// handle). The callback captures the slot pointer + owning Evaluator
+// (or just the unregister fn + ctx). On hard-reclaim (JoinStatus::
+// Reclaimed) or natural Done, the Fiber invokes the callbacks to
+// release the global table entries WITHOUT touching the body's running
+// stack. The body keeps its stack copies; only the global table
+// entries (which the body isn't directly accessing anymore) are
+// released. This breaks the design leak from #2467/#2468/#2469
+// (non-yielding body after hard-reclaim → join cleanup deferred
+// forever → global table entries accumulate).
+//
+// Thread safety: registrations come from the body's worker thread
+// (the Fiber's executing thread); release calls come from the
+// joiner thread (or from ~Fiber on the destroying thread). Both
+// sides take orphan_roots_mtx_; release invokes callbacks OUTSIDE
+// the lock to keep the critical section short and avoid re-entrant
+// lock cycles (drop callbacks may acquire other locks).
+void Fiber::register_orphan_root_release(std::function<void()> drop) noexcept {
+    if (!drop)
+        return;
+    std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
+    orphan_root_releases_.push_back(std::move(drop));
+    // Bump HWM (snapshot of pending count across all fibers when
+    // the table grows). Decay happens on release; HWM is monotonic
+    // until reset (orchestrator reset hook).
+    const auto cur = orphan_root_releases_.size();
+    auto prev = orphan_roots_hwm_.load(std::memory_order_relaxed);
+    while (static_cast<std::uint64_t>(cur) > prev &&
+           !orphan_roots_hwm_.compare_exchange_weak(prev, static_cast<std::uint64_t>(cur),
+                                                    std::memory_order_relaxed)) {
+    }
+}
+
+// Returns the number of callbacks invoked. Idempotent: subsequent
+// calls on the same Fiber return 0 (the table is cleared on first
+// release). Bumps orphan_roots_dropped_on_reclaim_total_ on every
+// successful invocation (for AC1 metrics + dashboards).
+std::size_t Fiber::release_orphan_roots() noexcept {
+    std::vector<std::function<void()>> drops;
+    {
+        std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
+        if (orphan_root_releases_.empty())
+            return 0;
+        drops.swap(orphan_root_releases_);
+    }
+    // Invoke OUTSIDE the lock. A drop callback may acquire other
+    // locks (Evaluator mutex, mailbox mutex, GC root table) — holding
+    // orphan_roots_mtx_ across the call would risk re-entrant cycles.
+    std::size_t n = 0;
+    for (auto& d : drops) {
+        if (d) {
+            d();
+            ++n;
+        }
+    }
+    orphan_roots_dropped_on_reclaim_total_.fetch_add(n, std::memory_order_relaxed);
+    return n;
+}
+
+[[nodiscard]] bool Fiber::has_orphan_roots() const noexcept {
+    std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
+    return !orphan_root_releases_.empty();
+}
+
+std::uint64_t Fiber::orphan_roots_dropped_on_reclaim_total() noexcept {
+    return orphan_roots_dropped_on_reclaim_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Fiber::orphan_roots_hwm() noexcept {
+    return orphan_roots_hwm_.load(std::memory_order_relaxed);
+}
 std::uint64_t Fiber::join_wait_us_total() noexcept {
     return join_wait_us_total_.load(std::memory_order_relaxed);
 }
@@ -967,8 +1058,15 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
     // Cleanup is deferred until Fiber destructor runs after
     // state_==Done. For non-yielding bodies this may never happen
     // (accept the leak vs the UAF).
-    if (target->is_reclaimed() && !target->is_done())
+    if (target->is_reclaimed() && !target->is_done()) {
+        // Issue #2498: drop off-stack orphan roots (EnvFrame/mailbox refs
+        // the body registered globally) without touching the body's running
+        // stack. Body stack copies remain valid; the global table entries
+        // (which the body isn't directly accessing anymore) are released
+        // here. Same fail-safe shape as pin_contract_held at #2266.
+        target->release_orphan_roots();
         return finish(JoinStatus::Reclaimed);
+    }
     if (target->is_done())
         return finish(JoinStatus::Ok);
 
@@ -984,8 +1082,13 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // Issue #2467: same Reclaimed check under fiber-context path —
         // avoids infinite spin when target is reclaimed but body
         // hasn't yielded (state_ never reaches Done).
-        if (target->is_reclaimed() && !target->is_done())
+        if (target->is_reclaimed() && !target->is_done()) {
+            // Issue #2498: drop off-stack orphan roots (see top-level
+            // Reclaimed path above for rationale). Idempotent + safe
+            // to call from the scheduler pre-check.
+            target->release_orphan_roots();
             return finish(JoinStatus::Reclaimed);
+        }
         if (!g_scheduler->add_joiner(target->id(), g_current_fiber)) {
             // Target vanished or not registered — recheck Done.
             if (target->is_done())
@@ -999,8 +1102,12 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             // Issue #2467: bail out on reclaim to avoid infinite spin.
             // body will keep running until it eventually yields/returns,
             // but our join is done — caller handles Reclaimed status.
-            if (target->is_reclaimed())
+            if (target->is_reclaimed()) {
+                // Issue #2498: drop off-stack orphan roots (see top-level
+                // Reclaimed path above for rationale). Idempotent.
+                target->release_orphan_roots();
                 return finish(JoinStatus::Reclaimed);
+            }
             if (g_current_fiber->is_cancel_requested()) {
                 g_scheduler->remove_joiner(target->id(), g_current_fiber);
                 return finish(JoinStatus::Cancelled);
@@ -1034,8 +1141,14 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
     // Host-thread path (tests without active fiber context).
     while (!target->is_done()) {
         // Issue #2467: same Reclaimed check on host-thread path.
-        if (target->is_reclaimed())
+        if (target->is_reclaimed()) {
+            // Issue #2498: drop off-stack orphan roots (see top-level
+            // Reclaimed path above for rationale). Idempotent; host
+            // thread path doesn't go through scheduler but the drop
+            // is independent of scheduler state.
+            target->release_orphan_roots();
             return finish(JoinStatus::Reclaimed);
+        }
         if (g_current_fiber && g_current_fiber->is_cancel_requested())
             return finish(JoinStatus::Cancelled);
         if (has_deadline && std::chrono::steady_clock::now() >= deadline)
