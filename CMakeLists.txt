@@ -3342,6 +3342,11 @@ aura_add_issue_test(test_list_end_of_list_void_2482)
 aura_issue_test_link_llvm_jit(test_list_end_of_list_void_2482)
 add_dependencies(all_test_issue_targets test_list_end_of_list_void_2482)
 
+# Issue #2483: channel:send rendezvous (buffer_size=0) blocks until recv.
+aura_add_issue_test(test_channel_rendezvous_2483)
+aura_issue_test_link_llvm_jit(test_channel_rendezvous_2483)
+add_dependencies(all_test_issue_targets test_channel_rendezvous_2483)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
