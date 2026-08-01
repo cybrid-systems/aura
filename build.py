@@ -3671,6 +3671,25 @@ def cmd_ir_soa_layout_stamp_coverage():
     return 0
 
 
+def cmd_soa_ban_residual_aos_bridge_coverage():
+    """Issue #2520: production bans residual to_aos_view under SoA-only.
+
+    aos_bridge_allowed opt-in for tests; residual_aos_bridge_total test-only
+    metric (target 0); production packs must not call to_aos_view.
+    """
+    print(f"{B}=== soa ban residual aos bridge coverage (#2520) ==={N}")
+    script = ROOT / "scripts" / "check_soa_ban_residual_aos_bridge_2520.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("soa ban residual aos bridge (#2520) coverage contract rows failed")
+        return 1
+    ok("soa ban residual aos bridge (#2520) coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_equality_8field_coverage():
     """Issue #2519: LayoutStamp::operator== full 8-field equality.
 
@@ -5615,6 +5634,7 @@ def cmd_gate():
         or cmd_capability_effect_stats_snapshot_coverage()
         or cmd_dead_coercion_columnar_coverage()
         or cmd_ir_soa_layout_stamp_coverage()
+        or cmd_soa_ban_residual_aos_bridge_coverage()
         or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()

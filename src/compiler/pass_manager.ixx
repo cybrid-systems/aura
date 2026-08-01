@@ -5226,10 +5226,17 @@ public:
     // Run the bridge: convert each SoA function to AoS, run
     // the wrapped AoS pass on the AoS view, bump counters.
     // Returns true if the wrapped pass returned no errors.
-    // Issue #1377 / #1629: early-out when dual-emit flag off or empty SoA —
-    // no to_aos_view conversion cost in production single-emit path.
+    // Issue #1377 / #1629 / #2520: early-out when dual-emit flag off, empty
+    // SoA, or residual AoS bridge banned under AURA_IR_SOA_ONLY (production).
+    // No to_aos_view conversion cost on production single-emit path.
     bool run(IRModuleV2& soa_mod) {
         if (!ir_soa_migration::soa_dual_emit_enabled() || soa_mod.functions.empty()) {
+            aos_view_ = aura::ir::IRModule{};
+            return true;
+        }
+        // Issue #2520: refuse residual materialize on production SoA-only
+        // unless test opt-in (aos_bridge_allowed). Prefer run_dirty_pipeline.
+        if (!aura::compiler::aos_bridge_allowed()) {
             aos_view_ = aura::ir::IRModule{};
             return true;
         }
@@ -5238,7 +5245,7 @@ public:
         // Build a temporary AoS IRModule from the SoA module
         // for the wrapped pass to consume. This is the
         // bridge — the SoA side is the source of truth, the
-        // AoS side is a view.
+        // AoS side is a view. (Test seam only under #2520.)
         aos_view_ = aura::ir::IRModule{};
         aos_view_.entry_function_id = soa_mod.entry_function_id;
         aos_view_.string_pool = soa_mod.string_pool;

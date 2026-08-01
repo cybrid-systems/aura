@@ -47,6 +47,7 @@ import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin; // Issue #2256: g_moving_compact_* process atomics
 import aura.compiler.value;
 import aura.compiler.pass_manager;
+import aura.compiler.ir_soa; // Issue #2520: residual AoS bridge ban / counters
 import aura.compiler.soa_view;
 import aura.compiler.optimization_passes;
 import aura.compiler.coercion_map;      // Issue #2025: AST dead-coercion elision counter
@@ -14656,6 +14657,18 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"constfold-soa-run-wired", make_int(1)},
                 {"schema-1920", make_int(1920)},
                 {"issue-1920", make_int(1920)},
+                // Issue #2520: residual AoS bridge banned on production SoA-only.
+                // residual_aos_bridge_total is a TEST-ONLY metric (target 0).
+                {"residual-aos-bridge-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_residual_aos_bridge_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"residual-aos-bridge-test-only",
+                 make_int(aura::compiler::kResidualAosBridgeTestOnly)},
+                {"aos-bridge-allowed", make_int(aura::compiler::aos_bridge_allowed() ? 1 : 0)},
+                {"aos-bridge-production-banned", make_int(1)},
+                {"schema-2520", make_int(2520)},
+                {"issue-2520", make_int(2520)},
                 {"issue", make_int(1629)},
                 {"schema", make_int(1629)}, // lineage 1619|1517|1377 → 1629 + #1920
             };
