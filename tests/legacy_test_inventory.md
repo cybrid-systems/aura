@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 683 | Preferred destination suites |
-| **Total scanned** | **683** | |
+| `tests/core/test_*.cpp` | 684 | Preferred destination suites |
+| **Total scanned** | **684** | |
 
 ### Related artifacts
 
