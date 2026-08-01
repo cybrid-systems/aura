@@ -3537,6 +3537,13 @@ aura_issue_test_link_llvm_jit(test_capability_unified_2077)
 aura_add_issue_test(test_capability_string_matrix_unify_2387)
 aura_issue_test_link_llvm_jit(test_capability_string_matrix_unify_2387)
 
+# Issue #2489: promote remaining high-risk string-only caps into the Effect
+# matrix (self-evo / synthesize / strategy → MacroSelfEvo; sys-open / sys-write /
+# sys-read → Syscall|Read/Write; agent / capability → TenantAdmin). Closes the
+# residual multi-tenant self-mod / syscall / meta-privilege dual-track surface.
+aura_add_issue_test(test_capability_high_risk_promote_2489)
+aura_issue_test_link_llvm_jit(test_capability_high_risk_promote_2489)
+
 # Issue #2388: fold Capability + Isolation private audit rings into SecurityEvent WAL.
 aura_add_issue_test(test_security_audit_fold_2388)
 aura_issue_test_link_llvm_jit(test_security_audit_fold_2388)

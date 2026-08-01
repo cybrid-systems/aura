@@ -41,10 +41,14 @@ using security::kCapWildcard;
 // so an effect-only grant (without pushing "*" as a string) can
 // satisfy wildcard queries if every bit is held.
 // Issue #2387: tenant-admin + syscall promoted into the matrix (epoch /
-// fiber bind). Caps that remain intentionally string-only
-// (effect_for_cap_name == None): compile-stats, compile*, fiber,
-// workspace, agent, exception-control, macro, query, capability,
-// sys-read/write/open, self-evo, synthesize, strategy, sandbox.
+// fiber bind).
+// Issue #2489: remaining high-risk sensitive caps promoted —
+//   self-evo / synthesize / strategy / sys-open / sys-write / sys-read /
+//   agent / capability now also map to matrix bits (MacroSelfEvo / Syscall
+//   / TenantAdmin). Caps that remain intentionally string-only
+//   (effect_for_cap_name == None, SECURITY_EXEMPT staged):
+//   compile, compile-stats, compile-dirty, compile-deopt, fiber, workspace,
+//   exception-control, macro, query, sandbox.
 bool Evaluator::has_capability(std::string_view needed) const noexcept {
     // Sandbox fully off (Evaluator sandbox + global registry effect mode)
     // preserves legacy "always allow" semantics — matches check_and_record_effect.
