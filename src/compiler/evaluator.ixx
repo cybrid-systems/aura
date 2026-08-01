@@ -1133,7 +1133,9 @@ namespace primitives_detail {
                                              std::atomic<std::uint64_t>* primitive_error_counter);
     void register_json_primitives(std::function<void(std::string, PrimFn)> add,
                                   std::pmr::vector<Pair>& pairs,
-                                  std::pmr::vector<std::string>& string_heap);
+                                  std::pmr::vector<std::string>& string_heap,
+                                  std::vector<EvalValue>& error_values,
+                                  std::atomic<std::uint64_t>* primitive_error_counter);
     void register_list_primitives(std::function<void(std::string, PrimFn)> add,
                                   std::pmr::vector<Pair>& pairs,
                                   std::pmr::vector<std::string>& string_heap,
