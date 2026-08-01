@@ -1,7 +1,9 @@
 # Issue #675: nightly extended fuzz + sanitizer stress (non-blocking on PRs).
 # Issue #1933: LLVM source-based coverage artifact job.
 # Issue #1935: unified fuzz orchestrator.
-# Issue #2380: production-concurrency gate (lock-order canary + full chaos).
+# Issue #2380 / #2513: production-concurrency gate (lock-order canary + full chaos).
+# Deploy-class soak: AURA_CHAOS_SOAK=1 AURA_CHAOS_FIBERS=256..1000
+#   AURA_CHAOS_DURATION_S=300+ (local / long runners only).
 name: Nightly
 
 on:
@@ -15,9 +17,11 @@ env:
   CCACHE_DISABLE: 1
 
 jobs:
-  # Issue #2380: nightly production-concurrency hard gate.
-  # Hard-fail: hang / residual defer / snapshot mismatch / densify fail /
-  # lock-order canary violation / Soft steal enabled. PR CI stays smoke-only.
+  # Issue #2380 / #2513: nightly production-concurrency hard gate.
+  # Hard-fail: hang / residual defer / snapshot mismatch / steal hard-fail /
+  # residual still-running > 0 / densify fail / lock-order canary / Soft steal /
+  # mailbox hold-starvation over AURA_CHAOS_MB_STARVE_MAX.
+  # PR CI stays smoke-only (no FULL / no PRODUCTION_CONCURRENCY_GATE).
   production-concurrency:
     runs-on: ubuntu-latest
     container:
@@ -31,18 +35,19 @@ jobs:
     - name: Build
       run: python3 build.py build
 
-    - name: production-concurrency gate (#2380)
+    - name: production-concurrency gate (#2380 / #2513)
       env:
         AURA_PRODUCTION_CONCURRENCY_GATE: "1"
         AURA_LOCK_ORDER_CANARY: "1"
         AURA_CHAOS_FULL: "1"
         AURA_CHAOS_SEED: "1"
         AURA_CHAOS_WORKERS: "4"
-        AURA_CHAOS_FIBERS: "64"
+        AURA_CHAOS_FIBERS: "128"
         AURA_CHAOS_DURATION_S: "30"
+        AURA_CHAOS_MB_STARVE_MAX: "0"
       run: |
         python3 build.py production-concurrency
-        echo "✓ production-concurrency green (canary + full chaos)"
+        echo "✓ production-concurrency green (canary + full chaos; soak via AURA_CHAOS_SOAK=1)"
 
   fuzz-extended:
     runs-on: ubuntu-latest

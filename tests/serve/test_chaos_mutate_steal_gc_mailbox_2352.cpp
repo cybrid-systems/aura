@@ -5,6 +5,9 @@
 // fail the gate on hang, residual Panic, or snapshot mismatch growth.
 // Issue #2380 — nightly production-concurrency profile: lock-order canary +
 // full chaos + densify consistency + Soft steal forbidden as hard pass criteria.
+// Issue #2513 — production-grade multi-fiber soak extension: non-yield
+// (LLM-style) loops + reclaim residual still-running + mailbox hold
+// starvation + hard-fail counters; configurable AURA_CHAOS_FIBERS up to 1000+.
 //
 //   AC1: Fixed-seed chaos completes exit 0 (smoke default; full 30s via env)
 //   AC2: Injected residual Panic depth fails detection CHECK
@@ -20,16 +23,28 @@
 //   AC4: Default PR smoke unchanged (no multi-minute soak unless FULL=1)
 //   AC5: build.py production-concurrency + nightly.yml + source-cite
 //
+//   #2513 ACs (soak extension):
+//   AC1: Configurable duration/fibers (AURA_CHAOS_DURATION_S / FIBERS / SOAK)
+//   AC2: Hard-fail criteria observable (steal hard-fail, residual still-running,
+//        mailbox hold-starvation threshold, hang)
+//   AC3: reclaim residual body still-running path exercised (#2397 / #2467)
+//   AC4: coverage linter + source-cite for soak paths
+//   AC5: production-concurrency docs / knobs updated
+//
 // Env knobs (AURA_CHAOS_* / production gate):
 //   AURA_CHAOS_SEED          default 1 (deterministic RNG stream)
 //   AURA_CHAOS_WORKERS       smoke 4 / full ≥4 (prod gate default 4)
-//   AURA_CHAOS_FIBERS        smoke 16 / full 64
-//   AURA_CHAOS_DURATION_S    smoke 2 / full ≥30 (prod gate default 30)
+//   AURA_CHAOS_FIBERS        smoke 16 / full 64 / soak default 256 (up to 1000+)
+//   AURA_CHAOS_DURATION_S    smoke 2 / full ≥30 / soak default 300 (nightly longer)
 //   AURA_CHAOS_FULL=1        enable full soak variant (nightly)
+//   AURA_CHAOS_SOAK=1        #2513: high-fiber soak (default fibers 256, dur 300
+//                            unless overridden); PR smoke stays light
 //   AURA_CHAOS_FAULT=        residual_panic | snapshot_mismatch | hang_detect
+//   AURA_CHAOS_MB_STARVE_MAX default 0 (any hold-exit starvation delta fails
+//                            under prod/soak when set; absolute ceiling)
 //   AURA_STEAL_SNAPSHOT_HARD=1  for AC3 Hard canary (live getenv)
 //   AURA_LOCK_ORDER_CANARY=1    #2380: hard lock-order abort on inversion
-//   AURA_PRODUCTION_CONCURRENCY_GATE=1  #2380: densify+canary+Soft-forbid criteria
+//   AURA_PRODUCTION_CONCURRENCY_GATE=1  #2380/#2513: densify+canary+Soft-forbid
 //   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production gate
 
 #include "test_harness.hpp"
@@ -67,6 +82,7 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::serve::Fiber;
+using aura::serve::FiberState;
 using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 using aura::serve::mf_mailbox::MailMessage;
@@ -105,6 +121,12 @@ static bool chaos_full() noexcept {
     return e && e[0] == '1';
 }
 
+// Issue #2513: high-fiber / longer soak profile (optional; PR smoke free).
+[[nodiscard]] static bool chaos_soak() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_SOAK");
+    return e && e[0] == '1';
+}
+
 static const char* chaos_fault() noexcept {
     const char* e = std::getenv("AURA_CHAOS_FAULT");
     return e ? e : "";
@@ -115,6 +137,7 @@ struct ChaosState {
     std::atomic<std::uint64_t> yields{0};
     std::atomic<std::uint64_t> mb_ops{0};
     std::atomic<std::uint64_t> guards{0};
+    std::atomic<std::uint64_t> non_yield_spins{0}; // #2513 LLM-style tight loops
     std::atomic<int> fibers_done{0};
     MultiFiberMailbox* mailbox = nullptr;
     CompilerService* cs = nullptr;
@@ -122,6 +145,7 @@ struct ChaosState {
 
 // Random mix: outermost mutate, nested Guard, Explicit yield, mailbox
 // try_recv/recv, alloc pressure (eval), force steal pressure via affinity.
+// Issue #2513: non-yield tight loop (LLM inference style) without Fiber::yield.
 static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
                         std::chrono::steady_clock::time_point deadline) {
     std::mt19937_64 rng(seed);
@@ -131,7 +155,7 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
         ++steps;
         st.ops.fetch_add(1, std::memory_order_relaxed);
         const int op = op_d(rng);
-        if (op < 20 && st.cs) {
+        if (op < 18 && st.cs) {
             bool ok = true;
             auto gr = Evaluator::MutationBoundaryGuard::try_acquire(st.cs->evaluator(), 1, &ok);
             if (gr) {
@@ -151,10 +175,10 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
                     }
                 }
             }
-        } else if (op < 40) {
+        } else if (op < 35) {
             Fiber::yield(YieldReason::Explicit);
             st.yields.fetch_add(1, std::memory_order_relaxed);
-        } else if (op < 55 && st.mailbox) {
+        } else if (op < 48 && st.mailbox) {
             MailMessage m;
             m.from_fiber = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id() : 0;
             m.to_fiber = 0;
@@ -164,13 +188,13 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
             // Policy A: try_recv / recv(wait=false) under Guard is safe.
             (void)st.mailbox->try_recv();
             st.mb_ops.fetch_add(1, std::memory_order_relaxed);
-        } else if (op < 70 && st.cs) {
+        } else if (op < 60 && st.cs) {
             // Alloc / eval pressure + GC safepoint request.
             (void)st.cs->eval("(+ 1 1)");
             (void)st.cs->evaluator().request_gc_safepoint();
             Fiber::yield(YieldReason::Explicit);
             st.yields.fetch_add(1, std::memory_order_relaxed);
-        } else if (op < 85 && st.cs) {
+        } else if (op < 72 && st.cs) {
             // Yield under Guard → Policy A / #2200 reject path (must not hang).
             bool ok = true;
             auto gr = Evaluator::MutationBoundaryGuard::try_acquire(st.cs->evaluator(), 1, &ok);
@@ -181,6 +205,17 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
                 if (st.mailbox)
                     (void)st.mailbox->recv(/*wait=*/true, /*timeout_ms=*/-1); // Policy A empty
             }
+        } else if (op < 88) {
+            // Issue #2513: non-yield tight loop (LLM-style inference).
+            // Bounded CPU burn WITHOUT Fiber::yield — exercises steal of
+            // non-stealable Running fibers + reclaim residual paths when
+            // cancelled. Cap iterations so deadline still wins.
+            volatile std::uint64_t acc = seed;
+            const int n = 200 + static_cast<int>(rng() % 400);
+            for (int i = 0; i < n; ++i)
+                acc = acc * 0x9E37 + static_cast<std::uint64_t>(i);
+            (void)acc;
+            st.non_yield_spins.fetch_add(1, std::memory_order_relaxed);
         } else {
             Fiber::yield(YieldReason::OperationBoundary);
             st.yields.fetch_add(1, std::memory_order_relaxed);
@@ -193,13 +228,16 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
 // Issue #2380: when AURA_PRODUCTION_CONCURRENCY_GATE=1 also hard-fail on:
 //   Soft steal mode, densify consistency fail delta, lock-order violations
 //   under canary, and require workers≥4 / duration≥30 for full profile.
+// Issue #2513: also hard-fail on steal hard-fail delta, residual still-running
+//   gauge > 0 at end, mailbox hold-exit starvation over ceiling.
 static long run_chaos_pass(const char* label, int workers, int n_fibers, int duration_s,
                            int steps_cap) {
     const bool prod_gate = production_concurrency_gate();
+    const bool soak = chaos_soak();
     std::println("\n=== {} workers={} fibers={} duration={}s steps_cap={} seed={} prod_gate={} "
-                 "canary={} ===",
+                 "soak={} canary={} ===",
                  label, workers, n_fibers, duration_s, steps_cap, chaos_seed(), prod_gate ? 1 : 0,
-                 aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
+                 soak ? 1 : 0, aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
 
     // Issue #2380 AC1/AC3: Soft steal forbidden under production-concurrency.
     if (prod_gate) {
@@ -214,13 +252,23 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     }
 
     const auto mismatch0 = Fiber::mutation_steal_snapshot_mismatch_total();
+    const auto hard_fail0 = Fiber::steal_snapshot_hard_fail_total();
     const auto densify0 = aura::core::densify_consistency::densify_consistency_fail_total();
     const auto lock_viol0 =
         aura::compiler::lock_order::g_lock_order_violation_total.load(std::memory_order_relaxed);
+    const auto mb_starve0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
+            std::memory_order_relaxed);
+    const auto mb_hold_starve0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
+            std::memory_order_relaxed);
+    const auto still_run0 = Fiber::join_drain_residual_still_running();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
 
-    MultiFiberMailbox mailbox(/*high_water=*/256);
+    // Higher HWM for multi-fiber soak so BP is policy, not accidental overflow.
+    const std::size_t hw = static_cast<std::size_t>(std::max(256, n_fibers * 2));
+    MultiFiberMailbox mailbox(/*high_water=*/hw);
     ChaosState st;
     st.mailbox = &mailbox;
     st.cs = &cs;
@@ -247,32 +295,41 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
 
     // Host-side GC pressure: request → wait → resume (must not leave
     // workers stuck in wait_for_resume — classic hang class from #2202).
+    // Issue #2513: also tick orphan reaper so reclaim residual paths run.
     int host_ticks = 0;
-    const auto watchdog = deadline + std::chrono::seconds(15);
+    // Watchdog: smoke +15s; soak/full scale with duration (min +60s).
+    const auto watchdog_slack = (soak || chaos_full() || prod_gate)
+                                    ? std::chrono::seconds(std::max(60, duration_s / 2))
+                                    : std::chrono::seconds(15);
+    const auto watchdog = deadline + watchdog_slack;
     while (st.fibers_done.load() < n_fibers && std::chrono::steady_clock::now() < watchdog) {
         if ((host_ticks++ % 10) == 0) {
             (void)cs.evaluator().request_gc_safepoint();
             (void)sched.request_gc_safepoint();
             (void)sched.wait_for_safepoint(20);
             sched.resume_from_gc();
+            // Tick-driven orphan reclaim (#2396 / #2513 AC3 surface).
+            (void)sched.maybe_reap_orphans_on_tick();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     sched.resume_from_gc();
+    (void)sched.maybe_reap_orphans_on_tick();
     sched.stop();
     io.join();
 
     const auto wall_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
             .count();
-    std::println("  wall_ms={} fibers_done={}/{} ops={} yields={} guards={} mb={}", wall_ms,
-                 st.fibers_done.load(), n_fibers, st.ops.load(), st.yields.load(), st.guards.load(),
-                 st.mb_ops.load());
+    std::println(
+        "  wall_ms={} fibers_done={}/{} ops={} yields={} guards={} mb={} non_yield_spins={}",
+        wall_ms, st.fibers_done.load(), n_fibers, st.ops.load(), st.yields.load(), st.guards.load(),
+        st.mb_ops.load(), st.non_yield_spins.load());
 
     // Pass criteria (production gate).
     CHECK(st.fibers_done.load() == n_fibers, "no hang: all fibers finished");
-    // AC4: smoke wall < 90s; full/prod soak may exceed smoke budget (not PR CI).
-    if (!chaos_full() && !prod_gate)
+    // AC4: smoke wall < 90s; full/prod/soak may exceed smoke budget (not PR CI).
+    if (!chaos_full() && !prod_gate && !soak)
         CHECK(wall_ms < 90'000, "AC4 smoke wall < 90s");
     CHECK(aura_evaluator_mutation_boundary_depth() == 0, "depth 0 after chaos");
     CHECK(aura_evaluator_mutation_boundary_held() == 0, "held 0 after chaos");
@@ -294,6 +351,39 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
                      aura::serve::is_steal_snapshot_hard_mode() ||
                          aura::serve::is_steal_snapshot_hard_abort());
     CHECK(delta == 0, "snapshot mismatch delta == 0 (0 silent corruption)");
+
+    // Issue #2513 AC2: steal hard-fail delta must be 0 under prod/soak.
+    const auto hard_fail1 = Fiber::steal_snapshot_hard_fail_total();
+    const auto hard_delta = hard_fail1 - hard_fail0;
+    if (prod_gate || soak || hard_delta != 0)
+        std::println("  steal_snapshot_hard_fail delta={}", hard_delta);
+    if (prod_gate || soak)
+        CHECK(hard_delta == 0, "#2513: steal snapshot hard-fail delta == 0");
+
+    // Issue #2513 AC3: residual body still-running gauge must be 0 at end
+    // (all reclaimed bodies retired / no orphan still-running left open).
+    const auto still_run1 = Fiber::join_drain_residual_still_running();
+    if (prod_gate || soak || still_run1 != still_run0)
+        std::println("  join_drain_residual_still_running end={} (start={})", still_run1,
+                     still_run0);
+    if (prod_gate || soak)
+        CHECK(still_run1 == 0, "#2513: residual still-running gauge == 0 at end");
+
+    // Issue #2513 AC2: mailbox hold/defer starvation under ceiling.
+    const auto mb_starve1 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
+            std::memory_order_relaxed);
+    const auto mb_hold_starve1 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
+            std::memory_order_relaxed);
+    const auto mb_starve_delta = (mb_starve1 - mb_starve0) + (mb_hold_starve1 - mb_hold_starve0);
+    const auto mb_starve_max = static_cast<std::uint64_t>(k_int_env("AURA_CHAOS_MB_STARVE_MAX", 0));
+    if (prod_gate || soak || mb_starve_delta != 0)
+        std::println("  mailbox starvation delta={} (max allowed={})", mb_starve_delta,
+                     mb_starve_max);
+    if (prod_gate || soak)
+        CHECK(mb_starve_delta <= mb_starve_max,
+              "#2513: mailbox hold/defer starvation within ceiling");
 
     // Issue #2380: densify consistency fail delta (Moving may not run;
     // any fail total growth still fails the production gate).
@@ -321,6 +411,9 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     }
 
     CHECK(st.ops.load() > 0, "ops progressed");
+    // Issue #2513: soak/full should exercise non-yield path (LLM-style).
+    if ((soak || chaos_full()) && n_fibers >= 16)
+        CHECK(st.non_yield_spins.load() > 0, "#2513: non-yield spins exercised under soak/full");
     return static_cast<long>(wall_ms);
 }
 
@@ -347,6 +440,47 @@ static void ac1_full_optional() {
     const int fibers = k_int_env("AURA_CHAOS_FIBERS", 64);
     const int dur = k_int_env("AURA_CHAOS_DURATION_S", 30);
     (void)run_chaos_pass("AC1-full", workers, fibers, dur, /*steps_cap=*/10'000'000);
+}
+
+// ── Issue #2513: high-fiber soak (optional; AURA_CHAOS_SOAK=1) ──
+static void ac2513_soak_optional() {
+    if (!chaos_soak()) {
+        std::println("\n--- #2513 soak: SKIPPED (set AURA_CHAOS_SOAK=1 for high-fiber soak) ---");
+        CHECK(true, "#2513 soak optional skip");
+        return;
+    }
+    std::println("\n--- #2513: multi-fiber soak (mutate+steal+GC+mailbox+reclaim) ---");
+    // Defaults: 256 fibers / 300s — override via env. Cap steps high so duration wins.
+    const int workers = k_int_env("AURA_CHAOS_WORKERS", 8);
+    const int fibers = k_int_env("AURA_CHAOS_FIBERS", 256);
+    const int dur = k_int_env("AURA_CHAOS_DURATION_S", 300);
+    CHECK(fibers >= 64, "#2513 AC1: soak fibers ≥ 64 (prefer 256–1000)");
+    CHECK(dur >= 5, "#2513 AC1: soak duration configurable (≥5s for local, 300+ nightly)");
+    (void)run_chaos_pass("AC2513-soak", workers, fibers, dur, /*steps_cap=*/50'000'000);
+}
+
+// ── Issue #2513 AC3: reclaim residual still-running path ──
+static void ac2513_reclaim_residual_still_running() {
+    std::println("\n--- #2513 AC3: reclaim residual still-running path ---");
+    // Match #2397 AC1: mark_reclaimed while Ready (body not returned) →
+    // still-running +1; is_reclaimed true but still !Done until body exit.
+    // Then simulate body return: set Done + note_body_exit_if_reclaimed.
+    auto* f = new Fiber([]() { /* never run */ });
+    CHECK(f != nullptr, "#2513 AC3: fiber constructed");
+    CHECK(!f->is_done(), "#2513 AC3: not Done before reclaim");
+    const auto sr0 = Fiber::join_drain_residual_still_running();
+    f->mark_reclaimed();
+    CHECK(f->is_reclaimed(), "#2513 AC3: is_reclaimed after mark");
+    CHECK(!f->is_done(), "#2513 AC3: still !Done (body not returned) — residual window");
+    const auto sr1 = Fiber::join_drain_residual_still_running();
+    CHECK(sr1 >= sr0 + 1, "#2513 AC3: still-running +1 after mark_reclaimed while !Done");
+    // Pair down: simulate body return (trampoline does Done then note).
+    f->set_state(FiberState::Done);
+    f->note_body_exit_if_reclaimed();
+    const auto sr2 = Fiber::join_drain_residual_still_running();
+    CHECK(sr2 < sr1 || sr2 == sr0, "#2513 AC3: still-running pairs down after body exit");
+    delete f;
+    std::println("  still_running start={} after_reclaim={} after_exit={}", sr0, sr1, sr2);
 }
 
 // ── AC2: residual Panic inject fails detection ──
@@ -491,10 +625,53 @@ static void ac2380_production_concurrency_docs() {
           "AC4: full soak still optional without FULL=1");
 }
 
+// ── Issue #2513 AC4/AC5: soak docs + source-cite ──
+static void ac2513_docs_and_source() {
+    std::println("\n--- #2513 AC4/AC5: soak knobs + coverage + docs ---");
+    const auto src = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp");
+    CHECK(src.find("Issue #2513") != std::string::npos, "AC4: cites #2513");
+    CHECK(src.find("AURA_CHAOS_SOAK") != std::string::npos, "AC1: documents AURA_CHAOS_SOAK");
+    CHECK(src.find("AURA_CHAOS_FIBERS") != std::string::npos, "AC1: documents AURA_CHAOS_FIBERS");
+    CHECK(src.find("AURA_CHAOS_DURATION_S") != std::string::npos,
+          "AC1: documents AURA_CHAOS_DURATION_S");
+    CHECK(src.find("non_yield_spins") != std::string::npos ||
+              src.find("non-yield") != std::string::npos,
+          "AC4: non-yield LLM-style path");
+    CHECK(src.find("join_drain_residual_still_running") != std::string::npos,
+          "AC2/AC3: still-running hard criterion");
+    CHECK(src.find("steal_snapshot_hard_fail") != std::string::npos,
+          "AC2: steal hard-fail criterion");
+    CHECK(src.find("mailbox_hold_exit_starvation") != std::string::npos ||
+              src.find("AURA_CHAOS_MB_STARVE_MAX") != std::string::npos,
+          "AC2: mailbox starvation ceiling");
+    CHECK(src.find("mark_reclaimed") != std::string::npos, "AC3: reclaim residual path");
+    CHECK(src.find("maybe_reap_orphans_on_tick") != std::string::npos,
+          "AC3: tick reaper exercised");
+
+    const auto build = read_file("build.py");
+    CHECK(build.find("2513") != std::string::npos ||
+              build.find("AURA_CHAOS_SOAK") != std::string::npos,
+          "AC5: build.py soak knobs / #2513");
+    CHECK(build.find("check_production_concurrency_soak_2513") != std::string::npos ||
+              build.find("cmd_production_concurrency_soak") != std::string::npos ||
+              build.find("AURA_CHAOS_SOAK") != std::string::npos,
+          "AC5: soak gate / knobs registered");
+
+    const auto gate = read_file("scripts/check_production_concurrency_soak_2513.py");
+    CHECK(!gate.empty(), "AC4: coverage linter present");
+    CHECK(gate.find("Issue #2513") != std::string::npos, "AC4: linter cites #2513");
+
+    // AC5: gate help / production-concurrency command documents soak.
+    CHECK(build.find("production-concurrency") != std::string::npos, "AC5: production-concurrency");
+    CHECK(src.find("if (!chaos_soak())") != std::string::npos ||
+              src.find("SKIPPED") != std::string::npos,
+          "AC1: soak optional without SOAK=1 (PR smoke free)");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #2352/#2380: chaos mutate×steal×GC×mailbox production gate ===");
+    std::println("=== Issue #2352/#2380/#2513: chaos mutate×steal×GC×mailbox production gate ===");
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
@@ -508,10 +685,13 @@ int main() {
         ac3_inject_snapshot_mismatch();
         ac2380_inject_densify_fail();
         ac2380_inject_lock_order_violation();
+        ac2513_reclaim_residual_still_running();
         ac1_smoke();
         ac1_full_optional();
+        ac2513_soak_optional();
         ac4_ac5_docs_and_source();
         ac2380_production_concurrency_docs();
+        ac2513_docs_and_source();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

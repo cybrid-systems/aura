@@ -40,8 +40,9 @@ Usage:
   ./build.py coverage --check-tools  # verify llvm-cov tooling only
   ./build.py fuzz --list       # list registered fuzzers (#1935)
   ./build.py fuzz --all --quick  # run fuzz orchestrator
-  ./build.py production-concurrency  # #2380 nightly gate: canary + full chaos soak
-  ./build.py production-concurrency-coverage  # #2380 static AC contract rows
+  ./build.py production-concurrency  # #2380/#2513 nightly gate: canary + full chaos soak
+  ./build.py production-concurrency-coverage  # #2380/#2513 static AC contract rows
+  #   Soak knobs: AURA_CHAOS_SOAK=1 AURA_CHAOS_FIBERS=256..1000 AURA_CHAOS_DURATION_S=300+
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -4965,10 +4966,11 @@ def cmd_chaos_mutate_steal_gc_mailbox_coverage():
 
 
 def cmd_production_concurrency_coverage():
-    """Issue #2380: production-concurrency gate static contract rows.
+    """Issue #2380/#2513: production-concurrency gate static contract rows.
 
     Nightly profile: lock-order canary + full chaos + densify + Soft forbid.
-    PR smoke path stays short (no FULL / no PRODUCTION_CONCURRENCY_GATE).
+    #2513 soak extension: non-yield loops, reclaim residual, hard-fail counters.
+    PR smoke path stays short (no FULL / no PRODUCTION_CONCURRENCY_GATE / no SOAK).
     """
     print(f"{B}=== production-concurrency coverage (#2380) ==={N}")
     script = ROOT / "scripts" / "check_production_concurrency_gate_2380.py"
@@ -4980,22 +4982,42 @@ def cmd_production_concurrency_coverage():
         fail("production-concurrency coverage contract rows failed")
         return 1
     ok("production-concurrency coverage clean")
+    # Issue #2513 soak extension contract (same binary / gate).
+    return cmd_production_concurrency_soak_coverage()
+
+
+def cmd_production_concurrency_soak_coverage():
+    """Issue #2513: multi-fiber soak extension static AC contract rows."""
+    print(f"{B}=== production-concurrency soak coverage (#2513) ==={N}")
+    script = ROOT / "scripts" / "check_production_concurrency_soak_2513.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production-concurrency soak (#2513) coverage contract rows failed")
+        return 1
+    ok("production-concurrency soak (#2513) coverage clean")
     return 0
 
 
 def cmd_production_concurrency():
-    """Issue #2380: nightly / deploy production-concurrency hard gate.
+    """Issue #2380/#2513: nightly / deploy production-concurrency hard gate.
 
     Env matrix (hard-fail if any criterion fails):
       AURA_PRODUCTION_CONCURRENCY_GATE=1
       AURA_LOCK_ORDER_CANARY=1
       AURA_CHAOS_FULL=1
       AURA_CHAOS_WORKERS≥4  AURA_CHAOS_DURATION_S≥30
+      Optional soak: AURA_CHAOS_SOAK=1 AURA_CHAOS_FIBERS=256..1000
+                     AURA_CHAOS_DURATION_S=300+ (nightly / deploy)
     Soft steal (AURA_STEAL_SNAPSHOT_SOFT) is forbidden.
+    Hard criteria (#2513): steal hard-fail delta 0, residual still-running 0,
+    mailbox starvation ≤ AURA_CHAOS_MB_STARVE_MAX, no hang.
     Builds test_chaos_mutate_steal_gc_mailbox_2352 if needed, then soaks.
     Not part of PR CI smoke — use nightly or explicit local run.
     """
-    print(f"{B}═══ production-concurrency gate (#2380) ═══{N}")
+    print(f"{B}═══ production-concurrency gate (#2380/#2513) ═══{N}")
     # Static contract first (fast fail on missing wire-up).
     rc = cmd_production_concurrency_coverage()
     if rc != 0:
@@ -5030,14 +5052,21 @@ def cmd_production_concurrency():
     env["AURA_CHAOS_FULL"] = "1"
     env.setdefault("AURA_CHAOS_SEED", "1")
     env.setdefault("AURA_CHAOS_WORKERS", "4")
-    env.setdefault("AURA_CHAOS_FIBERS", "64")
-    env.setdefault("AURA_CHAOS_DURATION_S", "30")
+    # #2513: prefer higher fiber default under gate; SOAK raises further.
+    if env.get("AURA_CHAOS_SOAK", "") == "1":
+        env.setdefault("AURA_CHAOS_FIBERS", "256")
+        env.setdefault("AURA_CHAOS_DURATION_S", "300")
+    else:
+        env.setdefault("AURA_CHAOS_FIBERS", "64")
+        env.setdefault("AURA_CHAOS_DURATION_S", "30")
+    env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0")
     # Soft steal forbidden under production gate (also unset by test body).
     env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)
 
     info(
         "env: AURA_PRODUCTION_CONCURRENCY_GATE=1 AURA_LOCK_ORDER_CANARY=1 "
-        f"AURA_CHAOS_FULL=1 workers={env['AURA_CHAOS_WORKERS']} "
+        f"AURA_CHAOS_FULL=1 soak={env.get('AURA_CHAOS_SOAK', '0')} "
+        f"workers={env['AURA_CHAOS_WORKERS']} fibers={env['AURA_CHAOS_FIBERS']} "
         f"duration={env['AURA_CHAOS_DURATION_S']}s seed={env['AURA_CHAOS_SEED']}"
     )
     # Full soak + injects: allow generous wall (duration + watchdog + overhead).
