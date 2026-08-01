@@ -40,11 +40,14 @@ def main() -> int:
     must("Issue #2439", "AC1", ast)
     must("apply_verification_dirty_bits", "AC1", ast)
     must("dirty_column_mtx_.mutable_get()", "AC1", ast)
-    must("newly_set = static_cast<std::uint8_t>(reasons & ~verification_dirty_", "AC1", ast)
+    # #2440 strengthened RMW to atomic fetch_or (prev → newly_set).
+    must("fetch_or(reasons", "AC1", ast)
+    must("newly_set = static_cast<std::uint8_t>(reasons & ~prev)", "AC1", ast)
     must("2439 AC1", "AC1", test)
 
     must("apply_verify_dirty_bits", "AC2", ast)
-    must("newly_set = static_cast<std::uint8_t>(verify_reasons & ~verify_dirty_", "AC2", ast)
+    must("fetch_or(verify_reasons", "AC2", ast)
+    must("newly_set = static_cast<std::uint8_t>(verify_reasons & ~prev)", "AC2", ast)
     must("2439 AC2", "AC2", test)
 
     must("verification_dirty(NodeId id)", "AC3", ast)

@@ -47,8 +47,9 @@ def main() -> int:
         fails.append("AC1: reset_node_slot not found")
         body = ""
     else:
-        # reset_node_slot is long (many column resets); need ~2.5k for the edge clear.
-        body = ast[idx : idx + 2800]
+        # reset_node_slot is long (many column resets + #2440 atomic_ref stores);
+        # need ~3.5k for the edge clear at the tail of the body.
+        body = ast[idx : idx + 3600]
 
     must("Issue #2412", "AC1", ast)
     must("incoming_parent_edges_[id].clear()", "AC1", body)

@@ -1110,16 +1110,18 @@ private:
         dirty_[id] = 0;
         if (id < ppa_dirty_.size())
             ppa_dirty_[id] = 0;
-        // Issue #437: reset verify_dirty_ alongside ppa_dirty_
+        // Issue #437 / #2440: reset verify_dirty_ alongside ppa_dirty_
+        // (slot recycle; exclusive ownership of this node).
         if (id < verify_dirty_.size())
-            verify_dirty_[id] = 0;
-        // Issue #469: reset verification_dirty_ alongside the
+            std::atomic_ref<std::uint8_t>(verify_dirty_[id]).store(0, std::memory_order_relaxed);
+        // Issue #469 / #2440: reset verification_dirty_ alongside the
         // other dirty columns. Populated by
         // apply_verification_dirty_bits (from
         // (verify:parse-coverage-feedback) /
         // (verify:parse-assert-failure)).
         if (id < verification_dirty_.size())
-            verification_dirty_[id] = 0;
+            std::atomic_ref<std::uint8_t>(verification_dirty_[id])
+                .store(0, std::memory_order_relaxed);
         // Issue #290: reset macro_dirty_ alongside the other
         // dirty columns. Populated by apply_macro_dirty_bits
         // (called from clone_macro_body for newly expanded
@@ -1131,17 +1133,18 @@ private:
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
         node_first_mutation_[id] = 0;
-        // Issue #320: reset the per-node epoch column
+        // Issue #320 / #2440: reset the per-node epoch column
         // (the slot is recycled; the epoch starts at 0
         // again, same semantics as a fresh node).
         if (id < last_seen_epoch_.size())
-            last_seen_epoch_[id] = 0;
-        // Issue #339: reset occ_stale_ alongside
+            std::atomic_ref<std::uint64_t>(last_seen_epoch_[id])
+                .store(0, std::memory_order_relaxed);
+        // Issue #339 / #2440: reset occ_stale_ alongside
         // last_seen_epoch_ (the slot is recycled; the
         // staleness starts at 0 again, same as a
         // fresh node).
         if (id < occ_stale_.size())
-            occ_stale_[id] = 0;
+            std::atomic_ref<std::uint8_t>(occ_stale_[id]).store(0, std::memory_order_relaxed);
         parent_[id] = NULL_NODE;
         // Issue #1689 / #2412: recycled slot has no incoming edges.
         // Always clear — do not gate on !incoming_parent_index_dirty_.
@@ -1579,7 +1582,9 @@ public:
     //   0x08 = FormalCounterexample (formal proof counterexample)
     // OR'd with kGeneralDirty on dirty_ when set so legacy
     // is_dirty() callers still see "this node needs work".
-    std::pmr::vector<std::uint8_t> verify_dirty_;
+    // Issue #2440: mutable so const accessors can atomic_ref load;
+    // concurrent RMW under dirty_column_mtx_ + atomic_ref (#2439/#2440).
+    mutable std::pmr::vector<std::uint8_t> verify_dirty_;
     // Issue #469: verification_dirty_ column. Mirrors
     // verify_dirty_'s pattern; populated by
     // apply_verification_dirty_bits (called from
@@ -1587,7 +1592,8 @@ public:
     // (verify:parse-assert-failure)). 2 bits defined:
     //   kCoverageFeedbackDirty = 0x01
     //   kAssertFailureDirty = 0x02
-    std::pmr::vector<std::uint8_t> verification_dirty_;
+    // Issue #2440: mutable for atomic_ref in const readers.
+    mutable std::pmr::vector<std::uint8_t> verification_dirty_;
     // Issue #290: macro_dirty_ column. Mirrors
     // verification_dirty_'s pattern; populated by
     // apply_macro_dirty_bits (called from clone_macro_body
@@ -1816,7 +1822,9 @@ public:
     // parallel-array SoA vector; live nodes always
     // carry a valid epoch (starts at 0, which
     // compares != any real mutation_epoch_ >= 1).
-    std::pmr::vector<std::uint64_t> last_seen_epoch_;
+    // Issue #2440: mutable + atomic_ref load/store (no torn
+    // 64-bit reads); resize under dirty_column_mtx_.
+    mutable std::pmr::vector<std::uint64_t> last_seen_epoch_;
     // Issue #339: per-node occurrence-narrowing
     // staleness column. (Declared after last_seen_epoch_
     // to match the init-list order in all 3 ctors;
@@ -1829,7 +1837,8 @@ public:
     // verification_dirty_ / macro_dirty_). The narrow
     // helper: 1 = stale (must re-analyze before use),
     // 0 = fresh.
-    std::pmr::vector<std::uint8_t> occ_stale_;
+    // Issue #2440: mutable + atomic_ref; resize under dirty_column_mtx_.
+    mutable std::pmr::vector<std::uint8_t> occ_stale_;
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
@@ -2257,12 +2266,13 @@ public:
 public:
     // Issue #437: verify_dirty_ accessor (public, used by
     // the (compile:verify-dirty?) primitive).
-    // Issue #2439: shared dirty_column_mtx_ (parity with verification_dirty).
+    // Issue #2439 / #2440: shared dirty_column_mtx_ + atomic_ref load
+    // (no torn read vs concurrent apply_verify_dirty_bits).
     [[nodiscard]] std::uint8_t verify_dirty(NodeId id) const noexcept {
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= verify_dirty_.size())
             return 0;
-        return verify_dirty_[id];
+        return std::atomic_ref<std::uint8_t>(verify_dirty_[id]).load(std::memory_order_acquire);
     }
     // Issue #469: verification_dirty_ accessor is defined
     // later in this file (after apply_verification_dirty_bits
@@ -2567,11 +2577,10 @@ public:
     [[nodiscard]] std::uint64_t tag_arity_index_dirty_marks() const noexcept {
         return tag_arity_index_dirty_marks_.load(std::memory_order_relaxed);
     }
-    // Issue #437 / #2439: apply verify-dirty bits to a node.
-    // Issue #2439: exclusive dirty_column_mtx_ around column RMW so
-    // concurrent apply_*(same_id, same_reasons) computes newly_set
-    // exactly once (no metric double-count). mark_dirty is outside
-    // the lock (it takes dirty_column_mtx_ itself — non-recursive).
+    // Issue #437 / #2439 / #2440: apply verify-dirty bits to a node.
+    // Exclusive dirty_column_mtx_ for resize; atomic fetch_or for the
+    // column cell so newly_set is computed exactly once (no metric
+    // double-count). mark_dirty is outside the lock (non-recursive).
     void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
         if (verify_reasons == 0)
             return;
@@ -2580,9 +2589,10 @@ public:
             std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
             if (id >= verify_dirty_.size())
                 verify_dirty_.resize(id + 1, 0);
-            // Detect newly-set bits under lock (for per-reason counters).
-            newly_set = static_cast<std::uint8_t>(verify_reasons & ~verify_dirty_[id]);
-            verify_dirty_[id] |= verify_reasons;
+            // Issue #2440: atomic fetch_or (prev bits → newly_set).
+            const auto prev = std::atomic_ref<std::uint8_t>(verify_dirty_[id])
+                                  .fetch_or(verify_reasons, std::memory_order_acq_rel);
+            newly_set = static_cast<std::uint8_t>(verify_reasons & ~prev);
         }
         if (newly_set & kAssertionDirty)
             verify_assertion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
@@ -2596,20 +2606,16 @@ public:
     }
     // Issue #469: verification_dirty_ accessor (public, used
     // by the (query:verification-loop-stats) primitive).
-    // Issue #2439: shared dirty_column_mtx_ so concurrent apply_*
-    // exclusive RMW cannot race the byte load / vector reallocation.
+    // Issue #2439 / #2440: shared dirty_column_mtx_ + atomic_ref load.
     [[nodiscard]] std::uint8_t verification_dirty(NodeId id) const noexcept {
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= verification_dirty_.size())
             return 0;
-        return verification_dirty_[id];
+        return std::atomic_ref<std::uint8_t>(verification_dirty_[id])
+            .load(std::memory_order_acquire);
     }
-    // Issue #469 / #2439: apply verification-dirty bits to a node.
-    // Mirrors apply_verify_dirty_bits (from #437) but for
-    // the verification_dirty_ column (separate column to
-    // avoid collision with the VerifyDirtyReason bits).
-    // Issue #2439: exclusive dirty_column_mtx_ for newly_set RMW
-    // (same pattern as mark_dirty / apply_verify_dirty_bits).
+    // Issue #469 / #2439 / #2440: apply verification-dirty bits.
+    // Mirrors apply_verify_dirty_bits; exclusive resize + atomic fetch_or.
     void apply_verification_dirty_bits(NodeId id, std::uint8_t reasons) {
         if (reasons == 0)
             return;
@@ -2618,9 +2624,10 @@ public:
             std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
             if (id >= verification_dirty_.size())
                 verification_dirty_.resize(id + 1, 0);
-            // Detect newly-set bits under lock (for per-reason counters).
-            newly_set = static_cast<std::uint8_t>(reasons & ~verification_dirty_[id]);
-            verification_dirty_[id] |= reasons;
+            // Issue #2440: atomic fetch_or for newly_set metrics.
+            const auto prev = std::atomic_ref<std::uint8_t>(verification_dirty_[id])
+                                  .fetch_or(reasons, std::memory_order_acq_rel);
+            newly_set = static_cast<std::uint8_t>(reasons & ~prev);
         }
         if (newly_set & kCoverageFeedbackDirty)
             verification_coverage_feedback_total_.fetch_add(1, std::memory_order_relaxed);
@@ -2683,12 +2690,22 @@ public:
     // a never-touched node will look "stale" once
     // after the first real epoch and then settle).
 
+    // Issue #2440: SoA side-table cells must be lock-free atomics
+    // on target platforms (uint8 dirty/stale + uint64 epoch).
+    static_assert(std::atomic<std::uint8_t>::is_always_lock_free,
+                  "Issue #2440: uint8 atomic must be lock-free on target");
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+                  "Issue #2440: uint64 atomic must be lock-free on target");
+
     // Read-only accessor (public, used by the type
     // checker + tests).
+    // Issue #2440: shared dirty_column_mtx_ + atomic_ref load
+    // (no torn 64-bit epoch vs concurrent stamp).
     [[nodiscard]] std::uint64_t last_seen_epoch(NodeId id) const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= last_seen_epoch_.size())
             return 0;
-        return last_seen_epoch_[id];
+        return std::atomic_ref<std::uint64_t>(last_seen_epoch_[id]).load(std::memory_order_acquire);
     }
 
     // Stamp the node with the current mutation epoch.
@@ -2696,10 +2713,14 @@ public:
     // the updated epoch. The size of the column grows
     // lazily (matches the pattern of other side-tables
     // like verify_dirty_).
+    // Issue #2440: exclusive dirty_column_mtx_ for resize +
+    // atomic_ref store (no torn 64-bit write).
     void stamp_last_seen_epoch(NodeId id, std::uint64_t epoch) noexcept {
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         if (id >= last_seen_epoch_.size())
             last_seen_epoch_.resize(id + 1, 0);
-        last_seen_epoch_[id] = epoch;
+        std::atomic_ref<std::uint64_t>(last_seen_epoch_[id])
+            .store(epoch, std::memory_order_release);
     }
 
     // Convenience: stamp a node as having-seen the
@@ -2730,34 +2751,43 @@ public:
     // Public read accessor: returns 0/1 (or 0 for
     // out-of-range, consistent with the other
     // per-node dirty accessors).
+    // Issue #2440: shared dirty_column_mtx_ + atomic_ref load.
     [[nodiscard]] std::uint8_t is_occurrence_stale(NodeId id) const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= occ_stale_.size())
             return 0;
-        return occ_stale_[id];
+        return std::atomic_ref<std::uint8_t>(occ_stale_[id]).load(std::memory_order_acquire);
     }
     // Mark a node as stale (after mutation or after
     // validate_occurrence_narrowing() decides the
     // refined type is no longer compatible). The
     // caller can pass the mutation_id for
     // provenance tracking.
+    // Issue #2440: exclusive dirty_column_mtx_ + atomic_ref store.
     void mark_occurrence_stale(NodeId id) noexcept {
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         if (id >= occ_stale_.size())
             occ_stale_.resize(id + 1, 0);
-        occ_stale_[id] = 1;
+        std::atomic_ref<std::uint8_t>(occ_stale_[id]).store(1, std::memory_order_release);
     }
     // Clear the staleness bit (after a successful
     // re-analysis via analyze_predicate_flat).
+    // Issue #2440: exclusive dirty_column_mtx_ + atomic_ref store.
     void clear_occurrence_stale(NodeId id) noexcept {
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         if (id < occ_stale_.size())
-            occ_stale_[id] = 0;
+            std::atomic_ref<std::uint8_t>(occ_stale_[id]).store(0, std::memory_order_release);
     }
     // Count of how many nodes are currently stale
     // (for observability).
+    // Issue #2440: shared lock + atomic_ref loads while scanning.
     [[nodiscard]] std::size_t occurrence_stale_count() const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         std::size_t n = 0;
-        for (auto v : occ_stale_)
-            if (v)
+        for (std::size_t i = 0; i < occ_stale_.size(); ++i) {
+            if (std::atomic_ref<std::uint8_t>(occ_stale_[i]).load(std::memory_order_relaxed) != 0)
                 ++n;
+        }
         return n;
     }
 
@@ -2792,24 +2822,29 @@ public:
         }
     }
 
-    // Issue #313: read-only accessor for the verification-
+    // Issue #313 / #2440: read-only accessor for the verification-
     // dirty side-table. Returns the OR'd set of verification
     // reasons set on this node (kCoverageFeedbackDirty |
     // kAssertFailureDirty | ...). 0 means "clean from a
-    // verification perspective".
-    bool is_verification_dirty(NodeId id) const {
-        return id < verification_dirty_.size() && verification_dirty_[id] != 0;
-    }
+    // verification perspective". Uses locked atomic load.
+    bool is_verification_dirty(NodeId id) const { return verification_dirty(id) != 0; }
     bool is_verification_dirty_for(NodeId id, std::uint8_t verify_mask) const {
-        return id < verification_dirty_.size() && (verification_dirty_[id] & verify_mask) != 0;
+        return (verification_dirty(id) & verify_mask) != 0;
     }
     void clear_verification_dirty(NodeId id) {
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         if (id < verification_dirty_.size())
-            verification_dirty_[id] = 0;
+            std::atomic_ref<std::uint8_t>(verification_dirty_[id])
+                .store(0, std::memory_order_release);
     }
     void clear_verification_dirty_for(NodeId id, std::uint8_t verify_mask) {
-        if (id < verification_dirty_.size())
-            verification_dirty_[id] &= static_cast<std::uint8_t>(~verify_mask);
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+        if (id < verification_dirty_.size()) {
+            auto& cell = verification_dirty_[id];
+            auto cur = std::atomic_ref<std::uint8_t>(cell).load(std::memory_order_relaxed);
+            std::atomic_ref<std::uint8_t>(cell).store(static_cast<std::uint8_t>(cur & ~verify_mask),
+                                                      std::memory_order_release);
+        }
     }
 
 
@@ -5925,8 +5960,14 @@ public:
         // tests + introspection (the value isn't yet
         // meaningful for the cache check; that's a
         // follow-up).
-        if (id < last_seen_epoch_.size())
-            last_seen_epoch_[id] += 1;
+        // Issue #2440: atomic fetch_add under exclusive lock
+        // (no torn 64-bit RMW; only if column already sized).
+        {
+            std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+            if (id < last_seen_epoch_.size())
+                std::atomic_ref<std::uint64_t>(last_seen_epoch_[id])
+                    .fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     // Issue #320: mark_dirty_for_reinfer helper.
@@ -6186,8 +6227,9 @@ public:
                                     src_tag == NodeTag::Coverpoint ||
                                     src_tag == NodeTag::Constraint || src_tag == NodeTag::Class);
         }
-        if (!propagate_sva_verify && id < verify_dirty_.size())
-            propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;
+        // Issue #2440: use locked atomic accessor (not raw column).
+        if (!propagate_sva_verify)
+            propagate_sva_verify = (verify_dirty(id) & kSvaDirty) != 0;
         std::uint64_t touched = 0;
         bool truncated = false;
         std::deque<NodeId> queue;

@@ -3413,6 +3413,24 @@ def cmd_verification_dirty_bits_lock_coverage():
     return 0
 
 
+def cmd_soa_column_atomic_coverage():
+    """Issue #2440: 4 SoA side-table columns atomic_ref + dirty_column_mtx_.
+
+    verify_dirty_ / verification_dirty_ / last_seen_epoch_ / occ_stale_.
+    """
+    print(f"{B}=== SoA column atomic coverage (#2440) ==={N}")
+    script = ROOT / "scripts" / "check_soa_column_atomic_2440.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("SoA column atomic (#2440) coverage contract rows failed")
+        return 1
+    ok("SoA column atomic (#2440) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4374,6 +4392,7 @@ def cmd_gate():
         or cmd_gc_defer_reconcile_cas_coverage()
         or cmd_arena_compact_notify_lifecycle_coverage()
         or cmd_verification_dirty_bits_lock_coverage()
+        or cmd_soa_column_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
