@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 629 | Preferred destination suites |
-| **Total scanned** | **629** | |
+| `tests/core/test_*.cpp` | 630 | Preferred destination suites |
+| **Total scanned** | **630** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 73 | 73 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 183 | 183 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 184 | 184 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 65 | 65 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -274,6 +274,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp`
 - `tests/compiler/test_dead_coercion_layered_2282.cpp`
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp`
+- `tests/core/test_defines_referencing_sym_2448.cpp`
 - `tests/compiler/test_defuse_version_closed_loop.cpp`
 - `tests/compiler/test_densify_envframe_ok_2361.cpp`
 - `tests/compiler/test_densify_last_call_axes_2376.cpp`
@@ -896,13 +897,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (183)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (184)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (183)
+#### domain/ (184)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -940,6 +941,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_constraint_system_solve_delta_cross_delta_task2.cpp` (—) [domain_suite, theme_compiler] — test_constraint_system_solve_delta_cross_delta_task2.cpp
 - `tests/core/test_coverage_holes_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1816 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dead_coercion_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_dead_coercion_batch.cpp
+- `tests/core/test_defines_referencing_sym_2448.cpp` (#2448) [domain_suite, theme_core] — AC1: well-formed unique-name case still finds referencing Defines
 - `tests/core/test_dep_graph_concurrent.cpp` (—) [domain_suite, theme_core] — test_dep_graph_concurrent.cpp — Issue #1376:
 - `tests/compiler/test_dep_graph_hybrid_cascade_2110.cpp` (#2110) [domain_suite, theme_compiler] — DepGraph (hybrid cascade). Extended by Issue #2187 — block/instr
 - `tests/serve/test_depth_safe_mutation_boundary_steal_2115.cpp` (#2115) [domain_suite, theme_serve] — AC1: Holding MutationBoundary (depth>0) fiber is never steal-safe
