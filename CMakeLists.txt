@@ -3379,6 +3379,11 @@ aura_add_issue_test(test_sys_open_path_harden_2487)
 aura_issue_test_link_llvm_jit(test_sys_open_path_harden_2487)
 add_dependencies(all_test_issue_targets test_sys_open_path_harden_2487)
 
+# Issue #2500: Agent compact policy (health + frag + defer + hold → mode).
+aura_add_issue_test(test_compact_policy_2500)
+aura_issue_test_link_llvm_jit(test_compact_policy_2500)
+add_dependencies(all_test_issue_targets test_compact_policy_2500)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
