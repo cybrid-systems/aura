@@ -109,6 +109,11 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_sampled_reject_to
 // coercion_provenance_sampled_reject_total which counts SKIPS.
 export inline std::atomic<std::uint64_t> g_coercion_sampled_insert_incomplete_total{0};
 export inline std::atomic<std::uint32_t> g_coercion_provenance_ban_weak_ir_wired{1};
+// Issue #2512: times CoercionMap::add stamped TLS active mid/pred into a
+// zero-field entry (deferred-add completeness). Completeness_bp remains
+// the authority for apply-time quality.
+export inline std::atomic<std::uint64_t> g_coercion_stamp_at_add_total{0};
+export inline std::atomic<std::uint32_t> g_coercion_stamp_at_add_wired{1};
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
 // Issue #2282: combined on query:dead-coercion-layered-stats as the
@@ -136,6 +141,9 @@ export inline void clear_coercion_active_mutation_context() noexcept {
 }
 export [[nodiscard]] inline std::uint64_t coercion_active_mutation_id() noexcept {
     return s_coercion_active_mutation_id;
+}
+export [[nodiscard]] inline std::uint32_t coercion_active_predicate() noexcept {
+    return s_coercion_active_predicate;
 }
 
 export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
@@ -177,6 +185,25 @@ export struct CoercionEntry {
     // CastOp elision (stored on Coercion node float_val_).
     std::uint32_t narrow_evidence = 0;
 };
+
+// Issue #2512: stamp TLS active mutation/predicate into a CoercionEntry at
+// deferred-add. Never overwrites non-zero caller stamps (occurrence / explicit
+// mid). Zero cost when both fields already set or TLS is empty (AC3/AC5).
+// Returns true when at least one field was stamped from context.
+export inline bool stamp_coercion_entry_from_active_context(CoercionEntry& e) noexcept {
+    bool stamped = false;
+    if (e.source_mutation_id == 0 && s_coercion_active_mutation_id != 0) {
+        e.source_mutation_id = s_coercion_active_mutation_id;
+        stamped = true;
+    }
+    if (e.predicate_cond_node == 0 && s_coercion_active_predicate != 0) {
+        e.predicate_cond_node = s_coercion_active_predicate;
+        stamped = true;
+    }
+    if (stamped)
+        g_coercion_stamp_at_add_total.fetch_add(1, std::memory_order_relaxed);
+    return stamped;
+}
 
 // Issue #2147: weak forensic mutation id = original_child placeholder
 // (not a real MutationRecord id). Must never count as complete under
@@ -391,20 +418,41 @@ public:
     void add(aura::ast::NodeId parent, std::uint32_t child_index, aura::ast::NodeId original_child,
              std::uint32_t type_tag, std::uint32_t type_id, std::uint32_t src_line,
              std::uint32_t src_col) {
-        entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
-                                         static_cast<std::uint32_t>(original_child), type_tag,
-                                         type_id, src_line, src_col, 0, 0});
+        // Issue #2512: stamp TLS active mid/pred at deferred-add (fast-path
+        // completeness). Bare 6-arg add used when engine had no local context.
+        CoercionEntry e{static_cast<std::uint32_t>(parent),
+                        child_index,
+                        static_cast<std::uint32_t>(original_child),
+                        type_tag,
+                        type_id,
+                        src_line,
+                        src_col,
+                        0,
+                        0,
+                        0};
+        (void)stamp_coercion_entry_from_active_context(e);
+        entries_.push_back(e);
     }
 
     // Issue #537: overload with occurrence-narrowing provenance.
+    // Issue #2512: still fills zero fields from TLS; never overwrites
+    // explicit non-zero stamps (AC2).
     void add(aura::ast::NodeId parent, std::uint32_t child_index, aura::ast::NodeId original_child,
              std::uint32_t type_tag, std::uint32_t type_id, std::uint32_t src_line,
              std::uint32_t src_col, std::uint32_t predicate_cond_node,
              std::uint64_t source_mutation_id, std::uint32_t narrow_evidence = 0) {
-        entries_.push_back(CoercionEntry{static_cast<std::uint32_t>(parent), child_index,
-                                         static_cast<std::uint32_t>(original_child), type_tag,
-                                         type_id, src_line, src_col, predicate_cond_node,
-                                         source_mutation_id, narrow_evidence});
+        CoercionEntry e{static_cast<std::uint32_t>(parent),
+                        child_index,
+                        static_cast<std::uint32_t>(original_child),
+                        type_tag,
+                        type_id,
+                        src_line,
+                        src_col,
+                        predicate_cond_node,
+                        source_mutation_id,
+                        narrow_evidence};
+        (void)stamp_coercion_entry_from_active_context(e);
+        entries_.push_back(e);
     }
 
     const std::vector<CoercionEntry>& entries() const { return entries_; }

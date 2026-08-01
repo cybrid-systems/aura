@@ -3603,6 +3603,11 @@ aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)
 aura_add_issue_test(test_coercion_provenance_fast_strict_2147)
 aura_issue_test_link_llvm_jit(test_coercion_provenance_fast_strict_2147)
 
+# Issue #2512: stamp active mid/pred into CoercionEntry at deferred-add.
+aura_add_issue_test(test_coercion_stamp_at_add_2512)
+aura_issue_test_link_llvm_jit(test_coercion_stamp_at_add_2512)
+add_dependencies(all_test_issue_targets test_coercion_stamp_at_add_2512)
+
 # Issue #2148: Precision meet/join for predicate lattice (number/string/bool + ADT).
 aura_add_issue_test(test_predicate_meet_join_lattice_2148)
 aura_issue_test_link_llvm_jit(test_predicate_meet_join_lattice_2148)

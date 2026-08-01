@@ -6565,6 +6565,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-provenance-fast-path-wired", 1);
             insert_kv("schema-2147", 2147);
             insert_kv("issue-2147", 2147);
+            // Issue #2512: stamp active mid/pred into CoercionEntry at deferred-add.
+            // Raises apply-time fast-path hit rate when TLS would otherwise clear.
+            insert_kv("coercion-stamp-at-add-total",
+                      static_cast<std::int64_t>(aura::compiler::g_coercion_stamp_at_add_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("coercion_stamp_at_add_total",
+                      static_cast<std::int64_t>(aura::compiler::g_coercion_stamp_at_add_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("coercion-stamp-at-add-wired",
+                      static_cast<std::int64_t>(aura::compiler::g_coercion_stamp_at_add_wired.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-2512", 2512);
+            insert_kv("issue-2512", 2512);
             // Issue #2148: precision meet/join lattice observability.
             const std::int64_t meet_prec =
                 m ? static_cast<std::int64_t>(

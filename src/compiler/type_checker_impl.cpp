@@ -3106,13 +3106,21 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                                             std::uint32_t child_index, NodeId original_child,
                                             std::uint32_t type_tag, std::uint32_t type_id,
                                             std::uint32_t src_line, std::uint32_t src_col) {
-    // Issue #1924: prefer active CS mutation/blame context (typed_mutate
+    // Issue #1924 / #2512: prefer active CS mutation/blame context (typed_mutate
     // path) over only the flat mutation log — prevents blame 断裂 when
     // deferral happens mid-infer_flat_partial with empty log race.
+    // Issue #2512: always stamp mid/pred into CoercionEntry at deferred-add
+    // (not only at apply-time TLS fill) so production reject-on-miss does not
+    // thrash when TLS was cleared between collect and apply.
     std::uint32_t cond_node = last_predicate_cond_id_;
     if (cond_node == 0)
         cond_node = cs_.active_predicate_cond_node();
+    // Issue #2512: also consult TLS (kept in sync by set_active_mutation_id).
+    if (cond_node == 0)
+        cond_node = aura::compiler::coercion_active_predicate();
     std::uint64_t mutation_id = cs_.active_mutation_id();
+    if (mutation_id == 0)
+        mutation_id = aura::compiler::coercion_active_mutation_id();
     std::uint32_t narrow_ev = last_if_narrowing_;
     if (mutation_id == 0 && !flat.all_mutations().empty())
         mutation_id = flat.all_mutations().back().mutation_id;
@@ -3135,11 +3143,13 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
     if (cs_.active_affected_node() == 0 && original_child != aura::ast::NULL_NODE)
         cs_.set_active_blame_context(cond_node, static_cast<std::uint32_t>(original_child));
 
-    if (narrow_ev != 0 || cond_node != 0 || mutation_id != 0) {
-        coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col,
-                       cond_node, mutation_id, narrow_ev);
-        if (cs_.metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+    // Always use provenance overload so CoercionMap::add can fill residual
+    // zeros from TLS (#2512). Explicit non-zero stamps are never overwritten.
+    coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col,
+                   cond_node, mutation_id, narrow_ev);
+    if (cs_.metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        if (narrow_ev != 0 || cond_node != 0 || mutation_id != 0) {
             m->coercion_post_narrow_elim_opportunities_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
             if (cond_node != 0 && mutation_id != 0)
@@ -3153,13 +3163,9 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
             } else if (mutation_id != 0 || !flat.all_mutations().empty()) {
                 m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
             }
-        }
-    } else {
-        coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col);
-        // Mutation context expected but no stamp → miss (AI audit signal).
-        if (cs_.metrics_ && (!flat.all_mutations().empty() || cs_.active_mutation_id() != 0)) {
-            static_cast<struct CompilerMetrics*>(cs_.metrics_)
-                ->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (!flat.all_mutations().empty() || cs_.active_mutation_id() != 0) {
+            // Mutation context expected but no stamp → miss (AI audit signal).
+            m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
