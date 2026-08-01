@@ -14180,6 +14180,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"stable-func-id-sole-primary-wired", make_int(1)},
                 {"schema-2369", make_int(2369)},
                 {"issue-2369", make_int(2369)},
+                // Issue #2503: remount fail → MustDeopt + batch_deopt shared path.
+                {"remount-or-force-deopt-wired", make_int(1)},
+                {"schema-2503", make_int(2503)},
+                {"issue-2503", make_int(2503)},
             };
             return build_hash(kv);
         });

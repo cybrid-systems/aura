@@ -117,6 +117,14 @@ void aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n);
 // per-closure linear_state is the linear ownership proxy).
 int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
                                   std::uint8_t linear_fp);
+// Issue #2503: remount + unified fail transaction. Calls remount; on any
+// fail (env_gen / defuse / linear / densify cell remap) sets MustDeopt and
+// invokes aura_jit_batch_deopt_for(name) when the closure has a name.
+// Metrics stay distinct (env_gen_mismatch / cell_remap_fail / remount_fail).
+// Returns 1 on remount ok, 0 on fail (force-deopt path applied). Prefer this
+// over bare aura_remount_closure_captures at production call sites.
+int aura_remount_or_force_deopt(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                std::uint8_t linear_fp);
 // Issue #2234: capture detection helper. Returns true when the
 // closure has any env or linear capture to remount (proxied by
 // non-zero defuse_version or non-zero linear_state). The remap +
