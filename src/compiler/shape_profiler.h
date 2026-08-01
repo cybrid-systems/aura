@@ -103,16 +103,43 @@ inline std::atomic<std::uint64_t>& g_shape_version_at_storm_atomic() noexcept {
     return g_shape_version_at_storm_atomic().load(std::memory_order_acquire);
 }
 
-// Issue #2433: force-reason codes for query:shape-storm-health.
-// 0 = none / quiet; 1 = deopt-ring threshold trip (storm enter).
+// Issue #2433 / #2526: force-reason codes for query:shape-storm-health.
+// 0 = none / quiet
+// 1 = deopt-ring threshold trip (mutation-induced storm enter) — HARD LayoutStamp fence
+// 2 = reserved / legacy
+// 3 = adaptive path last suppressed compact-dominated candidate (#2526 soft)
 inline constexpr std::uint32_t kShapeStormForceReasonNone = 0;
 inline constexpr std::uint32_t kShapeStormForceReasonThreshold = 1;
+inline constexpr std::uint32_t kShapeStormForceReasonAdaptiveSuppress = 3;
+inline constexpr int kShapeStormAdaptiveIssue = 2526;
 inline std::atomic<std::uint32_t>& g_shape_storm_force_reason_atomic() noexcept {
     static std::atomic<std::uint32_t> v{kShapeStormForceReasonNone};
     return v;
 }
 [[nodiscard]] inline std::uint32_t shape_storm_force_reason() noexcept {
     return g_shape_storm_force_reason_atomic().load(std::memory_order_acquire);
+}
+// Issue #2526: LayoutStamp consumers treat force-reason==Threshold as hard
+// fence (must re-specialize). AdaptiveSuppress / None are soft (compact-only
+// version noise may soft-miss without process-global storm isolation).
+[[nodiscard]] inline bool shape_storm_fence_hard() noexcept {
+    return shape_storm_force_reason() == kShapeStormForceReasonThreshold;
+}
+// Live adaptive threshold published for Agents (process-global snapshot).
+inline std::atomic<std::uint32_t>& g_deopt_storm_adaptive_threshold_atomic() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+[[nodiscard]] inline std::uint32_t deopt_storm_adaptive_threshold_live() noexcept {
+    return g_deopt_storm_adaptive_threshold_atomic().load(std::memory_order_acquire);
+}
+inline std::atomic<std::uint64_t>& g_deopt_storm_adaptive_suppress_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_deopt_storm_adaptive_enter_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
 }
 
 class ShapeProfiler {
@@ -244,8 +271,38 @@ public:
     // last `deopt_storm_window_` deopts exceeded `deopt_storm_threshold_`.
     // Once true, callers (SpecJITController, GuardShape) should
     // down-shift to generic / raise threshold / drop the function.
+    // Issue #2526: threshold may be raised adaptively under compact-
+    // dominated + high stable-ratio pressure (avoids over-isolation).
     [[nodiscard]] bool deopt_storm_active() const noexcept {
         return deopt_storm_active_.load(std::memory_order_acquire);
+    }
+
+    // Issue #2526: adaptive closed-loop knobs / observability.
+    // effective threshold used on last storm decision (base or raised).
+    [[nodiscard]] std::uint32_t deopt_storm_adaptive_threshold() const noexcept {
+        return adaptive_threshold_live_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t deopt_storm_adaptive_suppress_total() const noexcept {
+        return adaptive_suppress_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t deopt_storm_adaptive_enter_total() const noexcept {
+        return adaptive_enter_total_.load(std::memory_order_relaxed);
+    }
+    // Pressure classification helpers (lifetime counters).
+    // compact-dominated when compact_calls >= mutation_invalidations (and compact>0).
+    [[nodiscard]] bool pressure_compact_dominated() const noexcept {
+        const auto c = arena_compact_calls_.load(std::memory_order_relaxed);
+        const auto m = mutation_induced_invalidations_.load(std::memory_order_relaxed);
+        return c > 0 && c >= m;
+    }
+    // Boost applied to threshold under compact-dominated + stable profiles.
+    // Default = base threshold (so adaptive thr = 2× base). Env:
+    // AURA_SHAPE_STORM_ADAPTIVE_BOOST=N (0 disables adaptive raise).
+    void set_adaptive_threshold_boost(std::uint32_t boost) noexcept {
+        adaptive_threshold_boost_ = boost;
+    }
+    [[nodiscard]] std::uint32_t adaptive_threshold_boost() const noexcept {
+        return adaptive_threshold_boost_;
     }
 
     // Issue #1468: shape_stable_ratio = (# fns in profiles_ with
@@ -377,6 +434,11 @@ private:
     std::uint32_t min_samples_for_stable_ = 100;
     std::uint32_t deopt_storm_window_ = 256;
     std::uint32_t deopt_storm_threshold_ = 4;
+    // Issue #2526: adaptive boost (0 = disable adaptive raise).
+    std::uint32_t adaptive_threshold_boost_ = 0; // set in ctor to match base thr
+    std::atomic<std::uint32_t> adaptive_threshold_live_{0};
+    std::atomic<std::uint64_t> adaptive_suppress_total_{0};
+    std::atomic<std::uint64_t> adaptive_enter_total_{0};
     Preset active_preset_ = kDefaultPreset;
     std::function<void(FnKey fn, std::uint32_t dirty_scope)> dirty_hook_;
 };

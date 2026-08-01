@@ -12397,7 +12397,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto isolations =
                 shape::g_deopt_storm_isolations_total_atomic().load(std::memory_order_relaxed);
             const auto force = shape::shape_storm_force_reason();
-            const bool storm_active = force != shape::kShapeStormForceReasonNone;
+            // Issue #2526: only Threshold force-reason is active storm (hard fence).
+            // AdaptiveSuppress is soft (no isolation / no health crash).
+            const bool storm_active = force == shape::kShapeStormForceReasonThreshold;
             // health-bp: 10000 quiet; −2500 when storm active; −min(4000, isolations*100)
             std::int64_t health_bp = 10000;
             if (storm_active)
@@ -12407,7 +12409,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             health_bp -= iso_pen;
             if (health_bp < 0)
                 health_bp = 0;
-            auto* ht = FlatHashTable::create(8);
+            // Issue #2526: capacity 32 for adaptive keys + schema-2526.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -12444,6 +12447,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(shape::shape_high_mutation_default_enabled()));
             insert_kv("schema-2433", 2433);
             insert_kv("issue-2433", 2433);
+            // Issue #2526: adaptive threshold closed-loop surface.
+            insert_kv("schema-2526", 2526);
+            insert_kv("issue-2526", 2526);
+            insert_kv("adaptive-threshold-live",
+                      static_cast<std::int64_t>(shape::deopt_storm_adaptive_threshold_live()));
+            insert_kv("adaptive-suppress-total",
+                      static_cast<std::int64_t>(
+                          shape::g_deopt_storm_adaptive_suppress_total_atomic().load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "adaptive-enter-total",
+                static_cast<std::int64_t>(shape::g_deopt_storm_adaptive_enter_total_atomic().load(
+                    std::memory_order_relaxed)));
+            insert_kv("shape-storm-fence-hard", shape::shape_storm_fence_hard() ? 1 : 0);
+            insert_kv("force-reason-threshold",
+                      static_cast<std::int64_t>(shape::kShapeStormForceReasonThreshold));
+            insert_kv("force-reason-adaptive-suppress",
+                      static_cast<std::int64_t>(shape::kShapeStormForceReasonAdaptiveSuppress));
+            insert_kv("adaptive-policy-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

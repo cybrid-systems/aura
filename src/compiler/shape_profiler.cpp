@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <contracts>
 #include <cstdint>
+#include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
 #include "hash_meta.h" // FNV constants (#901)
@@ -361,6 +362,24 @@ void ShapeProfiler::apply_preset(Preset p) {
     min_samples_for_stable_ = p.min_samples_for_stable;
     deopt_storm_window_ = p.deopt_storm_window;
     deopt_storm_threshold_ = p.deopt_storm_threshold;
+    // Issue #2526: default adaptive boost = base threshold (2× under
+    // compact-dominated + stable). AURA_SHAPE_STORM_ADAPTIVE_BOOST=0
+    // disables raise; N sets explicit boost.
+    std::uint32_t boost = p.deopt_storm_threshold;
+    if (const char* e = std::getenv("AURA_SHAPE_STORM_ADAPTIVE_BOOST")) {
+        if (e[0] == '0' && e[1] == '\0')
+            boost = 0;
+        else {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(e, &end, 10);
+            if (end != e && v <= 100000ul)
+                boost = static_cast<std::uint32_t>(v);
+        }
+    }
+    adaptive_threshold_boost_ = boost;
+    adaptive_threshold_live_.store(p.deopt_storm_threshold, std::memory_order_release);
+    g_deopt_storm_adaptive_threshold_atomic().store(p.deopt_storm_threshold,
+                                                    std::memory_order_release);
     active_preset_ = p;
 }
 
@@ -576,6 +595,8 @@ bool ShapeProfiler::invalidate_unlocked_(FnKey fn) {
     const std::uint64_t epoch = aura::core::current_mutation_epoch();
     if (epoch > it->second.version)
         it->second.version = epoch;
+    // Issue #2526: single-fn invalidate is mutation pressure (feeds ring).
+    mutation_induced_invalidations_.fetch_add(1, std::memory_order_relaxed);
     update_deopt_storm_state_(fn);
     return was_stable;
 }
@@ -610,13 +631,14 @@ bool ShapeProfiler::invalidate(FnKey fn) {
 
 void ShapeProfiler::invalidate_all() noexcept {
     // Collect keys under unique lock, then invalidate each (hook-safe).
+    // Issue #2526: mutation pressure counted per-invalidate_unlocked_ (not here)
+    // to avoid double-count with the single-fn path.
     std::vector<FnKey> keys;
     {
         auto lock = unique_lock_();
         keys.reserve(profiles_.size());
         for (const auto& [k, _] : profiles_)
             keys.push_back(k);
-        mutation_induced_invalidations_.fetch_add(keys.size(), std::memory_order_relaxed);
     }
     for (FnKey fn : keys)
         (void)invalidate(fn);
@@ -722,10 +744,18 @@ double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) n
     return shape_stable_ratio();
 }
 
-// Issue #1468: deopt-storm detection helper. Called from
+// Issue #1468 / #2526: deopt-storm detection helper. Called from
 // invalidate() and from the deopt-hook path. Maintains a ring of
 // (time, fn) pairs and sets deopt_storm_active_ when the count
-// in the last deopt_storm_window_ events exceeds the threshold.
+// in the last deopt_storm_window_ events exceeds the (adaptive)
+// threshold.
+//
+// Issue #2526 adaptive closed-loop:
+//   if compact-dominated pressure && shape_stable_ratio high
+//     → raise threshold (or suppress enter when only base thr would trip)
+//   else mutation-induced deopts >= adaptive_threshold
+//     → storm enter + shape_version bump + SpecJIT isolate (hard fence)
+// Compact alone never feeds this ring (on_arena_compact skips it).
 //
 // Why a per-instance ring (vs global): the storm is local to this
 // ShapeProfiler's workload — different evaluators (eval / IR / JIT)
@@ -740,41 +770,58 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
     if (deopt_ring_count_ < deopt_ring_.size())
         ++deopt_ring_count_;
     // Count deopts in the most-recent `deopt_storm_window_` ring entries.
-    // Conservative: count everything in the ring if it just filled, else
-    // count up to the head pointer. Since the ring is sized to
-    // deopt_storm_window_, this is exact.
-    const std::uint32_t window = static_cast<std::uint32_t>(deopt_ring_.size());
-    std::uint32_t recent = 0;
-    for (std::uint32_t i = 0; i < deopt_ring_count_; ++i)
-        ++recent; // all entries in the ring are within the window
-    if (recent >= deopt_storm_threshold_ && !deopt_storm_active_.load(std::memory_order_acquire)) {
+    const std::uint32_t recent = deopt_ring_count_; // ring sized to window
+    const std::uint32_t base_thr = deopt_storm_threshold_ > 0 ? deopt_storm_threshold_ : 1;
+
+    // Issue #2526: compute adaptive threshold under compact-dominated
+    // + stable profiles (avoid over-isolation after Moving compact).
+    std::uint32_t adaptive_thr = base_thr;
+    const auto compact = arena_compact_calls_.load(std::memory_order_relaxed);
+    const auto mut_inv = mutation_induced_invalidations_.load(std::memory_order_relaxed);
+    // Stable-ratio peek without nested lock: use profiles under current unique lock.
+    std::uint32_t stable = 0;
+    const auto nprof = static_cast<std::uint32_t>(profiles_.size());
+    for (const auto& [k, p] : profiles_) {
+        (void)k;
+        if (p.is_stable)
+            ++stable;
+    }
+    const double stable_ratio =
+        nprof > 0 ? static_cast<double>(stable) / static_cast<double>(nprof) : 0.0;
+    const bool compact_dominated = compact > 0 && compact >= mut_inv;
+    const bool profiles_stable =
+        nprof > 0 && stable_ratio >= (stability_ratio_ * 0.90); // slight slack
+    if (adaptive_threshold_boost_ > 0 && compact_dominated && profiles_stable)
+        adaptive_thr = base_thr + adaptive_threshold_boost_;
+
+    adaptive_threshold_live_.store(adaptive_thr, std::memory_order_release);
+    g_deopt_storm_adaptive_threshold_atomic().store(adaptive_thr, std::memory_order_release);
+
+    if (recent >= base_thr && recent < adaptive_thr &&
+        !deopt_storm_active_.load(std::memory_order_acquire)) {
+        // Would have entered under base threshold — suppress (compact+stable).
+        adaptive_suppress_total_.fetch_add(1, std::memory_order_relaxed);
+        g_deopt_storm_adaptive_suppress_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        // Soft marker for Agents (not an active storm).
+        g_shape_storm_force_reason_atomic().store(kShapeStormForceReasonAdaptiveSuppress,
+                                                  std::memory_order_release);
+        return;
+    }
+
+    if (recent >= adaptive_thr && !deopt_storm_active_.load(std::memory_order_acquire)) {
         deopt_storm_active_.store(true, std::memory_order_release);
         deopt_storm_total_.fetch_add(1, std::memory_order_relaxed);
-        // Issue #2257: on storm enter, bump shape_version (file-scope
-        // atomic) so any speculative opt from the previous version is
-        // invalidated on the next observation cycle. Mirrors the
-        // per-CompilerMetrics deopt_storm_isolations_total field.
-        //
-        // Issue #2370: under StormIsolation::PerEval do NOT bump the
-        // process-global shape_version — SpecJITController uses a
-        // per-eval isolation epoch so concurrent evals are not
-        // cross-invalidated by one noisy agent.
-        //
-        // Issue #2433 AC2: bump version AND publish shape_storm_active
-        // so SpecJIT StormLevel Shape gate + monomorphize consumers
-        // drop / refuse specialized code before the next eval of the
-        // affected fn (stamp miss + no new specialize under Shape bit).
+        adaptive_enter_total_.fetch_add(1, std::memory_order_relaxed);
+        g_deopt_storm_adaptive_enter_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        // Issue #2257 / #2433 / #2526: mutation-induced storm enter — HARD fence.
         g_deopt_storm_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
         g_shape_storm_force_reason_atomic().store(kShapeStormForceReasonThreshold,
                                                   std::memory_order_release);
         // StormIsolation::PerEval = 2 (hot_update_registry.hh).
         if (aura_get_storm_isolation_mode() != 2)
             bump_shape_version_on_storm_enter();
-        // Snapshot version at storm (post-bump when Global/PerRegion).
         g_shape_version_at_storm_atomic().store(current_global_shape_version(),
                                                 std::memory_order_release);
-        // Publish into HotUpdateRegistry StormLevel facade (soft cost:
-        // one store, only on storm-enter transition).
         aura_hot_update_set_shape_storm_active(1);
     }
 }
