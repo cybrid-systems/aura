@@ -3793,6 +3793,24 @@ def cmd_type_system_health_next_action_coverage():
     return 0
 
 
+def cmd_ir_optimize_type_info_chain_coverage():
+    """Issue #2471: optimize_type_info chain-walk terminates on MAX sentinel.
+
+    slot_remap chain must not treat remap==0 as end (slot 0 is valid).
+    """
+    print(f"{B}=== IR optimize_type_info chain-walk coverage (#2471) ==={N}")
+    script = ROOT / "scripts" / "check_ir_optimize_type_info_chain_2471.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("IR optimize_type_info chain-walk (#2471) coverage contract rows failed")
+        return 1
+    ok("IR optimize_type_info chain-walk (#2471) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4813,6 +4831,7 @@ def cmd_gate():
         or cmd_truncate_commit_gate_coverage()
         or cmd_type_system_health_coverage()
         or cmd_type_system_health_next_action_coverage()
+        or cmd_ir_optimize_type_info_chain_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
