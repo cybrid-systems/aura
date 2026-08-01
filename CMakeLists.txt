@@ -2856,6 +2856,13 @@ aura_add_issue_test(test_densify_last_call_axes_2376)
 aura_issue_test_link_llvm_jit(test_densify_last_call_axes_2376)
 add_dependencies(all_test_issue_targets test_densify_last_call_axes_2376)
 
+# Issue #2497: densify ownership-scan fail delta hard-binds envframe_ok
+# suppression (no path where scan fail is metrics-only — same fail-closed
+# shape as pin_contract_held gating at #2266).
+aura_add_issue_test(test_densify_ownership_scan_fail_gate_2497)
+aura_issue_test_link_llvm_jit(test_densify_ownership_scan_fail_gate_2497)
+add_dependencies(all_test_issue_targets test_densify_ownership_scan_fail_gate_2497)
+
 # Issue #2362: EnvFrameRef ownership protocol under fiber steal + densify
 # (depends on #2360 live set tracking).
 aura_add_issue_test(test_envframe_ownership_steal_densify_2362)

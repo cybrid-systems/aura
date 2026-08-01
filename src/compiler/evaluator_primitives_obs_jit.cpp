@@ -11158,6 +11158,13 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-envframe-axis-wired", 1);
             insert_kv("schema-2361", 2361);
             insert_kv("issue-2361", 2361);
+            // Issue #2497: densify ownership-scan fail delta gates Phase 5
+            // success metrics the same way pin_contract_held does (no path
+            // where scan fail is metrics-only). Sentinel surfaces gate wired.
+            insert_kv("densify-ownership-scan-fail-gate-wired", 1);
+            insert_kv("densify_ownership_scan_fail_gate_wired", 1);
+            insert_kv("schema-2497", 2497);
+            insert_kv("issue-2497", 2497);
             // Issue #2365: RootRemap + closure remount last-call closed-loop
             // (Soft vacuous; Moving uses last densify publish).
             insert_kv("densify-root-remap-axis-wired", 1);

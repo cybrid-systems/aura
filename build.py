@@ -2091,6 +2091,30 @@ def cmd_moving_densify_fail_closed_2495_coverage():
     return 0
 
 
+def cmd_densify_ownership_scan_fail_gate_2497_coverage():
+    """Issue #2497: Phase 5 hard-bind densify ownership scan fail → suppress
+    outermost success metrics.
+
+    #2340 / #2361 / #2376 made `DensifyConsistencyReport.envframe_ok` real
+    and last-call capable. Residual gap from review: densify ownership scan
+    fail delta must ALWAYS suppress outermost Phase 5 success metrics the
+    same way pin_contract_held == false does — no path where scan fail is
+    metrics-only. Linter fails when the Phase 5 gate (scan_fail_delta →
+    envframe_ok suppression) is missing from evaluator_mutation_boundary.cpp.
+    """
+    print(f"{B}=== Densify ownership scan fail gate coverage (#2497) ==={N}")
+    script = ROOT / "scripts" / "check_densify_ownership_scan_fail_gate_2497.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Densify ownership scan fail gate (#2497) coverage contract rows failed")
+        return 1
+    ok("Densify ownership scan fail gate (#2497) coverage clean")
+    return 0
+
+
 def cmd_general_object_pin_coverage_gate_2496_coverage():
     """Issue #2496: GeneralObjectPin adoption coverage gate.
 

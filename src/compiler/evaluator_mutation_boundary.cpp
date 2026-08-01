@@ -1780,7 +1780,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2353: true only when Moving densify actually relocated live objects
         // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
         bool had_moving_densify = false;
+        // Issue #2497: baseline ownership-scan fail counter BEFORE the Moving
+        // densify window opens. Any fail delta across compact + pairing + injected
+        // tests must suppress Phase 5 success the same way pin_contract_held does
+        // (no path where scan fail is metrics-only — mirrors #2266 fail-closed).
+        std::uint64_t scan_fail_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
+            // Issue #2497: snapshot densify-ownership-scan fail baseline before
+            // compact runs (covers compact callbacks + pairing + injected fails
+            // across the entire Moving densify window).
+            scan_fail_baseline = aura::core::envframe_lifetime::
+                envframe_lifetime_densify_ownership_scan_fail_total();
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
                                        : aura::ast::AdaptiveCompactResult{};
@@ -1852,9 +1862,21 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (had_moving_densify && pin_contract_held) {
             // Issue #2368: single forced pairing entry (order encoded in body).
             const auto pairing = ev_->force_densify_remap_pairing();
+            // Issue #2497: re-check scan fail counter after pairing. Any delta
+            // since the Moving densify baseline (compact + pairing + injected
+            // fails) suppresses envframe_ok — same fail-closed shape as
+            // pin_contract_held gating at #2266 / #2341 AC2.
+            const auto scan_fail_after = aura::core::envframe_lifetime::
+                envframe_lifetime_densify_ownership_scan_fail_total();
+            const bool scan_fail_delta = (scan_fail_after > scan_fail_baseline);
             densify_consistency.root_remap_ok = pairing.root_remap_ok;
             densify_consistency.closure_remount_ok = pairing.closure_remount_ok;
-            densify_consistency.envframe_ok = pairing.envframe_ok && linear_type_ok;
+            // Issue #2497: scan_fail_delta ANDs into envframe_ok. Pairing already
+            // checks within-pairing delta — this gate widens the window so a
+            // pre-pairing inject (test helper) or compact-callback fail also
+            // suppresses. Phase 5 success gated via overall_ok() at #2266 site.
+            densify_consistency.envframe_ok =
+                pairing.envframe_ok && linear_type_ok && !scan_fail_delta;
             aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
         } else {
