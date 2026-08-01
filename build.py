@@ -2166,6 +2166,33 @@ def cmd_root_remap_pin_contract_unified_2499_coverage():
     return 0
 
 
+def cmd_orch_soft_boundary_unified_2515_coverage():
+    """Issue #2515: Soft orch-agent boundary 提升为轻量 Guard 子集, 统一
+    depth/held 语义.
+
+    #2118 introduced a soft-boundary path (per-fiber mutation stack depth
+    可见 + orch_agent_boundary_active_ flag) but did NOT call
+    publish_mutation_safety_mirrors — so the fiber-local held_mirror_
+    stayed stale during soft windows. steal / GC / is_at_mutation_boundary_safe
+    saw a divergent picture (orch flag set, snapshot.held == false from a
+    different code path). orch_soft_boundary_enter / exit now call the
+    same publish_mutation_safety_mirrors as the full Guard path; symmetric
+    release order (held=false publish BEFORE flag clear) prevents probe
+    windows where the flag flipped without the mirror cleared.
+    """
+    print(f"{B}=== Orch soft boundary unified coverage (#2515) ==={N}")
+    script = ROOT / "scripts" / "check_orch_soft_boundary_unified_2515.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Orch soft boundary unified (#2515) coverage contract rows failed")
+        return 1
+    ok("Orch soft boundary unified (#2515) coverage clean")
+    return 0
+
+
 def cmd_general_object_pin_coverage_gate_2496_coverage():
     """Issue #2496: GeneralObjectPin adoption coverage gate.
 

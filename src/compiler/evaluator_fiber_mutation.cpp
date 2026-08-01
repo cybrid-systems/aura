@@ -1972,6 +1972,11 @@ namespace {
         g_orch_agent_body_guard{};
     // Issue #2118: soft boundary depth pushed on fiber agent body (nested-safe).
     thread_local int g_orch_soft_boundary_depth = 0;
+    // Issue #2515: track the Evaluator that owns the soft window so
+    // orch_soft_boundary_exit can publish the symmetric held=false mirror
+    // with the same defuse_version the enter side captured (avoid version
+    // drift between the two publish_mutation_safety_mirrors calls).
+    thread_local Evaluator* g_orch_soft_boundary_ev = nullptr;
 
     void orch_soft_boundary_enter(Evaluator* ev) noexcept {
         if (!ev)
@@ -1984,8 +1989,21 @@ namespace {
         cp.evaluator_id = static_cast<void*>(ev);
         Evaluator::active_mutation_stack_static().push_back(std::move(cp));
         ++g_orch_soft_boundary_depth;
-        if (aura::serve::g_current_fiber)
-            aura::serve::g_current_fiber->set_orch_agent_boundary_active(true);
+        // Issue #2515: track the Evaluator so the symmetric exit publish
+        // uses the same defuse_version the enter side captured.
+        g_orch_soft_boundary_ev = ev;
+        if (aura::serve::g_current_fiber) {
+            auto* fib = aura::serve::g_current_fiber;
+            fib->set_orch_agent_boundary_active(true);
+            // Issue #2515: publish the same held mirror the full Guard path
+            // publishes — keeps fiber-local mutation_safety_snapshot.held
+            // consistent so steal / GC / is_at_mutation_boundary_safe see
+            // the soft window as held (not depth-only). Symmetric release
+            // in orch_soft_boundary_exit (depth=0 + held=false).
+            const auto depth = Evaluator::active_mutation_stack_static().size();
+            fib->publish_mutation_safety_mirrors(depth, /*held=*/true,
+                                                 ev->defuse_version_for_test());
+        }
         aura::orch::g_orch_module_stats.orch_agent_boundary_entered_total.fetch_add(
             1, std::memory_order_relaxed);
         if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
@@ -1999,8 +2017,22 @@ namespace {
         if (!stack.empty())
             stack.pop_back();
         --g_orch_soft_boundary_depth;
-        if (g_orch_soft_boundary_depth == 0 && aura::serve::g_current_fiber)
-            aura::serve::g_current_fiber->set_orch_agent_boundary_active(false);
+        // Issue #2515: symmetric release — publish held=false mirror
+        // BEFORE clearing orch_agent_boundary_active_ so a steal probe
+        // landing between the two writes doesn't see the flag flipped
+        // without the mirror cleared (would mismatch snapshot.held vs
+        // orch_agent_boundary_active).
+        if (g_orch_soft_boundary_depth == 0 && aura::serve::g_current_fiber) {
+            auto* fib = aura::serve::g_current_fiber;
+            const auto depth = Evaluator::active_mutation_stack_static().size();
+            const auto ver = (g_orch_soft_boundary_ev != nullptr)
+                                 ? g_orch_soft_boundary_ev->defuse_version_for_test()
+                                 : std::uint64_t{0};
+            fib->publish_mutation_safety_mirrors(depth, /*held=*/false, ver);
+            fib->set_orch_agent_boundary_active(false);
+        }
+        if (g_orch_soft_boundary_depth == 0)
+            g_orch_soft_boundary_ev = nullptr;
     }
 } // namespace
 
