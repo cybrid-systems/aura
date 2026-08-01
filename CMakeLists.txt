@@ -3252,6 +3252,11 @@ aura_add_issue_test(test_mutation_log_cow_copy_2457)
 aura_issue_test_link_llvm_jit(test_mutation_log_cow_copy_2457)
 add_dependencies(all_test_issue_targets test_mutation_log_cow_copy_2457)
 
+# Issue #2458: truncate-commit Soft observe / Hard full-solve-or-reject
+aura_add_issue_test(test_truncate_commit_gate_2458)
+aura_issue_test_link_llvm_jit(test_truncate_commit_gate_2458)
+add_dependencies(all_test_issue_targets test_truncate_commit_gate_2458)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

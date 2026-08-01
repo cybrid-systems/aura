@@ -1209,6 +1209,10 @@ struct CompilerMetrics {
     // Issue #2221: composite_txn_commit hard-reject on incomplete blame.
     std::atomic<std::uint64_t> blame_commit_reject_total{0};
     std::atomic<std::uint64_t> blame_propagation_wired{1};
+    // Issue #2458: truncate/incomplete-blame commit gate (mirrors typed_audit).
+    std::atomic<std::uint64_t> truncate_commit_observe_total{0};
+    std::atomic<std::uint64_t> truncate_commit_reject_total{0};
+    std::atomic<std::uint64_t> truncate_commit_full_solve_recover_total{0};
     // Issue #1873: add_delta constraints still missing provenance after
     // active-context stamp (warning / degrade path — keep partial chain).
     std::atomic<std::uint64_t> blame_provenance_missing_warning_total{0};

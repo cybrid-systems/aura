@@ -160,19 +160,30 @@ static void ac3_composite_truncated_fail() {
     const auto trunc0 =
         load_u64(g_typed_mutation_audit_counters.boundary_solve_truncated_seen_total);
 
-    // composite_txn_commit with truncated CS should not report clean solve.
+    // composite_txn_commit with truncated CS should not report *silent*
+    // clean solve. Issue #2458 may full-solve recover under Full hard —
+    // that is still not half-green (recover counter advances).
+    const auto rec0 =
+        load_u64(g_typed_mutation_audit_counters.truncate_commit_full_solve_recover_total);
+    const auto trej0 = load_u64(g_typed_mutation_audit_counters.truncate_commit_reject_total);
     aura::compiler::typed_audit::CompositeTxnCommitResult ccr{};
     const bool committed = cs.evaluator().composite_txn_commit(
         /*mutation_id=*/2260, "test-2260-composite", 0, 0, 1,
         /*nested=*/true, /*batch=*/false, &ccr);
 
-    CHECK(!committed || !ccr.solve_ok, "truncated composite not clean-solved");
+    const bool recovered =
+        load_u64(g_typed_mutation_audit_counters.truncate_commit_full_solve_recover_total) > rec0;
+    const bool trejected =
+        load_u64(g_typed_mutation_audit_counters.truncate_commit_reject_total) > trej0;
+    CHECK(!committed || !ccr.solve_ok || recovered,
+          "truncated composite not clean-solved without full-solve recover (#2458)");
     CHECK(load_u64(g_typed_mutation_audit_counters.boundary_solve_hard_gate_total) >= 1 ||
               load_u64(g_typed_mutation_audit_counters.composite_commit_revalidate_total) >= 1,
           "composite revalidate ran");
     CHECK(load_u64(g_typed_mutation_audit_counters.boundary_solve_truncated_seen_total) > trunc0 ||
-              load_u64(g_typed_mutation_audit_counters.composite_commit_solve_fail_total) > fail0,
-          "truncated or solve_fail advanced");
+              load_u64(g_typed_mutation_audit_counters.composite_commit_solve_fail_total) > fail0 ||
+              recovered || trejected,
+          "truncated / solve_fail / #2458 recover|reject advanced");
 }
 
 static void ac4_unresolved_export() {

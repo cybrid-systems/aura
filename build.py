@@ -3737,6 +3737,24 @@ def cmd_mutation_log_cow_copy_coverage():
     return 0
 
 
+def cmd_truncate_commit_gate_coverage():
+    """Issue #2458: truncate-commit Soft observe / Hard full-solve-or-reject.
+
+    Anti half-green: Soft observes; production/Full/HARD full-solves or rejects.
+    """
+    print(f"{B}=== truncate-commit gate coverage (#2458) ==={N}")
+    script = ROOT / "scripts" / "check_truncate_commit_gate_2458.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("truncate-commit gate (#2458) coverage contract rows failed")
+        return 1
+    ok("truncate-commit gate (#2458) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4716,6 +4734,7 @@ def cmd_gate():
         or cmd_restore_children_structural_lock_coverage()
         or cmd_subtree_uses_sym_template_bloat_coverage()
         or cmd_mutation_log_cow_copy_coverage()
+        or cmd_truncate_commit_gate_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

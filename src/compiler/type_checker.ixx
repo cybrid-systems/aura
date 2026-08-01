@@ -462,6 +462,20 @@ public:
     SolveResult check_truncate_anti_starve(struct CompilerMetrics& m,
                                            std::vector<Constraint>* unresolved_out);
     [[nodiscard]] bool last_reverify_truncated() const noexcept { return last_reverify_truncated_; }
+    // Issue #2458: after a successful full ConstraintSystem::solve() on the
+    // truncate-commit hard path, clear stale delta-reverify truncation so
+    // SolverSnapshot / commit gate see a clean post-fixpoint surface.
+    // Does not synthesize a complete blame triple (incomplete non-vacuous
+    // blame still fails the gate under production).
+    void note_full_solve_cleared_truncation() noexcept {
+        last_reverify_truncated_ = false;
+        last_reverify_unscanned_ = 0;
+        last_blame_chain_.truncated_reverify = false;
+        if (last_blame_chain_.complete && last_blame_chain_.missing_provenance_frames == 0)
+            last_blame_chain_.partial = false;
+        else if (last_blame_chain_.truncated_reverify)
+            last_blame_chain_.partial = true;
+    }
     // Issue #2308: forensic / Agent-visible accessor — true when the
     // last escalate_if_production call took the production full-solve
     // path (delta_timeout_full_solve_total bumped). SolverSnapshot
@@ -2679,6 +2693,25 @@ export struct SolverSnapshot {
 
 export SolverSnapshot snapshot_constraint_system(ConstraintSystem& cs,
                                                  const SolveDeltaOccurrenceResult* last = nullptr);
+
+// Issue #2458: outermost commit gate after a delta snapshot.
+// Soft: truncated / incomplete blame → observe only, allow commit.
+// Hard (production_defaults / Full / AURA_TRUNCATE_COMMIT_HARD): one full
+// solve; still truncated / !SOLVED / incomplete non-vacuous blame → reject;
+// recovered → allow. Happy path (clean snap): no extra full solve.
+export struct TruncateCommitGateResult {
+    bool allow = true;
+    bool observed = false;
+    bool rejected = false;
+    bool recovered = false;
+    bool attempted_full_solve = false;
+    SolverSnapshot snap{};
+};
+
+export TruncateCommitGateResult
+commit_ok_after_delta_snapshot(ConstraintSystem& cs,
+                               const SolveDeltaOccurrenceResult* last = nullptr,
+                               std::vector<Constraint>* unresolved_out = nullptr);
 
 export SolveDeltaOccurrenceResult
 solve_delta_occurrence(ConstraintSystem& cs,

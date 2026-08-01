@@ -192,6 +192,15 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_commit_empty_cs_hard_miss_total{0};
     std::atomic<std::uint64_t> composite_commit_empty_cs_observe_total{0};
     std::atomic<std::uint32_t> composite_empty_cs_hard_wired{1};
+    // Issue #2458: outermost commit gate on truncated reverify / incomplete
+    // blame (non-empty under-scanned CS — residual half-green after #2345).
+    // Soft/Sampled: observe only (commit may still succeed).
+    // production_defaults / Full / Strict / AURA_TRUNCATE_COMMIT_HARD=1:
+    //   one full ConstraintSystem::solve(); still bad → reject; recovered → ok.
+    std::atomic<std::uint64_t> truncate_commit_observe_total{0};
+    std::atomic<std::uint64_t> truncate_commit_reject_total{0};
+    std::atomic<std::uint64_t> truncate_commit_full_solve_recover_total{0};
+    std::atomic<std::uint32_t> truncate_commit_hard_wired{1};
     // Issue #2221: composite commit blame-complete hard gate.
     std::atomic<std::uint64_t> blame_commit_check_total{0};
     std::atomic<std::uint64_t> blame_commit_reject_total{0};
@@ -271,6 +280,31 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 [[nodiscard]] inline bool composite_empty_cs_hard_reject_enabled() noexcept {
     return production_defaults_active() || get_strategy() == AuditStrategy::Full ||
            composite_empty_cs_hard_env();
+}
+
+// Issue #2458: env override AURA_TRUNCATE_COMMIT_HARD=1 forces full-solve /
+// reject policy on truncated reverify or incomplete blame even under Soft.
+[[nodiscard]] inline bool truncate_commit_hard_env() noexcept {
+    static const bool cached = []() noexcept -> bool {
+        const char* e = std::getenv("AURA_TRUNCATE_COMMIT_HARD");
+        if (e == nullptr || e[0] == '\0')
+            return false;
+        if (e[0] == '1' && e[1] == '\0')
+            return true;
+        if ((e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y') && e[1] != '\0')
+            return true;
+        return false;
+    }();
+    return cached;
+}
+
+// Issue #2458: hard gate for truncated/incomplete-blame commit under
+// production defaults, Full strategy, or AURA_TRUNCATE_COMMIT_HARD=1.
+// Callers may also OR Strict sandbox (same pattern as empty-CS #2345).
+// Soft Sampled + sandbox off → observe only (AC1).
+[[nodiscard]] inline bool truncate_commit_hard_enabled() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full ||
+           truncate_commit_hard_env();
 }
 
 // Issue #2053: production multi-tenant AI — capture every self-modify event.
@@ -1010,6 +1044,13 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2458
+    g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.truncate_commit_reject_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.truncate_commit_full_solve_recover_total.store(
         0, std::memory_order_relaxed);
     // Issue #2221
     g_typed_mutation_audit_counters.blame_commit_check_total.store(0, std::memory_order_relaxed);
