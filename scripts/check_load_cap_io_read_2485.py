@@ -4,7 +4,7 @@
 Contract:
   AC1 kCapIoRead gate + sandbox_mode in load body
   AC2 #2485 cite + denial message
-  AC3 path deny list (/proc/self/mem)
+  AC3 path deny via shared path_is_denied (/proc/self/mem family)
   AC4 test present
   AC5 gate wiring
 
@@ -51,8 +51,10 @@ def main() -> int:
     must("2485 AC1", "AC2", test)
     must("capability denied", "AC2", test.lower())
 
-    must("/proc/self/mem", "AC3", body)
-    must("kDenied", "AC3", body)
+    # Shared path_is_denied (#2487) covers /proc/self/mem; body must still
+    # cite sensitive-path policy (comment or call).
+    must("path_is_denied", "AC3", body)
+    must("/proc/self/mem", "AC3", body + _read("src/compiler/security_capabilities.h"))
 
     must("test_load_cap_io_read_2485", "AC4", test)
     must("kCapIoRead", "AC4", test)

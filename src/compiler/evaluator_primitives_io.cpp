@@ -2484,6 +2484,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("sys-open", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
         // (sys-open path [flags]) → fd | -1
+        // Issue #2487 (Option A): production hardening —
+        //   - path_is_denied blocks /proc/self/mem, /dev/mem, /proc/kcore, …
+        //   - fixed flags O_RDONLY | O_NOFOLLOW | O_CLOEXEC (caller flags ignored;
+        //     no TOCTOU symlink follow, no arbitrary O_RDWR|O_CREAT|O_TRUNC)
+        //   - no create path → mode irrelevant (0600 would apply if Option B
+        //     re-enables O_CREAT with a whitelist)
         if (auto d = deny_sys(aura::compiler::security::kCapSysOpen,
                               "capability denied: sys-open required");
             !is_void(d))
@@ -2493,10 +2499,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
             return make_int(-1);
-        int flags = O_RDONLY;
-        if (a.size() >= 2 && is_int(a[1]))
-            flags = static_cast<int>(as_int(a[1]));
-        int fd = ::open(ev.string_heap_[sidx].c_str(), flags, 0644);
+        const auto& path = ev.string_heap_[sidx];
+        if (aura::compiler::security::path_is_denied(path))
+            return make_int(-1);
+        // Optional second arg kept for call-site compatibility
+        // (sys-open path [flags]) but is never applied to ::open.
+        const int flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC;
+        int fd = ::open(path.c_str(), flags);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->sys_open_calls.fetch_add(1, std::memory_order_relaxed);
         return make_int(fd);

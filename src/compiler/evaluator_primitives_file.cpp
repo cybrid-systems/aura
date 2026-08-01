@@ -96,23 +96,10 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         struct stat st;
         return ::lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
     };
-    // Issue #1163/#1164/#1165: refuse dangerous / sensitive paths.
+    // Issue #1163/#1164/#1165/#2487: shared path_is_denied policy
+    // (security_capabilities.h) — used by read/write/file-* and sys-open.
     auto path_is_denied = [](std::string_view path) -> bool {
-        if (path.empty())
-            return true;
-        // Absolute sensitive prefixes
-        static constexpr const char* kDenied[] = {
-            "/proc/self/mem", "/proc/self/mem/", "/dev/mem", "/dev/kmem", "/proc/kcore",
-        };
-        for (auto* d : kDenied) {
-            if (path == d || path.starts_with(std::string(d) + "/"))
-                return true;
-        }
-        // Any /proc/*/mem style
-        if (path.starts_with("/proc/") &&
-            (path.ends_with("/mem") || path.find("/mem/") != std::string_view::npos))
-            return true;
-        return false;
+        return aura::compiler::security::path_is_denied(path);
     };
 
     add("read-file", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {

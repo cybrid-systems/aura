@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 668 | Preferred destination suites |
-| **Total scanned** | **668** | |
+| `tests/core/test_*.cpp` | 669 | Preferred destination suites |
+| **Total scanned** | **669** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 65 | 65 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 40 | 40 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 126 | 126 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 44 | 44 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 45 | 45 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -765,6 +765,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_summary_flags_guard_2415.cpp`
 - `tests/core/test_summary_recompute_sym_2414.cpp`
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp`
+- `tests/compiler/test_sys_open_path_harden_2487.cpp`
 - `tests/core/test_tag_arity_index_lock_2419.cpp`
 - `tests/core/test_tag_arity_key_hash_2420.cpp`
 - `tests/core/test_tenant_isolation_enforcement.cpp`
@@ -1549,13 +1550,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
-### `uncategorized` — Uncategorized / mixed (44)
+### `uncategorized` — Uncategorized / mixed (45)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (44)
+#### domain/ (45)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1592,6 +1593,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:
 - `tests/core/test_stringpool_concurrent_intern.cpp` (—) [domain_suite, theme_core] — Issue #2062 — StringPool thread-safe intern test.
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp` (—) [domain_suite, theme_stdlib] — test_synthesize_namespace_demotion.cpp — Issue #561:
+- `tests/compiler/test_sys_open_path_harden_2487.cpp` (#2487) [domain_suite, theme_compiler] — AC1: (sys-open "/proc/self/mem") → -1 (path_is_denied)
 - `tests/renderer/test_terminal_concurrent.cpp` (—) [domain_suite, theme_renderer] — test_terminal_concurrent.cpp — Issue #1352 (standalone; free-corruption when co-linked)
 - `tests/renderer/test_terminal_deprecation.cpp` (—) [domain_suite, theme_renderer] — test_terminal_deprecation.cpp — Issue #1351: deprecate 7 no-op terminal:* primitives
 - `tests/repl/test_terminal_domain_batch.cpp` (—) [batch_driver, domain_suite, theme_repl] — test_terminal_domain_batch.cpp — terminal domain batch driver.

@@ -223,17 +223,18 @@ inline std::atomic<std::uint64_t> g_pin_registry_lock_wait_us_total{0};
 // fail-closed enforcement. Bumped when a densify-tracked intermediate
 // create fails the required-mode gate (new create without pin under
 // production Moving + restricted). Agent dashboards surface regression.
-export inline std::atomic<std::uint64_t> g_general_object_pin_required_enforced_total{0};
+// Already inside export namespace — bare inline (not export inline).
+inline std::atomic<std::uint64_t> g_general_object_pin_required_enforced_total{0};
 // Issue #2496: AURA_GENERAL_OBJECT_PIN=required preference (process-wide).
 // -1 = env/default unset, 0 = off, 1 = required. Applied by
 // apply_general_object_pin_required_env().
-export inline std::atomic<int> g_general_object_pin_required_pref{-1};
+inline std::atomic<int> g_general_object_pin_required_pref{-1};
 
 // Issue #2496: read AURA_GENERAL_OBJECT_PIN env var at process start
 // (called from production security defaults). Values: "required" / "1" /
 // "true" / "yes" / "on" → enable fail-closed mode. "off" / "0" / "false"
 // / "no" → disable. Unset → -1 (no preference; Soft path).
-export inline void apply_general_object_pin_required_env() noexcept {
+inline void apply_general_object_pin_required_env() noexcept {
     const char* e = std::getenv("AURA_GENERAL_OBJECT_PIN");
     if (!e || !*e)
         return;

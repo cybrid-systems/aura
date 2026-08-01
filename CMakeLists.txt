@@ -3362,6 +3362,11 @@ aura_add_issue_test(test_gc_heap_cells_clear_2486)
 aura_issue_test_link_llvm_jit(test_gc_heap_cells_clear_2486)
 add_dependencies(all_test_issue_targets test_gc_heap_cells_clear_2486)
 
+# Issue #2487: sys-open O_NOFOLLOW + path_is_denied (TOCTOU / mem disclosure).
+aura_add_issue_test(test_sys_open_path_harden_2487)
+aura_issue_test_link_llvm_jit(test_sys_open_path_harden_2487)
+add_dependencies(all_test_issue_targets test_sys_open_path_harden_2487)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
