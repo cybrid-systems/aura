@@ -675,18 +675,54 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // 1) solve_delta_occurrence (stable constraint surface #2028 / #2180).
     // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
     // rely on a greenfield empty TypeChecker for production composite commit.
+    //
+    // Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix
+    // at commit entry (anti false-green / false-empty):
+    //   expected|has_work | production hard path
+    //   true|false        | hard-miss (#2345)
+    //   true|true         | must run SDO; no vacuous SOLVED without SDO
+    //   false|false       | structural OK
+    //   false|true        | observe + still solve; never silent skip under Full
     cr.solve_ok = true;
     cr.blame_ok = true;
     bool sdo_provenance_continuity = true;
     bool sdo_blame_complete = true;
     bool sdo_blame_nonvacuous = false;
-    bool partial_cs_hard_empty = false; // Issue #2262
+    bool partial_cs_hard_empty = false; // Issue #2262 / #2345
+    bool sdo_entered = false;           // Issue #2509: SDO actually ran
+    const bool expected_partial = txn_dirty();
+    bool has_work = false;
+    if (commit_type_checker_opaque_) {
+        auto* ctc0 = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        has_work = ctc0->commit_cs_has_work() || commit_cs_live_;
+    } else {
+        has_work = commit_cs_live_;
+    }
+    // Matrix cell counters (#2509).
+    if (expected_partial && has_work) {
+        c.composite_commit_expected_has_work_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->composite_commit_expected_has_work_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!expected_partial && has_work) {
+        // AC4: observe unexpected CS work; under Full/production still solve
+        // (never silent drop of dirty CS). Soft Sampled: observe only for the
+        // matrix cell (solve still runs when reuse path is available).
+        c.composite_commit_unexpected_cs_work_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->composite_commit_unexpected_cs_work_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // When has_work, force live-CS path even if commit_cs_live_ lagged.
+    const bool require_sdo = has_work; // AC2/AC4: dirty CS must enter SDO
     if (type_registry_ || commit_type_checker_opaque_) {
         try {
             ConstraintSystem* cs_ptr = nullptr;
             std::span<const aura::core::TypeId> occ_span{};
             TypeChecker* scratch_tc = nullptr;
-            const bool reuse = commit_type_checker_opaque_ && commit_cs_live_;
+            // Issue #2180 / #2509: reuse when opaque TC exists and work is live
+            // (or commit_cs_live_ from stash). has_work forces reuse so we never
+            // greenfield-empty when the long-lived CS already holds marks.
+            const bool reuse = commit_type_checker_opaque_ && (commit_cs_live_ || has_work);
             if (reuse) {
                 auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
                 cs_ptr = &ctc->constraint_system();
@@ -696,9 +732,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     occ_span = *occ;
                 }
                 c.composite_commit_solve_reuse_hit_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #2262: reuse with empty work is a hard miss under Full
-                // (silent SOLVED on empty CS is forbidden when partial expected).
-                if (!ctc->commit_cs_has_work() && txn_dirty()) {
+                // Issue #2262 / #2345: reuse with empty work is a hard miss when
+                // partial was expected (silent SOLVED on empty CS forbidden).
+                // Issue #2509 AC2: when has_work, this cell is not empty-miss.
+                if (!has_work && expected_partial) {
                     partial_cs_hard_empty = true;
                     g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
                     c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
@@ -713,8 +750,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     scratch_tc->set_metrics(compiler_metrics_);
                 cs_ptr = &scratch_tc->constraint_system();
                 c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #2262: expected partial (txn dirty) but empty CS → hard miss.
-                if (txn_dirty()) {
+                // Issue #2262 / #2345: expected partial but empty CS → hard miss.
+                if (expected_partial) {
                     partial_cs_hard_empty = true;
                     g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
@@ -727,6 +764,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 std::vector<Constraint> unresolved;
                 auto sdo = aura::compiler::solve_delta_occurrence(*cs_ptr, occ_span, &unresolved,
                                                                   compiler_metrics_);
+                sdo_entered = true;
+                c.composite_commit_sdo_entered_total.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->composite_commit_sdo_entered_total.fetch_add(1, std::memory_order_relaxed);
                 using aura::compiler::SolveResult;
                 // Issue #2260: SOLVED alone is insufficient when reverify was
                 // truncated — partial type-proof must not commit under hard-gate.
@@ -897,6 +938,26 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             // [SILENCE-PRIM] solve path failure → treat as type fail.
             cr.solve_ok = false;
             c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #2509 AC2/AC4: has_work (or expected+has_work) must enter SDO.
+    // Vacuous SOLVED without solve_delta_occurrence is forbidden — never ship
+    // a dirty/live CS as green by skipping the type-proof path. Also covers
+    // expected_partial with no type_registry/opaque (no try block at all).
+    if (require_sdo && !sdo_entered) {
+        cr.solve_ok = false;
+        c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (expected_partial && has_work && !sdo_entered) {
+        // AC2: expected + has_work without SDO is hard anti-false-green.
+        const bool hard =
+            composite_empty_cs_hard_reject_enabled() || aura::core::sandbox::is_strict();
+        if (hard) {
+            cr.solve_ok = false;
+            c.composite_commit_empty_cs_hard_miss_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_empty_cs_hard_miss_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
     }
 

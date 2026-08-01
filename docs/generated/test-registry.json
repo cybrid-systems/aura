@@ -441,6 +441,12 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "category": "unit",
+      "reason": "Issue #2509 — symmetric expected_partial ↔ commit_cs_has_work",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_composite_nested_txn_invariant_audit.cpp",
       "category": "unit",
       "reason": "Issue #2027 — composite / nested txn typed + linear invariant",

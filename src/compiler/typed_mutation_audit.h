@@ -200,6 +200,17 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_commit_empty_cs_hard_miss_total{0};
     std::atomic<std::uint64_t> composite_commit_empty_cs_observe_total{0};
     std::atomic<std::uint32_t> composite_empty_cs_hard_wired{1};
+    // Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix.
+    //   unexpected_cs_work: !expected_partial + has_work (observe always;
+    //     under Full/production never silent-skip solve on dirty CS).
+    //   expected_has_work: expected_partial + has_work (must enter SDO;
+    //     vacuous SOLVED without SDO forbidden).
+    //   sdo_entered: solve_delta_occurrence actually ran this commit.
+    //   signature_matrix_wired: sentinel = 1.
+    std::atomic<std::uint64_t> composite_commit_unexpected_cs_work_total{0};
+    std::atomic<std::uint64_t> composite_commit_expected_has_work_total{0};
+    std::atomic<std::uint64_t> composite_commit_sdo_entered_total{0};
+    std::atomic<std::uint32_t> composite_cs_signature_matrix_wired{1};
     // Issue #2458: outermost commit gate on truncated reverify / incomplete
     // blame (non-empty under-scanned CS — residual half-green after #2345).
     // Soft/Sampled: observe only (commit may still succeed).
@@ -1089,6 +1100,13 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2509
+    g_typed_mutation_audit_counters.composite_commit_unexpected_cs_work_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_expected_has_work_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_sdo_entered_total.store(
         0, std::memory_order_relaxed);
     // Issue #2458
     g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,
