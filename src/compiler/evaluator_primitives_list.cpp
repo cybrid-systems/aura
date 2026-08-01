@@ -56,8 +56,11 @@ using types::make_void;
 
 namespace {
 
-    bool is_end_of_list(const EvalValue& v) {
-        return is_void(v) || (is_int(v) && as_int(v) == 0);
+    // Issue #2482: empty list is make_void() only. int 0 is a number —
+    // never a list terminator. The historical `is_int && as_int==0` check
+    // made (null? 0)/(list? 0) true and conflated numeric 0 with '().
+    bool is_end_of_list(const EvalValue& v) noexcept {
+        return is_void(v);
     }
 
 } // namespace
@@ -175,20 +178,22 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         // Now consistent with all other predicates.
         return make_bool(true);
     });
-    add("null?", [](const auto& a) {
-        return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
-    });
+    // Issue #2482: null? is true only for the empty list (void), not int 0.
+    add("null?", [](const auto& a) { return make_bool(!a.empty() && is_void(a[0])); });
     add("length", [&pairs, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
         std::int64_t n = 0;
         while (!is_end_of_list(v)) {
+            // Issue #2482: non-pair (e.g. improper list ending in 0) stops
+            // the walk and returns the count so far — not forced zero.
+            // Bare non-list input (length 0) still yields 0 (n unchanged).
             if (!is_pair(v))
-                return make_int(0);
+                break;
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size())
-                return make_int(0);
+                break;
             v = pairs[idx].cdr;
             n++;
         }

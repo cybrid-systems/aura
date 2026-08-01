@@ -4016,6 +4016,24 @@ def cmd_json_parse_object_grow_coverage():
     return 0
 
 
+def cmd_list_end_of_list_void_coverage():
+    """Issue #2482: is_end_of_list / null? treat only void as empty list.
+
+    int 0 is a number — never list terminator.
+    """
+    print(f"{B}=== list end-of-list void-only coverage (#2482) ==={N}")
+    script = ROOT / "scripts" / "check_list_end_of_list_void_2482.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("list end-of-list void-only (#2482) coverage contract rows failed")
+        return 1
+    ok("list end-of-list void-only (#2482) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5048,6 +5066,7 @@ def cmd_gate():
         or cmd_regex_redos_timeout_coverage()
         or cmd_json_parse_number_exception_coverage()
         or cmd_json_parse_object_grow_coverage()
+        or cmd_list_end_of_list_void_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
