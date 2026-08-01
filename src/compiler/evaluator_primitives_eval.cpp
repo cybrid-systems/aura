@@ -7,7 +7,8 @@ module;
 #include <unistd.h>
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
-#include "prim_names.h"                    // #904
+#include "prim_names.h"            // #904
+#include "security_capabilities.h" // Issue #2485: kCapIoRead for load
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
@@ -302,13 +303,46 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // (load filename) — Load and evaluate a file of Aura code
     // Uses set-code + eval-current internally so definitions persist
     // in the workspace and closures are properly rooted.
+    // Issue #2485: require kCapIoRead (same family as read-file / #2478
+    // command-line) so sandbox cannot bypass the io-read gate via load.
     add("load", [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
+        // Capability gate matches read-file deny_io(kCapIoRead) semantics:
+        // only enforced when sandbox_mode_ is on; kCapIo / kCapWildcard also pass.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapIoRead) &&
+            !ev.has_capability(aura::compiler::security::kCapIo) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: io-read required for load",
+                                        ev.primitive_error_counter_ptr());
+        }
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_void();
         auto& path = ev.string_heap_[idx];
+
+        // Issue #2485 / #1163: refuse dangerous / sensitive paths (match read-file).
+        {
+            static constexpr const char* kDenied[] = {
+                "/proc/self/mem", "/proc/self/mem/", "/dev/mem", "/dev/kmem", "/proc/kcore",
+            };
+            bool denied = path.empty();
+            if (!denied) {
+                for (auto* d : kDenied) {
+                    if (path == d || path.starts_with(std::string(d) + "/")) {
+                        denied = true;
+                        break;
+                    }
+                }
+            }
+            if (!denied && path.starts_with("/proc/") &&
+                (path.ends_with("/mem") || path.find("/mem/") != std::string::npos))
+                denied = true;
+            if (denied)
+                return make_void();
+        }
 
         std::ifstream f(path);
         if (!f)
