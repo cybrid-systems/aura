@@ -2115,6 +2115,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"sv-node-count", make_int(static_cast<std::int64_t>(sv_nodes))},
                 {"stable-ref-sv-scale-total", make_int(static_cast<std::int64_t>(total))},
                 {"stable-ref-sv-scale-recommendation", make_int(recommendation)},
+                // Issue #2528: long-session SLA surface (restamp latency
+                // + breach budget). Agents / orch poll these via the query
+                // surface to degrade mutation rate or force soft checkpoint
+                // when restamp_us_last > AURA_REStamp_SLO_US (default 500µs).
+                // Zero cost when no restamp runs (counters stay 0).
+                {"restamp-us-p99",
+                 make_int(static_cast<std::int64_t>(ws ? ws->restamp_us_p99() : 0))},
+                {"restamp-us-last",
+                 make_int(static_cast<std::int64_t>(ws ? ws->restamp_us_last() : 0))},
+                {"restamp-nodes-last",
+                 make_int(static_cast<std::int64_t>(ws ? ws->restamp_nodes_last() : 0))},
+                {"generation-wrap-total",
+                 make_int(static_cast<std::int64_t>(ws ? ws->generation_wrap_count() : 0))},
+                {"restamp-incremental-hit-total",
+                 make_int(
+                     static_cast<std::int64_t>(ws ? ws->restamp_incremental_nodes_total() : 0))},
+                {"restamp-full-fallback-total",
+                 make_int(static_cast<std::int64_t>(ws ? ws->restamp_full_fallback_total() : 0))},
+                {"restamp-slo-breach-total",
+                 make_int(static_cast<std::int64_t>(ws ? ws->restamp_slo_breach_total() : 0))},
+                {"restamp-slo-us-budget",
+                 make_int(static_cast<std::int64_t>(ws ? ws->restamp_slo_us_budget() : 0))},
+                {"stable-ref-sv-scale-schema-2528", make_int(2528)},
             };
             return build_hash(kv);
         });

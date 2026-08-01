@@ -3127,6 +3127,15 @@ aura_add_issue_test(test_restamp_lazy_align_atomic_2421)
 aura_issue_test_link_llvm_jit(test_restamp_lazy_align_atomic_2421)
 add_dependencies(all_test_issue_targets test_restamp_lazy_align_atomic_2421)
 
+# Issue #2528: long-session SLA surface for generation-wrap restamp.
+# Additive observability on top of #2402/#2122/#2394 (#2061 lineage).
+# Exposes restamp-us-p99 / restamp-us-last / restamp-slo-breach-total +
+# AURA_REStamp_SLO_US env-resolved budget via query:stable-ref-sv-scale-stats.
+# Zero cost when no restamp runs (counters live INSIDE the wrap path only).
+aura_add_issue_test(test_restamp_sla_observability_2528)
+aura_issue_test_link_llvm_jit(test_restamp_sla_observability_2528)
+add_dependencies(all_test_issue_targets test_restamp_sla_observability_2528)
+
 # Issue #2422: subtree_gen_ 32-bit cells + atomic_ref (+ resize mutex).
 aura_add_issue_test(test_subtree_gen_atomic_2422)
 aura_issue_test_link_llvm_jit(test_subtree_gen_atomic_2422)

@@ -2193,6 +2193,33 @@ def cmd_orch_soft_boundary_unified_2515_coverage():
     return 0
 
 
+def cmd_restamp_sla_observability_2528_coverage():
+    """Issue #2528: long-session SLA surface for generation-wrap restamp.
+
+    #2402 / #2122 made incremental restamp the production default + added
+    dirty/pinned cone. Residual production gap: no explicit long-session SLA
+    (p99 restamp_us budget) that Agents / orch can poll to degrade mutation
+    rate or force soft checkpoint. Issue #2528 closes the gap with a first-class
+    SLA surface: restamp-us-p99 / restamp-us-last / restamp-slo-breach-total +
+    AURA_REStamp_SLO_US env-resolved budget via query:stable-ref-sv-scale-stats.
+    Zero cost when no restamp runs (counters live INSIDE restamp_all_node_
+    generations() — the only wrap path). Linter fails when SLA keys are
+    missing from the query surface or when the env resolution helper is
+    missing from ast.ixx.
+    """
+    print(f"{B}=== Restamp SLA observability coverage (#2528) ==={N}")
+    script = ROOT / "scripts" / "check_restamp_sla_observability_2528.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Restamp SLA observability (#2528) coverage contract rows failed")
+        return 1
+    ok("Restamp SLA observability (#2528) coverage clean")
+    return 0
+
+
 def cmd_general_object_pin_coverage_gate_2496_coverage():
     """Issue #2496: GeneralObjectPin adoption coverage gate.
 

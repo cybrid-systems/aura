@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 687 | Preferred destination suites |
-| **Total scanned** | **687** | |
+| `tests/core/test_*.cpp` | 688 | Preferred destination suites |
+| **Total scanned** | **688** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 195 | 195 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 196 | 196 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 73 | 73 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -684,6 +684,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp`
 - `tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp`
 - `tests/core/test_restamp_lazy_align_atomic_2421.cpp`
+- `tests/core/test_restamp_sla_observability_2528.cpp`
 - `tests/core/test_restore_children_structural_lock_2455.cpp`
 - `tests/core/test_restricted_unset_principal_2385.cpp`
 - `tests/compiler/test_reverify_expand_2356.cpp`
@@ -960,13 +961,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (195)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (196)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (195)
+#### domain/ (196)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1118,6 +1119,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_require_effect_live_mid_2384.cpp` (#2384) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges_2412.cpp` (#2412) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
 - `tests/compiler/test_residual_gc_defer_assert_2211.cpp` (#2211) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0
+- `tests/core/test_restamp_sla_observability_2528.cpp` (#2528) [obs_named, domain_suite, theme_core] — AC1: After forced wrap, query surface reports restamp-us / nodes /
 - `tests/core/test_restricted_unset_principal_2385.cpp` (#2385) [domain_suite, theme_core] — AC1: Restricted + tenant=0 + Mutate side-effect → deny + IsolationDeny
 - `tests/core/test_sandbox_mode_atomic_2427.cpp` (#2427) [domain_suite, theme_core] — AC1: sandbox_mode is atomic-backed (AtomicEffectSandboxMode)
 - `tests/compiler/test_security_audit_fold_2388.cpp` (#2388) [domain_suite, theme_compiler] — AC1: >128 effect denies under enabled SecurityEvent WAL → after
