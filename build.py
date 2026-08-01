@@ -4092,6 +4092,24 @@ def cmd_eval_current_no_auto_fix_coverage():
     return 0
 
 
+def cmd_load_cap_io_read_coverage():
+    """Issue #2485: load requires kCapIoRead (capability bypass closed).
+
+    Sandbox without io-read / io / wildcard → capability denied.
+    """
+    print(f"{B}=== load kCapIoRead coverage (#2485) ==={N}")
+    script = ROOT / "scripts" / "check_load_cap_io_read_2485.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("load kCapIoRead (#2485) coverage contract rows failed")
+        return 1
+    ok("load kCapIoRead (#2485) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5128,6 +5146,7 @@ def cmd_gate():
         or cmd_list_end_of_list_void_coverage()
         or cmd_channel_rendezvous_coverage()
         or cmd_eval_current_no_auto_fix_coverage()
+        or cmd_load_cap_io_read_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
