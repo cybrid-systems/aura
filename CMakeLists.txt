@@ -3282,6 +3282,12 @@ aura_add_issue_test(test_ir_optimize_type_info_chain_2471)
 aura_issue_test_link_llvm_jit(test_ir_optimize_type_info_chain_2471)
 add_dependencies(all_test_issue_targets test_ir_optimize_type_info_chain_2471)
 
+# Issue #2472: close TOCTOU in aura_closure_call MustDeopt lock-downgrade
+# (free+realloc of cid between shared unlock and exclusive re-acquire).
+aura_add_issue_test(test_closure_call_must_deopt_toctou_2472)
+aura_issue_test_link_llvm_jit(test_closure_call_must_deopt_toctou_2472)
+add_dependencies(all_test_issue_targets test_closure_call_must_deopt_toctou_2472)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

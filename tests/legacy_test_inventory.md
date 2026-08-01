@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 644 | Preferred destination suites |
-| **Total scanned** | **644** | |
+| `tests/core/test_*.cpp` | 645 | Preferred destination suites |
+| **Total scanned** | **645** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 66 | 66 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 15 | 15 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 62 | 62 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 63 | 63 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 40 | 40 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 125 | 125 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 35 | 35 | P3 — review case-by-case |
@@ -239,6 +239,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_closedloop_stats_hash_cap.cpp`
 - `tests/compiler/test_closure_batch.cpp`
 - `tests/compiler/test_closure_bridge_lifetime.cpp`
+- `tests/compiler/test_closure_call_must_deopt_toctou_2472.cpp`
 - `tests/compiler/test_closure_free.cpp`
 - `tests/compiler/test_closure_view_batch.cpp`
 - `tests/compiler/test_coercion_ban_weak_ir_2261.cpp`
@@ -1256,13 +1257,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (62)
+### `jit_incremental` — JIT / AOT / incremental relower (63)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (62)
+#### domain/ (63)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1279,6 +1280,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_capability_gating.cpp` (—) [domain_suite, theme_compiler] — Issue #1416: Inline no-op stubs for aura::jit::AuraJIT::invalidate_prefix
 - `tests/compiler/test_cascade_incremental_pass_suite_2044.cpp` (#2044) [domain_suite, theme_compiler] — Issue #2044 — Pass pipeline fully incremental on cascade re-lower
 - `tests/compiler/test_castop_density_hard_2358.cpp` (#2358) [domain_suite, theme_compiler] — AC1: HARD=0 + dens>budget → no hard_action, no force-JIT side effect
+- `tests/compiler/test_closure_call_must_deopt_toctou_2472.cpp` (#2472) [domain_suite, theme_compiler] — AC1: multi-step free+realloc under concurrent MustDeopt callers —
 - `tests/compiler/test_compiler_core_incremental_selfmod_gaps.cpp` (—) [domain_suite, theme_compiler] — test_compiler_core_incremental_selfmod_gaps.cpp — Issue #657:
 - `tests/compiler/test_concept_constraints.cpp` (—) [domain_suite, theme_compiler] — AC1: module exports all Pass-related concepts
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2025; PassKind::DeadCoercion + DeadCoercionPass +
