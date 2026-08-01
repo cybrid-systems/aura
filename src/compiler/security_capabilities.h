@@ -138,6 +138,30 @@ inline constexpr int kCoercionProvenanceRejectProductionIssue = 2185;
 // require_effect, PrimMeta.required_effects, or documented security_exempt.
 inline constexpr int kSideEffectInheritIssue = 2057;
 
+// Issue #1163/#1164/#1165/#2485/#2487: refuse process-memory / device-memory
+// paths for any user-supplied path open/read/load primitive (read-file,
+// write-file, load, sys-open, …). Empty path is denied. /proc/*/mem and
+// well-known absolute sensitive prefixes are denied.
+// Header-inline so file / io / eval TUs share one policy without link deps.
+[[nodiscard]] inline bool path_is_denied(std::string_view path) noexcept {
+    if (path.empty())
+        return true;
+    static constexpr const char* kDenied[] = {
+        "/proc/self/mem", "/proc/self/mem/", "/dev/mem", "/dev/kmem", "/proc/kcore",
+    };
+    for (auto* d : kDenied) {
+        if (path == d || path.starts_with(std::string(d) + "/"))
+            return true;
+    }
+    if (path.starts_with("/proc/") &&
+        (path.ends_with("/mem") || path.find("/mem/") != std::string_view::npos))
+        return true;
+    return false;
+}
+
+// Issue #2487: sys-open path TOCTOU + sensitive-path hardening stamp.
+inline constexpr int kSysOpenPathHardenIssue = 2487;
+
 } // namespace aura::compiler::security
 
 #endif // AURA_COMPILER_SECURITY_CAPABILITIES_H

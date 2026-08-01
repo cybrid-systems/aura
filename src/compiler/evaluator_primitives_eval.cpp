@@ -323,26 +323,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_void();
         auto& path = ev.string_heap_[idx];
 
-        // Issue #2485 / #1163: refuse dangerous / sensitive paths (match read-file).
-        {
-            static constexpr const char* kDenied[] = {
-                "/proc/self/mem", "/proc/self/mem/", "/dev/mem", "/dev/kmem", "/proc/kcore",
-            };
-            bool denied = path.empty();
-            if (!denied) {
-                for (auto* d : kDenied) {
-                    if (path == d || path.starts_with(std::string(d) + "/")) {
-                        denied = true;
-                        break;
-                    }
-                }
-            }
-            if (!denied && path.starts_with("/proc/") &&
-                (path.ends_with("/mem") || path.find("/mem/") != std::string::npos))
-                denied = true;
-            if (denied)
-                return make_void();
-        }
+        // Issue #2485 / #1163 / #2487: refuse dangerous / sensitive paths
+        // (/proc/self/mem, /dev/mem, /proc/kcore, …) via shared
+        // path_is_denied (same policy as read-file / sys-open).
+        if (aura::compiler::security::path_is_denied(path))
+            return make_void();
 
         std::ifstream f(path);
         if (!f)
