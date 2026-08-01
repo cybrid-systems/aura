@@ -3562,6 +3562,15 @@ aura_issue_test_link_llvm_jit(test_audit_mutation_id_unify_2493)
 aura_add_issue_test(test_side_effect_security_gate_hardfail_2494)
 aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail_2494)
 
+# Issue #2495: Moving densify fail-closed on untracked external roots.
+# ASTArena::live_compact(Moving) only densifies small-pool tracked create
+# objects via relocate_tracked_objects_for_moving_; non-small-pool /
+# untracked external raw pointers never enter last_object_remap_. Fail-closed
+# via moving_incomplete_remap + pin_contract_held=false when objects_moved > 0
+# && untracked_kept_count > 0 (production Moving default).
+aura_add_issue_test(test_moving_densify_fail_closed_2495)
+aura_issue_test_link_llvm_jit(test_moving_densify_fail_closed_2495)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.

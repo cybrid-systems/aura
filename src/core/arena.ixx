@@ -521,6 +521,16 @@ export inline std::atomic<std::uint64_t> g_objects_moved_total{0};
 export inline std::atomic<std::uint64_t> g_moving_blocked_precondition_total{0};
 // Feature flag: default OFF (env AURA_ARENA_MOVING_COMPACT=1 enables).
 export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/default
+// Issue #2495: process-wide counter for Moving densify windows where the
+// remap walk observed untracked external / non-small-pool candidates
+// (raw pointers not registered as LifetimePin or RootRemap root). Bumped
+// when objects_moved > 0 && untracked_kept_count > 0. Agent dashboards
+// surface untracked-buffer accumulation.
+export inline std::atomic<std::uint64_t> g_moving_untracked_external_roots_total{0};
+// Issue #2495: AURA_MOVING_UNTRACKED=hard → abort under production security
+// defaults when densify observes untracked candidates. Off / unset keeps
+// Soft semantics (success metrics suppressed but no abort) for unit path.
+export inline std::atomic<int> g_moving_untracked_hard_abort_pref{-1};
 
 export inline void set_moving_compact_enabled(int enabled) noexcept {
     g_moving_compact_enabled_pref.store(enabled ? 1 : 0, std::memory_order_release);
@@ -587,6 +597,24 @@ export struct LiveCompactResult {
     // bumps moving_compact_pin_contract_fail_total + suppresses success metrics
     // when this is false. Default true (no Moving = contract trivially held).
     bool pin_contract_held = true;
+    // Issue #2495: incomplete-remap flag for untracked external roots.
+    // True when relocate_tracked_objects_for_moving_ moved live objects but
+    // also left candidates untracked (non-small-pool / non-aligned size /
+    // not registered as a pin or root). Failure mode = false safety under
+    // production Moving default; Agents can otherwise treat Moving success
+    // + pin_contract_held as full pointer safety. Aggregated into
+    // LiveCompactResultAggregated.moving_incomplete_remap_any() so Phase 5
+    // in evaluator_mutation_boundary.cpp fails outermost_exit_phase5_unlock
+    // when any arena reports incomplete remap. Distinct from
+    // pin_contract_held so observability can separate "tracked-but-unpin"
+    // vs "untracked-external" failures.
+    bool moving_incomplete_remap = false;
+    // Issue #2495: count of untracked external candidates the densify
+    // walk observed but could not remap (non-small-pool / oversized /
+    // unaligned / no remap walk entry). When objects_moved > 0 AND
+    // untracked_kept_count > 0, moving_incomplete_remap is set. Visible
+    // to Agent dashboards so untracked-buffer accumulation is observable.
+    std::size_t untracked_kept_count = 0;
     // Issue #2267: RootRemapPass counters (StableNodeRef + Closure captures).
     std::size_t root_remap_stable_ref_total = 0;
     std::size_t root_remap_stable_ref_fail_total = 0;
@@ -596,7 +624,8 @@ export struct LiveCompactResult {
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
                !force_blocked_by_pin && !force_blocked_by_envframe_guard &&
-               !moving_blocked_precondition && objects_moved == 0 && pin_contract_held;
+               !moving_blocked_precondition && objects_moved == 0 && pin_contract_held &&
+               !moving_incomplete_remap && untracked_kept_count == 0;
     }
     [[nodiscard]] bool force_blocked() const noexcept {
         return force_blocked_by_pin || force_blocked_by_envframe_guard;
@@ -1285,10 +1314,37 @@ public:
             ++stats_.live_compact_moving_count;
             g_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
             // Densify tracked create objects before freelist/tail compact.
-            result.objects_moved = relocate_tracked_objects_for_moving_();
+            // Issue #2495: pass out_untracked_kept_count so we can detect
+            // densify windows where Moving moved live objects but left
+            // external / untracked candidates behind. failure-closed →
+            // set moving_incomplete_remap + clear pin_contract_held.
+            std::size_t untracked_kept_local = 0;
+            result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
+            result.untracked_kept_count = untracked_kept_local;
             result.moved_live_objects = result.objects_moved > 0;
             stats_.objects_moved_total += result.objects_moved;
             g_objects_moved_total.fetch_add(result.objects_moved, std::memory_order_relaxed);
+            // Issue #2495: fail-closed against false safety under Moving default.
+            // When densify moved objects AND untracked candidates existed, the
+            // remap walk missed at least one potential live root (external raw
+            // pointer not registered as pin or root). Pin-or-remap contract
+            // cannot be claimed; bump the untracked counter and mark both
+            // moving_incomplete_remap (observability) and pin_contract_held
+            // (the unified failure flag the Phase 5 driver checks).
+            if (result.objects_moved > 0 && result.untracked_kept_count > 0) {
+                result.moving_incomplete_remap = true;
+                result.pin_contract_held = false;
+                ++stats_.moving_untracked_external_roots_total;
+                g_moving_untracked_external_roots_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2495 AC3: AURA_MOVING_UNTRACKED=hard abort under
+                // production security defaults. Off / unset keeps the Soft
+                // semantics (success metrics suppressed but no abort) so
+                // unit Soft path stays unchanged.
+                if (g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) > 0) {
+                    result.moving_blocked_precondition = true;
+                    result.soft_gated = true;
+                }
+            }
         } else {
             // Force path (#2160 / #2157).
             if (aura::gc_hooks::should_defer_destructive_gc()) {
@@ -1617,7 +1673,12 @@ private:
     // Snapshot → freelist recycle (no dtor) → reallocate → memcpy → remap.
     // Non-small-pool / untracked slots stay put. Avoids allocate_raw_impl
     // auto-compact re-entry. Returns count of objects whose address changed.
-    [[nodiscard]] std::size_t relocate_tracked_objects_for_moving_() noexcept {
+    // Issue #2495: also returns the count of untracked-kept candidates via
+    // the out-parameter so LiveCompactResult can set moving_incomplete_remap
+    // when objects_moved > 0 && untracked_kept_count > 0 (failure-closed
+    // against false safety under production Moving default).
+    [[nodiscard]] std::size_t
+    relocate_tracked_objects_for_moving_(std::size_t* out_untracked_kept_count = nullptr) noexcept {
         last_object_remap_.clear();
         if (dtors_.empty())
             return 0;
@@ -1634,14 +1695,22 @@ private:
         std::vector<DtorEntry> kept;
         kept.reserve(dtors_.size());
 
+        // Issue #2495: count of candidates that were NOT small-pool /
+        // NOT in size budget / NOT pinned (external / untracked). When
+        // objects_moved > 0 alongside this count > 0, the densify may
+        // have moved a referent out from under an untracked live pointer.
+        std::size_t untracked_kept = 0;
+
         for (auto& e : dtors_) {
             if (!e.ptr || e.size == 0 || e.dtor == nullptr) {
                 kept.push_back(e);
+                ++untracked_kept;
                 continue;
             }
             // Only densify freelist-reclaimable small-pool objects.
             if (!small_pool_.owns(e.ptr) || e.size > SmallObjectPool::kMaxSmallSize) {
                 kept.push_back(e);
+                ++untracked_kept;
                 continue;
             }
             Pending p;
