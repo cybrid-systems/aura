@@ -544,12 +544,23 @@ std::uint64_t aura_epoch_invariant_violation_total_v_read(void);
 std::uint64_t aura_epoch_invariant_walks_total_v_read(void);
 // Mirror service-side counters into C-readable totals (called after walk).
 void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept;
+// Issue #2501: additive breakdown counters (subset of violations).
+void aura_epoch_invariant_note_slot_stale(std::uint64_t n) noexcept;
+void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept;
+[[nodiscard]] std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_closure_must_deopt_total_v_read(void);
 // Count live generation-behind AOT slots (fn_ptr≠0 && gen≠current epoch).
 // Empty slots (fn_ptr==0) are not violations.
 [[nodiscard]] std::size_t aura_aot_count_live_generation_behind_slots(void);
+// Issue #2501: walk JIT live-closure table; set MustDeopt on gen-behind
+// (bridge_epoch != current table epoch, not already must_deopt, not freed).
+// Returns number of closures newly marked MustDeopt.
+[[nodiscard]] std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void);
 // Test inject: live non-null slot with table_generation behind current epoch.
 void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id);
 void aura_aot_clear_slot_for_test(std::int64_t func_id);
+// Issue #2501 test: stamp a live JIT closure bridge_epoch one behind current.
+void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t closure_id);
 // Issue #2271 / #2299: physically invalidate generation-behind AOT slots
 // (close #2232 / #2271 follow-up). For each slot in g_aot_func_slots whose
 // table_generation != aura_aot_func_table_epoch(), set fn_ptr empty

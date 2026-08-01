@@ -30,6 +30,11 @@
 // Declared in runtime_shared.h / aura_jit_runtime.cpp; weak stub in bridge stub.
 extern "C" void aura_set_remap_name_fallback_enabled(int v);
 
+// Issue #2501: post-bump epoch invariant mode (0=off, 1=soft, 2=hard).
+// Defined in aura_jit_bridge.cpp; weak stub may exist for non-JIT links.
+extern "C" void aura_set_epoch_invariant_mode(int mode);
+extern "C" int aura_epoch_invariant_mode(void);
+
 // Issue #2372: production Soft steal-snapshot lock (defined in serve/fiber.cpp).
 // Soft env ignored when locked; strong force-deopt ABI required under production.
 namespace aura::serve {
@@ -405,6 +410,20 @@ inline void apply_production_security_defaults() noexcept {
         // in check_soft_in_production_or_abort (called from
         // run_post_mutate_typecheck_no_lock) handles AURA_HARD_TYPE_GATE_ABORT.
         mutate_type_gate::check_soft_in_production_or_abort();
+    }
+
+    // 12) Issue #2501: post-bump epoch invariant soft-on under production
+    //     so long-running Agents detect gen-behind AOT/closure survivors.
+    //     AURA_EPOCH_INVARIANT=soft|hard|0 still wins (env applied at
+    //     static init + re-read here). AURA_SANDBOX=off keeps mode off
+    //     for unit tests (zero walk cost). Soft never aborts.
+    if (!dev_off) {
+        const char* ei = std::getenv("AURA_EPOCH_INVARIANT");
+        if (!ei || !*ei) {
+            // Unset under production → soft (mode 1).
+            aura_set_epoch_invariant_mode(1);
+        }
+        // If env set, EpochInvariantEnvInit / existing mode already applied.
     }
 }
 

@@ -935,6 +935,55 @@ extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v) {
     g_closure_must_deopt[cid] = v != 0 ? 1 : 0;
 }
 
+// Issue #2501: post-bump epoch invariant — walk JIT live-closure table
+// and force MustDeopt on gen-behind survivors (not already MustDeopt,
+// not freed). Returns newly-marked count. Called from
+// CompilerService::run_epoch_invariant_if_enabled under soft+hard.
+extern "C" std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void) {
+    const auto cur = aura_aot_func_table_epoch();
+    std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto n = g_closure_func_ids.size();
+    if (g_closure_must_deopt.size() < n)
+        g_closure_must_deopt.resize(n, 0);
+    if (g_closure_bridge_epochs.size() < n)
+        g_closure_bridge_epochs.resize(n, 0);
+    if (g_closure_freed.size() < n)
+        g_closure_freed.resize(n, 0);
+    std::size_t marked = 0;
+    for (std::size_t cid = 0; cid < n; ++cid) {
+        if (g_closure_freed[cid] != 0)
+            continue; // free slot
+        if (g_closure_must_deopt[cid] != 0)
+            continue; // already MustDeopt
+        const auto be = g_closure_bridge_epochs[cid];
+        if (be == 0 || be == cur)
+            continue; // unstamped or current
+        g_closure_must_deopt[cid] = 1;
+        ++marked;
+    }
+    return marked;
+}
+
+// Issue #2501 test: force a live JIT closure's bridge_epoch one behind.
+extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return;
+    if (g_closure_bridge_epochs.size() <= cid)
+        g_closure_bridge_epochs.resize(cid + 1, 0);
+    const auto cur = aura_aot_func_table_epoch();
+    g_closure_bridge_epochs[cid] = cur > 0 ? cur - 1 : 0;
+    // Ensure not already MustDeopt so the walk can mark it.
+    if (g_closure_must_deopt.size() <= cid)
+        g_closure_must_deopt.resize(cid + 1, 0);
+    g_closure_must_deopt[cid] = 0;
+}
+
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;

@@ -3384,6 +3384,11 @@ aura_add_issue_test(test_compact_policy_2500)
 aura_issue_test_link_llvm_jit(test_compact_policy_2500)
 add_dependencies(all_test_issue_targets test_compact_policy_2500)
 
+# Issue #2501: complete post-bump epoch invariant (slot clear + MustDeopt).
+aura_add_issue_test(test_epoch_invariant_complete_2501)
+aura_issue_test_link_llvm_jit(test_epoch_invariant_complete_2501)
+add_dependencies(all_test_issue_targets test_epoch_invariant_complete_2501)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
