@@ -3998,6 +3998,24 @@ def cmd_json_parse_number_exception_coverage():
     return 0
 
 
+def cmd_json_parse_object_grow_coverage():
+    """Issue #2481: json-parse parse_object grows FlatHashTable.
+
+    Load-factor 0.7 grow — no silent key drop when N>5.
+    """
+    print(f"{B}=== json-parse object grow coverage (#2481) ==={N}")
+    script = ROOT / "scripts" / "check_json_parse_object_grow_2481.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("json-parse object grow (#2481) coverage contract rows failed")
+        return 1
+    ok("json-parse object grow (#2481) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5029,6 +5047,7 @@ def cmd_gate():
         or cmd_command_line_cap_io_read_coverage()
         or cmd_regex_redos_timeout_coverage()
         or cmd_json_parse_number_exception_coverage()
+        or cmd_json_parse_object_grow_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
