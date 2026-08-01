@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 641 | Preferred destination suites |
-| **Total scanned** | **641** | |
+| `tests/core/test_*.cpp` | 642 | Preferred destination suites |
+| **Total scanned** | **642** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 73 | 73 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 74 | 74 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 188 | 188 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 66 | 66 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 15 | 15 | P1 — small, already partially batched |
@@ -522,6 +522,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_obs_schema_matrix.cpp`
 - `tests/compiler/test_observability_tier_table.cpp`
 - `tests/compiler/test_occ_cache_stats_wired.cpp`
+- `tests/compiler/test_occurrence_cache_key_2461.cpp`
 - `tests/compiler/test_occurrence_dirty_blame_post_mutate.cpp`
 - `tests/compiler/test_occurrence_goal_epoch_table_2278.cpp`
 - `tests/compiler/test_occurrence_mutate_narrowing.cpp`
@@ -826,13 +827,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (73)
+### `arena_compaction` — Arena / compaction / GC (74)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (73)
+#### domain/ (74)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -886,6 +887,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_layout_stamp_2170.cpp` (#2170) [domain_suite, theme_compiler] — API for cross-subsystem epoch coherence (P1, MemorySafety-Review,
 - `tests/compiler/test_memo_goal_epoch_health_2359.cpp` (#2359) [domain_suite, theme_compiler] — AC1: Two successive queries without mutate return identical epoch
 - `tests/core/test_moving_compact_2166.cpp` (#2166) [large, domain_suite, theme_core] — Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
+- `tests/compiler/test_occurrence_cache_key_2461.cpp` (#2461) [domain_suite, theme_compiler] — AC1: same shape + epoch → second visit is structural key hit
 - `tests/compiler/test_occurrence_goal_epoch_table_2278.cpp` (#2278) [domain_suite, theme_compiler] — AC1: clear_blame_context does NOT wipe OccurrenceGoal table
 - `tests/compiler/test_outermost_exit_order_2120.cpp` (#2120) [domain_suite, theme_compiler] — Documented success exit order (AC5):
 - `tests/compiler/test_post_compact_lifecycle_2436.cpp` (#2436) [domain_suite, theme_compiler] — AC1: Documented ordered lifecycle in post_compact_lifecycle.hh

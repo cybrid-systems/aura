@@ -1087,6 +1087,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> predicate_memo_hits_total{0};
     std::atomic<std::uint64_t> predicate_memo_misses_total{0};
     std::atomic<std::uint64_t> predicate_memo_evictions_total{0};
+    // Issue #2461: per-If structural narrowing cache key
+    // (cond_shape_hash × epoch × refined) hit/miss totals.
+    std::atomic<std::uint64_t> occurrence_cache_key_hit_total{0};  // #2461
+    std::atomic<std::uint64_t> occurrence_cache_key_miss_total{0}; // #2461
     // Issue #1872: partial LRU overflow eviction events
     // (subset of predicate_memo_evictions_total that are not
     // epoch wholesale clears). Under high mutation, partial

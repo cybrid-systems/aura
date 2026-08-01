@@ -6926,6 +6926,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("memo-goal-epoch-health-wired", 1);
                 insert_kv("schema-2359", 2359);
                 insert_kv("issue-2359", 2359);
+                // Issue #2461: per-If structural cache key hit/miss.
+                std::int64_t key_hit = 0;
+                std::int64_t key_miss = 0;
+                if (m) {
+                    key_hit = static_cast<std::int64_t>(
+                        m->occurrence_cache_key_hit_total.load(std::memory_order_relaxed));
+                    key_miss = static_cast<std::int64_t>(
+                        m->occurrence_cache_key_miss_total.load(std::memory_order_relaxed));
+                }
+                if (ev) {
+                    if (auto* eng = static_cast<aura::compiler::InferenceEngine*>(
+                            ev->guard_infer_engine())) {
+                        // Prefer live engine session counters when present.
+                        key_hit = static_cast<std::int64_t>(eng->occurrence_cache_key_hits());
+                        key_miss = static_cast<std::int64_t>(eng->occurrence_cache_key_misses());
+                    }
+                }
+                insert_kv("occurrence-cache-key-hit-total", key_hit);
+                insert_kv("occurrence_cache_key_hit_total", key_hit);
+                insert_kv("occurrence-cache-key-miss-total", key_miss);
+                insert_kv("occurrence_cache_key_miss_total", key_miss);
+                insert_kv("occurrence-cache-key-wired", 1);
+                insert_kv("schema-2461", 2461);
+                insert_kv("issue-2461", 2461);
             }
             insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
             insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030

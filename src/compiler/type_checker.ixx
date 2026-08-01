@@ -1358,6 +1358,10 @@ public:
     // *partial* LRU eviction via last_used stamps instead of
     // wholesale clear — preserves hot predicate entries under
     // high-mutation workspaces that thrash the 4096 cap.
+    // Issue #2461: per-If stable narrowing cache key =
+    //   (cond_shape_hash × epoch × refined_type_id)
+    // Hit only when all three match; epoch alone is insufficient
+    // when cond body mutates mid-epoch without dirt bits.
     struct PredicateMemoEntry {
         aura::ast::NodeId cond_id{};
         std::uint64_t epoch = 0;
@@ -1368,7 +1372,20 @@ public:
         // that mention affected SymIds (selective invalidation) instead of
         // evicting unrelated entries via LRU thrashing.
         std::vector<std::string> captured_var_names;
+        // Issue #2461: structural cond shape (hash_node_shape) + refined TypeId.
+        std::uint64_t cond_shape_hash = 0;
+        aura::core::TypeId refined{}; // 0 / invalid when no narrowing
     };
+    // Issue #2461: Agent-visible structural key hit/miss (sibling of
+    // predicate_memo_hits_/misses_ which are epoch-only historically).
+    std::uint64_t occurrence_cache_key_hits_ = 0;
+    std::uint64_t occurrence_cache_key_misses_ = 0;
+    [[nodiscard]] std::uint64_t occurrence_cache_key_hits() const noexcept {
+        return occurrence_cache_key_hits_;
+    }
+    [[nodiscard]] std::uint64_t occurrence_cache_key_misses() const noexcept {
+        return occurrence_cache_key_misses_;
+    }
     std::unordered_map<aura::ast::NodeId, PredicateMemoEntry> predicate_memo_;
     std::uint64_t predicate_memo_hits_ = 0;
     std::uint64_t predicate_memo_misses_ = 0;
