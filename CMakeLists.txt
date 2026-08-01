@@ -3332,6 +3332,11 @@ aura_add_issue_test(test_json_parse_number_exception_2480)
 aura_issue_test_link_llvm_jit(test_json_parse_number_exception_2480)
 add_dependencies(all_test_issue_targets test_json_parse_number_exception_2480)
 
+# Issue #2481: json-parse parse_object grows FlatHashTable (no silent key drop).
+aura_add_issue_test(test_json_parse_object_grow_2481)
+aura_issue_test_link_llvm_jit(test_json_parse_object_grow_2481)
+add_dependencies(all_test_issue_targets test_json_parse_object_grow_2481)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
