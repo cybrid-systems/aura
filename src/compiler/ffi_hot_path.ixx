@@ -63,9 +63,10 @@ struct FFIBatchHotPath {
             return 0;
         }
         record_miss();
-        cached_sig_hash = sig_hash;
-        cached_func_ptr = resolved_fn;
+        // Issue #2474 parity with .hh: abi+fn before hash publish.
         cached_abi = abi;
+        cached_func_ptr = resolved_fn;
+        cached_sig_hash = sig_hash;
         if (!resolved_fn)
             return -1;
         if (abi == RenderFfiAbi::BatchArgs) {

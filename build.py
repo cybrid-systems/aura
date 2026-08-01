@@ -3849,6 +3849,25 @@ def cmd_gc_closures_mtx_flush_sweep_coverage():
     return 0
 
 
+def cmd_ffi_hot_path_cache_toctou_coverage():
+    """Issue #2474: FFI hot-path cache torn update closed.
+
+    update_cache publishes sig_hash last (after fn/abi); readers
+    double-check hash; clear_cache invalidates hash first.
+    """
+    print(f"{B}=== FFI hot-path cache TOCTOU coverage (#2474) ==={N}")
+    script = ROOT / "scripts" / "check_ffi_hot_path_cache_toctou_2474.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("FFI hot-path cache TOCTOU (#2474) coverage contract rows failed")
+        return 1
+    ok("FFI hot-path cache TOCTOU (#2474) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4872,6 +4891,7 @@ def cmd_gate():
         or cmd_ir_optimize_type_info_chain_coverage()
         or cmd_closure_call_must_deopt_toctou_coverage()
         or cmd_gc_closures_mtx_flush_sweep_coverage()
+        or cmd_ffi_hot_path_cache_toctou_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
