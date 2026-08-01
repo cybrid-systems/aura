@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 631 | Preferred destination suites |
-| **Total scanned** | **631** | |
+| `tests/core/test_*.cpp` | 632 | Preferred destination suites |
+| **Total scanned** | **632** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 73 | 73 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 185 | 185 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 186 | 186 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 65 | 65 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -541,6 +541,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_panic_defer_after_densify_2364.cpp`
 - `tests/orch/test_parallel_intend_pure_2163.cpp`
 - `tests/orch/test_parallel_intend_pure_contract_2230.cpp`
+- `tests/core/test_param_annot_mutation_contract_2450.cpp`
 - `tests/core/test_param_data_mutation_contract_2449.cpp`
 - `tests/compiler/test_partial_cs_single_source_2262.cpp`
 - `tests/compiler/test_partial_relower_cascade_2041.cpp`
@@ -898,13 +899,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (185)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (186)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (185)
+#### domain/ (186)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1026,6 +1027,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_task2.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_typing_blame_post_mutate_task2.cpp — restored standalone (AC drift under batch
 - `tests/orch/test_parallel_intend_pure_2163.cpp` (#2163) [domain_suite, theme_orch] — thunks; mutating thunks fail pure-contract; FailurePolicy still works.
 - `tests/orch/test_parallel_intend_pure_contract_2230.cpp` (#2230) [domain_suite, theme_orch] — (pure_unlocked_applies / pure_fallback_locked / pure_contract_violated)
+- `tests/core/test_param_annot_mutation_contract_2450.cpp` (#2450) [domain_suite, theme_core] — AC1: single-thread add_lambda with annotations coherent
 - `tests/core/test_param_data_mutation_contract_2449.cpp` (#2449) [domain_suite, theme_core] — AC1: single-threaded add_lambda / set_lambda_params unchanged
 - `tests/compiler/test_partial_cs_single_source_2262.cpp` (#2262) [domain_suite, theme_compiler] — AC1: N consecutive infer_flat_partial → import_total += N; solve sees roots
 - `tests/core/test_pcv_exclusive_with_set_2140.cpp` (#2140) [domain_suite, theme_core] — AC1: with_set exclusive → no alloc (same storage, with_set_exclusive metric)

@@ -3593,6 +3593,24 @@ def cmd_param_data_mutation_contract_coverage():
     return 0
 
 
+def cmd_param_annot_mutation_contract_coverage():
+    """Issue #2450: param_annot_data_ single-threaded mutation contract.
+
+    Builder resize under parser-only contract; tandem with param_data_ (#2449).
+    """
+    print(f"{B}=== param_annot_data_ mutation contract coverage (#2450) ==={N}")
+    script = ROOT / "scripts" / "check_param_annot_mutation_contract_2450.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("param_annot_data_ mutation contract (#2450) coverage contract rows failed")
+        return 1
+    ok("param_annot_data_ mutation contract (#2450) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4564,6 +4582,7 @@ def cmd_gate():
         or cmd_region_sym_map_race_coverage()
         or cmd_defines_referencing_sym_coverage()
         or cmd_param_data_mutation_contract_coverage()
+        or cmd_param_annot_mutation_contract_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

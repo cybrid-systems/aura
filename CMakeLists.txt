@@ -3217,6 +3217,11 @@ aura_add_issue_test(test_param_data_mutation_contract_2449)
 aura_issue_test_link_llvm_jit(test_param_data_mutation_contract_2449)
 add_dependencies(all_test_issue_targets test_param_data_mutation_contract_2449)
 
+# Issue #2450: param_annot_data_ single-threaded mutation contract
+aura_add_issue_test(test_param_annot_mutation_contract_2450)
+aura_issue_test_link_llvm_jit(test_param_annot_mutation_contract_2450)
+add_dependencies(all_test_issue_targets test_param_annot_mutation_contract_2450)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
