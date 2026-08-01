@@ -227,7 +227,10 @@ int main() {
         auto pure = read_file("src/compiler/ir_cache_pure.ixx");
         auto svc = read_file("src/compiler/service.ixx");
         auto dirty = read_file("src/compiler/service_dirty.cpp");
-        auto pm = read_file("src/compiler/pass_manager.ixx");
+        // #2524: storm-aware consult lives in pass_pipeline_core (dirty pipeline).
+        auto pm = read_file("src/compiler/pass_manager.ixx") +
+                  read_file("src/compiler/pass_pipeline_core.ixx") +
+                  read_file("src/compiler/pass_impls.ixx");
         auto low = read_file("src/compiler/lowering_impl.cpp");
         CHECK(pure.find("Issue #2190") != std::string::npos, "ir_cache_pure #2190");
         CHECK(pure.find("should_partial_relower_storm_aware") != std::string::npos,

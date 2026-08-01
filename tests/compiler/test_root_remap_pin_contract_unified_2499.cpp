@@ -63,14 +63,17 @@ static void ac1_root_remap_fail_suppresses_pin_contract() {
         pin_ok && !root_remap_stable_ref_fail && !root_remap_closure_capture_fail;
     CHECK(!pin_contract_held, "AC1: pin_contract_held false when stable_ref_fail present");
 
-    // Mirror DensifyConsistencyReport: pin_ok = pin_contract_held (after #2499 gate).
+    // force_reason reports the failing *axis*, not the AND success gate.
+    // pin_contract_held folds root_remap fails for Phase-5 success metrics,
+    // but pin_ok stays true when only root_remap failed so reason is root_remap.
     DensifyConsistencyReport r;
-    r.pin_ok = pin_contract_held;
+    r.pin_ok = pin_ok;                             // pin axis itself ok
     r.root_remap_ok = !root_remap_stable_ref_fail; // last-call fail axis
     CHECK(!r.overall_ok(), "AC1: !overall_ok when root_remap fail axis fails");
     CHECK(
         std::string_view(r.force_reason()) == "root_remap",
         "AC1: force_reason == root_remap (priority over pin since pin_ok would be true otherwise)");
+    CHECK(!pin_contract_held, "AC1: success gate still false when root_remap fails");
 }
 
 // ── AC2: Clean Moving → fail total == 0 → success allowed ──

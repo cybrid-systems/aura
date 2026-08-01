@@ -83,7 +83,10 @@ static void ac1_production_ban() {
           "AC1: hard-fail without allow");
     CHECK(soa.find("to_aos_view") != std::string::npos, "AC1: to_aos_view present");
 
-    const auto pm = read_file("src/compiler/pass_manager.ixx");
+    // #2524: SoAtoAoSBridgePass + #2520 cites live in pass_impls.
+    const auto pm = read_file("src/compiler/pass_manager.ixx") +
+                    read_file("src/compiler/pass_pipeline_core.ixx") +
+                    read_file("src/compiler/pass_impls.ixx");
     CHECK(pm.find("aos_bridge_allowed") != std::string::npos, "AC1: bridge pass gates allow");
     CHECK(pm.find("Issue #2520") != std::string::npos, "AC1: pass_manager cites #2520");
 
@@ -116,8 +119,11 @@ static void ac2_residual_zero() {
 // ── AC3: DirtyAware / columnar does not call to_aos_view ──
 static void ac3_columnar_no_bridge() {
     std::println("\n--- AC3: DirtyAware / columnar paths avoid to_aos_view ---");
-    const auto pm = read_file("src/compiler/pass_manager.ixx");
-    const auto dce = read_file("src/compiler/pass_manager.ixx");
+    // #2524: columnar / dirty-aware paths live in pass_pipeline_core + pass_impls.
+    const auto pm = read_file("src/compiler/pass_manager.ixx") +
+                    read_file("src/compiler/pass_pipeline_core.ixx") +
+                    read_file("src/compiler/pass_impls.ixx");
+    const auto dce = pm;
     CHECK(pm.find("run_columnar_block") != std::string::npos ||
               pm.find("pure columnar") != std::string::npos ||
               pm.find("residual_aos_bridge_total stays 0") != std::string::npos,
@@ -129,7 +135,8 @@ static void ac3_columnar_no_bridge() {
     // (bridge is separate SoAtoAoSBridgePass)
     CHECK(pm.find("Prefer run_dirty_pipeline over to_aos_view") != std::string::npos ||
               pm.find("prefer run_dirty") != std::string::npos ||
-              pm.find("no temporary AoS") != std::string::npos,
+              pm.find("no temporary AoS") != std::string::npos ||
+              pm.find("Prefer run_dirty()") != std::string::npos,
           "AC3: prefer SoA over AoS materialize");
     (void)dce;
 }

@@ -135,12 +135,16 @@ int main() {
         AgentSpec spec;
         spec.name = "cancel-stall-test";
         spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep_running); };
-        spec.attach_mailbox = true;
+        // ProgressClock mode: body owns keepalive via note_agent_progress.
+        // MailboxKeepalive would spawn a helper that keeps the agent alive.
+        spec.attach_mailbox = false;
         spec.mailbox_high_water = 16;
         spec.keepalive_interval_ms = 50;
         AgentHandle& h = scope.spawn(spec);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // watch_agent_liveness returns Alive immediately while age < stall_ms.
+        // Wait past the stall window so silence is observable on the first call.
+        std::this_thread::sleep_for(std::chrono::milliseconds(180));
 
         // Default policy = Cancel (no restart). Stall should
         // request_cancel + bump stalled_agents_total.
@@ -188,7 +192,8 @@ int main() {
         AgentSpec spec_a;
         spec_a.name = name_a;
         spec_a.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep_running); };
-        spec_a.attach_mailbox = true;
+        // ProgressClock (no mailbox helper) so body silence produces stalls.
+        spec_a.attach_mailbox = false;
         spec_a.mailbox_high_water = 16;
         spec_a.keepalive_interval_ms = 50;
         // Spawn the initial agent.
@@ -198,7 +203,8 @@ int main() {
             scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
         std::println("  first_fiber_id={}", first_fiber_id);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Age past stall window so ProgressClock silence is Stalled.
+        std::this_thread::sleep_for(std::chrono::milliseconds(180));
 
         // RestartN policy: max_restarts=2, consecutive_stall_limit=3
         // (so the circuit doesn't fire on the first stall).
@@ -285,6 +291,7 @@ int main() {
         std::println("  (MVP linter still green — no global registry).");
     }
 
-    std::println("\n=== Results: {} passed, {} failed ===", 0, 0);
+    std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
+                 aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }

@@ -841,14 +841,14 @@ void ac2360_6_source_cite() {
     };
     check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_env.cpp",
           {"Issue #2360", "register_live_env_frame_ref", "live_env_frame_refs_mtx_",
-           "live_env_frame_refs_"},
+           "live_env_frame_refs_", "scan_live_env_frame_refs_after_densify"},
           "evaluator_env.cpp");
     check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator.ixx",
           {"Issue #2360", "live_env_frame_refs_mtx_", "register_live_env_frame_ref"},
           "evaluator.ixx");
+    // densify Phase-5 still cites #2360; scan body lives in evaluator_env.cpp.
     check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_mutation_boundary.cpp",
-          {"Issue #2360", "scan_live_env_frame_refs_after_densify"},
-          "evaluator_mutation_boundary.cpp");
+          {"Issue #2360"}, "evaluator_mutation_boundary.cpp");
     check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_primitives_mutate.cpp",
           {"Issue #2360", "schema-2360", "issue-2360", "envframe-live-refs-tracked-wired"},
           "evaluator_primitives_mutate.cpp");

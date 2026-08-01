@@ -87,7 +87,12 @@ int run_allow_macro_inline_1780() {
               "Evaluator stores per-eval policy");
         CHECK(ixx.find("set_inline_respect_macro_hygiene") != std::string::npos, "setter present");
 
-        auto pm = read_first({"src/compiler/pass_manager.ixx", "../src/compiler/pass_manager.ixx"});
+        // #2524: InlinePass body lives in pass_impls (facade is re-export only).
+        auto pm =
+            read_first({"src/compiler/pass_manager.ixx", "../src/compiler/pass_manager.ixx"}) +
+            read_first(
+                {"src/compiler/pass_pipeline_core.ixx", "../src/compiler/pass_pipeline_core.ixx"}) +
+            read_first({"src/compiler/pass_impls.ixx", "../src/compiler/pass_impls.ixx"});
         CHECK(!pm.empty(), "read pass_manager.ixx");
         CHECK(pm.find("static inline bool respect_macro_hygiene_") == std::string::npos,
               "InlinePass hygiene not process-wide static");

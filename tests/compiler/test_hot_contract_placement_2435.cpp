@@ -101,7 +101,10 @@ int main() {
     {
         std::println("\n--- #2435 AC2: cold edges still enforce (language pre) ---");
         auto soa = read_file("src/compiler/ir_soa.ixx");
-        auto pm = read_file("src/compiler/pass_manager.ixx");
+        // #2524: run_pipeline pre cold edge lives in pass_pipeline_core.
+        auto pm = read_file("src/compiler/pass_manager.ixx") +
+                  read_file("src/compiler/pass_pipeline_core.ixx") +
+                  read_file("src/compiler/pass_impls.ixx");
         // view_at keeps language pre (cold bounds edge)
         CHECK(soa.find("pre(func_idx < functions.size())") != std::string::npos,
               "AC2: view_at language pre cold edge");
