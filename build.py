@@ -3927,6 +3927,25 @@ def cmd_linear_partial_revalidate_coverage():
     return 0
 
 
+def cmd_occurrence_cache_key_coverage():
+    """Issue #2461: per-If stable narrowing cache key (shape × epoch × refined).
+
+    Hit only when cond_shape_hash + epoch match; note_occurrence_goal on miss;
+    schema-2461 on fidelity-stats.
+    """
+    print(f"{B}=== occurrence cache key coverage (#2461) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_cache_key_2461.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence cache key (#2461) coverage contract rows failed")
+        return 1
+    ok("occurrence cache key (#2461) coverage clean")
+    return 0
+
+
 def cmd_castop_density_hard_coverage():
     """Issue #2358: CastOp density HARD force-JIT policy.
 
@@ -4784,6 +4803,7 @@ def cmd_gate():
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
         or cmd_linear_partial_revalidate_coverage()
+        or cmd_occurrence_cache_key_coverage()
         or cmd_castop_density_hard_coverage()
         or cmd_castop_density_closed_loop_coverage()
         or cmd_memo_goal_epoch_health_coverage()

@@ -4583,8 +4583,36 @@ InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
                 }
             }
         }
-        predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ,
-                                                      ++predicate_memo_clock_, std::move(captured)};
+        // Issue #2461: stamp shape hash + refined on reanalyze path.
+        TypeId refined{};
+        if (occ)
+            refined = occ->refined_type;
+        const std::uint64_t shape_h = (cond_id != NULL_NODE && cond_id < flat.size())
+                                          ? TypeChecker::hash_node_shape(flat, cond_id, /*depth=*/0)
+                                          : 0;
+        PredicateMemoEntry ent;
+        ent.cond_id = cond_id;
+        ent.epoch = cache_epoch_;
+        ent.result = occ;
+        ent.last_used = ++predicate_memo_clock_;
+        ent.captured_var_names = std::move(captured);
+        ent.cond_shape_hash = shape_h;
+        ent.refined = refined;
+        predicate_memo_[cond_id] = std::move(ent);
+        ++occurrence_cache_key_misses_;
+        if (cs_.metrics_) {
+            static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                ->occurrence_cache_key_miss_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (occ && occ->refined_type.valid() && !occ->var_name.empty()) {
+            const auto var_ty = env_.lookup(occ->var_name);
+            if (var_ty.valid()) {
+                cs_.set_current_epoch(cache_epoch_);
+                cs_.note_occurrence_goal(var_ty, occ->refined_type,
+                                         static_cast<std::uint32_t>(cond_id),
+                                         cs_.active_mutation_id(), cache_epoch_);
+            }
+        }
         evict_predicate_memo_if_over_capacity();
 
         flat.clear_dirty_for(id, kOccurrenceBit);
@@ -4936,18 +4964,39 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
         predicate_memo_.erase(cond_id);
 
     std::optional<OccurrenceInfoFlat> occ;
+    // Issue #2461: stable key (cond_shape_hash × epoch × refined).
+    // Reuse TypeChecker::hash_node_shape so structural cond edits mid-epoch
+    // miss even when NodeId + dirty bits lag.
+    const std::uint64_t shape_hash = (cond_id != NULL_NODE && cond_id < flat.size())
+                                         ? TypeChecker::hash_node_shape(flat, cond_id, /*depth=*/0)
+                                         : 0;
     {
         auto memo_it = predicate_memo_.find(cond_id);
-        if (!force_reanalyze && memo_it != predicate_memo_.end() &&
-            memo_it->second.epoch == cache_epoch_) {
+        const bool epoch_ok = !force_reanalyze && memo_it != predicate_memo_.end() &&
+                              memo_it->second.epoch == cache_epoch_;
+        // Shape match: 0 stored means pre-#2461 entry — treat as miss once
+        // so we re-stamp shape (no silent cross-shape hit on upgrade).
+        const bool shape_ok = epoch_ok && memo_it->second.cond_shape_hash != 0 &&
+                              memo_it->second.cond_shape_hash == shape_hash;
+        if (shape_ok) {
             occ = memo_it->second.result;
             ++predicate_memo_hits_;
+            ++occurrence_cache_key_hits_;
             // Issue #1872: touch LRU stamp so hot predicates survive
             // partial overflow eviction.
             memo_it->second.last_used = ++predicate_memo_clock_;
+            if (cs_.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                m->occurrence_cache_key_hit_total.fetch_add(1, std::memory_order_relaxed);
+            }
         } else {
             ++predicate_memo_misses_;
+            ++occurrence_cache_key_misses_;
             ++stats_.narrowing_reanalyzed;
+            if (cs_.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                m->occurrence_cache_key_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
             if (if_id < flat.size() &&
                 (flat.is_dirty(if_id) || flat.is_occurrence_stale(if_id) != 0 ||
                  out.stale_narrowing))
@@ -4995,9 +5044,30 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
                     }
                 }
             }
-            predicate_memo_[cond_id] = PredicateMemoEntry{
-                cond_id, cache_epoch_, occ, ++predicate_memo_clock_, std::move(captured)};
+            TypeId refined{};
+            if (occ)
+                refined = occ->refined_type;
+            PredicateMemoEntry ent;
+            ent.cond_id = cond_id;
+            ent.epoch = cache_epoch_;
+            ent.result = occ;
+            ent.last_used = ++predicate_memo_clock_;
+            ent.captured_var_names = std::move(captured);
+            ent.cond_shape_hash = shape_hash;
+            ent.refined = refined;
+            predicate_memo_[cond_id] = std::move(ent);
             evict_predicate_memo_if_over_capacity();
+            // Issue #2461: always note OccurrenceGoal on successful narrow
+            // so CS goals stay aligned with memo without caller stitching.
+            if (occ && occ->refined_type.valid() && !occ->var_name.empty()) {
+                const auto var_ty = env_.lookup(occ->var_name);
+                if (var_ty.valid()) {
+                    cs_.set_current_epoch(cache_epoch_);
+                    cs_.note_occurrence_goal(var_ty, occ->refined_type,
+                                             static_cast<std::uint32_t>(cond_id),
+                                             cs_.active_mutation_id(), cache_epoch_);
+                }
+            }
             // Issue #1455: after a forced re-walk from stale
             // provenance, clear historical stale flags so the next
             // resolve trusts the fresh analysis (and blame chain

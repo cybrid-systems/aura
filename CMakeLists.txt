@@ -3267,6 +3267,11 @@ aura_add_issue_test(test_linear_partial_revalidate_2460)
 aura_issue_test_link_llvm_jit(test_linear_partial_revalidate_2460)
 add_dependencies(all_test_issue_targets test_linear_partial_revalidate_2460)
 
+# Issue #2461: per-If stable narrowing cache key (shape × epoch × refined)
+aura_add_issue_test(test_occurrence_cache_key_2461)
+aura_issue_test_link_llvm_jit(test_occurrence_cache_key_2461)
+add_dependencies(all_test_issue_targets test_occurrence_cache_key_2461)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
