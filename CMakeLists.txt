@@ -3222,6 +3222,11 @@ aura_add_issue_test(test_param_annot_mutation_contract_2450)
 aura_issue_test_link_llvm_jit(test_param_annot_mutation_contract_2450)
 add_dependencies(all_test_issue_targets test_param_annot_mutation_contract_2450)
 
+# Issue #2451: param_begin_ + param_count_ publish order (TOCTOU)
+aura_add_issue_test(test_param_begin_count_publish_2451)
+aura_issue_test_link_llvm_jit(test_param_begin_count_publish_2451)
+add_dependencies(all_test_issue_targets test_param_begin_count_publish_2451)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

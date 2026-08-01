@@ -3611,6 +3611,24 @@ def cmd_param_annot_mutation_contract_coverage():
     return 0
 
 
+def cmd_param_begin_count_publish_coverage():
+    """Issue #2451: param_begin_ + param_count_ publish order (TOCTOU).
+
+    Count last after arena fill; post-parse reader contract.
+    """
+    print(f"{B}=== param_begin_count publish coverage (#2451) ==={N}")
+    script = ROOT / "scripts" / "check_param_begin_count_publish_2451.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("param_begin_count publish (#2451) coverage contract rows failed")
+        return 1
+    ok("param_begin_count publish (#2451) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4583,6 +4601,7 @@ def cmd_gate():
         or cmd_defines_referencing_sym_coverage()
         or cmd_param_data_mutation_contract_coverage()
         or cmd_param_annot_mutation_contract_coverage()
+        or cmd_param_begin_count_publish_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
