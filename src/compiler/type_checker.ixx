@@ -2046,6 +2046,23 @@ export struct TypeChecker {
                                    aura::diag::DiagnosticCollector& diag,
                                    void* per_defuse_index_tracker);
 
+    // Issue #2516: documented dirty-transaction entry for typed_mutate
+    // partial paths. Same implementation as infer_flat_partial; the name
+    // source-cites the fixed order:
+    //   1. invalidate_type_dep_for_nodes(dirty seeds)
+    //   2. re-infer / re-record type dependencies
+    //   3. mirror_type_affected_to_cascade(post-infer affected)
+    // Empty dirty → no invalidate / no mirror cost. Prefer this name in
+    // new call sites; existing infer_flat_partial callers already run
+    // the same ordered txn (single production body).
+    std::size_t infer_flat_partial_with_dirty_txn(aura::ast::FlatAST& flat,
+                                                  const aura::ast::StringPool& pool,
+                                                  const aura::ast::MutationRecord& rec,
+                                                  aura::diag::DiagnosticCollector& diag,
+                                                  void* per_defuse_index_tracker = nullptr) {
+        return infer_flat_partial(flat, pool, rec, diag, per_defuse_index_tracker);
+    }
+
     // Issue #116: deferred CoercionNode insertion. infer_flat
     // now collects coercion intent in this map rather than
     // mutating the FlatAST directly. The caller is expected

@@ -546,9 +546,11 @@ inline void pull_cascade_ast_dirty_into(std::vector<NodeId>& out) {
     }
 }
 
-// Issue #2191: after infer_flat_partial builds `affected` (and occurrence
-// Ifs), mirror the type cone into the pipeline DepGraph cascade so
-// DirtyAware / partial re-lower see type ∪ IR authority.
+// Issue #2191 / #2516: after infer_flat_partial re-infer (phase 3 of the
+// dirty txn), mirror the post-infer type cone into the pipeline DepGraph
+// cascade so DirtyAware / partial re-lower see type ∪ IR authority.
+// Must run AFTER invalidate_type_dep + re-infer re-record (#2516 AC3);
+// empty span → zero cost (AC4).
 // Returns number of distinct AST nodes mirrored.
 inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affected_ast) {
     t_last_type_cone_ast.clear();

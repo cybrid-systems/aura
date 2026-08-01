@@ -3833,7 +3833,8 @@ public:
         auto* tracker_ptr = per_defuse_index_tracker_.index_count() > 0
                                 ? static_cast<void*>(&per_defuse_index_tracker_)
                                 : nullptr;
-        auto n = tc.infer_flat_partial(*flat, *pool, rec, diag, tracker_ptr);
+        // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
+        auto n = tc.infer_flat_partial_with_dirty_txn(*flat, *pool, rec, diag, tracker_ptr);
         // Issue #2180: stash partial CS + occurrence vars for composite commit.
         evaluator_.stash_partial_constraint_state(static_cast<void*>(&tc));
         metrics_.typecheck_gen_saved_total.fetch_add(tc.stats().gen_saved,
@@ -8539,7 +8540,8 @@ public:
         auto* tracker_ptr2 = per_defuse_index_tracker_.index_count() > 0
                                  ? static_cast<void*>(&per_defuse_index_tracker_)
                                  : nullptr;
-        auto n = tc.infer_flat_partial(flat, pool, rec, diag, tracker_ptr2);
+        // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
+        auto n = tc.infer_flat_partial_with_dirty_txn(flat, pool, rec, diag, tracker_ptr2);
         // Issue #2262: stash partial CS for all typed_mutate paths (not only
         // incremental_infer / composite). Single long-lived fact source.
         evaluator_.stash_partial_constraint_state(static_cast<void*>(&tc));

@@ -7051,8 +7051,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
-            // Capacity 32: #2283 + #2320 + #2355 keys (~20 inserts).
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #2283 + #2320 + #2355 + #2516 keys.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7145,6 +7145,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("type-dep-epoch-wired", 1);
             insert_kv("schema-2355", 2355);
             insert_kv("issue-2355", 2355);
+            // Issue #2516: dirty txn order (invalidate → re-infer → mirror).
+            const std::int64_t txn_wired =
+                m ? static_cast<std::int64_t>(
+                        m->type_dirty_txn_order_wired.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t txn_total =
+                m ? static_cast<std::int64_t>(
+                        m->type_dirty_txn_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t txn_p1 =
+                m ? static_cast<std::int64_t>(
+                        m->type_dirty_txn_phase1_invalidate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t txn_p2 =
+                m ? static_cast<std::int64_t>(
+                        m->type_dirty_txn_phase2_reinfer_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t txn_p3 =
+                m ? static_cast<std::int64_t>(
+                        m->type_dirty_txn_phase3_mirror_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("type-dirty-txn-order-wired", txn_wired);
+            insert_kv("type-dirty-txn-total", txn_total);
+            insert_kv("type-dirty-txn-phase1-invalidate-total", txn_p1);
+            insert_kv("type-dirty-txn-phase2-reinfer-total", txn_p2);
+            insert_kv("type-dirty-txn-phase3-mirror-total", txn_p3);
+            insert_kv("schema-2516", 2516);
+            insert_kv("issue-2516", 2516);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

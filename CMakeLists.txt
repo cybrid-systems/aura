@@ -2850,6 +2850,11 @@ aura_add_issue_test(test_linear_synth_violation_2357)
 aura_issue_test_link_llvm_jit(test_linear_synth_violation_2357)
 add_dependencies(all_test_issue_targets test_linear_synth_violation_2357)
 
+# Issue #2516: type_dep invalidate → re-infer → cascade mirror single txn.
+aura_add_issue_test(test_type_dirty_txn_order_2516)
+aura_issue_test_link_llvm_jit(test_type_dirty_txn_order_2516)
+add_dependencies(all_test_issue_targets test_type_dirty_txn_order_2516)
+
 # Issue #2514: unify linear_synth_hard_fail with MutationBoundary audit exit.
 aura_add_issue_test(test_linear_synth_boundary_authority_2514)
 aura_issue_test_link_llvm_jit(test_linear_synth_boundary_authority_2514)

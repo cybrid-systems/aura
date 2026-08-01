@@ -4603,6 +4603,25 @@ def cmd_linear_synth_boundary_authority_coverage():
     return 0
 
 
+def cmd_type_dirty_txn_order_coverage():
+    """Issue #2516: type_dep invalidate → re-infer → cascade mirror txn.
+
+    Single ordered sequence on all production partial paths; empty dirty
+    zero cost; phase counters lock order.
+    """
+    print(f"{B}=== type dirty txn order coverage (#2516) ==={N}")
+    script = ROOT / "scripts" / "check_type_dirty_txn_order_2516.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type dirty txn order (#2516) coverage contract rows failed")
+        return 1
+    ok("type dirty txn order (#2516) coverage clean")
+    return 0
+
+
 def cmd_linear_partial_revalidate_coverage():
     """Issue #2460: Phase-2 dirty OwnershipEnv re-sim during infer_flat_partial.
 
@@ -5592,6 +5611,7 @@ def cmd_gate():
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
         or cmd_linear_synth_boundary_authority_coverage()
+        or cmd_type_dirty_txn_order_coverage()
         or cmd_linear_partial_revalidate_coverage()
         or cmd_occurrence_cache_key_coverage()
         or cmd_castop_density_hard_coverage()
