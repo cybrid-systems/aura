@@ -318,6 +318,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 m->typecheck_persistent_cs_cache_hits.store(st.cs_cache_hits,
                                                             std::memory_order_relaxed);
             }
+            // Issue #2514: sticky synth hard-fail for boundary authority.
+            if (tc.last_linear_synth_hard_fail())
+                note_linear_synth_hard_fail_pending();
         } else {
             if (compiler_metrics_)
                 tc.set_metrics(compiler_metrics_);
@@ -339,6 +342,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 m->typecheck_persistent_cs_cache_hits.store(st.cs_cache_hits,
                                                             std::memory_order_relaxed);
             }
+            // Issue #2514: sticky synth hard-fail for boundary authority.
+            if (tc.last_linear_synth_hard_fail())
+                note_linear_synth_hard_fail_pending();
         }
 
         {
@@ -386,6 +392,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             aura::diag::DiagnosticCollector full_diag;
             tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, full_diag);
             workspace_flat_->clear_all_dirty();
+            // Issue #2514: full recheck may surface use-after-move synth hard-fail.
+            if (tc.last_linear_synth_hard_fail())
+                note_linear_synth_hard_fail_pending();
             {
                 auto span = full_diag.diagnostics();
                 local_diags.assign(span.begin(), span.end());
@@ -1456,6 +1465,96 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
     return false;
 }
 
+// ── Issue #2514: linear_synth_hard_fail ↔ MutationBoundary authority ──
+//
+// Exit decision table (single source of truth for Agents):
+//   | synth hard-fail (prod/strict) | Soft Warning only | synth clean      |
+//   | force rollback; skip soft     | no force from     | post-mutate      |
+//   | partial recovery; deny kind   | synth flag; audit | ownership+escape |
+//   | = linear-synth-hard-fail;     | may still run     | defense-in-depth |
+//   | no Success audit for mid      |                   | (#2263/#2108)    |
+//
+// Counter ownership (no double-count of same logical violation):
+//   linear_synth_violation_total / linear_synth_hard_fail_total — synthesize
+//   linear_invariant_fail — post-mutate invariant linear walk only
+//   linear_synth_boundary_force_rollback_total — this early-exit path only
+
+bool Evaluator::linear_synth_hard_fail_pending() const noexcept {
+    if (linear_synth_hard_fail_pending_.load(std::memory_order_relaxed) != 0)
+        return true;
+    if (persistent_typechecker_opaque_) {
+        auto* tc = static_cast<const TypeChecker*>(persistent_typechecker_opaque_);
+        if (tc->last_linear_synth_hard_fail())
+            return true;
+    }
+    if (commit_type_checker_opaque_ &&
+        commit_type_checker_opaque_ != persistent_typechecker_opaque_) {
+        auto* tc = static_cast<const TypeChecker*>(commit_type_checker_opaque_);
+        if (tc->last_linear_synth_hard_fail())
+            return true;
+    }
+    if (guard_infer_engine_opaque_) {
+        auto* eng = static_cast<const InferenceEngine*>(guard_infer_engine_opaque_);
+        if (eng->linear_synth_hard_fail())
+            return true;
+    }
+    return false;
+}
+
+void Evaluator::note_linear_synth_hard_fail_pending() noexcept {
+    linear_synth_hard_fail_pending_.store(1, std::memory_order_relaxed);
+}
+
+void Evaluator::clear_linear_synth_hard_fail_pending() noexcept {
+    linear_synth_hard_fail_pending_.store(0, std::memory_order_relaxed);
+    if (persistent_typechecker_opaque_) {
+        static_cast<TypeChecker*>(persistent_typechecker_opaque_)
+            ->clear_last_linear_synth_hard_fail();
+    }
+    if (commit_type_checker_opaque_ &&
+        commit_type_checker_opaque_ != persistent_typechecker_opaque_) {
+        static_cast<TypeChecker*>(commit_type_checker_opaque_)->clear_last_linear_synth_hard_fail();
+    }
+    if (guard_infer_engine_opaque_) {
+        static_cast<InferenceEngine*>(guard_infer_engine_opaque_)->clear_linear_synth_hard_fail();
+    }
+}
+
+bool Evaluator::deny_if_linear_synth_hard_fail(std::string_view op) noexcept {
+    using namespace aura::compiler::typed_audit;
+    if (!linear_synth_hard_fail_pending())
+        return false;
+    // Soft Warning never sets the sticky flag (note_linear_synth_violation
+    // only sets linear_synth_hard_fail_ under production_defaults || strict_).
+    clear_linear_synth_hard_fail_pending();
+    auto& ac = g_typed_mutation_audit_counters;
+    ac.linear_synth_boundary_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    ac.linear_synth_boundary_skip_recovery_total.fetch_add(1, std::memory_order_relaxed);
+    ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    ac.full_strategy_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    ac.typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+    // Do NOT bump linear_invariant_fail — synthesize phase already owns
+    // this logical violation via linear_synth_hard_fail_total (#2357).
+    last_mutate_error_ =
+        format_invariant_deny_reason("linear-synth-hard-fail", capability_tenant_id(), op);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->typed_mutation_full_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura_escape_move_gate_clear();
+    g_linear_escape_gate_clear_on_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    const bool strict = aura::core::sandbox::is_strict();
+    if (strict) {
+        strict_mutate_hold_.store(1, std::memory_order_relaxed);
+        ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+    const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
+    capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0, 0,
+                               static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+    return true;
+}
+
 // ── Issue #2145: Full/Strict hard-gate before mutate commit ───────────
 
 bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear_ops_present,
@@ -1469,6 +1568,10 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
+    // Issue #2514: synth hard-fail is single rollback authority — before
+    // Sampled skip or soft partial recovery that cannot clear TypeError.
+    if (deny_if_linear_synth_hard_fail(op))
+        return false;
     const bool strict = aura::core::sandbox::is_strict();
     // Issue #2223: force hard-gate when workspace has match sites (Sampled
     // must not under-sample ADT self-mod), mirror linear_ops_present.

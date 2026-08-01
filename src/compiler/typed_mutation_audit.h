@@ -235,6 +235,21 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> partial_recovery_provenance_total{0};
     // Issue #2223: Full-strategy ADT renarrow / revalidate recovery category.
     std::atomic<std::uint64_t> partial_recovery_adt_total{0};
+    // Issue #2514: linear_synth_hard_fail unified with MutationBoundary exit.
+    // When synth already hard-failed under production/strict, boundary forces
+    // rollback and skips soft partial recovery (cannot clear synth TypeError).
+    // Counter ownership table (AC4 — no double-count of same logical violation):
+    //   linear_synth_violation_total / linear_synth_hard_fail_total (#2357)
+    //     → synthesize phase (note_linear_synth_violation only)
+    //   linear_invariant_fail / linear_invariant_ok (#1614)
+    //     → post-mutate invariant audit linear walk only
+    //   linear_synth_boundary_force_rollback_total (#2514)
+    //     → boundary/hard-gate force-deny when synth hard-fail is authority
+    //   When #2514 early-exits, invariant audit is NOT re-run for that mid
+    //   (so linear_invariant_fail does not also bump for the same violation).
+    std::atomic<std::uint64_t> linear_synth_boundary_force_rollback_total{0};
+    std::atomic<std::uint64_t> linear_synth_boundary_skip_recovery_total{0};
+    std::atomic<std::uint32_t> linear_synth_authority_unified{1};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -1138,6 +1153,13 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.partial_recovery_provenance_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.partial_recovery_adt_total.store(0, std::memory_order_relaxed);
+    // Issue #2514
+    g_typed_mutation_audit_counters.linear_synth_boundary_force_rollback_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_synth_boundary_skip_recovery_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_synth_authority_unified.store(1,
+                                                                         std::memory_order_relaxed);
     apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)

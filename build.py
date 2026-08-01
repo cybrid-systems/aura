@@ -4584,6 +4584,25 @@ def cmd_linear_synth_violation_coverage():
     return 0
 
 
+def cmd_linear_synth_boundary_authority_coverage():
+    """Issue #2514: unify linear_synth_hard_fail with MutationBoundary exit.
+
+    Production/strict synth hard-fail forces rollback and skips soft partial
+    recovery; Soft Warning does not; counter ownership avoids double-count.
+    """
+    print(f"{B}=== linear synth boundary authority coverage (#2514) ==={N}")
+    script = ROOT / "scripts" / "check_linear_synth_boundary_authority_2514.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear synth boundary authority (#2514) coverage contract rows failed")
+        return 1
+    ok("linear synth boundary authority (#2514) coverage clean")
+    return 0
+
+
 def cmd_linear_partial_revalidate_coverage():
     """Issue #2460: Phase-2 dirty OwnershipEnv re-sim during infer_flat_partial.
 
@@ -5572,6 +5591,7 @@ def cmd_gate():
         or cmd_type_dep_epoch_prune_coverage()
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
+        or cmd_linear_synth_boundary_authority_coverage()
         or cmd_linear_partial_revalidate_coverage()
         or cmd_occurrence_cache_key_coverage()
         or cmd_castop_density_hard_coverage()

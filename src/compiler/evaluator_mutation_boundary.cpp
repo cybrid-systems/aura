@@ -561,6 +561,58 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 const bool strict_sandbox = aura::core::sandbox::is_strict();
                 const bool hard_gate = typed_audit::requires_invariant_hard_gate(
                     nodes_changed, linear_hint, strict_sandbox, match_sites);
+                // Issue #2514: linear_synth_hard_fail is single rollback authority.
+                // Decision table (see deny_if_linear_synth_hard_fail / typecheck):
+                //   synth hard (prod/strict) → force rollback, skip soft recovery
+                //   soft Warning only        → no force; continue audit below
+                //   synth clean              → post-mutate ownership defense-in-depth
+                // Must run before Sampled skip / partial recovery so soft recovery
+                // cannot claim Success after a synth TypeError.
+                if (linear_synth_hard_fail_pending()) {
+                    // Reuse shared deny helper (counters + deny reason + trail).
+                    (void)deny_if_linear_synth_hard_fail(
+                        composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail");
+                    // Structural undo (mirror hard-gate force-rollback body).
+                    BoundaryRollbackStats stats;
+                    stats.field_records_rolled =
+                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                    if (stats.field_records_rolled > 0) {
+                        bump_mutation_log_rollback_count();
+                        if (nested_boundary)
+                            bump_edsl_nested_atomic_rollback();
+                    }
+                    workspace_flat_->restore_children(std::move(cp.children_snapshot));
+                    stats.children_column_restored = true;
+                    if (cp.fine_rollback) {
+                        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                        stats.sym_id_column_restored = true;
+                        stats.param_columns_restored = true;
+                    }
+                    if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+                        if (cp.bump_suppressed_at_entry)
+                            workspace_flat_->begin_atomic_batch();
+                        else
+                            workspace_flat_->rollback_atomic_batch();
+                        suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    last_boundary_rollback_stats_ = stats;
+                    defuse_index_ = nullptr;
+                    if (!nested_boundary)
+                        clear_txn_dirty();
+                    typed_audit::record_boundary_outcome(
+                        mid,
+                        composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
+                        cp.version, epoch_after, /*success=*/false,
+                        static_cast<std::uint32_t>(audit_target), 0, fid);
+                    if (strict_sandbox)
+                        typed_audit::capture_audit_event_forced(
+                            mid, "strict-linear-synth-denied",
+                            typed_audit::MutationKind::Structural, cp.version, epoch_after,
+                            typed_audit::AuditOutcome::Error,
+                            static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                    return cp;
+                }
                 // Composite paths never under-sample (self-evo multi-step safety).
                 // Provenance miss forces audit even when Sampled would skip and
                 // even when nodes_changed==0 (apply may be the only side effect).
