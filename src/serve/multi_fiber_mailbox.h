@@ -16,6 +16,10 @@
 // #2378: defer drain SLA — deferred_depth / HWM, flush latency after
 //        outermost Guard exit, starvation signal if depth stays open.
 //        Zero cost when deferred_depth==0 (single relaxed load on Ok path).
+// #2511: outermost Guard exit forces deferred drain under budget
+//        (AURA_MAILBOX_HOLD_DRAIN_BUDGET_US, default 1000 µs). Soft: retain
+//        + starvation. Strict: force-resolve remaining depth + audit.
+//        AC5: depth==0 → single relaxed load.
 // #2316: wire mu_ acquire to lock_order::on_acquire(Level::Mailbox) for
 //        rank-table audit + AURA_LOCK_ORDER_CANARY inversion detection.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
@@ -115,6 +119,16 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_deferred_flush_latency_us_max{0};    // #2378
     std::atomic<std::uint64_t> mailbox_defer_starvation_total{0};           // #2378
     std::atomic<std::uint64_t> mailbox_deferred_drain_opportunity_total{0}; // #2378
+    // Issue #2511: outermost Guard exit forced deferred drain under budget.
+    // hold_exit_drain_total: drain path entered with open depth
+    // hold_exit_drain_us_total / max: elapsed under budget
+    // hold_exit_starvation_total: budget exhausted with depth still open
+    // hold_exit_force_resolved_total: Strict/production force-closed depth
+    std::atomic<std::uint64_t> mailbox_hold_exit_drain_total{0};          // #2511
+    std::atomic<std::uint64_t> mailbox_hold_exit_drain_us_total{0};       // #2511
+    std::atomic<std::uint64_t> mailbox_hold_exit_drain_us_max{0};         // #2511
+    std::atomic<std::uint64_t> mailbox_hold_exit_starvation_total{0};     // #2511
+    std::atomic<std::uint64_t> mailbox_hold_exit_force_resolved_total{0}; // #2511
 };
 
 // Process-wide aggregate (tests / observability).
@@ -205,6 +219,8 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
 // Issue #2378: outermost Guard exit — drain opportunity + starvation canary.
 // Called from MutationBoundaryGuard dtor (Phase 5 unlock) next to #2347
 // window clear. Soft / no open defer: just stamps exit_ns (one store).
+// Issue #2511 wraps this inside drain_deferred_under_budget (still public
+// for tests that call the note directly).
 inline void note_mailbox_outermost_exit_drain() noexcept {
     const auto now = mailbox_steady_ns();
     g_mailbox_last_outermost_exit_ns.store(now, std::memory_order_relaxed);
@@ -224,6 +240,130 @@ inline void note_mailbox_outermost_exit_drain() noexcept {
     if (age_ms >= thr_ms) {
         g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Issue #2511: hold-exit drain budget (µs). Default 1000 µs.
+// Override: AURA_MAILBOX_HOLD_DRAIN_BUDGET_US (0 = no spin, immediate
+// starved/force path when depth open).
+[[nodiscard]] inline std::uint64_t mailbox_hold_drain_budget_us() noexcept {
+    static const std::uint64_t cached = []() noexcept -> std::uint64_t {
+        const char* e = std::getenv("AURA_MAILBOX_HOLD_DRAIN_BUDGET_US");
+        if (e == nullptr || e[0] == '\0')
+            return 1000ull;
+        std::uint64_t v = 0;
+        for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+        return v; // 0 is intentional (immediate deadline)
+    }();
+    return cached;
+}
+
+// Issue #2511: result of budgeted hold-exit deferred drain.
+// Messages deferred under #2312 are not queued (BP to sender); drain closes
+// the open SLA window once hold is released, waits under budget for concurrent
+// retries to resolve depth, and optionally force-resolves under Strict.
+struct MailboxHoldDrainResult {
+    std::uint64_t remaining_depth = 0;
+    std::uint64_t elapsed_us = 0;
+    std::uint64_t force_resolved = 0;
+    bool starved = false;
+    bool had_open_defer = false; // depth > 0 at entry
+};
+
+// Issue #2511: outermost Guard exit forced deferred drain under budget.
+// AC5: when deferred_depth==0, single relaxed load then return (no maps,
+// no spin). Always stamps last_outermost_exit_ns when depth was open (via
+// note_mailbox_outermost_exit_drain). Soft: retain open depth + starvation
+// bump when budget exhausted. Strict/production: force-resolve remaining
+// depth (accounting close — senders already got BP and will retry) + audit.
+[[nodiscard]] inline MailboxHoldDrainResult
+drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
+    MailboxHoldDrainResult r;
+    // AC5: zero extra work when no pending defer (one relaxed load).
+    const auto depth0 = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    if (depth0 == 0) {
+        // Still stamp exit_ns so a later open-window flush can baseline
+        // against this outermost exit (cheap store; not a depth walk).
+        g_mailbox_last_outermost_exit_ns.store(mailbox_steady_ns(), std::memory_order_relaxed);
+        return r;
+    }
+    r.had_open_defer = true;
+    g_mf_mailbox_stats.mailbox_hold_exit_drain_total.fetch_add(1, std::memory_order_relaxed);
+    // #2378 opportunity + age starvation canary (unchanged semantics).
+    note_mailbox_outermost_exit_drain();
+
+    const auto budget = budget_us != 0 ? budget_us : mailbox_hold_drain_budget_us();
+    const auto start_ns = mailbox_steady_ns();
+
+    // Wait under budget for concurrent push Ok to close the window.
+    // #2312 does not enqueue deferred messages — depth falls when senders
+    // retry after hold release (now true: Guard unlocked before this call
+    // or concurrently). Spin is deliberately light (yield, no sleep).
+    for (;;) {
+        const auto d = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+        const auto now = mailbox_steady_ns();
+        const auto elapsed_us = (now > start_ns) ? (now - start_ns) / 1000ull : 0ull;
+        if (d == 0) {
+            r.remaining_depth = 0;
+            r.elapsed_us = elapsed_us;
+            break;
+        }
+        if (elapsed_us >= budget) {
+            r.starved = true;
+            r.remaining_depth = d;
+            r.elapsed_us = elapsed_us;
+            g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.fetch_add(
+                1, std::memory_order_relaxed);
+            // Also feed #2378 starvation so health score sees hold-exit SLA.
+            g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            // Strict / production: force-resolve open depth (explicit audit).
+            // Soft: leave depth for later natural retries.
+            // Inline Strict probe here — is_mutate_mailbox_strict is defined
+            // later in this header (#2347); avoid forward-order dependency.
+            const char* strict_e = std::getenv("AURA_MUTATE_MAILBOX_STRICT");
+            const bool hard_resolve =
+                (strict_e && strict_e[0] == '1') || aura_production_defaults_active_probe() != 0;
+            if (hard_resolve) {
+                std::uint64_t resolved = 0;
+                std::uint64_t guard = d + 8;
+                while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >
+                           0 &&
+                       guard-- > 0) {
+                    note_mailbox_push_ok_drain_progress();
+                    ++resolved;
+                }
+                r.force_resolved = resolved;
+                r.remaining_depth =
+                    g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+                if (resolved > 0) {
+                    g_mf_mailbox_stats.mailbox_hold_exit_force_resolved_total.fetch_add(
+                        resolved, std::memory_order_relaxed);
+                }
+            }
+            break;
+        }
+        // Light pause so concurrent sender retries can run.
+#if defined(__x86_64__) || defined(_M_X64)
+        __builtin_ia32_pause();
+#else
+        std::this_thread::yield();
+#endif
+    }
+
+    // Elapsed accounting (always when had_open_defer).
+    if (r.elapsed_us == 0) {
+        const auto now = mailbox_steady_ns();
+        r.elapsed_us = (now > start_ns) ? (now - start_ns) / 1000ull : 0ull;
+    }
+    g_mf_mailbox_stats.mailbox_hold_exit_drain_us_total.fetch_add(r.elapsed_us,
+                                                                  std::memory_order_relaxed);
+    auto mx = g_mf_mailbox_stats.mailbox_hold_exit_drain_us_max.load(std::memory_order_relaxed);
+    while (r.elapsed_us > mx &&
+           !g_mf_mailbox_stats.mailbox_hold_exit_drain_us_max.compare_exchange_weak(
+               mx, r.elapsed_us, std::memory_order_relaxed)) {
+    }
+    return r;
 }
 
 // Issue #2347: rejects in the current outermost Guard window (TLS).

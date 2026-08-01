@@ -3041,6 +3041,25 @@ def cmd_mailbox_defer_drain_sla_coverage():
     return 0
 
 
+def cmd_mailbox_hold_exit_drain_coverage():
+    """Issue #2511: outermost Guard exit forced mailbox deferred drain.
+
+    Budget AURA_MAILBOX_HOLD_DRAIN_BUDGET_US (default 1000 µs). Soft: retain
+    + starvation. Strict/production: force-resolve. Free when depth 0.
+    """
+    print(f"{B}=== mailbox hold-exit drain coverage (#2511) ==={N}")
+    script = ROOT / "scripts" / "check_mailbox_hold_exit_drain_2511.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox hold-exit drain (#2511) coverage contract rows failed")
+        return 1
+    ok("mailbox hold-exit drain (#2511) coverage clean")
+    return 0
+
+
 def cmd_bidirectional_match_coverage():
     """Issue #2348: bidirectional check-mode for ADT match + GuardShape.
 
@@ -5412,6 +5431,7 @@ def cmd_gate():
         or cmd_steal_complete_strong_entry_coverage()
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_mailbox_defer_drain_sla_coverage()
+        or cmd_mailbox_hold_exit_drain_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()

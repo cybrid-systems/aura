@@ -1737,10 +1737,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // mutates do not accumulate a stale threshold across outermost
         // boundaries (Soft dashboard + Strict force-rollback both reset).
         aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
-        // Issue #2378: outermost exit is a mailbox drain opportunity —
-        // stamp exit_ns + optional starvation if deferred_depth still open.
-        // AC3: free when deferred_depth==0 (one relaxed load after store).
-        aura::serve::mf_mailbox::note_mailbox_outermost_exit_drain();
+        // Issue #2378 / #2511: outermost exit forces mailbox deferred drain
+        // under budget (hold-exit SLA). Success + exception paths both hit
+        // this Phase-5 block (Guard dtor). AC5: free when deferred_depth==0
+        // (single relaxed load). Soft: retain open depth + starvation bump;
+        // Strict/production: force-resolve remaining + audit.
+        // Wraps note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
+        (void)aura::serve::mf_mailbox::drain_deferred_under_budget();
         ev_->unbind_yield_hook_evaluator();
         // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).
         // Captures the post-mutation stamp (env_generation_ + defuse_version_

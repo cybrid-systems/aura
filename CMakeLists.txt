@@ -3863,6 +3863,11 @@ aura_add_issue_test(test_mailbox_recv_mutation_boundary_2188)
 aura_issue_test_link_llvm_jit(test_mailbox_recv_mutation_boundary_2188)
 add_dependencies(all_test_issue_targets test_mailbox_recv_mutation_boundary_2188)
 
+# Issue #2511: outermost Guard exit forced mailbox deferred drain under budget.
+aura_add_issue_test(test_mailbox_hold_exit_drain_2511)
+aura_issue_test_link_llvm_jit(test_mailbox_hold_exit_drain_2511)
+add_dependencies(all_test_issue_targets test_mailbox_hold_exit_drain_2511)
+
 # Issue #2229: lift FailurePolicy / RestartPolicy onto AgentScope
 # supervision. AgentFailureAction (ReportOnly / Cancel / RestartN)
 # + AgentFailurePolicy + RestartN path in AgentScope::watch_all

@@ -51,7 +51,9 @@ def main() -> int:
     must("note_mailbox_push_ok_drain_progress", "AC2", mb)
     must("mailbox_deferred_flush_latency_us_total", "AC2", mb)
     must("mailbox_deferred_flush_samples", "AC2", mb)
-    must("note_mailbox_outermost_exit_drain", "AC2", emb)
+    # #2511 wraps note_mailbox_outermost_exit_drain inside drain_deferred_under_budget.
+    if "note_mailbox_outermost_exit_drain" not in emb and "drain_deferred_under_budget" not in emb:
+        fails.append("AC2: missing note_mailbox_outermost_exit_drain or drain_deferred_under_budget in Guard dtor")
     must("ac2378_flush_latency_after_exit", "AC2", test)
 
     # AC3
