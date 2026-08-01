@@ -44,7 +44,12 @@ def main() -> int:
     must("2445 AC1", "AC1", test)
 
     must("flatast_mutex_", "AC2", ast)
-    must("lock_guard<std::recursive_mutex> lock(flatast_mutex_)", "AC2", ast)
+    # #2488: exclusive unique_lock on OwnedSharedMutex (was recursive_mutex).
+    if "unique_lock" not in ast or "flatast_mutex_" not in ast:
+        fails.append("AC2: add_node must exclusive-lock flatast_mutex_")
+    else:
+        # Accept exclusive SoA write under flatast_mutex_ (#2413 / #2488).
+        must("flatast_mutex_.mutable_get()", "AC2", ast)
     must("2445 AC2", "AC2", test)
     must("concurrent add_node", "AC2", test)
 
