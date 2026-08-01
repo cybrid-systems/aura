@@ -4980,7 +4980,7 @@ public:
         return children_; // vector copy ctor; each PCV is shared_ptr copy
     }
 
-    // Issue #221: restore children_ from a pre-captured snapshot.
+    // Issue #221 / #2455: restore children_ from a pre-captured snapshot.
     // The passed-in vector is moved (its shared_ptrs are now bound
     // to children_; back-references to the old PCVs in the
     // snapshot are released as the snapshot goes out of scope).
@@ -4989,7 +4989,24 @@ public:
     // from the restored child lists so children_/parent_ topology
     // cannot diverge when MutationRecord inverse ops partially
     // fail or when restore runs without a full inverse walk.
+    //
+    // Issue #2455: acquires structural exclusive lock (same as
+    // set_child / insert_child) so concurrent readers cannot observe
+    // torn children_/parent_ mid-restore. Caller need not hold the
+    // lock; if already inside begin_structural_mutation(), use
+    // restore_children_locked() to avoid non-recursive deadlock.
+    // generation_ is bumped once by StructuralMutationGuard dtor.
     void restore_children(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
+        StructuralMutationGuard guard(this);
+        // Issue #2455: lock held for the restore critical section.
+        contract_assert(static_cast<bool>(guard));
+        restore_children_locked(std::move(snapshot));
+    }
+
+    // Issue #2455: restore while structural exclusive already held
+    // (e.g. multi-step begin_structural_mutation scope). Does not
+    // bump generation_ — the outer StructuralMutationGuard dtor does.
+    void restore_children_locked(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
         // Issue #487: pad the snapshot up to children_'s current
         // size before the move. Without padding, if the in-flight
         // mutation added nodes (e.g. set-code inside a MutationBoundary
@@ -5021,7 +5038,10 @@ public:
         children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
         // Issue #1502: full parent_ topology restore from children_.
         rebuild_parent_links_from_children();
-        bump_generation();
+        // generation_ bumped by outer StructuralMutationGuard (restore_children)
+        // or by caller if using restore_children_locked under their own guard.
+        // When called only via restore_children_locked without outer guard,
+        // caller is responsible for generation consistency.
         // Issue #1282: if a wrap was observed mid-mutation, restamp now.
         maybe_auto_restamp_on_wrap();
     }
