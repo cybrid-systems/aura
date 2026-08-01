@@ -56,6 +56,14 @@ inline constexpr int kGeneralObjectPinIssue = 2298;
 // Issue #2363: complete GeneralObjectPin adoption for mutate/agent/scratch
 // intermediate create sites (refines #2337 single-site demo).
 inline constexpr int kGeneralObjectPinAdoptIssue = 2363;
+// Issue #2496: GeneralObjectPin adoption coverage gate (inventory vs
+// wire_total). Maintain kGeneralObjectPinAdoptSiteCount vs
+// general_object_pin_mutate_wire_total. AURA_GENERAL_OBJECT_PIN=required →
+// fail-closed on new densify-tracked intermediate create without pin
+// (optional runtime mode). Linter fails when a listed inventory site
+// lacks wire call (note_general_object_pin_mutate_wire /
+// wire_general_object_create_pair).
+inline constexpr int kGeneralObjectPinCoverageGateIssue = 2496;
 // Expected adopted wire sites (mutate/agent/scratch intermediate create).
 // Bumped when a new site calls wire_general_object_create_pair /
 // note_general_object_pin_mutate_wire. Dashboard compares wire total
@@ -211,6 +219,31 @@ inline std::size_t pin_registry_shard_index(std::uint64_t arena_id) noexcept {
 // each shard's lock_guard ctor (best-effort; the std::chrono
 // resolution is microseconds). Used by AC4 observability.
 inline std::atomic<std::uint64_t> g_pin_registry_lock_wait_us_total{0};
+// Issue #2496: process-wide counter for AURA_GENERAL_OBJECT_PIN=required
+// fail-closed enforcement. Bumped when a densify-tracked intermediate
+// create fails the required-mode gate (new create without pin under
+// production Moving + restricted). Agent dashboards surface regression.
+export inline std::atomic<std::uint64_t> g_general_object_pin_required_enforced_total{0};
+// Issue #2496: AURA_GENERAL_OBJECT_PIN=required preference (process-wide).
+// -1 = env/default unset, 0 = off, 1 = required. Applied by
+// apply_general_object_pin_required_env().
+export inline std::atomic<int> g_general_object_pin_required_pref{-1};
+
+// Issue #2496: read AURA_GENERAL_OBJECT_PIN env var at process start
+// (called from production security defaults). Values: "required" / "1" /
+// "true" / "yes" / "on" → enable fail-closed mode. "off" / "0" / "false"
+// / "no" → disable. Unset → -1 (no preference; Soft path).
+export inline void apply_general_object_pin_required_env() noexcept {
+    const char* e = std::getenv("AURA_GENERAL_OBJECT_PIN");
+    if (!e || !*e)
+        return;
+    std::string_view v(e);
+    if (v == "required" || v == "1" || v == "true" || v == "yes" || v == "on") {
+        g_general_object_pin_required_pref.store(1, std::memory_order_release);
+    } else if (v == "off" || v == "0" || v == "false" || v == "no") {
+        g_general_object_pin_required_pref.store(0, std::memory_order_release);
+    }
+}
 inline std::uint64_t pin_registry_lock_wait_us_total() noexcept {
     return g_pin_registry_lock_wait_us_total.load(std::memory_order_relaxed);
 }

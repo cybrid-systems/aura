@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 666 | Preferred destination suites |
-| **Total scanned** | **666** | |
+| `tests/core/test_*.cpp` | 667 | Preferred destination suites |
+| **Total scanned** | **667** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 65 | 65 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 40 | 40 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 126 | 126 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 43 | 43 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 44 | 44 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -367,6 +367,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_gc_mark_size_inject_2084.cpp`
 - `tests/core/test_general_object_pin_2298.cpp`
 - `tests/core/test_general_object_pin_adopt_2363.cpp`
+- `tests/core/test_general_object_pin_coverage_gate_2496.cpp`
 - `tests/core/test_get_nodeview_snapshot_2453.cpp`
 - `tests/compiler/test_grant_epoch_fiber_bind_2055.cpp`
 - `tests/compiler/test_grant_epoch_invalidation_2074.cpp`
@@ -1546,13 +1547,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
-### `uncategorized` — Uncategorized / mixed (43)
+### `uncategorized` — Uncategorized / mixed (44)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (43)
+#### domain/ (44)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1567,6 +1568,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
 - `tests/compiler/test_eval_current_no_auto_fix_2484.cpp` (#2484) [domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
 - `tests/renderer/test_ffi_cellgrid_abi_2216.cpp` (#2216) [domain_suite, theme_renderer] — AC1: abi_from_signature recognizes cellgrid / TermCell* / DirtyRegion
+- `tests/core/test_general_object_pin_coverage_gate_2496.cpp` (#2496) [domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
 - `tests/compiler/test_ir_optimize_type_info_chain_2471.cpp` (#2471) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
 - `tests/compiler/test_json_parse_number_exception_2480.cpp` (#2480) [domain_suite, theme_compiler] — AC1: oversized integer → error (not crash)
