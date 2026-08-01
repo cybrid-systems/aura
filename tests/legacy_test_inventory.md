@@ -1179,7 +1179,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/serve/test_boundary_yield_steal_metrics_2119.cpp` (#2119) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
 - `tests/compiler/test_capability_high_risk_promote_2489.cpp` (#2489) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying
-- `tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp` (#2352) [domain_suite, theme_serve] — Issue #2380 — nightly production-concurrency profile: lock-order canary +
+- `tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp` (#2352) [large, domain_suite, theme_serve] — Issue #2380 — nightly production-concurrency profile: lock-order canary +
 - `tests/serve/test_chaos_steal_mutation_gc.cpp` (—) [domain_suite, theme_serve] — test_chaos_steal_mutation_gc_2315.cpp — Issue #2315:
 - `tests/compiler/test_compile_primitive_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1896 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_concurrent.cpp` (—) [large, domain_suite, theme_serve] — test_concurrent.cpp — Concurrency model unit tests
