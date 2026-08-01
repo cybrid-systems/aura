@@ -3272,6 +3272,11 @@ aura_add_issue_test(test_occurrence_cache_key_2461)
 aura_issue_test_link_llvm_jit(test_occurrence_cache_key_2461)
 add_dependencies(all_test_issue_targets test_occurrence_cache_key_2461)
 
+# Issue #2462: type-system-health next-action + repair_nodes closed-loop
+aura_add_issue_test(test_type_system_health_next_action_2462)
+aura_issue_test_link_llvm_jit(test_type_system_health_next_action_2462)
+add_dependencies(all_test_issue_targets test_type_system_health_next_action_2462)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -26,6 +26,7 @@ module;
 #include "compiler/mutation_concurrency_health.hh" // Issue #2379: mutation-concurrency-health
 #include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -7612,8 +7613,72 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             const auto scored = compute_type_system_health(snap);
 
-            // Capacity 32: health keys + component mirrors + schema sentinels.
-            auto* ht = FlatHashTable::create(32);
+            // Issue #2462: SolverSnapshot + density + hard-reject → next-action.
+            // Pure read (no solve); reuses snapshot_constraint_system (#2308)
+            // and type_repair last surface for repair_nodes / suggested_roots.
+            SolverSnapshot solver_snap{};
+            std::size_t suggested_roots_n = 0;
+            bool hard_gate_reject = false;
+            if (__qev_ && __qev_->commit_cs_live()) {
+                if (auto* ctc = static_cast<aura::compiler::TypeChecker*>(
+                        __qev_->commit_type_checker_handle())) {
+                    solver_snap = snapshot_constraint_system(ctc->constraint_system(), nullptr);
+                }
+            }
+            if (m) {
+                // Cap-16 repair sample from last type_repair publish when
+                // snapshot repair_nodes empty (boundary reject path).
+                if (solver_snap.repair_nodes.empty()) {
+                    const auto n = m->type_repair_last_unresolved_aff_nodes_count.load(
+                        std::memory_order_relaxed);
+                    const std::size_t cap = std::min<std::size_t>(n, 16);
+                    for (std::size_t i = 0; i < cap; ++i) {
+                        const auto id = m->type_repair_last_unresolved_aff_nodes[i].load(
+                            std::memory_order_relaxed);
+                        if (id != 0)
+                            solver_snap.repair_nodes.push_back(static_cast<std::uint32_t>(id));
+                    }
+                }
+                suggested_roots_n =
+                    m->type_repair_suggested_root_count.load(std::memory_order_relaxed);
+                // Hard-reject status 99 from boundary force path (#2284).
+                constexpr std::uint64_t kHardRejectStatus = 99;
+                hard_gate_reject = m->type_repair_last_timeout_status.load(
+                                       std::memory_order_relaxed) == kHardRejectStatus;
+                if (solver_snap.unresolved.empty()) {
+                    // Mirror last unresolved count as signal only (no Constraint body).
+                    const auto uc =
+                        m->type_repair_last_unresolved_count.load(std::memory_order_relaxed);
+                    if (uc > 0 && solver_snap.status == SolveResult::SOLVED &&
+                        m->type_repair_last_timeout_status.load(std::memory_order_relaxed) != 0)
+                        solver_snap.status = static_cast<SolveResult>(std::min<std::uint64_t>(
+                            m->type_repair_last_timeout_status.load(std::memory_order_relaxed), 2));
+                }
+                if (m->type_repair_last_truncated_reverify.load(std::memory_order_relaxed) != 0)
+                    solver_snap.truncated_reverify = true;
+            }
+            TypeSystemNextActionInput nai{};
+            nai.health_ok = scored.health_bp >= scored.health_budget_bp;
+            nai.force_reason = scored.force_reason;
+            nai.solve_status = static_cast<std::uint8_t>(solver_snap.status);
+            nai.truncated_reverify = solver_snap.truncated_reverify;
+            nai.blame_complete = solver_snap.blame.is_complete() || solver_snap.blame.complete;
+            nai.production_escalated = solver_snap.production_escalated;
+            nai.repair_nodes_count = solver_snap.repair_nodes.size();
+            nai.suggested_roots_count = suggested_roots_n;
+            nai.unresolved_count = solver_snap.unresolved.size();
+            if (m && nai.unresolved_count == 0) {
+                nai.unresolved_count =
+                    m->type_repair_last_unresolved_count.load(std::memory_order_relaxed);
+            }
+            nai.castop_over_budget = snap.castop_density_bp > snap.castop_density_budget_bp ||
+                                     snap.castop_over_budget_total > 0;
+            nai.hard_gate_reject = hard_gate_reject;
+            nai.production_defaults = aura::compiler::typed_audit::production_defaults_active();
+            const auto next = decide_type_system_next_action(nai);
+
+            // Capacity 64: #2350 keys + #2462 next-action / repair sample.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7684,6 +7749,44 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2282", 2282);
             insert_kv("schema-2284", 2284);
             insert_kv("schema-2287", 2287);
+            // Issue #2462: next-action + repair_nodes closed-loop surface.
+            //   next-action: string enum (ok|annotate-dynamic|expand-dirty|
+            //     full-solve|rollback)
+            //   next-action-code: 0..4 int alias
+            //   repair-nodes-count + repair-node-0..15 (cap 16)
+            //   suggested-roots-count + suggested-root-0..7 when available
+            insert_kv_str("next-action", next.action_str);
+            insert_kv("next-action-code", static_cast<std::int64_t>(next.action_code));
+            insert_kv("repair-nodes-count",
+                      static_cast<std::int64_t>(solver_snap.repair_nodes.size()));
+            {
+                const std::size_t cap =
+                    std::min(solver_snap.repair_nodes.size(), static_cast<std::size_t>(16));
+                for (std::size_t i = 0; i < 16; ++i) {
+                    char keybuf[32];
+                    // Fixed keys repair-node-0 .. repair-node-15
+                    std::snprintf(keybuf, sizeof(keybuf), "repair-node-%zu", i);
+                    const std::int64_t v =
+                        i < cap ? static_cast<std::int64_t>(solver_snap.repair_nodes[i]) : 0;
+                    insert_kv(keybuf, v);
+                }
+            }
+            insert_kv("suggested-roots-count", static_cast<std::int64_t>(suggested_roots_n));
+            if (m) {
+                const std::size_t rcap = std::min(suggested_roots_n, static_cast<std::size_t>(8));
+                for (std::size_t i = 0; i < 8; ++i) {
+                    char keybuf[32];
+                    std::snprintf(keybuf, sizeof(keybuf), "suggested-root-%zu", i);
+                    const std::int64_t v =
+                        i < rcap ? static_cast<std::int64_t>(m->type_repair_suggested_roots[i].load(
+                                       std::memory_order_relaxed))
+                                 : 0;
+                    insert_kv(keybuf, v);
+                }
+            }
+            insert_kv("type-system-health-next-action-wired", 1);
+            insert_kv("schema-2462", 2462);
+            insert_kv("issue-2462", 2462);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

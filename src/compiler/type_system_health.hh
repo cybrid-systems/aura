@@ -1,4 +1,5 @@
 // type_system_health.hh — Issue #2350: single Agent type-system health score.
+//                       Issue #2462: next-action + repair_nodes closed-loop.
 //
 // Pure, read-only aggregation of four existing observability surfaces so Agents
 // can gate mutate aggressiveness without joining 20+ schema keys.
@@ -64,6 +65,119 @@ struct TypeSystemHealthResult {
     std::string_view force_reason = "ok";
     TypeSystemHealthSnapshot components{};
 };
+
+// ── Issue #2462: next-action decision (pure; no solve side effects) ──
+//
+// Priority (highest first) — Agent closed-loop without multi-query stitch:
+//   rollback        — hard-gate / production reject signal
+//   full-solve      — truncated_reverify || TIMEOUT escalated / incomplete blame
+//   expand-dirty    — non-empty repair_nodes / suggested_roots / unresolved
+//   annotate-dynamic— castop over budget while type status otherwise ok
+//   ok              — healthy empty / clean snap
+//
+// Codes (stable int alias for hash tables):
+//   0=ok 1=annotate-dynamic 2=expand-dirty 3=full-solve 4=rollback
+enum class TypeSystemNextAction : std::uint8_t {
+    Ok = 0,
+    AnnotateDynamic = 1,
+    ExpandDirty = 2,
+    FullSolve = 3,
+    Rollback = 4,
+};
+
+struct TypeSystemNextActionInput {
+    // From compute_type_system_health.
+    bool health_ok = true; // health_bp >= budget
+    std::string_view force_reason = "ok";
+    // SolverSnapshot-shaped pure inputs (0=SOLVED, 1=CONFLICT, 2=TIMEOUT).
+    std::uint8_t solve_status = 0;
+    bool truncated_reverify = false;
+    bool blame_complete = true;
+    bool production_escalated = false;
+    std::size_t repair_nodes_count = 0;
+    std::size_t suggested_roots_count = 0;
+    std::size_t unresolved_count = 0;
+    // CastOp density residual (#2287 / #2459).
+    bool castop_over_budget = false;
+    // Hard-gate / production reject (e.g. type_repair hard-reject status 99).
+    bool hard_gate_reject = false;
+    bool production_defaults = false;
+};
+
+struct TypeSystemNextActionResult {
+    TypeSystemNextAction action = TypeSystemNextAction::Ok;
+    std::string_view action_str = "ok";
+    std::uint8_t action_code = 0;
+};
+
+[[nodiscard]] inline std::string_view type_system_next_action_str(TypeSystemNextAction a) noexcept {
+    switch (a) {
+        case TypeSystemNextAction::Rollback:
+            return "rollback";
+        case TypeSystemNextAction::FullSolve:
+            return "full-solve";
+        case TypeSystemNextAction::ExpandDirty:
+            return "expand-dirty";
+        case TypeSystemNextAction::AnnotateDynamic:
+            return "annotate-dynamic";
+        case TypeSystemNextAction::Ok:
+        default:
+            return "ok";
+    }
+}
+
+// Pure decision table (AC5: identical inputs → identical output; no atomics).
+[[nodiscard]] inline TypeSystemNextActionResult
+decide_type_system_next_action(const TypeSystemNextActionInput& in) noexcept {
+    TypeSystemNextActionResult r;
+    auto set = [&](TypeSystemNextAction a) {
+        r.action = a;
+        r.action_code = static_cast<std::uint8_t>(a);
+        r.action_str = type_system_next_action_str(a);
+    };
+
+    // 1) rollback — hard-gate / production reject.
+    if (in.hard_gate_reject)
+        return (set(TypeSystemNextAction::Rollback), r);
+
+    // 2) full-solve — truncated reverify or TIMEOUT escalated incomplete
+    //    under production (AC2).
+    const bool timeout = in.solve_status == 2;
+    const bool conflict = in.solve_status == 1;
+    if (in.truncated_reverify)
+        return (set(TypeSystemNextAction::FullSolve), r);
+    if (timeout && (in.production_escalated || in.production_defaults))
+        return (set(TypeSystemNextAction::FullSolve), r);
+    if (in.production_defaults && !in.blame_complete &&
+        (timeout || conflict || in.unresolved_count > 0 || in.repair_nodes_count > 0))
+        return (set(TypeSystemNextAction::FullSolve), r);
+    if (in.force_reason == "timeout-reject")
+        return (set(TypeSystemNextAction::FullSolve), r);
+
+    // 3) expand-dirty — concrete repair set / TIMEOUT graph available (AC3).
+    if (in.repair_nodes_count > 0 || in.suggested_roots_count > 0 ||
+        (timeout && in.unresolved_count > 0) || (conflict && in.unresolved_count > 0))
+        return (set(TypeSystemNextAction::ExpandDirty), r);
+
+    // 4) annotate-dynamic — density over budget, type otherwise clean (AC4).
+    if (in.castop_over_budget && in.solve_status == 0 && in.blame_complete &&
+        !in.truncated_reverify)
+        return (set(TypeSystemNextAction::AnnotateDynamic), r);
+    if (in.force_reason == "castop-density" && in.solve_status == 0)
+        return (set(TypeSystemNextAction::AnnotateDynamic), r);
+
+    // 5) ok — healthy empty / clean (AC1).
+    if (in.health_ok && in.force_reason == "ok" && in.solve_status == 0 && !in.truncated_reverify &&
+        in.unresolved_count == 0)
+        return (set(TypeSystemNextAction::Ok), r);
+
+    // Below-budget residual without typed repair set: still expand/ok map.
+    if (!in.health_ok) {
+        if (in.force_reason == "pin-miss" || in.force_reason == "provenance-miss")
+            return (set(TypeSystemNextAction::ExpandDirty), r);
+    }
+    return (set(TypeSystemNextAction::Ok), r);
+}
 
 // Default budget 8000 bp (80%). Override: AURA_TYPE_SYSTEM_HEALTH_BUDGET_BP.
 [[nodiscard]] inline std::uint64_t type_system_health_budget_bp() noexcept {
