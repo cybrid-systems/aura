@@ -108,15 +108,15 @@ static void ac2_unified_safety_semantics() {
     CHECK(fiber.is_at_mutation_boundary_safe(),
           "AC2: full Guard release (held=false) → safe again");
 
-    // Soft path semantics: orch_agent_boundary_active=true + depth=0
-    // → unsafe (the orch_agent_boundary_active flag triggers the
-    // pre-check in is_at_mutation_boundary_safe).
+    // #2515: soft path unifies with full Guard via depth/held mirrors.
+    // orch_agent_boundary_active alone (depth=0, held=false) is NOT unsafe —
+    // pre-check only trips when soft window AND (depth>0 || held).
     fiber.set_orch_agent_boundary_active(true);
-    CHECK(!fiber.is_at_mutation_boundary_safe(),
-          "AC2: soft window (orch_agent_boundary_active=true) → unsafe");
+    CHECK(fiber.is_at_mutation_boundary_safe(),
+          "AC2: soft flag alone (depth=0, held=false) → still safe");
 
-    // Soft + held=true (via the new publish_mutation_safety_mirrors call
-    // in orch_soft_boundary_enter) → still unsafe, same as full Guard.
+    // Soft + held=true (via publish_mutation_safety_mirrors in
+    // orch_soft_boundary_enter) → unsafe, same as full Guard.
     fiber.publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/true, /*defuse=*/0);
     CHECK(!fiber.is_at_mutation_boundary_safe(),
           "AC2: soft window + held=true → unsafe (same as full Guard)");

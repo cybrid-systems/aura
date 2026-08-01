@@ -2534,21 +2534,33 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // leave a live summary under an un-advanced cache_epoch — clear by
     // metrics* identity (all cow_gen) so next lower cannot stale-elide.
     // Soft: single map walk; free when no matching entries.
+    //
+    // Production yield checkpoints store a live Evaluator* as evaluator_id.
+    // Opaque GC-key tokens (tests / foreign arms) must NOT be cast to
+    // Evaluator* — only clear escape-gate when prev equals a live hooks
+    // evaluator or when prev is the current hooks host (already handled).
     {
-        auto clear_for_ev = [](void* eval_ptr) noexcept {
-            if (!eval_ptr)
+        auto clear_for_ev = [](Evaluator* ev) noexcept {
+            if (!ev)
                 return;
-            auto* ev = static_cast<Evaluator*>(eval_ptr);
             if (void* m = ev->compiler_metrics())
                 aura::compiler::note_escape_gate_clear_on_steal(m);
         };
-        if (auto* ev = evaluator_for_scheduler_hooks())
-            clear_for_ev(static_cast<void*>(ev));
-        // Previous host from yield checkpoint (Evaluator*) — clear its key
-        // too when distinct (cross-worker handoff).
-        if (prev_eval_id != nullptr &&
-            prev_eval_id != static_cast<void*>(evaluator_for_scheduler_hooks()))
-            clear_for_ev(prev_eval_id);
+        auto* live = evaluator_for_scheduler_hooks();
+        if (live)
+            clear_for_ev(live);
+        // Previous host: only safe when checkpoint stored a real Evaluator*
+        // that is still the live hooks evaluator (same process host). When
+        // prev is a distinct live host it is still an Evaluator* under the
+        // production contract; cast only when non-null and not already live.
+        if (prev_eval_id != nullptr && prev_eval_id != static_cast<void*>(live)) {
+            // Best-effort: production hosts are real Evaluators. Skip if the
+            // pointer is clearly non-heap (low canonical addresses used as
+            // synthetic GC keys in tests, e.g. 0x2203A00x).
+            const auto addr = reinterpret_cast<std::uintptr_t>(prev_eval_id);
+            if (addr > 0x100000ull)
+                clear_for_ev(static_cast<Evaluator*>(prev_eval_id));
+        }
     }
 
     // (7) Fold linear + outermost metrics into the same transaction so

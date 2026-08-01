@@ -58,7 +58,10 @@ void ac1_source() {
     std::println("\n--- AC1: source cites #2044 ---");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto svc = read_file("src/compiler/service.ixx");
-    auto pm = read_file("src/compiler/pass_manager.ixx");
+    // #2524: run_incremental_dirty_pipeline lives in pass_pipeline_core; facade re-exports.
+    auto pm = read_file("src/compiler/pass_manager.ixx") +
+              read_file("src/compiler/pass_pipeline_core.ixx") +
+              read_file("src/compiler/pass_impls.ixx");
     CHECK(!dirty.empty() && dirty.find("#2044") != std::string::npos, "service_dirty #2044");
     CHECK(dirty.find("run_incremental_dirty_pass_suite_") != std::string::npos,
           "cascade calls suite");

@@ -215,8 +215,9 @@ static void ac4_source_cite() {
           "AC4: soft migrate present");
     // Soft migrate wires shared path (not bare remount_unlocked for fail).
     {
-        const auto soft_pos = rt.find("try_cross_cow_soft_migrate_");
-        const auto soft_body = soft_pos != std::string::npos ? rt.substr(soft_pos, 2500) : "";
+        // Body spans ~2.9 KB to the shared remount call — use a 4 KB window.
+        const auto soft_pos = rt.find("static int try_cross_cow_soft_migrate_");
+        const auto soft_body = soft_pos != std::string::npos ? rt.substr(soft_pos, 4000) : "";
         CHECK(soft_body.find("remount_or_force_deopt_unlocked") != std::string::npos,
               "AC4: soft migrate uses remount_or_force_deopt_unlocked");
     }

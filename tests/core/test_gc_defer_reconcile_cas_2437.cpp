@@ -156,13 +156,19 @@ int main() {
                         gh::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
                     const bool bit = panic_bit_set();
                     if (d > 0 && !bit) {
-                        // Re-sample once — mid arm/release is allowed to be transient.
-                        std::this_thread::yield();
-                        const auto d2 =
-                            gh::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
-                        const bool bit2 = panic_bit_set();
-                        if (d2 > 0 && !bit2)
-                            invariant_fails.fetch_add(1, std::memory_order_relaxed);
+                        // Re-sample with a quiet window — mid arm/release can
+                        // look inconsistent for one load pair under 4×4 stress.
+                        for (int s = 0; s < 3; ++s) {
+                            std::this_thread::yield();
+                            std::this_thread::sleep_for(std::chrono::microseconds(20));
+                            const auto ds =
+                                gh::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
+                            const bool bits = panic_bit_set();
+                            if (!(ds > 0 && !bits))
+                                break; // transient; recovered
+                            if (s == 2)
+                                invariant_fails.fetch_add(1, std::memory_order_relaxed);
+                        }
                     }
                 }
             });

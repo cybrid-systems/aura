@@ -5834,7 +5834,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::uint32_t strategy = 0, ratio = 0;
             snapshot_global(considered, skipped, contextual, trail_sz, rollbacks, errors, strategy,
                             ratio);
-            auto* ht = FlatHashTable::create(128); // #1894 + #2027 composite keys
+            // Capacity must stay well above key count (~126+ schemas). At 128 the
+            // linear-probe insert silently drops late keys (schema-2108 etc.).
+            auto* ht = FlatHashTable::create(256); // #1894 + #2027 + #2108 + lineage
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

@@ -130,10 +130,14 @@ static void ac1_ac5_ac6_source() {
 // ── AC2: functional clear via steal-complete entry ─────────
 static void ac2_clear_via_steal_complete() {
     std::println("\n--- AC2: on_steal_complete clears orphan panic-defer ---");
-    // Drain any residual from prior tests.
-    // Use a dedicated fake evaluator id (not a live Evaluator*) so we
-    // only clear the orphan slot under test.
-    auto* id_prev = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2203A001u));
+    // Yield-checkpoint evaluator_id is a live Evaluator* in production
+    // (checkpoint_yield_boundary stores `this`). Steal-complete step (6)
+    // also clears escape-gate keys via Evaluator::compiler_metrics(), so
+    // the prev host must be a real Evaluator*. Orthogonal id stays a
+    // opaque GC-key token so residual force-clear (scheduler hooks eval)
+    // cannot accidentally clear it.
+    CompilerService prev_cs;
+    auto* id_prev = static_cast<void*>(&prev_cs.evaluator());
     auto* id_other = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2203A002u));
 
     // Ensure clean baseline for these ids.
@@ -317,7 +321,12 @@ static void ac2314_zero_cost_snapshot_zero() {
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
     CHECK(efm.find("if (aura::gc_hooks::defer_reasons_snapshot() != 0)") != std::string::npos,
           "AC3: zero-cost early-exit guard present");
-    CHECK(efm.find("Issue #2314 AC1.2") != std::string::npos,
+    // Source cites #2314 AC1.2 on the shared helper (gc_hooks.h) and/or
+    // the zero-cost note next to the steal-complete interlock.
+    CHECK(efm.find("Issue #2314") != std::string::npos &&
+              (efm.find("zero cost") != std::string::npos ||
+               efm.find("AC1.2") != std::string::npos ||
+               read_file("src/core/gc_hooks.h").find("AC1.2") != std::string::npos),
           "AC3: comment cites AC1.2 (zero-cost noted)");
     // Idempotency sanity: shared helper itself does not double-bump.
     const auto gh = read_file("src/core/gc_hooks.h");

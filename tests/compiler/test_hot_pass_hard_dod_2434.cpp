@@ -124,7 +124,10 @@ int main() {
                                       MonomorphizePass>();
         CHECK(true, "AC1: production packs accepted at registration");
         CHECK(DCEPass::kPureWrap && InlinePass::kPureWrap && TCOPass::kPureWrap, "AC1: kPureWrap");
-        auto pm = read_file("src/compiler/pass_manager.ixx");
+        // #2524: inventory + static_assert live in pass_pipeline_core (facade re-exports).
+        auto pm = read_file("src/compiler/pass_manager.ixx") +
+                  read_file("src/compiler/pass_pipeline_core.ixx") +
+                  read_file("src/compiler/pass_impls.ixx");
         CHECK(pm.find("check_production_pipeline_packs_2434") != std::string::npos,
               "AC1: production pack inventory");
         CHECK(pm.find("Pipeline stage must be HotPassDodCompliant") != std::string::npos,
@@ -208,7 +211,10 @@ int main() {
     // ── AC5: schema-2434 + source-cite ─────────────────────────────
     {
         std::println("\n--- #2434 AC5: schema + source-cite ---");
-        auto pm = read_file("src/compiler/pass_manager.ixx");
+        // #2524: hard-dod metric + issue cite live in pass_pipeline_core.
+        auto pm = read_file("src/compiler/pass_manager.ixx") +
+                  read_file("src/compiler/pass_pipeline_core.ixx") +
+                  read_file("src/compiler/pass_impls.ixx");
         auto cc = read_file("src/core/concept_constraints.ixx");
         auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         CHECK(pm.find("Issue #2434") != std::string::npos, "AC5: #2434 in pass_manager");
