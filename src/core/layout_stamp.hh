@@ -41,10 +41,18 @@
 
 namespace aura::core {
 
-// LayoutStamp — one POD, one freshness check, six fields.
+// LayoutStamp — one POD, one freshness check, eight fields
+// (core 6 + shape_version #2255 + ir_soa_generation #2432).
 // Trivially copyable so it can be captured by value across the
 // mutation boundary + FFI handoff without breaking the FFI flat
 // signature (POD = no destructors / no pointers / no vtable).
+//
+// Issue #2519: operator== compares ALL 8 fields. Pre-#2519 == only
+// compared the core 6, so shape deopt / IR SoA gen advance could
+// leave stamps "equal" while specialized IR was stale. Agents /
+// fiber resume / SpecJIT that use == for freshness now see full
+// coherence. Prefer layout_core_equal() only when intentionally
+// ignoring shape/ir (rare; document call site).
 struct LayoutStamp {
     // arena_id + arena_gen come from the owning ASTArena
     // (per-arena storage, NOT process-global; matches #2085
@@ -92,27 +100,48 @@ struct LayoutStamp {
         , shape_version(sver)
         , ir_soa_generation(ir_gen) {}
 
-    // operator== — full 6-field equality. A captured stamp matches
-    // the current state only if EVERY field matches (per #2170
-    // "consistent stamp" requirement; partial match is treated as
-    // stale because Agent / FFI decisions require the whole picture
-    // to be coherent).
+    // Issue #2519 / #2170: full 8-field equality. A captured stamp
+    // matches current state only if EVERY field matches (core 6 +
+    // shape_version + ir_soa_generation). Partial match is stale —
+    // Agent / fiber / JIT decisions require full coherence.
     [[nodiscard]] constexpr bool operator==(const LayoutStamp& o) const noexcept {
         return arena_id == o.arena_id && arena_gen == o.arena_gen && flat_gen == o.flat_gen &&
                mutation_epoch == o.mutation_epoch && env_gen == o.env_gen &&
-               defuse_version == o.defuse_version;
+               defuse_version == o.defuse_version && shape_version == o.shape_version &&
+               ir_soa_generation == o.ir_soa_generation;
     }
     [[nodiscard]] constexpr bool operator!=(const LayoutStamp& o) const noexcept {
         return !(*this == o);
     }
 
-    // is_any_field_zero — true if any captured field is 0 (the
-    // sentinel used by lifetime_pin.hh / workspace_epoch.hh for
-    // "unset / legacy ref"). Useful for tests that want to assert
-    // the stamp was fully captured (no zeroes from missing fields).
+    // Issue #2519: intentional core-6 equality (excludes shape/ir).
+    // Prefer operator== for production freshness. Use only when a call
+    // site deliberately ignores shape/IR fences (must be documented).
+    [[nodiscard]] constexpr bool layout_core_equal(const LayoutStamp& o) const noexcept {
+        return arena_id == o.arena_id && arena_gen == o.arena_gen && flat_gen == o.flat_gen &&
+               mutation_epoch == o.mutation_epoch && env_gen == o.env_gen &&
+               defuse_version == o.defuse_version;
+    }
+
+    // Alias of full equality for Agent/docs ("is_fully_fresh vs current").
+    [[nodiscard]] constexpr bool is_fully_fresh(const LayoutStamp& current) const noexcept {
+        return *this == current;
+    }
+
+    // is_any_field_zero — true if any core-6 field is 0 (sentinel used by
+    // lifetime_pin.hh / workspace_epoch.hh for "unset / legacy ref").
+    // shape_version / ir_soa_generation default 0 = "never stamped" and
+    // are NOT treated as unset here (cold-start exception; see #2255/#2432).
+    // Use is_shape_or_ir_unset() when those must be non-zero.
     [[nodiscard]] constexpr bool is_any_field_zero() const noexcept {
         return arena_id == 0 || arena_gen == 0 || flat_gen == 0 || mutation_epoch == 0 ||
                env_gen == 0 || defuse_version == 0;
+    }
+
+    // Issue #2519: true when shape_version or ir_soa_generation is still
+    // the never-stamped default (0).
+    [[nodiscard]] constexpr bool is_shape_or_ir_unset() const noexcept {
+        return shape_version == 0 || ir_soa_generation == 0;
     }
 
     // Note: capture() helper intentionally not inlined here — it
@@ -128,7 +157,11 @@ struct LayoutStamp {
 // shape gains / loses / reorders fields. Agents use this to
 // detect drift in the dashboard shape.
 // Issue #2432: schema bumped for ir_soa_generation 8th field.
+// Issue #2519: equality semantics = full 8-field (layout-stamp-equality-8-field).
 inline constexpr std::uint64_t kLayoutStampSchema = 2432;
+// Issue #2519: observability sentinel — Agents keying on stamp equality
+// see full 8-field freshness (behavior change vs pre-#2519 core-6 ==).
+inline constexpr std::uint64_t kLayoutStampEqualitySchema = 2519;
 
 } // namespace aura::core
 
