@@ -24,8 +24,12 @@ module;
 #include "mutate_type_gate.hh"                     // Issue #2219 Soft/Hard post-mutate type gate
 #include "compiler/type_system_health.hh"          // Issue #2350: query:type-system-health score
 #include "compiler/mutation_concurrency_health.hh" // Issue #2379: mutation-concurrency-health
+#include "compiler/compact_policy.hh"              // Issue #2500: query:compact-policy
+#include "compiler/mutation_hold_budget.h"         // Issue #2500: hold estimate for split
 #include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
 
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -48,6 +52,8 @@ import aura.compiler.type_checker; // Issue #2262: partial_cs_import_* module at
 import aura.compiler.value;
 import aura.compiler.ir_cache_pure; // Issue #2257: current_shape_stability_ratio
 import aura.core.lifetime_pin;      // Issue #2350: linear pin miss rate for type-system-health
+import aura.core.envframe_lifetime; // Issue #2500: active_guard_depth for compact policy
+import aura.core.arena;             // Issue #2500: g_force_compact_blocked_* + arena frag
 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
@@ -7938,6 +7944,207 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2500: query:compact-policy (+ aliases orch:compact-policy /
+    // arena:recommend-compact) — pure recommendation over existing health /
+    // frag / defer / hold atomics. Does not change Soft/Force gates (AC4).
+    auto register_compact_policy = [&string_heap](const char* name) {
+        ObservabilityPrims::register_stats_impl(
+            name, [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+                (void)a;
+                auto* __qev_ = Evaluator::get_query_evaluator();
+                const auto* m =
+                    __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics())
+                           : nullptr;
+
+                // ── Build mutation-concurrency health (same sources as #2379) ──
+                MutationConcurrencyHealthSnapshot hsnap;
+                hsnap.steal_force_deopt_total =
+                    aura::serve::Fiber::steal_snapshot_mismatch_force_deopt_total();
+                hsnap.steal_hard_fail_total = aura::serve::Fiber::steal_snapshot_hard_fail_total();
+                hsnap.residual_defer_cleared_on_steal_total =
+                    aura::gc_hooks::residual_defer_cleared_on_steal_total();
+                if (m)
+                    hsnap.residual_hard_fail_total =
+                        m->mutation_boundary_residual_defer_hard_fail_total.load(
+                            std::memory_order_relaxed);
+                hsnap.densify_consistency_fail_total =
+                    aura::core::densify_consistency::densify_consistency_fail_total();
+                hsnap.last_densify_envframe_ok =
+                    aura::core::densify_consistency::last_densify_envframe_ok() ? 1 : 0;
+                hsnap.last_densify_closure_remount_ok =
+                    aura::core::densify_consistency::last_densify_closure_remount_ok() ? 1 : 0;
+                if (m) {
+                    hsnap.hold_slo_violation_total =
+                        m->mutation_hold_slo_violation_total.load(std::memory_order_relaxed);
+                    hsnap.hold_over_budget_total =
+                        m->mutation_hold_over_budget_total.load(std::memory_order_relaxed);
+                }
+                using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+                hsnap.mailbox_defer_starvation_total =
+                    g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
+                        std::memory_order_relaxed);
+                hsnap.mailbox_deferred_depth =
+                    g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+                hsnap.mailbox_deferred_mutation_hold_total =
+                    g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(
+                        std::memory_order_relaxed);
+                const auto health = compute_mutation_concurrency_health(hsnap);
+
+                CompactPolicyInput pin;
+                pin.health_bp = health.health_bp;
+                pin.health_budget_bp = health.health_budget_bp;
+                pin.should_defer_destructive_gc = aura::gc_hooks::should_defer_destructive_gc();
+                pin.active_guard_depth = aura::core::envframe_lifetime::active_guard_depth();
+                pin.mutation_hold_active = (__qev_ && __qev_->mutation_boundary_depth() > 0) ||
+                                           hsnap.mailbox_deferred_mutation_hold_total > 0;
+                pin.densify_consistency_fail_total = hsnap.densify_consistency_fail_total;
+                if (m) {
+                    pin.pin_contract_fail_total =
+                        m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
+                }
+                pin.force_blocked_by_pin_total =
+                    aura::ast::g_force_compact_blocked_by_pin_total.load(std::memory_order_relaxed);
+                pin.force_blocked_by_envframe_total =
+                    aura::ast::g_force_compact_blocked_by_envframe_guard_total.load(
+                        std::memory_order_relaxed);
+
+                // Frag: process metric (post-mutate) — pure read, no private
+                // arena_ access. Values may be pct 0..100 or bp; normalize.
+                std::uint64_t frag_bp = 0;
+                if (m) {
+                    frag_bp = m->arena_fragmentation_post_mutate.load(std::memory_order_relaxed);
+                    if (frag_bp > 0 && frag_bp <= 100)
+                        frag_bp *= 100;
+                    if (frag_bp > 10000)
+                        frag_bp = 10000;
+                }
+                pin.frag_bp = frag_bp;
+
+                // Hold estimate → recommend-split (#2405): estimate > 0.7 * budget.
+                {
+                    const auto budget =
+                        static_cast<std::int64_t>(aura::compiler::mutation_hold_budget_us());
+                    std::int64_t estimate = 0;
+                    if (m) {
+                        const auto total =
+                            m->mutation_hold_sample_count.load(std::memory_order_relaxed);
+                        const auto n = static_cast<std::size_t>(std::min(
+                            total,
+                            static_cast<std::uint64_t>(CompilerMetrics::kMutationHoldSampleRing)));
+                        if (n > 0) {
+                            std::array<std::uint64_t, CompilerMetrics::kMutationHoldSampleRing>
+                                samples{};
+                            if (total < CompilerMetrics::kMutationHoldSampleRing) {
+                                for (std::size_t i = 0; i < n; ++i)
+                                    samples[i] = m->mutation_hold_sample_ring[i].load(
+                                        std::memory_order_relaxed);
+                            } else {
+                                for (std::size_t i = 0;
+                                     i < CompilerMetrics::kMutationHoldSampleRing; ++i)
+                                    samples[i] = m->mutation_hold_sample_ring[i].load(
+                                        std::memory_order_relaxed);
+                            }
+                            std::sort(samples.begin(),
+                                      samples.begin() + static_cast<std::ptrdiff_t>(n));
+                            const auto p99_idx = static_cast<std::size_t>(
+                                (static_cast<std::uint64_t>(n) * 99 + 99) / 100);
+                            estimate = static_cast<std::int64_t>(samples[std::min(p99_idx, n - 1)]);
+                        }
+                    }
+                    pin.recommend_split = (budget > 0 && estimate * 10 > budget * 7);
+                }
+
+                const auto pol = compute_compact_policy(pin);
+
+                auto* ht = FlatHashTable::create(64);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (const char* p = k_str; *p; ++p)
+                        h = (h ^ static_cast<std::uint8_t>(*p)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            auto kidx = string_heap.size();
+                            string_heap.push_back(k_str);
+                            keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                            vals[idx] = make_int(v).val;
+                            ht->size++;
+                            return;
+                        }
+                    }
+                };
+                auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (const char* p = k_str; *p; ++p)
+                        h = (h ^ static_cast<std::uint8_t>(*p)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            auto kidx = string_heap.size();
+                            string_heap.push_back(k_str);
+                            keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                            auto vidx = string_heap.size();
+                            string_heap.push_back(std::string(v_str));
+                            vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
+                            ht->size++;
+                            return;
+                        }
+                    }
+                };
+
+                insert_kv_str("mode", pol.mode_name);
+                insert_kv("mode-code", pol.mode_code);
+                insert_kv_str("reason", pol.reason);
+                insert_kv("health-bp", static_cast<std::int64_t>(pin.health_bp));
+                insert_kv("health-budget-bp", static_cast<std::int64_t>(pin.health_budget_bp));
+                insert_kv("frag-bp", static_cast<std::int64_t>(pin.frag_bp));
+                insert_kv("should-defer", pin.should_defer_destructive_gc ? 1 : 0);
+                insert_kv("active-guard-depth", static_cast<std::int64_t>(pin.active_guard_depth));
+                insert_kv("mutation-hold-active", pin.mutation_hold_active ? 1 : 0);
+                insert_kv("pin-contract-fail-total",
+                          static_cast<std::int64_t>(pin.pin_contract_fail_total));
+                insert_kv("densify-consistency-fail-total",
+                          static_cast<std::int64_t>(pin.densify_consistency_fail_total));
+                insert_kv("force-blocked-by-pin-total",
+                          static_cast<std::int64_t>(pin.force_blocked_by_pin_total));
+                insert_kv("force-blocked-by-envframe-total",
+                          static_cast<std::int64_t>(pin.force_blocked_by_envframe_total));
+                insert_kv("recommend-split", pin.recommend_split ? 1 : 0);
+                insert_kv("advisory", 1); // Agents: advisory unless enforce env (future)
+                insert_kv("compact-policy-wired", 1);
+                insert_kv("schema-2500", kCompactPolicyIssue);
+                insert_kv("issue-2500", kCompactPolicyIssue);
+                insert_kv("schema", kCompactPolicyIssue);
+                // Lineage sentinels (subsystem queries remain authoritative).
+                insert_kv("schema-2379", 2379);
+                insert_kv("schema-2405", 2405);
+                insert_kv("schema-2004", 2004);
+
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            });
+    };
+    register_compact_policy("query:compact-policy");
+    register_compact_policy("orch:compact-policy");
+    register_compact_policy("arena:recommend-compact");
 
     // Issue #574: query:coercion-elim-stats. Returns the sum of
     // 4 coercion elimination observability counters:
