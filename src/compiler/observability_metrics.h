@@ -4705,6 +4705,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> delta_truncate_force_full_solve_total{0}; // #2318
     std::atomic<std::uint64_t> delta_truncate_streak_threshold{0};       // #2318
     std::atomic<std::uint64_t> delta_truncate_anti_starve_wired{0};      // #2318
+    // Issue #2508: before anti-starve full solve, one goal-prioritized
+    // reverify pass (occurrence_goals_ / priority roots, elevated limit).
+    //   - delta_truncate_goal_priority_reverify_total: passes run
+    //   - delta_truncate_goal_priority_recovered_total: pass cleared truncate
+    //     (no force-full that round)
+    std::atomic<std::uint64_t> delta_truncate_goal_priority_reverify_total{0};  // #2508
+    std::atomic<std::uint64_t> delta_truncate_goal_priority_recovered_total{0}; // #2508
     // Issue #2146: adaptive reverify limit + truncation drain to pending full-solve.
     //   - solve_delta_reverify_truncated_total: lifetime reverify caps hit
     //   - solve_delta_reverify_limit_used: last effective_reverify_limit()

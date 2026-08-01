@@ -1397,77 +1397,133 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
 // reverify_clean_constraints_for_touched() catches cross-delta
 // unification conflicts against clean constraints (bounded scan
 // over var_to_constraints_ for touched Union-Find roots).
-SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_out) {
-    // Issue #258: time the delta solve. The timer accumulates
-    // into CompilerMetrics::delta_solve_time_us (lifetime total)
-    // via the metrics_ pointer. The RAII guard ensures the
-    // elapsed time is captured even on early-return paths.
-    // We use a void pointer (forward-declared via the
-    // observability_metrics.h header) to avoid pulling the
-    // full CompilerMetrics definition into this TU.
-    // Issue #2318: extended MetricsAccess with the new anti-starvation
-    // streak fields (per-CompilerMetrics mirror). Offsets match
-    // observability_metrics.h since CompilerMetrics declares the
-    // new fields in the same struct (layout-compatible).
+// Issue #2508: one elevated goal-priority reverify before anti-starve
+// full solve. Seeds occurrence_priority_roots_ from live occurrence_goals_
+// (epoch==0 untagged or epoch >= current), temporarily pins reverify limit
+// at kReverifyCleanScanMax, runs reverify_clean_constraints_for_touched.
+// Returns true when truncate cleared (recovered — no full solve needed).
+// Zero cost when no goals and no priority / let-poly roots.
+bool ConstraintSystem::try_goal_priority_reverify_before_full() noexcept {
+    const bool have_goals = !occurrence_goals_.empty();
+    const bool have_roots = !occurrence_priority_roots_.empty() || !let_poly_dirty_roots_.empty() ||
+                            !pending_full_solve_roots_.empty();
+    if (!have_goals && !have_roots)
+        return false;
+
+    // Replay live OccurrenceGoal vars into priority roots (sole authority
+    // #2278 / #2307 — same filter as solve_delta_occurrence).
+    if (have_goals) {
+        const auto cur_epoch = current_epoch();
+        for (const auto& goal : occurrence_goals_) {
+            if (!goal.var.valid())
+                continue;
+            if (goal.epoch > 0 && goal.epoch < cur_epoch)
+                continue;
+            mark_touched_on_delta(goal.var, /*occurrence_narrow=*/true);
+        }
+    }
+    // Also seed pending full-solve backlog into touched so reverify
+    // collects clean constraints for residual unscanned roots (#2146).
+    for (auto r : pending_full_solve_roots_)
+        touched_roots_.insert(r);
+
     if (metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(metrics_);
+        m->delta_truncate_goal_priority_reverify_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Elevate clean-reverify budget to Max for this one pass (still ≤ Max).
+    const auto saved_limit = force_reverify_limit_;
+    force_reverify_limit_ = kReverifyCleanScanMax;
+    const bool ok = reverify_clean_constraints_for_touched();
+    force_reverify_limit_ = saved_limit;
+
+    if (!ok) {
+        // Conflict during goal reverify — leave truncated flag as-is /
+        // conflict will surface via full solve path if needed.
+        return false;
+    }
+    // Recovered if reverify no longer truncated.
+    if (!last_reverify_truncated_) {
+        if (metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(metrics_);
+            m->delta_truncate_goal_priority_recovered_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return true;
+    }
+    return false;
+}
+
+// Issue #2318 / #2508: streak gate after solve_delta_impl.
+// Returns true when caller should replace `prior` with `out_result`
+// (force-full or goal-recovery). Returns false to keep `prior` unchanged
+// (streak below threshold, or no truncate).
+// Metrics: cast metrics_ (void*) inside this TU only — do not put
+// CompilerMetrics* in the module interface (GMF/impl type identity).
+bool ConstraintSystem::check_truncate_anti_starve_impl(std::vector<Constraint>* unresolved_out,
+                                                       SolveResult prior, SolveResult& out_result) {
+    auto* m = metrics_ ? static_cast<CompilerMetrics*>(metrics_) : nullptr;
+    if (!last_reverify_truncated_) {
+        truncate_streak_ = 0;
+        if (m)
+            m->delta_reverify_truncate_streak.store(0, std::memory_order_relaxed);
+        return false; // keep prior (AC4 zero cost)
+    }
+    ++truncate_streak_;
+    if (m) {
+        m->delta_reverify_truncate_streak.store(static_cast<std::uint64_t>(truncate_streak_),
+                                                std::memory_order_relaxed);
+        m->delta_truncate_streak_threshold.store(delta_truncate_streak_threshold(),
+                                                 std::memory_order_relaxed);
+        m->delta_truncate_anti_starve_wired.store(1, std::memory_order_relaxed);
+    }
+    if (truncate_streak_ < delta_truncate_streak_threshold())
+        return false; // keep prior; streak counting only
+
+    // Streak at threshold: try goal-priority reverify first (#2508).
+    if (try_goal_priority_reverify_before_full()) {
+        truncate_streak_ = 0;
+        if (m)
+            m->delta_reverify_truncate_streak.store(0, std::memory_order_relaxed);
+        // Recovered: prefer SOLVED when prior was SOLVED; otherwise prior.
+        out_result = (prior == SolveResult::SOLVED) ? SolveResult::SOLVED : prior;
+        return true;
+    }
+    // Still truncated (or no goals) → full solve (#2318).
+    if (m)
+        m->delta_truncate_force_full_solve_total.fetch_add(1, std::memory_order_relaxed);
+    truncate_streak_ = 0;
+    out_result = solve(unresolved_out);
+    return true;
+}
+
+// Public declaration wrapper (tests source-cite check_truncate_anti_starve).
+SolveResult ConstraintSystem::check_truncate_anti_starve(std::vector<Constraint>* unresolved_out) {
+    SolveResult out = SolveResult::SOLVED;
+    if (check_truncate_anti_starve_impl(unresolved_out, SolveResult::SOLVED, out))
+        return out;
+    return SolveResult::SOLVED;
+}
+
+SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_out) {
+    // Issue #258: time the delta solve into CompilerMetrics::delta_solve_time_us.
+    // Issue #2318 / #2508: anti-starve streak + goal-priority reverify gate.
+    if (metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(metrics_);
         auto start = std::chrono::steady_clock::now();
         auto result = solve_delta_impl(unresolved_out);
         auto end = std::chrono::steady_clock::now();
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-        // Forward-declared CompilerMetrics in observability_metrics.h.
-        // We use the offset of delta_solve_time_us via the
-        // metrics_ type's known layout — see header for the
-        // ordering. The metrics_ pointer is opaque here.
-        struct MetricsAccess {
-            std::atomic<std::uint64_t> delta_solve_time_us{0};
-            // Issue #2318: anti-starvation streak fields.
-            std::atomic<std::uint64_t> delta_reverify_truncate_streak{0};
-            std::atomic<std::uint64_t> delta_truncate_force_full_solve_total{0};
-            std::atomic<std::uint64_t> delta_truncate_streak_threshold{0};
-            std::atomic<std::uint64_t> delta_truncate_anti_starve_wired{0};
-        };
-        auto* ma = static_cast<MetricsAccess*>(metrics_);
-        ma->delta_solve_time_us.fetch_add(static_cast<std::uint64_t>(us),
-                                          std::memory_order_relaxed);
-        // Issue #2318: anti-starvation streak gate. If solve_delta
-        // truncated the reverify scan, increment streak; if streak ≥
-        // env threshold (AURA_DELTA_TRUNCATE_STREAK_FULL, default 2),
-        // force one full ConstraintSystem::solve() (anti-starvation
-        // under multi-round Agent mutate + partial CS).
-        if (last_reverify_truncated_) {
-            ++truncate_streak_;
-            ma->delta_reverify_truncate_streak.store(static_cast<std::uint64_t>(truncate_streak_),
-                                                     std::memory_order_relaxed);
-            const auto threshold = delta_truncate_streak_threshold();
-            ma->delta_truncate_streak_threshold.store(threshold, std::memory_order_relaxed);
-            if (truncate_streak_ >= threshold) {
-                ma->delta_truncate_anti_starve_wired.store(1, std::memory_order_relaxed);
-                ma->delta_truncate_force_full_solve_total.fetch_add(1, std::memory_order_relaxed);
-                truncate_streak_ = 0;
-                // Anti-starvation: force full solve (mirror #2277
-                // escalation body). Replaces the partial-solve result
-                // with the full-solve result; if full solve still
-                // CONFLICTS or TIMEOUTs, escalate_if_production path
-                // (already in place) handles the reject.
-                return solve(unresolved_out);
-            }
-        } else {
-            truncate_streak_ = 0;
-            ma->delta_reverify_truncate_streak.store(0, std::memory_order_relaxed);
-        }
+        m->delta_solve_time_us.fetch_add(static_cast<std::uint64_t>(us), std::memory_order_relaxed);
+        SolveResult replaced = result;
+        if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
+            return replaced;
         return result;
     }
     auto result = solve_delta_impl(unresolved_out);
-    // Issue #2318: anti-starvation streak gate (no-metrics path).
-    if (last_reverify_truncated_) {
-        ++truncate_streak_;
-        if (truncate_streak_ >= delta_truncate_streak_threshold()) {
-            truncate_streak_ = 0;
-            return solve(unresolved_out);
-        }
-    } else {
-        truncate_streak_ = 0;
-    }
+    SolveResult replaced = result;
+    if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
+        return replaced;
     return result;
 }
 

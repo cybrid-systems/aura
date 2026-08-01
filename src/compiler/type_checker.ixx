@@ -451,16 +451,25 @@ public:
     void force_reverify_limit_for_test(std::size_t lim = 0) noexcept {
         force_reverify_limit_ = lim;
     }
-    // Issue #2318: anti-starvation streak gate. Called after solve_delta_impl
-    // returns. If last_reverify_truncated_ bumped, increment truncate_streak_
-    // (and mirror to m.delta_reverify_truncate_streak). When streak ≥
-    // delta_truncate_streak_threshold() (env AURA_DELTA_TRUNCATE_STREAK_FULL,
-    // default 2), force one full ConstraintSystem::solve() (mirror #2277
-    // escalation body), bump m.delta_truncate_force_full_solve_total, and
-    // reset streak. When !last_reverify_truncated_, reset streak to 0
-    // (happy path = no extra full solve; per AC3 zero cost).
-    SolveResult check_truncate_anti_starve(struct CompilerMetrics& m,
-                                           std::vector<Constraint>* unresolved_out);
+    // Issue #2508: shared gate body. Reads metrics_ (void*) when non-null.
+    // Returns true if caller should replace prior result with out_result.
+    // CompilerMetrics is not in the signature — header type must not cross
+    // the module interface (GCC treats GMF vs impl-unit includes as distinct).
+    bool check_truncate_anti_starve_impl(std::vector<Constraint>* unresolved_out, SolveResult prior,
+                                         SolveResult& out_result);
+    // Issue #2318 / #2508: anti-starvation streak gate after solve_delta_impl.
+    // On truncate: ++streak. When streak ≥ AURA_DELTA_TRUNCATE_STREAK_FULL
+    // (default 2):
+    //   1) If occurrence_goals_ / priority roots live → one goal-priority
+    //      reverify with elevated limit (#2508). Recovered → reset streak,
+    //      no full solve.
+    //   2) Still truncated → full solve() + force-full counter (#2318).
+    // Happy path (!truncate): streak=0, zero extra solve work.
+    SolveResult check_truncate_anti_starve(std::vector<Constraint>* unresolved_out = nullptr);
+    // Issue #2508: one elevated occurrence/let-poly goal reverify pass.
+    // Returns true when last_reverify_truncated_ is cleared after the pass.
+    // Zero cost when no goals and no priority roots.
+    bool try_goal_priority_reverify_before_full() noexcept;
     [[nodiscard]] bool last_reverify_truncated() const noexcept { return last_reverify_truncated_; }
     // Issue #2458: after a successful full ConstraintSystem::solve() on the
     // truncate-commit hard path, clear stale delta-reverify truncation so

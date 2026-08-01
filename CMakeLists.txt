@@ -3428,6 +3428,11 @@ aura_add_issue_test(test_escape_gate_steal_densify_clear_2507)
 aura_issue_test_link_llvm_jit(test_escape_gate_steal_densify_clear_2507)
 add_dependencies(all_test_issue_targets test_escape_gate_steal_densify_clear_2507)
 
+# Issue #2508: OccurrenceGoal reverify before anti-starve full solve on truncate.
+aura_add_issue_test(test_delta_truncate_goal_priority_2508)
+aura_issue_test_link_llvm_jit(test_delta_truncate_goal_priority_2508)
+add_dependencies(all_test_issue_targets test_delta_truncate_goal_priority_2508)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
