@@ -656,9 +656,21 @@ export struct AdaptiveCompactResult {
     // Used by post-densify linear+type revalidate to skip AC3 zero-cost path
     // when densify was empty (no objects moved).
     bool moved_live_objects = false;
+    // Issue #2499: per-call aggregate of RootRemapPass fail totals across
+    // all arenas in this densify window. Each arena's LiveCompactResult
+    // populates these from invoke_root_remap_callback_ out-params (per-call,
+    // NOT process-cumulative). last-call semantics (#2376 pattern) — zero
+    // on clean densify (default true), > 0 if any arena's RootRemap
+    // encountered an unmapped root or capture cell. Phase 5 in
+    // evaluator_mutation_boundary.cpp ANDs (fail_total == 0) into
+    // pin_contract_held so the unified gate surfaces "pin ok +
+    // root_remap fail cumulative" mixed-signal gap.
+    std::size_t root_remap_stable_ref_fail_total = 0;
+    std::size_t root_remap_closure_capture_fail_total = 0;
 
     [[nodiscard]] bool empty() const noexcept {
-        return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects;
+        return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects &&
+               root_remap_stable_ref_fail_total == 0 && root_remap_closure_capture_fail_total == 0;
     }
 };
 
@@ -2659,6 +2671,14 @@ public:
             out.bytes_reclaimed_total += r.bytes_reclaimed;
             out.pin_contract_held = out.pin_contract_held && r.pin_contract_held;
             out.moved_live_objects = out.moved_live_objects || r.moved_live_objects;
+            // Issue #2499: aggregate per-arena RootRemapPass fail totals
+            // (per-call out-params from invoke_root_remap_callback_ — last-call
+            // semantics, NOT process-cumulative). Phase 5 in
+            // evaluator_mutation_boundary.cpp ANDs (fail_total == 0) into
+            // pin_contract_held so the unified gate surfaces "pin ok +
+            // root_remap fail cumulative" mixed-signal gap.
+            out.root_remap_stable_ref_fail_total += r.root_remap_stable_ref_fail_total;
+            out.root_remap_closure_capture_fail_total += r.root_remap_closure_capture_fail_total;
         }
         return out;
     }

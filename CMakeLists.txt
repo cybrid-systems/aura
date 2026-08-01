@@ -2255,6 +2255,15 @@ aura_add_issue_test(test_densify_remap_pairing_2368)
 aura_issue_test_link_llvm_jit(test_densify_remap_pairing_2368)
 add_dependencies(all_test_issue_targets test_densify_remap_pairing_2368)
 
+# Issue #2499: unify RootRemapPass fail with pin_contract_held (single Moving
+# success gate). Closes "pin ok + root_remap fail cumulative" mixed-signal
+# gap from 2026-07-31 production review 建议 5. AdaptiveCompactResult
+# aggregates per-call fail totals; Phase 5 ANDs them into pin_contract_held
+# (same fail-closed shape as #2266 pin + #2497 scan_fail_delta).
+aura_add_issue_test(test_root_remap_pin_contract_unified_2499)
+aura_issue_test_link_llvm_jit(test_root_remap_pin_contract_unified_2499)
+add_dependencies(all_test_issue_targets test_root_remap_pin_contract_unified_2499)
+
 # Issue #2369: live-closure remap stable_func_id sole primary (name-fallback legacy).
 aura_add_issue_test(test_live_closure_stable_id_only_2369)
 aura_issue_test_link_llvm_jit(test_live_closure_stable_id_only_2369)

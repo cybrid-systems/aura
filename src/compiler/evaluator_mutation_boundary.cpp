@@ -1802,6 +1802,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             pin_contract_held = compact_r.pin_contract_held;
             had_moving_densify = compact_r.moved_live_objects;
+            // Issue #2499: unify RootRemapPass fail into pin_contract_held.
+            // Per-call fail totals (not process-cumulative — last-call semantics
+            // #2376) aggregated into AdaptiveCompactResult by compact_all_moving_pinned.
+            // Any fail this densify call → pin_contract_held = false → Phase 5
+            // success suppressed (same fail-closed shape as #2266 pin verify +
+            // #2497 ownership scan). Closes "pin ok + root_remap fail cumulative"
+            // mixed-signal gap from 2026-07-31 production review 建议 5.
+            pin_contract_held = pin_contract_held &&
+                                compact_r.root_remap_stable_ref_fail_total == 0 &&
+                                compact_r.root_remap_closure_capture_fail_total == 0;
             if (!pin_contract_held) {
                 // Issue #2266 AC2: contract failed — bump fail counter + do not
                 // publish success metrics as if contract held. Optional env
