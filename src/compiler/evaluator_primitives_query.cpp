@@ -7426,8 +7426,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics()) : nullptr;
             if (!m)
                 return make_int(0);
-            // Capacity 32: #2287 + #2319 + #2358 keys.
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #2287 + #2319 + #2358 + #2459 keys.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7506,6 +7506,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("castop-density-hard-action-wired", 1);
             insert_kv("schema-2358", 2358);
             insert_kv("issue-2358", 2358);
+            // Issue #2459: production closed-loop streak + gate reject.
+            //   - castop-density-streak: consecutive over-budget unannotated
+            //   - castop-density-gate-reject-total: MutateTypeGate-aligned
+            //   - castop-density-production-default-wired: policy present
+            //   - schema-2458 / issue-2458
+            const std::int64_t streak =
+                static_cast<std::int64_t>(m->castop_density_streak.load(std::memory_order_relaxed));
+            const std::int64_t gate_rej = static_cast<std::int64_t>(
+                m->castop_density_gate_reject_total.load(std::memory_order_relaxed));
+            const std::int64_t soft_warn = static_cast<std::int64_t>(
+                m->castop_density_soft_warn_total.load(std::memory_order_relaxed));
+            const std::int64_t prod_wired = static_cast<std::int64_t>(
+                m->castop_density_production_default_wired.load(std::memory_order_relaxed));
+            insert_kv("castop-density-streak", streak);
+            insert_kv("castop_density_streak", streak);
+            insert_kv("castop-density-gate-reject-total", gate_rej);
+            insert_kv("castop_density_gate_reject_total", gate_rej);
+            insert_kv("castop-density-soft-warn-total", soft_warn);
+            insert_kv("castop-density-production-default-wired", prod_wired);
+            insert_kv("castop_density_production_default_wired", prod_wired);
+            insert_kv("schema-2459", 2459);
+            insert_kv("issue-2459", 2459);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
