@@ -308,8 +308,23 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // go through require_effect (not call check_and_record_effect
 // directly) so the audit ring + capability metrics surface stays
 // consistent. Returns true on allow, false on deny.
+//
+// Issue #2490: require_effect is the single side-effect entry —
+// auto-enforce workspace isolation when req_bits != 0 so callers cannot
+// skip isolation by only calling require_effect. Pure / zero-bits callers
+// are unchanged. Single SE IsolationDeny count is preserved via #2388
+// (check_workspace_isolation emits at most one IsolationDeny; callers
+// that already pair the checks short-circuit on the first deny). Cross-
+// tenant ref provenance is enforced at StableNodeRef access sites
+// (evaluator_fiber_mutation.cpp) where a ref is in hand; here we only
+// carry target_tenant + required_effects.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op,
                                ast::NodeId target_node) noexcept {
+    if (req_bits != 0) {
+        if (!check_workspace_isolation(/*target=*/capability_tenant_id_,
+                                       /*ref_tenant=*/0, req_bits, op))
+            return false; // IsolationDeny emitted (single-count, #2388)
+    }
     std::uint64_t mid =
         aura::core::resource_quota::process_resource_quota_manager().provenance_mutation_id;
     if (mid == 0)
