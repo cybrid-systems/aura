@@ -7473,16 +7473,30 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                 !last_occurrence_vars_.empty() || re_inferred > 0;
     }
 
-    // Issue #688: automatic OwnershipEnv revalidate after partial infer
-    // when the affected subtree contains linear bindings.
+    // Issue #688 / #2460 Phase 2: OwnershipEnv re-sim on dirty linear set
+    // during infer_flat_partial (before boundary-only Full audit).
+    // Zero cost when no linear bindings in the dirty cone (AC5).
+    // Soft/permissive: Warning + notes (AC3). production_defaults || strict:
+    // TypeError + set_node_error so partial TC fails early (AC1).
+    // Defense-in-depth: post_mutation validate_ownership_full + #2108 escape
+    // hard-block still run at boundary (AC4).
+    last_partial_linear_revalidate_fail_ = false;
     if (flat.root != aura::ast::NULL_NODE && flat.root < flat.size()) {
         std::unordered_set<std::string> linear_bindings;
         collect_linear_bindings_under_nodes(flat, pool, affected, linear_bindings);
+        // Issue #2460 / #1458: also walk discover_linear_bindings_in_subtree
+        // for each affected root (O(dirty) linear name discovery).
+        for (auto nid : affected) {
+            if (nid != aura::ast::NULL_NODE && nid < flat.size())
+                discover_linear_bindings_in_subtree(flat, pool, nid, linear_bindings);
+        }
         if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
             collect_linear_bindings_under_nodes(flat, pool, {rec.target_node}, linear_bindings);
+            discover_linear_bindings_in_subtree(flat, pool, rec.target_node, linear_bindings);
         }
         if (rec.parent_id != aura::ast::NULL_NODE && rec.parent_id < flat.size()) {
             collect_linear_bindings_under_nodes(flat, pool, {rec.parent_id}, linear_bindings);
+            discover_linear_bindings_in_subtree(flat, pool, rec.parent_id, linear_bindings);
         }
         if (sym_for_lookup != aura::ast::INVALID_SYM) {
             const auto sym_name = std::string(pool.resolve(sym_for_lookup));
@@ -7500,6 +7514,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             if (metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                 m->linear_dirty_revalidate_count.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2460: sibling counters for partial-infer ownership path.
+                m->linear_partial_revalidate_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #1531: validate_ownership already runs escape
                 // re-analysis; surface the counters here as well for
                 // dashboards that only watch the partial-infer path.
@@ -7512,6 +7528,36 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                                                         std::memory_order_relaxed);
                     else if (n.kind == "escape-after-move")
                         m->linear_escape_after_move_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            // Issue #2460: elevate ownership fail to partial TC fail signal
+            // (not only metric bump / late boundary audit).
+            if (!ownership_pass) {
+                last_partial_linear_revalidate_fail_ = true;
+                const bool hard =
+                    strict_ || aura::compiler::typed_audit::production_defaults_active();
+                const auto ek = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+                if (metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->linear_partial_revalidate_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    if (hard)
+                        m->linear_partial_revalidate_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                for (const auto& n : ownership_notes) {
+                    diag.report(aura::diag::Diagnostic(ek, n.message, aura::diag::SourceLocation{})
+                                    .with_blame(aura::diag::BlameInfo{
+                                        aura::diag::BlameParty::System, "", "compile"})
+                                    .with_suggestion(
+                                        "fix linear ownership in the dirty cone (move/drop/borrow "
+                                        "order) before committing; see OwnershipNote kind=" +
+                                        n.kind));
+                    if (n.node != aura::ast::NULL_NODE && n.node < flat.size()) {
+                        // Always stamp TypeError bit so partial TC / Guard see fail
+                        // (matches #2357 set_node_error policy).
+                        flat.set_node_error(n.node,
+                                            static_cast<std::uint8_t>(ErrorKind::TypeError));
+                    }
                 }
             }
         }
