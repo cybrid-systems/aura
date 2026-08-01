@@ -3184,10 +3184,10 @@ def cmd_mutation_hold_live_coverage():
 
 
 def cmd_pcv_tls_scratch_coverage():
-    """Issue #2406: optional TLS freelist for exclusive PCV unique-inplace.
+    """Issue #2406: TLS freelist for exclusive PCV unique-inplace.
 
-    AURA_PCV_TLS=1 opt-in; default OFF; SafePCVSpan unchanged; schema-2406
-    on query:pcv-hotpath-stats.
+    Foundation for #2521 production default ON; tests use override for
+    on/off. SafePCVSpan unchanged; schema-2406 on query:pcv-hotpath-stats.
     """
     print(f"{B}=== pcv TLS scratch coverage (#2406) ==={N}")
     script = ROOT / "scripts" / "check_pcv_tls_scratch_2406.py"
@@ -3199,6 +3199,24 @@ def cmd_pcv_tls_scratch_coverage():
         fail("pcv TLS scratch (#2406) coverage contract rows failed")
         return 1
     ok("pcv TLS scratch (#2406) coverage clean")
+    return 0
+
+
+def cmd_pcv_tls_default_on_coverage():
+    """Issue #2521: production default-on PCV TLS freelist.
+
+    AURA_PCV_TLS=0 forces off; exclusive stress TLS hits; schema-2521.
+    """
+    print(f"{B}=== pcv TLS default-on coverage (#2521) ==={N}")
+    script = ROOT / "scripts" / "check_pcv_tls_default_on_2521.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pcv TLS default-on (#2521) coverage contract rows failed")
+        return 1
+    ok("pcv TLS default-on (#2521) coverage clean")
     return 0
 
 
@@ -5608,6 +5626,7 @@ def cmd_gate():
         or cmd_mutation_hold_estimate_coverage()
         or cmd_mutation_hold_live_coverage()
         or cmd_pcv_tls_scratch_coverage()
+        or cmd_pcv_tls_default_on_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()

@@ -6338,9 +6338,9 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()));
         });
 
-    // Issue #2058 / #2140 / #2406: (query:pcv-hotpath-stats) — PCV unique
-    // in-place vs COW alloc vs optional TLS freelist (AURA_PCV_TLS).
-    // Soft default: TLS off; production risk zero until measured.
+    // Issue #2058 / #2140 / #2406 / #2521: (query:pcv-hotpath-stats) —
+    // PCV unique in-place vs COW alloc vs TLS freelist (production default
+    // ON; AURA_PCV_TLS=0 forces off).
     ObservabilityPrims::register_stats_impl(
         "query:pcv-hotpath-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
@@ -6348,7 +6348,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
-            auto* ht = FlatHashTable::create(32);
+            // #2521: more keys (schema-2521 + default-on sentinel).
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6380,17 +6381,21 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("ensure-unique-clone-total", load(m.ensure_unique_clone_total));
             insert_kv("with-set-exclusive-total", load(m.with_set_exclusive_total));
             insert_kv("with-set-cow-total", load(m.with_set_cow_total));
-            // Issue #2406 TLS freelist surface
+            // Issue #2406 / #2521 TLS freelist surface
             insert_kv("tls-scratch-hit-total", load(m.tls_scratch_hit_total));
             insert_kv("tls-scratch-miss-total", load(m.tls_scratch_miss_total));
             insert_kv("tls-scratch-recycle-total", load(m.tls_scratch_recycle_total));
             insert_kv("tls-scratch-enabled", aura::ast::pcv_tls_scratch_active() ? 1 : 0);
             insert_kv("tls-scratch-wired", 1);
+            // Issue #2521: production default ON (AURA_PCV_TLS=0 forces off).
+            insert_kv("tls-scratch-production-default-on", 1);
+            insert_kv("schema-2521", aura::ast::kPcvTlsDefaultOnIssue);
+            insert_kv("issue-2521", aura::ast::kPcvTlsDefaultOnIssue);
             insert_kv("schema-2406", aura::ast::kPcvTlsScratchIssue);
             insert_kv("issue-2406", aura::ast::kPcvTlsScratchIssue);
             insert_kv("schema-2058", aura::ast::kPcvHotpathIssue);
             insert_kv("schema-2140", aura::ast::kPcvExclusiveSetIssue);
-            insert_kv("schema", aura::ast::kPcvTlsScratchIssue);
+            insert_kv("schema", aura::ast::kPcvTlsDefaultOnIssue);
             insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

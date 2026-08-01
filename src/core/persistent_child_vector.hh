@@ -98,7 +98,8 @@ struct PcvHotpathMetrics {
     // Issue #2140: with_set exclusive vs shared paths.
     std::atomic<std::uint64_t> with_set_exclusive_total{0};
     std::atomic<std::uint64_t> with_set_cow_total{0};
-    // Issue #2406: TLS scratch freelist (AURA_PCV_TLS=1).
+    // Issue #2406 / #2521: TLS scratch freelist (production default ON;
+    // AURA_PCV_TLS=0 forces off).
     std::atomic<std::uint64_t> tls_scratch_hit_total{0};
     std::atomic<std::uint64_t> tls_scratch_miss_total{0};
     std::atomic<std::uint64_t> tls_scratch_recycle_total{0};
@@ -126,17 +127,27 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
 inline constexpr int kPcvHotpathIssue = 2058;
 // Issue #2140: exclusive with_set (refcount==1) in-place, no alloc.
 inline constexpr int kPcvExclusiveSetIssue = 2140;
-// Issue #2406: optional TLS scratch freelist for exclusive PCV allocs.
+// Issue #2406: TLS scratch freelist foundation for exclusive PCV allocs.
+// Issue #2521: production default ON (mirror Moving compact / HighMutation).
 inline constexpr int kPcvTlsScratchIssue = 2406;
+inline constexpr int kPcvTlsDefaultOnIssue = 2521;
 
-// Issue #2406: opt-in TLS freelist. Default OFF (AC1: behavior identical).
-// AURA_PCV_TLS=1|true|on enables. Soft / production risk zero until measured.
+// Issue #2406 / #2521: TLS freelist for exclusive short-lived PCV allocs.
+// Production default ON (AC1). Override:
+//   AURA_PCV_TLS=0|f|F|n|N  → force off (deterministic alloc accounting)
+//   AURA_PCV_TLS=1|t|T|y|Y  → force on
+// Cross-fiber steal: non-owner thread deletes, does not recycle (AC3).
 [[nodiscard]] inline bool pcv_tls_scratch_enabled() noexcept {
     static const bool on = [] {
         if (const char* e = std::getenv("AURA_PCV_TLS")) {
-            return e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y';
+            if (e[0] == '\0')
+                return true; // empty → production default
+            if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+                return false;
+            if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+                return true;
         }
-        return false;
+        return true; // Issue #2521: production default ON
     }();
     return on;
 }
@@ -622,7 +633,7 @@ private:
         if (n == 0) {
             return std::make_shared<Storage>();
         }
-        // Issue #2406: constructors share TLS path when opt-in + small.
+        // Issue #2406 / #2521: constructors share TLS path when active + small.
         if (pcv_tls_scratch_active() && n <= kTlsMaxElems)
             return make_from_tls_or_new(n);
         return std::make_shared<Storage>(n);
@@ -635,10 +646,10 @@ private:
     // can write to storage->data[i] before the storage is
     // shared out.
     //
-    // Issue #2406: when AURA_PCV_TLS is on and n is small, prefer
-    // TLS freelist (hit avoids malloc). Callers still may bump
-    // cow_alloc_total; with_* use note_pcv_alloc() so TLS hits
-    // do not inflate cow_alloc (AC2 exclusive stress).
+    // Issue #2406 / #2521: when TLS is active (production default)
+    // and n is small, prefer freelist (hit avoids malloc). Callers
+    // still may bump cow_alloc_total; with_* use note_pcv_alloc() so
+    // TLS hits do not inflate cow_alloc (exclusive stress AC2).
     static StoragePtr make_storage_owned(size_type n) {
         if (n == 0) {
             return std::make_shared<Storage>();

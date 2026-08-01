@@ -24,6 +24,7 @@ import aura.core.ast;
 
 namespace {
 
+using aura::ast::clear_pcv_tls_scratch_for_test;
 using aura::ast::FlatAST;
 using aura::ast::g_pcv_hotpath_metrics;
 using aura::ast::kPcvExclusiveSetIssue;
@@ -32,6 +33,7 @@ using aura::ast::NodeId;
 using aura::ast::PersistentChildVector;
 using aura::ast::reset_pcv_hotpath_metrics_for_test;
 using aura::ast::SafePCVSpan;
+using aura::ast::set_pcv_tls_scratch_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -93,6 +95,8 @@ int main() {
     // ── AC2: shared pin / SafePCVSpan → COW; observers see old data ──
     {
         std::println("\n--- AC2: shared pin → COW ---");
+        // Issue #2521: force TLS off so cow_alloc accounting is deterministic.
+        set_pcv_tls_scratch_for_test(false);
         reset_pcv_hotpath_metrics_for_test();
         auto base = make_n(16);
         // Share storage (simulates SafePCVSpan / snapshot hold).
@@ -120,6 +124,7 @@ int main() {
         flat.set_child(root, 0, flat.add_literal(50));
         CHECK(safe[0] == s0, "SafePCVSpan sees pre-mutation after set_child");
         CHECK(flat.children(root)[0] != s0, "tree updated");
+        clear_pcv_tls_scratch_for_test();
     }
 
     // ── AC3: snapshot / restore ──

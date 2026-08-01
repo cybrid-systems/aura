@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Issue #2406: optional TLS freelist for exclusive PCV unique-inplace.
+"""Issue #2406: TLS freelist for exclusive PCV unique-inplace.
 
 Contract:
-  AC1 default OFF — identical path (AURA_PCV_TLS / test override)
-  AC2 opt-in reduces cow_alloc under exclusive stress (TLS hit skips cow_alloc)
+  AC1 TLS off path (test override) identical exclusive path
+  AC2 TLS on reduces cow_alloc under exclusive stress (TLS hit skips cow_alloc)
   AC3 SafePCVSpan semantics unchanged
   AC4 metrics + schema-2406 on query:pcv-hotpath-stats
   AC5 multi-thread stress + build gate
+
+Note: Issue #2521 flips production default ON; AURA_PCV_TLS=0 forces off.
+Tests use set_pcv_tls_scratch_for_test for deterministic on/off.
 
 Exit 0 = all rows satisfied.
 """
