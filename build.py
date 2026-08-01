@@ -2140,6 +2140,32 @@ def cmd_fiber_reclaim_orphan_release_2498_coverage():
     return 0
 
 
+def cmd_root_remap_pin_contract_unified_2499_coverage():
+    """Issue #2499: unify RootRemapPass fail with pin_contract_held (single Moving
+    success gate).
+
+    #2294 / #2365 / #2368 RootRemapPass writes per-call fail totals into
+    LiveCompactResult.root_remap_*_fail_total. Phase 5 in
+    evaluator_mutation_boundary.cpp gates on compact_r.pin_contract_held only
+    — Agents see "pin ok + root_remap fail cumulative" mixed signal.
+    AdaptiveCompactResult now aggregates per-call fail totals; Phase 5 ANDs
+    (root_remap_*_fail_total == 0) into pin_contract_held so the unified
+    gate surfaces the mixed-signal gap. Linter fails when the gate is
+    missing or when LiveCompactResult / AdaptiveCompactResult fields regress.
+    """
+    print(f"{B}=== RootRemap pin_contract unified coverage (#2499) ==={N}")
+    script = ROOT / "scripts" / "check_root_remap_pin_contract_unified_2499.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("RootRemap pin_contract unified (#2499) coverage contract rows failed")
+        return 1
+    ok("RootRemap pin_contract unified (#2499) coverage clean")
+    return 0
+
+
 def cmd_general_object_pin_coverage_gate_2496_coverage():
     """Issue #2496: GeneralObjectPin adoption coverage gate.
 
