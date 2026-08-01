@@ -3521,6 +3521,24 @@ def cmd_add_node_builder_contract_coverage():
     return 0
 
 
+def cmd_region_lambda_dense_race_coverage():
+    """Issue #2446: region_by_lambda_dense_ + map race-free vs concurrent set/get.
+
+    region_table_mtx_ + atomic_ref; test extended in test_ast_concurrency.
+    """
+    print(f"{B}=== region_by_lambda_dense race coverage (#2446) ==={N}")
+    script = ROOT / "scripts" / "check_region_lambda_dense_race_2446.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("region_by_lambda_dense race (#2446) coverage contract rows failed")
+        return 1
+    ok("region_by_lambda_dense race (#2446) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4488,6 +4506,7 @@ def cmd_gate():
         or cmd_region_dense_atomic_coverage()
         or cmd_region_sym_dense_race_coverage()
         or cmd_add_node_builder_contract_coverage()
+        or cmd_region_lambda_dense_race_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

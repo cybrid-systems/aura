@@ -9,6 +9,9 @@
 // get_function_region_for_sym (region_table_mtx_ + atomic_ref; no mid-resize
 // UB / torn region byte). Extends this concurrency harness per AC.
 //
+// Issue #2446 — region_by_lambda_dense_ + region_by_lambda_id_ concurrent
+// set_function_region_lambda + get_function_region_for_lambda (same lock).
+//
 // TSan-clean under -fsanitize=thread; value-consistency (no torn
 // 0xA5A5A5A5 bits observed by the reader thread) holds on
 // architectures where naturally-aligned 32-bit stores are not
@@ -22,6 +25,7 @@
 //        or the set pattern, never torn bits
 //   #2444 AC: concurrent set_function_region + get_function_region_for_sym
 //             — no crash, region values only in published set
+//   #2446 AC: concurrent set_function_region_lambda + get_for_lambda
 
 #include "test_harness.hpp"
 
@@ -39,6 +43,8 @@ import aura.core.arena;
 namespace {
 
 using aura::ast::FlatAST;
+using aura::ast::NodeId;
+using aura::ast::NodeTag;
 using aura::ast::SymId;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -141,13 +147,14 @@ int main() {
         std::atomic<bool> stop{false};
         std::atomic<std::uint64_t> added{0};
 
-        // Issue #2463: clear() now acquires flatast_mutex_, which
-        // add_node() also holds (recursive_mutex at ast.ixx:910).
-        // Concurrent clear() + add_node() must serialize — no crash,
-        // no tag_ vector corruption, no stale parent_/children_ refs.
+        // Issue #2463 / #2445: clear() acquires flatast_mutex_, which
+        // add_node() also holds. Use add_node (not add_literal): the
+        // builder writes int_val_ after unlock and races clear()'s
+        // vector clear → OOB under libstdc++ asserts. add_node keeps
+        // the full multi-column init under the mutex.
         std::thread adder([&]() {
             while (!stop.load(std::memory_order_acquire)) {
-                flat->add_literal(static_cast<std::int64_t>(added.load() + 1));
+                (void)flat->add_node(NodeTag::LiteralInt);
                 added.fetch_add(1, std::memory_order_relaxed);
             }
         });
@@ -256,6 +263,91 @@ int main() {
             const SymId sym = static_cast<SymId>(500 + i);
             auto r = flat.get_function_region_for_sym(sym);
             CHECK(r.has_value() && *r <= kMaxRegion, "#2444: final region coherent");
+        }
+    }
+
+    // ── Issue #2446: region_by_lambda_dense concurrent set + get ───
+    {
+        std::println("\n--- #2446: concurrent set_function_region_lambda + get ---");
+        FlatAST flat;
+        constexpr int kN = 64;
+        constexpr std::uint8_t kMaxRegion = 15;
+        // Fixed lambda set (no concurrent lams vector growth).
+        // High NodeIds exercise dense resize under region_table_mtx_.
+        std::vector<NodeId> lams;
+        lams.reserve(static_cast<std::size_t>(kN));
+        for (int i = 0; i < kN; ++i) {
+            const auto id = flat.add_node(NodeTag::Lambda);
+            lams.push_back(id);
+        }
+        // Pre-seed all so final checks are stable; writers overwrite
+        // under region_table_mtx_ (resize already done for these ids).
+        // First set with ascending ids also exercises dense growth once.
+        for (int i = 0; i < kN; ++i)
+            flat.set_function_region_lambda(lams[static_cast<std::size_t>(i)], 0);
+
+        std::atomic<bool> stop{false};
+        std::atomic<std::uint64_t> writes{0};
+        std::atomic<std::uint64_t> reads{0};
+        std::atomic<std::uint64_t> hits{0};
+        std::atomic<std::uint64_t> err{0};
+
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 2; ++t) {
+            threads.emplace_back([&, t]() {
+                int i = t;
+                while (!stop.load(std::memory_order_acquire)) {
+                    try {
+                        const auto idx = static_cast<std::size_t>(i % kN);
+                        const auto reg = static_cast<std::uint8_t>((i + t) & kMaxRegion);
+                        flat.set_function_region_lambda(lams[idx], reg);
+                        writes.fetch_add(1, std::memory_order_relaxed);
+                        ++i;
+                    } catch (...) {
+                        err.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+        for (int t = 0; t < 6; ++t) {
+            threads.emplace_back([&, t]() {
+                int i = t;
+                while (!stop.load(std::memory_order_acquire)) {
+                    try {
+                        const auto idx = static_cast<std::size_t>(i % kN);
+                        auto r = flat.get_function_region_for_lambda(lams[idx]);
+                        if (r.has_value()) {
+                            if (*r > kMaxRegion)
+                                err.fetch_add(1, std::memory_order_relaxed);
+                            else
+                                hits.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        reads.fetch_add(1, std::memory_order_relaxed);
+                        i += 6;
+                    } catch (...) {
+                        err.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        stop.store(true, std::memory_order_release);
+        for (auto& th : threads)
+            th.join();
+
+        std::println("  #2446 writes={} reads={} hits={} err={}", writes.load(), reads.load(),
+                     hits.load(), err.load());
+        CHECK(writes.load() > 0, "#2446: writers progressed");
+        CHECK(reads.load() > 0, "#2446: readers progressed");
+        CHECK(hits.load() > 0, "#2446: dense/map hits observed");
+        CHECK(err.load() == 0, "#2446: no tear / invalid region / exceptions");
+
+        // After storm every lambda should have a published region
+        // (writers cycle all kN).
+        for (int i = 0; i < kN; ++i) {
+            auto r = flat.get_function_region_for_lambda(lams[static_cast<std::size_t>(i)]);
+            CHECK(r.has_value() && *r <= kMaxRegion, "#2446: final lambda region coherent");
         }
     }
 
