@@ -60,8 +60,11 @@ def main() -> int:
     must("invalidate_pins_not_in_new_addrs", "AC3", pin)
     must("unpin_on_compact", "AC3", pin)
     must("kPinRegistryShardCount", "AC3", pin)
-    # AC_M5 negative path still documented in moving-compact suite
-    must("AC_M5: non-arena pin invalidated after Moving", "AC3", test)
+    # AC_M5: live pins block Moving densify (AC_M3 contract); non-arena
+    # pin case remains. Selective invalidate is exercised via #2374 helper.
+    must("AC_M5: Moving blocked with live non-arena pin", "AC3", test)
+    must("invalidate_pins_not_in_new_addrs", "AC3", test)
+    must("Issue #2374", "AC3", test)
 
     # AC4: gate + source cites
     must("cmd_legacy_pin_registry_cleanup_coverage", "AC4", bp)
