@@ -87,7 +87,8 @@ void Evaluator::register_all_primitives() {
     primitives_detail::register_pair_and_string_primitives(
         prim_registrar(), *this, pairs_, string_heap_, error_values_, primitive_error_counter);
 
-    primitives_detail::register_json_primitives(prim_registrar(), pairs_, string_heap_);
+    primitives_detail::register_json_primitives(prim_registrar(), pairs_, string_heap_,
+                                                error_values_, primitive_error_counter);
 
     primitives_detail::register_list_primitives(prim_registrar(), pairs_, string_heap_,
                                                 error_values_, *this);

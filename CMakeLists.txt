@@ -3327,6 +3327,11 @@ aura_add_issue_test(test_regex_redos_timeout_2479)
 aura_issue_test_link_llvm_jit(test_regex_redos_timeout_2479)
 add_dependencies(all_test_issue_targets test_regex_redos_timeout_2479)
 
+# Issue #2480: json-parse parse_number catches stod/stoll exceptions.
+aura_add_issue_test(test_json_parse_number_exception_2480)
+aura_issue_test_link_llvm_jit(test_json_parse_number_exception_2480)
+add_dependencies(all_test_issue_targets test_json_parse_number_exception_2480)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

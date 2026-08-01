@@ -3980,6 +3980,24 @@ def cmd_regex_redos_timeout_coverage():
     return 0
 
 
+def cmd_json_parse_number_exception_coverage():
+    """Issue #2480: json-parse parse_number catches stod/stoll exceptions.
+
+    out_of_range / invalid_argument → PRIM_ERROR (no fiber crash).
+    """
+    print(f"{B}=== json-parse number exception coverage (#2480) ==={N}")
+    script = ROOT / "scripts" / "check_json_parse_number_exception_2480.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("json-parse number exception (#2480) coverage contract rows failed")
+        return 1
+    ok("json-parse number exception (#2480) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5010,6 +5028,7 @@ def cmd_gate():
         or cmd_emit_object_deprecated_coverage()
         or cmd_command_line_cap_io_read_coverage()
         or cmd_regex_redos_timeout_coverage()
+        or cmd_json_parse_number_exception_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
