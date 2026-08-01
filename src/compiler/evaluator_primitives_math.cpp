@@ -125,6 +125,9 @@ namespace {
                 box->value = fn();
                 box->state.store(1, std::memory_order_release);
             } catch (...) {
+                // [SILENCE-PRIM-#615] invalid regex / regex_error → SyntaxError
+                // status; caller maps to PRIM_ERROR via bump_regex_error
+                // (#668 / #1669 / #2479).
                 box->state.store(2, std::memory_order_release);
             }
         }).detach();
