@@ -108,6 +108,14 @@ inline void record_epoch_fence_hit(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().stable_ref_epoch_fence_hit_total.fetch_add(
         n, std::memory_order_relaxed);
 }
+// Issue #2393 / #715: fail-closed indicator for StableNodeRef that
+// crossed a workspace COW boundary without pin_for_cow(). Bumped by
+// refresh_if_stale when cow_epoch_at_capture != workspace_cow_epoch
+// (and capture epoch != 0, not boundary_pinned); the refresh returns
+// false — no restamp. Not a soft-warn counter: each hit means the
+// caller must re-pin or re-resolve. Also exposed via
+// cross_layer_provenance_mismatch_total / (query:stable-ref-*)
+// surfaces.
 inline void record_cross_layer_mismatch(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().cross_layer_provenance_mismatch_total.fetch_add(
         n, std::memory_order_relaxed);

@@ -182,12 +182,18 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
 //      caller's long-held handle (Agent / fiber context)
 //
 // Hard failures (return false): NULL/OOR id, free slot, wrap_epoch
-// mismatch with a non-zero captured epoch (second wrap cycle).
+// mismatch with a non-zero captured epoch (second wrap cycle), and
+// cross-layer COW epoch mismatch without pin_for_cow (Issue #2393 —
+// fail-closed, consistent with is_valid_in_layer / is_valid).
 //
 // Contract (#1564): every refresh that restamps gen/cow is counted on
 // both FlatAST::stale_ref_auto_refresh and process-wide
 // provenance::stable_ref_auto_refresh_total. Epoch-fence style wrap
 // mismatches bump stable_ref_epoch_fence_hit_total (no restamp).
+// COW mismatches without pin bump cross_layer_provenance_mismatch_total
+// and return false — no silent restamp to a potentially stale parent
+// copy (Issue #2393; counter is a fail-closed indicator, not a soft
+// warn).
 bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     if (is_valid_in(ast)) {
         validate_with_provenance(ast);
@@ -205,10 +211,16 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     if (ast.is_free_slot(id) || !ast.is_live_node(id))
         return false;
 
-    // Cross-layer COW without pin: count mismatch before restamp.
+    // Issue #2393: cross-layer COW without pin is hard fail-closed,
+    // same policy as wrap_epoch fence and is_valid_in_layer (which
+    // returns false for the same condition). cow_epoch_at_capture==0
+    // is brace-init / pre-provenance legacy (parallel to wrap_epoch
+    // == 0) and may still restamp into the live layer. Caller must
+    // re-pin (pin_for_cow) or re-resolve after a COW boundary.
     if (!boundary_pinned && cow_epoch_at_capture != 0 &&
         cow_epoch_at_capture != ast.workspace_cow_epoch()) {
         aura::core::provenance::record_cross_layer_mismatch();
+        return false;
     }
 
     // Preserve cross-fiber / cross-layer / pin / tenant provenance across

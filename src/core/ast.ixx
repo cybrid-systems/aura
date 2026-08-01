@@ -7548,8 +7548,11 @@ public:
                                std::uint32_t target_workspace_id = 0) const noexcept;
         bool validate_with_provenance(const FlatAST& ast) noexcept;
 
-        // Issue #497: refresh gen/wrap from a still-live node id when
-        // invalidation is gen-only (same wrap epoch, slot not recycled).
+        // Issue #497/#1564/#2393: refresh gen/wrap/cow from a still-live
+        // node when invalidation is gen-only (same wrap cycle, slot not
+        // free). Hard fail-closed on wrap_epoch mismatch (non-zero) and
+        // on COW epoch mismatch without boundary_pinned (non-zero
+        // capture); see ast_stability.cpp body + record_cross_layer_mismatch.
         bool refresh_if_stale(FlatAST& ast) noexcept;
         std::optional<NodeView> validate_or_refresh(FlatAST& ast) noexcept;
 
