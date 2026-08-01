@@ -196,30 +196,32 @@ def check() -> list:
         fails,
     )
 
-    # AC5 — Tests
+    # AC5 — Tests (Moving densify-with-live-pin superseded by AC_M3 block:
+    # live pins refuse densify. AC_M5 asserts the block; #2374 helper covers
+    # selective invalidate without densify.)
     _must(
-        "AC_M5 positive" in test,
-        "AC5: positive remap test missing in test_moving_compact_2166.cpp",
+        "AC_M5: live arena pin blocks Moving densify" in test or "AC_M5: Moving blocked with live pin" in test,
+        "AC5: live-pin blocks Moving densify AC_M5 missing in test_moving_compact_2166.cpp",
         fails,
     )
     _must(
-        "AC_M5 negative" in test,
-        "AC5: negative remap test missing in test_moving_compact_2166.cpp",
+        "AC_M5: Moving blocked with live non-arena pin" in test or "non-arena pin also blocks Moving" in test,
+        "AC5: non-arena pin block path missing in test_moving_compact_2166.cpp",
         fails,
     )
     _must(
-        "pin.ptr() ==" in test and "resolve_object_remap" in test,
-        "AC5: positive test must verify pin.ptr() follows remap via resolve_object_remap",
+        "invalidate_pins_not_in_new_addrs" in test and "Issue #2374" in test,
+        "AC5: #2374 selective invalidate helper must remain covered",
         fails,
     )
     _must(
-        "non-arena pin" in test.lower() or "local buffer" in test.lower(),
-        "AC5: negative test must pin a non-arena address (local buffer)",
+        "non-arena pin" in test.lower() or "local pin" in test.lower() or "local{" in test,
+        "AC5: test must pin a non-arena address (local buffer)",
         fails,
     )
     _must(
-        "lifetime_pin_remap_total" in test,
-        "AC5: tests must verify lifetime_pin_remap_total counter bumped",
+        "lifetime_pin_remap_total" in test or "verify_pins_under_moving_compact" in test,
+        "AC5: tests must exercise pin remap / verify contract counters",
         fails,
     )
 
