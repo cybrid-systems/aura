@@ -149,9 +149,14 @@ std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
 // entries that WOULD be marked, without allocating the GCRootSet.
 // Useful for pre-GC metrics and unit tests that want to verify the
 // root set is populated without paying for the GCRootSet heap allocs.
-// Issue #1864: unlike flush_gc_roots (safepoint + heap_mutex),
-// gc_root_count is public outside safepoint — it takes
+// Issue #1864: gc_root_count is public outside safepoint — it takes
 // shared_lock(closures_mtx_) when walking closures_.
+//
+// Issue #2473: flush_gc_roots / compact_sweep also take closures_mtx_
+// when iterating / erasing closures_. heap_mutex_ alone does NOT
+// serialize with register_active_closure / erase_active_closure (those
+// only take closures_mtx_). Dual-lock order with env: closures →
+// env_frames (#1664). heap_mutex_ is orthogonal (vector heaps).
 
 void Evaluator::flush_gc_roots(void* root_set_out) {
     // The opaque pointer is aura::serve::GCRootSet* (set by the
@@ -184,10 +189,22 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
     //    pinned (module-level / while-loop bodies). Anything above
     //    that watermark was created inside a temp-arena intend and
     //    is safe to collect. We walk the map and emit the safe set.
-    out.closure_roots.reserve(out.closure_roots.size() + closures_.size());
-    for (const auto& [id, c] : closures_) {
-        if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
-            out.closure_roots.push_back(static_cast<int64_t>(id));
+    //
+    // Issue #2473: shared_lock(closures_mtx_) alongside heap_mutex_
+    // so concurrent register_active_closure / erase cannot rehash the
+    // map under our iterator. shared_lock allows concurrent
+    // gc_root_count readers (#1864). Bumps gc_flush_closures_locked_total.
+    {
+        aura::compiler::lock_order::AuditScope lo_closures(
+            aura::compiler::lock_order::Level::Closures);
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->gc_flush_closures_locked_total.fetch_add(1, std::memory_order_relaxed);
+        out.closure_roots.reserve(out.closure_roots.size() + closures_.size());
+        for (const auto& [id, c] : closures_) {
+            if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
+                out.closure_roots.push_back(static_cast<int64_t>(id));
+            }
         }
     }
 
@@ -219,6 +236,9 @@ std::size_t Evaluator::gc_root_count() const {
     // UAF an unlocked iterator. Returns an approximate upper bound —
     // string_heap_/pairs_ size() remain unlocked (heap_mutex_ covers
     // those in flush_gc_roots / compact_sweep at safepoint).
+    // Issue #2473: flush_gc_roots / compact_sweep now also lock
+    // closures_mtx_ (shared / unique) for the same map — so this
+    // reader serializes with GC map walks, not only with register/free.
     // Issue #2354: Closures rank after Workspace/DepGraph when audit on.
     std::size_t n = string_heap_.size() + pairs_.size();
     aura::compiler::lock_order::AuditScope lo_closures(aura::compiler::lock_order::Level::Closures);
@@ -906,12 +926,11 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
 //
 // For `closures_` we actually erase unmarked entries — this is the
 // main memory-reclamation path (closure bodies hold arena-allocated
-// state). For the vector heaps, we report the dead count without
-// compaction, because compaction requires remapping all
-// EvalValue / pair / cell references — that's a major refactor
-// tracked separately in `binary_runtime_plan.md` (the C-runtime
-// equivalent) and in a future iteration of the Aura evaluator
-// (likely via a generation index table).
+// state). Issue #2473: take unique_lock(closures_mtx_) for the
+// iterate/erase section so concurrent register_active_closure /
+// gc_root_count cannot rehash under our erase iterator. Dual-lock
+// with env (if ever taken here): closures → env_frames (#1664).
+// For the vector heaps, compaction remaps indices (#2001).
 
 // Forward decl: helper is `static`, defined at file scope below
 // compact_sweep (per Issue #2003 — runs scan_skip_freed on dtor).
@@ -1000,24 +1019,39 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     //    This is the main leak-reduction path: each closure holds
     //    an arena-allocated flat, pool, and env that can be
     //    significant memory.
-    if (marks->closure_marks) {
-        std::size_t before = closures_.size();
-        for (auto it = closures_.begin(); it != closures_.end();) {
-            int64_t id = static_cast<int64_t>(it->first);
-            if (!marks->closure_marks->test(id)) {
-                // Issue #1888: tombstone before erase so ClosureView
-                // lifetime revalidation fails on moved-from / freed sources.
-                invalidate_closure_lifetime(it->second);
-                it = closures_.erase(it);
-            } else {
-                ++it;
+    //
+    // Issue #2473: unique_lock(closures_mtx_) for the full iterate /
+    // erase section. heap_mutex_ alone does not protect the map —
+    // register_active_closure / erase take only closures_mtx_ and can
+    // rehash under an unlocked erase iterator (UAF). Blocks all
+    // shared readers (gc_root_count / flush) for the erase window.
+    // Lock order vs env: closures first (#1664); we do not take
+    // env_frames_mtx_ here. Bumps gc_sweep_closures_locked_total.
+    {
+        aura::compiler::lock_order::AuditScope lo_closures(
+            aura::compiler::lock_order::Level::Closures);
+        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->gc_sweep_closures_locked_total.fetch_add(1, std::memory_order_relaxed);
+        if (marks->closure_marks) {
+            std::size_t before = closures_.size();
+            for (auto it = closures_.begin(); it != closures_.end();) {
+                int64_t id = static_cast<int64_t>(it->first);
+                if (!marks->closure_marks->test(id)) {
+                    // Issue #1888: tombstone before erase so ClosureView
+                    // lifetime revalidation fails on moved-from / freed sources.
+                    invalidate_closure_lifetime(it->second);
+                    it = closures_.erase(it);
+                } else {
+                    ++it;
+                }
             }
-        }
-        result.closures_freed = before - closures_.size();
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
-            m->closure_view_dangling_prevented_total.store(
-                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
+            result.closures_freed = before - closures_.size();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+                m->closure_view_dangling_prevented_total.store(
+                    g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
         }
     }
 

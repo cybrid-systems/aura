@@ -3830,6 +3830,25 @@ def cmd_closure_call_must_deopt_toctou_coverage():
     return 0
 
 
+def cmd_gc_closures_mtx_flush_sweep_coverage():
+    """Issue #2473: flush_gc_roots / compact_sweep take closures_mtx_.
+
+    heap_mutex_ alone does not serialize with register_active_closure;
+    shared_lock on flush + unique_lock on sweep close the map rehash race.
+    """
+    print(f"{B}=== GC flush/sweep closures_mtx_ coverage (#2473) ==={N}")
+    script = ROOT / "scripts" / "check_gc_closures_mtx_flush_sweep_2473.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("GC flush/sweep closures_mtx_ (#2473) coverage contract rows failed")
+        return 1
+    ok("GC flush/sweep closures_mtx_ (#2473) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4852,6 +4871,7 @@ def cmd_gate():
         or cmd_type_system_health_next_action_coverage()
         or cmd_ir_optimize_type_info_chain_coverage()
         or cmd_closure_call_must_deopt_toctou_coverage()
+        or cmd_gc_closures_mtx_flush_sweep_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()

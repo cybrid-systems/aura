@@ -3175,6 +3175,9 @@ public:
     // mutator can run). Holds `heap_mutex()` so a non-fiber thread
     // in serve-async mode can't race a concurrent
     // `string_heap_.push_back` (or similar) with the walk.
+    // Issue #2473: also takes shared_lock(closures_mtx_) for the
+    // closures_ walk (heap_mutex_ alone does not serialize with
+    // register_active_closure). Bumps gc_flush_closures_locked_total.
     void flush_gc_roots(void* root_set_out);
     // Total number of vector-heap entries that would be marked as roots.
     // Cheap (no allocation, just sizes + map iteration). Useful for
@@ -3183,6 +3186,8 @@ public:
     // Issue #1864: takes shared_lock(closures_mtx_) for the closures_
     // walk — callable outside safepoint (metrics / tests); not an
     // unlocked "safepoint only" helper.
+    // Issue #2473: serializes with flush_gc_roots / compact_sweep map
+    // sections (those now also take closures_mtx_).
     [[nodiscard]] std::size_t gc_root_count() const;
     // Issue #682: export tree-walker Closure / EnvId roots for
     // compiler GC coordination (bridge epoch gate).
@@ -3592,6 +3597,10 @@ public:
     // Issue #1865: clears pair_remap_ on the successful sweep path
     // (not on nullptr / panic-defer early returns) so compact_pairs
     // remaps cannot outlive GC reclaim.
+    // Issue #2473: unique_lock(closures_mtx_) for closures_ iterate/
+    // erase (blocks register / gc_root_count / flush readers). Bumps
+    // gc_sweep_closures_locked_total. Lock order vs env: closures
+    // first (#1664).
     CompactSweepResult compact_sweep(void* sweep_buffers);
 
 

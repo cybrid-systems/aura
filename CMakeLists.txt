@@ -3288,6 +3288,12 @@ aura_add_issue_test(test_closure_call_must_deopt_toctou_2472)
 aura_issue_test_link_llvm_jit(test_closure_call_must_deopt_toctou_2472)
 add_dependencies(all_test_issue_targets test_closure_call_must_deopt_toctou_2472)
 
+# Issue #2473: flush_gc_roots / compact_sweep take closures_mtx_ when
+# iterating / erasing closures_ (heap_mutex_ alone races register rehash).
+aura_add_issue_test(test_gc_closures_mtx_flush_sweep_2473)
+aura_issue_test_link_llvm_jit(test_gc_closures_mtx_flush_sweep_2473)
+add_dependencies(all_test_issue_targets test_gc_closures_mtx_flush_sweep_2473)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
