@@ -2115,6 +2115,31 @@ def cmd_densify_ownership_scan_fail_gate_2497_coverage():
     return 0
 
 
+def cmd_fiber_reclaim_orphan_release_2498_coverage():
+    """Issue #2498: epoch-scoped off-stack orphan-root table for fiber reclaim.
+
+    #2467 / #2468 / #2469 fixed UAF on reclaimed fibers but deferred the
+    cleanup hook until state_==Done. For non-yielding bodies after
+    hard-reclaim, Done never fires — EnvFrame / mailbox / external handle
+    refs leak by design. Option A (epoch-scoped off-stack table) lets
+    body code register drop callbacks with the current Fiber so the global
+    table entries are released on Reclaimed / ~Fiber without touching
+    the body's running stack. Linter fails when the table API is missing
+    from Fiber or when JoinStatus::Reclaimed paths skip release_orphan_roots().
+    """
+    print(f"{B}=== Fiber reclaim orphan release coverage (#2498) ==={N}")
+    script = ROOT / "scripts" / "check_fiber_reclaim_orphan_release_2498.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Fiber reclaim orphan release (#2498) coverage contract rows failed")
+        return 1
+    ok("Fiber reclaim orphan release (#2498) coverage clean")
+    return 0
+
+
 def cmd_general_object_pin_coverage_gate_2496_coverage():
     """Issue #2496: GeneralObjectPin adoption coverage gate.
 

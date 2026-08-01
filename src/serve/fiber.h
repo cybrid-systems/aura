@@ -9,8 +9,10 @@
 #include <functional>
 #include <memory>
 #include <atomic>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <vector>
 
 // Issue #438: C-linkage forward declaration of the
 // per-thread mutation boundary depth probe. Defined
@@ -532,6 +534,29 @@ public:
     [[nodiscard]] static JoinResult join(std::span<Fiber* const> targets,
                                          std::optional<std::uint64_t> timeout_ms = std::nullopt);
 
+    // Issue #2498: epoch-scoped off-stack orphan-root table. Body code
+    // (Fiber::resume context) can register a drop callback for any
+    // global table entry it added (EnvFrame ref, mailbox ref, external
+    // handle) so that on hard-reclaim (JoinStatus::Reclaimed path) the
+    // global entries are released without touching the body's running
+    // stack. Body stack copies remain valid; the off-stack global table
+    // is the only thing leaked by design. Idempotent: clear + invoke
+    // is a no-op on subsequent calls. Thread-safe: registrations from
+    // the body's worker thread; release from the joiner thread.
+    void register_orphan_root_release(std::function<void()> drop) noexcept;
+    // Returns the number of callbacks invoked (for AC1 metrics).
+    std::size_t release_orphan_roots() noexcept;
+    // True iff the table has any pending callbacks (for tests).
+    [[nodiscard]] bool has_orphan_roots() const noexcept;
+
+    // Issue #2498: process-wide counter for orphan-root drops on
+    // Reclaimed (counts callbacks invoked when JoinStatus::Reclaimed
+    // returns to a joiner). Accessor for tests + query surface.
+    [[nodiscard]] static std::uint64_t orphan_roots_dropped_on_reclaim_total() noexcept;
+    // Process-wide HWM of pending orphan roots across all fibers
+    // (production observability for AC1 root count bound).
+    [[nodiscard]] static std::uint64_t orphan_roots_hwm() noexcept;
+
     // Cooperative cancellation. Target fibers may poll this
     // flag and exit early; joiners observe Cancelled when their
     // own cancel is set during wait.
@@ -880,6 +905,20 @@ private:
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).
     std::atomic<bool> still_running_after_reclaim_counted_{false};
 
+    // Issue #2498: per-fiber off-stack orphan-root table. Protected by
+    // orphan_roots_mtx_ — registrations come from the body's worker thread
+    // (Fiber::resume context), release calls come from the joiner thread
+    // (or from ~Fiber on the destroying thread). Both sides take the mutex;
+    // release invokes callbacks OUTSIDE the lock to keep the critical
+    // section short and avoid re-entrant lock cycles (drop callbacks may
+    // acquire other locks — Evaluator mutex, mailbox mutex, GC root table).
+    // The vector is on the heap so the Fiber object stays small and
+    // moveable; std::function captures (this, slot) for the unregister
+    // callback are safe because the Evaluator outlives all fibers in
+    // production (scheduler teardown ensures fibers stop first).
+    mutable std::mutex orphan_roots_mtx_;
+    std::vector<std::function<void()>> orphan_root_releases_;
+
     // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;
     static std::atomic<std::uint64_t> join_timeout_total_;
@@ -892,6 +931,9 @@ private:
     static std::atomic<std::uint64_t> join_wait_us_total_;
     static std::atomic<std::uint64_t> join_wait_us_max_;
     static std::atomic<std::uint64_t> join_linear_enforcement_total_;
+    // Issue #2498: process-wide orphan-root drops + HWM.
+    static std::atomic<std::uint64_t> orphan_roots_dropped_on_reclaim_total_;
+    static std::atomic<std::uint64_t> orphan_roots_hwm_;
     // Issue #1597 join latency histogram (process-wide).
     static std::atomic<std::uint64_t> join_latency_hist_[kJoinLatencyHistBuckets];
 };
