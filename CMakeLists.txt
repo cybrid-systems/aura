@@ -3197,6 +3197,11 @@ aura_add_issue_test(test_clear_macro_dirty_concurrent_2442)
 aura_issue_test_link_llvm_jit(test_clear_macro_dirty_concurrent_2442)
 add_dependencies(all_test_issue_targets test_clear_macro_dirty_concurrent_2442)
 
+# Issue #2443: region dense SoA atomic_ref + region_table_mtx_
+aura_add_issue_test(test_region_dense_atomic_2443)
+aura_issue_test_link_llvm_jit(test_region_dense_atomic_2443)
+add_dependencies(all_test_issue_targets test_region_dense_atomic_2443)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

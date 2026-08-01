@@ -3467,6 +3467,24 @@ def cmd_clear_macro_dirty_concurrent_coverage():
     return 0
 
 
+def cmd_region_dense_atomic_coverage():
+    """Issue #2443: region_by_sym/lambda_dense atomic_ref + region_table_mtx_.
+
+    Concurrent parser write + lowering read without torn uint8.
+    """
+    print(f"{B}=== region dense atomic coverage (#2443) ==={N}")
+    script = ROOT / "scripts" / "check_region_dense_atomic_2443.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("region dense atomic (#2443) coverage contract rows failed")
+        return 1
+    ok("region dense atomic (#2443) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4431,6 +4449,7 @@ def cmd_gate():
         or cmd_soa_column_atomic_coverage()
         or cmd_macro_dirty_bits_lock_coverage()
         or cmd_clear_macro_dirty_concurrent_coverage()
+        or cmd_region_dense_atomic_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

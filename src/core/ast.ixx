@@ -1170,8 +1170,19 @@ private:
         };
         if (root != NULL_NODE)
             visit(root);
-        for (const auto& [lid, _] : region_by_lambda_id_)
-            visit(lid);
+        // Issue #2443: snapshot lambda region roots under shared
+        // region_table_mtx_ (map may grow from concurrent set_*).
+        {
+            std::vector<NodeId> lambda_roots;
+            {
+                std::shared_lock<std::shared_mutex> rlock(region_table_mtx_.mutable_get());
+                lambda_roots.reserve(region_by_lambda_id_.size());
+                for (const auto& [lid, _] : region_by_lambda_id_)
+                    lambda_roots.push_back(lid);
+            }
+            for (auto lid : lambda_roots)
+                visit(lid);
+        }
         for (std::size_t qi = 0; qi < queue.size(); ++qi) {
             for (auto cid : children(queue[qi])) {
                 if (cid != NULL_NODE)
@@ -2939,13 +2950,18 @@ public:
     // Lowering reads them via get_function_region_for_sym /
     // get_function_region_for_lambda to set
     // IRFunction::region accordingly.
+    // Issue #2443: region_table_mtx_ guards maps + dense SoA.
+    // LOCK ORDER if combined with structural: structural → region_table.
+    mutable OwnedSharedMutex region_table_mtx_;
     std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
     std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
-    // Issue #1520: dense SoA side-tables for region lookups (index =
-    // SymId/NodeId, 0 = unset, else region+1). Cap keeps memory bounded.
+    // Issue #1520 / #2443: dense SoA side-tables for region lookups
+    // (index = SymId/NodeId, 0 = unset, else region+1). Cap keeps
+    // memory bounded. mutable for atomic_ref load in const getters;
+    // resize under exclusive region_table_mtx_; cells via atomic_ref.
     static constexpr std::size_t kRegionDenseCap = 65536;
-    std::pmr::vector<std::uint8_t> region_by_sym_dense_;
-    std::pmr::vector<std::uint8_t> region_by_lambda_dense_;
+    mutable std::pmr::vector<std::uint8_t> region_by_sym_dense_;
+    mutable std::pmr::vector<std::uint8_t> region_by_lambda_dense_;
     // Issue #255: explicit custom move constructor. The
     // 4 std::atomic observability members (added for #255)
     // make the implicit move ctor deleted by some compiler
@@ -3576,15 +3592,19 @@ public:
     // get_function_region_for_sym(sym) and
     // get_function_region_for_lambda(node_id) — both return
     // std::optional<std::uint8_t>; nullopt means no annotation.
+    //
+    // Issue #2443: exclusive region_table_mtx_ for map + dense resize
+    // + atomic_ref store (no torn uint8 vs concurrent get_*).
     void set_function_region(SymId name, std::uint8_t region) {
+        std::unique_lock<std::shared_mutex> wlock(region_table_mtx_.mutable_get());
         region_by_sym_[name] = region;
         // Issue #1520: dense SoA side-table for hot SymId lookups.
         // Encoding: 0 = unset, region+1 stored (region is 0..254).
         if (static_cast<std::size_t>(name) < kRegionDenseCap) {
             if (region_by_sym_dense_.size() <= static_cast<std::size_t>(name))
                 region_by_sym_dense_.resize(static_cast<std::size_t>(name) + 1, 0);
-            region_by_sym_dense_[static_cast<std::size_t>(name)] =
-                static_cast<std::uint8_t>(region + 1);
+            std::atomic_ref<std::uint8_t>(region_by_sym_dense_[static_cast<std::size_t>(name)])
+                .store(static_cast<std::uint8_t>(region + 1), std::memory_order_release);
         }
     }
     // Overload tag: pass a 0 literal to disambiguate. We
@@ -3592,20 +3612,27 @@ public:
     // overloads don't collide on the same uint32_t underlying
     // type. Callers use set_function_region_sym and
     // set_function_region_lambda explicitly.
+    // Issue #2443: exclusive region_table_mtx_ + atomic dense store.
     void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
+        std::unique_lock<std::shared_mutex> wlock(region_table_mtx_.mutable_get());
         region_by_lambda_id_[lambda_id] = region;
         // Issue #1520: dense side-table for hot lambda NodeId lookups.
         if (static_cast<std::size_t>(lambda_id) < kRegionDenseCap) {
             if (region_by_lambda_dense_.size() <= static_cast<std::size_t>(lambda_id))
                 region_by_lambda_dense_.resize(static_cast<std::size_t>(lambda_id) + 1, 0);
-            region_by_lambda_dense_[static_cast<std::size_t>(lambda_id)] =
-                static_cast<std::uint8_t>(region + 1);
+            std::atomic_ref<std::uint8_t>(
+                region_by_lambda_dense_[static_cast<std::size_t>(lambda_id)])
+                .store(static_cast<std::uint8_t>(region + 1), std::memory_order_release);
         }
     }
+    // Issue #2443: shared region_table_mtx_ + atomic_ref load on dense.
     [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_sym(SymId name) const {
+        std::shared_lock<std::shared_mutex> rlock(region_table_mtx_.mutable_get());
         // Issue #1520: prefer dense columnar path (no hash).
         if (static_cast<std::size_t>(name) < region_by_sym_dense_.size()) {
-            const auto enc = region_by_sym_dense_[static_cast<std::size_t>(name)];
+            const auto enc =
+                std::atomic_ref<std::uint8_t>(region_by_sym_dense_[static_cast<std::size_t>(name)])
+                    .load(std::memory_order_acquire);
             if (enc != 0) {
                 region_dense_hits_.fetch_add(1, std::memory_order_relaxed);
                 return static_cast<std::uint8_t>(enc - 1);
@@ -3617,10 +3644,14 @@ public:
             return std::nullopt;
         return it->second;
     }
+    // Issue #2443: shared region_table_mtx_ + atomic_ref load on dense.
     [[nodiscard]] std::optional<std::uint8_t>
     get_function_region_for_lambda(NodeId lambda_id) const {
+        std::shared_lock<std::shared_mutex> rlock(region_table_mtx_.mutable_get());
         if (static_cast<std::size_t>(lambda_id) < region_by_lambda_dense_.size()) {
-            const auto enc = region_by_lambda_dense_[static_cast<std::size_t>(lambda_id)];
+            const auto enc = std::atomic_ref<std::uint8_t>(
+                                 region_by_lambda_dense_[static_cast<std::size_t>(lambda_id)])
+                                 .load(std::memory_order_acquire);
             if (enc != 0) {
                 region_dense_hits_.fetch_add(1, std::memory_order_relaxed);
                 return static_cast<std::uint8_t>(enc - 1);
