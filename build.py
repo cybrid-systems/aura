@@ -1957,6 +1957,28 @@ def cmd_require_effect_live_mid_coverage():
     return 0
 
 
+def cmd_require_effect_auto_isolation_2490_coverage():
+    """Issue #2490: require_effect auto-enforces workspace isolation.
+
+    require_effect (single side-effect entry) calls check_workspace_isolation
+    before check_and_record_effect when req_bits != 0. Pure / zero-bits callers
+    unchanged; isolation deny short-circuits; single SE IsolationDeny count
+    preserved via #2388. Existing prims that only call require_effect gain
+    isolation enforcement without per-prim edits.
+    """
+    print(f"{B}=== require_effect auto-isolation coverage (#2490) ==={N}")
+    script = ROOT / "scripts" / "check_require_effect_auto_isolation_2490.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("require_effect auto-isolation (#2490) coverage contract rows failed")
+        return 1
+    ok("require_effect auto-isolation (#2490) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -4976,6 +4998,7 @@ def cmd_gate():
         or cmd_arena_dtor_clears_hooks_coverage()
         or cmd_has_on_compact_hook_lock_coverage()
         or cmd_require_effect_live_mid_coverage()
+        or cmd_require_effect_auto_isolation_2490_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()

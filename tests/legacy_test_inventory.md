@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 657 | Preferred destination suites |
-| **Total scanned** | **657** | |
+| `tests/core/test_*.cpp` | 658 | Preferred destination suites |
+| **Total scanned** | **658** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 75 | 75 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 190 | 190 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 191 | 191 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 67 | 67 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 15 | 15 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -654,6 +654,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_render_pass_incremental.cpp`
 - `tests/compiler/test_render_strategy_layer_2138.cpp`
 - `tests/renderer/test_render_telemetry.cpp`
+- `tests/compiler/test_require_effect_auto_isolation_2490.cpp`
 - `tests/compiler/test_require_effect_live_mid_2384.cpp`
 - `tests/core/test_reset_slot_parent_edges_2412.cpp`
 - `tests/compiler/test_residual_gc_defer_assert_2211.cpp`
@@ -926,13 +927,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (190)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (191)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (190)
+#### domain/ (191)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1078,6 +1079,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_ai_native_template.cpp` (—) [domain_suite, theme_renderer] — Issue #1677 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_critical_hotswap_2050.cpp` (#2050) [domain_suite, theme_renderer] — AC1: schema-2050 keys on query:render-jit-stability-stats
 - `tests/renderer/test_render_mutation_checkpoint.cpp` (—) [domain_suite, theme_renderer] — test_render_mutation_checkpoint.cpp — Issue #1355: lightweight mutation in render hot path
+- `tests/compiler/test_require_effect_auto_isolation_2490.cpp` (#2490) [domain_suite, theme_compiler] — AC1: Restricted + tenant principal unset + require_effect(Mutate) →
 - `tests/compiler/test_require_effect_live_mid_2384.cpp` (#2384) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges_2412.cpp` (#2412) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
 - `tests/compiler/test_residual_gc_defer_assert_2211.cpp` (#2211) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0

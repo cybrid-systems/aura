@@ -3511,6 +3511,13 @@ aura_issue_test_link_llvm_jit(test_capability_effect_force_2072)
 aura_add_issue_test(test_require_effect_live_mid_2384)
 aura_issue_test_link_llvm_jit(test_require_effect_live_mid_2384)
 
+# Issue #2490: require_effect auto-enforces workspace isolation when
+# req_bits != 0 (single side-effect entry). Pure / zero-bits callers
+# unchanged; isolation deny short-circuits before effect check; single SE
+# IsolationDeny count preserved via #2388.
+aura_add_issue_test(test_require_effect_auto_isolation_2490)
+aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation_2490)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.
