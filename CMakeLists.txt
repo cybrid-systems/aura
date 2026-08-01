@@ -3277,6 +3277,11 @@ aura_add_issue_test(test_type_system_health_next_action_2462)
 aura_issue_test_link_llvm_jit(test_type_system_health_next_action_2462)
 add_dependencies(all_test_issue_targets test_type_system_health_next_action_2462)
 
+# Issue #2471: optimize_type_info chain-walk terminates on MAX not 0
+aura_add_issue_test(test_ir_optimize_type_info_chain_2471)
+aura_issue_test_link_llvm_jit(test_ir_optimize_type_info_chain_2471)
+add_dependencies(all_test_issue_targets test_ir_optimize_type_info_chain_2471)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

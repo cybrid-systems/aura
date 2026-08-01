@@ -771,9 +771,12 @@ export struct IRModule {
                         if (op < slot_remap.size() &&
                             slot_remap[op] != std::numeric_limits<std::uint32_t>::max() &&
                             slot_remap[op] != op) {
-                            // Follow the remap chain
+                            // Issue #2471: follow remap chain until sentinel (MAX)
+                            // or self-map. Do NOT terminate on remap==0 — slot 0
+                            // is a valid intermediate (e.g. X→0→5→MAX).
                             auto src = slot_remap[op];
-                            while (src < slot_remap.size() && slot_remap[src] != 0 &&
+                            while (src < slot_remap.size() &&
+                                   slot_remap[src] != std::numeric_limits<std::uint32_t>::max() &&
                                    slot_remap[src] != src)
                                 src = slot_remap[src];
                             op = src;
