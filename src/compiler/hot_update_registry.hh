@@ -85,6 +85,23 @@ public:
     void on_reemit_pipeline_call(std::uint64_t candidates, std::uint64_t successes) noexcept;
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
+    // Issue #2502: after force-JIT demotion, auto re-promote when a
+    // consecutive clean-success window is met (StormLevel::None,
+    // attempts_left idle, optional pending_dirty idle). Soft zero-cost
+    // when force_jit_regions_mask_ is already 0. Clears mask bits on
+    // match; does not change fall_back_jit_only exhaust semantics.
+    void maybe_force_jit_repromote_on_clean_success() noexcept;
+    void set_force_jit_repromote_window(std::uint32_t n) noexcept;
+    [[nodiscard]] std::uint32_t force_jit_repromote_window() const noexcept;
+    void set_force_jit_repromote_require_pending_idle(bool require) noexcept;
+    [[nodiscard]] bool force_jit_repromote_require_pending_idle() const noexcept;
+    [[nodiscard]] std::uint32_t force_jit_stable_successes() const noexcept;
+    [[nodiscard]] std::uint64_t force_jit_repromote_total() const noexcept;
+    [[nodiscard]] std::uint8_t last_force_jit_repromote_reason() const noexcept;
+    [[nodiscard]] std::uint64_t last_force_jit_repromote_at_epoch_notify() const noexcept;
+    // Test isolation: reset streak / totals / window defaults without
+    // touching force_jit_regions_mask_ (use on_reload_success for that).
+    void reset_force_jit_repromote_for_test() noexcept;
     // Issue #2094: unified StormLevel facade. Combines
     // HotUpdateRegistry's sliding-window deopt storm (global reemit
     // throttle) with ShapeProfiler's shape-storm detector into a
@@ -499,6 +516,21 @@ private:
     std::atomic<std::uint64_t> pending_dirty_count_{0};
     std::atomic<std::uint8_t> deferred_reemit_pending_v2_{0};
 
+    // Issue #2502: force-JIT re-promote after stable recovery window.
+    //   force_jit_repromote_window_: N consecutive clean successes
+    //     required (default 3). 0 disables re-promote.
+    //   force_jit_stable_successes_: current streak (reset on storm,
+    //     new force-JIT, rollback, or failed reemit).
+    //   force_jit_repromote_require_pending_idle_: when 1 (default),
+    //     pending_dirty_count must be 0 to advance the window.
+    //   force_jit_repromote_total_ / last_* : observability.
+    std::atomic<std::uint32_t> force_jit_repromote_window_{3};
+    std::atomic<std::uint32_t> force_jit_stable_successes_{0};
+    std::atomic<std::uint8_t> force_jit_repromote_require_pending_idle_{1};
+    std::atomic<std::uint64_t> force_jit_repromote_total_{0};
+    std::atomic<std::uint8_t> last_force_jit_repromote_reason_{0};
+    std::atomic<std::uint64_t> last_force_jit_repromote_at_epoch_notify_{0};
+
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
     std::atomic<std::uint64_t> deopt_window_count_{0};
@@ -785,6 +817,14 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_for_reason_total;
     std::int64_t last_force_jit_at_epoch_notify;
     std::int64_t epoch_notify_total;
+    // Issue #2502: auto re-promote after stable recovery window
+    std::int64_t force_jit_repromote_total;
+    std::int64_t last_force_jit_repromote_reason;
+    std::int64_t last_force_jit_repromote_at_epoch_notify;
+    std::int64_t force_jit_stable_successes;
+    std::int64_t force_jit_repromote_window;
+    std::int64_t force_jit_repromote_require_pending_idle;
+    std::int64_t schema_2502; // 2502 when wired
     // recovery-active: 1 when any non-idle recovery signal is set
     // (force-jit mask, attempts_left, pending dirty, deferred reemit,
     // storm_level != None). Soft empty path → 0.

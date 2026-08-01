@@ -3389,6 +3389,11 @@ aura_add_issue_test(test_epoch_invariant_complete_2501)
 aura_issue_test_link_llvm_jit(test_epoch_invariant_complete_2501)
 add_dependencies(all_test_issue_targets test_epoch_invariant_complete_2501)
 
+# Issue #2502: auto re-promote force-JIT regions after stable recovery window.
+aura_add_issue_test(test_force_jit_repromote_2502)
+aura_issue_test_link_llvm_jit(test_force_jit_repromote_2502)
+add_dependencies(all_test_issue_targets test_force_jit_repromote_2502)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

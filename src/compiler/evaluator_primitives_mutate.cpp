@@ -179,6 +179,14 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_for_reason_total;
     std::int64_t last_force_jit_at_epoch_notify;
     std::int64_t epoch_notify_total;
+    // Issue #2502: force-JIT re-promote after stable recovery window
+    std::int64_t force_jit_repromote_total;
+    std::int64_t last_force_jit_repromote_reason;
+    std::int64_t last_force_jit_repromote_at_epoch_notify;
+    std::int64_t force_jit_stable_successes;
+    std::int64_t force_jit_repromote_window;
+    std::int64_t force_jit_repromote_require_pending_idle;
+    std::int64_t schema_2502;
     std::int64_t recovery_active;
     std::int64_t reload_recovery_wired;
 };
@@ -6928,10 +6936,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("last-force-jit-reason", rs.last_force_jit_reason);
                 insert_kv("force-jit-for-reason-total", rs.force_jit_for_reason_total);
                 insert_kv("last-force-jit-at-epoch-notify", rs.last_force_jit_at_epoch_notify);
+                // Issue #2502: re-promote keys on hot-update surface
+                insert_kv("force-jit-repromote-total", rs.force_jit_repromote_total);
+                insert_kv("last-force-jit-repromote-reason", rs.last_force_jit_repromote_reason);
+                insert_kv("last-force-jit-repromote-at-epoch-notify",
+                          rs.last_force_jit_repromote_at_epoch_notify);
+                insert_kv("force-jit-stable-successes", rs.force_jit_stable_successes);
+                insert_kv("force-jit-repromote-window", rs.force_jit_repromote_window);
+                insert_kv("force-jit-repromote-require-pending-idle",
+                          rs.force_jit_repromote_require_pending_idle);
                 insert_kv("recovery-active", rs.recovery_active);
                 insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
                 insert_kv("schema-2367", 2367);
                 insert_kv("issue-2367", 2367);
+                insert_kv("schema-2502", rs.schema_2502);
+                insert_kv("issue-2502", 2502);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -6948,7 +6967,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto reload_recovery_builder = [&ev](const auto&) -> EvalValue {
             aura_reload_recovery_snapshot rs{};
             aura_hot_update_reload_recovery_get_snapshot(&rs);
-            auto* ht = FlatHashTable::create(64);
+            // 64→128: #2502 adds re-promote keys (schema additive; power-of-2).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -6981,6 +7001,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("issue-2367", 2367);
             insert_kv("schema-2302", 2302);
             insert_kv("issue-2302", 2302);
+            insert_kv("schema-2502", rs.schema_2502);
+            insert_kv("issue-2502", 2502);
             // ReloadRecoveryState 5-field core
             insert_kv("attempts-left", rs.attempts_left);
             insert_kv("force-jit-regions-mask", rs.force_jit_regions_mask);
@@ -7002,6 +7024,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("force-jit-for-reason-total", rs.force_jit_for_reason_total);
             insert_kv("last-force-jit-at-epoch-notify", rs.last_force_jit_at_epoch_notify);
             insert_kv("epoch-notify-total", rs.epoch_notify_total);
+            // Issue #2502: re-promote window + totals
+            insert_kv("force-jit-repromote-total", rs.force_jit_repromote_total);
+            insert_kv("last-force-jit-repromote-reason", rs.last_force_jit_repromote_reason);
+            insert_kv("last-force-jit-repromote-at-epoch-notify",
+                      rs.last_force_jit_repromote_at_epoch_notify);
+            insert_kv("force-jit-stable-successes", rs.force_jit_stable_successes);
+            insert_kv("force-jit-repromote-window", rs.force_jit_repromote_window);
+            insert_kv("force-jit-repromote-require-pending-idle",
+                      rs.force_jit_repromote_require_pending_idle);
             insert_kv("recovery-active", rs.recovery_active);
             insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
             // Policy enum sentinels (docs)

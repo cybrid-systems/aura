@@ -67,6 +67,12 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     reemit_pipeline_calls_.fetch_add(1, std::memory_order_relaxed);
     reemit_candidates_.fetch_add(candidates, std::memory_order_relaxed);
     reemit_success_.fetch_add(successes, std::memory_order_relaxed);
+    // Issue #2502: feed clean reemit successes into the re-promote window
+    // (zero-cost when force_jit_regions_mask_ is already 0).
+    if (successes > 0)
+        maybe_force_jit_repromote_on_clean_success();
+    else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_reload_success() noexcept {
@@ -78,10 +84,106 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     // Clear deferred-reemit flag too — successful reload means the
     // deferred reemit (if any) has been processed.
     deferred_reemit_pending_v2_.store(0, std::memory_order_relaxed);
+    // Issue #2502: wholesale clear ends the re-promote streak (mask
+    // already idle; streak is only meaningful while demoted).
+    force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2502: auto re-promote force-JIT regions after a stable window of
+// consecutive clean successes. Policy:
+//   - Soft zero-cost when force_jit_regions_mask_ == 0
+//   - Require StormLevel::None (no global / shape storm)
+//   - Require attempts_left_ == 0 (not mid multi-round reload)
+//   - Optionally require pending_dirty_count_ == 0 (default on)
+//   - N consecutive clean reemit successes (window knob, default 3)
+// Storm / fail / zero-success reemit resets the streak (no re-promote).
+void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
+    const auto mask = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    if (mask == 0) {
+        // Idle demotion: keep streak zero (zero-cost path for hot reemit).
+        if (force_jit_stable_successes_.load(std::memory_order_relaxed) != 0)
+            force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const auto window = force_jit_repromote_window_.load(std::memory_order_relaxed);
+    if (window == 0) {
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        return; // policy disabled
+    }
+    // Preconditions: storm idle + attempts idle + optional pending idle.
+    if (current_storm_level() != StormLevel::None) {
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        return;
+    }
+    if (attempts_left_.load(std::memory_order_relaxed) != 0) {
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        return;
+    }
+    if (force_jit_repromote_require_pending_idle_.load(std::memory_order_relaxed) != 0 &&
+        pending_dirty_count_.load(std::memory_order_relaxed) != 0) {
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const auto streak = force_jit_stable_successes_.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (streak < window)
+        return;
+    // Window met: clear demoted mask bits (process-wide stability → all
+    // reasons eligible). Stamp last repromoted reason from the demotion
+    // that put us here for agent correlation.
+    const auto reason = last_force_jit_reason_.load(std::memory_order_relaxed);
+    force_jit_regions_mask_.store(0, std::memory_order_relaxed);
+    force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    force_jit_repromote_total_.fetch_add(1, std::memory_order_relaxed);
+    last_force_jit_repromote_reason_.store(reason, std::memory_order_release);
+    last_force_jit_repromote_at_epoch_notify_.store(epoch_notify_.load(std::memory_order_relaxed),
+                                                    std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::set_force_jit_repromote_window(std::uint32_t n) noexcept {
+    force_jit_repromote_window_.store(n, std::memory_order_relaxed);
+}
+
+std::uint32_t HotUpdateRegistry::force_jit_repromote_window() const noexcept {
+    return force_jit_repromote_window_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::set_force_jit_repromote_require_pending_idle(bool require) noexcept {
+    force_jit_repromote_require_pending_idle_.store(require ? 1 : 0, std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::force_jit_repromote_require_pending_idle() const noexcept {
+    return force_jit_repromote_require_pending_idle_.load(std::memory_order_relaxed) != 0;
+}
+
+std::uint32_t HotUpdateRegistry::force_jit_stable_successes() const noexcept {
+    return force_jit_stable_successes_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::force_jit_repromote_total() const noexcept {
+    return force_jit_repromote_total_.load(std::memory_order_relaxed);
+}
+
+std::uint8_t HotUpdateRegistry::last_force_jit_repromote_reason() const noexcept {
+    return last_force_jit_repromote_reason_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::last_force_jit_repromote_at_epoch_notify() const noexcept {
+    return last_force_jit_repromote_at_epoch_notify_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
+    force_jit_repromote_window_.store(3, std::memory_order_relaxed);
+    force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    force_jit_repromote_require_pending_idle_.store(1, std::memory_order_relaxed);
+    force_jit_repromote_total_.store(0, std::memory_order_relaxed);
+    last_force_jit_repromote_reason_.store(0, std::memory_order_relaxed);
+    last_force_jit_repromote_at_epoch_notify_.store(0, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_reload_rollback(AotReloadFail reason) noexcept {
     aot_reload_rollback_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2502: any fail in the window breaks the clean-success streak.
+    force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(reason),
                                        std::memory_order_release);
     switch (reason) {
@@ -118,6 +220,8 @@ void HotUpdateRegistry::on_reload_rollback(AotReloadFail reason) noexcept {
 
 void HotUpdateRegistry::on_reload_rollback() noexcept {
     aot_reload_rollback_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2502: any fail in the window breaks the clean-success streak.
+    force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(AotReloadFail::Other),
                                        std::memory_order_release);
     aot_reload_fail_other_.fetch_add(1, std::memory_order_relaxed);
@@ -145,6 +249,9 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     attempts_left_.store(0, std::memory_order_relaxed);
     last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(reason),
                                        std::memory_order_release);
+    // Issue #2502: new force-JIT reason resets the re-promote streak
+    // (window must rebuild after demotion recurrence).
+    force_jit_stable_successes_.store(0, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_live_closure_remap(std::uint64_t count) noexcept {
@@ -514,6 +621,17 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->last_force_jit_at_epoch_notify =
         static_cast<std::int64_t>(reg.last_force_jit_at_epoch_notify());
     out->epoch_notify_total = snap.epoch_notify_total;
+    // Issue #2502: re-promote window + totals (additive; zero when idle).
+    out->force_jit_repromote_total = static_cast<std::int64_t>(reg.force_jit_repromote_total());
+    out->last_force_jit_repromote_reason =
+        static_cast<std::int64_t>(reg.last_force_jit_repromote_reason());
+    out->last_force_jit_repromote_at_epoch_notify =
+        static_cast<std::int64_t>(reg.last_force_jit_repromote_at_epoch_notify());
+    out->force_jit_stable_successes = static_cast<std::int64_t>(reg.force_jit_stable_successes());
+    out->force_jit_repromote_window = static_cast<std::int64_t>(reg.force_jit_repromote_window());
+    out->force_jit_repromote_require_pending_idle =
+        reg.force_jit_repromote_require_pending_idle() ? 1 : 0;
+    out->schema_2502 = 2502;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
                         snap.storm_level != 0 || snap.reemit_deferred_pending != 0;
