@@ -2003,6 +2003,29 @@ def cmd_tenant_scope_fiber_mandate_2491_coverage():
     return 0
 
 
+def cmd_security_audit_wal_force_restricted_2492_coverage():
+    """Issue #2492: force SecurityEvent WAL under Restricted.
+
+    Production default Restricted (#2076) without AURA_MULTI_TENANT was
+    silent under deny storms — single-tenant commercial deploys lost
+    early forensic events to ring wrap (1024 entries). Adding `restricted`
+    to force_wal closes the gap. New metric
+    audit_wal_forced_by_restricted_total distinguishes Restricted-only
+    force from multi-tenant/Strict for dashboards.
+    """
+    print(f"{B}=== security audit WAL force restricted coverage (#2492) ==={N}")
+    script = ROOT / "scripts" / "check_security_audit_wal_force_restricted_2492.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("security audit WAL force restricted (#2492) coverage contract rows failed")
+        return 1
+    ok("security audit WAL force restricted (#2492) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -5078,6 +5101,7 @@ def cmd_gate():
         or cmd_require_effect_live_mid_coverage()
         or cmd_require_effect_auto_isolation_2490_coverage()
         or cmd_tenant_scope_fiber_mandate_2491_coverage()
+        or cmd_security_audit_wal_force_restricted_2492_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()

@@ -176,14 +176,22 @@ inline void apply_production_security_defaults() noexcept {
     }
 
     // 4) Mutation audit WAL (#2150).
-    //    Explicit path env always wins. Under multi-tenant OR Strict, force
-    //    a durable default dir so commercial deploys get forensic trail
-    //    without tribal knowledge of env vars. AURA_SANDBOX=off never enables
-    //    WAL (unit tests must not spill files).
+    //    Explicit path env always wins. Under multi-tenant OR Strict OR
+    //    Restricted, force a durable default dir so commercial deploys
+    //    (including single-tenant Restricted) get forensic trail without
+    //    tribal knowledge of env vars. AURA_SANDBOX=off never enables WAL
+    //    (unit tests must not spill files). Issue #2492: Restricted-only
+    //    commercial deploys were silent under deny storms because force_wal
+    //    only fired for multi-tenant/Strict — single-tenant Restricted
+    //    (the #2076 production default) lost early forensic events to
+    //    ring wrap (1024 entries). Adding restricted closes the gap.
     if (!dev_off) {
         const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
                             g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
-        const bool force_wal = multi_tenant || strict;
+        const bool restricted =
+            g_sandbox_state().mode == SandboxMode::Restricted ||
+            g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
+        const bool force_wal = multi_tenant || strict || restricted;
         const char* explicit_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
         if (!explicit_wal || !*explicit_wal)
             explicit_wal = std::getenv("AURA_PERSIST_DIR");
@@ -199,6 +207,13 @@ inline void apply_production_security_defaults() noexcept {
                 if (force_wal && !has_explicit) {
                     g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
                         1, std::memory_order_relaxed);
+                    // Issue #2492: distinct counter for Restricted-only force
+                    // so Agent dashboards can break out single-tenant vs
+                    // multi-tenant/Strict WAL pressure.
+                    if (restricted && !multi_tenant && !strict) {
+                        g_audit_wal_metrics().audit_wal_forced_by_restricted_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
                 if (used_default || (force_wal && !has_explicit)) {
                     g_audit_wal_metrics().audit_wal_using_default_dir.store(
@@ -208,8 +223,9 @@ inline void apply_production_security_defaults() noexcept {
                     bool expected = false;
                     if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
                         std::fprintf(stderr,
-                                     "[aura] mutation audit WAL forced under multi-tenant/Strict "
-                                     "→ %s (set AURA_MUTATION_AUDIT_WAL to override)\n",
+                                     "[aura] mutation audit WAL forced under "
+                                     "multi-tenant/Strict/Restricted (#2492) → %s "
+                                     "(set AURA_MUTATION_AUDIT_WAL to override)\n",
                                      dir.c_str());
                     }
                 }
