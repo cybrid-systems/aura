@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 672 | Preferred destination suites |
-| **Total scanned** | **672** | |
+| `tests/core/test_*.cpp` | 673 | Preferred destination suites |
+| **Total scanned** | **673** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 68 | 68 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 65 | 65 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 66 | 66 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 41 | 41 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 126 | 126 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 45 | 45 | P3 — review case-by-case |
@@ -322,6 +322,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_envframe_truncate_guard_dual_epoch.cpp`
 - `tests/compiler/test_epoch_apply_batch.cpp`
 - `tests/compiler/test_epoch_bump_invariant_2304.cpp`
+- `tests/compiler/test_epoch_invariant_complete_2501.cpp`
 - `tests/compiler/test_epoch_invariant_walk_2366.cpp`
 - `tests/reflect/test_error_kind_names_wire.cpp`
 - `tests/reflect/test_error_merr.cpp`
@@ -1297,13 +1298,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (65)
+### `jit_incremental` — JIT / AOT / incremental relower (66)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (65)
+#### domain/ (66)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1327,6 +1328,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2025; PassKind::DeadCoercion + DeadCoercionPass +
 - `tests/compiler/test_dep_graph_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2032; get/set_partial_relower_threshold; reject counter
 - `tests/compiler/test_emit_object_deprecated_2477.cpp` (#2477) [domain_suite, theme_compiler] — AC1: emit_object returns false
+- `tests/compiler/test_epoch_invariant_complete_2501.cpp` (#2501) [domain_suite, theme_compiler] — AC1: Soft inject stale AOT slot → violation count; hard clears fn_ptr
 - `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2035; notify_hot_update_after_cascade_ +
 - `tests/compiler/test_incremental_effectiveness_snapshot_fail.cpp` (—) [domain_suite, theme_compiler] — Issue #1669/#1854/#1856 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_incremental_perblock_closure_bridge_safety.cpp` (—) [domain_suite, theme_compiler] — test_incremental_perblock_closure_bridge_safety.cpp — Issue #600:

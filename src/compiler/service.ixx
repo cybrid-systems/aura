@@ -11624,18 +11624,24 @@ public:
         run_epoch_invariant_if_enabled();
     }
 
-    // Issue #2304 / #2366: post-bump epoch invariant walk.
+    // Issue #2304 / #2366 / #2501: post-bump epoch invariant walk.
     //
     // Mode source: process-level aura_epoch_invariant_mode() (env +
-    // C setter) OR local epoch_invariant_hard_enabled_ (test setter).
-    //   0 = off — single relaxed load (AC3 zero-cost production default)
-    //   1 = soft — walk + epoch_invariant_violation_total only
-    //   2 = hard — walk + metric + std::abort on violation
+    // C setter + production soft default #2501) OR local hard flag.
+    //   0 = off — single relaxed load (AC3 zero-cost when disabled)
+    //   1 = soft — walk + metrics only (never abort)
+    //   2 = hard — walk + metrics + clear stale AOT slots + abort if
+    //       violations remain after enforcement
     //
-    // Invariant (#2366): after an epoch bump, every live AOT/JIT
+    // Invariant (#2366/#2501): after an epoch bump, every live AOT/JIT
     // executable slot is either current-generation or null; every
     // live closure is either remounted (bridge_epoch==current / 0) or
     // MustDeopt; every clean IR cache entry has a current bridge stamp.
+    //
+    // #2501 completes the #2304 residual:
+    //   - hard mode nulls generation-behind AOT fn_ptr (order = #2271)
+    //   - soft+hard set MustDeopt on tree-walker + JIT live closures
+    //   - additive counters: slot-stale / closure-must-deopt
     void run_epoch_invariant_if_enabled() noexcept {
         // AC3: zero-cost when off — prefer process mode, fall back to local hard flag.
         int mode = aura_epoch_invariant_mode();
@@ -11645,8 +11651,9 @@ public:
             return;
 
         const auto cur_epoch = bridge_epoch();
-        const auto cur_aot_epoch = aura_aot_func_table_epoch();
         std::uint64_t violations = 0;
+        std::uint64_t slot_stale = 0;
+        std::uint64_t closure_must_deopt = 0;
 
         // ── 1. IR cache v2: clean entries must not be generation-behind ──
         // ir_cache_bridge_ is ClosureBridgeData bundles (no version stamp);
@@ -11663,34 +11670,62 @@ public:
         }
 
         // ── 2. AOT func table: live slots (fn_ptr≠0) must be current gen ──
-        (void)cur_aot_epoch;
-        violations += static_cast<std::uint64_t>(aura_aot_count_live_generation_behind_slots());
+        // Count first (soft metric). Hard mode then physically nulls
+        // fn_ptr (same order as #2271: fn_ptr release then generation).
+        slot_stale = static_cast<std::uint64_t>(aura_aot_count_live_generation_behind_slots());
+        violations += slot_stale;
+        if (mode >= 2 && slot_stale > 0) {
+            // Process-wide clear of generation-behind slots (eval_ptr=null).
+            (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+        }
 
-        // ── 3. Live closures: remounted-ok OR MustDeopt (no bare gen-behind) ──
+        // ── 3. Live tree-walker closures: set MustDeopt on gen-behind ──
+        // (#2501: enforce, not metric-only count). Already-MustDeopt is OK.
         evaluator_.walk_active_closures([&]([[maybe_unused]] ClosureId id, Closure& cl) {
             const bool has_view =
                 cl.flat != nullptr || cl.pool != nullptr || cl.body_id != aura::ast::NULL_NODE;
             if (!has_view)
                 return; // expired / not live — not a violation
             if (cl.must_deopt_before_next_call)
-                return; // MustDeopt path OK
+                return; // MustDeopt path already enforced
             // Unstamped (0) or remounted at current epoch OK.
             if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
                 return;
-            // Live, stamped, generation-behind, no MustDeopt → violation.
+            // Live, stamped, generation-behind → force MustDeopt + count.
+            cl.must_deopt_before_next_call = true;
             ++violations;
+            ++closure_must_deopt;
         });
+
+        // ── 4. JIT runtime live-closure table (g_closure_*) ──
+        // Same MustDeopt contract for AOT/JIT native dispatch path.
+        const auto jit_md =
+            static_cast<std::uint64_t>(aura_epoch_invariant_must_deopt_stale_live_closures());
+        violations += jit_md;
+        closure_must_deopt += jit_md;
 
         epoch_invariant_violation_total_.fetch_add(violations, std::memory_order_relaxed);
         epoch_invariant_walks_total_.fetch_add(1, std::memory_order_relaxed);
+        if (slot_stale > 0)
+            epoch_invariant_slot_stale_total_.fetch_add(slot_stale, std::memory_order_relaxed);
+        if (closure_must_deopt > 0)
+            epoch_invariant_closure_must_deopt_total_.fetch_add(closure_must_deopt,
+                                                                std::memory_order_relaxed);
         // Mirror into C-readable process counters (test + dashboards).
         aura_epoch_invariant_note_walk(violations);
+        aura_epoch_invariant_note_slot_stale(slot_stale);
+        aura_epoch_invariant_note_closure_must_deopt(closure_must_deopt);
 
+        // Soft never aborts (AC4). Hard aborts only if violations remain
+        // after enforcement (stale IR stamps cannot be auto-healed here).
         if (violations > 0 && mode >= 2) {
             std::fprintf(stderr,
-                         "[#2366] epoch invariant HARD fail: %llu generation-behind "
-                         "AOT/IR/closure survivors after bump (cur_bridge=%llu) — aborting\n",
+                         "[#2366][#2501] epoch invariant HARD fail: %llu generation-behind "
+                         "AOT/IR/closure survivors after bump "
+                         "(slot_stale=%llu closure_must_deopt=%llu cur_bridge=%llu) — aborting\n",
                          static_cast<unsigned long long>(violations),
+                         static_cast<unsigned long long>(slot_stale),
+                         static_cast<unsigned long long>(closure_must_deopt),
                          static_cast<unsigned long long>(cur_epoch));
             std::abort();
         }
@@ -12694,6 +12729,9 @@ public:
     std::atomic<std::uint64_t> epoch_invariant_violation_total_{0};
     std::atomic<std::uint8_t> epoch_invariant_hard_enabled_{0};
     std::atomic<std::uint64_t> epoch_invariant_walks_total_{0};
+    // Issue #2501: additive breakdown counters (subset of violations).
+    std::atomic<std::uint64_t> epoch_invariant_slot_stale_total_{0};
+    std::atomic<std::uint64_t> epoch_invariant_closure_must_deopt_total_{0};
 
 public:
     // Issue #2304 / #2366: public setters for epoch invariant mode.
@@ -12716,6 +12754,12 @@ public:
     }
     [[nodiscard]] std::uint64_t epoch_invariant_walks_total() const noexcept {
         return epoch_invariant_walks_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t epoch_invariant_slot_stale_total() const noexcept {
+        return epoch_invariant_slot_stale_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t epoch_invariant_closure_must_deopt_total() const noexcept {
+        return epoch_invariant_closure_must_deopt_total_.load(std::memory_order_relaxed);
     }
     // Issue #1431 follow-up: serialize the entire eval pipeline
     // across threads. Race #1 (TypeRegistry thread-safety) and

@@ -13952,9 +13952,6 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         // C function (mirrors #2094 storm_level pattern — agents want
         // the live value even when compiler_metrics_ is null).
         const int keep_fail_enabled = ::aura_reemit_keep_fail_enabled();
-        constexpr const char* kKeepFailDebugDir = "/tmp/aura_reemit_failed";
-        auto kfdd_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(kKeepFailDebugDir);
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
@@ -14032,7 +14029,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(aura_epoch_invariant_violation_total_v_read()))},
             {"epoch-invariant-live-aot-behind-slots",
              make_int(static_cast<std::int64_t>(aura_aot_count_live_generation_behind_slots()))},
+            // Issue #2501: additive breakdown (slot-stale / closure-must-deopt).
+            {"epoch-invariant-slot-stale",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_slot_stale_total_v_read()))},
+            {"epoch-invariant-closure-must-deopt",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_closure_must_deopt_total_v_read()))},
             {"epoch-invariant-wired", make_int(1)},
+            {"schema-2501", make_int(2501)},
+            {"issue-2501", make_int(2501)},
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},
             {"schema-2304", make_int(2304)},
@@ -14065,7 +14070,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(reemit_fail))},
             {"aot-reemit-keep-fail-enabled",
              make_int(static_cast<std::int64_t>(keep_fail_enabled))},
-            {"aot-reemit-keep-fail-debug-dir", make_string(kfdd_idx)},
+            {"aot-reemit-keep-fail-debug-dir",
+             [&] {
+                 // Keep string_heap_ push adjacent to make_string so
+                 // #1668 dead-heap audit sees a real use (window ≤120).
+                 constexpr const char* kKeepFailDebugDir = "/tmp/aura_reemit_failed";
+                 auto kfdd_idx = ev.string_heap_.size();
+                 ev.string_heap_.push_back(kKeepFailDebugDir);
+                 return make_string(kfdd_idx);
+             }()},
             {"schema-2095", make_int(2095)},
             {"issue-2095", make_int(2095)},
         };

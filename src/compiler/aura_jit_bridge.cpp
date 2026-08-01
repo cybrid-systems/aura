@@ -3822,6 +3822,9 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 // File-local atomics keep non-module tests free of service.ixx include.
 static std::atomic<std::uint64_t> g_epoch_invariant_violation_total{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_walks_total{0};
+// Issue #2501 additive breakdown.
+static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total{0};
 // 0=off, 1=soft, 2=hard
 static std::atomic<std::uint8_t> g_epoch_invariant_mode{0};
 
@@ -3831,6 +3834,14 @@ extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
 
 extern "C" std::uint64_t aura_epoch_invariant_walks_total_v_read(void) {
     return g_epoch_invariant_walks_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void) {
+    return g_epoch_invariant_slot_stale_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_closure_must_deopt_total_v_read(void) {
+    return g_epoch_invariant_closure_must_deopt_total.load(std::memory_order_relaxed);
 }
 
 extern "C" void aura_set_epoch_invariant_mode(int mode) {
@@ -3854,6 +3865,16 @@ extern "C" void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcep
     g_epoch_invariant_walks_total.fetch_add(1, std::memory_order_relaxed);
     if (violations > 0)
         g_epoch_invariant_violation_total.fetch_add(violations, std::memory_order_relaxed);
+}
+
+extern "C" void aura_epoch_invariant_note_slot_stale(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_slot_stale_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+extern "C" void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_closure_must_deopt_total.fetch_add(n, std::memory_order_relaxed);
 }
 
 // Issue #2366: count live generation-behind AOT slots (fn_ptr≠0 && gen≠cur).
