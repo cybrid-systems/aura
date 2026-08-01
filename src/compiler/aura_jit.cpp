@@ -3777,7 +3777,7 @@ bool AuraJIT::partial_recompile(const char* name, const std::uint32_t* dirty_blo
     if (!name || !name[0])
         return false;
     // Count whether anything was cached before eviction.
-    // Do NOT hold compile_mtx_ across invalidate() — it re-locks.
+    // Do NOT hold compile_mtx_ across invalidate_prefix() — it re-locks.
     bool had = false;
     if (impl_) {
         std::string n(name);
@@ -3794,8 +3794,10 @@ bool AuraJIT::partial_recompile(const char* name, const std::uint32_t* dirty_blo
             }
         }
     }
-    // Evict bare name + name#* (same as redefine path).
-    invalidate(name);
+    // Issue #2476: single pass — invalidate_prefix already matches bare
+    // name (`it->first == p`) and name#* (`rfind(p_hash, 0) == 0`). A prior
+    // bare-name-only invalidate was a redundant second walk of fn_trackers_
+    // (+ second compile_mtx_ acquire). Same eviction semantics.
     invalidate_prefix(name);
     if (had)
         metrics_.partial_recompile_cache_evictions.fetch_add(1, std::memory_order_relaxed);
