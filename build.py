@@ -2049,6 +2049,26 @@ def cmd_audit_mutation_id_unify_2493_coverage():
     return 0
 
 
+def cmd_side_effect_security_gate_hardfail_2494_coverage():
+    """Issue #2494: hard-fail check_side_effect_security.py for new prims.
+
+    PR CI hard-fail (build.py gate runs the script with --strict). Tests
+    confirm a fixture prim (side-effect name + no coverage marker) trips
+    the gate, and the allowlist reason-format enforcement is operational.
+    """
+    print(f"{B}=== side-effect security gate hard-fail coverage (#2494) ==={N}")
+    script = ROOT / "scripts" / "check_side_effect_security_gate_hardfail_2494.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("side-effect security gate hard-fail (#2494) coverage contract rows failed")
+        return 1
+    ok("side-effect security gate hard-fail (#2494) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -5126,6 +5146,7 @@ def cmd_gate():
         or cmd_tenant_scope_fiber_mandate_2491_coverage()
         or cmd_security_audit_wal_force_restricted_2492_coverage()
         or cmd_audit_mutation_id_unify_2493_coverage()
+        or cmd_side_effect_security_gate_hardfail_2494_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()

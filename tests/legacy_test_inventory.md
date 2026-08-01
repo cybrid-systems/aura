@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 664 | Preferred destination suites |
-| **Total scanned** | **664** | |
+| `tests/core/test_*.cpp` | 665 | Preferred destination suites |
+| **Total scanned** | **665** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 65 | 65 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 40 | 40 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 126 | 126 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 42 | 42 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 43 | 43 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -709,6 +709,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_shape_storm_partial_relower_2212.cpp`
 - `tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp`
 - `tests/compiler/test_side_effect_inherit_2057.cpp`
+- `tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp`
 - `tests/core/test_soa_batch.cpp`
 - `tests/compiler/test_soa_cascade_instr_dirty_sync.cpp`
 - `tests/core/test_soa_column_atomic_2440.cpp`
@@ -1543,13 +1544,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
-### `uncategorized` — Uncategorized / mixed (42)
+### `uncategorized` — Uncategorized / mixed (43)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (42)
+#### domain/ (43)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1581,6 +1582,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_register_render_hot_prim_2217.cpp` (#2217) [domain_suite, theme_compiler] — AC1: Helper API stamps RENDER_PRIMITIVE_META fields (hot + render_critical)
 - `tests/compiler/test_render_deopt_throttle_race_2373.cpp` (#2373) [domain_suite, theme_compiler] — (CAS loop). N concurrent callers within window → exactly one true.
 - `tests/renderer/test_render_telemetry.cpp` (—) [domain_suite, theme_renderer] — test_render_telemetry.cpp — Issue #1357: per-prim latency + frame time histogram
+- `tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp` (#2494) [domain_suite, theme_compiler] — AC1: Intentionally broken fixture prim (side-effect name, no
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:
 - `tests/core/test_stringpool_concurrent_intern.cpp` (—) [domain_suite, theme_core] — Issue #2062 — StringPool thread-safe intern test.
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp` (—) [domain_suite, theme_stdlib] — test_synthesize_namespace_demotion.cpp — Issue #561:
