@@ -3647,6 +3647,24 @@ def cmd_incoming_parent_dirty_atomic_2452_coverage():
     return 0
 
 
+def cmd_get_nodeview_snapshot_coverage():
+    """Issue #2453: get(NodeId) NodeView multi-column snapshot contract.
+
+    Post-parse / workspace_mtx serial; concurrent multi-reader on stable flat.
+    """
+    print(f"{B}=== get NodeView snapshot coverage (#2453) ==={N}")
+    script = ROOT / "scripts" / "check_get_nodeview_snapshot_2453.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("get NodeView snapshot (#2453) coverage contract rows failed")
+        return 1
+    ok("get NodeView snapshot (#2453) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4621,6 +4639,7 @@ def cmd_gate():
         or cmd_param_annot_mutation_contract_coverage()
         or cmd_param_begin_count_publish_coverage()
         or cmd_incoming_parent_dirty_atomic_2452_coverage()
+        or cmd_get_nodeview_snapshot_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

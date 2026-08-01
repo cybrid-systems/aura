@@ -3227,6 +3227,11 @@ aura_add_issue_test(test_param_begin_count_publish_2451)
 aura_issue_test_link_llvm_jit(test_param_begin_count_publish_2451)
 add_dependencies(all_test_issue_targets test_param_begin_count_publish_2451)
 
+# Issue #2453: get(NodeId) NodeView multi-column snapshot contract
+aura_add_issue_test(test_get_nodeview_snapshot_2453)
+aura_issue_test_link_llvm_jit(test_get_nodeview_snapshot_2453)
+add_dependencies(all_test_issue_targets test_get_nodeview_snapshot_2453)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
