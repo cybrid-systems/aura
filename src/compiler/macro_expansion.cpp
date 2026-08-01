@@ -27,6 +27,17 @@ namespace aura::compiler::macro_exp {
 
 namespace detail {
 
+    // Quiet by default: expected MacroSelfEvo denials under Restricted
+    // production sandbox spam simple REPL `(+ 1 2)`. Counters still
+    // advance; set AURA_VERBOSE=1 for operator diagnostics.
+    [[nodiscard]] inline bool macro_self_evo_verbose() noexcept {
+        static const bool on = [] {
+            const char* e = std::getenv("AURA_VERBOSE");
+            return e != nullptr && e[0] != '\0' && e[0] != '0';
+        }();
+        return on;
+    }
+
     // Issue #965: keep special forms + high-frequency primitives that
     // macros must not gensym. Expanded beyond the original 56-name set
     // so new stdlib-facing builtins (length, vector, make-hash, …) are
@@ -998,11 +1009,13 @@ aura::ast::NodeId clone_macro_body(
             // without any new state.
             const std::uint32_t cur_fid = aura_fiber_current_id();
             if (aura_macro_self_evo_check_fiber_hygiene_budget(cur_fid) != 0) {
-                std::fprintf(stderr,
-                             "[#2241 MacroSelfEvo] clone_macro_body denied: "
-                             "fiber %u exceeded hygiene violation budget "
-                             "(no clone work performed)\n",
-                             cur_fid);
+                if (detail::macro_self_evo_verbose()) {
+                    std::fprintf(stderr,
+                                 "[#2241 MacroSelfEvo] clone_macro_body denied: "
+                                 "fiber %u exceeded hygiene violation budget "
+                                 "(no clone work performed)\n",
+                                 cur_fid);
+                }
                 s_effective_max_depth = -1;
                 return;
             }
@@ -1046,8 +1059,11 @@ aura::ast::NodeId clone_macro_body(
         [[nodiscard]] bool denied() const noexcept { return s_effective_max_depth < 0; }
     } top_cap_guard;
     if (top_cap_guard.denied()) {
-        std::fprintf(stderr, "[#2023 MacroSelfEvo] clone_macro_body denied: capability not granted "
-                             "(no clone work performed)\n");
+        if (detail::macro_self_evo_verbose()) {
+            std::fprintf(stderr,
+                         "[#2023 MacroSelfEvo] clone_macro_body denied: capability not granted "
+                         "(no clone work performed)\n");
+        }
         s_effective_max_depth = MAX_HYGIENE_DEPTH; // restore after deny sentinel
         return NULL_NODE;
     }
@@ -1865,10 +1881,14 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
         const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
         if (!chk.allowed) {
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-            std::fprintf(stderr,
-                         "[#2023 MacroSelfEvo] macro_expand_all denied: %s "
-                         "(no clone work performed)\n",
-                         chk.deny_reason ? chk.deny_reason : "capability denied");
+            // Expected under Restricted without MacroSelfEvo grant — quiet
+            // unless AURA_VERBOSE=1 (metrics still count denials).
+            if (detail::macro_self_evo_verbose()) {
+                std::fprintf(stderr,
+                             "[#2023 MacroSelfEvo] macro_expand_all denied: %s "
+                             "(no clone work performed)\n",
+                             chk.deny_reason ? chk.deny_reason : "capability denied");
+            }
             return root;
         }
         g_macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
@@ -1924,8 +1944,10 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_capability_effect_metrics().macro_self_evo_denied_total.fetch_add(
                 1, std::memory_order_relaxed);
-            std::fprintf(stderr, "[#2023 MacroSelfEvo] macro_expand_all denied: "
-                                 "concurrent fiber expand not allowed by policy\n");
+            if (detail::macro_self_evo_verbose()) {
+                std::fprintf(stderr, "[#2023 MacroSelfEvo] macro_expand_all denied: "
+                                     "concurrent fiber expand not allowed by policy\n");
+            }
             return root;
         }
         DepthPolicyGuard depth_guard(eff_depth, chk.effective.allow_rest_hygiene);

@@ -223,15 +223,24 @@ inline void apply_production_security_defaults() noexcept {
                 if (used_default || (force_wal && !has_explicit)) {
                     g_audit_wal_metrics().audit_wal_using_default_dir.store(
                         1, std::memory_order_relaxed);
-                    // One-shot stderr note so operators see the durable path.
-                    static std::atomic<bool> warned{false};
-                    bool expected = false;
-                    if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
-                        std::fprintf(stderr,
-                                     "[aura] mutation audit WAL forced under "
-                                     "multi-tenant/Strict/Restricted (#2492) → %s "
-                                     "(set AURA_MUTATION_AUDIT_WAL to override)\n",
-                                     dir.c_str());
+                    // Quiet by default (metrics already track force/default-dir).
+                    // One-shot note only under AURA_VERBOSE=1 so simple REPL
+                    // `(+ 1 2)` is not spammed by production security defaults.
+                    static const bool verbose = [] {
+                        const char* e = std::getenv("AURA_VERBOSE");
+                        return e != nullptr && e[0] != '\0' && e[0] != '0';
+                    }();
+                    if (verbose) {
+                        static std::atomic<bool> warned{false};
+                        bool expected = false;
+                        if (warned.compare_exchange_strong(expected, true,
+                                                           std::memory_order_relaxed)) {
+                            std::fprintf(stderr,
+                                         "[aura] mutation audit WAL forced under "
+                                         "multi-tenant/Strict/Restricted (#2492) → %s "
+                                         "(set AURA_MUTATION_AUDIT_WAL to override)\n",
+                                         dir.c_str());
+                        }
                     }
                 }
             }
