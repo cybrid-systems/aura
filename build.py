@@ -3274,6 +3274,24 @@ def cmd_module_partition_map_coverage():
     return 0
 
 
+def cmd_query_hygiene_default_coverage():
+    """Issue #2525: unconstrained query hygiene residual default skip.
+
+    query:filter + pattern MacroIntroduced skip; schema-2525 stats.
+    """
+    print(f"{B}=== query hygiene residual default coverage (#2525) ==={N}")
+    script = ROOT / "scripts" / "check_query_hygiene_default_2525.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query hygiene residual default (#2525) coverage contract rows failed")
+        return 1
+    ok("query hygiene residual default (#2525) coverage clean")
+    return 0
+
+
 def cmd_aot_linear_literal_noop_coverage():
     """Issue #2407: AOT move/Linear of Copy literals as no-ops + emit-binary.
 
@@ -5684,6 +5702,7 @@ def cmd_gate():
         or cmd_batch_dirty_cascade_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
+        or cmd_query_hygiene_default_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()

@@ -797,35 +797,32 @@ void register_workspace_query_primitives(
     //
     //   (query:filter (where :defined-by "fib") (where :node-type "Lambda"))
     //   → the body Lambda of (define fib ...)
-    add("query:filter", [ws, mev](const auto& a) -> EvalValue {
+    add("query:filter", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty())
-            return mev("bad-arg", "usage: (query:filter predicate ...)");
+            return mev("bad-arg", "usage: (query:filter predicate ... "
+                                  "[:hygiene #t|#f] [:include-macro-introduced #t] "
+                                  "[:exclude-macro-introduced #t|#f])");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *ws.workspace_flat;
         auto& pool = *ws.workspace_pool;
 
-        // Issue #425: top-level :hygiene / :skip-macro-introduced
-        // hygiene gate. When enabled (default #f → opt-in to keep
-        // existing behavior; opt-in #t skips MacroIntroduced nodes
-        // from the result set BEFORE predicate evaluation), the
-        // filter silently drops any node whose marker is
-        // SyntaxMarker::MacroIntroduced. This is the natural
-        // EDSL surface for the "AI mutate shouldn't touch macro
-        // expansion" use case from the issue body — the agent
-        // calls (query:filter :hygiene #t ...) and gets back
-        // only user-written nodes, no need to remember the
-        // (:marker "User") predicate idiom.
+        // Issue #425 / #2525: top-level hygiene gate for query:filter.
+        // Production default (#2525 residual after #2123 pattern default):
+        //   skip MacroIntroduced BEFORE predicate evaluation unless
+        //   explicit :include-macro-introduced / :allow-macro-introduced #t
+        //   (or :hygiene #f / :skip-macro-introduced #f / :exclude-macro-introduced #f).
+        // Agent contract: default filter results never contain MacroIntroduced.
         //
-        // The :hygiene keyword takes a boolean (or int-as-bool)
-        // value. The :skip-macro-introduced keyword is a
-        // discoverable alias — same semantics, more explicit
-        // name for readers unfamiliar with the hygiene terminology.
+        // Keywords:
+        //   :hygiene / :skip-macro-introduced  — bool (default #t under #2525)
+        //   :include-macro-introduced / :allow-macro-introduced — opt-in include
+        //   :exclude-macro-introduced #t|#f — explicit exclude (default true)
         //
         // The gate runs BEFORE the predicate loop, so any (where ...)
         // predicates still apply on top of the hygiene filter.
-        bool hygiene_skip_macro = false;
+        bool hygiene_skip_macro = true; // Issue #2525 production default ON
         // Issue #425: track which arg indices are consumed by
         // top-level keyword parsing so the predicate parser can
         // skip them. Without this, the predicate loop would
@@ -838,8 +835,8 @@ void register_workspace_query_primitives(
                 if (kidx >= ws.keyword_table.size())
                     return mev("bad-arg", "unknown keyword");
                 auto kw = ws.keyword_table[kidx];
-                if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
-                    bool v = true;
+                auto consume_bool_kw = [&](bool default_v) -> bool {
+                    bool v = default_v;
                     arg_consumed[ai] = true;
                     if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
                         if (is_bool(a[ai + 1]))
@@ -849,7 +846,15 @@ void register_workspace_query_primitives(
                         arg_consumed[ai + 1] = true;
                         ++ai;
                     }
-                    hygiene_skip_macro = v;
+                    return v;
+                };
+                if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
+                    hygiene_skip_macro = consume_bool_kw(true);
+                } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
+                    // Issue #2525: opt-in restore previous "include macro" behaviour.
+                    hygiene_skip_macro = !consume_bool_kw(true);
+                } else if (kw == ":exclude-macro-introduced") {
+                    hygiene_skip_macro = consume_bool_kw(true);
                 } else {
                     // Re-emit a bad-arg for unknown top-level
                     // keyword (we already validated that each
@@ -892,18 +897,26 @@ void register_workspace_query_primitives(
         if (predicates.empty() && !hygiene_skip_macro)
             return mev("bad-arg", "at least one predicate required");
 
+        // Issue #2525: count filter hygiene skips for Agent dashboards
+        // (hygiene_skip_total / hygiene_include_total on pattern-hygiene-stats).
+        std::uint64_t filter_hygiene_skips = 0;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            if (hygiene_skip_macro)
+                m->hygiene_filter_default_skip_total.fetch_add(1, std::memory_order_relaxed);
+            else
+                m->hygiene_filter_include_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
         // Iterate all workspace nodes, applying all predicates
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            // Issue #425: hygiene gate. Drop MacroIntroduced nodes
-            // BEFORE predicate evaluation so the predicate list
-            // doesn't have to repeat the (:marker "User")
-            // idiom on every query. The `flat.marker(id)` call
-            // is O(1) (one vector lookup) and the early-continue
-            // is cheaper than a chain of 5+ where clauses for
-            // the common EDSL self-evolution query patterns.
-            if (hygiene_skip_macro && flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+            // Issue #425 / #2525: hygiene gate (production default ON).
+            // Drop MacroIntroduced nodes BEFORE predicate evaluation so
+            // the predicate list doesn't have to repeat (:marker "User").
+            if (hygiene_skip_macro && flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                ++filter_hygiene_skips;
                 continue;
+            }
             auto v = flat.get(id);
             bool match = true;
 
@@ -1064,6 +1077,13 @@ void register_workspace_query_primitives(
                 auto pid = ws.pairs.size();
                 ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
+            }
+        }
+        if (filter_hygiene_skips > 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->hygiene_skip_total.fetch_add(filter_hygiene_skips, std::memory_order_relaxed);
+                m->pattern_hygiene_filtered_total.fetch_add(filter_hygiene_skips,
+                                                            std::memory_order_relaxed);
             }
         }
         return result;
@@ -2135,8 +2155,10 @@ void register_workspace_query_primitives(
             // Issue #2123: default skip MacroIntroduced (!include); opt-in
             // bumps pattern_include_macro_opt_in_total for dashboards.
             if (include_macro_introduced) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     m->pattern_include_macro_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+                    m->hygiene_include_total.fetch_add(1, std::memory_order_relaxed); // #2525
+                }
             }
             aura::compiler::QueryMatcher matcher(ws.workspace_flat, ws.workspace_pool, pat_flat,
                                                  pat_pool, wildcard_sym, nested_arity,
@@ -2372,8 +2394,25 @@ void register_workspace_query_primitives(
             } else {
                 // Full walk (Kleene + ellipsis, or wildcard root).
                 // Issue #2403 AC1: unconstrained → composite miss only.
+                // Issue #2525: when workspace has MacroIntroduced and default
+                // hygiene is on, bump unconstrained-walk metric so Agents can
+                // observe O(N) residue paths (fail-closed via metrics, not abort).
                 ev.bump_query_index_composite_miss();
                 ev.bump_total_query_calls();
+                if (!include_macro_introduced) {
+                    bool has_macro = false;
+                    for (aura::ast::NodeId mid = 0; mid < flat.size(); ++mid) {
+                        if (flat.is_macro_introduced(mid)) {
+                            has_macro = true;
+                            break;
+                        }
+                    }
+                    if (has_macro) {
+                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                            m->pattern_hygiene_unconstrained_walk_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                }
                 for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                     if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                         ev.bump_macro_introduced_skipped_in_query();
@@ -2449,6 +2488,8 @@ void register_workspace_query_primitives(
                                                                 std::memory_order_relaxed);
                     m->pattern_hygiene_filter_hits.fetch_add(matcher.recursive_macro_skipped(),
                                                              std::memory_order_relaxed);
+                    m->hygiene_skip_total.fetch_add(matcher.recursive_macro_skipped(),
+                                                    std::memory_order_relaxed); // #2525
                 }
                 macro_skips_this_query += matcher.recursive_macro_skipped();
             }

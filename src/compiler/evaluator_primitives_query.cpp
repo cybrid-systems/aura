@@ -2681,13 +2681,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #547 / #1501 / #1609 / #1636 / #1892 / #2123: query:pattern-hygiene-stats —
-    // authoritative MacroIntroduced hygiene dashboard for query:pattern.
-    // Schema **2123** (lineage 1892/1636/1609/1501/547). Defense-in-depth:
+    // Issue #547 / #1501 / #1609 / #1636 / #1892 / #2123 / #2525:
+    // query:pattern-hygiene-stats — authoritative MacroIntroduced hygiene
+    // dashboard for query:pattern + query:filter residual defaults.
+    // Schema **2525** (lineage 2123/1892/1636/1609/1501/547). Defense-in-depth:
     // root/full-walk skip + recursive matcher + user-only
     // tag_arity_index_user_ (marker dimension via parallel index — not
     // packing marker into TagArityKey; same hot-path win).
-    // #2123: default-exclude is production contract; opt-in counters exposed.
+    // #2123/#2525: default-exclude is production contract for pattern + filter;
+    // opt-in counters + unconstrained-walk metric exposed for Agent throttle.
     ObservabilityPrims::register_stats_impl(
         "query:pattern-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -2695,8 +2697,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             // Capacity must be power-of-two (open-address mask hcap-1).
-            // #2123 added several keys — 64 slots for open addressing.
-            auto* ht = FlatHashTable::create(64);
+            // #2123 / #2525 added several keys — 128 slots for open addressing.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2761,28 +2763,59 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("pattern-hygiene-mandate-active", 1);
             insert_kv("typed-mutation-audit-skip-wired", 1); // #1892
             insert_kv("self-evo-query-hygiene-mandate", 1);  // #1892
+            // Primary schema stays 2123 for back-compat; #2525 is additive.
             insert_kv("issue", 2123);  // #2123 production default-filter contract
             insert_kv("schema", 2123); // lineage 1892 / 1636 / 1609 / 1501 / 547
             insert_kv("schema-2123", 2123);
             insert_kv("issue-2123", 2123);
-            insert_kv("default-hygiene-filter-wired", 1); // #2123 AC1 sentinel
-            // Issue #1914 / #2123 AC metric aliases on pattern-hygiene surface.
+            insert_kv("schema-2525", 2525); // #2525 residual filter/unconstrained
+            insert_kv("issue-2525", 2525);
+            insert_kv("default-hygiene-filter-wired", 1);    // #2123 AC1 sentinel
+            insert_kv("filter-default-skip-macro-wired", 1); // #2525 query:filter default
+            insert_kv("unconstrained-walk-metric-wired", 1); // #2525
+            // Issue #1914 / #2123 / #2525 AC metric aliases on pattern-hygiene surface.
             if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                const auto filt = static_cast<std::int64_t>(
+                    m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed));
+                const auto skip_tot = static_cast<std::int64_t>(
+                    m->hygiene_skip_total.load(std::memory_order_relaxed));
+                const auto include_tot = static_cast<std::int64_t>(
+                    m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed) +
+                    m->hygiene_filter_include_opt_in_total.load(std::memory_order_relaxed));
                 insert_kv("pattern_hygiene_filter_hits",
                           static_cast<std::int64_t>(
                               m->pattern_hygiene_filter_hits.load(std::memory_order_relaxed)));
-                insert_kv("pattern_hygiene_filtered_total",
-                          static_cast<std::int64_t>(
-                              m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed)));
-                insert_kv("pattern-hygiene-filtered-total",
-                          static_cast<std::int64_t>(
-                              m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed)));
+                insert_kv("pattern_hygiene_filtered_total", filt);
+                insert_kv("pattern-hygiene-filtered-total", filt);
+                // Issue #2525 Agent-facing names (AC3)
+                insert_kv("hygiene_skip_total", skip_tot > 0 ? skip_tot : filt + pattern_skips);
+                insert_kv("hygiene-skip-total", skip_tot > 0 ? skip_tot : filt + pattern_skips);
+                insert_kv("hygiene_include_total", include_tot);
+                insert_kv("hygiene-include-total", include_tot);
                 insert_kv("pattern_include_macro_opt_in_total",
                           static_cast<std::int64_t>(m->pattern_include_macro_opt_in_total.load(
                               std::memory_order_relaxed)));
                 insert_kv("pattern-include-macro-opt-in-total",
                           static_cast<std::int64_t>(m->pattern_include_macro_opt_in_total.load(
                               std::memory_order_relaxed)));
+                insert_kv(
+                    "pattern_hygiene_unconstrained_walk_total",
+                    static_cast<std::int64_t>(m->pattern_hygiene_unconstrained_walk_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv(
+                    "pattern-hygiene-unconstrained-walk-total",
+                    static_cast<std::int64_t>(m->pattern_hygiene_unconstrained_walk_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("hygiene_filter_default_skip_total",
+                          static_cast<std::int64_t>(m->hygiene_filter_default_skip_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("hygiene_filter_include_opt_in_total",
+                          static_cast<std::int64_t>(m->hygiene_filter_include_opt_in_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv(
+                    "tag_arity_marker_dimension_rebuild_total",
+                    static_cast<std::int64_t>(m->tag_arity_marker_dimension_rebuild_total.load(
+                        std::memory_order_relaxed)));
                 insert_kv("macro_introduced_in_pattern_violations",
                           static_cast<std::int64_t>(m->macro_introduced_in_pattern_violations.load(
                               std::memory_order_relaxed)));
@@ -2790,8 +2823,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("pattern_hygiene_filter_hits", pattern_skips);
                 insert_kv("pattern_hygiene_filtered_total", pattern_skips);
                 insert_kv("pattern-hygiene-filtered-total", pattern_skips);
+                insert_kv("hygiene_skip_total", pattern_skips);
+                insert_kv("hygiene-skip-total", pattern_skips);
+                insert_kv("hygiene_include_total", 0);
+                insert_kv("hygiene-include-total", 0);
                 insert_kv("pattern_include_macro_opt_in_total", 0);
                 insert_kv("pattern-include-macro-opt-in-total", 0);
+                insert_kv("pattern_hygiene_unconstrained_walk_total", 0);
                 insert_kv("macro_introduced_in_pattern_violations",
                           static_cast<std::int64_t>(ev->get_pattern_macro_filter_violations()));
             }
