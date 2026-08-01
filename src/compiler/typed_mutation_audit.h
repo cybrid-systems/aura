@@ -147,6 +147,12 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> aot_hotupdate_invariant_fail_total{0};
     std::atomic<std::uint64_t> jit_hotpath_audits{0};
     std::atomic<std::uint64_t> audit_mutation_id_gen{0};
+    // Issue #2493: fallback-gen counter — bumped when an audit path took
+    // the last-resort next_audit_mutation_id() branch (no caller mid, no
+    // WorkspaceEpoch Mutation, no ResourceQuota host mid). Agent
+    // dashboards can compute join quality from this counter (lower =
+    // fewer process-origin join stamps; mid-vocabulary preferred).
+    std::atomic<std::uint64_t> audit_mid_fallback_gen_total{0};
     // Issue #1884: TypePropagation / predicate_memo ↔ invariant correlation.
     std::atomic<std::uint64_t> type_prop_invariant_correlation_total{0};
     std::atomic<std::uint64_t> type_prop_invariant_pass_with_evidence_total{0};
@@ -517,6 +523,30 @@ format_invariant_deny_reason(std::string_view kind, std::uint64_t tenant_id, std
            1;
 }
 
+// Issue #2493: canonical mid resolution for audit paths that did not
+// thread a caller mid. Preference order (mirrors #2384 require_effect
+// stamping so SE ↔ TypedMutationAudit ↔ grant epoch stay joined):
+//   1. caller mid when non-zero
+//   2. current_mutation_epoch() when non-zero  (WorkspaceEpoch Mutation — #2149)
+//   3. ResourceQuota host mid when set
+//   4. next_audit_mutation_id() as last-resort join stamp (process-origin,
+//      not a competing epoch vocabulary); bumps audit_mid_fallback_gen_total.
+[[nodiscard]] inline std::uint64_t
+resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
+    if (caller_mid != 0)
+        return caller_mid;
+    const auto ep = ::aura::core::current_mutation_epoch();
+    if (ep != 0)
+        return ep;
+    using ::aura::core::resource_quota::process_resource_quota_manager;
+    const auto rq = process_resource_quota_manager().provenance_mutation_id;
+    if (rq != 0)
+        return rq;
+    g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add(
+        1, std::memory_order_relaxed);
+    return next_audit_mutation_id();
+}
+
 // Core trail write (no Sampled gate). Used by capture_audit_event and by
 // #2054 security-correlated emit (always-on so rings stay joined by
 // mutation_id even under Sampled strategy).
@@ -577,12 +607,19 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
 // Issue #2054: always-on security correlation emit from
 // check_and_record_effect (allow + deny). Bypasses Sampled so Agents
 // can join SecurityEvent.mutation_id ↔ TypedMutationAuditEvent.mutation_id.
+// Issue #2493: caller_mid == 0 falls into the resolve_audit_mutation_id
+// preference order (caller_mid → current_mutation_epoch → ResourceQuota →
+// last-resort audit gen + fallback counter bump). Epoch field also falls
+// back to current_mutation_epoch() when caller passes 0 so SE.epoch stays
+// Mutation vocabulary (#2149).
 inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::string_view op,
                                               std::uint64_t epoch, bool denied,
                                               std::uint32_t target_node = 0,
                                               std::int64_t fiber_id = 0) noexcept {
     g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
-    capture_audit_event_forced(mutation_id, op, classify_kind(op), epoch, epoch,
+    const std::uint64_t mid = resolve_audit_mutation_id(mutation_id);
+    const auto use_epoch = epoch != 0 ? epoch : ::aura::core::current_mutation_epoch();
+    capture_audit_event_forced(mid, op, classify_kind(op), use_epoch, use_epoch,
                                denied ? AuditOutcome::Error : AuditOutcome::Success, target_node,
                                /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
 }
@@ -593,7 +630,10 @@ inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch
                                         std::uint64_t after_epoch,
                                         std::string_view reason = "aot-hotupdate") noexcept {
     g_typed_mutation_audit_counters.aot_hotupdate_attempts.fetch_add(1, std::memory_order_relaxed);
-    const std::uint64_t mid = next_audit_mutation_id();
+    // Issue #2493: prefer Mutation epoch / ResourceQuota host mid over the
+    // last-resort audit gen so AOT trail joins the same mid vocabulary as
+    // require_effect / grant / isolation SE.
+    const std::uint64_t mid = resolve_audit_mutation_id();
     if (success) {
         if (!should_audit(mid))
             return;
@@ -618,7 +658,8 @@ inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch
 
 // Issue #1882: lightweight JIT L2 / apply hotpath sample (never forces Full).
 inline void capture_jit_hotpath_audit(std::string_view tag) noexcept {
-    const std::uint64_t mid = next_audit_mutation_id();
+    // Issue #2493: same preference order as AOT (Mutation epoch preferred).
+    const std::uint64_t mid = resolve_audit_mutation_id();
     if (!should_audit(mid))
         return;
     g_typed_mutation_audit_counters.jit_hotpath_audits.fetch_add(1, std::memory_order_relaxed);
@@ -989,6 +1030,8 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.jit_hotpath_audits.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.audit_mutation_id_gen.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.store(0,
+                                                                       std::memory_order_relaxed);
     g_typed_mutation_audit_counters.type_prop_invariant_correlation_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.type_prop_invariant_pass_with_evidence_total.store(

@@ -2026,6 +2026,29 @@ def cmd_security_audit_wal_force_restricted_2492_coverage():
     return 0
 
 
+def cmd_audit_mutation_id_unify_2493_coverage():
+    """Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation.
+
+    Audit paths that didn't thread a caller mid previously allocated from
+    audit_mutation_id_gen (parallel vocabulary), weakening join against
+    grants bound to Mutation epoch. resolve_audit_mutation_id() enforces
+    preference order: caller mid → current_mutation_epoch → ResourceQuota
+    host mid → last-resort audit gen + audit_mid_fallback_gen_total bump.
+    capture_security_correlated_audit / AOT / JIT adopt the same order.
+    """
+    print(f"{B}=== audit mutation_id unify coverage (#2493) ==={N}")
+    script = ROOT / "scripts" / "check_audit_mutation_id_unify_2493.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("audit mutation_id unify (#2493) coverage contract rows failed")
+        return 1
+    ok("audit mutation_id unify (#2493) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -5102,6 +5125,7 @@ def cmd_gate():
         or cmd_require_effect_auto_isolation_2490_coverage()
         or cmd_tenant_scope_fiber_mandate_2491_coverage()
         or cmd_security_audit_wal_force_restricted_2492_coverage()
+        or cmd_audit_mutation_id_unify_2493_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()
