@@ -1029,6 +1029,14 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     if (outermost) {
         // Issue #1253: start hold-time clock for long-mutation policy.
         enter_ts_ = std::chrono::steady_clock::now();
+        // Issue #2517: process-wide live max outermost hold probe (fiber +
+        // start_ns). Best-effort CAS; Agents read via query:mutation-hold-live.
+        {
+            const auto start_ns = aura::compiler::mutation_hold_steady_ns_of(*enter_ts_);
+            // *slot already incremented for this outermost enter (prev==1).
+            const auto depth = static_cast<std::uint32_t>(*slot);
+            aura::compiler::mutation_hold_live_note_enter(aura_fiber_current_id(), start_ns, depth);
+        }
         // Issue #1523: Workspace level in #1388 order (after Mutate).
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
         auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics());
@@ -1662,6 +1670,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (slot)
             (*slot)--;
         ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+        // Issue #2517: clear process-wide live max probe if this fiber owns it.
+        // Simplified exit: only clear when we are the recorded max holder
+        // (next enter rebuilds; best-effort under multi-eval contention).
+        aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
         // Issue #2204: release MutationHold when logical hold ends (paired
         // with held_ clear, after exit probes / reemit / flush). Abort
         // (strict force-fail) still reaches here via dtor — bit always

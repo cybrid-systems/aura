@@ -3145,6 +3145,25 @@ def cmd_mutation_hold_estimate_coverage():
     return 0
 
 
+def cmd_mutation_hold_live_coverage():
+    """Issue #2517: real-time longest outermost MutationBoundary hold probe.
+
+    Process-wide fiber_id + start_ns + duration for Agent self-degrade;
+    coexist with #2405 estimate; best-effort CAS.
+    """
+    print(f"{B}=== mutation hold live coverage (#2517) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_hold_live_2517.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation hold live (#2517) coverage contract rows failed")
+        return 1
+    ok("mutation hold live (#2517) coverage clean")
+    return 0
+
+
 def cmd_pcv_tls_scratch_coverage():
     """Issue #2406: optional TLS freelist for exclusive PCV unique-inplace.
 
@@ -5529,6 +5548,7 @@ def cmd_gate():
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
+        or cmd_mutation_hold_live_coverage()
         or cmd_pcv_tls_scratch_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
