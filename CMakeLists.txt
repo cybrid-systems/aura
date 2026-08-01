@@ -2417,6 +2417,11 @@ aura_add_issue_test(test_workspace_mtx_contention_2523)
 aura_issue_test_link_llvm_jit(test_workspace_mtx_contention_2523)
 add_dependencies(all_test_issue_targets test_workspace_mtx_contention_2523)
 
+# Issue #2524: giant module partition map + pass_manager Phase C split.
+aura_add_issue_test(test_module_partition_map_2524)
+aura_issue_test_link_llvm_jit(test_module_partition_map_2524)
+add_dependencies(all_test_issue_targets test_module_partition_map_2524)
+
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)

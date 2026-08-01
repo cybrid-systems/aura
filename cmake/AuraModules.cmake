@@ -54,6 +54,9 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
+    # Issue #2524 Phase C: pass_manager split — pipeline core + pass impls + facade.
+    src/compiler/pass_pipeline_core.ixx
+    src/compiler/pass_impls.ixx
     src/compiler/pass_manager.ixx
     # Issue #1201 / #1576: concrete opt passes + contracts (imports pass_manager).
     src/compiler/optimization_passes.ixx

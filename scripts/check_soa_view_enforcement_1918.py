@@ -24,7 +24,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOA = ROOT / "src" / "compiler" / "soa_view.ixx"
+# Issue #2524: pass_manager facade + pipeline core + pass impls
 PASS = ROOT / "src" / "compiler" / "pass_manager.ixx"
+PASS_CORE = ROOT / "src" / "compiler" / "pass_pipeline_core.ixx"
+PASS_IMPLS = ROOT / "src" / "compiler" / "pass_impls.ixx"
 CONCEPTS = ROOT / "src" / "core" / "concept_constraints.ixx"
 CXX26 = ROOT / "src" / "core" / "cxx26_invariants.ixx"
 EVAL_FLAT = ROOT / "src" / "compiler" / "evaluator_eval_flat.cpp"
@@ -32,13 +35,20 @@ MATCHER = ROOT / "src" / "compiler" / "query_matcher.cpp"
 MUTATE = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
 OBS = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
 STDREV = ROOT / "src" / "compiler" / "evaluator_primitives_stdlib_review.cpp"
-TEST = ROOT / "tests" / "test_soa_view_enforcement_1918.cpp"
+# Prefer issue-named test; fall back to historical path.
+TEST = ROOT / "tests" / "compiler" / "test_soa_view_enforcement.cpp"
+if not TEST.is_file():
+    TEST = ROOT / "tests" / "test_soa_view_enforcement_1918.cpp"
 
 
 def main() -> int:
     failures: list[str] = []
     soa = SOA.read_text(encoding="utf-8", errors="replace")
     pm = PASS.read_text(encoding="utf-8", errors="replace")
+    if PASS_CORE.is_file():
+        pm += PASS_CORE.read_text(encoding="utf-8", errors="replace")
+    if PASS_IMPLS.is_file():
+        pm += PASS_IMPLS.read_text(encoding="utf-8", errors="replace")
     cc = CONCEPTS.read_text(encoding="utf-8", errors="replace")
     inv = CXX26.read_text(encoding="utf-8", errors="replace")
     flat = EVAL_FLAT.read_text(encoding="utf-8", errors="replace")

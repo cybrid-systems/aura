@@ -36,7 +36,11 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: unexpected {n!r}")
 
-    pm = _read("src/compiler/pass_manager.ixx")
+    # Issue #2524: DeadCoercionEliminationPass lives in pass_impls.ixx;
+    # pass_manager.ixx is a thin facade that re-exports it.
+    pm = _read("src/compiler/pass_impls.ixx")
+    if not pm:
+        pm = _read("src/compiler/pass_manager.ixx")
     test = _read("tests/compiler/test_dead_coercion_columnar_2431.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")

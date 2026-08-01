@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**65** `export module` declarations in `src/**/*.ixx`.
+**67** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -30,7 +30,9 @@
 | `aura.compiler.macro_expansion` | `src/compiler/macro_expansion.ixx` |
 | `aura.compiler.matcher` | `src/compiler/query_matcher.ixx` |
 | `aura.compiler.optimization_passes` | `src/compiler/optimization_passes.ixx` |
+| `aura.compiler.pass_impls` | `src/compiler/pass_impls.ixx` |
 | `aura.compiler.pass_manager` | `src/compiler/pass_manager.ixx` |
+| `aura.compiler.pass_pipeline_core` | `src/compiler/pass_pipeline_core.ixx` |
 | `aura.compiler.query` | `src/compiler/query.ixx` |
 | `aura.compiler.root_remap_pass` | `src/compiler/root_remap_pass.ixx` |
 | `aura.compiler.service` | `src/compiler/service.ixx` |
