@@ -1079,6 +1079,16 @@ export class FlatAST {
     // initialized only after add_node returns. Do not hand a
     // half-built id to another thread mid-call.
     //
+    // Issue #2453 — get(NodeId) primary reader path (NodeView snapshot):
+    //   get() assembles 10+ SoA columns into one NodeView without a
+    //   row lock. Concurrent builder/add_node mid-get yields a torn
+    //   view (e.g. tag vs children/sym/int mismatch). CONTRACT:
+    //   call get() under the single-threaded mutation contract or
+    //   post-parse / workspace_mtx-serialized path (no concurrent
+    //   SoA size or per-slot field writers). Concurrent multi-
+    //   reader get() is fine once the flat is stable. Matches
+    //   #2445-#2452 builder/param contracts.
+    //
     // Issue #2445 — add_* builder mutation contract:
     //   add_node itself serializes multi-column push_back under
     //   flatast_mutex_ (#2413). Higher-level builders
@@ -4249,9 +4259,12 @@ public:
 
     // ── Access ─────────────────────────────────────────────────
 
-    // Issue #2413: multi-column SoA snapshot. Not synchronized with
-    // flatast_mutex_ — concurrent with add_node/clear requires
-    // external serialization (workspace_mtx) or a stable pre-sized id.
+    // Issue #2413 / #2453: multi-column SoA snapshot (PRIMARY reader
+    // path). Not synchronized with flatast_mutex_ — concurrent with
+    // add_node/clear or builder per-slot writes requires external
+    // serialization (workspace_mtx / post-parse join). Ten+ column
+    // loads without a row lock: torn NodeView if a writer runs mid-
+    // get. Concurrent multi-reader get() is safe on a stable flat.
     NodeView get(NodeId id) const {
         // Issue #1620: hot-path SoA column access invariant probe
         // (zero cost under release observe; Agents track hits).
