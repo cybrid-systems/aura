@@ -4052,14 +4052,14 @@ bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
 }
 
 bool emit_object(const std::string& ir_dump, const std::string& out_path) {
-    // Deprecated: use emit_native_object instead.
-    // Parse IR dump and rebuild the module, then compile
-    // For now: dump only — full implementation needs IR deserialization
-    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
-        std::fprintf(f, "%s", ir_dump.c_str());
-        std::fclose(f);
-        return true;
-    }
+    // Issue #2477: deprecated misleading success path removed.
+    // Previously wrote out_path+".ir" and returned true — callers
+    // expecting a native .o at out_path would silently break.
+    // Fail closed: return false + stderr so callers migrate to
+    // emit_native_object (supported AOT entry).
+    (void)ir_dump;
+    (void)out_path;
+    std::fprintf(stderr, "emit_object: deprecated, use emit_native_object instead\n");
     return false;
 }
 
@@ -4237,13 +4237,10 @@ bool emit_native_object(const FlatFunction&, const std::string&, const std::vect
 }
 
 bool emit_object(const std::string& ir_dump, const std::string& out_path) {
-    // Parse IR dump and rebuild the module, then compile
-    // For now: dump only — full implementation needs IR deserialization
-    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
-        std::fprintf(f, "%s", ir_dump.c_str());
-        std::fclose(f);
-        return true;
-    }
+    // Issue #2477: same fail-closed deprecation as LLVM build.
+    (void)ir_dump;
+    (void)out_path;
+    std::fprintf(stderr, "emit_object: deprecated, use emit_native_object instead\n");
     return false;
 }
 
