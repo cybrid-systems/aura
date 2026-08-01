@@ -2674,12 +2674,10 @@ struct AuraJIT::Impl {
     // Issue #1323/#1324: also guards fn_unhandled_counts_ + fn_trackers_
     // (query/erase paths). Mutable so const unhandled_count_for_fn can lock.
     mutable std::mutex compile_mtx_;
-    // Issue #114: per-function compile cache. Lets two threads
-    // compiling different functions run in parallel; the same
-    // function name is still serialized by this shared_mutex.
-    // The cache holds the resolved ScalarFn from the most recent
-    // successful compile, keyed by function name. Hot-swap
-    // invalidates the entry (under the global lock).
+    // Issue #114 / #2475: protects compile_fns_ (name → ScalarFn cache).
+    // compile() itself is serialized by compile_mtx_; this shared_mutex
+    // is for cache map access only (shared lookup / unique publish /
+    // hot-swap erase). It does not enable parallel LLVM compiles.
     std::shared_mutex fn_compile_mtx_;
     std::unordered_map<std::string, ScalarFn, aura::core::TransparentStringHash, std::equal_to<>>
         compile_fns_{};
@@ -2915,29 +2913,27 @@ struct AuraJIT::Impl {
     ScalarFn compile(const FlatFunction& fn, Metrics* metrics = nullptr) {
         // Issue #59 Iter 1: serialize addIRModule + lookup across threads.
         // Held through the whole LLVM pipeline run + verify + addIRModule
-        // + lookup. Sub-ms per call in practice; readers don't contend
-        // because ORC's ThreadSafeModule is per-module atomic.
+        // + lookup. Sub-ms per call in practice.
         //
-        // Issue #114: the global compile_mtx_ is now complemented by a
-        // per-function-name lock in `fn_compile_mtx_` so different
-        // functions can compile concurrently. The global lock is still
-        // held briefly around addIRModule + lookup (because the ORC
-        // JITDylib symbol table isn't fully thread-safe across
-        // concurrent module insertions in this LLVM version).
+        // Issue #114 / #2475: compile_mtx_ is the global serializer for
+        // all compile() calls (ORC JITDylib inserts are not fully
+        // thread-safe across concurrent modules here). fn_compile_mtx_
+        // protects only the compile_fns_ name→ScalarFn cache map:
+        // shared_lock for hit lookup, unique_lock when publishing a new
+        // entry after a successful compile. It does NOT enable parallel
+        // compiles of different functions while compile_mtx_ is held.
+        //
+        // Issue #2475: removed unused default-constructed `fn_lock`
+        // (unique_lock not bound to any mutex) that suggested a
+        // per-function exclusive upgrade which was never assigned.
         std::lock_guard<std::mutex> compile_lock(compile_mtx_);
         if (!init())
             return nullptr;
 
-        // Per-function fine-grained lock (released before the global one).
-        // Two threads compiling the SAME function still serialize here
-        // (one wins, the other gets the cached compile_fns_ entry).
-        // Two threads compiling DIFFERENT functions run in parallel.
-        std::unique_lock<std::shared_mutex> fn_lock;
+        // Cache lookup under shared fn_compile_mtx_ (compile_mtx_ already
+        // held — same-function concurrent callers serialize on the global
+        // lock; one wins the compile, later callers hit compile_fns_).
         {
-            // Acquire the per-function shared lock briefly to look up
-            // the existing entry. The lookup is racy with concurrent
-            // compiles, but the result is just an optimization hint
-            // (we re-check under the global lock below).
             std::shared_lock<std::shared_mutex> shared(fn_compile_mtx_);
             auto it = compile_fns_.find(std::string(fn.name));
             if (it != compile_fns_.end()) {
@@ -3177,9 +3173,9 @@ struct AuraJIT::Impl {
         }
         auto fn_ptr = sym->toPtr<ScalarFn>();
 
-        // Update the per-function cache (under shared lock; readers
-        // from other threads can do concurrent compiles of OTHER
-        // functions while we hold this).
+        // Publish ScalarFn into compile_fns_ under unique fn_compile_mtx_.
+        // compile_mtx_ is still held (this thread is the only compiler);
+        // the unique_lock serializes with shared cache lookups / erase.
         {
             std::unique_lock<std::shared_mutex> lock(fn_compile_mtx_);
             compile_fns_[std::string(fn.name)] = fn_ptr;

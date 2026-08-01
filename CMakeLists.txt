@@ -3300,6 +3300,12 @@ aura_add_issue_test(test_ffi_hot_path_cache_toctou_2474)
 aura_issue_test_link_llvm_jit(test_ffi_hot_path_cache_toctou_2474)
 add_dependencies(all_test_issue_targets test_ffi_hot_path_cache_toctou_2474)
 
+# Issue #2475: remove unused default-constructed fn_lock in
+# AuraJIT::Impl::compile(); document compile_mtx_ + fn_compile_mtx_ roles.
+aura_add_issue_test(test_aura_jit_unused_fn_lock_2475)
+aura_issue_test_link_llvm_jit(test_aura_jit_unused_fn_lock_2475)
+add_dependencies(all_test_issue_targets test_aura_jit_unused_fn_lock_2475)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
