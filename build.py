@@ -3683,6 +3683,24 @@ def cmd_raii_guard_flatast_lifetime_coverage():
     return 0
 
 
+def cmd_restore_children_structural_lock_coverage():
+    """Issue #2455: restore_children acquires structural exclusive lock.
+
+    StructuralMutationGuard + restore_children_locked; concurrent-safe restore.
+    """
+    print(f"{B}=== restore_children structural lock coverage (#2455) ==={N}")
+    script = ROOT / "scripts" / "check_restore_children_structural_lock_2455.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restore_children structural lock (#2455) coverage contract rows failed")
+        return 1
+    ok("restore_children structural lock (#2455) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4659,6 +4677,7 @@ def cmd_gate():
         or cmd_incoming_parent_dirty_atomic_2452_coverage()
         or cmd_get_nodeview_snapshot_coverage()
         or cmd_raii_guard_flatast_lifetime_coverage()
+        or cmd_restore_children_structural_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

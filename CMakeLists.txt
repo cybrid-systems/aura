@@ -3237,6 +3237,11 @@ aura_add_issue_test(test_raii_guard_flatast_lifetime_2454)
 aura_issue_test_link_llvm_jit(test_raii_guard_flatast_lifetime_2454)
 add_dependencies(all_test_issue_targets test_raii_guard_flatast_lifetime_2454)
 
+# Issue #2455: restore_children acquires structural exclusive lock
+aura_add_issue_test(test_restore_children_structural_lock_2455)
+aura_issue_test_link_llvm_jit(test_restore_children_structural_lock_2455)
+add_dependencies(all_test_issue_targets test_restore_children_structural_lock_2455)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
