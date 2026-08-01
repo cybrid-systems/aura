@@ -195,6 +195,10 @@ export struct ArenaStats {
     std::size_t live_compact_moving_count = 0;
     std::size_t objects_moved_total = 0;
     std::size_t moving_blocked_precondition_total = 0;
+    // Issue #2495: Moving densify windows that moved tracked objects but left
+    // untracked external candidates unmapped (fail-closed signal).
+    // GUARDED_BY(per-arena compact serial)
+    std::size_t moving_untracked_external_roots_total = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
@@ -257,6 +261,7 @@ export struct ArenaStats {
         live_compact_moving_count += other.live_compact_moving_count;
         objects_moved_total += other.objects_moved_total;
         moving_blocked_precondition_total += other.moving_blocked_precondition_total;
+        moving_untracked_external_roots_total += other.moving_untracked_external_roots_total;
         if (other.frag_post_compact_bp > 0)
             frag_post_compact_bp = other.frag_post_compact_bp;
         if (other.defrag_attempted_count > 0)

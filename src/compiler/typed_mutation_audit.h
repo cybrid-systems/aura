@@ -7,6 +7,8 @@
 #define AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 
 #include "core/provenance_tracker.hh"
+#include "core/resource_quota.hh"  // process_resource_quota_manager (#2493 mid resolve)
+#include "core/workspace_epoch.hh" // current_mutation_epoch (#2493 mid resolve)
 
 #include <atomic>
 #include <chrono>
