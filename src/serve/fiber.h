@@ -48,6 +48,8 @@ extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_tota
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
 // Issue #2346: resume hard-fail total (fail-closed canary).
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
+// Issue #2518: resume safety ticket mismatch total (sample seq ≠ current).
+extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total();
 
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
@@ -95,6 +97,10 @@ struct MutationSafetySnapshot {
     bool held = false;
     std::uint64_t defuse_version = 0;
     YieldReason last_yield = YieldReason::Explicit;
+    // Issue #2518: even safety_seq_ at sample time (ticket). Steal captures
+    // this; resume must match current even seq or hard-fail (closes the
+    // sample→enqueue→steal→resume window after Guard enter/exit).
+    std::uint64_t ticket = 0;
 };
 
 // ── Fiber state ────────────────────────────────────────
@@ -182,6 +188,7 @@ public:
     [[nodiscard]] MutationSafetySnapshot mutation_safety_snapshot() const noexcept {
         MutationSafetySnapshot s;
         // Seqlock read of held/defuse mirrors (AC3: no torn pair).
+        // Issue #2518: capture even seq as ticket for sample→resume check.
         for (;;) {
             const auto seq1 = safety_seq_.load(std::memory_order_acquire);
             if (seq1 & 1u)
@@ -189,13 +196,40 @@ public:
             s.held = held_mirror_.load(std::memory_order_relaxed) != 0;
             s.defuse_version = defuse_mirror_.load(std::memory_order_relaxed);
             const auto seq2 = safety_seq_.load(std::memory_order_acquire);
-            if (seq1 == seq2)
+            if (seq1 == seq2) {
+                s.ticket = seq1; // even stable seq at sample time
                 break;
+            }
         }
         s.depth = aura_evaluator_mutation_stack_depth_from_ptr(
             mutation_stack_storage_.load(std::memory_order_acquire));
         s.last_yield = last_yield_reason_.load(std::memory_order_acquire);
         return s;
+    }
+
+    // Issue #2518: current even safety_seq_ (one acquire load; spin if odd).
+    // Cost: single atomic load on happy (even) path (AC4).
+    [[nodiscard]] std::uint64_t current_safety_ticket() const noexcept {
+        auto seq = safety_seq_.load(std::memory_order_acquire);
+        while (seq & 1u)
+            seq = safety_seq_.load(std::memory_order_acquire);
+        return seq;
+    }
+
+    // Issue #2518: steal success stamps resume ticket from sample snap.
+    void set_resume_safety_ticket(std::uint64_t ticket) noexcept {
+        resume_safety_ticket_ = ticket;
+        has_resume_safety_ticket_ = true;
+    }
+    void clear_resume_safety_ticket() noexcept {
+        has_resume_safety_ticket_ = false;
+        resume_safety_ticket_ = 0;
+    }
+    [[nodiscard]] bool has_resume_safety_ticket() const noexcept {
+        return has_resume_safety_ticket_;
+    }
+    [[nodiscard]] std::uint64_t resume_safety_ticket() const noexcept {
+        return resume_safety_ticket_;
     }
 
     // Issue #2184: publish fiber-visible held/defuse mirrors (Guard
@@ -284,11 +318,20 @@ public:
     [[nodiscard]] static std::uint64_t steal_snapshot_hard_fail_total() noexcept {
         return steal_snapshot_hard_fail_total_.load(std::memory_order_relaxed);
     }
-    // Issue #2346: post-sync resume invariant. Samples one snapshot (same as
-    // existing resume check). Soft → bump mismatch, return true (continue).
-    // Hard → bump mismatch + hard-fail, mark cancel/Done, return false
-    // (caller must not swapcontext). Happy path: one snapshot load only.
-    // Tests may call this directly with injected inconsistent mirrors.
+    // Issue #2518: resume ticket mismatch (sample seq ≠ current seq).
+    static void bump_steal_safety_ticket_mismatch() noexcept {
+        steal_safety_ticket_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t steal_safety_ticket_mismatch_total() noexcept {
+        return steal_safety_ticket_mismatch_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2346 / #2518: post-sync resume invariant. Samples one snapshot.
+    // Soft → bump mismatch, return true (continue). Hard → bump mismatch +
+    // hard-fail, mark cancel/Done, return false (no swapcontext).
+    // Issue #2518: if resume_safety_ticket_ set (steal path) and current
+    // even seq ≠ ticket → treat as inconsistent (Guard enter/exit mid-window).
+    // Happy path: one snapshot load (+ ticket compare if set).
+    // Tests may call this directly with injected ticket / mirrors.
     [[nodiscard]] bool check_and_enforce_resume_snapshot_invariant() noexcept;
 
     // Issue #2118: set when orch agent body soft-registers mutation depth
@@ -869,12 +912,19 @@ private:
     mutable std::atomic<std::uint64_t> safety_seq_{0};
     std::atomic<std::uint32_t> held_mirror_{0};
     std::atomic<std::uint64_t> defuse_mirror_{0};
+    // Issue #2518: steal-sample ticket for resume check (one-shot).
+    // Set on successful steal; consumed (cleared) in resume invariant.
+    // Independent of LayoutStamp restamp (#2510) — no dual-compute conflict.
+    std::uint64_t resume_safety_ticket_ = 0;
+    bool has_resume_safety_ticket_ = false;
     static std::atomic<std::uint64_t> mutation_steal_snapshot_mismatch_total_;
     // Issue #2310: see bump_steal_snapshot_mismatch_force_deopt().
     // Distinct from mutation_steal_snapshot_mismatch_total_ (observed-only).
     static std::atomic<std::uint64_t> steal_snapshot_mismatch_force_deopt_total_;
     // Issue #2346: resume hard-fail (mark-failed) total.
     static std::atomic<std::uint64_t> steal_snapshot_hard_fail_total_;
+    // Issue #2518: ticket mismatch total (sample seq ≠ current seq at resume).
+    static std::atomic<std::uint64_t> steal_safety_ticket_mismatch_total_;
     // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
     std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
     // Issue #2227: back-pointer to owner Scheduler so the orch join

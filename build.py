@@ -2935,6 +2935,25 @@ def cmd_steal_snapshot_hard_invariant_coverage():
     return 0
 
 
+def cmd_steal_safety_ticket_coverage():
+    """Issue #2518: MutationSafetySnapshot sequence ticket (sample→resume).
+
+    Steal stamps ticket from even safety_seq_; resume mismatch after mid-window
+    Guard publish → hard-fail under production; Soft metric-only.
+    """
+    print(f"{B}=== steal safety ticket coverage (#2518) ==={N}")
+    script = ROOT / "scripts" / "check_steal_safety_ticket_2518.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal safety ticket (#2518) coverage contract rows failed")
+        return 1
+    ok("steal safety ticket (#2518) coverage clean")
+    return 0
+
+
 def cmd_steal_snapshot_soft_production_lock_coverage():
     """Issue #2372: production hard-forbid Soft steal-snapshot + force-deopt ABI.
 
@@ -5537,6 +5556,7 @@ def cmd_gate():
         or cmd_composite_empty_cs_hard_coverage()
         or cmd_composite_cs_signature_matrix_coverage()
         or cmd_steal_snapshot_hard_invariant_coverage()
+        or cmd_steal_safety_ticket_coverage()
         or cmd_steal_snapshot_soft_production_lock_coverage()
         or cmd_render_deopt_throttle_race_coverage()
         or cmd_legacy_pin_registry_cleanup_coverage()

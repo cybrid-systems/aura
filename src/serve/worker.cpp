@@ -341,6 +341,11 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             stolen->bump_steal_success();
             // Issue #1492: one-shot boost consumed on successful steal.
             stolen->clear_steal_priority_boost();
+            // Issue #2518: stamp resume safety ticket from this steal sample.
+            // Resume must see the same even safety_seq_ (ticket); Guard
+            // enter/exit mid-window advances seq → hard-fail under production.
+            // Independent of LayoutStamp restamp (#2510) — no dual-compute.
+            stolen->set_resume_safety_ticket(snap.ticket);
             // Issue #783: refined split. Successful
             // steal at a MutationBoundary point with
             // depth==0 == "outermost safe steal" —
