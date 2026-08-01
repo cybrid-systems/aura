@@ -3719,6 +3719,24 @@ def cmd_subtree_uses_sym_template_bloat_coverage():
     return 0
 
 
+def cmd_mutation_log_cow_copy_coverage():
+    """Issue #2457: FlatAST copy shares mutation_log_ / narrowing_log_ via COW.
+
+    CowPmrVector shared_ptr share-on-copy; first mutate detaches.
+    """
+    print(f"{B}=== mutation_log COW copy coverage (#2457) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_log_cow_copy_2457.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation_log COW copy (#2457) coverage contract rows failed")
+        return 1
+    ok("mutation_log COW copy (#2457) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4697,6 +4715,7 @@ def cmd_gate():
         or cmd_raii_guard_flatast_lifetime_coverage()
         or cmd_restore_children_structural_lock_coverage()
         or cmd_subtree_uses_sym_template_bloat_coverage()
+        or cmd_mutation_log_cow_copy_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

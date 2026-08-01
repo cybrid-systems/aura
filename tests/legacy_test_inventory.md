@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 637 | Preferred destination suites |
-| **Total scanned** | **637** | |
+| `tests/core/test_*.cpp` | 638 | Preferred destination suites |
+| **Total scanned** | **638** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 73 | 73 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 186 | 186 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 187 | 187 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 66 | 66 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -501,6 +501,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_mutation_hold_hard_timeout_2199.cpp`
 - `tests/compiler/test_mutation_hold_slo_2349.cpp`
 - `tests/serve/test_mutation_hold_time.cpp`
+- `tests/core/test_mutation_log_cow_copy_2457.cpp`
 - `tests/compiler/test_mutation_log_pressure_2201.cpp`
 - `tests/compiler/test_mutation_log_query_race.cpp`
 - `tests/compiler/test_mutation_memory_blame_2196.cpp`
@@ -904,13 +905,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (186)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (187)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (186)
+#### domain/ (187)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1016,6 +1017,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_hold_estimate_2405.cpp` (#2405) [domain_suite, theme_compiler] — AC1: Query returns budget/slo + recent hold distribution (no side effects)
 - `tests/compiler/test_mutation_hold_hard_timeout_2199.cpp` (#2199) [domain_suite, theme_compiler] — AC1: Strict on + synthetic long mutate → outermost exit fails,
 - `tests/compiler/test_mutation_hold_slo_2349.cpp` (#2349) [domain_suite, theme_compiler] — AC1: Production + hold > SLO → success_flag=false; violation counter
+- `tests/core/test_mutation_log_cow_copy_2457.cpp` (#2457) [domain_suite, theme_core] — AC1: copy shares log sizes (no deep-copy isolation until write)
 - `tests/compiler/test_mutation_log_pressure_2201.cpp` (#2201) [domain_suite, theme_compiler] — AC1: Stats report log size, compact totals, pressure flag/score
 - `tests/compiler/test_mutation_log_query_race.cpp` (—) [domain_suite, theme_compiler] — test_mutation_log_query_race.cpp — Issue #1389:
 - `tests/compiler/test_mutation_memory_blame_2196.cpp` (#2196) [domain_suite, theme_compiler] — AC1: Single EDSL query returns structured blame/memory for node

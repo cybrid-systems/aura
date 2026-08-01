@@ -1033,6 +1033,135 @@ export template <typename Id, typename C, typename Tag>
                                           [&ast, tag](Id id) { return ast.tag(id) == tag; });
 }
 
+// ── Issue #2457: shared_ptr COW pmr vector for FlatAST logs ────
+//
+// mutation_log_ / narrowing_log_ can grow to 100K+ entries after a
+// long agent session. FlatAST copy is rare but still deep-copied
+// those logs. CowPmrVector shares storage on copy (O(1) refcount
+// bump, matching binding_gens_ #2417) and detaches on first
+// mutation when use_count > 1.
+//
+// Contract: single-threaded mutate per FlatAST (same as the rest
+// of the mutation log path). Concurrent readers of distinct
+// FlatAST copies that share a log are fine until one mutates.
+template <typename T> class CowPmrVector {
+public:
+    using vector_type = std::pmr::vector<T>;
+    using value_type = T;
+    using size_type = typename vector_type::size_type;
+    using iterator = typename vector_type::iterator;
+    using const_iterator = typename vector_type::const_iterator;
+    using reverse_iterator = typename vector_type::reverse_iterator;
+    using const_reverse_iterator = typename vector_type::const_reverse_iterator;
+    using allocator_type = typename vector_type::allocator_type;
+
+    CowPmrVector()
+        : resource_(std::pmr::get_default_resource())
+        , data_(std::make_shared<vector_type>(allocator_type{resource_})) {}
+
+    explicit CowPmrVector(std::pmr::polymorphic_allocator<std::byte> alloc)
+        : resource_(alloc.resource())
+        , data_(std::make_shared<vector_type>(allocator_type{resource_})) {}
+
+    // Copy: share storage (O(1)).
+    CowPmrVector(const CowPmrVector& other) noexcept
+        : resource_(other.resource_)
+        , data_(other.data_) {}
+
+    CowPmrVector& operator=(const CowPmrVector& other) noexcept {
+        if (this != &other) {
+            resource_ = other.resource_;
+            data_ = other.data_;
+        }
+        return *this;
+    }
+
+    // Move: take ownership; leave other with a fresh empty unique vector.
+    CowPmrVector(CowPmrVector&& other) noexcept
+        : resource_(other.resource_)
+        , data_(std::move(other.data_)) {
+        other.data_ = std::make_shared<vector_type>(allocator_type{other.resource_});
+    }
+
+    CowPmrVector& operator=(CowPmrVector&& other) noexcept {
+        if (this != &other) {
+            resource_ = other.resource_;
+            data_ = std::move(other.data_);
+            other.data_ = std::make_shared<vector_type>(allocator_type{other.resource_});
+        }
+        return *this;
+    }
+
+    // Replace storage with a uniquely-owned vector (e.g. compact rebuild).
+    CowPmrVector& operator=(vector_type&& v) {
+        resource_ = v.get_allocator().resource();
+        data_ = std::make_shared<vector_type>(std::move(v));
+        return *this;
+    }
+
+    [[nodiscard]] const vector_type& view() const noexcept { return *data_; }
+    [[nodiscard]] vector_type& mut() {
+        ensure_unique();
+        return *data_;
+    }
+
+    // Implicit view for `const vector&` return sites / span construction.
+    [[nodiscard]] operator const vector_type&() const noexcept { return *data_; }
+    // Non-const conversion COWs when shared (write-path drop-in).
+    [[nodiscard]] operator vector_type&() { return mut(); }
+
+    [[nodiscard]] size_type size() const noexcept { return data_->size(); }
+    [[nodiscard]] size_type capacity() const noexcept { return data_->capacity(); }
+    [[nodiscard]] bool empty() const noexcept { return data_->empty(); }
+    [[nodiscard]] const T* data() const noexcept { return data_->data(); }
+    [[nodiscard]] T* data() {
+        ensure_unique();
+        return data_->data();
+    }
+    [[nodiscard]] allocator_type get_allocator() const noexcept { return data_->get_allocator(); }
+
+    [[nodiscard]] const T& operator[](size_type i) const { return (*data_)[i]; }
+    // Non-const index COWs when shared (write path).
+    [[nodiscard]] T& operator[](size_type i) { return mut()[i]; }
+
+    // Range-for / iteration is always const-view — does NOT COW.
+    // Mutating loops must use `for (auto& x : cow.mut())` so a
+    // shared log is not detached by a read-only scan after copy.
+    [[nodiscard]] const_iterator begin() const noexcept { return data_->begin(); }
+    [[nodiscard]] const_iterator end() const noexcept { return data_->end(); }
+    [[nodiscard]] const_iterator begin() noexcept { return data_->begin(); }
+    [[nodiscard]] const_iterator end() noexcept { return data_->end(); }
+    [[nodiscard]] const_reverse_iterator rbegin() const noexcept { return data_->rbegin(); }
+    [[nodiscard]] const_reverse_iterator rend() const noexcept { return data_->rend(); }
+    [[nodiscard]] const_reverse_iterator rbegin() noexcept { return data_->rbegin(); }
+    [[nodiscard]] const_reverse_iterator rend() noexcept { return data_->rend(); }
+
+    template <typename U> void push_back(U&& value) { mut().push_back(std::forward<U>(value)); }
+    void clear() { mut().clear(); }
+    void reserve(size_type n) { mut().reserve(n); }
+    void resize(size_type n) { mut().resize(n); }
+    void shrink_to_fit() { mut().shrink_to_fit(); }
+
+    template <typename Iter> iterator erase(Iter first, Iter last) {
+        return mut().erase(first, last);
+    }
+
+    // True when this instance is the sole owner (no COW share).
+    [[nodiscard]] bool unique() const noexcept { return data_.use_count() == 1; }
+    // Refcount for tests / diagnostics (approximate under races).
+    [[nodiscard]] long use_count() const noexcept { return data_.use_count(); }
+
+private:
+    void ensure_unique() {
+        if (data_.use_count() != 1) {
+            data_ = std::make_shared<vector_type>(*data_, allocator_type{resource_});
+        }
+    }
+
+    std::pmr::memory_resource* resource_;
+    std::shared_ptr<vector_type> data_;
+};
+
 export class FlatAST {
     // ── Issue #2413 — concurrent access contract (read this) ───
     //
@@ -1845,7 +1974,9 @@ public:
     // This eliminates the need for free_persistent_state() at process
     // exit.
     std::pmr::vector<std::int64_t> value_cache_;
-    std::pmr::vector<MutationRecord> mutation_log_;
+    // Issue #2457: shared_ptr COW — FlatAST copy shares the log
+    // (O(1)); first append/erase/clear after share detaches.
+    CowPmrVector<MutationRecord> mutation_log_;
     // Issue #1419: provenance context stamped into new MutationRecords
     // (author / parent chain / composite transaction). Defaults 0.
     std::uint64_t mutation_author_fingerprint_ = 0;
@@ -1857,7 +1988,8 @@ public:
     // (query:provenance-of var-name) and all_narrowings() /
     // narrowing_count() accessors. The log is cleared on
     // full FlatAST reset, same lifecycle as mutation_log_.
-    std::pmr::vector<NarrowingRecord> narrowing_log_;
+    // Issue #2457: same COW strategy as mutation_log_.
+    CowPmrVector<NarrowingRecord> narrowing_log_;
     // Issue #639: count of narrowing records marked stale by
     // invalidate_narrowings_in_subtree (post-mutate invalidation).
     std::uint64_t narrow_invalidation_post_mutate_ = 0;
@@ -3074,6 +3206,9 @@ public:
         , error_kind_(std::move(other.error_kind_))
         , value_cache_(std::move(other.value_cache_))
         , mutation_log_(std::move(other.mutation_log_))
+        // Issue #2457: transfer COW narrowing log (was missing from
+        // move path — left other with the log, this empty).
+        , narrowing_log_(std::move(other.narrowing_log_))
         // Issue #300 follow-up #2: regression from e5f559bf
         // ("fix warning") which dropped node_first_mutation_
         // from the move-ctor init list. Default-construction
@@ -3184,6 +3319,8 @@ public:
             free_list_ = std::move(other.free_list_);
             value_cache_ = std::move(other.value_cache_);
             mutation_log_ = std::move(other.mutation_log_);
+            // Issue #2457: transfer COW narrowing log on move-assign.
+            narrowing_log_ = std::move(other.narrowing_log_);
             node_first_mutation_ = std::move(other.node_first_mutation_);
             next_mutation_id_ = other.next_mutation_id_;
             generation_ = other.generation_;
@@ -3241,6 +3378,11 @@ public:
     // copy versions, but evaluator_env.cpp has 3 copy-assign
     // sites (workspace COW, local-flat initialization, etc.).
     // Copy is rare in hot paths but must compile.
+    //
+    // Issue #2457: mutation_log_ + narrowing_log_ are CowPmrVector
+    // (shared_ptr COW). Copy shares those logs in O(1); first
+    // mutating op on either side detaches (matches binding_gens_
+    // share-on-copy pattern from #2417 / #412 follow-up #1).
     FlatAST(const FlatAST& other)
         : tag_(other.tag_)
         , int_val_(other.int_val_)
@@ -3377,7 +3519,9 @@ public:
             node_gen_ = other.node_gen_;
             free_list_ = other.free_list_;
             value_cache_ = other.value_cache_;
+            // Issue #2457: share COW logs (O(1)); was deep-copy.
             mutation_log_ = other.mutation_log_;
+            narrowing_log_ = other.narrowing_log_;
             node_first_mutation_ = other.node_first_mutation_;
             next_mutation_id_ = other.next_mutation_id_;
             generation_ = other.generation_;
@@ -5388,7 +5532,8 @@ public:
         }
         match_info_ = std::move(new_match_info);
 
-        for (auto& rec : mutation_log_) {
+        // Issue #2457: write path — detach shared log if needed.
+        for (auto& rec : mutation_log_.mut()) {
             rec.target_node = remap(rec.target_node);
             rec.parent_id = remap(rec.parent_id);
         }
@@ -6973,7 +7118,7 @@ public:
     // Get mutation history for a specific node (filters from log, O(n) in log size)
     std::pmr::vector<MutationRecord> mutation_history(NodeId node) const {
         std::pmr::vector<MutationRecord> result;
-        for (auto& rec : mutation_log_) {
+        for (const auto& rec : mutation_log_) {
             if (rec.target_node == node)
                 result.push_back(rec);
         }
@@ -7015,11 +7160,12 @@ public:
     // Returns the number of records erased.
     std::size_t erase_mutations_since(std::uint64_t since_id) {
         const auto old_size = mutation_log_.size();
-        mutation_log_.erase(std::remove_if(mutation_log_.begin(), mutation_log_.end(),
-                                           [since_id](const MutationRecord& r) {
-                                               return r.mutation_id >= since_id;
-                                           }),
-                            mutation_log_.end());
+        // Issue #2457: COW detach once, then erase on unique storage.
+        auto& log = mutation_log_.mut();
+        log.erase(std::remove_if(
+                      log.begin(), log.end(),
+                      [since_id](const MutationRecord& r) { return r.mutation_id >= since_id; }),
+                  log.end());
         return old_size - mutation_log_.size();
     }
     std::uint64_t next_mutation_id() const { return next_mutation_id_; }
@@ -7096,7 +7242,8 @@ public:
         }
         const std::uint8_t kOccurrenceBit = static_cast<std::uint8_t>(kOccurrenceDirty);
         std::size_t count = 0;
-        for (auto& rec : narrowing_log_) {
+        // Issue #2457: write path — detach shared narrowing log if needed.
+        for (auto& rec : narrowing_log_.mut()) {
             if (rec.stale)
                 continue;
             const bool in_tree =
@@ -7132,7 +7279,8 @@ public:
         if (if_id == NULL_NODE)
             return 0;
         std::size_t cleared = 0;
-        for (auto& rec : narrowing_log_) {
+        // Issue #2457: write path — detach shared narrowing log if needed.
+        for (auto& rec : narrowing_log_.mut()) {
             if (rec.if_node != if_id || !rec.stale)
                 continue;
             rec.stale = false;
@@ -8661,7 +8809,8 @@ public:
     }
 
     bool rollback(std::uint64_t mutation_id) pre(mutation_id != 0) {
-        for (auto& rec : mutation_log_) {
+        // Issue #2457: write path — detach shared log before mutating status.
+        for (auto& rec : mutation_log_.mut()) {
             if (rec.mutation_id == mutation_id)
                 return try_rollback_record(rec).has_value();
         }
@@ -8777,7 +8926,11 @@ public:
         std::size_t count = 0;
         const bool prev_defer = defer_rollback_restamp_;
         defer_rollback_restamp_ = true;
-        for (auto it = mutation_log_.rbegin(); it != mutation_log_.rend(); ++it) {
+        // Issue #2457: detach once so status checks + rollback see the
+        // same unique storage (const rbegin would walk a shared snapshot
+        // while mut() detaches underfoot).
+        auto& log = mutation_log_.mut();
+        for (auto it = log.rbegin(); it != log.rend(); ++it) {
             if (it->mutation_id >= since_id && it->status == MutationStatus::Committed) {
                 if (rollback(it->mutation_id))
                     ++count;
@@ -8827,8 +8980,10 @@ public:
         // Same restamp deferral as rollback_since (jit_late timeout fix).
         const bool prev_defer = defer_rollback_restamp_;
         defer_rollback_restamp_ = true;
-        for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
-            auto& rec = mutation_log_[i - 1];
+        // Issue #2457: detach once; index + rollback share unique storage.
+        auto& log = mutation_log_.mut();
+        for (std::size_t i = log.size(); i > checkpoint_size; --i) {
+            auto& rec = log[i - 1];
             if (rec.status == MutationStatus::Committed) {
                 if (rollback(rec.mutation_id))
                     ++count;
