@@ -3539,6 +3539,24 @@ def cmd_region_lambda_dense_race_coverage():
     return 0
 
 
+def cmd_region_sym_map_race_coverage():
+    """Issue #2447: region_by_sym_ concurrent insert + find race-free.
+
+    region_table_mtx_ exclusive insert / shared find; map path via high SymId.
+    """
+    print(f"{B}=== region_by_sym_ map race coverage (#2447) ==={N}")
+    script = ROOT / "scripts" / "check_region_sym_map_race_2447.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("region_by_sym_ map race (#2447) coverage contract rows failed")
+        return 1
+    ok("region_by_sym_ map race (#2447) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4507,6 +4525,7 @@ def cmd_gate():
         or cmd_region_sym_dense_race_coverage()
         or cmd_add_node_builder_contract_coverage()
         or cmd_region_lambda_dense_race_coverage()
+        or cmd_region_sym_map_race_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

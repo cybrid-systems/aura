@@ -12,6 +12,9 @@
 // Issue #2446 — region_by_lambda_dense_ + region_by_lambda_id_ concurrent
 // set_function_region_lambda + get_function_region_for_lambda (same lock).
 //
+// Issue #2447 — region_by_sym_ map insert + find under region_table_mtx_
+// (SymId >= kRegionDenseCap forces cold map path).
+//
 // TSan-clean under -fsanitize=thread; value-consistency (no torn
 // 0xA5A5A5A5 bits observed by the reader thread) holds on
 // architectures where naturally-aligned 32-bit stores are not
@@ -26,6 +29,7 @@
 //   #2444 AC: concurrent set_function_region + get_function_region_for_sym
 //             — no crash, region values only in published set
 //   #2446 AC: concurrent set_function_region_lambda + get_for_lambda
+//   #2447 AC: concurrent region_by_sym_ map insert + find (no rehash UB)
 
 #include "test_harness.hpp"
 
@@ -348,6 +352,88 @@ int main() {
         for (int i = 0; i < kN; ++i) {
             auto r = flat.get_function_region_for_lambda(lams[static_cast<std::size_t>(i)]);
             CHECK(r.has_value() && *r <= kMaxRegion, "#2446: final lambda region coherent");
+        }
+    }
+
+    // ── Issue #2447: region_by_sym_ map concurrent insert + find ───
+    {
+        std::println("\n--- #2447: concurrent region_by_sym_ map insert + find ---");
+        FlatAST flat;
+        // SymIds at/above kRegionDenseCap never touch dense SoA — pure map path.
+        constexpr SymId kBase = 70000; // > kRegionDenseCap (65536)
+        constexpr int kKeys = 48;
+        constexpr std::uint8_t kMaxRegion = 15;
+        const auto map0 = flat.region_map_lookups();
+
+        for (int i = 0; i < kKeys; ++i)
+            flat.set_function_region(static_cast<SymId>(kBase + i), 0);
+
+        std::atomic<bool> stop{false};
+        std::atomic<std::uint64_t> writes{0};
+        std::atomic<std::uint64_t> reads{0};
+        std::atomic<std::uint64_t> hits{0};
+        std::atomic<std::uint64_t> err{0};
+
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 2; ++t) {
+            threads.emplace_back([&, t]() {
+                int i = t;
+                while (!stop.load(std::memory_order_acquire)) {
+                    try {
+                        // Grow the map with new keys so insert can rehash
+                        // while readers find — exclusive lock must serialize.
+                        const int key = i % (kKeys * 2);
+                        const SymId sym = static_cast<SymId>(kBase + key);
+                        const auto reg = static_cast<std::uint8_t>((i + t) & kMaxRegion);
+                        flat.set_function_region(sym, reg);
+                        writes.fetch_add(1, std::memory_order_relaxed);
+                        ++i;
+                    } catch (...) {
+                        err.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+        for (int t = 0; t < 6; ++t) {
+            threads.emplace_back([&, t]() {
+                int i = t;
+                while (!stop.load(std::memory_order_acquire)) {
+                    try {
+                        const int key = i % (kKeys * 2);
+                        const SymId sym = static_cast<SymId>(kBase + key);
+                        auto r = flat.get_function_region_for_sym(sym);
+                        if (r.has_value()) {
+                            if (*r > kMaxRegion)
+                                err.fetch_add(1, std::memory_order_relaxed);
+                            else
+                                hits.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        reads.fetch_add(1, std::memory_order_relaxed);
+                        i += 6;
+                    } catch (...) {
+                        err.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        stop.store(true, std::memory_order_release);
+        for (auto& th : threads)
+            th.join();
+
+        const auto map_delta = flat.region_map_lookups() - map0;
+        std::println("  #2447 writes={} reads={} hits={} map_lookups_delta={} err={}",
+                     writes.load(), reads.load(), hits.load(), map_delta, err.load());
+        CHECK(writes.load() > 0, "#2447: writers progressed");
+        CHECK(reads.load() > 0, "#2447: readers progressed");
+        CHECK(hits.load() > 0, "#2447: map hits observed");
+        CHECK(map_delta > 0, "#2447: map fallback path exercised");
+        CHECK(err.load() == 0, "#2447: no rehash UB / invalid region / exceptions");
+
+        for (int i = 0; i < kKeys; ++i) {
+            auto r = flat.get_function_region_for_sym(static_cast<SymId>(kBase + i));
+            CHECK(r.has_value() && *r <= kMaxRegion, "#2447: final map region coherent");
         }
     }
 
