@@ -2402,6 +2402,11 @@ aura_add_issue_test(test_pcv_tls_scratch_2406)
 aura_issue_test_link_llvm_jit(test_pcv_tls_scratch_2406)
 add_dependencies(all_test_issue_targets test_pcv_tls_scratch_2406)
 
+# Issue #2521: PCV TLS freelist production default ON.
+aura_add_issue_test(test_pcv_tls_default_on_2521)
+aura_issue_test_link_llvm_jit(test_pcv_tls_default_on_2521)
+add_dependencies(all_test_issue_targets test_pcv_tls_default_on_2521)
+
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)
