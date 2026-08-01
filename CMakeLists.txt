@@ -3306,6 +3306,12 @@ aura_add_issue_test(test_aura_jit_unused_fn_lock_2475)
 aura_issue_test_link_llvm_jit(test_aura_jit_unused_fn_lock_2475)
 add_dependencies(all_test_issue_targets test_aura_jit_unused_fn_lock_2475)
 
+# Issue #2476: partial_recompile single-pass eviction (invalidate_prefix
+# only — bare + name#*; drop redundant invalidate walk).
+aura_add_issue_test(test_partial_recompile_single_evict_2476)
+aura_issue_test_link_llvm_jit(test_partial_recompile_single_evict_2476)
+add_dependencies(all_test_issue_targets test_partial_recompile_single_evict_2476)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

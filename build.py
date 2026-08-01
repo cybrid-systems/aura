@@ -3887,6 +3887,24 @@ def cmd_aura_jit_unused_fn_lock_coverage():
     return 0
 
 
+def cmd_partial_recompile_single_evict_coverage():
+    """Issue #2476: partial_recompile single-pass eviction.
+
+    invalidate_prefix covers bare + name#*; drop redundant invalidate().
+    """
+    print(f"{B}=== partial_recompile single-pass eviction coverage (#2476) ==={N}")
+    script = ROOT / "scripts" / "check_partial_recompile_single_evict_2476.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("partial_recompile single-pass eviction (#2476) coverage contract rows failed")
+        return 1
+    ok("partial_recompile single-pass eviction (#2476) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4912,6 +4930,7 @@ def cmd_gate():
         or cmd_gc_closures_mtx_flush_sweep_coverage()
         or cmd_ffi_hot_path_cache_toctou_coverage()
         or cmd_aura_jit_unused_fn_lock_coverage()
+        or cmd_partial_recompile_single_evict_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
