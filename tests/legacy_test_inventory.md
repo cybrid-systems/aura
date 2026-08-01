@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 678 | Preferred destination suites |
-| **Total scanned** | **678** | |
+| `tests/core/test_*.cpp` | 679 | Preferred destination suites |
+| **Total scanned** | **679** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 69 | 69 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 68 | 68 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 69 | 69 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 41 | 41 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 45 | 45 | P3 — review case-by-case |
@@ -168,6 +168,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_ai_closedloop_readiness.cpp`
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp`
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp`
+- `tests/compiler/test_aot_hot_update_health_2506.cpp`
 - `tests/compiler/test_aot_incremental_reemit.cpp`
 - `tests/compiler/test_aot_jit_joint_versioning_2046.cpp`
 - `tests/compiler/test_aot_mangle_top.cpp`
@@ -1304,17 +1305,18 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (68)
+### `jit_incremental` — JIT / AOT / incremental relower (69)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (68)
+#### domain/ (69)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp` (#2238) [domain_suite, theme_compiler] — AC1: anonymous + aura_closure_check_aot_stable_id_policy under
+- `tests/compiler/test_aot_hot_update_health_2506.cpp` (#2506) [domain_suite, theme_compiler] — AC1: Idle healthy → health-bp high, force-reason ok, recovery_active=0
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952/#2013 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_jit_joint_versioning_2046.cpp` (#2046) [domain_suite, theme_compiler] — bridge_epoch (joint epoch contract after soft/hard invalidate).
 - `tests/compiler/test_aot_mangle_top.cpp` (—) [domain_suite, theme_compiler] — test_aot_mangle_top.cpp — Issue #1369 / #2015:

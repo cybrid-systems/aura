@@ -24,6 +24,8 @@ module;
 #include "mutate_type_gate.hh"                     // Issue #2219 Soft/Hard post-mutate type gate
 #include "compiler/type_system_health.hh"          // Issue #2350: query:type-system-health score
 #include "compiler/mutation_concurrency_health.hh" // Issue #2379: mutation-concurrency-health
+#include "compiler/aot_hot_update_health.hh"       // Issue #2506: query:aot-hot-update-health
+#include "compiler/hot_update_registry.hh"         // Issue #2506: reload recovery C snapshot
 #include "compiler/compact_policy.hh"              // Issue #2500: query:compact-policy
 #include "compiler/mutation_hold_budget.h"         // Issue #2500: hold estimate for split
 #include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
@@ -7944,6 +7946,147 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2506: query:aot-hot-update-health — single Agent score for
+    // JIT/AOT recovery gate (reload recovery + storm + remount + epoch).
+    // Pure relaxed loads of existing atomics (AC4 zero idle cost). Formula +
+    // force_reason priority in aot_hot_update_health.hh.
+    // Alias: query:hot-update-health (same builder).
+    auto register_aot_hot_update_health = [&string_heap](const char* name) {
+        ObservabilityPrims::register_stats_impl(
+            name, [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+                (void)a;
+                auto* __qev_ = Evaluator::get_query_evaluator();
+                const auto* m =
+                    __qev_ ? static_cast<const CompilerMetrics*>(__qev_->compiler_metrics())
+                           : nullptr;
+
+                AotHotUpdateHealthSnapshot snap;
+                // Reload recovery C snapshot (#2367) — pure relaxed loads.
+                aura_reload_recovery_snapshot rs{};
+                aura_hot_update_reload_recovery_get_snapshot(&rs);
+                snap.attempts_left = static_cast<std::uint32_t>(rs.attempts_left);
+                snap.force_jit_regions_mask = static_cast<std::uint64_t>(rs.force_jit_regions_mask);
+                snap.pending_dirty_count = static_cast<std::uint64_t>(rs.pending_dirty_count);
+                snap.deferred_reemit_pending =
+                    static_cast<std::uint8_t>(rs.deferred_reemit_pending);
+                snap.storm_level = static_cast<std::uint8_t>(rs.storm_level);
+                snap.hard_storm_active = rs.hard_storm_active;
+                snap.last_reload_fail_reason = static_cast<std::uint8_t>(rs.last_reason);
+                snap.recovery_active = rs.recovery_active;
+                // Remount counters (#2234).
+                if (m) {
+                    snap.remount_fail_total =
+                        m->closure_capture_remount_fail_total.load(std::memory_order_relaxed);
+                    snap.remount_ok_total =
+                        m->closure_capture_remount_ok_total.load(std::memory_order_relaxed);
+                }
+                // Epoch invariant (#2366 / #2501).
+                snap.epoch_invariant_violation_total =
+                    aura_epoch_invariant_violation_total_v_read();
+
+                const auto scored = compute_aot_hot_update_health(snap);
+
+                auto* ht = FlatHashTable::create(64);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (const char* p = k_str; *p; ++p)
+                        h = (h ^ static_cast<std::uint8_t>(*p)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            auto kidx = string_heap.size();
+                            string_heap.push_back(k_str);
+                            keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                            vals[idx] = make_int(v).val;
+                            ht->size++;
+                            return;
+                        }
+                    }
+                };
+                auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (const char* p = k_str; *p; ++p)
+                        h = (h ^ static_cast<std::uint8_t>(*p)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            auto kidx = string_heap.size();
+                            string_heap.push_back(k_str);
+                            keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                            auto vidx = string_heap.size();
+                            string_heap.push_back(std::string(v_str));
+                            vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
+                            ht->size++;
+                            return;
+                        }
+                    }
+                };
+
+                insert_kv("health-bp", static_cast<std::int64_t>(scored.health_bp));
+                insert_kv("health-budget-bp", static_cast<std::int64_t>(scored.health_budget_bp));
+                insert_kv_str("force-reason", scored.force_reason);
+                insert_kv("force-reason-code", scored.force_reason_code);
+                insert_kv("recovery-active", scored.recovery_active);
+                // Components (raw totals; subsystem queries unchanged).
+                insert_kv("component-attempts-left", static_cast<std::int64_t>(snap.attempts_left));
+                insert_kv("component-force-jit-regions-mask",
+                          static_cast<std::int64_t>(snap.force_jit_regions_mask));
+                insert_kv("component-pending-dirty-count",
+                          static_cast<std::int64_t>(snap.pending_dirty_count));
+                insert_kv("component-deferred-reemit-pending",
+                          static_cast<std::int64_t>(snap.deferred_reemit_pending));
+                insert_kv("component-storm-level", static_cast<std::int64_t>(snap.storm_level));
+                insert_kv("component-hard-storm-active", snap.hard_storm_active);
+                insert_kv("component-last-reload-fail-reason",
+                          static_cast<std::int64_t>(snap.last_reload_fail_reason));
+                insert_kv("component-remount-fail-total",
+                          static_cast<std::int64_t>(snap.remount_fail_total));
+                insert_kv("component-remount-ok-total",
+                          static_cast<std::int64_t>(snap.remount_ok_total));
+                insert_kv("component-epoch-invariant-violation-total",
+                          static_cast<std::int64_t>(snap.epoch_invariant_violation_total));
+                // force-reason code sentinels (docs)
+                insert_kv("force-reason-ok", 0);
+                insert_kv("force-reason-storm", 1);
+                insert_kv("force-reason-force-jit", 2);
+                insert_kv("force-reason-reload-fail", 3);
+                insert_kv("force-reason-remount-fail", 4);
+                insert_kv("force-reason-epoch-invariant", 5);
+                insert_kv("force-reason-deferred-reemit", 6);
+                insert_kv("aot-hot-update-health-wired", 1);
+                insert_kv("schema-2506", 2506);
+                insert_kv("issue-2506", 2506);
+                // Lineage (existing queries remain authoritative).
+                insert_kv("schema-2367", 2367);
+                insert_kv("schema-2302", 2302);
+                insert_kv("schema-2094", 2094);
+                insert_kv("schema-2234", 2234);
+                insert_kv("schema-2366", 2366);
+
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            });
+    };
+    register_aot_hot_update_health("query:aot-hot-update-health");
+    register_aot_hot_update_health("query:hot-update-health");
 
     // Issue #2500: query:compact-policy (+ aliases orch:compact-policy /
     // arena:recommend-compact) — pure recommendation over existing health /
