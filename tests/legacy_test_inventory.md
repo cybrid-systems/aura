@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 645 | Preferred destination suites |
-| **Total scanned** | **645** | |
+| `tests/core/test_*.cpp` | 646 | Preferred destination suites |
+| **Total scanned** | **646** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 74 | 74 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 75 | 75 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 188 | 188 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 66 | 66 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 15 | 15 | P1 — small, already partially batched |
@@ -345,6 +345,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_frame_budget_guardian_2218.cpp`
 - `tests/compiler/test_full_strategy_partial_recovery.cpp`
 - `tests/serve/test_gc_batch.cpp`
+- `tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp`
 - `tests/serve/test_gc_compact_batch.cpp`
 - `tests/serve/test_gc_compact_sweep_batch.cpp`
 - `tests/compiler/test_gc_coord_scope_2131.cpp`
@@ -830,13 +831,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (74)
+### `arena_compaction` — Arena / compaction / GC (75)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (74)
+#### domain/ (75)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -867,6 +868,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_escape_move_elision_gate_2263.cpp` (#2263) [large, domain_suite, theme_compiler] — AC1: escape-after-move binding → MoveOp emitted; blocked counter bumps
 - `tests/core/test_force_compact_hard_mutex_2157.cpp` (#2157) [domain_suite, theme_core] — LifetimePin + EnvFrameLifetimeGuard (no gen bump / pin invalidate while held).
 - `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
+- `tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp` (#2473) [domain_suite, theme_compiler] — AC1: concurrent gc_root_count + register_active_closure + compact_sweep
 - `tests/serve/test_gc_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_batch.cpp — GC compact family batch driver.
 - `tests/serve/test_gc_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_sweep_batch.cpp — GC compact sweep batch driver.
 - `tests/compiler/test_gc_coord_scope_2131.cpp` (#2131) [domain_suite, theme_compiler] — AC1: source cites #2131; GcCoordScope + PrePin/Cascade/PostAudit order

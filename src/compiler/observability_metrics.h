@@ -4870,6 +4870,14 @@ struct CompilerMetrics {
     // but the call is no longer silent: this counter surfaces the
     // skipped reclaim path for diagnostics / Agent dashboards.
     std::atomic<std::uint64_t> gc_compact_sweep_null_marks_total{0};
+    // Issue #2473: times flush_gc_roots acquired shared_lock(closures_mtx_)
+    // for the closures_ walk (dual-lock with heap_mutex_). Dashboards
+    // observe that GC root flush serializes with register_active_closure.
+    std::atomic<std::uint64_t> gc_flush_closures_locked_total{0};
+    // Issue #2473: times compact_sweep acquired unique_lock(closures_mtx_)
+    // for the closures_ iterate/erase section (blocks readers during
+    // erase; serializes with register / gc_root_count / flush).
+    std::atomic<std::uint64_t> gc_sweep_closures_locked_total{0};
     // Issue #2001: total strings compacted across all sweeps
     // (counts dead entries reclaimed, mirrors strings_freed in
     // CompactSweepResult but as a process-wide aggregate). Bumped
