@@ -58,10 +58,11 @@ struct MutationConcurrencyHealthSnapshot {
     // Hold SLO (#2349) / early over-budget (#2313).
     std::uint64_t hold_slo_violation_total = 0;
     std::uint64_t hold_over_budget_total = 0;
-    // Mailbox defer SLA (#2312 / #2378).
+    // Mailbox defer SLA (#2312 / #2378 / #2511 hold-exit drain).
     std::uint64_t mailbox_defer_starvation_total = 0;
     std::uint64_t mailbox_deferred_depth = 0;
     std::uint64_t mailbox_deferred_mutation_hold_total = 0;
+    std::uint64_t mailbox_hold_exit_starvation_total = 0; // #2511
 };
 
 struct MutationConcurrencyHealthResult {
@@ -102,7 +103,9 @@ struct MutationConcurrencyHealthResult {
 }
 [[nodiscard]] inline bool
 has_mailbox_starvation(const MutationConcurrencyHealthSnapshot& s) noexcept {
-    return s.mailbox_defer_starvation_total > 0 || s.mailbox_deferred_depth > 0;
+    // #2511 hold-exit starvation feeds the same soft signal (health score).
+    return s.mailbox_defer_starvation_total > 0 || s.mailbox_deferred_depth > 0 ||
+           s.mailbox_hold_exit_starvation_total > 0;
 }
 
 // Pure score from a snapshot (no atomics — AC3 / AC4 read-only).
@@ -129,8 +132,9 @@ compute_mutation_concurrency_health(const MutationConcurrencyHealthSnapshot& s) 
         bp -= static_cast<std::int64_t>(soft);
     }
     if (has_mailbox_starvation(s)) {
-        const auto soft = std::min<std::uint64_t>(1500, s.mailbox_defer_starvation_total * 200 +
-                                                            s.mailbox_deferred_depth * 50);
+        const auto soft = std::min<std::uint64_t>(
+            1500, s.mailbox_defer_starvation_total * 200 + s.mailbox_deferred_depth * 50 +
+                      s.mailbox_hold_exit_starvation_total * 200);
         bp -= static_cast<std::int64_t>(soft);
     }
 

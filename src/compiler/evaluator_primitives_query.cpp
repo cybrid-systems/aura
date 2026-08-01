@@ -7902,6 +7902,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snap.mailbox_deferred_mutation_hold_total =
                 g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(
                     std::memory_order_relaxed);
+            snap.mailbox_hold_exit_starvation_total =
+                g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
+                    std::memory_order_relaxed);
 
             const auto scored = compute_mutation_concurrency_health(snap);
 
@@ -7984,6 +7987,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(snap.mailbox_deferred_depth));
             insert_kv("component-mailbox-deferred-mutation-hold-total",
                       static_cast<std::int64_t>(snap.mailbox_deferred_mutation_hold_total));
+            insert_kv("component-mailbox-hold-exit-starvation-total",
+                      static_cast<std::int64_t>(snap.mailbox_hold_exit_starvation_total));
             insert_kv("mutation-concurrency-health-wired", 1);
             insert_kv("schema-2379", 2379);
             insert_kv("issue-2379", 2379);
@@ -7993,6 +7998,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2349", 2349);
             insert_kv("schema-2312", 2312);
             insert_kv("schema-2378", 2378);
+            insert_kv("schema-2511", 2511);
+            insert_kv("issue-2511", 2511);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

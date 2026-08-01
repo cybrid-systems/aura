@@ -573,8 +573,10 @@ static void ac2378_source_cite() {
     CHECK(mb.find("note_mailbox_outermost_exit_drain") != std::string::npos, "AC5: exit drain");
     CHECK(mb.find("mailbox_defer_starvation_total") != std::string::npos,
           "AC5: starvation counter");
-    CHECK(emb.find("note_mailbox_outermost_exit_drain") != std::string::npos,
-          "AC5: Guard dtor drain note");
+    // #2511 wraps note_mailbox_outermost_exit_drain in drain_deferred_under_budget.
+    CHECK(emb.find("note_mailbox_outermost_exit_drain") != std::string::npos ||
+              emb.find("drain_deferred_under_budget") != std::string::npos,
+          "AC5: Guard dtor drain note / budgeted drain");
     CHECK(epm.find("schema-2378") != std::string::npos, "AC5: query schema");
     CHECK(epm.find("mailbox-deferred-depth") != std::string::npos, "AC5: query depth key");
 }

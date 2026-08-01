@@ -365,6 +365,32 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-defer-drain-sla-wired", 1);
             insert_kv("schema-2378", 2378);
             insert_kv("issue-2378", 2378);
+            // Issue #2511: outermost Guard exit forced deferred drain under budget.
+            insert_kv(
+                "mailbox-hold-exit-drain-total",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-hold-exit-drain-us-total",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_us_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-hold-exit-drain-us-max",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_exit_drain_us_max.load(
+                    std::memory_order_relaxed)));
+            insert_kv("mailbox-hold-exit-starvation-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-hold-exit-force-resolved-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_hold_exit_force_resolved_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-hold-exit-drain-budget-us",
+                      static_cast<std::int64_t>(mailbox_hold_drain_budget_us()));
+            insert_kv("mailbox-hold-exit-drain-wired", 1);
+            insert_kv("schema-2511", 2511);
+            insert_kv("issue-2511", 2511);
             // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
             // Soft path leaves hard-total / force-rollback-total at 0; Policy A
             // soft reject remains on recv-rejected-in-mutation-boundary.
