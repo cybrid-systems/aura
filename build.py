@@ -3868,6 +3868,25 @@ def cmd_ffi_hot_path_cache_toctou_coverage():
     return 0
 
 
+def cmd_aura_jit_unused_fn_lock_coverage():
+    """Issue #2475: unused fn_lock removed from AuraJIT::Impl::compile().
+
+    Dead unique_lock removed; comments document compile_mtx_ global
+    serialize + fn_compile_mtx_ cache-only role.
+    """
+    print(f"{B}=== AuraJIT unused fn_lock coverage (#2475) ==={N}")
+    script = ROOT / "scripts" / "check_aura_jit_unused_fn_lock_2475.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("AuraJIT unused fn_lock (#2475) coverage contract rows failed")
+        return 1
+    ok("AuraJIT unused fn_lock (#2475) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4892,6 +4911,7 @@ def cmd_gate():
         or cmd_closure_call_must_deopt_toctou_coverage()
         or cmd_gc_closures_mtx_flush_sweep_coverage()
         or cmd_ffi_hot_path_cache_toctou_coverage()
+        or cmd_aura_jit_unused_fn_lock_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
