@@ -2069,6 +2069,28 @@ def cmd_side_effect_security_gate_hardfail_2494_coverage():
     return 0
 
 
+def cmd_moving_densify_fail_closed_2495_coverage():
+    """Issue #2495: Moving densify fail-closed on untracked external roots.
+
+    LiveCompactResult.{moving_incomplete_remap, untracked_kept_count} +
+    g_moving_untracked_external_roots_total counter. Phase 5 (already
+    gating on pin_contract_held) suppresses success metrics when densify
+    moved live objects but untracked candidates existed. AURA_MOVING_UNTRACKED=hard
+    aborts under production security defaults.
+    """
+    print(f"{B}=== moving densify fail-closed coverage (#2495) ==={N}")
+    script = ROOT / "scripts" / "check_moving_densify_fail_closed_2495.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving densify fail-closed (#2495) coverage contract rows failed")
+        return 1
+    ok("moving densify fail-closed (#2495) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -5147,6 +5169,7 @@ def cmd_gate():
         or cmd_security_audit_wal_force_restricted_2492_coverage()
         or cmd_audit_mutation_id_unify_2493_coverage()
         or cmd_side_effect_security_gate_hardfail_2494_coverage()
+        or cmd_moving_densify_fail_closed_2495_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()
