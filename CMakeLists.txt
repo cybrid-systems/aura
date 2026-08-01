@@ -3668,6 +3668,11 @@ aura_add_issue_test(test_fixup_deltas_2392)
 aura_issue_test_link_llvm_jit(test_fixup_deltas_2392)
 add_dependencies(all_test_issue_targets test_fixup_deltas_2392)
 
+# Issue #2393: refresh_if_stale COW epoch mismatch fail-closed (vs wrap_epoch).
+aura_add_issue_test(test_stable_ref_cow_refresh_failclosed_2393)
+aura_issue_test_link_llvm_jit(test_stable_ref_cow_refresh_failclosed_2393)
+add_dependencies(all_test_issue_targets test_stable_ref_cow_refresh_failclosed_2393)
+
 # Issue #2394: last_validated_generation concurrent-safe (CopyableAtomicU16).
 aura_add_issue_test(test_last_validated_generation_atomic_2394)
 aura_issue_test_link_llvm_jit(test_last_validated_generation_atomic_2394)

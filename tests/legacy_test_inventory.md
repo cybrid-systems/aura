@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 667 | Preferred destination suites |
-| **Total scanned** | **667** | |
+| `tests/core/test_*.cpp` | 668 | Preferred destination suites |
+| **Total scanned** | **668** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 77 | 77 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 193 | 193 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 194 | 194 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 68 | 68 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 15 | 15 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -730,6 +730,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp`
 - `tests/compiler/test_stable_ref_batch.cpp`
 - `tests/compiler/test_stable_ref_cow_batch.cpp`
+- `tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp`
 - `tests/compiler/test_stable_ref_export_validate_2404.cpp`
 - `tests/compiler/test_stable_ref_pin_lifecycle_2189.cpp`
 - `tests/compiler/test_stable_ref_provenance_batch.cpp`
@@ -938,13 +939,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (193)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (194)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (193)
+#### domain/ (194)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1109,6 +1110,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_source_to_ir_map_consistency_2045.cpp` (#2045) [domain_suite, theme_compiler] — AC1: source cites #2045; rebuild_or_patch + pure helpers + consistency
 - `tests/compiler/test_stable_ref_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_batch.cpp
 - `tests/compiler/test_stable_ref_cow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #1912 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp` (#2393) [domain_suite, theme_compiler] — AC1: unpinned cow_epoch mismatch → refresh_if_stale returns false;
 - `tests/compiler/test_stable_ref_export_validate_2404.cpp` (#2404) [domain_suite, theme_compiler] — AC1: Agent export sites (export_ref, query:stable-ref, query:ensure-ref,
 - `tests/compiler/test_stable_ref_pin_lifecycle_2189.cpp` (#2189) [domain_suite, theme_compiler] — AC1: EDSL pin-stable-refs / unpin-stable-refs / with-pinned registered
 - `tests/compiler/test_stable_ref_provenance_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_provenance_batch.cpp — test_stable_ref 3-merge (R19 phase 20).
