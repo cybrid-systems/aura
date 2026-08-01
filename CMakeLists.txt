@@ -3548,6 +3548,13 @@ aura_issue_test_link_llvm_jit(test_tenant_scope_fiber_mandate_2491)
 aura_add_issue_test(test_security_audit_wal_force_restricted_2492)
 aura_issue_test_link_llvm_jit(test_security_audit_wal_force_restricted_2492)
 
+# Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation over
+# independent audit gens. resolve_audit_mutation_id() preference order
+# (caller mid → current_mutation_epoch → ResourceQuota → gen) joins SE ↔
+# TypedMutationAudit ↔ grant epoch into one mid vocabulary.
+aura_add_issue_test(test_audit_mutation_id_unify_2493)
+aura_issue_test_link_llvm_jit(test_audit_mutation_id_unify_2493)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.
