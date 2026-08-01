@@ -1405,6 +1405,20 @@ struct CompilerMetrics {
     //   into :include-macro-introduced / :allow-macro-introduced #t
     std::atomic<std::uint64_t> pattern_hygiene_filtered_total{0};     // #2123
     std::atomic<std::uint64_t> pattern_include_macro_opt_in_total{0}; // #2123
+    // Issue #2525: residual unconstrained hygiene default + filter/index.
+    // hygiene_skip_total: nodes skipped by filter/pattern hygiene gates
+    // hygiene_include_total: alias of pattern_include_macro_opt_in_total path
+    // pattern_hygiene_unconstrained_walk_total: full-walk pattern when workspace
+    //   has MacroIntroduced under default skip (Agent self-throttle)
+    // hygiene_filter_default_skip_total: query:filter calls with default skip
+    // hygiene_filter_include_opt_in_total: query:filter with include macro
+    // tag_arity_marker_dimension_rebuild_total: full rebuild stamped user index
+    std::atomic<std::uint64_t> hygiene_skip_total{0};                       // #2525
+    std::atomic<std::uint64_t> hygiene_include_total{0};                    // #2525
+    std::atomic<std::uint64_t> pattern_hygiene_unconstrained_walk_total{0}; // #2525
+    std::atomic<std::uint64_t> hygiene_filter_default_skip_total{0};        // #2525
+    std::atomic<std::uint64_t> hygiene_filter_include_opt_in_total{0};      // #2525
+    std::atomic<std::uint64_t> tag_arity_marker_dimension_rebuild_total{0}; // #2525
     std::atomic<std::uint64_t> provenance_query_total{0};
     std::atomic<std::uint64_t> macro_introduced_in_pattern_violations{0};
     std::atomic<std::uint64_t> by_marker_where_filter_hits{0};

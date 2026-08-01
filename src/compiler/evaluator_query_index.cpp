@@ -71,6 +71,11 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     // (would deadlock). Callers acquire the lock once at
     // the entry point and then call these helpers under
     // that umbrella.
+    //
+    // Issue #1501 / #1636 / #2525: marker dimension is carried by the
+    // parallel tag_arity_index_user_ (User-only) map — rebuild/sync always
+    // stamps both maps so default hygiene path never serves MacroIntroduced
+    // from the composite index (AC2).
     if (id >= flat.size())
         return;
     // Issue #484: skip orphan nodes. After mutate:replace-pattern,
@@ -119,6 +124,8 @@ void Evaluator::tag_arity_index_remove_node(aura::ast::NodeId id) const {
 }
 
 void Evaluator::tag_arity_index_rebuild_full(const aura::ast::FlatAST& flat) const {
+    // Issue #2525: full rebuild always rebuilds marker dimension
+    // (tag_arity_index_user_) alongside full tag_arity_index_.
     tag_arity_index_.clear();
     tag_arity_index_user_.clear();
     tag_arity_indexed_key_.clear();
@@ -131,6 +138,8 @@ void Evaluator::tag_arity_index_rebuild_full(const aura::ast::FlatAST& flat) con
         tag_arity_index_insert_node(flat, id);
     tag_arity_index_synced_size_ = n;
     tag_arity_index_synced_gen_ = flat.generation();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->tag_arity_marker_dimension_rebuild_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 void Evaluator::tag_arity_index_append_nodes(const aura::ast::FlatAST& flat,
