@@ -4034,6 +4034,24 @@ def cmd_list_end_of_list_void_coverage():
     return 0
 
 
+def cmd_channel_rendezvous_coverage():
+    """Issue #2483: channel:send rendezvous blocks until recv.
+
+    No buffer_size==0 wait short-circuit; waiting_receivers handoff.
+    """
+    print(f"{B}=== channel rendezvous coverage (#2483) ==={N}")
+    script = ROOT / "scripts" / "check_channel_rendezvous_2483.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("channel rendezvous (#2483) coverage contract rows failed")
+        return 1
+    ok("channel rendezvous (#2483) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5067,6 +5085,7 @@ def cmd_gate():
         or cmd_json_parse_number_exception_coverage()
         or cmd_json_parse_object_grow_coverage()
         or cmd_list_end_of_list_void_coverage()
+        or cmd_channel_rendezvous_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()

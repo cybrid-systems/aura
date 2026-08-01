@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 656 | Preferred destination suites |
-| **Total scanned** | **656** | |
+| `tests/core/test_*.cpp` | 657 | Preferred destination suites |
+| **Total scanned** | **657** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 65 | 65 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 40 | 40 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 126 | 126 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 39 | 39 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 40 | 40 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -235,6 +235,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_cascade_skip_metrics_2106.cpp`
 - `tests/compiler/test_castop_density_closed_loop_2459.cpp`
 - `tests/compiler/test_castop_density_hard_2358.cpp`
+- `tests/compiler/test_channel_rendezvous_2483.cpp`
 - `tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp`
 - `tests/serve/test_chaos_steal_mutation_gc.cpp`
 - `tests/core/test_clear_macro_dirty_concurrent_2442.cpp`
@@ -1530,19 +1531,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
-### `uncategorized` — Uncategorized / mixed (39)
+### `uncategorized` — Uncategorized / mixed (40)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (39)
+#### domain/ (40)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
 - `tests/stdlib/test_atomic_swap_stdlib.cpp` (—) [domain_suite, theme_stdlib] — test_atomic_swap_stdlib.cpp — Issue #1380:
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/renderer/test_camera_rays.cpp` (—) [domain_suite, theme_renderer] — test_camera_rays.cpp — Issue #1981 / Epic #1979
+- `tests/compiler/test_channel_rendezvous_2483.cpp` (#2483) [domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
 - `tests/compiler/test_command_line_cap_io_read_2478.cpp` (#2478) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_compile02_no_dup_imports.cpp` (—) [domain_suite, theme_compiler] — Issue #1857 (#1978 renamed): issue# moved from filename to header.

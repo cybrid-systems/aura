@@ -5578,6 +5578,9 @@ private:
         std::condition_variable cv;
         std::deque<std::string> queue;
         std::size_t buffer_size = 0; // 0 = rendezvous (unbuffered)
+        // Issue #2483: count of blocked channel:recv waiters so unbuffered
+        // send only proceeds when a receiver is posted (true rendezvous).
+        std::size_t waiting_receivers = 0;
         bool closed = false;
     };
     std::vector<std::shared_ptr<Channel>> channels_;

@@ -889,26 +889,42 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (channel:send channel-id msg) — Send a message to a channel
-    // Returns #t on success, #f if channel does not exist.
-    // Blocks if buffer full (buffered) or waiting for recv (rendezvous).
+    // Returns #t on success, #f if channel does not exist / closed.
+    // Blocks if buffer full (buffered) or until a recv is posted (rendezvous).
+    // Issue #2483: buffer_size==0 must NOT short-circuit the wait predicate
+    // (that made send non-blocking and let the queue grow unboundedly).
     add("channel:send", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        auto& msg = ev.string_heap_[as_string_idx(a[1])];
-        std::lock_guard lk(ev.channels_mtx_);
-        if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
-            return make_bool(false);
-        auto& ch = *ev.channels_[ch_id];
+        auto msg = ev.string_heap_[as_string_idx(a[1])]; // copy before wait
+        // Issue #2483: release channels_mtx_ before blocking — holding it
+        // across cv.wait deadlocks concurrent channel:recv on the same
+        // Evaluator (recv needs the global map lock to look up the channel).
+        std::shared_ptr<Evaluator::Channel> ch_ptr;
+        {
+            std::lock_guard lk(ev.channels_mtx_);
+            if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+                return make_bool(false);
+            ch_ptr = ev.channels_[ch_id];
+        }
+        auto& ch = *ch_ptr;
         std::unique_lock ul(ch.mtx);
         ch.cv.wait(ul, [&]() {
-            return ch.closed || ch.buffer_size == 0 || ch.queue.size() < ch.buffer_size;
+            if (ch.closed)
+                return true;
+            // Buffered: wait for free slot (size never exceeds buffer_size).
+            if (ch.buffer_size > 0)
+                return ch.queue.size() < ch.buffer_size;
+            // Rendezvous (buffer_size==0): wait until a recv is posted and
+            // the handoff slot is free (at most one in-flight message).
+            return ch.waiting_receivers > 0 && ch.queue.empty();
         });
         if (ch.closed)
             return make_bool(false);
-        ch.queue.push_back(msg);
+        ch.queue.push_back(std::move(msg));
         ul.unlock();
-        ch.cv.notify_one();
+        ch.cv.notify_all();
         return make_bool(true);
     });
 
@@ -919,20 +935,31 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        std::lock_guard lk(ev.channels_mtx_);
-        if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
-            return make_string(0);
-        auto& ch = *ev.channels_[ch_id];
+        std::shared_ptr<Evaluator::Channel> ch_ptr;
+        {
+            std::lock_guard lk(ev.channels_mtx_);
+            if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+                return make_string(0);
+            ch_ptr = ev.channels_[ch_id];
+        }
+        auto& ch = *ch_ptr;
         std::unique_lock ul(ch.mtx);
+        // Issue #2483: announce waiting receiver so rendezvous send can proceed.
+        ++ch.waiting_receivers;
+        ch.cv.notify_all();
         ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
-        if (ch.queue.empty())
+        --ch.waiting_receivers;
+        if (ch.queue.empty()) {
+            ul.unlock();
+            ch.cv.notify_all();
             return make_string(0);
-        auto msg = ch.queue.front();
+        }
+        auto msg = std::move(ch.queue.front());
         ch.queue.pop_front();
         ul.unlock();
-        ch.cv.notify_one();
+        ch.cv.notify_all();
         auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(msg);
+        ev.string_heap_.push_back(std::move(msg));
         return make_string(static_cast<std::uint64_t>(idx));
     });
 
@@ -942,17 +969,23 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        std::lock_guard lk(ev.channels_mtx_);
-        if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
-            return make_string(0);
-        auto& ch = *ev.channels_[ch_id];
-        std::lock_guard ul(ch.mtx);
+        std::shared_ptr<Evaluator::Channel> ch_ptr;
+        {
+            std::lock_guard lk(ev.channels_mtx_);
+            if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+                return make_string(0);
+            ch_ptr = ev.channels_[ch_id];
+        }
+        auto& ch = *ch_ptr;
+        std::unique_lock ul(ch.mtx);
         if (ch.queue.empty())
             return make_string(0);
-        auto msg = ch.queue.front();
+        auto msg = std::move(ch.queue.front());
         ch.queue.pop_front();
+        ul.unlock();
+        ch.cv.notify_all(); // wake blocked senders (full buffer / next rendezvous)
         auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(msg);
+        ev.string_heap_.push_back(std::move(msg));
         return make_string(static_cast<std::uint64_t>(idx));
     });
 
@@ -962,10 +995,14 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
-        std::lock_guard lk(ev.channels_mtx_);
-        if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
-            return make_bool(false);
-        auto& ch = *ev.channels_[ch_id];
+        std::shared_ptr<Evaluator::Channel> ch_ptr;
+        {
+            std::lock_guard lk(ev.channels_mtx_);
+            if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
+                return make_bool(false);
+            ch_ptr = ev.channels_[ch_id];
+        }
+        auto& ch = *ch_ptr;
         {
             std::lock_guard ul(ch.mtx);
             ch.closed = true;
