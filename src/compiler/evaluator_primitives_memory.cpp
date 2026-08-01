@@ -218,6 +218,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.string_heap_.shrink_to_fit();
             ev.pairs_.clear();
             ev.pairs_.shrink_to_fit();
+            // Issue #2486: cells_ was skipped — gc-stats reports cells:N but
+            // gc-heap left stale cell slots, so a "stronger reset" was a lie
+            // and (cell) ids could alias post-gc garbage. Clear with the other
+            // heap vectors; cell_id indices are invalid after gc-heap (same
+            // contract as string/pair indices).
+            ev.cells_.clear();
+            ev.cells_.shrink_to_fit();
             ev.error_values_.clear();
             ev.error_values_.shrink_to_fit();
             for (auto* fht : g_hash_tables)
@@ -234,6 +241,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             // (per the original comment). Without these clears the
             // doc claim was a lie — a fiber running after (gc-heap)
             // could still see stale modules_ / workspace_flat_.
+            // Audit (#2486): heap vectors cleared above — string/pairs/
+            // cells/err/hash/vec/opq. channels_ / closures_ are lifetime
+            // tables (not bulk-cleared here; closures use gc-temp / GC).
             destroy_defuse_index();
             ev.modules_.clear();
             ev.module_cache_.clear();

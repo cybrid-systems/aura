@@ -4110,6 +4110,24 @@ def cmd_load_cap_io_read_coverage():
     return 0
 
 
+def cmd_gc_heap_cells_clear_coverage():
+    """Issue #2486: gc-heap fallback clears cells_.
+
+    Stale cell data must not survive a full heap reset.
+    """
+    print(f"{B}=== gc-heap cells clear coverage (#2486) ==={N}")
+    script = ROOT / "scripts" / "check_gc_heap_cells_clear_2486.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("gc-heap cells clear (#2486) coverage contract rows failed")
+        return 1
+    ok("gc-heap cells clear (#2486) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5147,6 +5165,7 @@ def cmd_gate():
         or cmd_channel_rendezvous_coverage()
         or cmd_eval_current_no_auto_fix_coverage()
         or cmd_load_cap_io_read_coverage()
+        or cmd_gc_heap_cells_clear_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
