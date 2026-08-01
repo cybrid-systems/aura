@@ -3774,6 +3774,25 @@ def cmd_type_system_health_coverage():
     return 0
 
 
+def cmd_type_system_health_next_action_coverage():
+    """Issue #2462: type-system-health next-action + repair_nodes closed-loop.
+
+    Pure decide_type_system_next_action; additive next-action / repair keys
+    on query:type-system-health without breaking #2350.
+    """
+    print(f"{B}=== type-system-health next-action coverage (#2462) ==={N}")
+    script = ROOT / "scripts" / "check_type_system_health_next_action_2462.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type-system-health next-action (#2462) coverage contract rows failed")
+        return 1
+    ok("type-system-health next-action (#2462) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4793,6 +4812,7 @@ def cmd_gate():
         or cmd_mutation_log_cow_copy_coverage()
         or cmd_truncate_commit_gate_coverage()
         or cmd_type_system_health_coverage()
+        or cmd_type_system_health_next_action_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
