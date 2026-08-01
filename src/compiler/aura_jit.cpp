@@ -1910,11 +1910,10 @@ struct LLVMBuilder {
                         return true;
                     }
                     case PrimNullP: {
-                        // Void sentinel (11) or fixnum 0 (from () → LiteralInt 0) are null
+                        // Issue #2482: empty list is void sentinel (11) only.
+                        // Fixnum 0 is a number — never null? / end-of-list.
                         auto is_void = irb->CreateICmpEQ(a1, c64(11));
-                        auto is_zero = irb->CreateICmpEQ(a1, c64(0));
-                        auto is_null = irb->CreateOr(is_void, is_zero);
-                        store(result_slot, irb->CreateSelect(is_null, c64(7), c64(3)));
+                        store(result_slot, irb->CreateSelect(is_void, c64(7), c64(3)));
                         bump_fastpath();
                         return true;
                     }

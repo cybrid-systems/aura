@@ -58,11 +58,10 @@ using types::make_void;
 using aura::compiler::pure::is_truthy;
 
 namespace {
-    // Check if value is the end of a list (void is the proper sentinel)
-    // Note: int 0 is ALSO used as the empty list sentinel in some contexts,
-    // but we only treat it as end-of-list in cdr chain position.
-    static bool is_end_of_list(const EvalValue& v) {
-        return is_void(v) || (is_int(v) && as_int(v) == 0);
+    // Issue #2482: empty list is make_void() only (int 0 is a number).
+    // Improper (1 . 0) prints as dotted, not as a one-element list.
+    static bool is_end_of_list(const EvalValue& v) noexcept {
+        return is_void(v);
     }
     // Format a value to string (same formatting as io_print_val but returns string)
     static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
@@ -176,7 +175,7 @@ namespace {
                 std::fprintf(stdout, "<pair[%zu]>", (size_t)idx);
                 return;
             }
-            // Check if it's a proper list (cdr chain ends in void or int 0 sentinel)
+            // Check if it's a proper list (cdr chain ends in void)
             auto cdr = pairs[idx].cdr;
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)

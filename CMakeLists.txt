@@ -3337,6 +3337,11 @@ aura_add_issue_test(test_json_parse_object_grow_2481)
 aura_issue_test_link_llvm_jit(test_json_parse_object_grow_2481)
 add_dependencies(all_test_issue_targets test_json_parse_object_grow_2481)
 
+# Issue #2482: is_end_of_list / null? treat only void as empty list (not int 0).
+aura_add_issue_test(test_list_end_of_list_void_2482)
+aura_issue_test_link_llvm_jit(test_list_end_of_list_void_2482)
+add_dependencies(all_test_issue_targets test_list_end_of_list_void_2482)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
