@@ -6244,6 +6244,91 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+    // Issue #2517: (query:mutation-hold-live) — real-time longest outermost
+    // MutationBoundary holder probe for Agent self-degrade (split / yield).
+    // Surfaces fiber-id + start-ns + duration-us + depth. No holder → zeros.
+    // Coexists with #2405 hold-estimate (historical p50/p99) and #2379 health.
+    // Best-effort CAS updates (AC5); not a hard mutex owner lock.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-hold-live", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(24);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            const auto snap = aura::compiler::mutation_hold_live_snapshot();
+            const auto budget =
+                static_cast<std::int64_t>(aura::compiler::mutation_hold_budget_us());
+            const std::int64_t over_budget =
+                (snap.held && budget > 0 && static_cast<std::int64_t>(snap.duration_us) > budget)
+                    ? 1
+                    : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"fiber-id", make_int(static_cast<std::int64_t>(snap.fiber_id))},
+                {"start-ns", make_int(static_cast<std::int64_t>(snap.start_ns))},
+                {"duration-us", make_int(static_cast<std::int64_t>(snap.duration_us))},
+                {"depth", make_int(static_cast<std::int64_t>(snap.depth))},
+                {"held", make_int(snap.held ? 1 : 0)},
+                {"over-budget", make_int(over_budget)},
+                {"budget-us", make_int(budget)},
+                {"live-update-total", make_int(static_cast<std::int64_t>(
+                                          aura::compiler::g_mutation_hold_live_update_total.load(
+                                              std::memory_order_relaxed)))},
+                {"live-clear-total", make_int(static_cast<std::int64_t>(
+                                         aura::compiler::g_mutation_hold_live_clear_total.load(
+                                             std::memory_order_relaxed)))},
+                {"live-over-budget-observe-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_mutation_hold_live_over_budget_observe_total.load(
+                         std::memory_order_relaxed)))},
+                {"hold-live-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_mutation_hold_live_wired.load(std::memory_order_relaxed)))},
+                {"schema-2517", make_int(2517)},
+                {"issue-2517", make_int(2517)},
+                // AC4: coexistence markers for #2405 / #2379 discovery.
+                {"schema-2405", make_int(2405)},
+                {"hold-estimate-coexist", make_int(1)},
+                {"active", make_int(1)},
+            };
+            return build_hash(kv);
+        });
+
     // Issue #1504: (query:mutation-boundary-depth) — current Guard
     // nesting depth for Agent orchestration (0 = steal-safe / yield-safe).
     ObservabilityPrims::register_stats_impl(
