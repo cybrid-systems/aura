@@ -361,10 +361,17 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 if (aura_evaluator_bump_boundary_held_steal_safe)
                     aura_evaluator_bump_boundary_held_steal_safe();
             }
-            // Issue #2203 / #2377: single mandatory steal-complete entry
-            // (full transaction under strong ABI). Production forbids
-            // weak-null legacy residual-less path.
+            // Issue #2203 / #2377 / #2510: single mandatory steal-complete
+            // entry (full transaction under strong ABI: residual + stamp
+            // dual-check + forced restamp). Production forbids weak-null
+            // legacy residual-less path. On LayoutStamp hard-fail (#2510)
+            // the fiber is Cancel+Done — must not enqueue Ready.
             call_steal_complete(stolen);
+            if (stolen->state() == FiberState::Done || stolen->is_cancel_requested()) {
+                // Hard-fail path: generation-behind fiber rejected. Steal
+                // attempt counts as unsuccessful for enqueue purposes.
+                return false;
+            }
             local_queue_.push(stolen);
             return true;
         }

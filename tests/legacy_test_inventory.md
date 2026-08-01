@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 684 | Preferred destination suites |
-| **Total scanned** | **684** | |
+| `tests/core/test_*.cpp` | 685 | Preferred destination suites |
+| **Total scanned** | **685** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 194 | 194 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 71 | 71 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 72 | 72 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 69 | 69 | P2 — link-profile heavy; migrate AC smoke first |
@@ -763,6 +763,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/stdlib/test_stdlib_infrastructure.cpp`
 - `tests/compiler/test_stdlib_production_review_923.cpp`
 - `tests/serve/test_steal_complete_gc_defer_2203.cpp`
+- `tests/serve/test_steal_complete_restamp_txn_2510.cpp`
 - `tests/serve/test_steal_complete_strong_entry_2377.cpp`
 - `tests/serve/test_steal_layout_stamp_2351.cpp`
 - `tests/serve/test_steal_snapshot_hard_invariant_2346.cpp`
@@ -1160,13 +1161,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (71)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (72)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (71)
+#### domain/ (72)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy_2229.cpp` (#2229) [domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1230,6 +1231,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp` (—) [domain_suite, theme_serve] — test_scheduler_gc_safepoint_mutation_coordination.cpp —
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
 - `tests/serve/test_steal_complete_gc_defer_2203.cpp` (#2203) [domain_suite, theme_serve] — AC1: try_steal_from success always invokes aura_evaluator_on_steal_complete
+- `tests/serve/test_steal_complete_restamp_txn_2510.cpp` (#2510) [domain_suite, theme_serve] — AC1: on_steal_complete is the sole restamp entry (source-cite + gate)
 - `tests/serve/test_steal_complete_strong_entry_2377.cpp` (#2377) [domain_suite, theme_serve] — legacy residual-less path under production).
 - `tests/serve/test_steal_layout_stamp_2351.cpp` (#2351) [domain_suite, theme_serve] — AC1: Steal with matching stamp → no mismatch bump
 - `tests/serve/test_steal_snapshot_hard_invariant_2346.cpp` (#2346) [domain_suite, theme_serve] — (fail-closed canary). Soft: mismatch metric only. Hard: mark-failed.

@@ -2313,7 +2313,7 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
-// Issue #2203 / #2314 / #2351 / Issue #2377: single mandatory steal-complete
+// Issue #2203 / #2314 / #2351 / #2377 / #2510: single mandatory steal-complete
 // entry. Called from WorkerThread::try_steal_from on every successful
 // cross-worker steal (strong symbol linked). Production multi-worker MUST
 // link this strong def (Issue #2377) — weak no-op / null ABI is fail-closed
@@ -2324,11 +2324,15 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
 //   2. Panic orphan clear for previous host (#2203 clear_gc_defer_for_evaluator)
 //      + bit reconcile
 //   3. Residual GcDefer interlock when snapshot != 0 (#2314)
-//   4. LayoutStamp dual-check when stamp set (#2351); mismatch → deopt path
-//   5. Fold linear probe + outermost-enforced metrics
-// Soft: steps 3–4 are free when residual zero / stamp unset (relaxed loads).
-// Does NOT reemit / SoftEnter (leave to Guard / #2114) and does NOT run
-// full post-resume Env/bridge refresh (leave to #1490 / #2194 resume path).
+//   4. LayoutStamp dual-check when stamp set (#2351 / #2510):
+//        Soft mismatch → metric + deopt continue
+//        Hard/production mismatch → hard-fail (cancel + Done); no Ready enqueue
+//   5. Issue #2510: forced transactional restamp on success path
+//        (refresh_stale_frames_after_steal + StableNodeRef provenance restamp)
+//   6. Escape-gate clear (#2507) + linear probe + outermost-enforced metrics
+// Soft: steps 3–4 free when residual zero / stamp unset (relaxed loads).
+// Does NOT clear resume_layout_stamp (resume dual-check retains it — #2351).
+// Does NOT reemit / SoftEnter (leave to Guard / #2114).
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Always count the steal-complete entry (even with null fiber).
     aura::gc_hooks::g_steal_complete_total.fetch_add(1, std::memory_order_relaxed);
@@ -2409,10 +2413,11 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // (4) Issue #2351: LayoutStamp dual-check at steal-complete (before
-    // fiber is pushed local and later resumed). AC3/AC4: zero cost when no
-    // stamp set (single has_resume_layout_stamp load). Does NOT clear the stamp
+    // (4) Issue #2351 / #2510: LayoutStamp dual-check at steal-complete
+    // (before fiber is pushed local / resumed). Zero cost when no stamp
+    // set (single has_resume_layout_stamp load). Does NOT clear the stamp
     // — resume path (#2250) still dual-checks and clears (defense in depth).
+    bool hard_failed = false;
     if (fiber) {
         if (fiber->has_resume_layout_stamp()) {
             if (auto* ev = evaluator_for_scheduler_hooks()) {
@@ -2450,6 +2455,20 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                         /*had_moving_densify=*/true);
                     aura_aot_record_deopt_on_steal();
                     ev->bump_concurrent_safety_aot_reload_at_guard();
+                    // Issue #2510 AC2/AC3: under Hard/production, mark fiber
+                    // failed so worker must not enqueue Ready. Soft
+                    // (AURA_STEAL_SNAPSHOT_SOFT=1, production Soft ignored
+                    // via #2372) continues with metric + deopt only.
+                    if (aura::serve::is_steal_snapshot_hard_mode()) {
+                        aura::serve::Fiber::bump_steal_snapshot_hard_fail();
+                        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                            m->steal_complete_layout_hard_fail_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                        fiber->request_cancel();
+                        fiber->set_state(aura::serve::FiberState::Done);
+                        hard_failed = true;
+                    }
                 }
             }
         } else {
@@ -2475,7 +2494,27 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         }
     }
 
-    // (5) Issue #2507: invalidate OwnershipEscapeSummary / MoveOp elision
+    // (5) Issue #2510: transactional EnvFrame + provenance restamp on the
+    // success path (sole restamp entry for successful steal under strong
+    // ABI). Skipped after hard-fail so generation-behind fiber never gets
+    // a green restamp that would look Ready-safe. Idempotent with resume
+    // refresh_after_fiber_migration (#2194). Does NOT clear layout stamp.
+    if (fiber && !hard_failed) {
+        if (auto* ev = evaluator_for_scheduler_hooks()) {
+            const auto hint_env = fiber->resume_env_hint();
+            const auto expected_epoch = fiber->resume_bridge_epoch_hint();
+            (void)ev->refresh_stale_frames_after_steal(hint_env, expected_epoch);
+            // Issue #2362: EnvFrameRef ownership across steal (OOB drop /
+            // gen advanced → transfer_to). Soft free when live set empty.
+            ev->sync_live_env_frame_refs_ownership();
+            (void)ev->auto_restamp_pinned_stable_refs_at(Evaluator::StableRefRefreshSite::Steal);
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                m->steal_complete_restamp_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // (6) Issue #2507: invalidate OwnershipEscapeSummary / MoveOp elision
     // gate for the stolen eval (and previous host when known). Steal may
     // leave a live summary under an un-advanced cache_epoch — clear by
     // metrics* identity (all cow_gen) so next lower cannot stale-elide.
@@ -2497,11 +2536,14 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             clear_for_ev(prev_eval_id);
     }
 
-    // (6) Fold linear + outermost metrics into the same transaction so
+    // (7) Fold linear + outermost metrics into the same transaction so
     // worker never needs the legacy N-call residual-less path under a
     // full link (#2377). Weak stubs remain for light binaries only.
-    aura_evaluator_probe_linear_on_steal();
-    aura_evaluator_bump_steal_outermost_enforced();
+    // Skip on hard-fail — fiber is Done, no Ready run.
+    if (!hard_failed) {
+        aura_evaluator_probe_linear_on_steal();
+        aura_evaluator_bump_steal_outermost_enforced();
+    }
 }
 
 // Issue #2203: test-only helper — seed fiber yield-checkpoint evaluator_id

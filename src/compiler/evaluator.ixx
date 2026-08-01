@@ -12386,6 +12386,9 @@ public:
     // Issue #2351: steal-complete LayoutStamp dual-check counters.
     [[nodiscard]] std::uint64_t get_layout_stamp_steal_mismatch_total() const noexcept;
     [[nodiscard]] std::uint64_t get_layout_stamp_steal_missing_total() const noexcept;
+    // Issue #2510: steal-complete transactional restamp / layout hard-fail.
+    [[nodiscard]] std::uint64_t get_steal_complete_restamp_total() const noexcept;
+    [[nodiscard]] std::uint64_t get_steal_complete_layout_hard_fail_total() const noexcept;
     // Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
     // field) hard-fence counter accessor for query primitive.
     [[nodiscard]] std::uint64_t get_shape_version_fence_reject_total() const noexcept;

@@ -2813,6 +2813,11 @@ aura_add_issue_test(test_steal_layout_stamp_2351)
 aura_issue_test_link_llvm_jit(test_steal_layout_stamp_2351)
 add_dependencies(all_test_issue_targets test_steal_layout_stamp_2351)
 
+# Issue #2510: transactional LayoutStamp + provenance restamp on steal-complete.
+aura_add_issue_test(test_steal_complete_restamp_txn_2510)
+aura_issue_test_link_llvm_jit(test_steal_complete_restamp_txn_2510)
+add_dependencies(all_test_issue_targets test_steal_complete_restamp_txn_2510)
+
 # Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 # Smoke always (short); full 30s soak via AURA_CHAOS_FULL=1 (nightly).
 aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox_2352)
