@@ -183,7 +183,11 @@ int main() {
         FlatAST flat;
         constexpr int kKeys = 64;
         constexpr std::uint8_t kMaxRegion = 15;
-        // Force progressive dense resize by writing high SymIds.
+        // Pre-seed all keys so dense table is sized and final checks are
+        // meaningful even if the storm is short; writers then overwrite.
+        for (int i = 0; i < kKeys; ++i)
+            flat.set_function_region(static_cast<SymId>(500 + i), 0);
+
         std::atomic<bool> stop{false};
         std::atomic<std::uint64_t> writes{0};
         std::atomic<std::uint64_t> reads{0};
@@ -191,13 +195,16 @@ int main() {
         std::atomic<std::uint64_t> err{0};
 
         std::vector<std::thread> threads;
-        // 2 writers — grow dense table + store region+1 cells
+        // 2 writers — resize (already sized) + store region+1 cells
         for (int t = 0; t < 2; ++t) {
             threads.emplace_back([&, t]() {
                 int i = t;
                 while (!stop.load(std::memory_order_acquire)) {
                     try {
-                        const SymId sym = static_cast<SymId>(500 + (i % kKeys));
+                        // Also grow beyond pre-seed with higher SymIds to
+                        // exercise concurrent resize (Issue #2444 AC).
+                        const int key = (i % (kKeys * 2));
+                        const SymId sym = static_cast<SymId>(500 + key);
                         const auto reg = static_cast<std::uint8_t>((i + t) & kMaxRegion);
                         flat.set_function_region(sym, reg);
                         writes.fetch_add(1, std::memory_order_relaxed);
@@ -214,7 +221,8 @@ int main() {
                 int i = t;
                 while (!stop.load(std::memory_order_acquire)) {
                     try {
-                        const SymId sym = static_cast<SymId>(500 + (i % kKeys));
+                        const int key = (i % (kKeys * 2));
+                        const SymId sym = static_cast<SymId>(500 + key);
                         auto r = flat.get_function_region_for_sym(sym);
                         if (r.has_value()) {
                             if (*r > kMaxRegion)
@@ -243,7 +251,7 @@ int main() {
         CHECK(hits.load() > 0, "#2444: dense hits observed");
         CHECK(err.load() == 0, "#2444: no tear / invalid region / exceptions");
 
-        // Hot path still dense for published keys (no forced map-only)
+        // Pre-seeded keys always present; values in published range.
         for (int i = 0; i < kKeys; ++i) {
             const SymId sym = static_cast<SymId>(500 + i);
             auto r = flat.get_function_region_for_sym(sym);
