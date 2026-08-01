@@ -49,6 +49,7 @@ module;
 #include <cstdio>
 #include <cstdlib>
 #include <memory_resource>
+#include <span>
 #include <string>
 #include <vector>
 #include <contracts>
@@ -118,6 +119,9 @@ export inline std::atomic<std::uint64_t>& g_ir_soa_generation_fence() noexcept {
 export [[nodiscard]] inline std::uint64_t current_ir_soa_generation_fence() noexcept {
     return g_ir_soa_generation_fence().load(std::memory_order_acquire);
 }
+
+// Issue #2522: batch dirty cascade (mark_blocks_dirty + single generation bump).
+export inline constexpr int kIrSoaBatchDirtyIssue = 2522;
 
 // Compile-time SoA-only default (macro lives in this TU + consumers that
 // #include the GMF define block or set -DAURA_IR_SOA_ONLY). Exported for
@@ -263,21 +267,29 @@ export struct IRFunctionSoA {
     // Body defined outside the class (after BasicBlockSoA is
     // complete) because the cascade needs to read
     // `block.start_idx` / `block.end_idx`.
+    // Issue #2522: one generation bump (same as mark_blocks_dirty of 1).
     void mark_block_dirty(std::uint32_t block_id);
+
+    // Issue #2522: batch mark N blocks dirty + cascade instr ranges,
+    // then **one** bump_generation() / g_ir_soa_generation_fence advance
+    // regardless of block count. Empty span is a no-op (no bump).
+    void mark_blocks_dirty(std::span<const std::uint32_t> block_ids);
+
+    // Issue #2522: bulk-fill instruction_dirty_[start, end) + one bump.
+    // Used by block cascade and optional range invalidates.
+    void mark_instruction_range_dirty(std::uint32_t start_idx, std::uint32_t end_idx);
 
     // Mark all blocks dirty (used by mark_define_dirty for
     // a full invalidate). Cheaper than a loop of individual
     // mark_block_dirty() calls. Also marks all instructions
-    // dirty (cascade).
+    // dirty (cascade). Issue #2522: bulk fill + single bump
+    // (no double-bump / no per-block fence).
     void mark_all_blocks_dirty() {
-        for (auto& b : block_dirty_)
-            b = 1;
+        std::fill(block_dirty_.begin(), block_dirty_.end(), std::uint8_t{1});
         // Issue #380: cascade the all-blocks invalidate to all
-        // instructions too. Same byte-per-element representation
-        // as the block mask; both go to 0xFF... no wait, 0x01.
-        for (auto& i : instruction_dirty_)
-            i = 1;
-        // Issue #2111: generation fence on full-function dirty.
+        // instructions too. Bulk fill (Issue #2522).
+        std::fill(instruction_dirty_.begin(), instruction_dirty_.end(), std::uint8_t{1});
+        // Issue #2111: generation fence on full-function dirty (once).
         bump_generation();
     }
 
@@ -418,7 +430,7 @@ export struct BasicBlockSoA {
     std::vector<std::uint32_t> successors; // block indices in same function
 };
 
-// Issue #380: define IRFunctionSoA::mark_block_dirty here (after
+// Issue #380 / #2522: define IRFunctionSoA dirty cascade here (after
 // BasicBlockSoA is complete) so the cascade can read
 // `block.start_idx` and `block.end_idx`. Marked `inline` so
 // downstream importers get the same definition without ODR
@@ -429,31 +441,65 @@ inline void IRFunctionSoA::bump_generation() noexcept {
     g_ir_soa_generation_fence().fetch_add(1, std::memory_order_relaxed);
 }
 
-inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
-    // Issue #2142 / #2435: hot-tier contract (production OFF = zero cost;
-    // dirty cascade still runs; cold edges keep language pre/post).
-    AURA_HOT_CONTRACT(block_id < blocks_.size() || block_dirty_.empty() ||
-                      block_id <= block_dirty_.size());
-    if (block_id >= block_dirty_.size()) {
-        block_dirty_.resize(block_id + 1, 1);
-    } else {
-        block_dirty_[block_id] = 1;
+// Issue #2522: bulk-fill instruction_dirty_[start, end) without bump.
+// Internal helper shared by mark_block_dirty / mark_blocks_dirty /
+// mark_instruction_range_dirty.
+namespace detail {
+    inline void fill_instruction_dirty_range(IRFunctionSoA& fn, std::uint32_t start_idx,
+                                             std::uint32_t end_idx) noexcept {
+        if (start_idx >= end_idx)
+            return;
+        if (end_idx > fn.instruction_dirty_.size()) {
+            // Match prior per-index resize(i+1, 1) semantics: newly grown
+            // slots are dirty so cascade never leaves clean holes.
+            fn.instruction_dirty_.resize(end_idx, std::uint8_t{1});
+        }
+        std::fill(fn.instruction_dirty_.begin() + static_cast<std::ptrdiff_t>(start_idx),
+                  fn.instruction_dirty_.begin() + static_cast<std::ptrdiff_t>(end_idx),
+                  std::uint8_t{1});
     }
-    // Issue #380: cascade to all instructions in the block.
-    // If the block doesn't exist yet (block_id out of
-    // range for blocks_), the loop is a no-op — the block
-    // bit itself is now set, which is the safe default.
-    if (block_id < blocks_.size()) {
-        const auto& block = blocks_[block_id];
-        for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-            if (i >= instruction_dirty_.size()) {
-                instruction_dirty_.resize(i + 1, 1);
-            } else {
-                instruction_dirty_[i] = 1;
-            }
+
+    // Mark one block dirty + cascade instrs; no generation bump.
+    inline void mark_block_dirty_no_bump(IRFunctionSoA& fn, std::uint32_t block_id) {
+        // Issue #2142 / #2435: hot-tier contract (production OFF = zero cost;
+        // dirty cascade still runs; cold edges keep language pre/post).
+        AURA_HOT_CONTRACT(block_id < fn.blocks_.size() || fn.block_dirty_.empty() ||
+                          block_id <= fn.block_dirty_.size());
+        if (block_id >= fn.block_dirty_.size()) {
+            fn.block_dirty_.resize(block_id + 1, 1);
+        } else {
+            fn.block_dirty_[block_id] = 1;
+        }
+        // Issue #380 / #2522: cascade to all instructions in the block via
+        // bulk fill. Out-of-range block_id → no-op cascade (block bit set).
+        if (block_id < fn.blocks_.size()) {
+            const auto& block = fn.blocks_[block_id];
+            fill_instruction_dirty_range(fn, block.start_idx, block.end_idx);
         }
     }
+} // namespace detail
+
+inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
+    detail::mark_block_dirty_no_bump(*this, block_id);
     // Issue #2111 / #2432: generation fence on block dirty (and instr cascade).
+    bump_generation();
+}
+
+// Issue #2522: batch API — N blocks, one fence.
+inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> block_ids) {
+    if (block_ids.empty())
+        return;
+    for (const auto block_id : block_ids)
+        detail::mark_block_dirty_no_bump(*this, block_id);
+    bump_generation(); // once regardless of block count
+}
+
+// Issue #2522: optional range API + one fence.
+inline void IRFunctionSoA::mark_instruction_range_dirty(std::uint32_t start_idx,
+                                                        std::uint32_t end_idx) {
+    if (start_idx >= end_idx)
+        return;
+    detail::fill_instruction_dirty_range(*this, start_idx, end_idx);
     bump_generation();
 }
 
@@ -663,6 +709,7 @@ export struct IRModuleV2 {
     // Always leaves instruction_dirty_synced_with_blocks() == true.
     // Cascade / invalidate / dual-emit repair paths call this (not bare
     // sync_instruction_dirty_from_block_dirty).
+    // Issue #2522: does not bump generation (block marks already did).
     std::size_t finish_dirty_sync() {
         const auto flipped = sync_instruction_dirty_from_block_dirty();
         // Postcondition: every dirty block has all instructions dirty.
@@ -670,6 +717,15 @@ export struct IRModuleV2 {
         // bookkeeping — fix the caller rather than relaxing the assert.
         contract_assert(instruction_dirty_synced_with_blocks());
         return flipped;
+    }
+
+    // Issue #2522: batch mark blocks dirty on one function + single
+    // generation bump for that function (via IRFunctionSoA::mark_blocks_dirty).
+    void mark_function_blocks_dirty(std::size_t func_idx,
+                                    std::span<const std::uint32_t> block_ids) {
+        if (func_idx >= functions.size() || block_ids.empty())
+            return;
+        functions[func_idx].mark_blocks_dirty(block_ids);
     }
 
     // Issue #2034: count remaining block↔instruction dirty desyncs

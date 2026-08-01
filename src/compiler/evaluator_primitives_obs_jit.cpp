@@ -839,6 +839,10 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"soa-dirty-finish-wired", make_int(L(&CompilerMetrics::soa_dirty_finish_wired))},
                 {"schema-2139", make_int(2139)},
                 {"issue-2139", make_int(2139)},
+                // Issue #2522: batch mark_blocks_dirty + single generation bump
+                {"schema-2522", make_int(2522)},
+                {"issue-2522", make_int(2522)},
+                {"soa-batch-dirty-wired", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

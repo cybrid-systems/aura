@@ -4271,16 +4271,22 @@ public:
         // dirty block via IRModuleV2::finish_dirty_sync() (single entry).
         // Returns # of instruction bits flipped 0→1 (metric accounting).
         // Safe to call after any cascade path that set AoS bits directly.
+        // Issue #2522: batch mark_blocks_dirty per function (one generation
+        // bump per function, not per block).
         std::size_t force_soa_instruction_dirty_sync() {
             for (std::size_t fi = 0; fi < block_dirty_per_func_.size(); ++fi) {
                 if (fi >= soa_mod.functions.size())
                     break;
                 auto& soa_fn = soa_mod.functions[fi];
                 const auto& aos = block_dirty_per_func_[fi];
+                std::vector<std::uint32_t> dirty_ids;
+                dirty_ids.reserve(aos.size());
                 for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(aos.size()); ++bi) {
                     if (aos[bi] != 0)
-                        soa_fn.mark_block_dirty(bi);
+                        dirty_ids.push_back(bi);
                 }
+                if (!dirty_ids.empty())
+                    soa_fn.mark_blocks_dirty(dirty_ids);
             }
             // Issue #2139: only production call path into module dirty sync.
             return soa_mod.finish_dirty_sync();
@@ -4295,6 +4301,28 @@ public:
         // force_soa_instruction_dirty_sync() once at the end.
         void mark_block_dirty(std::size_t func_idx, std::uint32_t block_idx) {
             mark_block_dirty_impl(func_idx, block_idx, /*cascade_instrs=*/true);
+        }
+
+        // Issue #2522: batch mark multiple blocks dirty on one function.
+        // AoS bits + instr cascade per block; SoA uses mark_blocks_dirty
+        // (single generation / fence advance). Empty span is a no-op.
+        void mark_blocks_dirty(std::size_t func_idx, std::span<const std::uint32_t> block_idxs) {
+            if (block_idxs.empty())
+                return;
+            if (func_idx >= block_dirty_per_func_.size())
+                block_dirty_per_func_.resize(func_idx + 1);
+            auto& fb = block_dirty_per_func_[func_idx];
+            std::uint32_t max_id = 0;
+            for (const auto bi : block_idxs)
+                max_id = std::max(max_id, bi);
+            if (max_id >= fb.size())
+                fb.resize(max_id + 1, 0);
+            for (const auto bi : block_idxs) {
+                fb[bi] = 1;
+                cascade_block_to_instructions(func_idx, bi);
+            }
+            if (func_idx < soa_mod.functions.size())
+                soa_mod.functions[func_idx].mark_blocks_dirty(block_idxs);
         }
 
         // Issue #2109: mark block dirty without cascading every instruction
@@ -4569,16 +4597,23 @@ public:
                 for (auto& b : block_dirty_per_func_[0])
                     b = 0;
             }
-            std::size_t n = 0;
-            for (std::uint32_t bi = 0;
-                 bi < static_cast<std::uint32_t>(block_dirty_per_func_[body_idx].size()); ++bi) {
-                mark_block_dirty(body_idx, bi);
-                ++n;
+            // Issue #2522: batch body blocks — one SoA generation bump,
+            // not N× mark_block_dirty fence advances.
+            auto& fb = block_dirty_per_func_[body_idx];
+            std::vector<std::uint32_t> body_ids;
+            body_ids.reserve(fb.size());
+            for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fb.size()); ++bi) {
+                fb[bi] = 1;
+                body_ids.push_back(bi);
+                cascade_block_to_instructions(body_idx, bi);
             }
-            // Issue #2034: one force-sync after the body block batch
-            // (not per-block) so SoA instruction_dirty_ is fully
-            // mirrored before metrics / partial re-lower consult it.
-            (void)force_soa_instruction_dirty_sync();
+            if (body_idx < soa_mod.functions.size() && !body_ids.empty())
+                soa_mod.functions[body_idx].mark_blocks_dirty(body_ids);
+            const std::size_t n = body_ids.size();
+            // Issue #2034 / #2139: finish_dirty_sync validates block→instr
+            // (batch already cascaded; repair any residual desync without
+            // re-bumping per block).
+            (void)soa_mod.finish_dirty_sync();
             dirty = true;
             return n;
         }
@@ -5245,14 +5280,21 @@ public:
     // ImpactScope. When precise affected_instrs are present, mark block
     // dirty *without* cascading all instructions so clean slots stay
     // skippable on partial re-emit (AC2). Block-only scopes keep cascade.
+    // Issue #2522: non-precise multi-block path batches per function
+    // (one generation bump per function, not per block).
     // Returns number of instruction dirty marks applied.
     std::size_t apply_impact_scope_dirty(IRCacheEntry& entry, const ImpactScope& scope) {
         const bool precise = !scope.affected_instrs.empty();
-        for (const auto& b : scope.affected_blocks) {
-            if (precise)
+        if (precise) {
+            for (const auto& b : scope.affected_blocks)
                 entry.mark_block_dirty_bit_only(b.function_index, b.block_index);
-            else
-                entry.mark_block_dirty(b.function_index, b.block_index);
+        } else if (!scope.affected_blocks.empty()) {
+            // Group block ids by function for mark_blocks_dirty batch.
+            std::unordered_map<std::size_t, std::vector<std::uint32_t>> by_fn;
+            for (const auto& b : scope.affected_blocks)
+                by_fn[b.function_index].push_back(b.block_index);
+            for (auto& [fi, ids] : by_fn)
+                entry.mark_blocks_dirty(fi, ids);
         }
         std::size_t marks = 0;
         for (const auto& ir : scope.affected_instrs) {
@@ -5436,11 +5478,17 @@ public:
 
         std::size_t marked = 0;
         if (any_instr_hit) {
+            // Issue #2522: collect hits then batch mark (one fence).
+            std::vector<std::uint32_t> hit_ids;
+            hit_ids.reserve(hit.size());
             for (std::size_t bi = 0; bi < hit.size(); ++bi) {
                 if (!hit[bi])
                     continue;
-                entry.mark_block_dirty(fi, static_cast<std::uint32_t>(bi));
-                ++marked;
+                hit_ids.push_back(static_cast<std::uint32_t>(bi));
+            }
+            if (!hit_ids.empty()) {
+                entry.mark_blocks_dirty(fi, hit_ids);
+                marked = hit_ids.size();
             }
         } else {
             // free_vars / capture hit without per-block IR evidence:
