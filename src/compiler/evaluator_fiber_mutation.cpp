@@ -18,7 +18,8 @@ module;
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"                 // #2056: is_strict for cross-tenant ensure
 #include "compiler/hot_update_registry.hh" // Issue #2162: aura_hot_update_has_deferred_reemit
-#include <algorithm>                       // Issue #2189: remove_if for pin table invalidate
+#include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
+#include <algorithm> // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
 #include <memory> // Issue #1880: unique_ptr for orch agent body guard
@@ -2442,7 +2443,29 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         }
     }
 
-    // (5) Fold linear + outermost metrics into the same transaction so
+    // (5) Issue #2507: invalidate OwnershipEscapeSummary / MoveOp elision
+    // gate for the stolen eval (and previous host when known). Steal may
+    // leave a live summary under an un-advanced cache_epoch — clear by
+    // metrics* identity (all cow_gen) so next lower cannot stale-elide.
+    // Soft: single map walk; free when no matching entries.
+    {
+        auto clear_for_ev = [](void* eval_ptr) noexcept {
+            if (!eval_ptr)
+                return;
+            auto* ev = static_cast<Evaluator*>(eval_ptr);
+            if (void* m = ev->compiler_metrics())
+                aura::compiler::note_escape_gate_clear_on_steal(m);
+        };
+        if (auto* ev = evaluator_for_scheduler_hooks())
+            clear_for_ev(static_cast<void*>(ev));
+        // Previous host from yield checkpoint (Evaluator*) — clear its key
+        // too when distinct (cross-worker handoff).
+        if (prev_eval_id != nullptr &&
+            prev_eval_id != static_cast<void*>(evaluator_for_scheduler_hooks()))
+            clear_for_ev(prev_eval_id);
+    }
+
+    // (6) Fold linear + outermost metrics into the same transaction so
     // worker never needs the legacy N-call residual-less path under a
     // full link (#2377). Weak stubs remain for light binaries only.
     aura_evaluator_probe_linear_on_steal();

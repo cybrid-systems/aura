@@ -9935,6 +9935,23 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                           g_linear_escape_gate_key_contract_wired.load(std::memory_order_relaxed)));
             insert_kv("schema-2344", 2344);
             insert_kv("issue-2344", 2344);
+            // Issue #2507: steal-complete / densify-success clear-by-eval.
+            insert_kv("linear-escape-gate-steal-clear-total",
+                      static_cast<std::int64_t>(
+                          g_linear_escape_gate_steal_clear_total.load(std::memory_order_relaxed)));
+            insert_kv("linear-escape-gate-densify-clear-total",
+                      static_cast<std::int64_t>(g_linear_escape_gate_densify_clear_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("linear-escape-gate-steal-clear-entries-total",
+                      static_cast<std::int64_t>(g_linear_escape_gate_steal_clear_entries_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "linear-escape-gate-densify-clear-entries-total",
+                static_cast<std::int64_t>(g_linear_escape_gate_densify_clear_entries_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("linear-escape-gate-steal-densify-clear-wired", 1);
+            insert_kv("schema-2507", 2507);
+            insert_kv("issue-2507", 2507);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
