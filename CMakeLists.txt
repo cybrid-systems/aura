@@ -3294,6 +3294,12 @@ aura_add_issue_test(test_gc_closures_mtx_flush_sweep_2473)
 aura_issue_test_link_llvm_jit(test_gc_closures_mtx_flush_sweep_2473)
 add_dependencies(all_test_issue_targets test_gc_closures_mtx_flush_sweep_2473)
 
+# Issue #2474: FFI hot-path cache torn update — publish sig_hash last;
+# invalidate-first + reader double-check (no new-hash + old-fn invoke).
+aura_add_issue_test(test_ffi_hot_path_cache_toctou_2474)
+aura_issue_test_link_llvm_jit(test_ffi_hot_path_cache_toctou_2474)
+add_dependencies(all_test_issue_targets test_ffi_hot_path_cache_toctou_2474)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

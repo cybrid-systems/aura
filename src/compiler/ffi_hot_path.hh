@@ -46,6 +46,9 @@ struct FFIBatchHotPathStats {
     // Issue #2216: CellGrid typed present invokes.
     std::atomic<std::uint64_t> cellgrid_invoke_total{0};
     std::atomic<std::uint64_t> cellgrid_dispatch_total{0};
+    // Issue #2474: reader observed hash change mid-hit (double-check fail).
+    // Zero in steady state; non-zero under concurrent update_cache storms.
+    std::atomic<std::uint64_t> ffi_hot_path_cache_update_race_total{0};
 };
 
 inline FFIBatchHotPathStats& g_ffi_hot_path_stats() noexcept {
@@ -133,11 +136,21 @@ struct FFIBatchHotPath {
     }
 
     // Update cache (miss path). Holds miss_mtx.
+    //
+    // Issue #2474: never publish sig_hash before fn/abi. Readers hit on
+    // `fn != nullptr && h == sig_hash`; if hash is stored first they can
+    // pair the *new* hash with the *old* fn+abi (wrong invoke / type
+    // confusion). Protocol:
+    //   1) invalidate hash (0) so concurrent readers miss during the write
+    //   2) store abi + fn
+    //   3) store sig_hash LAST (publish token; acquire on hash sees fn/abi)
     void update_cache(std::uint64_t sig_hash, void* fn, RenderFfiAbi abi) noexcept {
+        // Issue #2474: publish protocol (hash last).
         std::lock_guard<std::mutex> lock(miss_mtx);
-        cached_sig_hash.store(sig_hash, std::memory_order_release);
-        cached_func_ptr.store(fn, std::memory_order_release);
+        cached_sig_hash.store(0, std::memory_order_release); // invalidate first
         cached_abi.store(static_cast<std::uint8_t>(abi), std::memory_order_release);
+        cached_func_ptr.store(fn, std::memory_order_release);       // fn before hash
+        cached_sig_hash.store(sig_hash, std::memory_order_release); // hash LAST
     }
 
     // Invoke according to ABI. Returns 0 for void/nullary, function ret for batch,
@@ -203,12 +216,21 @@ struct FFIBatchHotPath {
         }
         g_ffi_hot_path_stats().effect_granted_render_total.fetch_add(1, std::memory_order_relaxed);
 
+        // Issue #2474: load hash first; re-check after fn/abi so a concurrent
+        // update_cache cannot leave us with a mismatched triple.
         const auto cached_h = cached_sig_hash.load(std::memory_order_acquire);
         const auto cached_fn = cached_func_ptr.load(std::memory_order_acquire);
         if (cached_fn != nullptr && cached_h == sig_hash) {
-            record_hit();
             const auto cabi = static_cast<RenderFfiAbi>(cached_abi.load(std::memory_order_acquire));
-            return invoke(cached_fn, cabi, args);
+            const auto h2 = cached_sig_hash.load(std::memory_order_acquire);
+            if (h2 != cached_h) {
+                g_ffi_hot_path_stats().ffi_hot_path_cache_update_race_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                // Fall through to miss path (safe re-resolve).
+            } else {
+                record_hit();
+                return invoke(cached_fn, cabi, args);
+            }
         }
 
         // Slow path: parse/resolve already done by caller; update cache + call.
@@ -235,16 +257,22 @@ struct FFIBatchHotPath {
         }
         g_ffi_hot_path_stats().effect_granted_render_total.fetch_add(1, std::memory_order_relaxed);
 
+        // Issue #2474: same hash-last publish + double-check as dispatch_batch.
         const auto cached_h = cached_sig_hash.load(std::memory_order_acquire);
         const auto cached_fn = cached_func_ptr.load(std::memory_order_acquire);
         if (cached_fn != nullptr && cached_h == sig_hash) {
-            record_hit();
             const auto cabi = static_cast<RenderFfiAbi>(cached_abi.load(std::memory_order_acquire));
-            if (cabi != RenderFfiAbi::CellGrid) {
+            const auto h2 = cached_sig_hash.load(std::memory_order_acquire);
+            if (h2 != cached_h) {
+                g_ffi_hot_path_stats().ffi_hot_path_cache_update_race_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else if (cabi != RenderFfiAbi::CellGrid) {
                 g_ffi_hot_path_stats().invoke_skip_total.fetch_add(1, std::memory_order_relaxed);
                 return -1;
+            } else {
+                record_hit();
+                return invoke_cellgrid(cached_fn, cells, w, h, dirty_or_null);
             }
-            return invoke_cellgrid(cached_fn, cells, w, h, dirty_or_null);
         }
         record_miss();
         if (resolved_fn)
@@ -263,6 +291,8 @@ struct FFIBatchHotPath {
 
     void clear_cache() noexcept {
         std::lock_guard<std::mutex> lock(miss_mtx);
+        // Issue #2474: invalidate hash first so lock-free readers miss
+        // before fn is nulled (symmetric with update_cache publish order).
         cached_sig_hash.store(0, std::memory_order_release);
         cached_func_ptr.store(nullptr, std::memory_order_release);
         cached_abi.store(static_cast<std::uint8_t>(RenderFfiAbi::MetricsOnly),
@@ -326,6 +356,7 @@ struct FFIBatchHotPathSnapshot {
     std::uint64_t effect_granted_render_total = 0; // #2136
     std::uint64_t cellgrid_invoke_total = 0;       // #2216
     std::uint64_t cellgrid_dispatch_total = 0;     // #2216
+    std::uint64_t cache_update_race_total = 0;     // #2474
     int phase = kFfiHotPathPhase;
     int issue = kFfiHotPathIssue;
 };
@@ -342,6 +373,7 @@ struct FFIBatchHotPathSnapshot {
         s.effect_granted_render_total.load(std::memory_order_relaxed),
         s.cellgrid_invoke_total.load(std::memory_order_relaxed),
         s.cellgrid_dispatch_total.load(std::memory_order_relaxed),
+        s.ffi_hot_path_cache_update_race_total.load(std::memory_order_relaxed),
         kFfiHotPathPhase,
         kFfiHotPathIssue,
     };
@@ -358,6 +390,7 @@ inline void reset_ffi_hot_path_for_test() noexcept {
     s.effect_granted_render_total.store(0, std::memory_order_relaxed);
     s.cellgrid_invoke_total.store(0, std::memory_order_relaxed);
     s.cellgrid_dispatch_total.store(0, std::memory_order_relaxed);
+    s.ffi_hot_path_cache_update_race_total.store(0, std::memory_order_relaxed);
     clear_cellgrid_present_backend();
     global_ffi_batch_hot_path().clear_cache();
 }
