@@ -3701,6 +3701,24 @@ def cmd_restore_children_structural_lock_coverage():
     return 0
 
 
+def cmd_subtree_uses_sym_template_bloat_coverage():
+    """Issue #2456: hoist find_first_node_with instantiation to single TU.
+
+    Named functors + out-of-line subtree_uses_sym / find_define_by_name.
+    """
+    print(f"{B}=== subtree_uses_sym single-TU template hoist coverage (#2456) ==={N}")
+    script = ROOT / "scripts" / "check_subtree_uses_sym_template_bloat_2456.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("subtree_uses_sym single-TU template hoist (#2456) coverage contract rows failed")
+        return 1
+    ok("subtree_uses_sym single-TU template hoist (#2456) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4678,6 +4696,7 @@ def cmd_gate():
         or cmd_get_nodeview_snapshot_coverage()
         or cmd_raii_guard_flatast_lifetime_coverage()
         or cmd_restore_children_structural_lock_coverage()
+        or cmd_subtree_uses_sym_template_bloat_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
