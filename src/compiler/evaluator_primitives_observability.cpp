@@ -348,6 +348,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #504 — Guard impact log for AI decision loops
     "query:mutation-boundary-log",
     "query:mutation-boundary-hold-stats", // #2040 + #2121 region concurrency fields
+    // Issue #2523 — focused workspace_mtx contention for Agent self-throttle
+    "query:workspace-mtx-contention-stats",
     // Issue #1504 — first-class safe yield + depth instrumentation
     "query:mutation-boundary-depth",
     "query:mutation-boundary-safe-yield",

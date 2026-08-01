@@ -2412,6 +2412,11 @@ aura_add_issue_test(test_batch_dirty_cascade_2522)
 aura_issue_test_link_llvm_jit(test_batch_dirty_cascade_2522)
 add_dependencies(all_test_issue_targets test_batch_dirty_cascade_2522)
 
+# Issue #2523: residual workspace_mtx contention stats + soft region path.
+aura_add_issue_test(test_workspace_mtx_contention_2523)
+aura_issue_test_link_llvm_jit(test_workspace_mtx_contention_2523)
+add_dependencies(all_test_issue_targets test_workspace_mtx_contention_2523)
+
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)

@@ -7694,6 +7694,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_region_collision_total{0};       // #2121
     std::atomic<std::uint64_t> workspace_region_fallback_global_total{0}; // #2121
     std::atomic<std::uint64_t> workspace_region_hold_samples{0};          // #2121
+    // ── Issue #2523: residual contention stats for Agent self-throttle ──
+    // workspace_mtx_optimistic_hit_total: RegionExclusive soft-path success
+    // workspace_mtx_region_collision_total: alias of region collision (#2523 name)
+    // workspace_mtx_waiters_now / _peak: concurrent blocking waiters gauge
+    // hold_ns p99 is computed on read from hold histogram (no hot-path write).
+    // Exposed via query:workspace-mtx-contention-stats schema-2523.
+    std::atomic<std::uint64_t> workspace_mtx_optimistic_hit_total{0};   // #2523
+    std::atomic<std::uint64_t> workspace_mtx_region_collision_total{0}; // #2523
+    std::atomic<std::uint64_t> workspace_mtx_waiters_now{0};            // #2523
+    std::atomic<std::uint64_t> workspace_mtx_waiters_peak{0};           // #2523
     // ── Issue #2090: MutationBoundaryGuard outermost reemit pipeline ──
     // Pairs with #2035 cascade path: non-cascade exits (fiber-steal restore,
     // partial recovery, compact-only, exception unwind) drive the same

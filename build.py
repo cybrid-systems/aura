@@ -3238,6 +3238,24 @@ def cmd_batch_dirty_cascade_coverage():
     return 0
 
 
+def cmd_workspace_mtx_contention_coverage():
+    """Issue #2523: residual workspace_mtx contention stats + soft path.
+
+    query:workspace-mtx-contention-stats; optimistic hits; region soft path.
+    """
+    print(f"{B}=== workspace_mtx contention residual coverage (#2523) ==={N}")
+    script = ROOT / "scripts" / "check_workspace_mtx_contention_2523.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("workspace_mtx contention residual (#2523) coverage contract rows failed")
+        return 1
+    ok("workspace_mtx contention residual (#2523) coverage clean")
+    return 0
+
+
 def cmd_aot_linear_literal_noop_coverage():
     """Issue #2407: AOT move/Linear of Copy literals as no-ops + emit-binary.
 
@@ -5646,6 +5664,7 @@ def cmd_gate():
         or cmd_pcv_tls_scratch_coverage()
         or cmd_pcv_tls_default_on_coverage()
         or cmd_batch_dirty_cascade_coverage()
+        or cmd_workspace_mtx_contention_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()
