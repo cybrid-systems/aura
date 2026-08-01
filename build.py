@@ -4074,6 +4074,24 @@ def cmd_channel_rendezvous_coverage():
     return 0
 
 
+def cmd_eval_current_no_auto_fix_coverage():
+    """Issue #2484: eval-current must not auto-invoke workspace Defines.
+
+    Closures returned unchanged — no side-effect auto-fix path.
+    """
+    print(f"{B}=== eval-current no auto-fix coverage (#2484) ==={N}")
+    script = ROOT / "scripts" / "check_eval_current_no_auto_fix_2484.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("eval-current no auto-fix (#2484) coverage contract rows failed")
+        return 1
+    ok("eval-current no auto-fix (#2484) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -5109,6 +5127,7 @@ def cmd_gate():
         or cmd_json_parse_object_grow_coverage()
         or cmd_list_end_of_list_void_coverage()
         or cmd_channel_rendezvous_coverage()
+        or cmd_eval_current_no_auto_fix_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()

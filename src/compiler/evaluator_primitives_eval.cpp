@@ -687,92 +687,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             auto msg = diag.format();
             return mev(kind, msg);
         }
-        // ── Auto-fix closure: if result is an uncalled function, try call ──
-        // Uses the snapshot flat/pool (arena-stable after set-code design).
-        using aura::ast::NodeId;
-        using aura::ast::NodeTag;
-        if (is_closure(*result) && flat && pool) {
-            std::string fn_name;
-            int arity = 0;
-            // Use the snapshot flat from the initial pin (arena-stable).
-            for (NodeId nid = 0; nid < static_cast<NodeId>(flat->size()); ++nid) {
-                auto nv = flat->get(nid);
-                if (nv.tag == NodeTag::Define && nv.sym_id != aura::ast::INVALID_SYM) {
-                    fn_name = std::string(pool->resolve(nv.sym_id));
-                    arity = 0;
-                    if (!nv.children.empty()) {
-                        auto lambda_nv = flat->get(nv.child(0));
-                        if (lambda_nv.tag == NodeTag::Lambda)
-                            arity = static_cast<int>(lambda_nv.params.size());
-                    }
-                }
-            }
-            if (!fn_name.empty()) {
-                std::vector<std::string> arg_pats;
-                if (arity == 0) {
-                    arg_pats = {""};
-                } else if (arity == 1) {
-                    arg_pats = {"5", "0", "1", "\"test\"", "(list 3 1 4 1 5)"};
-                } else if (arity == 2) {
-                    arg_pats = {"42 7",
-                                "0 0",
-                                "(list 1 3 5 7 9) 5",
-                                "5 (list 1 3 5 7 9)",
-                                "(list 3 1 4 1 5) 1",
-                                "1 (list 3 1 4 1 5)"};
-                } else {
-                    arg_pats = {"1 2 3", "0 0 0"};
-                }
-                std::fflush(stdout);
-                int saved_stdout = ::dup(STDOUT_FILENO);
-                int null_fd = ::open("/dev/null", O_WRONLY);
-                if (null_fd >= 0)
-                    ::dup2(null_fd, STDOUT_FILENO);
-                bool auto_fixed = false;
-                std::string winning_call;
-                for (auto& args : arg_pats) {
-                    std::string call_code = "(" + fn_name;
-                    if (!args.empty())
-                        call_code += " " + args;
-                    call_code += ")";
-                    aura::ast::StringPool temp_pool;
-                    aura::ast::FlatAST temp_flat;
-                    auto pr = aura::parser::parse_to_flat(call_code, temp_flat, temp_pool);
-                    if (!pr.success || pr.root == aura::ast::NULL_NODE)
-                        continue;
-                    temp_flat.root = pr.root;
-                    auto call_expanded =
-                        aura::compiler::macro_expand_all(temp_flat, temp_pool, temp_flat.root);
-                    auto call_result = ev.eval_flat(temp_flat, temp_pool, call_expanded, ev.top_);
-                    if (!call_result || is_void(*call_result) || is_closure(*call_result))
-                        continue;
-                    auto_fixed = true;
-                    winning_call = call_code;
-                    break;
-                }
-                std::fflush(stdout);
-                ::dup2(saved_stdout, STDOUT_FILENO);
-                ::close(saved_stdout);
-                if (null_fd >= 0)
-                    ::close(null_fd);
-                if (auto_fixed && !winning_call.empty()) {
-                    aura::ast::StringPool call_pool;
-                    aura::ast::FlatAST call_flat;
-                    auto call_pr = aura::parser::parse_to_flat(winning_call, call_flat, call_pool);
-                    if (call_pr.success && call_pr.root != aura::ast::NULL_NODE) {
-                        call_flat.root = call_pr.root;
-                        auto call_expanded =
-                            aura::compiler::macro_expand_all(call_flat, call_pool, call_flat.root);
-                        auto call_result =
-                            ev.eval_flat(call_flat, call_pool, call_expanded, ev.top_);
-                        if (call_result) {
-                            ev.coverage_counters_[9]++;
-                            return *call_result;
-                        }
-                    }
-                }
-            }
-        }
+        // Issue #2484: auto-fix-on-closure REMOVED.
+        // Former path re-invoked the last workspace Define with hardcoded
+        // arg patterns (5 / "test" / lists) whenever eval-current returned a
+        // closure. That was wrong (last Define ≠ returned closure), ran side
+        // effects without capability checks, and could hang on infinite
+        // loops. Closures are returned unchanged — callers invoke explicitly.
         return *result;
     });
 
