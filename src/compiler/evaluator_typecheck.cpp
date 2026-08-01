@@ -284,8 +284,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             tc.set_on_selective_recheck([this]() { bump_selective_recheck_count(); });
             tc.set_on_touched_roots_snapshot([this](std::size_t n) { set_touched_roots_size(n); });
             tc.set_on_cross_delta_conflict([this]() { bump_cross_delta_conflicts_caught(); });
-            const auto reinferred =
-                tc.infer_flat_partial(*workspace_flat_, *workspace_pool_, log.back(), diag);
+            // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
+            const auto reinferred = tc.infer_flat_partial_with_dirty_txn(
+                *workspace_flat_, *workspace_pool_, log.back(), diag);
             (void)reinferred;
             // Issue #2180/#2220: stash partial CS for composite_txn_commit; with
             // persistent TC the same solve_delta_cs_ is reused next call.

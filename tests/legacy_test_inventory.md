@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 689 | Preferred destination suites |
-| **Total scanned** | **689** | |
+| `tests/core/test_*.cpp` | 690 | Preferred destination suites |
+| **Total scanned** | **690** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 197 | 197 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 198 | 198 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 73 | 73 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -806,6 +806,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_type_dep_epoch_prune_2355.cpp`
 - `tests/compiler/test_type_dep_partial_merge_2283.cpp`
 - `tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp`
+- `tests/compiler/test_type_dirty_txn_order_2516.cpp`
 - `tests/compiler/test_type_prop_invariant_correlation.cpp`
 - `tests/compiler/test_type_propagation_dead_coercion.cpp`
 - `tests/core/test_type_registry_ownership.cpp`
@@ -962,13 +963,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (197)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (198)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (197)
+#### domain/ (198)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1152,6 +1153,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tui_present_dirty_2214.cpp` (#2214) [domain_suite, theme_compiler] — AC1: Primitive registered under AURA_ENABLE_TUI + hot meta
 - `tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp` (#2191) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
+- `tests/compiler/test_type_dirty_txn_order_2516.cpp` (#2516) [domain_suite, theme_compiler] — AC1: Source-cite single ordered sequence on all production partial paths
 - `tests/compiler/test_type_system_health_2350.cpp` (#2350) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)
 - `tests/compiler/test_type_timeout_repair_2284.cpp` (#2284) [domain_suite, theme_compiler] — test_type_timeout_repair_2284.cpp
 - `tests/compiler/test_typed_mutation_audit_decision_2281.cpp` (#2281) [domain_suite, theme_compiler] — (≥12 cells per AC4) + the query schema sentinels (AC2/AC3).

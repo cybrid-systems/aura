@@ -8476,6 +8476,19 @@ struct CompilerMetrics {
     // type_ir_cone_union_size_avg_x100 — last avg |type ∪ IR| × 100.
     std::atomic<std::uint64_t> type_dirty_cone_mirrored_total{0};
     std::atomic<std::uint64_t> type_ir_cone_union_size_avg_x100{0};
+    // Issue #2516: single-transaction order for type_dep invalidate →
+    // partial re-infer → cascade mirror (all production partial paths).
+    //   type_dirty_txn_order_wired: sentinel (1 when #2516 path compiled/run)
+    //   type_dirty_txn_total: complete 1→2→3 transactions (non-empty affected)
+    //   type_dirty_txn_phase1_invalidate_total: after invalidate_type_dep_for_nodes
+    //   type_dirty_txn_phase2_reinfer_total: after re-infer loop
+    //   type_dirty_txn_phase3_mirror_total: after mirror_type_affected_to_cascade
+    // Empty dirty → early return before any phase bump (AC4 zero cost).
+    std::atomic<std::uint32_t> type_dirty_txn_order_wired{0};             // #2516
+    std::atomic<std::uint64_t> type_dirty_txn_total{0};                   // #2516
+    std::atomic<std::uint64_t> type_dirty_txn_phase1_invalidate_total{0}; // #2516
+    std::atomic<std::uint64_t> type_dirty_txn_phase2_reinfer_total{0};    // #2516
+    std::atomic<std::uint64_t> type_dirty_txn_phase3_mirror_total{0};     // #2516
     std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
     // Issue #2065: solve_delta_epoch_skip_total — count of touched /

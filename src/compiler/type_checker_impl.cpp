@@ -7216,49 +7216,30 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             }
         }
     }
+    // ── Issue #2516 dirty txn (single ordered sequence; all partial paths) ──
+    // Phase order (AC1 source-cite; do not reorder without updating tests):
+    //   1. invalidate_type_dep_for_nodes(dirty seeds)  — drop stale edges
+    //   2. re-infer affected (engine re-records type_dep)  — loop below
+    //   3. mirror_type_affected_to_cascade(post-infer cone) — AFTER phase 2
+    // Empty affected already returned above (AC4: no invalidate / no mirror).
+    // Pre-#2516 mirrored cascade before re-infer (stale cone risk); mirror
+    // is now deferred to after re-infer (see phase-3 block below).
+    //
     // Issue #2355 Phase B: after expand, drop dirty nids from type_dep so
     // re-infer re-records under the current epoch (bounds session growth).
     // Empty affected already returned above — span non-empty here.
     (void)invalidate_type_dep_for_nodes(std::span<const NodeId>(affected.data(), affected.size()));
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->type_dirty_txn_phase1_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        m->type_dirty_txn_order_wired.store(1, std::memory_order_relaxed);
+    }
     {
         const std::uint8_t kOccurrenceBit =
             static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
         for (auto id : occurrence_targets) {
             flat.mark_dirty(id, kOccurrenceBit);
             flat.mark_occurrence_stale(id);
-        }
-    }
-
-    // Issue #2191: mirror type cone (affected ∪ occurrence Ifs) into
-    // dirty::DepGraph cascade so partial re-lower / DirtyAware see
-    // type ∪ IR as authority. Occurrence If nodes stay in the cone
-    // when cascade also marks their blocks (AC3).
-    {
-        std::vector<NodeId> cone;
-        cone.reserve(affected.size() + occurrence_targets.size());
-        std::unordered_set<NodeId> seen;
-        seen.reserve((affected.size() + occurrence_targets.size()) * 2);
-        for (auto id : affected) {
-            if (id == NULL_NODE || id >= flat.size())
-                continue;
-            if (seen.insert(id).second)
-                cone.push_back(id);
-        }
-        for (auto id : occurrence_targets) {
-            if (id == NULL_NODE || id >= flat.size())
-                continue;
-            if (seen.insert(id).second)
-                cone.push_back(id);
-        }
-        const auto mirrored = dirty::mirror_type_affected_to_cascade(cone);
-        if (metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-            if (mirrored > 0)
-                m->type_dirty_cone_mirrored_total.fetch_add(mirrored, std::memory_order_relaxed);
-            // Snapshot last union size for Agent (avg lives in dirty::).
-            const auto avg_bp = static_cast<std::uint64_t>(dirty::type_ir_cone_union_size_avg() *
-                                                           100.0); // fixed-point ×100
-            m->type_ir_cone_union_size_avg_x100.store(avg_bp, std::memory_order_relaxed);
         }
     }
 
@@ -7530,8 +7511,50 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             ++re_inferred;
         }
     }
+    // Issue #2516 phase 2 complete: re-infer finished; type_dep re-recorded
+    // for visited nodes. Phase 3 mirror must see this post-infer cone.
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->type_dirty_txn_phase2_reinfer_total.fetch_add(1, std::memory_order_relaxed);
+    }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
+
+    // Issue #2516 phase 3 / #2191: mirror type cone (affected ∪ occurrence
+    // Ifs) into dirty::DepGraph cascade AFTER re-infer so cascade sees the
+    // post-infer affected set (not pre-invalidate stale). Empty cone →
+    // zero cost (mirror_type_affected_to_cascade no-ops). Occurrence If
+    // nodes stay in the cone when cascade also marks their blocks.
+    {
+        std::vector<NodeId> cone;
+        cone.reserve(affected.size() + occurrence_targets.size());
+        std::unordered_set<NodeId> seen;
+        seen.reserve((affected.size() + occurrence_targets.size()) * 2);
+        for (auto id : affected) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (seen.insert(id).second)
+                cone.push_back(id);
+        }
+        for (auto id : occurrence_targets) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (seen.insert(id).second)
+                cone.push_back(id);
+        }
+        const auto mirrored = dirty::mirror_type_affected_to_cascade(cone);
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->type_dirty_txn_phase3_mirror_total.fetch_add(1, std::memory_order_relaxed);
+            m->type_dirty_txn_total.fetch_add(1, std::memory_order_relaxed);
+            if (mirrored > 0)
+                m->type_dirty_cone_mirrored_total.fetch_add(mirrored, std::memory_order_relaxed);
+            // Snapshot last union size for Agent (avg lives in dirty::).
+            const auto avg_bp = static_cast<std::uint64_t>(dirty::type_ir_cone_union_size_avg() *
+                                                           100.0); // fixed-point ×100
+            m->type_ir_cone_union_size_avg_x100.store(avg_bp, std::memory_order_relaxed);
+        }
+    }
 
     // Accumulate per-call engine stats into TypeChecker stats.
     auto es = engine.stats();

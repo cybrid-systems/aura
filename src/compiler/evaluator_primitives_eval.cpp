@@ -958,7 +958,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // ancestors). See type_checker_impl.cpp:2901 for the
         // full algorithm.
         std::size_t re_inferred =
-            tc.infer_flat_partial(*ev.workspace_flat_, *ev.workspace_pool_, rec, diag);
+            // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
+            tc.infer_flat_partial_with_dirty_txn(*ev.workspace_flat_, *ev.workspace_pool_, rec,
+                                                 diag);
         std::string out = "re-inferred: " + std::to_string(re_inferred) + "\n";
         if (!diag.diagnostics().empty()) {
             out += "diagnostics:\n";
