@@ -533,9 +533,27 @@ void aura_jit_closure_record_safe_fallback(void);
 std::uint64_t aura_jit_closure_dual_check_total(void);
 std::uint64_t aura_jit_closure_stale_deopt_total(void);
 std::uint64_t aura_jit_closure_safe_fallbacks(void);
-// Issue #2371: cross-COW soft restamp vs hard-reject counters.
+// Issue #2371 / #2505: cross-COW call-time soft migrate vs hard safe-fallback.
+//
+// Scope (single-workspace MVP — NOT full COW heap migration / #2275 write path):
+//   On aura_closure_call dual-freshness miss only:
+//     Soft: live slot + linear-safe + |epoch_delta| ≤ K → restamp bridge+defuse
+//           (+ remount if captures) and continue native. Default soft ON.
+//     Hard: freed, linear-moved / fingerprint drift, delta > K, remount fail,
+//           or soft disabled → safe-fallback (no native body).
+//   K = AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT (default 4096; 0 = unlimited).
+//   Soft off: AURA_CROSS_COW_SOFT_MIGRATE=0 → always hard on dual miss.
+//   Does NOT open cross-workspace hot-update write (#2178 / #2275 fail-closed).
+//
+// Hard-reject reason enum (cross_cow_last_hard_reject_reason / breakdown):
+//   0=None 1=Disabled 2=Freed 3=FarBehind 4=Linear 5=RemountFail 6=Other
 void aura_bump_cross_cow_soft_migrate_total(void) noexcept;
 void aura_bump_cross_cow_hard_reject_total(void) noexcept;
+// Issue #2505: reason breakdown bumpers + policy knobs (Agent query).
+void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept;
+[[nodiscard]] std::uint8_t aura_cross_cow_last_hard_reject_reason(void) noexcept;
+[[nodiscard]] int aura_cross_cow_soft_migrate_enabled(void) noexcept;
+[[nodiscard]] std::uint64_t aura_cross_cow_soft_migrate_max_drift(void) noexcept;
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
 

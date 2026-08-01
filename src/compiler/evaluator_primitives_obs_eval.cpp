@@ -10498,7 +10498,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                       m ? L(&m->compiler_closure_safe_fallbacks) : 0);
             // #1604 / #1626: JIT-side dual-check counters (same dashboard).
             insert_kv("jit_closure_dual_check_total", m ? L(&m->jit_closure_dual_check_total) : 0);
-            // Issue #2371: cross-COW soft restamp vs hard-reject.
+            // Issue #2371 / #2505: cross-COW soft restamp vs hard-reject.
             insert_kv("cross-cow-soft-migrate-total", m ? L(&m->cross_cow_soft_migrate_total) : 0);
             insert_kv("cross_cow_soft_migrate_total", m ? L(&m->cross_cow_soft_migrate_total) : 0);
             insert_kv("cross-cow-hard-reject-total", m ? L(&m->cross_cow_hard_reject_total) : 0);
@@ -10506,6 +10506,32 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("cross-cow-soft-migrate-wired", 1);
             insert_kv("schema-2371", 2371);
             insert_kv("issue-2371", 2371);
+            // Issue #2505: reason breakdown + policy knobs (additive).
+            insert_kv("cross-cow-hard-reject-disabled-total",
+                      m ? L(&m->cross_cow_hard_reject_disabled_total) : 0);
+            insert_kv("cross-cow-hard-reject-freed-total",
+                      m ? L(&m->cross_cow_hard_reject_freed_total) : 0);
+            insert_kv("cross-cow-hard-reject-far-behind-total",
+                      m ? L(&m->cross_cow_hard_reject_far_behind_total) : 0);
+            insert_kv("cross-cow-hard-reject-linear-total",
+                      m ? L(&m->cross_cow_hard_reject_linear_total) : 0);
+            insert_kv("cross-cow-hard-reject-remount-fail-total",
+                      m ? L(&m->cross_cow_hard_reject_remount_fail_total) : 0);
+            insert_kv("cross-cow-hard-reject-other-total",
+                      m ? L(&m->cross_cow_hard_reject_other_total) : 0);
+            insert_kv("cross-cow-last-hard-reject-reason",
+                      m ? static_cast<std::int64_t>(
+                              m->cross_cow_last_hard_reject_reason.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("cross-cow-soft-migrate-max-drift",
+                      static_cast<std::int64_t>(aura_cross_cow_soft_migrate_max_drift()));
+            insert_kv("cross-cow-soft-migrate-enabled",
+                      static_cast<std::int64_t>(aura_cross_cow_soft_migrate_enabled()));
+            insert_kv("cross-cow-soft-migrate-default-max-drift", 4096);
+            insert_kv("cross-cow-call-time-only-wired", 1);
+            insert_kv("cross-cow-single-workspace-mvp-wired", 1);
+            insert_kv("schema-2505", 2505);
+            insert_kv("issue-2505", 2505);
             insert_kv("jit_closure_stale_deopt_total",
                       m ? L(&m->jit_closure_stale_deopt_total) : 0);
             insert_kv("jit_closure_safe_fallbacks", m ? L(&m->jit_closure_safe_fallbacks) : 0);

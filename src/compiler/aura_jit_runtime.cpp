@@ -1151,16 +1151,31 @@ static void stamp_closure_provenance_locked(size_t cid) {
     g_closure_env_gen[cid] = env_gen;
 }
 
-// Issue #2371: production-default-on soft migrate policy.
+// Issue #2371 / #2505: production-default-on soft migrate policy.
 // AURA_CROSS_COW_SOFT_MIGRATE=0 disables; unset / 1 → on.
+// Contract (call-time only; single-workspace MVP — see aura_jit_bridge.h):
+//   Soft: live + linear-safe + |epoch_delta| ≤ K
+//   Hard: freed / linear / far-behind / remount-fail / disabled
+// Reason codes mirror aura_bump_cross_cow_hard_reject_reason.
+enum class CrossCowHardReject : std::uint8_t {
+    None = 0,
+    Disabled = 1,
+    Freed = 2,
+    FarBehind = 3,
+    Linear = 4,
+    RemountFail = 5,
+    Other = 6,
+};
+
 static bool cross_cow_soft_migrate_enabled_() noexcept {
     if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE"))
         return e[0] != '0' && e[0] != '\0';
     return true;
 }
 
-// Max generation lag for soft migrate (0 = unlimited). Default 4096.
+// Max generation lag K for soft migrate (0 = unlimited). Default 4096.
 // Far-behind stamps hard-reject (COW clone long detached from live gen).
+// Override: AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT=<N>.
 static std::uint64_t cross_cow_soft_migrate_max_drift_() noexcept {
     if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT")) {
         char* end = nullptr;
@@ -1169,6 +1184,13 @@ static std::uint64_t cross_cow_soft_migrate_max_drift_() noexcept {
             return static_cast<std::uint64_t>(v);
     }
     return 4096;
+}
+
+extern "C" int aura_cross_cow_soft_migrate_enabled(void) noexcept {
+    return cross_cow_soft_migrate_enabled_() ? 1 : 0;
+}
+extern "C" std::uint64_t aura_cross_cow_soft_migrate_max_drift(void) noexcept {
+    return cross_cow_soft_migrate_max_drift_();
 }
 
 static bool cross_cow_drift_within_cap_(std::uint64_t captured, std::uint64_t current) noexcept {
@@ -1181,6 +1203,10 @@ static bool cross_cow_drift_within_cap_(std::uint64_t captured, std::uint64_t cu
     return lag <= max_d;
 }
 
+static void cross_cow_note_hard_(CrossCowHardReject r) noexcept {
+    aura_bump_cross_cow_hard_reject_reason(static_cast<std::uint8_t>(r));
+}
+
 // Forward decl: remount body (defined later in this TU).
 static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
                                                   std::uint64_t live_env_gen,
@@ -1191,19 +1217,24 @@ static int remount_or_force_deopt_unlocked(std::int64_t closure_id, std::uint64_
                                            std::uint64_t batch_deopt_epoch) noexcept;
 static int aura_closure_has_env_or_linear_captures_unlocked(std::int64_t closure_id);
 
-// Issue #2371: exclusive soft restamp of dual-epoch (+ remount). Caller
-// must NOT hold g_closure_table_mtx or workspace read. Returns 1 on success
-// (caller should re-take shared locks and continue native path).
+// Issue #2371 / #2505: exclusive soft restamp of dual-epoch (+ remount).
+// Caller must NOT hold g_closure_table_mtx or workspace read. Returns 1 on
+// success (caller re-takes shared locks and continues native). On fail
+// notes hard-reject reason (#2505) then returns 0 (caller hard-rejects).
 static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
-    if (!cross_cow_soft_migrate_enabled_())
+    if (!cross_cow_soft_migrate_enabled_()) {
+        cross_cow_note_hard_(CrossCowHardReject::Disabled);
         return 0;
+    }
     std::unique_lock<std::shared_mutex> wlock(g_closure_table_mtx);
     aura_lock_workspace_write();
     if (cid >= g_closure_func_ids.size()) {
+        cross_cow_note_hard_(CrossCowHardReject::Other);
         aura_unlock_workspace_write();
         return 0;
     }
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+        cross_cow_note_hard_(CrossCowHardReject::Freed);
         aura_unlock_workspace_write();
         return 0;
     }
@@ -1215,15 +1246,25 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
     const std::uint64_t cur_defuse = aura_get_aot_defuse_version();
     if (!cross_cow_drift_within_cap_(cap_bridge, cur_bridge) ||
         !cross_cow_drift_within_cap_(cap_defuse, cur_defuse)) {
+        cross_cow_note_hard_(CrossCowHardReject::FarBehind);
         aura_unlock_workspace_write();
         return 0;
     }
     const std::uint8_t lin = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
     if (lin != 0) {
+        // Issue #2505: linear fingerprint drift vs live → hard reject
+        // (linear-moved / ownership epoch advanced past capture stamp).
+        const auto live_lin_fp = aura_get_aot_live_linear_state_fingerprint();
+        if (live_lin_fp != 0 && lin != live_lin_fp) {
+            cross_cow_note_hard_(CrossCowHardReject::Linear);
+            aura_unlock_workspace_write();
+            return 0;
+        }
         const char* cname = (cid < g_closure_names.size() && !g_closure_names[cid].empty())
                                 ? g_closure_names[cid].c_str()
                                 : nullptr;
         if (aura_jit_linear_epoch_safety_check(cname, lin, /*opcode=*/0) != 0) {
+            cross_cow_note_hard_(CrossCowHardReject::Linear);
             aura_unlock_workspace_write();
             return 0;
         }
@@ -1239,6 +1280,7 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
         // batch_deopt so half-remount cannot leave native path live.
         if (remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), live_env, live_lin,
                                             cur_bridge) == 0) {
+            cross_cow_note_hard_(CrossCowHardReject::RemountFail);
             aura_unlock_workspace_write();
             return 0;
         }

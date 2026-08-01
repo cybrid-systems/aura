@@ -4788,6 +4788,25 @@ def cmd_cross_cow_soft_migrate_coverage():
     return 0
 
 
+def cmd_cross_cow_drift_contract_coverage():
+    """Issue #2505: cross-COW soft-migrate drift K + hard-reject reason breakdown.
+
+    Documents call-time single-workspace MVP; near-drift soft, far/linear/
+    disabled hard with Agent-facing reason counters + query keys.
+    """
+    print(f"{B}=== cross-COW drift contract coverage (#2505) ==={N}")
+    script = ROOT / "scripts" / "check_cross_cow_drift_contract_2505.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross-COW drift contract (#2505) coverage contract rows failed")
+        return 1
+    ok("cross-COW drift contract (#2505) coverage clean")
+    return 0
+
+
 def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 
@@ -5402,6 +5421,7 @@ def cmd_gate():
         or cmd_specjit_per_eval_storm_isolation_coverage()
         or cmd_specjit_pereval_storm_e2e_coverage()
         or cmd_cross_cow_soft_migrate_coverage()
+        or cmd_cross_cow_drift_contract_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
