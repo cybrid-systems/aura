@@ -2094,6 +2094,53 @@ extern "C" void aura_orch_note_mailbox_backpressure() {
     aura::orch::note_mailbox_bp_recent_event();
 }
 
+// Issue #2491: TenantScope install at Fiber::resume entry from the
+// fiber's assigned_tenant_id (when set + production sandbox active).
+// Strong def overrides fiber_bridge weak no-op when the Evaluator
+// module is linked. Holds the RAII scope in a thread_local so the
+// fiber body runs under the assigned principal for its full lifetime
+// (until release on yield / completion).
+namespace {
+    thread_local std::unique_ptr<Evaluator::TenantScope> g_fiber_tenant_scope{};
+}
+
+extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noexcept {
+    if (!fiber_ptr)
+        return;
+    auto* f = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    const auto assigned = f->assigned_tenant_id();
+    if (assigned == 0)
+        return; // AC5: Soft / no assigned tenant — unit path unchanged.
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    // Soft path: AURA_SANDBOX=off — skip force per AC5.
+    const auto mode = static_cast<std::uint8_t>(ev->effect_sandbox_mode());
+    if (mode == 0)
+        return;
+    // Mismatch detection: if the worker's ambient principal diverges
+    // from the fiber's stamped tenant, bump the metric. The Scope
+    // install itself still proceeds (mandate entry contract) — the
+    // bump is observability for ops / Agent dashboards.
+    if (ev->capability_tenant_id() != 0 && ev->capability_tenant_id() != assigned) {
+        aura::serve::Fiber::bump_tenant_scope_mismatch();
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->tenant_scope_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Install scope (release any prior scope first — defensive).
+    g_fiber_tenant_scope.reset(
+        new Evaluator::TenantScope(*ev, assigned, /*name=*/{}, /*allow_cross=*/false));
+}
+
+extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
+    // Release (does not destroy) — restore previous principal so a
+    // subsequent resume of a different fiber on the same worker starts
+    // from a clean baseline.
+    if (g_fiber_tenant_scope)
+        g_fiber_tenant_scope->release();
+    g_fiber_tenant_scope.reset();
+}
+
 // Issue #2397: Fiber reclaim still-running / body-retired → OrchModuleStats.
 // Strong defs override fiber_bridge weak no-ops when evaluator/orch is linked.
 // Fiber owns the process-truth gauges; these mirrors feed query:orch-module-stats.

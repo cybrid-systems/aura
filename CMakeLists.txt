@@ -3533,6 +3533,14 @@ aura_issue_test_link_llvm_jit(test_require_effect_live_mid_2384)
 aura_add_issue_test(test_require_effect_auto_isolation_2490)
 aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation_2490)
 
+# Issue #2491: mandate TenantScope at fiber spawn/resume entry (no residual
+# principal). assigned_tenant_id_ on Fiber + bridge hooks
+# aura_fiber_install_tenant_scope_for_resume / aura_fiber_release_tenant_scope_after_yield
+# on Fiber::resume / yield boundary. Single authority with #2385 / #2055 /
+# #2388 + #2490 require_effect auto-isolation.
+aura_add_issue_test(test_tenant_scope_fiber_mandate_2491)
+aura_issue_test_link_llvm_jit(test_tenant_scope_fiber_mandate_2491)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.

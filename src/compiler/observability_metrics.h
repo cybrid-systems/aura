@@ -6609,6 +6609,11 @@ struct CompilerMetrics {
     // Issue #2118: orch agent soft mutation-boundary registration (fiber path).
     std::atomic<std::uint64_t> orch_agent_boundary_entered_total{0};
     std::atomic<std::uint64_t> orch_agent_steal_skipped_boundary_total{0};
+    // Issue #2491: TenantScope install mismatch at fiber resume (current
+    // capability_tenant_id_ != assigned_tenant_id_). Mirrors
+    // Fiber::tenant_scope_mismatch_total() process-wide static aggregate
+    // — bumped once per mismatch, not per resume.
+    std::atomic<std::uint64_t> tenant_scope_mismatch_total{0};
     // Issue #740: linear ownership safety in JIT L2 hot paths
     // post-invalidate (Arena/DropOp/GC root re-sync).
     // Exposed via (query:linear-jit-safety-stats).
