@@ -63,8 +63,9 @@ def main() -> int:
     must("residual defer clean", "AC3", test)
     must("no hang", "AC3", test)
 
-    # AC4 smoke stays short without FULL / prod gate
-    must("if (!chaos_full() && !prod_gate)", "AC4", test)
+    # AC4 smoke stays short without FULL / prod gate / soak (#2513)
+    if "if (!chaos_full() && !prod_gate" not in test and "if (!chaos_full() && !prod_gate && !soak)" not in test:
+        fails.append("AC4: missing smoke wall guard (FULL/prod/soak)")
     must("90", "AC4", test)
     must("SKIPPED", "AC4", test)
 
