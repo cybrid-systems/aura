@@ -3357,6 +3357,11 @@ aura_add_issue_test(test_load_cap_io_read_2485)
 aura_issue_test_link_llvm_jit(test_load_cap_io_read_2485)
 add_dependencies(all_test_issue_targets test_load_cap_io_read_2485)
 
+# Issue #2486: gc-heap fallback clears cells_ (stale cell data).
+aura_add_issue_test(test_gc_heap_cells_clear_2486)
+aura_issue_test_link_llvm_jit(test_gc_heap_cells_clear_2486)
+add_dependencies(all_test_issue_targets test_gc_heap_cells_clear_2486)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
