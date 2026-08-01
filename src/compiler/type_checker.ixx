@@ -1554,6 +1554,18 @@ public:
         on_selective_recheck_ = std::move(on_selective);
     }
 
+    // Issue #2357 / #2514: public read of synth hard-fail (engine is
+    // short-lived; TypeChecker / Evaluator lift sticky before destroy).
+    [[nodiscard]] bool linear_synth_hard_fail() const noexcept { return linear_synth_hard_fail_; }
+    [[nodiscard]] std::uint64_t linear_synth_violation_count() const noexcept {
+        return linear_synth_violation_count_;
+    }
+    // Issue #2514: reset after MutationBoundary / hard-gate consumes the signal.
+    void clear_linear_synth_hard_fail() noexcept {
+        linear_synth_hard_fail_ = false;
+        linear_synth_violation_count_ = 0;
+    }
+
 private:
     std::function<void()> on_narrowing_refresh_;
     std::function<void()> on_selective_recheck_;
@@ -1627,12 +1639,7 @@ private:
                                      const std::string& suggestion,
                                      aura::core::TypeId binding_ty = {});
 
-    // Issue #2357: true if any hard linear-synth violation this engine life.
-    [[nodiscard]] bool linear_synth_hard_fail() const noexcept { return linear_synth_hard_fail_; }
-    [[nodiscard]] std::uint64_t linear_synth_violation_count() const noexcept {
-        return linear_synth_violation_count_;
-    }
-
+    // Issue #2357: private sticky flags (public accessors above).
     bool linear_synth_hard_fail_ = false;
     std::uint64_t linear_synth_violation_count_ = 0;
 
@@ -1692,6 +1699,11 @@ export struct TypeCheckResult {
     // 0 = no narrowing applied (no predicate found, or the
     //     predicate wasn't recognized).
     std::uint32_t narrow_evidence = 0;
+
+    // Issue #2514 / #2357: synth hard-fail from this pure check call.
+    // Soft Warning path leaves this false (recoverable).
+    bool linear_synth_hard_fail = false;
+    std::uint64_t linear_synth_violation_count = 0;
 
     // Issue #281: predicate memo stats. Mirrors the
     // InferenceEngine's internal counters, copied into the
@@ -1922,6 +1934,22 @@ export struct TypeChecker {
     // also set_node_error TypeError. Boundary Full audit still runs.
     [[nodiscard]] bool last_partial_linear_revalidate_fail() const noexcept {
         return last_partial_linear_revalidate_fail_;
+    }
+    // Issue #2514: sticky synth hard-fail from last infer_flat /
+    // infer_flat_partial (engine is short-lived). Soft Warning does NOT
+    // set this. Boundary / finish_mutate_hard_gate consume via clear.
+    // Counter ownership: linear_synth_* (#2357) = synthesize phase;
+    // linear_invariant_fail = post-mutate audit only (no double-count when
+    // synth hard-fail forces early exit before audit linear walk).
+    [[nodiscard]] bool last_linear_synth_hard_fail() const noexcept {
+        return last_linear_synth_hard_fail_;
+    }
+    [[nodiscard]] std::uint64_t last_linear_synth_violation_count() const noexcept {
+        return last_linear_synth_violation_count_;
+    }
+    void clear_last_linear_synth_hard_fail() noexcept {
+        last_linear_synth_hard_fail_ = false;
+        last_linear_synth_violation_count_ = 0;
     }
     // Issue #2180 / #2262: solve_delta_cs_ after partial import (commit reuse).
     // True when the long-lived CS has dirty/touched/occurrence work after
@@ -2245,6 +2273,9 @@ public:
     bool last_partial_cs_live_ = false;
     // Issue #2460: last infer_flat_partial dirty ownership re-sim failed.
     bool last_partial_linear_revalidate_fail_ = false;
+    // Issue #2514: sticky linear-synth hard-fail from last engine life.
+    bool last_linear_synth_hard_fail_ = false;
+    std::uint64_t last_linear_synth_violation_count_ = 0;
 
     // Issue #283 follow-up #5 / #627: plumb bidirectional flag
     // from CompilerService into per-call InferenceEngine instances.

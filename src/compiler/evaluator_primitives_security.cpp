@@ -3332,6 +3332,25 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"linear-partial-revalidate-wired", make_int(1)},
                 {"schema-2460", make_int(2460)},
                 {"issue-2460", make_int(2460)},
+                // Issue #2514: synth hard-fail ↔ boundary single rollback authority.
+                // Counter ownership: linear_synth_* = synthesize; linear_invariant_fail
+                // = post-mutate audit only; boundary-force-rollback = #2514 early exit.
+                {"linear-synth-boundary-force-rollback-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_synth_boundary_force_rollback_total.load(
+                             std::memory_order_relaxed)))},
+                {"linear-synth-boundary-skip-recovery-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_synth_boundary_skip_recovery_total.load(
+                             std::memory_order_relaxed)))},
+                {"linear-synth-authority-unified",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_synth_authority_unified.load(std::memory_order_relaxed)))},
+                {"schema-2514", make_int(2514)},
+                {"issue-2514", make_int(2514)},
             };
             return build_hash(kv);
         });

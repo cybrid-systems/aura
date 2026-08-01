@@ -3341,6 +3341,24 @@ public:
     [[nodiscard]] bool finish_mutate_hard_gate(std::uint64_t nodes_changed = 0,
                                                bool linear_ops_present = false,
                                                std::string_view op = "mutate") noexcept;
+    // Issue #2514: single rollback authority for linear_synth_hard_fail.
+    // Returns true when production/strict synth hard-fail is pending
+    // (TypeChecker last_linear_synth_hard_fail or evaluator sticky flag).
+    // Soft Warning synth never sets this.
+    [[nodiscard]] bool linear_synth_hard_fail_pending() const noexcept;
+    // Issue #2514: note sticky flag after post-mutate typecheck.
+    void note_linear_synth_hard_fail_pending() noexcept;
+    // Issue #2514: clear sticky flag after boundary / hard-gate consumes it.
+    void clear_linear_synth_hard_fail_pending() noexcept;
+    // Issue #2514: if synth hard-fail pending → set deny reason, bump
+    // force-rollback counters, skip soft partial recovery, return true
+    // (caller treats as commit denied). Soft path returns false (no force).
+    // Decision table (AC5 source-cite):
+    //   synth hard (prod/strict) → force rollback, skip partial recovery,
+    //                              deny kind=linear-synth-hard-fail, no Success
+    //   synth soft Warning only  → no force; continue post-mutate audit
+    //   synth clean              → post-mutate ownership/escape defense-in-depth
+    [[nodiscard]] bool deny_if_linear_synth_hard_fail(std::string_view op) noexcept;
     // Issue #2260: MutationBoundary type-proof hard gate.
     // Under hard_gate: solve_delta_occurrence must be SOLVED && !truncated_reverify,
     // else full resync (type-only cheap dirty) or force-fail (linear / large dirty).
@@ -5057,6 +5075,9 @@ private:
     // Issue #2105: set while nested Guard / atomic_batch is open so Agents
     // can treat workspace type/linear views as not yet commit-consistent.
     std::atomic<std::uint32_t> txn_dirty_{0};
+    // Issue #2514: sticky synth hard-fail seen during post-mutate TC
+    // (mirrors TypeChecker::last_linear_synth_hard_fail_; cleared on consume).
+    std::atomic<std::uint32_t> linear_synth_hard_fail_pending_{0};
     // Issue #2145: Strict sandbox — deny further mutate after hard-gate fail.
     std::atomic<std::uint32_t> strict_mutate_hold_{0};
     // Issue #2264: test inject — next run_typed_mutation_invariant_audit fails adt_ok.

@@ -6040,6 +6040,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("partial-recovery-adt",
                           static_cast<std::int64_t>(
                               c.partial_recovery_adt_total.load(std::memory_order_relaxed)));
+                // Issue #2514: synth hard-fail ↔ boundary force-rollback (no soft recovery)
+                insert_kv(
+                    "linear-synth-boundary-force-rollback-total",
+                    static_cast<std::int64_t>(c.linear_synth_boundary_force_rollback_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv(
+                    "linear-synth-boundary-skip-recovery-total",
+                    static_cast<std::int64_t>(c.linear_synth_boundary_skip_recovery_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("linear-synth-authority-unified",
+                          static_cast<std::int64_t>(
+                              c.linear_synth_authority_unified.load(std::memory_order_relaxed)));
+                insert_kv("schema-2514", 2514);
+                insert_kv("issue-2514", 2514);
                 insert_kv("adt-invariant-ok", static_cast<std::int64_t>(c.adt_invariant_ok.load(
                                                   std::memory_order_relaxed)));
                 insert_kv("adt-invariant-fail", static_cast<std::int64_t>(c.adt_invariant_fail.load(

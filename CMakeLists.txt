@@ -2850,6 +2850,11 @@ aura_add_issue_test(test_linear_synth_violation_2357)
 aura_issue_test_link_llvm_jit(test_linear_synth_violation_2357)
 add_dependencies(all_test_issue_targets test_linear_synth_violation_2357)
 
+# Issue #2514: unify linear_synth_hard_fail with MutationBoundary audit exit.
+aura_add_issue_test(test_linear_synth_boundary_authority_2514)
+aura_issue_test_link_llvm_jit(test_linear_synth_boundary_authority_2514)
+add_dependencies(all_test_issue_targets test_linear_synth_boundary_authority_2514)
+
 # Issue #2358: CastOp density HARD force-JIT policy (codegen, not type gate).
 aura_add_issue_test(test_castop_density_hard_2358)
 aura_issue_test_link_llvm_jit(test_castop_density_hard_2358)

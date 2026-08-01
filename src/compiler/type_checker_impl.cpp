@@ -6642,6 +6642,12 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.predicate_memo_evictions += r.predicate_memo_evictions;
     stats_.predicate_memo_partial_evictions += r.predicate_memo_partial_evictions;
     last_coercions_ = std::move(r.coercions);
+    // Issue #2514: sticky synth hard-fail for MutationBoundary authority.
+    // Soft Warning does not set the flag; only production/strict hard.
+    if (r.linear_synth_hard_fail) {
+        last_linear_synth_hard_fail_ = true;
+        last_linear_synth_violation_count_ += r.linear_synth_violation_count;
+    }
     // Issue #1407 R1: cache the outcome for next call. Only
     // cache when we have a stable epoch (cache_epoch_ > 0);
     // otherwise we'd be caching into an invalid-keyed entry.
@@ -6728,6 +6734,9 @@ TypeCheckResult type_check_flat_pure(
     // Issue #390: schema cache.
     result.schema_cache_lookups = es.schema_cache_lookups;
     result.schema_cache_hits = es.schema_cache_hits;
+    // Issue #2514: plumb synth hard-fail out of short-lived engine.
+    result.linear_synth_hard_fail = engine.linear_synth_hard_fail();
+    result.linear_synth_violation_count = engine.linear_synth_violation_count();
     return result;
 }
 
@@ -7548,6 +7557,13 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     stats_.predicate_memo_misses += engine.predicate_memo_misses();
     stats_.predicate_memo_evictions += engine.predicate_memo_evictions();
     stats_.predicate_memo_partial_evictions += engine.predicate_memo_partial_evictions();
+    // Issue #2514: sticky synth hard-fail outlives short-lived engine
+    // so MutationBoundary / finish_mutate_hard_gate can force rollback
+    // without soft partial recovery claiming Success.
+    if (engine.linear_synth_hard_fail()) {
+        last_linear_synth_hard_fail_ = true;
+        last_linear_synth_violation_count_ += engine.linear_synth_violation_count();
+    }
     // Issue #2359: snapshot memo epoch health for the Agent query
     // surface (engine dies at end of this partial; guard_infer_engine
     // may still hold a live memo on the Evaluator path).
