@@ -1057,11 +1057,24 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
 }
 
 // Map security cap name → Effect bit.
-// Issue #2387: tenant-admin + syscall join the matrix (epoch/fiber bind).
-// Intentionally string-only (effect_for_cap_name == None): compile-stats,
-// fiber, workspace, agent, query, capability, sandbox, sys-read/write/open,
-// self-evo, synthesize, strategy, exception-control, macro, compile* —
-// staged; SECURITY_EXEMPT display / low-risk paths.
+//
+// Issue #2387: tenant-admin + syscall join the matrix (epoch / fiber bind).
+// Issue #2489: remaining high-risk sensitive caps promoted —
+//   - self-evo / synthesize / strategy → MacroSelfEvo (AI self-modify)
+//   - sys-open / sys-write → Syscall | Write (raw syscall + write)
+//   - sys-read → Syscall | Read
+//   - agent → TenantAdmin (cross-tenant agent spawn adjacency)
+//   - capability → TenantAdmin (meta-privilege: cap:grant / cap:revoke)
+//
+// SECURITY_EXEMPT (staged, effect_for_cap_name == None) — non-security
+// display / low-risk paths intentionally left on the string list:
+//   compile, compile-stats, compile-dirty, compile-deopt, fiber, workspace,
+//   exception-control, macro, query, sandbox.
+//
+// has_capability(needed) consults this map first; effect-mapped names hit
+// g_capability_registry().effects_for(tenant) + provenance_ok (epoch fence /
+// hard fiber / sliding retain window) so grant_capability / grant_effect_-
+// capability / revoke_effect_capability are single-authority.
 [[nodiscard]] inline Effect effect_for_cap_name(std::string_view name) noexcept {
     if (name == "mutate")
         return Effect::Mutate;
@@ -1083,6 +1096,17 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         return Effect::TenantAdmin;
     if (name == "syscall")
         return Effect::Syscall;
+    // Issue #2489: high-risk residual promoted (see block comment above).
+    if (name == "self-evo" || name == "synthesize" || name == "strategy")
+        return Effect::MacroSelfEvo;
+    if (name == "sys-open" || name == "sys-write")
+        return Effect::Syscall | Effect::Write;
+    if (name == "sys-read")
+        return Effect::Syscall | Effect::Read;
+    if (name == "agent")
+        return Effect::TenantAdmin;
+    if (name == "capability")
+        return Effect::TenantAdmin;
     if (name == "*")
         return Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate | Effect::Network |
                Effect::Ffi | Effect::Render | Effect::MacroSelfEvo | Effect::TenantAdmin |

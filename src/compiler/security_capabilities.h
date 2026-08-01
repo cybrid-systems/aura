@@ -29,6 +29,9 @@ inline constexpr const char* kCapRender = "render";
 inline constexpr const char* kCapTenantAdmin = "tenant-admin";
 
 // Issue #1232 Phase 1: agent / self-evolution capability gates.
+// Issue #2489: self-evo / synthesize / strategy promoted into the Effect
+// matrix (→ MacroSelfEvo) so has_capability / grant_epoch / fiber bind share
+// one authority with Mutate / FFI.
 inline constexpr const char* kCapSelfEvo = "self-evo";
 inline constexpr const char* kCapSynthesize = "synthesize";
 inline constexpr const char* kCapStrategy = "strategy";
@@ -50,12 +53,14 @@ inline constexpr const char* kCapQuery = "query";
 // Issues #1325–#1330 Phase 1: architecture reduction + cap retrofit scaffold.
 // Full Phase 5 gates all remaining ~50 primitives; these names land early so
 // Phases 1–4 can wire deny_* helpers incrementally.
-inline constexpr const char* kCapCapability = "capability"; // cap:grant / cap:revoke
-inline constexpr const char* kCapAgent = "agent";           // agent:tick bridge
-inline constexpr const char* kCapSysRead = "sys-read";      // raw sys-read binding
-inline constexpr const char* kCapSysWrite = "sys-write";    // raw sys-write binding
-inline constexpr const char* kCapSysOpen = "sys-open";      // raw sys-open binding
-inline constexpr const char* kCapSyscall = "syscall";       // high-risk arbitrary syscall
+// Issue #2489: capability / agent / sys-read / sys-write / sys-open promoted
+// into the Effect matrix (→ TenantAdmin / Syscall|Read / Syscall|Write).
+inline constexpr const char* kCapCapability = "capability"; // cap:grant / cap:revoke → TenantAdmin
+inline constexpr const char* kCapAgent = "agent";           // agent:tick bridge → TenantAdmin
+inline constexpr const char* kCapSysRead = "sys-read";      // raw sys-read binding → Syscall|Read
+inline constexpr const char* kCapSysWrite = "sys-write";    // raw sys-write binding → Syscall|Write
+inline constexpr const char* kCapSysOpen = "sys-open";      // raw sys-open binding → Syscall|Write
+inline constexpr const char* kCapSyscall = "syscall";       // high-risk arbitrary syscall → Syscall
 
 // Effect bit tags (mirror aura.core.capability_model Effect enum).
 inline constexpr std::uint16_t kEffectNone = 0;

@@ -2013,6 +2013,27 @@ def cmd_capability_string_matrix_unify_coverage():
     return 0
 
 
+def cmd_capability_high_risk_promote_2489_coverage():
+    """Issue #2489: remaining high-risk caps into Effect matrix.
+
+    self-evo / synthesize / strategy → MacroSelfEvo; sys-open / sys-write /
+    sys-read → Syscall | Read/Write; agent / capability → TenantAdmin. Closes
+    the dual-track self-mod / syscall / meta-privilege surface; revoke clears
+    both sides; epoch fence + hard fiber isolation deny via single authority.
+    """
+    print(f"{B}=== capability high-risk promote coverage (#2489) ==={N}")
+    script = ROOT / "scripts" / "check_capability_high_risk_promote_2489.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("capability high-risk promote (#2489) coverage contract rows failed")
+        return 1
+    ok("capability high-risk promote (#2489) coverage clean")
+    return 0
+
+
 def cmd_security_audit_fold_coverage():
     """Issue #2388: fold Capability + Isolation audit into SecurityEvent WAL.
 
@@ -4850,6 +4871,7 @@ def cmd_gate():
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()
+        or cmd_capability_high_risk_promote_2489_coverage()
         or cmd_security_audit_fold_coverage()
         or cmd_security_health_coverage()
         or cmd_validate_node_no_abort_coverage()
