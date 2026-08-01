@@ -696,6 +696,12 @@ extern "C" __attribute__((weak)) void
 aura_bump_closure_capture_cell_remap_ok_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t /*n*/) {}
+// Issue #2503: remount + MustDeopt + batch_deopt shared fail path (stub: fail).
+extern "C" __attribute__((weak)) int aura_remount_or_force_deopt(std::int64_t /*closure_id*/,
+                                                                 std::uint64_t /*live_env_gen*/,
+                                                                 std::uint8_t /*linear_fp*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void aura_set_densify_object_remap(const void* const* /*olds*/,
                                                                     const void* const* /*news*/,
                                                                     std::size_t /*n*/) {}

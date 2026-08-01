@@ -3394,6 +3394,11 @@ aura_add_issue_test(test_force_jit_repromote_2502)
 aura_issue_test_link_llvm_jit(test_force_jit_repromote_2502)
 add_dependencies(all_test_issue_targets test_force_jit_repromote_2502)
 
+# Issue #2503: remount fail → MustDeopt + batch_deopt shared path (cell remap).
+aura_add_issue_test(test_remount_force_deopt_2503)
+aura_issue_test_link_llvm_jit(test_remount_force_deopt_2503)
+add_dependencies(all_test_issue_targets test_remount_force_deopt_2503)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -14071,6 +14071,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("capture-cell-remap-wired", 1);
             insert_kv("schema-2297", 2297);
             insert_kv("issue-2297", 2297);
+            // Issue #2503: remount fail → MustDeopt + batch_deopt shared path.
+            insert_kv("remount-or-force-deopt-wired", 1);
+            insert_kv("schema-2503", 2503);
+            insert_kv("issue-2503", 2503);
             insert_kv("schema-2234", 2234);
             insert_kv("issue-2234", 2234);
             insert_kv("capture-remount-wired", 1);

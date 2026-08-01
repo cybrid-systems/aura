@@ -1185,6 +1185,10 @@ static bool cross_cow_drift_within_cap_(std::uint64_t captured, std::uint64_t cu
 static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
                                                   std::uint64_t live_env_gen,
                                                   std::uint8_t linear_fp);
+// Issue #2503: remount + MustDeopt + batch_deopt shared fail path.
+static int remount_or_force_deopt_unlocked(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                           std::uint8_t linear_fp,
+                                           std::uint64_t batch_deopt_epoch) noexcept;
 static int aura_closure_has_env_or_linear_captures_unlocked(std::int64_t closure_id);
 
 // Issue #2371: exclusive soft restamp of dual-epoch (+ remount). Caller
@@ -1231,8 +1235,10 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
         if (cid >= g_closure_env_gen.size())
             g_closure_env_gen.resize(g_closure_func_ids.size(), 0);
         g_closure_env_gen[cid] = live_env;
-        if (aura_remount_closure_captures_unlocked(static_cast<std::int64_t>(cid), live_env,
-                                                   live_lin) == 0) {
+        // Issue #2503: shared fail path — remount fail sets MustDeopt +
+        // batch_deopt so half-remount cannot leave native path live.
+        if (remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), live_env, live_lin,
+                                            cur_bridge) == 0) {
             aura_unlock_workspace_write();
             return 0;
         }
@@ -1624,10 +1630,49 @@ static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
 }
 
 // Public C ABI: takes exclusive table lock (may rewrite capture cells).
+// Pure remount probe — does NOT set MustDeopt. Production sites that
+// must fail-closed use aura_remount_or_force_deopt (#2503).
 extern "C" int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_env_gen,
                                              std::uint8_t linear_fp) {
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     return aura_remount_closure_captures_unlocked(closure_id, live_env_gen, linear_fp);
+}
+
+// Issue #2503: unified remount-fail transaction.
+// Any remount fail (env_gen PRIMARY / defuse / linear / densify cell remap)
+// → MustDeopt + batch_deopt_for(name when present). Distinct counters still
+// bump inside remount (env_gen_mismatch / cell_remap_fail); this path adds
+// the shared force-deopt outcome so no half-remount leaves native live.
+// Caller must hold exclusive g_closure_table_mtx.
+static int remount_or_force_deopt_unlocked(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                           std::uint8_t linear_fp,
+                                           std::uint64_t batch_deopt_epoch) noexcept {
+    if (aura_remount_closure_captures_unlocked(closure_id, live_env_gen, linear_fp) != 0) {
+        aura_bump_closure_capture_remount_ok_total(1);
+        return 1;
+    }
+    if (closure_id < 0)
+        return 0;
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    // Ensure MustDeopt column covers this slot (resize under exclusive lock).
+    if (g_closure_must_deopt.size() <= cid)
+        g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+    g_closure_must_deopt[cid] = 1;
+    if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
+        aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), batch_deopt_epoch);
+    }
+    aura_bump_closure_capture_remount_fail_total(1);
+    return 0;
+}
+
+// Public C ABI: exclusive table lock + remount_or_force_deopt_unlocked.
+extern "C" int aura_remount_or_force_deopt(std::int64_t closure_id, std::uint64_t live_env_gen,
+                                           std::uint8_t linear_fp) {
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    return remount_or_force_deopt_unlocked(closure_id, live_env_gen, linear_fp,
+                                           aura_aot_func_table_epoch());
 }
 
 // Issue #660 Option 1: set the closure's name after allocation. Used by
@@ -1858,33 +1903,18 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // required by the joint versioning contract (#2046). Bumped
         // per-closure so Agents can branch on the remap outcome.
         aura_bump_live_closure_epoch_restamp_total(1);
-        // Issue #2234: post-remit capture remount. For closures that
-        // captured an env_frame or linear_state (proxied by
-        // g_closure_defuse_versions != 0 or g_closure_linear_state != 0),
-        // the func_id restamp above is not enough — the captured
-        // env_frame slot + linear ownership must also be rebound to
-        // the live generation. Check the consistency gate; fail →
-        // caller must set MustDeopt + batch_deopt so the next
-        // aura_closure_call force-deopts instead of running pre-reemit
-        // native with dirty captures.
-        // Unlocked has/remount: exclusive g_closure_table_mtx already held
+        // Issue #2234 / #2503: post-remit capture remount. For closures
+        // that captured env_frame or linear_state, func_id restamp is not
+        // enough — rebind captures to live generation. Any fail (env_gen /
+        // defuse / linear / densify cell remap) uses the shared
+        // remount_or_force_deopt_unlocked path: MustDeopt + batch_deopt so
+        // half-remount cannot leave native code live with stale cells.
+        // Unlocked: exclusive g_closure_table_mtx already held
         // (non-recursive — public APIs would deadlock on re-lock).
         if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid))) {
             const auto live_linear_fp = aura_get_aot_live_linear_state_fingerprint();
-            if (aura_remount_closure_captures_unlocked(static_cast<std::int64_t>(cid), host_defuse,
-                                                       live_linear_fp) != 0) {
-                aura_bump_closure_capture_remount_ok_total(1);
-            } else {
-                // Remount fail — keep the flag set so the next
-                // aura_closure_call deopts, and force-deopt any
-                // sibling native tables with the same name.
-                if (cid < g_closure_must_deopt.size())
-                    g_closure_must_deopt[cid] = 1;
-                if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
-                    aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), new_bridge_epoch);
-                }
-                aura_bump_closure_capture_remount_fail_total(1);
-            }
+            (void)remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), host_defuse,
+                                                  live_linear_fp, new_bridge_epoch);
         }
         if (via_name_fallback)
             ++name_fallback_count;
