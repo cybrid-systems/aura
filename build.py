@@ -2091,6 +2091,29 @@ def cmd_moving_densify_fail_closed_2495_coverage():
     return 0
 
 
+def cmd_general_object_pin_coverage_gate_2496_coverage():
+    """Issue #2496: GeneralObjectPin adoption coverage gate.
+
+    Inventory vs wire_total — kGeneralObjectPinAdoptSiteCount tracks the
+    documented sites (mutate/batch/require/query×2/load/eval-expr).
+    Linter fails when a listed site lacks wire call
+    (note_general_object_pin_mutate_wire / wire_general_object_create_pair).
+    Optional AURA_GENERAL_OBJECT_PIN=required fail-closed runtime mode
+    for new densify-tracked intermediate creates.
+    """
+    print(f"{B}=== GeneralObjectPin coverage gate coverage (#2496) ==={N}")
+    script = ROOT / "scripts" / "check_general_object_pin_coverage_gate_2496.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("GeneralObjectPin coverage gate (#2496) coverage contract rows failed")
+        return 1
+    ok("GeneralObjectPin coverage gate (#2496) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -5170,6 +5193,7 @@ def cmd_gate():
         or cmd_audit_mutation_id_unify_2493_coverage()
         or cmd_side_effect_security_gate_hardfail_2494_coverage()
         or cmd_moving_densify_fail_closed_2495_coverage()
+        or cmd_general_object_pin_coverage_gate_2496_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()

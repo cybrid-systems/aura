@@ -3571,6 +3571,15 @@ aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail_2494)
 aura_add_issue_test(test_moving_densify_fail_closed_2495)
 aura_issue_test_link_llvm_jit(test_moving_densify_fail_closed_2495)
 
+# Issue #2496: GeneralObjectPin adoption coverage gate (inventory vs
+# wire_total). kGeneralObjectPinAdoptSiteCount tracks the documented
+# inventory; linter fails when a listed site lacks wire call. Optional
+# AURA_GENERAL_OBJECT_PIN=required fail-closed runtime mode. Source-cites
+# #2298 + #2337 + #2363 (the GeneralObjectPin + mutate-path adoption
+# lineage).
+aura_add_issue_test(test_general_object_pin_coverage_gate_2496)
+aura_issue_test_link_llvm_jit(test_general_object_pin_coverage_gate_2496)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.
