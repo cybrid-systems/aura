@@ -535,9 +535,11 @@ run_emit_test "emit:cadr-list"  "(car (cdr (list 10 20 30)))" "20"
 
 # pair?/null? (inlined as LLVM ICmp via OpPrimCall)
 # main() skips printing 0 values, so falsy expectations must be empty.
+# Issue #2482: null? is true only for empty list (void), not fixnum 0.
 run_emit_test "emit:pair?"   "(pair? (cons 1 2))" "#t"
 run_emit_test "emit:not-pair?"   "(pair? 42)" "#f"
-run_emit_test "emit:null?"   "(null? 0)" "#t"
+run_emit_test "emit:null?"   "(null? (list))" "#t"
+run_emit_test "emit:null?-zero"  "(null? 0)" "#f"
 run_emit_test "emit:not-null?"   "(null? -1)" "#f"
 
 # Comparisons (inlined as LLVM ICmp, raw int output: 1=#t)

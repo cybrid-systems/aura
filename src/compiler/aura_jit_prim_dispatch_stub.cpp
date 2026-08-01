@@ -26,3 +26,15 @@ aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args, std::int32_t ar
     (void)argc;
     return 0;
 }
+
+// Issue #2370 / CI link: hot_update_registry.cpp references
+// aura_get_storm_eval_context (defined strongly in
+// spec_jit_controller.cpp). test_concurrent links
+// hot_update_registry + aura_jit_bridge but not SpecJIT
+// controller — without a weak fallback, link fails with
+// undefined reference. Strong definitions (controller /
+// bridge_stub) still win when present.
+extern "C" __attribute__((weak)) void aura_set_storm_eval_context(void* /*eval_ptr*/) noexcept {}
+extern "C" __attribute__((weak)) void* aura_get_storm_eval_context(void) noexcept {
+    return nullptr;
+}

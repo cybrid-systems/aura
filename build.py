@@ -1263,6 +1263,9 @@ SUITE_SKIP: dict[str, str] = {
     # "starting-cycles..." (spin / unbounded mutate loop). Skip so
     # suite CI completes; track re-enable after cycle bound fix.
     "incremental_mutation_test.aura": "hangs after starting-cycles (unbounded loop; Soft sandbox still hangs)",
+    # CI / non-TTY: Scheduler requires epollable stdin; --load capture
+    # pipes fail with ENOTTY/EPERM. Skip outside interactive serve.
+    "parallel_orchestration_stress.aura": "scheduler stdin not epollable under CI capture (non-TTY)",
 }
 
 # P4: curated S0 surface smoke (AURA_PRIMITIVES=s0). Full suite stays full-mode.
