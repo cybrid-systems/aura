@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 623 | Preferred destination suites |
-| **Total scanned** | **623** | |
+| `tests/core/test_*.cpp` | 624 | Preferred destination suites |
+| **Total scanned** | **624** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 73 | 73 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 179 | 179 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 180 | 180 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 65 | 65 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 14 | 14 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 39 | 39 | P1 — domain hygiene suite exists |
@@ -758,6 +758,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_validate_post_restore_soa_2391.cpp`
 - `tests/compiler/test_value_encoding_v2_dispatch_contracts.cpp`
 - `tests/compiler/test_value_tag_hot_path_2259.cpp`
+- `tests/core/test_verification_dirty_bits_lock_2439.cpp`
 - `tests/compiler/test_verify_parse_shared_helper.cpp`
 - `tests/renderer/test_voxel_frame.cpp`
 - `tests/renderer/test_voxel_raycast.cpp`
@@ -890,13 +891,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (179)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (180)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (179)
+#### domain/ (180)
 
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
@@ -1071,6 +1072,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_typesystem_typed_mutate_incremental_gaps.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_typed_mutate_incremental_gaps.cpp — Issue #659:
 - `tests/compiler/test_unify_invalidate_try_acquire.cpp` (—) [domain_suite, theme_compiler] — Issue #1476/#1547/#1628/#1634 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_value_encoding_v2_dispatch_contracts.cpp` (—) [domain_suite, theme_compiler] — Issue #1622/#571/#723 (#1978 renamed): issue# moved from filename to header.
+- `tests/core/test_verification_dirty_bits_lock_2439.cpp` (#2439) [domain_suite, theme_core] — AC1: concurrent apply_verification_dirty_bits(same_id, same_reasons) → +1 metric
 - `tests/renderer/test_voxel_frame.cpp` (—) [domain_suite, theme_renderer] — test_voxel_frame.cpp — Issue #1985 / Epic #1979
 - `tests/compiler/test_walk_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_walk_batch.cpp
 - `tests/core/test_workspace_isolation_wire_2073.cpp` (#2073) [domain_suite, theme_core] — Issue #2073 — wire check_workspace_isolation + stamp_ref_tenant on

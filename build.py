@@ -3395,6 +3395,24 @@ def cmd_arena_compact_notify_lifecycle_coverage():
     return 0
 
 
+def cmd_verification_dirty_bits_lock_coverage():
+    """Issue #2439: apply_verification_dirty_bits metric double-count fix.
+
+    Exclusive dirty_column_mtx_ around newly_set RMW.
+    """
+    print(f"{B}=== verification dirty bits lock coverage (#2439) ==={N}")
+    script = ROOT / "scripts" / "check_verification_dirty_bits_lock_2439.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("verification dirty bits lock (#2439) coverage contract rows failed")
+        return 1
+    ok("verification dirty bits lock (#2439) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4355,6 +4373,7 @@ def cmd_gate():
         or cmd_post_compact_lifecycle_coverage()
         or cmd_gc_defer_reconcile_cas_coverage()
         or cmd_arena_compact_notify_lifecycle_coverage()
+        or cmd_verification_dirty_bits_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

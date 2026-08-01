@@ -2257,7 +2257,9 @@ public:
 public:
     // Issue #437: verify_dirty_ accessor (public, used by
     // the (compile:verify-dirty?) primitive).
+    // Issue #2439: shared dirty_column_mtx_ (parity with verification_dirty).
     [[nodiscard]] std::uint8_t verify_dirty(NodeId id) const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= verify_dirty_.size())
             return 0;
         return verify_dirty_[id];
@@ -2565,15 +2567,23 @@ public:
     [[nodiscard]] std::uint64_t tag_arity_index_dirty_marks() const noexcept {
         return tag_arity_index_dirty_marks_.load(std::memory_order_relaxed);
     }
-    // Issue #437: apply verify-dirty bits to a node.
+    // Issue #437 / #2439: apply verify-dirty bits to a node.
+    // Issue #2439: exclusive dirty_column_mtx_ around column RMW so
+    // concurrent apply_*(same_id, same_reasons) computes newly_set
+    // exactly once (no metric double-count). mark_dirty is outside
+    // the lock (it takes dirty_column_mtx_ itself — non-recursive).
     void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
         if (verify_reasons == 0)
             return;
-        if (id >= verify_dirty_.size())
-            verify_dirty_.resize(id + 1, 0);
-        // Detect newly-set bits (for per-reason counters).
-        const auto newly_set = verify_reasons & ~verify_dirty_[id];
-        verify_dirty_[id] |= verify_reasons;
+        std::uint8_t newly_set = 0;
+        {
+            std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+            if (id >= verify_dirty_.size())
+                verify_dirty_.resize(id + 1, 0);
+            // Detect newly-set bits under lock (for per-reason counters).
+            newly_set = static_cast<std::uint8_t>(verify_reasons & ~verify_dirty_[id]);
+            verify_dirty_[id] |= verify_reasons;
+        }
         if (newly_set & kAssertionDirty)
             verify_assertion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
         if (newly_set & kCoverageDirty)
@@ -2586,23 +2596,32 @@ public:
     }
     // Issue #469: verification_dirty_ accessor (public, used
     // by the (query:verification-loop-stats) primitive).
+    // Issue #2439: shared dirty_column_mtx_ so concurrent apply_*
+    // exclusive RMW cannot race the byte load / vector reallocation.
     [[nodiscard]] std::uint8_t verification_dirty(NodeId id) const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= verification_dirty_.size())
             return 0;
         return verification_dirty_[id];
     }
-    // Issue #469: apply verification-dirty bits to a node.
+    // Issue #469 / #2439: apply verification-dirty bits to a node.
     // Mirrors apply_verify_dirty_bits (from #437) but for
     // the verification_dirty_ column (separate column to
     // avoid collision with the VerifyDirtyReason bits).
+    // Issue #2439: exclusive dirty_column_mtx_ for newly_set RMW
+    // (same pattern as mark_dirty / apply_verify_dirty_bits).
     void apply_verification_dirty_bits(NodeId id, std::uint8_t reasons) {
         if (reasons == 0)
             return;
-        if (id >= verification_dirty_.size())
-            verification_dirty_.resize(id + 1, 0);
-        // Detect newly-set bits (for per-reason counters).
-        const auto newly_set = reasons & ~verification_dirty_[id];
-        verification_dirty_[id] |= reasons;
+        std::uint8_t newly_set = 0;
+        {
+            std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+            if (id >= verification_dirty_.size())
+                verification_dirty_.resize(id + 1, 0);
+            // Detect newly-set bits under lock (for per-reason counters).
+            newly_set = static_cast<std::uint8_t>(reasons & ~verification_dirty_[id]);
+            verification_dirty_[id] |= reasons;
+        }
         if (newly_set & kCoverageFeedbackDirty)
             verification_coverage_feedback_total_.fetch_add(1, std::memory_order_relaxed);
         if (newly_set & kAssertFailureDirty)
