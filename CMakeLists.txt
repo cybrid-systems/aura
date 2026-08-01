@@ -3187,6 +3187,11 @@ aura_add_issue_test(test_soa_column_atomic_2440)
 aura_issue_test_link_llvm_jit(test_soa_column_atomic_2440)
 add_dependencies(all_test_issue_targets test_soa_column_atomic_2440)
 
+# Issue #2441: apply_macro_dirty_bits metric double-count (fetch_or + lock)
+aura_add_issue_test(test_macro_dirty_bits_lock_2441)
+aura_issue_test_link_llvm_jit(test_macro_dirty_bits_lock_2441)
+add_dependencies(all_test_issue_targets test_macro_dirty_bits_lock_2441)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

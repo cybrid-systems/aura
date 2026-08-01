@@ -3431,6 +3431,24 @@ def cmd_soa_column_atomic_coverage():
     return 0
 
 
+def cmd_macro_dirty_bits_lock_coverage():
+    """Issue #2441: apply_macro_dirty_bits metric double-count fix.
+
+    Exclusive dirty_column_mtx_ + atomic fetch_or for newly_set.
+    """
+    print(f"{B}=== macro dirty bits lock coverage (#2441) ==={N}")
+    script = ROOT / "scripts" / "check_macro_dirty_bits_lock_2441.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("macro dirty bits lock (#2441) coverage contract rows failed")
+        return 1
+    ok("macro dirty bits lock (#2441) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4393,6 +4411,7 @@ def cmd_gate():
         or cmd_arena_compact_notify_lifecycle_coverage()
         or cmd_verification_dirty_bits_lock_coverage()
         or cmd_soa_column_atomic_coverage()
+        or cmd_macro_dirty_bits_lock_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

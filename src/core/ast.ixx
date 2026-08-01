@@ -1122,13 +1122,13 @@ private:
         if (id < verification_dirty_.size())
             std::atomic_ref<std::uint8_t>(verification_dirty_[id])
                 .store(0, std::memory_order_relaxed);
-        // Issue #290: reset macro_dirty_ alongside the other
+        // Issue #290 / #2441: reset macro_dirty_ alongside the other
         // dirty columns. Populated by apply_macro_dirty_bits
         // (called from clone_macro_body for newly expanded
         // subtrees and from self-evolution loops that touch
         // macro-introduced nodes).
         if (id < macro_dirty_.size())
-            macro_dirty_[id] = 0;
+            std::atomic_ref<std::uint8_t>(macro_dirty_[id]).store(0, std::memory_order_relaxed);
         error_kind_[id] = 0;
         if (id < value_cache_.size())
             value_cache_[id] = kNotCached;
@@ -1604,7 +1604,9 @@ public:
     //   kMacroSelfModify = 0x02 (a self-evolution step
     //                            mutated a macro-introduced
     //                            node)
-    std::pmr::vector<std::uint8_t> macro_dirty_;
+    // Issue #2441: mutable for atomic_ref in const readers;
+    // concurrent RMW under dirty_column_mtx_ + fetch_or.
+    mutable std::pmr::vector<std::uint8_t> macro_dirty_;
     // Issue #339: per-node occurrence-narrowing staleness
     // column. When a mutation affects a predicate or a
     std::pmr::vector<std::uint32_t> type_id_;
@@ -2857,47 +2859,60 @@ public:
         kMacroExpansion = 0x01,  // clone_macro_body produced this subtree
         kMacroSelfModify = 0x02, // self-evolution step touched a macro-introduced node
     };
-    // Issue #290: macro_dirty_ accessor (public, used by the
-    // (compile:macro-dirty?) primitive).
+    // Issue #290 / #2441: macro_dirty_ accessor (public, used by the
+    // (compile:macro-dirty?) primitive). Shared dirty_column_mtx_ +
+    // atomic_ref load (parity with verification_dirty / verify_dirty).
     [[nodiscard]] std::uint8_t macro_dirty(NodeId id) const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= macro_dirty_.size())
             return 0;
-        return macro_dirty_[id];
+        return std::atomic_ref<std::uint8_t>(macro_dirty_[id]).load(std::memory_order_acquire);
     }
-    // Issue #290: apply macro-dirty bits to a node. Called from
+    // Issue #290 / #2441: apply macro-dirty bits to a node. Called from
     // clone_macro_body after a hygienic macro expansion
     // (kMacroExpansion) and from self-evolution loops that touch
     // macro-introduced nodes (kMacroSelfModify). Mirrors the
-    // verification-column pattern (#469) but lives in its own
-    // column to avoid collision with the VerifyDirtyReason bits
-    // (4 bits used).
+    // verification-column pattern (#469 / #2439 / #2440): exclusive
+    // dirty_column_mtx_ for resize + atomic fetch_or so newly_set is
+    // computed exactly once (no metric double-count). mark_dirty is
+    // outside the lock (non-recursive mutex).
     void apply_macro_dirty_bits(NodeId id, std::uint8_t reasons) {
         if (reasons == 0)
             return;
-        if (id >= macro_dirty_.size())
-            macro_dirty_.resize(id + 1, 0);
-        const auto newly_set = reasons & ~macro_dirty_[id];
-        macro_dirty_[id] |= reasons;
+        std::uint8_t newly_set = 0;
+        {
+            std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+            if (id >= macro_dirty_.size())
+                macro_dirty_.resize(id + 1, 0);
+            // Issue #2441: atomic fetch_or (prev bits → newly_set).
+            const auto prev = std::atomic_ref<std::uint8_t>(macro_dirty_[id])
+                                  .fetch_or(reasons, std::memory_order_acq_rel);
+            newly_set = static_cast<std::uint8_t>(reasons & ~prev);
+        }
         if (newly_set & kMacroExpansion)
             macro_expansion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
         if (newly_set & kMacroSelfModify)
             macro_self_modify_dirty_total_.fetch_add(1, std::memory_order_relaxed);
         mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
     }
-    // Issue #290: bulk-clear all macro_dirty_ bits across the
+    // Issue #290 / #2441: bulk-clear all macro_dirty_ bits across the
     // flat. Called from the (compile:clear-macro-dirty!) primitive
-    // and from full-reset paths. Walks every live node.
+    // and from full-reset paths. Walks every live node under exclusive
+    // dirty_column_mtx_ + atomic store.
     void clear_macro_dirty_all() noexcept {
+        std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         for (auto& b : macro_dirty_)
-            b = 0;
+            std::atomic_ref<std::uint8_t>(b).store(0, std::memory_order_relaxed);
     }
-    // Issue #290: count nodes with any macro_dirty_ bit set.
+    // Issue #290 / #2441: count nodes with any macro_dirty_ bit set.
     // Used by the (compile:macro-dirty-count) primitive.
     [[nodiscard]] std::size_t macro_dirty_count() const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         std::size_t n = 0;
-        for (auto b : macro_dirty_)
-            if (b != 0)
+        for (std::size_t i = 0; i < macro_dirty_.size(); ++i) {
+            if (std::atomic_ref<std::uint8_t>(macro_dirty_[i]).load(std::memory_order_relaxed) != 0)
                 ++n;
+        }
         return n;
     }
 
@@ -7819,11 +7834,8 @@ public:
                 }
             }
             // macro_dirty: ensure kMacroExpansion without double-counting
-            // when already set (bitwise OR; counters only on first apply).
-            if (id < macro_dirty_.size()) {
-                if ((macro_dirty_[id] & kExpansion) == 0)
-                    apply_macro_dirty_bits(id, kExpansion);
-            }
+            // when already set (Issue #2441: apply uses atomic fetch_or).
+            apply_macro_dirty_bits(id, kExpansion);
             ++restamped;
         }
         if (restamped > 0) {
@@ -7873,9 +7885,8 @@ public:
                             parent_[cid] = id;
                     }
                 }
-                // kMacroExpansion dirty bit — idempotent OR.
-                if (id < macro_dirty_.size() && (macro_dirty_[id] & kExpansion) == 0)
-                    apply_macro_dirty_bits(id, kExpansion);
+                // kMacroExpansion dirty bit — idempotent OR (#2441 fetch_or).
+                apply_macro_dirty_bits(id, kExpansion);
                 ++restamped;
             }
             // Descend into children (MacroIntroduced + User + ...).
@@ -7950,8 +7961,19 @@ public:
                 // Other dirty bits (kGeneralDirty + kMacroSelfModify)
                 // are preserved — only the expansion provenance bit is
                 // cleared, matching the roll-back semantics.
-                if (id < macro_dirty_.size() && (macro_dirty_[id] & kExpansion) != 0)
-                    macro_dirty_[id] = static_cast<std::uint8_t>(macro_dirty_[id] & ~kExpansion);
+                // Issue #2441: exclusive dirty_column_mtx_ + atomic RMW.
+                {
+                    std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
+                    if (id < macro_dirty_.size()) {
+                        auto& cell = macro_dirty_[id];
+                        auto cur =
+                            std::atomic_ref<std::uint8_t>(cell).load(std::memory_order_relaxed);
+                        if ((cur & kExpansion) != 0)
+                            std::atomic_ref<std::uint8_t>(cell).store(
+                                static_cast<std::uint8_t>(cur & ~kExpansion),
+                                std::memory_order_release);
+                    }
+                }
                 ++unstampped;
             }
             // Descend into children (MacroIntroduced + User + ...).
