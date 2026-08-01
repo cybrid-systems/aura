@@ -132,6 +132,11 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // (hold + steal + residual + mailbox + densify). Pure reads of existing
     // atomics; does not replace per-subsystem queries.
     "query:mutation-concurrency-health",
+    // Issue #2506 — single Agent JIT/AOT recovery health score
+    // (reload recovery + storm + remount + epoch-invariant). Pure reads;
+    // does not replace reload-recovery / hot-update-registry queries.
+    "query:aot-hot-update-health",
+    "query:hot-update-health",
     // Issue #2500 — Agent compact action policy (soft|force|skip|split-batch)
     // over health + frag + defer + hold. Pure advisory; aliases orch: /
     // arena:recommend-compact via register_stats_impl.
