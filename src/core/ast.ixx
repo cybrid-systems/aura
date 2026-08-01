@@ -1079,6 +1079,26 @@ export class FlatAST {
     // initialized only after add_node returns. Do not hand a
     // half-built id to another thread mid-call.
     //
+    // Issue #2445 — add_* builder mutation contract:
+    //   add_node itself serializes multi-column push_back under
+    //   flatast_mutex_ (#2413). Higher-level builders
+    //   (add_literal / add_variable / add_call / add_if /
+    //   add_lambda / add_let / add_letrec / add_define / …)
+    //   call add_node then write per-slot fields (int_val_,
+    //   sym_id_, children_, param_*) and link_children outside
+    //   that critical section. Those post-return column writes
+    //   are NOT protected against concurrent add_node reallocation
+    //   of the same vectors.
+    //
+    //   MUTATION CONTRACT (today): the full add_* builder body
+    //   (and any other post-publish per-slot write path) runs
+    //   under the single-threaded mutation contract or external
+    //   serialization (CompilerService workspace_mtx exclusive
+    //   parse/build path). Parallel parsing (#2342) MUST either
+    //   keep that external serial or widen flatast_mutex_ (or
+    //   concurrent_vector) across the entire builder body before
+    //   concurrent builders are enabled — deferred until then.
+    //
     // Issue #1431 follow-up (Race #2): two CompilerService::eval
     // threads sharing workspace_flat_ raced add_node push_backs,
     // corrupting pmr. recursive_mutex because reset_node_slot is
@@ -1324,12 +1344,13 @@ public:
     }
 
     [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
-        // Issue #1431 Race #2 + #2413: hold flatast_mutex_ across
-        // the full multi-column SoA append (or free-list reset).
-        // Writers are serialized; lock-free SoA readers must still
-        // be externally serialized (workspace_mtx / single-thread)
-        // — see FlatAST class contract (#2413 AC1). NodeId is fully
-        // published only on return from this function.
+        // Issue #1431 Race #2 + #2413 + #2445: hold flatast_mutex_
+        // across the full multi-column SoA append (or free-list
+        // reset). Concurrent add_node writers are serialized here.
+        // Higher-level add_* builders that write fields after
+        // return must still obey the single-threaded mutation
+        // contract (Issue #2445) — see FlatAST class contract.
+        // NodeId is fully published only on return from this function.
         std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);
         // Issue #402: tag-based summary flags. Update eagerly
         // before allocation so a fast-path consumer (next
@@ -3450,6 +3471,12 @@ public:
         // Issue #1689: bulk parent rewrite — reindex on next lookup.
         mark_incoming_parent_index_dirty();
     }
+
+    // ── Issue #2445: add_* builders (single-threaded mutation) ──
+    // Each builder: add_node (flatast_mutex_) then per-slot field
+    // writes + link_children. Concurrent multi-builder use requires
+    // external serialization (workspace_mtx) until parallel-parse
+    // hardening. Single-threaded path is the production default.
 
     [[nodiscard]] NodeId add_literal_float(double val) {
         auto id = add_node(NodeTag::LiteralFloat);

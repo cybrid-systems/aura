@@ -3503,6 +3503,24 @@ def cmd_region_sym_dense_race_coverage():
     return 0
 
 
+def cmd_add_node_builder_contract_coverage():
+    """Issue #2445: add_node + add_* builder single-threaded mutation contract.
+
+    Documents builder body serial; add_node keeps flatast_mutex_ (#2413).
+    """
+    print(f"{B}=== add_node builder contract coverage (#2445) ==={N}")
+    script = ROOT / "scripts" / "check_add_node_builder_contract_2445.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("add_node builder contract (#2445) coverage contract rows failed")
+        return 1
+    ok("add_node builder contract (#2445) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4469,6 +4487,7 @@ def cmd_gate():
         or cmd_clear_macro_dirty_concurrent_coverage()
         or cmd_region_dense_atomic_coverage()
         or cmd_region_sym_dense_race_coverage()
+        or cmd_add_node_builder_contract_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

@@ -3202,6 +3202,11 @@ aura_add_issue_test(test_region_dense_atomic_2443)
 aura_issue_test_link_llvm_jit(test_region_dense_atomic_2443)
 add_dependencies(all_test_issue_targets test_region_dense_atomic_2443)
 
+# Issue #2445: add_node + add_* builder single-threaded mutation contract
+aura_add_issue_test(test_add_node_builder_contract_2445)
+aura_issue_test_link_llvm_jit(test_add_node_builder_contract_2445)
+add_dependencies(all_test_issue_targets test_add_node_builder_contract_2445)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
