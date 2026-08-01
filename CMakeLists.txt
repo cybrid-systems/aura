@@ -3555,6 +3555,13 @@ aura_issue_test_link_llvm_jit(test_security_audit_wal_force_restricted_2492)
 aura_add_issue_test(test_audit_mutation_id_unify_2493)
 aura_issue_test_link_llvm_jit(test_audit_mutation_id_unify_2493)
 
+# Issue #2494: hard-fail check_side_effect_security.py for new prims without
+# require_effect / PrimMeta. The script already has --strict mode + allowlist
+# reason enforcement; this test confirms it's wired as PR CI hard-fail and
+# that a fixture prim (side-effect name, no coverage marker) trips the gate.
+aura_add_issue_test(test_side_effect_security_gate_hardfail_2494)
+aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail_2494)
+
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.

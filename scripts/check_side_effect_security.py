@@ -142,14 +142,21 @@ def local_window_has_coverage(lines: list[str], line_idx: int, window: int = 80)
     return any(m in chunk for m in COVERAGE_MARKERS)
 
 
-def scan() -> tuple[list[tuple[str, str, int]], list[str]]:
+def scan(path_override: str | None = None) -> tuple[list[tuple[str, str, int]], list[str]]:
     """Return (violations, allowlist_reason_errors).
 
     violations: list of (path, name, line).
+    path_override: optional test fixture path (Issue #2494 AC1 self-test).
     """
     allow, reason_errors = load_allowlist()
     violations: list[tuple[str, str, int]] = []
-    for path in sorted((ROOT / "src" / "compiler").glob("evaluator_primitives*.cpp")):
+    if path_override:
+        paths = [Path(path_override)]
+    else:
+        paths = sorted((ROOT / "src" / "compiler").glob("evaluator_primitives*.cpp"))
+    for path in paths:
+        if not path.is_file():
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
         lines = text.splitlines()
         covered_tu = file_has_coverage(text)
@@ -179,9 +186,18 @@ def main() -> int:
         action="store_true",
         help="exit 1 on violations (default for ./build.py gate)",
     )
+    # Issue #2494: --path overrides the production PRIM_GLOB so the
+    # AC1 self-test can point the gate at a fixture prim without
+    # contaminating src/compiler/. CI / build.py gate never pass --path.
+    ap.add_argument(
+        "--path",
+        action="store",
+        default=None,
+        help="override prim scan path (test fixture only — CI never passes this)",
+    )
     args = ap.parse_args()
 
-    violations, reason_errors = scan()
+    violations, reason_errors = scan(args.path)
     failed = False
 
     if reason_errors:
