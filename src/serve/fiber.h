@@ -226,7 +226,12 @@ public:
     // samples once and reuses for metrics).
     [[nodiscard]] bool
     is_at_mutation_boundary_safe(const MutationSafetySnapshot& s) const noexcept {
-        // Issue #2118: orch agent soft boundary + (depth>0 | held) → never safe
+        // Issue #2118: orch agent soft boundary + (depth>0 | held) → never safe.
+        // Issue #2515: soft path now publishes held_mirror_ via the same
+        // publish_mutation_safety_mirrors the full Guard path uses
+        // (orch_soft_boundary_enter/exit in evaluator_fiber_mutation.cpp).
+        // Pre-check below stays identical — soft + full agree on the
+        // depth/held input.
         if (orch_agent_boundary_active() && (s.depth > 0 || s.held))
             return false;
         // Outermost Guard live (held) → never steal-safe (#2184 contract).

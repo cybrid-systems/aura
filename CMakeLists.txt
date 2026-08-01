@@ -2914,6 +2914,15 @@ aura_add_issue_test(test_orch_agent_mutation_boundary_2118)
 aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary_2118)
 add_dependencies(all_test_issue_targets test_orch_agent_mutation_boundary_2118)
 
+# Issue #2515: Soft orch-agent boundary 提升为轻量 Guard 子集, 统一 depth/held
+# 语义. orch_soft_boundary_enter/exit now call publish_mutation_safety_mirrors
+# (same shape as full Guard) so steal / GC / is_at_mutation_boundary_safe
+# see the soft window consistently. Closes long-term depth-drift risk vs
+# the full Guard path (#2115 / #2118 / #2184 lineage).
+aura_add_issue_test(test_orch_soft_boundary_unified_2515)
+aura_issue_test_link_llvm_jit(test_orch_soft_boundary_unified_2515)
+add_dependencies(all_test_issue_targets test_orch_soft_boundary_unified_2515)
+
 # Issue #2153: configurable secondary drain timeout on non-Ok join.
 aura_add_issue_test(test_join_drain_timeout_2153)
 aura_issue_test_link_llvm_jit(test_join_drain_timeout_2153)
