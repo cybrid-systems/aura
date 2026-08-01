@@ -3347,6 +3347,11 @@ aura_add_issue_test(test_channel_rendezvous_2483)
 aura_issue_test_link_llvm_jit(test_channel_rendezvous_2483)
 add_dependencies(all_test_issue_targets test_channel_rendezvous_2483)
 
+# Issue #2484: eval-current must not auto-invoke workspace Defines (side effects).
+aura_add_issue_test(test_eval_current_no_auto_fix_2484)
+aura_issue_test_link_llvm_jit(test_eval_current_no_auto_fix_2484)
+add_dependencies(all_test_issue_targets test_eval_current_no_auto_fix_2484)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
