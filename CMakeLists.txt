@@ -3322,6 +3322,11 @@ aura_add_issue_test(test_command_line_cap_io_read_2478)
 aura_issue_test_link_llvm_jit(test_command_line_cap_io_read_2478)
 add_dependencies(all_test_issue_targets test_command_line_cap_io_read_2478)
 
+# Issue #2479: regex-* ReDoS wall-clock timeout (AURA_REGEX_TIMEOUT_MS).
+aura_add_issue_test(test_regex_redos_timeout_2479)
+aura_issue_test_link_llvm_jit(test_regex_redos_timeout_2479)
+add_dependencies(all_test_issue_targets test_regex_redos_timeout_2479)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

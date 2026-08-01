@@ -4268,11 +4268,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     //                       would require per-primitive atomics on
     //                       CompilerMetrics and is a separate
     //                       follow-up)
+    //   - regex-timeouts    regex_timeout_total (#2479 ReDoS budget)
     //   - schema            668
+    //   - schema-2479       2479
     ObservabilityPrims::register_stats_impl(
         "query:primitives-regex-error-stats", [&ev](const auto&) -> EvalValue {
             const std::int64_t regex_errors =
                 static_cast<std::int64_t>(ev.get_primitives_regex_error_total());
+            const std::int64_t regex_timeouts =
+                static_cast<std::int64_t>(ev.get_regex_timeout_total());
             auto* ht = FlatHashTable::create(8);
             if (!ht)
                 return make_void();
@@ -4301,7 +4305,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             };
             insert_kv("regex-errors", regex_errors);
+            insert_kv("regex-timeouts", regex_timeouts);
             insert_kv("schema", 668);
+            insert_kv("schema-2479", 2479);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

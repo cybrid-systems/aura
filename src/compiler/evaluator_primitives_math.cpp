@@ -11,6 +11,11 @@ module;
 #include "primitives_detail.h"
 #include "runtime_shared.h"
 
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <thread>
+
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_M4
 #define AURA_ENABLE_M4 1
@@ -73,6 +78,69 @@ namespace {
         return 0;
     }
 
+    // Issue #2479: wall-clock budget for regex-* (ReDoS guard).
+    // Env AURA_REGEX_TIMEOUT_MS (default 100). Detached-thread race so
+    // the interpreter fiber is not stuck in catastrophic backtracking.
+    [[nodiscard]] int regex_timeout_ms_cfg() noexcept {
+        static const int v = [] {
+            if (const char* e = std::getenv("AURA_REGEX_TIMEOUT_MS")) {
+                const int n = std::atoi(e);
+                if (n > 0)
+                    return n;
+            }
+            return 100;
+        }();
+        return v;
+    }
+
+    // Issue #2479 defense-in-depth: cap pattern / subject size.
+    // Env AURA_REGEX_MAX_INPUT (default 1 MiB).
+    [[nodiscard]] std::size_t regex_max_input_cfg() noexcept {
+        static const std::size_t v = [] {
+            if (const char* e = std::getenv("AURA_REGEX_MAX_INPUT")) {
+                const long n = std::strtol(e, nullptr, 10);
+                if (n > 0)
+                    return static_cast<std::size_t>(n);
+            }
+            return static_cast<std::size_t>(1) << 20;
+        }();
+        return v;
+    }
+
+    enum class RegexRunStatus : std::uint8_t { Ok = 0, SyntaxError = 1, Timeout = 2 };
+
+    // Run Fn on a detached worker; poll until done or timeout_ms.
+    // Fn must return R by value; exceptions → SyntaxError.
+    // Note: on Timeout the worker may still be running (std::regex has no
+    // cancel). Length caps reduce orphan lifetime under attack.
+    template <typename R, typename Fn>
+    [[nodiscard]] std::pair<RegexRunStatus, R> run_regex_timed(Fn fn, int timeout_ms) {
+        struct Box {
+            std::atomic<int> state{0}; // 0 running, 1 ok, 2 error
+            R value{};
+        };
+        auto box = std::make_shared<Box>();
+        std::thread([box, fn = std::move(fn)]() mutable {
+            try {
+                box->value = fn();
+                box->state.store(1, std::memory_order_release);
+            } catch (...) {
+                box->state.store(2, std::memory_order_release);
+            }
+        }).detach();
+
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        while (box->state.load(std::memory_order_acquire) == 0) {
+            if (std::chrono::steady_clock::now() >= deadline)
+                return {RegexRunStatus::Timeout, R{}};
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (box->state.load(std::memory_order_acquire) == 2)
+            return {RegexRunStatus::SyntaxError, R{}};
+        return {RegexRunStatus::Ok, std::move(box->value)};
+    }
+
 } // namespace
 
 void register_math_regex_and_arithmetic_primitives(
@@ -111,6 +179,11 @@ void register_math_regex_and_arithmetic_primitives(
     // primitives_regex_error_total counter so the AI Agent
     // can see the per-regex-primitive observability axis
     // via (query:primitives-regex-error-stats).
+    //
+    // Issue #2479: ReDoS protection — wall-clock timeout
+    // (AURA_REGEX_TIMEOUT_MS, default 100) via detached worker +
+    // size caps (AURA_REGEX_MAX_INPUT). Timeouts bump
+    // regex_timeout_total and return PRIM_ERROR.
     auto bump_regex_error = [&ev, &string_heap, &error_values,
                              primitive_error_counter](const char* prim_name, const char* reason) {
         ev.bump_primitives_regex_error_total();
@@ -118,94 +191,137 @@ void register_math_regex_and_arithmetic_primitives(
         return primitives_detail::make_primitive_error(string_heap, error_values, msg,
                                                        primitive_error_counter);
     };
-    add("regex-match?", [&string_heap, &error_values, primitive_error_counter,
-                         bump_regex_error](std::span<const EvalValue> a) {
+    // Capture bump_regex_error by value (its own captures are long-lived heaps).
+    auto handle_regex_status = [&ev, bump_regex_error](RegexRunStatus st,
+                                                       const char* prim) -> EvalValue {
+        if (st == RegexRunStatus::Timeout) {
+            ev.bump_regex_timeout_total();
+            return bump_regex_error(prim, "regex execution exceeded timeout");
+        }
+        if (st == RegexRunStatus::SyntaxError)
+            return bump_regex_error(prim, "invalid regular expression");
+        return make_void(); // Ok — caller ignores
+    };
+    const int regex_to_ms = regex_timeout_ms_cfg();
+    const std::size_t regex_max = regex_max_input_cfg();
+
+    add("regex-match?", [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
+                         regex_max](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return bump_regex_error("regex-match?", "expected two string arguments");
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
         if (pi >= string_heap.size() || si >= string_heap.size())
             return bump_regex_error("regex-match?", "string index out of range");
-        try {
-            std::regex re(string_heap[pi]);
-            return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
-            // bump_regex_error (#668 / #1669 class A).
-            return bump_regex_error("regex-match?", "invalid regular expression");
-        }
+        const auto& pat = string_heap[pi];
+        const auto& sub = string_heap[si];
+        if (pat.size() > regex_max || sub.size() > regex_max)
+            return bump_regex_error("regex-match?", "regex input exceeds size limit");
+        // Issue #2479: timed regex_search (ReDoS budget).
+        auto [st, matched] = run_regex_timed<bool>(
+            [pat, sub]() {
+                std::regex re(pat);
+                return std::regex_search(sub, re);
+            },
+            regex_to_ms);
+        if (st != RegexRunStatus::Ok)
+            return handle_regex_status(st, "regex-match?");
+        return make_int(matched ? 1 : 0);
     });
 
-    add("regex-find", [&string_heap, &error_values, primitive_error_counter,
-                       bump_regex_error](std::span<const EvalValue> a) {
+    add("regex-find", [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
+                       regex_max](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return bump_regex_error("regex-find", "expected two string arguments");
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
         if (pi >= string_heap.size() || si >= string_heap.size())
             return bump_regex_error("regex-find", "string index out of range");
-        try {
-            std::regex re(string_heap[pi]);
-            std::smatch m;
-            if (std::regex_search(string_heap[si], m, re)) {
-                auto id = string_heap.size();
-                string_heap.push_back(m.str());
-                return make_string(id);
-            }
-        } catch (...) {
-            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
-            // bump_regex_error (#668 / #1669 class A).
-            return bump_regex_error("regex-find", "invalid regular expression");
-        }
-        return make_void();
+        const auto& pat = string_heap[pi];
+        const auto& sub = string_heap[si];
+        if (pat.size() > regex_max || sub.size() > regex_max)
+            return bump_regex_error("regex-find", "regex input exceeds size limit");
+        struct FindOut {
+            bool found = false;
+            std::string match;
+        };
+        auto [st, out] = run_regex_timed<FindOut>(
+            [pat, sub]() {
+                FindOut o;
+                std::regex re(pat);
+                std::smatch m;
+                if (std::regex_search(sub, m, re)) {
+                    o.found = true;
+                    o.match = m.str();
+                }
+                return o;
+            },
+            regex_to_ms);
+        if (st != RegexRunStatus::Ok)
+            return handle_regex_status(st, "regex-find");
+        if (!out.found)
+            return make_void();
+        auto id = string_heap.size();
+        string_heap.push_back(std::move(out.match));
+        return make_string(id);
     });
 
-    add("regex-replace", [&string_heap, &error_values, primitive_error_counter,
-                          bump_regex_error](std::span<const EvalValue> a) {
+    add("regex-replace", [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
+                          regex_max](std::span<const EvalValue> a) {
         if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
             return bump_regex_error("regex-replace", "expected three string arguments");
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
         if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
             return bump_regex_error("regex-replace", "string index out of range");
-        try {
-            std::regex re(string_heap[pi]);
-            auto result = std::regex_replace(string_heap[si], re, string_heap[ri]);
-            auto id = string_heap.size();
-            string_heap.push_back(std::move(result));
-            return make_string(id);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
-            // bump_regex_error (#668 / #1669 class A).
-            return bump_regex_error("regex-replace", "invalid regular expression");
-        }
+        const auto& pat = string_heap[pi];
+        const auto& sub = string_heap[si];
+        const auto& rep = string_heap[ri];
+        if (pat.size() > regex_max || sub.size() > regex_max || rep.size() > regex_max)
+            return bump_regex_error("regex-replace", "regex input exceeds size limit");
+        auto [st, result] = run_regex_timed<std::string>(
+            [pat, sub, rep]() {
+                std::regex re(pat);
+                return std::regex_replace(sub, re, rep);
+            },
+            regex_to_ms);
+        if (st != RegexRunStatus::Ok)
+            return handle_regex_status(st, "regex-replace");
+        auto id = string_heap.size();
+        string_heap.push_back(std::move(result));
+        return make_string(id);
     });
 
-    add("regex-split", [&string_heap, &pairs, &error_values, primitive_error_counter,
-                        bump_regex_error](std::span<const EvalValue> a) {
+    add("regex-split", [&string_heap, &pairs, bump_regex_error, handle_regex_status, regex_to_ms,
+                        regex_max](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return bump_regex_error("regex-split", "expected two string arguments");
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
         if (pi >= string_heap.size() || si >= string_heap.size())
             return bump_regex_error("regex-split", "string index out of range");
-        try {
-            std::regex re(string_heap[pi]);
-            std::sregex_token_iterator it(string_heap[si].begin(), string_heap[si].end(), re, -1);
-            std::sregex_token_iterator end;
-            EvalValue result = make_void();
-            std::vector<std::string> parts;
-            for (; it != end; ++it)
-                parts.push_back(it->str());
-            for (auto it2 = parts.rbegin(); it2 != parts.rend(); ++it2) {
-                auto sid = string_heap.size();
-                string_heap.push_back(*it2);
-                auto pid = pairs.size();
-                pairs.push_back({make_string(sid), result});
-                result = make_pair(pid);
-            }
-            return result;
-        } catch (...) {
-            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
-            // bump_regex_error (#668 / #1669 class A).
-            return bump_regex_error("regex-split", "invalid regular expression");
+        const auto& pat = string_heap[pi];
+        const auto& sub = string_heap[si];
+        if (pat.size() > regex_max || sub.size() > regex_max)
+            return bump_regex_error("regex-split", "regex input exceeds size limit");
+        auto [st, parts] = run_regex_timed<std::vector<std::string>>(
+            [pat, sub]() {
+                std::regex re(pat);
+                std::sregex_token_iterator it(sub.begin(), sub.end(), re, -1);
+                std::sregex_token_iterator end;
+                std::vector<std::string> out;
+                for (; it != end; ++it)
+                    out.push_back(it->str());
+                return out;
+            },
+            regex_to_ms);
+        if (st != RegexRunStatus::Ok)
+            return handle_regex_status(st, "regex-split");
+        EvalValue result = make_void();
+        for (auto it2 = parts.rbegin(); it2 != parts.rend(); ++it2) {
+            auto sid = string_heap.size();
+            string_heap.push_back(*it2);
+            auto pid = pairs.size();
+            pairs.push_back({make_string(sid), result});
+            result = make_pair(pid);
         }
+        return result;
     });
 
     // ── Math ────────────────────────────────────────────────────

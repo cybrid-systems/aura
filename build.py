@@ -3962,6 +3962,24 @@ def cmd_command_line_cap_io_read_coverage():
     return 0
 
 
+def cmd_regex_redos_timeout_coverage():
+    """Issue #2479: regex-* ReDoS wall-clock timeout + size caps.
+
+    AURA_REGEX_TIMEOUT_MS (default 100) + regex_timeout_total metric.
+    """
+    print(f"{B}=== regex ReDoS timeout coverage (#2479) ==={N}")
+    script = ROOT / "scripts" / "check_regex_redos_timeout_2479.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("regex ReDoS timeout (#2479) coverage contract rows failed")
+        return 1
+    ok("regex ReDoS timeout (#2479) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4991,6 +5009,7 @@ def cmd_gate():
         or cmd_partial_recompile_single_evict_coverage()
         or cmd_emit_object_deprecated_coverage()
         or cmd_command_line_cap_io_read_coverage()
+        or cmd_regex_redos_timeout_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()

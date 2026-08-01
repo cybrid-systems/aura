@@ -12028,6 +12028,20 @@ public:
             m->primitives_regex_error_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #2479: ReDoS timeout observability for regex-* primitives.
+    [[nodiscard]] std::uint64_t get_regex_timeout_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->regex_timeout_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    void bump_regex_timeout_total(std::uint64_t n = 1) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->regex_timeout_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     void bump_total_query_calls() noexcept {
         total_query_calls_.fetch_add(1, std::memory_order_relaxed);
     }

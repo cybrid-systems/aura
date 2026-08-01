@@ -6100,6 +6100,9 @@ struct CompilerMetrics {
     // per-regex-primitive observability axis (count +
     // breakdown by primitive via the query primitive).
     std::atomic<std::uint64_t> primitives_regex_error_total{0};
+    // Issue #2479: ReDoS / timeout on regex-* primitives (AURA_REGEX_TIMEOUT_MS).
+    // Bumped when match/find/replace/split exceeds the wall-clock budget.
+    std::atomic<std::uint64_t> regex_timeout_total{0};
 
     // Issue #479: per-slot fast-path hit breakdown. Which
     // primitive is hottest in list/map/filter/apply hot
