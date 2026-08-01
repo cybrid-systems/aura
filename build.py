@@ -3557,6 +3557,24 @@ def cmd_region_sym_map_race_coverage():
     return 0
 
 
+def cmd_defines_referencing_sym_coverage():
+    """Issue #2448: defines_referencing_sym exclude mutated Define by NodeId.
+
+    Skip only exclude_define, not all Defines with matching name.
+    """
+    print(f"{B}=== defines_referencing_sym coverage (#2448) ==={N}")
+    script = ROOT / "scripts" / "check_defines_referencing_sym_2448.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("defines_referencing_sym (#2448) coverage contract rows failed")
+        return 1
+    ok("defines_referencing_sym (#2448) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4526,6 +4544,7 @@ def cmd_gate():
         or cmd_add_node_builder_contract_coverage()
         or cmd_region_lambda_dense_race_coverage()
         or cmd_region_sym_map_race_coverage()
+        or cmd_defines_referencing_sym_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

@@ -3207,6 +3207,11 @@ aura_add_issue_test(test_add_node_builder_contract_2445)
 aura_issue_test_link_llvm_jit(test_add_node_builder_contract_2445)
 add_dependencies(all_test_issue_targets test_add_node_builder_contract_2445)
 
+# Issue #2448: defines_referencing_sym exclude mutated Define by NodeId
+aura_add_issue_test(test_defines_referencing_sym_2448)
+aura_issue_test_link_llvm_jit(test_defines_referencing_sym_2448)
+add_dependencies(all_test_issue_targets test_defines_referencing_sym_2448)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

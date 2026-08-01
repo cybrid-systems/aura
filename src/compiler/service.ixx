@@ -9194,7 +9194,9 @@ public:
                         auto v = ws_flat->get(target);
                         if (v.tag == aura::ast::NodeTag::Define &&
                             v.sym_id != aura::ast::INVALID_SYM) {
-                            auto affected = ws_flat->defines_referencing_sym(v.sym_id);
+                            // Issue #2448: exclude only the mutated Define
+                            // NodeId (not all Defines with matching name).
+                            auto affected = ws_flat->defines_referencing_sym(v.sym_id, target);
                             std::println(
                                 std::cerr,
                                 "MutationImpactAnalysis: mutation {} affects {} function(s)", mid,

@@ -3705,12 +3705,18 @@ public:
         return it->second;
     }
 
-    // Issue #150 Phase 3: mutation impact analysis helper.
+    // Issue #150 Phase 3 / #2448: mutation impact analysis helper.
     // Given a SymId (the name that was mutated), find all
     // Define nodes whose value subtree references that
     // sym. Returns the list of Define node IDs whose
     // functions are potentially affected by a
     // mutate:rebind on the given name.
+    //
+    // Issue #2448: skip only the mutated Define by NodeId
+    // (`exclude_define`), not every Define whose name == sym.
+    // Skipping by name wrongly dropped shadowed / duplicate-name
+    // Defines that still reference the rebound binding (let rec
+    // shadowing + mutate:rebind).
     //
     // Conservative MVP: direct reference only. A function
     // that calls another function which uses the mutated
@@ -3721,7 +3727,8 @@ public:
     // need invalidation but isn't flagged. The follow-up
     // (Phase 3b) would walk the call graph from these
     // results to find the transitive set.
-    [[nodiscard]] std::pmr::vector<aura::ast::NodeId> defines_referencing_sym(SymId sym) const {
+    [[nodiscard]] std::pmr::vector<aura::ast::NodeId>
+    defines_referencing_sym(SymId sym, NodeId exclude_define = NULL_NODE) const {
         std::pmr::vector<aura::ast::NodeId> result(
             std::pmr::polymorphic_allocator<aura::ast::NodeId>{});
         for (aura::ast::NodeId i = 0; i < size(); ++i) {
@@ -3730,8 +3737,9 @@ public:
             auto v = get(i);
             if (v.tag != aura::ast::NodeTag::Define)
                 continue;
-            if (v.sym_id == sym)
-                continue; // the mutated Define itself
+            // Issue #2448: skip only the mutated Define node.
+            if (exclude_define != NULL_NODE && i == exclude_define)
+                continue;
             if (v.children.empty())
                 continue;
             if (subtree_uses_sym(v.child(0), sym)) {
