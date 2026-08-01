@@ -2427,6 +2427,11 @@ aura_add_issue_test(test_query_hygiene_default_2525)
 aura_issue_test_link_llvm_jit(test_query_hygiene_default_2525)
 add_dependencies(all_test_issue_targets test_query_hygiene_default_2525)
 
+# Issue #2526: adaptive deopt-storm threshold closed-loop with LayoutStamp.
+aura_add_issue_test(test_shape_storm_adaptive_2526)
+aura_issue_test_link_llvm_jit(test_shape_storm_adaptive_2526)
+add_dependencies(all_test_issue_targets test_shape_storm_adaptive_2526)
+
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)

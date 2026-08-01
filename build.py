@@ -3292,6 +3292,24 @@ def cmd_query_hygiene_default_coverage():
     return 0
 
 
+def cmd_shape_storm_adaptive_coverage():
+    """Issue #2526: adaptive deopt-storm threshold × LayoutStamp.
+
+    Compact-dominated stable pressure raises thr / suppresses global storm.
+    """
+    print(f"{B}=== shape storm adaptive coverage (#2526) ==={N}")
+    script = ROOT / "scripts" / "check_shape_storm_adaptive_2526.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape storm adaptive (#2526) coverage contract rows failed")
+        return 1
+    ok("shape storm adaptive (#2526) coverage clean")
+    return 0
+
+
 def cmd_aot_linear_literal_noop_coverage():
     """Issue #2407: AOT move/Linear of Copy literals as no-ops + emit-binary.
 
@@ -5703,6 +5721,7 @@ def cmd_gate():
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
+        or cmd_shape_storm_adaptive_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()
