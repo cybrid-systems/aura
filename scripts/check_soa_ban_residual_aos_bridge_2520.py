@@ -7,7 +7,7 @@ Contract:
   AC3 DirtyAware/columnar prefer SoA (no hot-path materialize)
   AC4 test opt-in set_allow_aos_bridge_for_test / AURA_ALLOW_AOS_BRIDGE
   AC5 residual metric test-only; schema-2520; gate wiring
-  Grep: production TUs do not call to_aos_view outside ir_soa + pass_manager
+  Grep: production TUs do not call to_aos_view outside ir_soa + pass_impls
 
 Exit 0 = all rows satisfied.
 """
@@ -36,7 +36,8 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     soa = _read("src/compiler/ir_soa.ixx")
-    pm = _read("src/compiler/pass_manager.ixx")
+    # Issue #2524: SoAtoAoS / DeadCoercion bodies live in pass_impls.ixx
+    pm = _read("src/compiler/pass_impls.ixx") + _read("src/compiler/pass_manager.ixx")
     low = _read("src/compiler/lowering_impl.cpp")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
@@ -84,7 +85,8 @@ def main() -> int:
     # Grep: production call sites of to_aos_view( (ignore // comments)
     allowed = {
         "src/compiler/ir_soa.ixx",
-        "src/compiler/pass_manager.ixx",
+        "src/compiler/pass_manager.ixx",  # facade only
+        "src/compiler/pass_impls.ixx",  # SoAtoAoSBridgePass (#2524)
     }
     src_root = ROOT / "src"
     call_re = re.compile(r"\bto_aos_(?:view|module)\s*\(")

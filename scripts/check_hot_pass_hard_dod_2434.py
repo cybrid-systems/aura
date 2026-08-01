@@ -33,7 +33,12 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    pm = _read("src/compiler/pass_manager.ixx")
+    # Issue #2524: pass_manager is a facade; bodies live in pipeline core + impls.
+    pm = (
+        _read("src/compiler/pass_pipeline_core.ixx")
+        + _read("src/compiler/pass_impls.ixx")
+        + _read("src/compiler/pass_manager.ixx")
+    )
     cc = _read("src/core/concept_constraints.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_hot_pass_hard_dod_2434.cpp")

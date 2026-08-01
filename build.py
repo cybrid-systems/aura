@@ -3256,6 +3256,24 @@ def cmd_workspace_mtx_contention_coverage():
     return 0
 
 
+def cmd_module_partition_map_coverage():
+    """Issue #2524: giant module partition map + pass_manager Phase C.
+
+    Facade re-exports pass_pipeline_core + pass_impls; no API renames.
+    """
+    print(f"{B}=== module partition map coverage (#2524) ==={N}")
+    script = ROOT / "scripts" / "check_module_partition_map_2524.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module partition map (#2524) coverage contract rows failed")
+        return 1
+    ok("module partition map (#2524) coverage clean")
+    return 0
+
+
 def cmd_aot_linear_literal_noop_coverage():
     """Issue #2407: AOT move/Linear of Copy literals as no-ops + emit-binary.
 
@@ -5665,6 +5683,7 @@ def cmd_gate():
         or cmd_pcv_tls_default_on_coverage()
         or cmd_batch_dirty_cascade_coverage()
         or cmd_workspace_mtx_contention_coverage()
+        or cmd_module_partition_map_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()
