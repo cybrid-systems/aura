@@ -3312,6 +3312,11 @@ aura_add_issue_test(test_partial_recompile_single_evict_2476)
 aura_issue_test_link_llvm_jit(test_partial_recompile_single_evict_2476)
 add_dependencies(all_test_issue_targets test_partial_recompile_single_evict_2476)
 
+# Issue #2477: emit_object fail-closed deprecation (no true after .ir write).
+aura_add_issue_test(test_emit_object_deprecated_2477)
+aura_issue_test_link_llvm_jit(test_emit_object_deprecated_2477)
+add_dependencies(all_test_issue_targets test_emit_object_deprecated_2477)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

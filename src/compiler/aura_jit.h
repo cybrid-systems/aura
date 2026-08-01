@@ -412,8 +412,9 @@ private:
 bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
                         const std::vector<std::string>* string_pool = nullptr);
 
-/// Emit an object file from an IR module.
-/// Returns true on success.
+/// Deprecated (Issue #2477): always returns false and logs to stderr.
+/// Previously wrote out_path+".ir" while returning true (misleading success).
+/// Use emit_native_object for native .o emission.
 bool emit_object(const std::string& ir_dump, const std::string& out_path);
 
 /// Emit object file from an already-compiled IRModule.
