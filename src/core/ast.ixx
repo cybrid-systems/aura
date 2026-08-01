@@ -2859,9 +2859,10 @@ public:
         kMacroExpansion = 0x01,  // clone_macro_body produced this subtree
         kMacroSelfModify = 0x02, // self-evolution step touched a macro-introduced node
     };
-    // Issue #290 / #2441: macro_dirty_ accessor (public, used by the
+    // Issue #2442 / #290 / #2441: macro_dirty_ accessor (public, used by the
     // (compile:macro-dirty?) primitive). Shared dirty_column_mtx_ +
-    // atomic_ref load (parity with verification_dirty / verify_dirty).
+    // atomic_ref load so concurrent clear_macro_dirty_all cannot tear
+    // the uint8 cell (parity with verification_dirty / verify_dirty).
     [[nodiscard]] std::uint8_t macro_dirty(NodeId id) const noexcept {
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         if (id >= macro_dirty_.size())
@@ -2895,17 +2896,20 @@ public:
             macro_self_modify_dirty_total_.fetch_add(1, std::memory_order_relaxed);
         mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
     }
-    // Issue #290 / #2441: bulk-clear all macro_dirty_ bits across the
-    // flat. Called from the (compile:clear-macro-dirty!) primitive
-    // and from full-reset paths. Walks every live node under exclusive
-    // dirty_column_mtx_ + atomic store.
+    // Issue #2442 / #290 / #2441: bulk-clear all macro_dirty_ bits across
+    // the flat. Called from the (compile:clear-macro-dirty!) primitive
+    // and from full-reset paths. Exclusive dirty_column_mtx_ + atomic
+    // store per cell so concurrent macro_dirty(id) readers cannot tear
+    // (AC1 Issue #2442) — shared lock on the reader excludes this exclusive
+    // clear mid-loop; atomic store is defense-in-depth.
     void clear_macro_dirty_all() noexcept {
         std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         for (auto& b : macro_dirty_)
             std::atomic_ref<std::uint8_t>(b).store(0, std::memory_order_relaxed);
     }
-    // Issue #290 / #2441: count nodes with any macro_dirty_ bit set.
-    // Used by the (compile:macro-dirty-count) primitive.
+    // Issue #2442 / #290 / #2441: count nodes with any macro_dirty_ bit set.
+    // Used by the (compile:macro-dirty-count) primitive. Shared lock +
+    // atomic loads so concurrent clear_macro_dirty_all cannot race the scan.
     [[nodiscard]] std::size_t macro_dirty_count() const noexcept {
         std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
         std::size_t n = 0;

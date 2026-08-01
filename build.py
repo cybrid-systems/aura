@@ -3449,6 +3449,24 @@ def cmd_macro_dirty_bits_lock_coverage():
     return 0
 
 
+def cmd_clear_macro_dirty_concurrent_coverage():
+    """Issue #2442: clear_macro_dirty_all concurrent-safe vs macro_dirty readers.
+
+    Exclusive dirty_column_mtx_ + atomic store per cell.
+    """
+    print(f"{B}=== clear_macro_dirty concurrent coverage (#2442) ==={N}")
+    script = ROOT / "scripts" / "check_clear_macro_dirty_concurrent_2442.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("clear_macro_dirty concurrent (#2442) coverage contract rows failed")
+        return 1
+    ok("clear_macro_dirty concurrent (#2442) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4412,6 +4430,7 @@ def cmd_gate():
         or cmd_verification_dirty_bits_lock_coverage()
         or cmd_soa_column_atomic_coverage()
         or cmd_macro_dirty_bits_lock_coverage()
+        or cmd_clear_macro_dirty_concurrent_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()

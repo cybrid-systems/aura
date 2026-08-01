@@ -3192,6 +3192,11 @@ aura_add_issue_test(test_macro_dirty_bits_lock_2441)
 aura_issue_test_link_llvm_jit(test_macro_dirty_bits_lock_2441)
 add_dependencies(all_test_issue_targets test_macro_dirty_bits_lock_2441)
 
+# Issue #2442: clear_macro_dirty_all concurrent with macro_dirty readers
+aura_add_issue_test(test_clear_macro_dirty_concurrent_2442)
+aura_issue_test_link_llvm_jit(test_clear_macro_dirty_concurrent_2442)
+add_dependencies(all_test_issue_targets test_clear_macro_dirty_concurrent_2442)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
