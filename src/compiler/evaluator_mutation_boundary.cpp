@@ -2606,6 +2606,14 @@ std::uint64_t Evaluator::get_layout_stamp_steal_missing_total() const noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     return m ? m->layout_stamp_steal_missing_total.load(std::memory_order_relaxed) : 0;
 }
+std::uint64_t Evaluator::get_steal_complete_restamp_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->steal_complete_restamp_total.load(std::memory_order_relaxed) : 0;
+}
+std::uint64_t Evaluator::get_steal_complete_layout_hard_fail_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->steal_complete_layout_hard_fail_total.load(std::memory_order_relaxed) : 0;
+}
 
 // Issue #2255: ShapeProfiler monotonic generation (7th LayoutStamp
 // field) hard-fence counter. Bumped by

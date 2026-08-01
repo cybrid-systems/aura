@@ -3010,6 +3010,11 @@ struct CompilerMetrics {
     // Issue #2351: MB-yielded fiber expected Phase-5 stamp but
     // has_resume_layout_stamp() is false (observability only).
     std::atomic<std::uint64_t> layout_stamp_steal_missing_total{0}; // #2351
+    // Issue #2510: transactional restamp on steal-complete success path
+    // (refresh_stale_frames_after_steal + StableNodeRef provenance).
+    std::atomic<std::uint64_t> steal_complete_restamp_total{0}; // #2510
+    // Issue #2510: LayoutStamp mismatch under Hard/production → cancel+Done.
+    std::atomic<std::uint64_t> steal_complete_layout_hard_fail_total{0}; // #2510
     // Issue #2353: post-densify / post-steal unified Linear+Type revalidate.
     // revalidate_total: phase entered (had Moving densify + linear work).
     // fail_total: ownership enforce or type dual-path failed → suppress Phase 5 success.

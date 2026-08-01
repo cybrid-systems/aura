@@ -1317,6 +1317,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("layout-stamp-steal-wired", 1);
             insert_kv("schema-2351", 2351);
             insert_kv("issue-2351", 2351);
+            // Issue #2510: transactional restamp on steal-complete success.
+            insert_kv("steal-complete-restamp-total",
+                      static_cast<std::int64_t>(ev.get_steal_complete_restamp_total()));
+            insert_kv("steal-complete-layout-hard-fail-total",
+                      static_cast<std::int64_t>(ev.get_steal_complete_layout_hard_fail_total()));
+            insert_kv("steal-complete-restamp-wired", 1);
+            insert_kv("schema-2510", 2510);
+            insert_kv("issue-2510", 2510);
             // Issue #2255: ShapeProfiler monotonic generation (7th
             // LayoutStamp field) hard-fence counter.
             insert_kv("shape-version-fence-reject-total",

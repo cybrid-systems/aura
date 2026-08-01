@@ -10991,6 +10991,25 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2351", 2351);
                 insert_kv("issue-2351", 2351);
             }
+            // Issue #2510: transactional LayoutStamp + provenance restamp on
+            // steal-complete (sole success-path restamp entry under strong ABI).
+            {
+                std::int64_t restamp = 0;
+                std::int64_t layout_hf = 0;
+                if (auto* __qev = Evaluator::get_query_evaluator()) {
+                    restamp = static_cast<std::int64_t>(__qev->get_steal_complete_restamp_total());
+                    layout_hf = static_cast<std::int64_t>(
+                        __qev->get_steal_complete_layout_hard_fail_total());
+                }
+                insert_kv("steal-complete-restamp-total", restamp);
+                insert_kv("steal-complete-layout-hard-fail-total", layout_hf);
+                insert_kv("steal-snapshot-hard-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::Fiber::steal_snapshot_hard_fail_total()));
+                insert_kv("steal-complete-restamp-wired", 1);
+                insert_kv("schema-2510", 2510);
+                insert_kv("issue-2510", 2510);
+            }
             // Issue #2314: residual GcDeferReason clear invoked from the
             // steal-complete entry when defer_reasons_snapshot() != 0 post
             // #2203 panic clear. Distinct from gc-defer-orphan-cleared-on-

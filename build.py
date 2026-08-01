@@ -4422,6 +4422,25 @@ def cmd_steal_layout_stamp_coverage():
     return 0
 
 
+def cmd_steal_complete_restamp_txn_coverage():
+    """Issue #2510: transactional LayoutStamp + provenance restamp on steal-complete.
+
+    Hard mismatch → cancel+Done (no Ready). Match → forced restamp.
+    Soft metric-only; production Soft ignored.
+    """
+    print(f"{B}=== steal-complete restamp transaction coverage (#2510) ==={N}")
+    script = ROOT / "scripts" / "check_steal_complete_restamp_txn_2510.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal-complete restamp transaction coverage contract rows failed")
+        return 1
+    ok("steal-complete restamp transaction coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -5469,6 +5488,7 @@ def cmd_gate():
         or cmd_gc_heap_cells_clear_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
+        or cmd_steal_complete_restamp_txn_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
