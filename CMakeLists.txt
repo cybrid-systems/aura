@@ -2407,6 +2407,11 @@ aura_add_issue_test(test_pcv_tls_default_on_2521)
 aura_issue_test_link_llvm_jit(test_pcv_tls_default_on_2521)
 add_dependencies(all_test_issue_targets test_pcv_tls_default_on_2521)
 
+# Issue #2522: batch dirty cascade API (mark_blocks_dirty + single gen bump).
+aura_add_issue_test(test_batch_dirty_cascade_2522)
+aura_issue_test_link_llvm_jit(test_batch_dirty_cascade_2522)
+add_dependencies(all_test_issue_targets test_batch_dirty_cascade_2522)
+
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
 aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)

@@ -3220,6 +3220,24 @@ def cmd_pcv_tls_default_on_coverage():
     return 0
 
 
+def cmd_batch_dirty_cascade_coverage():
+    """Issue #2522: batch dirty cascade (mark_blocks_dirty + single bump).
+
+    One generation/fence advance per batch; finish_dirty_sync retained.
+    """
+    print(f"{B}=== batch dirty cascade coverage (#2522) ==={N}")
+    script = ROOT / "scripts" / "check_batch_dirty_cascade_2522.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("batch dirty cascade (#2522) coverage contract rows failed")
+        return 1
+    ok("batch dirty cascade (#2522) coverage clean")
+    return 0
+
+
 def cmd_aot_linear_literal_noop_coverage():
     """Issue #2407: AOT move/Linear of Copy literals as no-ops + emit-binary.
 
@@ -5627,6 +5645,7 @@ def cmd_gate():
         or cmd_mutation_hold_live_coverage()
         or cmd_pcv_tls_scratch_coverage()
         or cmd_pcv_tls_default_on_coverage()
+        or cmd_batch_dirty_cascade_coverage()
         or cmd_aot_linear_literal_noop_coverage()
         or cmd_stringpool_bytes_total_lock_coverage()
         or cmd_stringpool_buf_fragmentation_lock_coverage()
