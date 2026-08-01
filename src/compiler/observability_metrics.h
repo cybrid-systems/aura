@@ -8430,6 +8430,10 @@ struct CompilerMetrics {
     // Issue #2345: per-CompilerMetrics mirrors of composite empty-CS policy.
     std::atomic<std::uint64_t> composite_commit_empty_cs_hard_miss_total{0};
     std::atomic<std::uint64_t> composite_commit_empty_cs_observe_total{0};
+    // Issue #2509: mirrors of expected↔has_work signature matrix counters.
+    std::atomic<std::uint64_t> composite_commit_unexpected_cs_work_total{0};
+    std::atomic<std::uint64_t> composite_commit_expected_has_work_total{0};
+    std::atomic<std::uint64_t> composite_commit_sdo_entered_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
     // Issue #1528: O(delta) re-inference observability.

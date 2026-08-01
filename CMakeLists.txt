@@ -3442,6 +3442,11 @@ aura_add_issue_test(test_delta_truncate_goal_priority_2508)
 aura_issue_test_link_llvm_jit(test_delta_truncate_goal_priority_2508)
 add_dependencies(all_test_issue_targets test_delta_truncate_goal_priority_2508)
 
+# Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix at commit.
+aura_add_issue_test(test_composite_cs_signature_matrix_2509)
+aura_issue_test_link_llvm_jit(test_composite_cs_signature_matrix_2509)
+add_dependencies(all_test_issue_targets test_composite_cs_signature_matrix_2509)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -6106,6 +6106,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                               c.composite_empty_cs_hard_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2345", 2345);
                 insert_kv("issue-2345", 2345);
+                // Issue #2509: expected_partial ↔ has_work signature matrix.
+                insert_kv(
+                    "composite-commit-unexpected-cs-work-total",
+                    static_cast<std::int64_t>(c.composite_commit_unexpected_cs_work_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("composite-commit-expected-has-work-total",
+                          static_cast<std::int64_t>(c.composite_commit_expected_has_work_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-commit-sdo-entered-total",
+                          static_cast<std::int64_t>(c.composite_commit_sdo_entered_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-cs-signature-matrix-wired",
+                          static_cast<std::int64_t>(c.composite_cs_signature_matrix_wired.load(
+                              std::memory_order_relaxed)));
+                insert_kv("schema-2509", 2509);
+                insert_kv("issue-2509", 2509);
                 insert_kv("commit-cs-live", ev.commit_cs_live() ? 1 : 0);
                 insert_kv("composite-commit-cs-reuse-wired", 1);
                 insert_kv("schema-2180", 2180);

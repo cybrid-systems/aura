@@ -2869,6 +2869,25 @@ def cmd_composite_empty_cs_hard_coverage():
     return 0
 
 
+def cmd_composite_cs_signature_matrix_coverage():
+    """Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix.
+
+    true|false hard-miss (#2345); true|true must SDO; false|false structural;
+    false|true unexpected_cs_work observe + never silent skip under Full.
+    """
+    print(f"{B}=== composite CS signature matrix coverage (#2509) ==={N}")
+    script = ROOT / "scripts" / "check_composite_cs_signature_matrix_2509.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("composite CS signature matrix coverage contract rows failed")
+        return 1
+    ok("composite CS signature matrix coverage clean")
+    return 0
+
+
 def cmd_steal_snapshot_hard_invariant_coverage():
     """Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed).
 
@@ -5365,6 +5384,7 @@ def cmd_gate():
         or cmd_type_timeout_repair_graph_coverage()
         or cmd_escape_gate_key_contract_coverage()
         or cmd_composite_empty_cs_hard_coverage()
+        or cmd_composite_cs_signature_matrix_coverage()
         or cmd_steal_snapshot_hard_invariant_coverage()
         or cmd_steal_snapshot_soft_production_lock_coverage()
         or cmd_render_deopt_throttle_race_coverage()
