@@ -1099,6 +1099,18 @@ export class FlatAST {
     //   concurrent_vector) across the entire builder body before
     //   concurrent builders are enabled — deferred until then.
     //
+    // Issue #2449 — param_data_ / param_annot_data_ mutation contract:
+    //   Shared param arena grown via param_data_.insert(end, …) from
+    //   add_lambda, set_lambda_params, add_define_type,
+    //   add_define_module, add_modport, add_coverpoint,
+    //   add_constraint, add_class, … Readers slice
+    //   param_data_[param_begin_[id] .. +param_count_[id]].
+    //   Concurrent insert + slice read is UB (vector reallocation).
+    //   Same single-threaded mutation contract as #2445: parse/build
+    //   exclusive (workspace_mtx); lowering/IR reads post-parse-join.
+    //   Parallel parse must serialize param_data_ growth before
+    //   concurrent builders are enabled.
+    //
     // Issue #1431 follow-up (Race #2): two CompilerService::eval
     // threads sharing workspace_flat_ raced add_node push_backs,
     // corrupting pmr. recursive_mutex because reset_node_slot is
@@ -1581,6 +1593,10 @@ public:
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
     std::pmr::vector<std::uint32_t> cap_require_count_;
+    // Issue #2449: param_data_ is a shared arena (not per-node SoA
+    // alone). Grown by builder insert under the single-threaded
+    // mutation contract — concurrent insert vs param_begin_/count
+    // slice readers is UB until parallel-parse hardens this column.
     std::pmr::vector<SymId> param_data_;
     std::pmr::vector<NodeId> param_annot_data_; // per-param annotation node IDs (NULL_NODE = none)
     // Source location (line/col, 1-based)
@@ -3537,6 +3553,9 @@ public:
         return id;
     }
 
+    // Issue #2449: add_lambda / set_lambda_params grow param_data_
+    // under the single-threaded mutation contract (parser/build
+    // exclusive). Concurrent insert + param slice readers deferred.
     [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body,
                                     bool dotted = false) {
         return add_lambda(params, {}, body, dotted);
@@ -3546,6 +3565,7 @@ public:
         auto id = add_node(NodeTag::Lambda);
         int_val_[id] = dotted ? 1 : 0; // store dotted flag
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        // Issue #2449: param_data_.insert — single-thread mutation contract.
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         // Store annotations (or NULL_NODE if not provided)
         param_annot_data_.resize(param_annot_data_.size() + params.size(), aura::ast::NULL_NODE);
@@ -3559,9 +3579,10 @@ public:
         return id;
     }
 
-    // Issue #1266: set params on an existing Lambda (used by
+    // Issue #1266 / #2449: set params on an existing Lambda (used by
     // mutate:inline-call clone path — add_lambda with empty params
-    // then copy params after body wire-up).
+    // then copy params after body wire-up). param_data_ growth under
+    // single-threaded mutation contract.
     void set_lambda_params(NodeId id, std::span<const SymId> params,
                            std::span<const NodeId> annots = {}) {
         if (id >= param_begin_.size() || id >= param_count_.size())
@@ -3569,6 +3590,7 @@ public:
         if (id >= tag_.size() || tag_[id] != NodeTag::Lambda)
             return;
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        // Issue #2449: param_data_.insert — single-thread mutation contract.
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
