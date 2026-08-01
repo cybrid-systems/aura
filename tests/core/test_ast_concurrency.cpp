@@ -31,6 +31,7 @@
 //   #2446 AC: concurrent set_function_region_lambda + get_for_lambda
 //   #2447 AC: concurrent region_by_sym_ map insert + find (no rehash UB)
 //   #2449 AC: param_data_ single-threaded mutation contract (seq builders)
+//   #2452 AC: incoming_parent_index_dirty_ atomic — mark visible to collect
 
 #include "test_harness.hpp"
 
@@ -454,6 +455,69 @@ int main() {
             CHECK(flat.tag(lam) == NodeTag::Lambda, "#2449: lambda after param insert");
         }
         CHECK(flat.size() >= static_cast<std::size_t>(kN * 2), "#2449: bulk builders sized");
+    }
+
+    // ── Issue #2452: incoming_parent_index_dirty_ atomic visibility ─
+    // mark_release must be visible to ensure/collect acquire (#2416 fix).
+    {
+        std::println("\n--- #2452: concurrent mark + dirty load; link+collect edges ---");
+        FlatAST flat;
+        const NodeId a = flat.add_node(NodeTag::LiteralInt);
+        const NodeId p = flat.add_node(NodeTag::Begin);
+        flat.root = p;
+        flat.insert_child(p, 0, a);
+        flat.ensure_incoming_parent_index();
+        CHECK(!flat.incoming_parent_index_dirty(), "#2452: clean after ensure");
+
+        std::atomic<bool> stop{false};
+        std::atomic<std::uint64_t> marks{0};
+        std::atomic<std::uint64_t> saw_true{0};
+        std::atomic<std::uint64_t> err{0};
+
+        std::vector<std::thread> threads;
+        // Writers: mark dirty (as link_children does)
+        for (int t = 0; t < 2; ++t) {
+            threads.emplace_back([&] {
+                while (!stop.load(std::memory_order_acquire)) {
+                    try {
+                        flat.mark_incoming_parent_index_dirty();
+                        marks.fetch_add(1, std::memory_order_relaxed);
+                    } catch (...) {
+                        err.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+        // Readers: observe dirty true (no stale permanent false)
+        for (int t = 0; t < 4; ++t) {
+            threads.emplace_back([&] {
+                while (!stop.load(std::memory_order_acquire)) {
+                    try {
+                        if (flat.incoming_parent_index_dirty())
+                            saw_true.fetch_add(1, std::memory_order_relaxed);
+                    } catch (...) {
+                        err.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            });
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        stop.store(true, std::memory_order_release);
+        for (auto& th : threads)
+            th.join();
+
+        std::println("  #2452 marks={} saw_true={} err={}", marks.load(), saw_true.load(),
+                     err.load());
+        CHECK(marks.load() > 0, "#2452: writers marked dirty");
+        CHECK(saw_true.load() > 0, "#2452: readers observed dirty true");
+        CHECK(err.load() == 0, "#2452: no exceptions");
+
+        // After mark, collect rebuilds and returns the parent edge
+        flat.mark_incoming_parent_index_dirty();
+        auto edges = flat.collect_incoming_parent_edges(a);
+        CHECK(edges.size() == 1, "#2452: collect sees parent edge after mark");
+        CHECK(edges[0].first == p, "#2452: parent is Begin node");
+        CHECK(!flat.incoming_parent_index_dirty(), "#2452: clean after collect rebuild");
     }
 
     std::println("\n=== test_ast_concurrency results: {} passed, {} failed ===", g_passed,

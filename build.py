@@ -3629,6 +3629,24 @@ def cmd_param_begin_count_publish_coverage():
     return 0
 
 
+def cmd_incoming_parent_dirty_atomic_2452_coverage():
+    """Issue #2452: incoming_parent_index_dirty_ atomic (stale-free edges).
+
+    release mark / acquire ensure; concurrent mark+load in test_ast_concurrency.
+    """
+    print(f"{B}=== incoming_parent_dirty atomic coverage (#2452) ==={N}")
+    script = ROOT / "scripts" / "check_incoming_parent_dirty_atomic_2452.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("incoming_parent_dirty atomic (#2452) coverage contract rows failed")
+        return 1
+    ok("incoming_parent_dirty atomic (#2452) coverage clean")
+    return 0
+
+
 def cmd_type_system_health_coverage():
     """Issue #2350: query:type-system-health single Agent score.
 
@@ -4602,6 +4620,7 @@ def cmd_gate():
         or cmd_param_data_mutation_contract_coverage()
         or cmd_param_annot_mutation_contract_coverage()
         or cmd_param_begin_count_publish_coverage()
+        or cmd_incoming_parent_dirty_atomic_2452_coverage()
         or cmd_type_system_health_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
