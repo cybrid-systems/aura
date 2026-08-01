@@ -3622,11 +3622,13 @@ public:
     // get_function_region_for_lambda(node_id) — both return
     // std::optional<std::uint8_t>; nullopt means no annotation.
     //
-    // Issue #2443 / #2444: exclusive region_table_mtx_ for map + dense
-    // resize + atomic_ref store (no torn uint8 / no mid-resize UB vs
-    // concurrent get_function_region_for_sym — Issue #2444).
+    // Issue #2443 / #2444 / #2447: exclusive region_table_mtx_ for
+    // region_by_sym_ map insert + dense resize + atomic_ref store
+    // (no concurrent insert+find UB on the map — Issue #2447; no
+    // mid-resize dense UB — Issue #2444).
     void set_function_region(SymId name, std::uint8_t region) {
         std::unique_lock<std::shared_mutex> wlock(region_table_mtx_.mutable_get());
+        // Issue #2447: map write under exclusive lock (rehash-safe vs find).
         region_by_sym_[name] = region;
         // Issue #1520 / #2444: dense SoA side-table for hot SymId lookups.
         // Encoding: 0 = unset, region+1 stored (region is 0..254).
@@ -3658,8 +3660,9 @@ public:
                 .store(static_cast<std::uint8_t>(region + 1), std::memory_order_release);
         }
     }
-    // Issue #2443 / #2444: shared region_table_mtx_ + atomic_ref load on
-    // region_by_sym_dense_ (consistent snapshot; no resize race with set).
+    // Issue #2443 / #2444 / #2447: shared region_table_mtx_ + atomic_ref
+    // load on dense; map find under same shared lock (Issue #2447 —
+    // no concurrent rehash vs exclusive set_function_region insert).
     [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_sym(SymId name) const {
         std::shared_lock<std::shared_mutex> rlock(region_table_mtx_.mutable_get());
         // Issue #1520 / #2444: prefer dense columnar path (no hash).
@@ -3672,6 +3675,9 @@ public:
                 return static_cast<std::uint8_t>(enc - 1);
             }
         }
+        // Issue #2447: cold map fallback (SymId >= kRegionDenseCap or
+        // dense unset) — find under shared lock; exclusive set holds
+        // unique lock so insert cannot rehash mid-lookup.
         region_map_lookups_.fetch_add(1, std::memory_order_relaxed);
         auto it = region_by_sym_.find(name);
         if (it == region_by_sym_.end())
