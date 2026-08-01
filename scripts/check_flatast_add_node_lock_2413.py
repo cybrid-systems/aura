@@ -46,9 +46,9 @@ def _audit_readers() -> list[str]:
     ast = _read("src/core/ast.ixx")
     if "flatast_mutex_" in ast and "try_acquire_reader_lock" in ast:
         findings.append(
-            "core: tag/get are lock-free vs flatast_mutex_; "
+            "core: tag/get are lock-free vs flatast_mutex_ (hot path); "
             "structural ReaderLockGuard does not cover add_node "
-            "(documented #2413; follow-up for public shared guard)"
+            "(documented #2413; #2488 SoAReadGuard for concurrent SoA reads)"
         )
 
     # Count approximate call sites of hot accessors in compiler (informational).
@@ -64,9 +64,9 @@ def _audit_readers() -> list[str]:
         "single-thread mutation contract (not flatast_mutex_)"
     )
     findings.append(
-        "FOLLOW-UP: upgrade flatast_mutex_ to shared_mutex + public "
-        "SoA reader guard OR edit_epoch RCU (Option C) for true lock-free "
-        "multi-column observation during add_node"
+        "FOLLOW-UP: shipped #2488 Option B′ — OwnedSharedMutex + public "
+        "SoAReadGuard / get_soa_safe (shared) vs exclusive add_node/clear; "
+        "edit_epoch RCU (Option C) remains optional for lock-free retry"
     )
     return findings
 
@@ -101,29 +101,27 @@ def main() -> int:
     must("2413 AC2", "AC2", test)
     must("FOLLOW-UP", "AC2", "\n".join(findings))
 
-    # AC3 writers hold mutex
+    # AC3 writers hold exclusive SoA lock (#2413; #2488 shared_mutex upgrade)
     add_idx = ast.find("NodeId add_node(NodeTag tag, SyntaxMarker m")
     if add_idx < 0:
         fails.append("AC3: add_node not found")
         add_body = ""
     else:
-        add_body = ast[add_idx : add_idx + 600]
-    must("lock_guard<std::recursive_mutex> lock(flatast_mutex_)", "AC3", add_body)
+        add_body = ast[add_idx : add_idx + 900]
+    # #2488: exclusive unique_lock on OwnedSharedMutex (was recursive_mutex).
+    if "flatast_mutex_" not in add_body or ("unique_lock" not in add_body and "lock_guard" not in add_body):
+        fails.append("AC3: add_node must exclusive-lock flatast_mutex_")
     must("2413 AC3", "AC3", test)
 
     clear_idx = ast.find("void clear() {")
     # FlatAST::clear is large; find the one near flatast_mutex
-    if (
-        "std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);" not in ast[clear_idx : clear_idx + 800]
-        if clear_idx >= 0
-        else True
-    ):
-        # Search any clear() that takes flatast_mutex
+    clear_slice = ast[clear_idx : clear_idx + 900] if clear_idx >= 0 else ""
+    if "flatast_mutex_" not in clear_slice:
         if "void clear()" not in ast or "flatast_mutex_" not in ast:
             fails.append("AC3: clear() flatast_mutex_ missing")
         else:
-            # Accept presence of mutex lock near Issue #2463 clear comment
-            must("holding flatast_mutex_ across the", "AC3", ast)
+            # Accept exclusive lock near clear (#2463 / #2488)
+            must("exclusive SoA write", "AC3", ast)
 
     must("2413 AC4", "AC4", test)
 

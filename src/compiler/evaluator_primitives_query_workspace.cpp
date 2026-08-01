@@ -213,6 +213,10 @@ void register_workspace_query_primitives(
         // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
         auto sym = ws.canonical_pool()->intern(name);
         EvalValue result = make_void();
+        // Issue #2488: SoA shared lock for multi-column get() vs concurrent
+        // add_node (workspace_mtx shared alone does not cover flatast_mutex_
+        // size domain — structural_mtx_ is also independent).
+        auto soa = flat.try_acquire_soa_reader_lock();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
             if (flat.is_free_slot(id))

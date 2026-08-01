@@ -1163,28 +1163,33 @@ private:
 };
 
 export class FlatAST {
-    // ── Issue #2413 — concurrent access contract (read this) ───
+    // ── Issue #2413 / #2488 — concurrent access contract (read this) ───
     //
     // FlatAST has three distinct synchronization domains:
     //
-    // 1) flatast_mutex_ (recursive_mutex) — SoA SIZE mutations
-    //    Held for the entire multi-column push/clear sequence in
+    // 1) flatast_mutex_ (OwnedSharedMutex / shared_mutex) — SoA SIZE
+    //    mutations (#2413 writers; #2488 public shared readers).
+    //    Exclusive: held for the multi-column push/clear sequence in
     //    add_node / free-list reset_node_slot / clear so no other
     //    *writer* observes a partially grown SoA. ~25 sequential
     //    push_backs mean a concurrent lock-free reader of
-    //    tag_/int_val_/… can see a half-initialized new id if it
-    //    races add_node without external serialization.
+    //    tag_/int_val_/… can see a half-initialized new id (or race
+    //    reallocation) if it races add_node without external serial.
     //
-    //    Reader contract (#2413 AC1): any thread that observes
-    //    SoA columns concurrently with add_node/clear MUST either:
+    //    Reader contract (#2413 AC1 / #2488 Option B′):
+    //    any thread that observes SoA columns concurrently with
+    //    add_node/clear MUST either:
     //      (a) be externally serialized with those writers
     //          (CompilerService workspace_mtx exclusive path /
     //           single-threaded mutation contract), or
-    //      (b) hold flatast_mutex_ for the multi-column read
-    //          (today private — see follow-up for public shared
-    //           reader guard / shared_mutex upgrade).
+    //      (b) hold a SoA *shared* lock — public API:
+    //          try_acquire_soa_reader_lock() / SoAReadGuard, or
+    //          get_soa_safe(id) (shared lock + multi-column get).
+    //          Writers use begin_soa_write() / SoAWriteGuard, or
+    //          the exclusive path already taken by add_node/clear.
     //    Holding structural_mtx_ (try_acquire_reader_lock) does
     //    NOT serialize against add_node.
+    //    Hot path tag()/get() remain lock-free when (a) holds (AC4).
     //
     // 2) structural_mtx_ (shared_mutex) — child topology
     //    set_child / insert_child / remove_child. Readers may use
@@ -1259,9 +1264,12 @@ export class FlatAST {
     //
     // Issue #1431 follow-up (Race #2): two CompilerService::eval
     // threads sharing workspace_flat_ raced add_node push_backs,
-    // corrupting pmr. recursive_mutex because reset_node_slot is
-    // invoked from inside add_node on the free-list path.
-    mutable std::recursive_mutex flatast_mutex_;
+    // corrupting pmr. Issue #2488: upgraded recursive_mutex →
+    // OwnedSharedMutex so multi-column readers can take a shared
+    // lock without blocking each other; add_node/clear take exclusive.
+    // reset_node_slot does not re-lock (called only under exclusive).
+    // LOCK ORDER: flatast_mutex_ (exclusive) before dirty_column_mtx_.
+    mutable OwnedSharedMutex flatast_mutex_;
 
 public:
     // Issue #261 / #1299: node_gen_[id] == 0 marks a recycled (free-list)
@@ -1509,13 +1517,14 @@ public:
         // return must still obey the single-threaded mutation
         // contract (Issue #2445) — see FlatAST class contract.
         // NodeId is fully published only on return from this function.
-        std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);
+        // Issue #2488: exclusive SoA write (shared readers blocked).
+        std::unique_lock<std::shared_mutex> lock(flatast_mutex_.mutable_get());
         // Issue #402: tag-based summary flags. Update eagerly
         // before allocation so a fast-path consumer (next
         // add_node's caller) sees the correct bit-set.
-        // Held under flatast_mutex_; relaxed fetch_or is
+        // Held under flatast_mutex_ exclusive; relaxed fetch_or is
         // sufficient (the mutex provides happens-before
-        // ordering vs concurrent writers).
+        // ordering vs concurrent writers/readers).
         summary_flags_.fetch_or(summary_flags_for_tag(tag), std::memory_order_relaxed);
         // Issue #399 / #2424: pre-reserve the per-node "dirty"
         // side-table columns to the upcoming size. The
@@ -4394,12 +4403,13 @@ public:
 
     // ── Access ─────────────────────────────────────────────────
 
-    // Issue #2413 / #2453: multi-column SoA snapshot (PRIMARY reader
-    // path). Not synchronized with flatast_mutex_ — concurrent with
-    // add_node/clear or builder per-slot writes requires external
-    // serialization (workspace_mtx / post-parse join). Ten+ column
-    // loads without a row lock: torn NodeView if a writer runs mid-
-    // get. Concurrent multi-reader get() is safe on a stable flat.
+    // Issue #2413 / #2453 / #2488: multi-column SoA snapshot (PRIMARY reader
+    // hot path). Lock-free w.r.t. flatast_mutex_ for (a) external serial /
+    // single-thread (AC4). Concurrent with add_node/clear or builder
+    // per-slot writes requires (b) SoAReadGuard / get_soa_safe or external
+    // serialization (workspace_mtx exclusive parse). Ten+ column loads
+    // without a SoA lock: torn NodeView or reallocation race if a writer
+    // runs mid-get. Concurrent multi-reader get() is safe on a stable flat.
     NodeView get(NodeId id) const {
         // Issue #1620: hot-path SoA column access invariant probe
         // (zero cost under release observe; Agents track hits).
@@ -4836,6 +4846,98 @@ public:
         std::shared_lock<std::shared_mutex> lock_;
     };
     [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const { return ReaderLockGuard(this); }
+
+    // ── Issue #2488: SoA size-domain public guards (flatast_mutex_) ──
+    //
+    // Distinct from structural_mtx_ ReaderLockGuard / StructuralMutationGuard
+    // (child topology). SoAReadGuard serializes multi-column SoA observation
+    // against add_node/clear reallocation; SoAWriteGuard is exclusive for
+    // external multi-column size writers (add_node/clear already take exclusive
+    // internally). Issue #2454 lifetime: must not outlive *ast_ across FlatAST
+    // move (same contract as ReaderLockGuard).
+    class SoAReadGuard {
+    public:
+        SoAReadGuard() noexcept = default;
+        explicit SoAReadGuard(const FlatAST* ast) noexcept
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::shared_lock<std::shared_mutex>(ast->flatast_mutex_.mutable_get());
+        }
+        ~SoAReadGuard() = default;
+        SoAReadGuard(const SoAReadGuard&) = delete;
+        SoAReadGuard& operator=(const SoAReadGuard&) = delete;
+        SoAReadGuard(SoAReadGuard&& o) noexcept
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
+        SoAReadGuard& operator=(SoAReadGuard&& o) noexcept {
+            if (this != &o) {
+                ast_ = o.ast_;
+                lock_ = std::move(o.lock_);
+                o.ast_ = nullptr;
+            }
+            return *this;
+        }
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return ast_ != nullptr && lock_.owns_lock();
+        }
+
+    private:
+        const FlatAST* ast_ = nullptr;
+        std::shared_lock<std::shared_mutex> lock_;
+    };
+
+    class SoAWriteGuard {
+    public:
+        SoAWriteGuard() noexcept = default;
+        explicit SoAWriteGuard(FlatAST* ast) noexcept
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::unique_lock<std::shared_mutex>(ast->flatast_mutex_.mutable_get());
+        }
+        ~SoAWriteGuard() = default;
+        SoAWriteGuard(const SoAWriteGuard&) = delete;
+        SoAWriteGuard& operator=(const SoAWriteGuard&) = delete;
+        SoAWriteGuard(SoAWriteGuard&& o) noexcept
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
+        SoAWriteGuard& operator=(SoAWriteGuard&& o) noexcept {
+            if (this != &o) {
+                ast_ = o.ast_;
+                lock_ = std::move(o.lock_);
+                o.ast_ = nullptr;
+            }
+            return *this;
+        }
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return ast_ != nullptr && lock_.owns_lock();
+        }
+
+    private:
+        FlatAST* ast_ = nullptr;
+        std::unique_lock<std::shared_mutex> lock_;
+    };
+
+    // Shared SoA lock for multi-column reads concurrent with add_node.
+    [[nodiscard]] SoAReadGuard try_acquire_soa_reader_lock() const { return SoAReadGuard(this); }
+    // Exclusive SoA lock for external size/mutation batches (rare;
+    // add_node/clear already lock exclusively).
+    [[nodiscard]] SoAWriteGuard begin_soa_write() { return SoAWriteGuard(this); }
+
+    // Issue #2488: multi-column get under SoA *shared* lock — safe
+    // concurrent with add_node/clear (writers take exclusive). Prefer
+    // this (or an explicit SoAReadGuard spanning multiple gets) when
+    // the caller cannot rely on workspace_mtx exclusive / single-thread
+    // mutation contract. Hot-path get() stays lock-free (AC4).
+    [[nodiscard]] NodeView get_soa_safe(NodeId id) const {
+        SoAReadGuard guard(this);
+        return get(id);
+    }
 
     // Issue #1783: exclusive lock on metadata_mtx_ (marker_ /
     // provenance_). Unlike StructuralMutationGuard, does NOT bump
@@ -5608,14 +5710,11 @@ public:
     [[nodiscard]] std::size_t max_live_nodes_warn() const noexcept { return max_live_nodes_warn_; }
 
     void clear() {
-        // Issue #2463: assert the single-threaded mutation
-        // contract by holding flatast_mutex_ across the
-        // entire clear(). Other mutators (add_node, etc.)
-        // also hold this recursive_mutex; concurrent clear()
-        // + add_node() is serialized here, so readers using
-        // the atomic summary_flags_ see either pre-clear or
-        // post-clear values but never a torn mix.
-        std::lock_guard<std::recursive_mutex> lock(flatast_mutex_);
+        // Issue #2463 / #2488: exclusive SoA write for the entire
+        // clear(). Concurrent add_node / SoAReadGuard readers
+        // serialize here; readers of atomic summary_flags_ see
+        // either pre-clear or post-clear values but never a torn mix.
+        std::unique_lock<std::shared_mutex> lock(flatast_mutex_.mutable_get());
         tag_.clear();
         int_val_.clear();
         float_val_.clear();
