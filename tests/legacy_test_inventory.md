@@ -1311,7 +1311,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (36)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
-- `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — contract / regression guard rather than a failure catch.
+- `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
 - `tests/core/test_binding_gens_atomic_2417.cpp` (#2417) [domain_suite, theme_core] — AC1: atomic shared_ptr snapshot for readers
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
 - `tests/compiler/test_dead_coercion_columnar_2431.cpp` (#2431) [domain_suite, theme_compiler] — AC1: residual_aos_bridge_total unchanged by DCE SoA path; columnar_total bumps
