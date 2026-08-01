@@ -3944,6 +3944,24 @@ def cmd_emit_object_deprecated_coverage():
     return 0
 
 
+def cmd_command_line_cap_io_read_coverage():
+    """Issue #2478: command-line requires kCapIoRead via deny_io.
+
+    Closes capability bypass that leaked /proc/self/cmdline secrets.
+    """
+    print(f"{B}=== command-line kCapIoRead coverage (#2478) ==={N}")
+    script = ROOT / "scripts" / "check_command_line_cap_io_read_2478.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("command-line kCapIoRead (#2478) coverage contract rows failed")
+        return 1
+    ok("command-line kCapIoRead (#2478) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4972,6 +4990,7 @@ def cmd_gate():
         or cmd_aura_jit_unused_fn_lock_coverage()
         or cmd_partial_recompile_single_evict_coverage()
         or cmd_emit_object_deprecated_coverage()
+        or cmd_command_line_cap_io_read_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()

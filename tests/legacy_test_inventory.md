@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 65 | 65 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 40 | 40 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 125 | 125 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 35 | 35 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 36 | 36 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -249,6 +249,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_coercion_provenance_fast_strict_2147.cpp`
 - `tests/compiler/test_coercion_provenance_miss_force_audit_2102.cpp`
 - `tests/compiler/test_coercion_reject_production_defaults_2185.cpp`
+- `tests/compiler/test_command_line_cap_io_read_2478.cpp`
 - `tests/compiler/test_compile02_no_dup_imports.cpp`
 - `tests/compiler/test_compile_primitive_guard.cpp`
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp`
@@ -1524,13 +1525,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
-### `uncategorized` — Uncategorized / mixed (35)
+### `uncategorized` — Uncategorized / mixed (36)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (35)
+#### domain/ (36)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1538,6 +1539,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
 - `tests/renderer/test_camera_rays.cpp` (—) [domain_suite, theme_renderer] — test_camera_rays.cpp — Issue #1981 / Epic #1979
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
+- `tests/compiler/test_command_line_cap_io_read_2478.cpp` (#2478) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_compile02_no_dup_imports.cpp` (—) [domain_suite, theme_compiler] — Issue #1857 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_composite_commit_cs_reuse_2180.cpp` (#2180) [domain_suite, theme_compiler] — AC1: inject type conflict into commit CS → solve_fail + reject
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:

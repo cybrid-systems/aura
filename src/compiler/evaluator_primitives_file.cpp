@@ -209,7 +209,13 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(1);
     });
 
-    add("command-line", [&ev](const auto&) -> EvalValue {
+    // Issue #2478: require io-read — /proc/self/cmdline can leak secrets
+    // (API keys, DSNs) from process argv. Same gate as file-exists? recon.
+    add("command-line", [&ev, deny_io](const auto&) -> EvalValue {
+        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                  "capability denied: io-read required");
+            is_error(denied))
+            return denied;
         // Returns list of command-line argument strings, NOT including argv[0].
         // Parsed from /proc/self/cmdline on Linux.
         std::ifstream f("/proc/self/cmdline");
