@@ -6615,6 +6615,14 @@ struct CompilerMetrics {
     //   - linear_synth_hard_fail_total: production_defaults || strict_ path
     std::atomic<std::uint64_t> linear_synth_violation_total{0}; // #2357
     std::atomic<std::uint64_t> linear_synth_hard_fail_total{0}; // #2357
+    // Issue #2460 Phase 2: OwnershipEnv re-sim during infer_flat_partial
+    // (dirty linear set). Sibling of linear_synth_* (#2357).
+    //   - linear_partial_revalidate_total: ownership walk ran (non-empty dirty)
+    //   - linear_partial_revalidate_fail_total: ownership_pass == false
+    //   - linear_partial_revalidate_hard_fail_total: production/strict hard
+    std::atomic<std::uint64_t> linear_partial_revalidate_total{0};           // #2460
+    std::atomic<std::uint64_t> linear_partial_revalidate_fail_total{0};      // #2460
+    std::atomic<std::uint64_t> linear_partial_revalidate_hard_fail_total{0}; // #2460
     // Issue #1531: escape analysis + OwnershipEnv dirty revalidate.
     //   - linear_escape_reanalysis_total: AST escape re-analysis runs
     //     after dirty ownership validation (typed_mutate path)

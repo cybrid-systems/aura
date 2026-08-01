@@ -736,6 +736,10 @@ AURA_COMPILER_METRICS_FIELD(delta_reverify_expand_total)
 // Issue #2357: linear synth Move/Drop violations (first-class).
 AURA_COMPILER_METRICS_FIELD(linear_synth_violation_total)
 AURA_COMPILER_METRICS_FIELD(linear_synth_hard_fail_total)
+// Issue #2460: infer_flat_partial dirty ownership re-sim.
+AURA_COMPILER_METRICS_FIELD(linear_partial_revalidate_total)
+AURA_COMPILER_METRICS_FIELD(linear_partial_revalidate_fail_total)
+AURA_COMPILER_METRICS_FIELD(linear_partial_revalidate_hard_fail_total)
 // Issue #2358: CastOp density hard policy (force-JIT, not mutate fail).
 AURA_COMPILER_METRICS_FIELD(castop_density_hard_action_total)
 AURA_COMPILER_METRICS_FIELD(castop_density_hard_enabled)

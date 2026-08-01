@@ -3908,6 +3908,25 @@ def cmd_linear_synth_violation_coverage():
     return 0
 
 
+def cmd_linear_partial_revalidate_coverage():
+    """Issue #2460: Phase-2 dirty OwnershipEnv re-sim during infer_flat_partial.
+
+    Non-empty dirty linear set → validate_ownership; production/strict
+    TypeError + set_node_error; Soft Warning; empty set zero cost.
+    """
+    print(f"{B}=== linear partial revalidate coverage (#2460) ==={N}")
+    script = ROOT / "scripts" / "check_linear_partial_revalidate_2460.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear partial revalidate (#2460) coverage contract rows failed")
+        return 1
+    ok("linear partial revalidate (#2460) coverage clean")
+    return 0
+
+
 def cmd_castop_density_hard_coverage():
     """Issue #2358: CastOp density HARD force-JIT policy.
 
@@ -4764,6 +4783,7 @@ def cmd_gate():
         or cmd_type_dep_epoch_prune_coverage()
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
+        or cmd_linear_partial_revalidate_coverage()
         or cmd_castop_density_hard_coverage()
         or cmd_castop_density_closed_loop_coverage()
         or cmd_memo_goal_epoch_health_coverage()

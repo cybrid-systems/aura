@@ -1891,6 +1891,12 @@ export struct TypeChecker {
         return last_occurrence_vars_;
     }
     [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
+    // Issue #2460: true when last infer_flat_partial ownership re-sim
+    // failed (dirty linear set). Soft = notes+Warning; production/strict
+    // also set_node_error TypeError. Boundary Full audit still runs.
+    [[nodiscard]] bool last_partial_linear_revalidate_fail() const noexcept {
+        return last_partial_linear_revalidate_fail_;
+    }
     // Issue #2180 / #2262: solve_delta_cs_ after partial import (commit reuse).
     // True when the long-lived CS has dirty/touched/occurrence work after
     // any infer_flat_partial (not only composite).
@@ -2211,6 +2217,8 @@ public:
     // Issue #2180: occurrence vars + CS-live flag for composite commit reuse.
     std::vector<aura::core::TypeId> last_occurrence_vars_;
     bool last_partial_cs_live_ = false;
+    // Issue #2460: last infer_flat_partial dirty ownership re-sim failed.
+    bool last_partial_linear_revalidate_fail_ = false;
 
     // Issue #283 follow-up #5 / #627: plumb bidirectional flag
     // from CompilerService into per-call InferenceEngine instances.
