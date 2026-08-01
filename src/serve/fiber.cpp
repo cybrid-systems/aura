@@ -61,6 +61,9 @@ std::atomic<std::uint64_t> Fiber::join_drain_residual_still_running_{0};
 std::atomic<std::uint64_t> Fiber::join_drain_residual_body_retired_total_{0};
 // Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
 std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
+// Issue #2491: process-wide TenantScope install mismatch counter
+// (resume detects current capability_tenant_id_ != assigned_tenant_id_).
+std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_total_{0};
 
 // Issue #2397: optional orch dashboard mirror (weak no-op when orch not linked;
 // strong defs in evaluator_fiber_mutation.cpp bump OrchModuleStats).
@@ -574,6 +577,10 @@ void Fiber::resume() {
     // read of an atomic field).
     if (g_fiber_sync_mutation_stack_)
         g_fiber_sync_mutation_stack_(mutation_stack_storage_.load(std::memory_order_acquire));
+    // Issue #2491: install TenantScope from assigned_tenant_id (when set
+    // + production sandbox active). Bridge is a C-linkage shim that the
+    // Evaluator module overrides; weak no-op when not linked.
+    aura_fiber_install_tenant_scope_for_resume(this);
     // Issue #2184 / #2346: post-sync snapshot invariant.
     // Soft: bump mismatch metric, continue. Hard: mark-failed (Done+cancel),
     // skip swapcontext so inconsistent code never runs (orch can drain).
@@ -597,6 +604,10 @@ void Fiber::resume() {
     // Issue #264: validate yield-boundary checkpoint after resume.
     if (g_fiber_resume_validate_)
         g_fiber_resume_validate_();
+    // Issue #2491: release TenantScope after the fiber yields back to the
+    // worker. Restores the previous principal so a subsequent resume of a
+    // different fiber on the same worker starts from a clean baseline.
+    aura_fiber_release_tenant_scope_after_yield();
 
     // Issue #453: panic checkpoint transfer on fiber migration.
     // After the resume returns, check whether a pending panic

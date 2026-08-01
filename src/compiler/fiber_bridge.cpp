@@ -149,4 +149,18 @@ __attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_still_running
 __attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_body_retired() {}
 __attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_still_running_drop() {}
 
+// Issue #2491: install TenantScope at Fiber::resume entry from the
+// fiber's assigned_tenant_id (when set + production sandbox active).
+// Strong def in evaluator_fiber_mutation.cpp installs the RAII scope
+// and bumps tenant_scope_mismatch_total when current capability_tenant_id_
+// != assigned_tenant_id_. Weak no-op keeps non-evaluator link units
+// (test_concurrent / test_issue_*) resolving without dragging the full
+// module into their link unit — production defaults stay bypassable
+// only when the production lock is not engaged (Soft test path).
+__attribute__((weak, used)) void aura_fiber_install_tenant_scope_for_resume(void* /*fiber_ptr*/) {}
+// Issue #2491: release TenantScope after fiber yields back to worker
+// (scope dtor restores previous principal). Weak no-op keeps test
+// binaries linking without Evaluator module.
+__attribute__((weak, used)) void aura_fiber_release_tenant_scope_after_yield() {}
+
 } // extern "C"

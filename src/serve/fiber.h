@@ -21,6 +21,14 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" int aura_evaluator_mutation_boundary_held();
 extern "C" std::uint64_t aura_fiber_current_id();
 
+// Issue #2491: TenantScope install / release hooks at fiber resume /
+// yield boundary. Strong definitions live in evaluator_fiber_mutation.cpp;
+// weak no-op stubs in fiber_bridge.cpp keep non-evaluator link units
+// (test_concurrent / test_issue_*) resolving without dragging the full
+// module into their link unit.
+extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noexcept;
+extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept;
+
 // Issue #588: per-fiber mutation stack depth from opaque storage.
 // Used by is_at_mutation_boundary_safe() on the victim fiber
 // during work-steal (thief thread must not read thread_local).
@@ -838,6 +846,33 @@ private:
     // documented limitation, same as #2153 cooperative cancel
     // protocol.
     std::atomic<bool> reclaimed_{false};
+    // Issue #2491: fiber-local assigned tenant id. Stamped at
+    // spawn time by the orch / agent path; Fiber::resume re-applies
+    // TenantScope from this value (not from ambient Evaluator state)
+    // so a stolen / resumed fiber cannot silently keep another
+    // tenant's principal. Default 0 = "no assigned tenant" — the
+    // resume hook skips TenantScope installation in that case (unit
+    // / Soft path stays unchanged per AC5).
+    std::atomic<std::uint64_t> assigned_tenant_id_{0};
+    // Issue #2491: process-wide counter for TenantScope install
+    // mismatch (resume detects current capability_tenant_id_ !=
+    // assigned_tenant_id_). Mirrors Fiber::static_*_total() pattern
+    // for process-wide aggregates.
+    static std::atomic<std::uint64_t> static_tenant_scope_mismatch_total_;
+    static void bump_tenant_scope_mismatch() noexcept {
+        static_tenant_scope_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t tenant_scope_mismatch_total() noexcept {
+        return static_tenant_scope_mismatch_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2491: assigned_tenant_id accessors (atomic for the
+    // orch path that stamps at spawn + the resume hook that reads).
+    void set_assigned_tenant_id(std::uint64_t t) noexcept {
+        assigned_tenant_id_.store(t, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
+        return assigned_tenant_id_.load(std::memory_order_acquire);
+    }
     // Issue #2397: true iff this fiber contributed +1 to the
     // still-running gauge (mark_reclaimed while !Done). Cleared by
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).

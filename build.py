@@ -1979,6 +1979,27 @@ def cmd_require_effect_auto_isolation_2490_coverage():
     return 0
 
 
+def cmd_tenant_scope_fiber_mandate_2491_coverage():
+    """Issue #2491: TenantScope mandated at fiber spawn/resume entry.
+
+    assigned_tenant_id_ on Fiber + bridge hooks
+    aura_fiber_install_tenant_scope_for_resume / aura_fiber_release_tenant_scope_after_yield
+    on Fiber::resume / yield boundary. No residual principal across worker
+    reuse; Off sandbox skips force (Soft unit path unchanged).
+    """
+    print(f"{B}=== tenant scope fiber mandate coverage (#2491) ==={N}")
+    script = ROOT / "scripts" / "check_tenant_scope_fiber_mandate_2491.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("tenant scope fiber mandate (#2491) coverage contract rows failed")
+        return 1
+    ok("tenant scope fiber mandate (#2491) coverage clean")
+    return 0
+
+
 def cmd_restricted_unset_principal_coverage():
     """Issue #2385: Restricted denies side-effects when principal unset.
 
@@ -5053,6 +5074,7 @@ def cmd_gate():
         or cmd_has_on_compact_hook_lock_coverage()
         or cmd_require_effect_live_mid_coverage()
         or cmd_require_effect_auto_isolation_2490_coverage()
+        or cmd_tenant_scope_fiber_mandate_2491_coverage()
         or cmd_restricted_unset_principal_coverage()
         or cmd_grant_macro_self_evo_stamp_coverage()
         or cmd_capability_string_matrix_unify_coverage()
