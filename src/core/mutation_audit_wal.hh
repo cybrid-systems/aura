@@ -354,6 +354,7 @@ struct AuditWalStatsSnapshot {
     int issue = kAuditWalIssue;
     // Issue #2150
     std::uint64_t forced_by_multi_tenant = 0;
+    std::uint64_t forced_by_restricted = 0;
     std::uint64_t using_default_dir = 0;
 };
 

@@ -699,6 +699,22 @@ public:
         resume_layout_stamp_set_ = 0;
     }
 
+    // Issue #2491: assigned_tenant_id accessors (atomic for the
+    // orch path that stamps at spawn + the resume hook that reads).
+    void set_assigned_tenant_id(std::uint64_t t) noexcept {
+        assigned_tenant_id_.store(t, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
+        return assigned_tenant_id_.load(std::memory_order_acquire);
+    }
+    // Issue #2491: process-wide TenantScope mismatch counter.
+    static void bump_tenant_scope_mismatch() noexcept {
+        static_tenant_scope_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t tenant_scope_mismatch_total() noexcept {
+        return static_tenant_scope_mismatch_total_.load(std::memory_order_relaxed);
+    }
+
 private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
@@ -857,22 +873,8 @@ private:
     // Issue #2491: process-wide counter for TenantScope install
     // mismatch (resume detects current capability_tenant_id_ !=
     // assigned_tenant_id_). Mirrors Fiber::static_*_total() pattern
-    // for process-wide aggregates.
+    // for process-wide aggregates. Accessors are public above.
     static std::atomic<std::uint64_t> static_tenant_scope_mismatch_total_;
-    static void bump_tenant_scope_mismatch() noexcept {
-        static_tenant_scope_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
-    }
-    [[nodiscard]] static std::uint64_t tenant_scope_mismatch_total() noexcept {
-        return static_tenant_scope_mismatch_total_.load(std::memory_order_relaxed);
-    }
-    // Issue #2491: assigned_tenant_id accessors (atomic for the
-    // orch path that stamps at spawn + the resume hook that reads).
-    void set_assigned_tenant_id(std::uint64_t t) noexcept {
-        assigned_tenant_id_.store(t, std::memory_order_release);
-    }
-    [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
-        return assigned_tenant_id_.load(std::memory_order_acquire);
-    }
     // Issue #2397: true iff this fiber contributed +1 to the
     // still-running gauge (mark_reclaimed while !Done). Cleared by
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).
