@@ -3811,6 +3811,25 @@ def cmd_ir_optimize_type_info_chain_coverage():
     return 0
 
 
+def cmd_closure_call_must_deopt_toctou_coverage():
+    """Issue #2472: aura_closure_call MustDeopt lock-downgrade TOCTOU closed.
+
+    After shared→exclusive upgrade, re-verify freed + func_id identity
+    before clearing must_deopt / invalidating cache.
+    """
+    print(f"{B}=== closure_call MustDeopt TOCTOU coverage (#2472) ==={N}")
+    script = ROOT / "scripts" / "check_closure_call_must_deopt_toctou_2472.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("closure_call MustDeopt TOCTOU (#2472) coverage contract rows failed")
+        return 1
+    ok("closure_call MustDeopt TOCTOU (#2472) coverage clean")
+    return 0
+
+
 def cmd_mutation_concurrency_health_coverage():
     """Issue #2379: query:mutation-concurrency-health single Agent score.
 
@@ -4832,6 +4851,7 @@ def cmd_gate():
         or cmd_type_system_health_coverage()
         or cmd_type_system_health_next_action_coverage()
         or cmd_ir_optimize_type_info_chain_coverage()
+        or cmd_closure_call_must_deopt_toctou_coverage()
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()

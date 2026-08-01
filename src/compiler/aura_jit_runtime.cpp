@@ -2041,15 +2041,41 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // Issue #2128: MustDeoptBeforeNextCall — hard refuse native if reemit
     // matched this closure but remap did not retarget. Clear flag under
     // upgrade to exclusive so concurrent calls see at most one force-deopt.
+    //
+    // Issue #2472: lock-downgrade TOCTOU — between shared unlock and exclusive
+    // re-acquire, free (or free+realloc) can reuse cid. Stash func_id under
+    // the shared lock; after exclusive, re-verify freed-clear + same func_id
+    // + still must_deopt before clearing (Option A freed check + Option B
+    // identity). Otherwise we would clear a *new* closure's must_deopt and
+    // invalidate its cache entry under the recycled id.
     {
         size_t cid = static_cast<size_t>(closure_id);
         if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
+            // Stash identity before dropping shared lock (Issue #2472).
+            const int64_t orig_func_id =
+                (cid < g_closure_func_ids.size()) ? g_closure_func_ids[cid] : -1;
             // Drop shared lock, re-take exclusive, clear flag, deopt.
             tlock.unlock();
             aura_unlock_workspace_read();
             {
                 std::unique_lock<std::shared_mutex> wlock(g_closure_table_mtx);
                 aura_lock_workspace_write();
+                // Issue #2472: original closure freed while unlocked — bail
+                // without touching must_deopt / cache of a recycled slot.
+                if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+                    aura_bump_must_deopt_force_deopt_fail_total(1);
+                    aura_deopt_inc();
+                    aura_unlock_workspace_write();
+                    return 0;
+                }
+                // Issue #2472: slot freed+realloced with a different func_id —
+                // leave the new closure's flags alone (stale force-deopt).
+                if (cid >= g_closure_func_ids.size() || g_closure_func_ids[cid] != orig_func_id) {
+                    aura_bump_must_deopt_force_deopt_fail_total(1);
+                    aura_deopt_inc();
+                    aura_unlock_workspace_write();
+                    return 0;
+                }
                 if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
                     g_closure_must_deopt[cid] = 0;
                     // Poison bridge_epoch so dual-freshness also fails if
