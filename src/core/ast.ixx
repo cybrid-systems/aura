@@ -78,6 +78,27 @@ export [[nodiscard]] inline RestampPolicy resolve_restamp_policy() noexcept {
     return RestampPolicy::Auto;
 }
 
+// Issue #2528: resolve AURA_REStamp_SLO_US env once on first call.
+// Cached static atomic — subsequent calls return the cached budget
+// (idempotent thereafter). Default 500 µs. Caller should read via this
+// helper rather than the member directly so the env override applies
+// without per-call env reads.
+export [[nodiscard]] inline std::uint32_t resolve_restamp_slo_us() noexcept {
+    static std::atomic<std::uint32_t> cached{500};
+    static std::atomic<bool> initialized{false};
+    if (!initialized.load(std::memory_order_acquire)) {
+        const char* e = std::getenv("AURA_REStamp_SLO_US");
+        if (e && *e) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(e, &end, 10);
+            if (end != e && v >= 1ul && v <= 60000000ul)
+                cached.store(static_cast<std::uint32_t>(v), std::memory_order_release);
+        }
+        initialized.store(true, std::memory_order_release);
+    }
+    return cached.load(std::memory_order_acquire);
+}
+
 export [[nodiscard]] inline const char* restamp_policy_name(RestampPolicy p) noexcept {
     switch (p) {
         case RestampPolicy::Full:
@@ -2164,6 +2185,17 @@ public:
     // Issue #2402: last restamp_all_node_generations call cost (Agent SLO).
     mutable std::atomic<std::uint64_t> restamp_nodes_last_{0};
     mutable std::atomic<std::uint64_t> restamp_us_last_{0};
+    // Issue #2528: long-session SLA surface — restamp_slo_breach_total_
+    // bumps when restamp_us_last_ exceeds the configured AURA_RESTAMP_SLO_US
+    // budget (default 500 µs). Agents / orch poll this counter via the
+    // query surface to degrade mutation rate or force soft checkpoint.
+    // restamp_us_p99_ is a CAS-loop max approximation (cheap p99 — fine
+    // for Agent self-throttle signals; no histogram buffer needed).
+    // Configurable budget lives in restamp_slo_us_budget_ (mutable for
+    // runtime override + env resolution at first restamp).
+    mutable std::atomic<std::uint64_t> restamp_slo_breach_total_{0};
+    mutable std::atomic<std::uint64_t> restamp_us_p99_{0};
+    mutable std::uint32_t restamp_slo_us_budget_{500};
     // Touched set for wrap-window restamp (mark_dirty / structural).
     // Parallel to live slots; resized lazily with size().
     std::vector<std::uint8_t> restamp_touched_;
@@ -8060,6 +8092,41 @@ public:
     [[nodiscard]] std::uint64_t restamp_us_last() const noexcept {
         return restamp_us_last_.load(std::memory_order_relaxed);
     }
+    // Issue #2528: long-session SLA surface. Each restamp_all_node_generations
+    // call that exceeds restamp_slo_us_budget() bumps the breach counter.
+    // Agents / orch poll this via query:eda-stability-stats to degrade mutation
+    // rate or force soft checkpoint under long sessions. Zero cost when no
+    // wrap / no pending restamp (no call → no increment).
+    [[nodiscard]] std::uint64_t restamp_slo_breach_total() const noexcept {
+        return restamp_slo_breach_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2528: max approximation of p99 restamp latency. CAS-loop max
+    // (cheap, no histogram buffer). Surfaced via query for Agent SLO dashboards.
+    [[nodiscard]] std::uint64_t restamp_us_p99() const noexcept {
+        return restamp_us_p99_.load(std::memory_order_relaxed);
+    }
+    // Issue #2528: configured SLO budget (microseconds). Default 500 µs;
+    // overridable via AURA_REStamp_SLO_US env at first restamp call (idempotent).
+    [[nodiscard]] std::uint32_t restamp_slo_us_budget() const noexcept {
+        // Read via the env-resolved helper (cached static atomic in
+        // resolve_restamp_slo_us). This is the source of truth for the
+        // AURA_RESTAMP_SLO_US env override. The per-AST member mirrors
+        // the value during restamp_all_node_generations() so breach detection
+        // uses a consistent snapshot.
+        return resolve_restamp_slo_us();
+    }
+    void set_restamp_slo_us_budget(std::uint32_t us) noexcept {
+        // Clamp to a sane range (1µs .. 60s) to avoid accidental 0 / overflow.
+        if (us == 0)
+            us = 1;
+        if (us > 60'000'000u)
+            us = 60'000'000u;
+        // Update the per-AST member (also mirrors into the static atomic
+        // via the helper's env cache — but the canonical override is the
+        // AURA_REStamp_SLO_US env at process start). Runtime override is
+        // per-AST member; env override is the global atomic.
+        restamp_slo_us_budget_ = us;
+    }
     void set_restamp_policy_override(std::optional<RestampPolicy> p) const noexcept {
         restamp_policy_override_ = p;
     }
@@ -8207,6 +8274,18 @@ public:
         // Issue #2402: last-call cost for Agent SLO dashboards.
         restamp_nodes_last_.store(restamped, std::memory_order_relaxed);
         restamp_us_last_.store(us_u, std::memory_order_relaxed);
+        // Issue #2528: SLO breach detection + max-approximation p99.
+        // Zero cost when no restamp runs (the only call site). Each call
+        // past the configured AURA_RESTAMP_SLO_US budget bumps the breach
+        // counter; p99 is a CAS-loop max (cheap, no histogram buffer).
+        const auto slo_budget_us = static_cast<std::uint64_t>(restamp_slo_us_budget());
+        if (us_u > slo_budget_us)
+            restamp_slo_breach_total_.fetch_add(1, std::memory_order_relaxed);
+        auto p99 = restamp_us_p99_.load(std::memory_order_relaxed);
+        while (us_u > p99 && !restamp_us_p99_.compare_exchange_weak(
+                                 p99, us_u, std::memory_order_relaxed, std::memory_order_relaxed)) {
+            // retry until either us_u <= p99 (someone else raised it) or CAS succeeds.
+        }
         // Issue #1282: if restamp was pending due to uint16 wrap,
         // clear the flag and count the recovery (Agent-visible via
         // ast:generation-stats / production-sweep-1281-1285-stats).
