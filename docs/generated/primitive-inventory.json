@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 528,
-  "frozen_count": 458,
+  "frozen_count": 459,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -450,6 +450,7 @@
     "query:workspace-closedloop-fiber-eda-stats",
     "query:workspace-closedloop-fiber-multi-agent-yield-stats",
     "query:workspace-closedloop-orchestration-stats",
+    "query:workspace-mtx-contention-stats",
     "query:workspace-snapshot-stats",
     "query:zero-copy-framebuffer-stats",
     "reflect:hygiene-stats",
@@ -1003,7 +1004,7 @@
   ],
   "public_stats_via_add": 2,
   "schema": 2,
-  "stats_count": 435,
+  "stats_count": 436,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1435,6 +1436,7 @@
     "query:workspace-closedloop-fiber-eda-stats",
     "query:workspace-closedloop-fiber-multi-agent-yield-stats",
     "query:workspace-closedloop-orchestration-stats",
+    "query:workspace-mtx-contention-stats",
     "query:workspace-snapshot-stats",
     "query:zero-copy-framebuffer-stats",
     "reflect:hygiene-stats",

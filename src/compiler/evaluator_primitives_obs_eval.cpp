@@ -5738,11 +5738,13 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
-    // Issue #1373 / #1375 / #2040: (query:mutation-boundary-hold-stats) —
-    // hold-time + yield/migration + 9-bucket histogram + workspace_mtx_
-    // unique-acquire contention (p99/max + wait_ns). Complements #717
-    // fiber-boundary-violation-stats and #1253 mutation_hold_* SLO.
-    // Issue #2040 reuses this existing stats name (no new *-stats freeze).
+    // Issue #1373 / #1375 / #2040 / #2121 / #2523:
+    // (query:mutation-boundary-hold-stats) — hold-time + yield/migration +
+    // 9-bucket histogram + workspace_mtx_ unique-acquire contention
+    // (p99/max + wait_ns) + region / optimistic residual (#2523).
+    // Complements #717 fiber-boundary-violation-stats and #1253
+    // mutation_hold_* SLO. Agents that prefer a focused surface also
+    // have query:workspace-mtx-contention-stats (same counters, AC5).
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-hold-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
@@ -5916,6 +5918,18 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"region-concurrency-wired", make_int(1)},
                 {"schema-2121", make_int(2121)},
                 {"issue-2121", make_int(2121)},
+                // Issue #2523 residual: Agent self-throttle keys on hold-stats too.
+                {"workspace-mtx-optimistic-hit-total",
+                 make_int(m ? load(m->workspace_mtx_optimistic_hit_total) : 0)},
+                {"workspace-mtx-region-collision-total",
+                 make_int(m ? load(m->workspace_mtx_region_collision_total) : 0)},
+                {"workspace-mtx-waiters-now", make_int(m ? load(m->workspace_mtx_waiters_now) : 0)},
+                {"workspace-mtx-waiters-peak",
+                 make_int(m ? load(m->workspace_mtx_waiters_peak) : 0)},
+                {"workspace-mtx-hold-ns-p99", make_int(p99_us * 1000)},
+                {"schema-2523", make_int(2523)},
+                {"issue-2523", make_int(2523)},
+                {"workspace-mtx-contention-wired", make_int(1)},
                 // Issue #2199: hard timeout / force-fail for long outermost holds.
                 // Soft: metrics + hook only; Strict: forced abort → rollback.
                 // Abort is transactional (success=false → exit_mutation_boundary
@@ -6112,6 +6126,141 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"residual-defer-steal-interlock-wired", make_int(1)},
                 {"schema-2314", make_int(2314)},
                 {"issue-2314", make_int(2314)},
+            };
+            return build_hash(kv);
+        });
+
+    // Issue #2523: (query:workspace-mtx-contention-stats) — focused Agent
+    // self-throttle surface (hold p99, waiters, region-collision, optimistic
+    // hits). Complements query:mutation-boundary-hold-stats without requiring
+    // Agents to parse the full hold-stats hash. Internal catalog only
+    // (register_stats_impl — SlimSurface public count unchanged).
+    ObservabilityPrims::register_stats_impl(
+        "query:workspace-mtx-contention-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(64);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+            };
+            const std::int64_t holds = m ? load(m->mutation_boundary_holds_total) : 0;
+            std::array<std::int64_t, CompilerMetrics::kMutationBoundaryHoldHistBuckets> hist{};
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets; ++i)
+                    hist[i] = load(m->mutation_boundary_hold_histogram[i]);
+            }
+            static constexpr std::int64_t
+                kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets] = {
+                    50, 300, 750, 3'000, 7'500, 30'000, 75'000, 550'000, 2'000'000};
+            std::int64_t p99_us = 0;
+            if (holds > 0) {
+                const auto target =
+                    static_cast<std::int64_t>((static_cast<std::uint64_t>(holds) * 99 + 99) / 100);
+                std::int64_t cum = 0;
+                p99_us = kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets - 1];
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets;
+                     ++i) {
+                    cum += hist[i];
+                    if (cum >= target) {
+                        p99_us = kHoldMidsUs[i];
+                        break;
+                    }
+                }
+            }
+            const std::int64_t acquires = m ? load(m->workspace_mtx_acquire_total) : 0;
+            const std::int64_t contended = m ? load(m->workspace_mtx_contended_total) : 0;
+            const std::int64_t wait_ns = m ? load(m->workspace_mtx_wait_ns_total) : 0;
+            const std::int64_t wait_max = m ? load(m->workspace_mtx_wait_ns_max) : 0;
+            const std::int64_t wait_avg =
+                contended > 0 ? static_cast<std::int64_t>(wait_ns / contended) : 0;
+            const std::int64_t rate_pct =
+                acquires > 0
+                    ? static_cast<std::int64_t>((static_cast<std::uint64_t>(contended) * 100) /
+                                                static_cast<std::uint64_t>(acquires))
+                    : 0;
+            const std::int64_t region_acq = m ? load(m->workspace_region_acquire_total) : 0;
+            const std::int64_t collision = m ? load(m->workspace_mtx_region_collision_total) : 0;
+            // Prefer #2523 named collision; fall back to #2121 lineage if only that moved.
+            const std::int64_t collision_eff =
+                collision > 0 ? collision : (m ? load(m->workspace_region_collision_total) : 0);
+            const std::int64_t collision_rate_pct =
+                region_acq > 0
+                    ? static_cast<std::int64_t>((static_cast<std::uint64_t>(collision_eff) * 100) /
+                                                static_cast<std::uint64_t>(region_acq))
+                    : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema-2523", make_int(2523)},
+                {"issue-2523", make_int(2523)},
+                {"schema", make_int(2523)},
+                {"issue", make_int(2523)},
+                {"workspace-mtx-contention-wired", make_int(1)},
+                {"workspace-mtx-acquire-total", make_int(acquires)},
+                {"workspace-mtx-contended-total", make_int(contended)},
+                {"workspace-mtx-wait-ns-total", make_int(wait_ns)},
+                {"workspace-mtx-wait-ns-avg", make_int(wait_avg)},
+                {"workspace-mtx-wait-ns-max", make_int(wait_max)},
+                {"workspace-mtx-contention-rate-pct", make_int(rate_pct)},
+                {"workspace-mtx-waiters-now", make_int(m ? load(m->workspace_mtx_waiters_now) : 0)},
+                {"workspace-mtx-waiters-peak",
+                 make_int(m ? load(m->workspace_mtx_waiters_peak) : 0)},
+                {"workspace-mtx-hold-ns-p99", make_int(p99_us * 1000)},
+                {"p99-hold-us", make_int(p99_us)},
+                {"workspace-mtx-optimistic-hit-total",
+                 make_int(m ? load(m->workspace_mtx_optimistic_hit_total) : 0)},
+                {"workspace-mtx-region-collision-total", make_int(collision_eff)},
+                {"workspace-region-collision-total",
+                 make_int(m ? load(m->workspace_region_collision_total) : 0)},
+                {"workspace-region-collision-rate-pct", make_int(collision_rate_pct)},
+                {"workspace-region-acquire-total", make_int(region_acq)},
+                {"workspace-global-exclusive-total",
+                 make_int(m ? load(m->workspace_global_exclusive_total) : 0)},
+                {"workspace-region-fallback-global-total",
+                 make_int(m ? load(m->workspace_region_fallback_global_total) : 0)},
+                {"workspace-region-concurrency-enabled",
+                 make_int(ev.workspace_region_concurrency_enabled() ? 1 : 0)},
+                {"region-concurrency-wired", make_int(1)},
+                {"schema-2121", make_int(2121)},
+                {"schema-2040", make_int(2040)},
             };
             return build_hash(kv);
         });

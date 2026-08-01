@@ -2079,15 +2079,40 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
         return 0;
     }
     bool ok = true;
-    auto g = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(*ev, /*pending=*/1, &ok);
-    if (!g) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
-            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
-            m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2523 residual soft path: when region concurrency is enabled,
+    // host orch agents prefer try_acquire_for_region with a thread-keyed
+    // soft region so disjoint multi-Agent mutates avoid dual global
+    // exclusive holds. Policy OFF / atomic-batch fall back inside the
+    // factory to GlobalExclusive (AC3). Topology-changing Agents that
+    // need full exclusive should call try_acquire directly.
+    std::unique_ptr<aura::compiler::Evaluator::MutationBoundaryGuard> guard;
+    if (ev->workspace_region_concurrency_enabled()) {
+        const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
+        const auto key = aura::compiler::Evaluator::workspace_region_key_from_name(
+            std::format("orch-agent-{}", tid));
+        auto g = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire_for_region(
+            *ev, key, /*pending=*/1, &ok);
+        if (!g) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+                m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return 1; // typed reject — caller skips body, no panic
         }
-        return 1; // typed reject — caller skips body, no panic
+        guard = std::move(*g);
+    } else {
+        auto g =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(*ev, /*pending=*/1, &ok);
+        if (!g) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+                m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return 1; // typed reject — caller skips body, no panic
+        }
+        guard = std::move(*g);
     }
-    g_orch_agent_body_guard = std::move(*g);
+    g_orch_agent_body_guard = std::move(guard);
     if (register_soft_boundary) {
         // Host path already has full Guard (depth via slot). Still count enter.
         aura::orch::g_orch_module_stats.orch_agent_boundary_entered_total.fetch_add(

@@ -850,13 +850,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Issue #2121: Region / optimistic workspace write concurrency
+// Issue #2121 / #2523: Region / optimistic workspace write concurrency
 //
 // Problem: all structural mutates serialize on unique_lock(workspace_mtx_).
 // Multi-Agent orchestration on disjoint top-level Defines was throughput-
 // bound by that single writer lock.
 //
-// Strategy (Phase 1 observability + Phase 2 region RW):
+// Strategy (Phase 1 observability + Phase 2 region RW + #2523 residual):
 //
 //   GlobalExclusive (default try_acquire / legacy ctor):
 //     unique_lock(workspace_mtx_) for the full Guard body.
@@ -868,15 +868,29 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 //                                    blocked by any GlobalExclusive unique.
 //     unique_lock(workspace_region_mtx_[shard]) — exclusive within region.
 //     Forces lightweight enter checkpoint (no full children_ snapshot).
+//     Counts as workspace_mtx_optimistic_hit_total (#2523 soft path hit).
+//
+//   Soft path residual (#2523):
+//     - Disjoint top-level Define Agents MUST use try_acquire_for_region
+//       (or orch host soft region key) so two fibers do not both hold
+//       global exclusive for the full body.
+//     - Host orch agent body prefers try_acquire_for_region when region
+//       concurrency is enabled (thread-keyed soft region); falls back to
+//       GlobalExclusive when policy OFF / atomic-batch.
+//     - Cross-region / atomic-batch / topology still take GlobalExclusive
+//       (no silent data race).
+//     - Agents self-throttle via query:workspace-mtx-contention-stats
+//       (hold p99, waiters, region-collision rate, optimistic hits).
 //
 //   Optimistic note: defuse_version_ is already atomic; region enter
 //   snapshots it for dirty detection. Full optimistic retry-on-conflict
-//   for arbitrary topology is future work — region path is the primary
-//   scale-out for disjoint Define mutates (AC2 / AC6).
+//   for arbitrary topology remains future work — region path is the
+//   primary scale-out for disjoint Define mutates (AC2 / AC6).
 //
-// Invariants preserved: PCV COW snapshots under lightweight path,
-// StableNodeRef restamp on exit, TypedMutationAudit + linear enforce
-// still run in outermost dtor under the held locks.
+// Invariants preserved: PCV SafePCVSpan lifetime, StableNodeRef
+// gen/wrap/cow restamp on exit, rollback_to_size + topology fidelity,
+// TypedMutationAudit + linear enforce still run in outermost dtor
+// under the held locks.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── try_acquire (#1547 / #1556 / #1590) ──────────────────────────────────
@@ -1044,14 +1058,25 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             // RegionExclusive: shared workspace + exclusive region shard.
             // Contended shared_lock wait counts toward workspace_mtx_ stats;
             // region collision when shard already has a holder.
+            // Issue #2523: collision + optimistic hit + waiter samples.
             const auto holders_before =
                 ev_->workspace_region_holders_[region_shard_].load(std::memory_order_relaxed);
-            if (holders_before > 0 && m)
+            if (holders_before > 0 && m) {
                 m->workspace_region_collision_total.fetch_add(1, std::memory_order_relaxed);
+                m->workspace_mtx_region_collision_total.fetch_add(1, std::memory_order_relaxed);
+            }
             if (shared_lock_.try_lock()) {
                 if (m)
                     m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
             } else {
+                if (m) {
+                    m->workspace_mtx_waiters_now.fetch_add(1, std::memory_order_relaxed);
+                    auto peak = m->workspace_mtx_waiters_peak.load(std::memory_order_relaxed);
+                    const auto now = m->workspace_mtx_waiters_now.load(std::memory_order_relaxed);
+                    while (now > peak && !m->workspace_mtx_waiters_peak.compare_exchange_weak(
+                                             peak, now, std::memory_order_relaxed)) {
+                    }
+                }
                 const auto wait_t0 = std::chrono::steady_clock::now();
                 shared_lock_.lock();
                 const auto wait_ns =
@@ -1059,6 +1084,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
                                                    std::chrono::steady_clock::now() - wait_t0)
                                                    .count());
                 if (m) {
+                    m->workspace_mtx_waiters_now.fetch_sub(1, std::memory_order_relaxed);
                     m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
                     m->workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
                     m->workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
@@ -1078,6 +1104,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             if (m) {
                 m->workspace_region_acquire_total.fetch_add(1, std::memory_order_relaxed);
                 m->workspace_region_hold_samples.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2523: soft path hit (region classification succeeded).
+                m->workspace_mtx_optimistic_hit_total.fetch_add(1, std::memory_order_relaxed);
             }
             // Lightweight checkpoint under concurrent region writers.
             ev_->force_lightweight_checkpoint_for_next_boundary_ = true;
@@ -1088,6 +1116,14 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
                 if (m)
                     m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
             } else {
+                if (m) {
+                    m->workspace_mtx_waiters_now.fetch_add(1, std::memory_order_relaxed);
+                    auto peak = m->workspace_mtx_waiters_peak.load(std::memory_order_relaxed);
+                    const auto now = m->workspace_mtx_waiters_now.load(std::memory_order_relaxed);
+                    while (now > peak && !m->workspace_mtx_waiters_peak.compare_exchange_weak(
+                                             peak, now, std::memory_order_relaxed)) {
+                    }
+                }
                 const auto wait_t0 = std::chrono::steady_clock::now();
                 lock_.lock();
                 const auto wait_ns =
@@ -1095,6 +1131,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
                                                    std::chrono::steady_clock::now() - wait_t0)
                                                    .count());
                 if (m) {
+                    m->workspace_mtx_waiters_now.fetch_sub(1, std::memory_order_relaxed);
                     m->workspace_mtx_acquire_total.fetch_add(1, std::memory_order_relaxed);
                     m->workspace_mtx_contended_total.fetch_add(1, std::memory_order_relaxed);
                     m->workspace_mtx_wait_ns_total.fetch_add(wait_ns, std::memory_order_relaxed);
