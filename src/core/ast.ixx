@@ -1593,6 +1593,8 @@ public:
     // mark → store(true, release); rebuild → store(false, release);
     // incremental mutators / ensure load(acquire). Default true so the
     // first lookup rebuilds until an explicit rebuild runs.
+    // Issue #2416 / #2452: atomic dirty so mark_release is visible to
+    // ensure/collect acquire (no stale clean index after link_children).
     mutable std::atomic<bool> incoming_parent_index_dirty_{true};
     mutable std::atomic<std::uint64_t> incoming_parent_index_rebuilds_{0};
     mutable std::atomic<std::uint64_t> incoming_parent_index_lookups_{0};
@@ -4347,10 +4349,11 @@ public:
         return id < parent_.size() ? parent_[id] : NULL_NODE;
     }
 
-    // Issue #1689: mark inverted parent-edge index stale (bulk topology
-    // changes). Next collect/lookup rebuilds O(N+E).
+    // Issue #1689 / #2416 / #2452: mark inverted parent-edge index stale
+    // (bulk topology changes). Next collect/lookup rebuilds O(N+E).
     void mark_incoming_parent_index_dirty() const noexcept {
-        // Issue #2416: release so subsequent ensure/collect sees dirty.
+        // Issue #2416 / #2452: release so subsequent ensure/collect
+        // cannot observe a stale clean flag after link_children.
         incoming_parent_index_dirty_.store(true, std::memory_order_release);
     }
 
@@ -4369,12 +4372,13 @@ public:
                 incoming_parent_edges_[cid].emplace_back(id, static_cast<std::uint32_t>(ci));
             }
         }
-        // Issue #2416: release publish of clean index.
+        // Issue #2416 / #2452: release publish of clean index.
         incoming_parent_index_dirty_.store(false, std::memory_order_release);
         incoming_parent_index_rebuilds_.fetch_add(1, std::memory_order_relaxed);
     }
 
     void ensure_incoming_parent_index() const {
+        // Issue #2452: acquire load — sees mark_release from writers.
         if (incoming_parent_index_dirty_.load(std::memory_order_acquire))
             rebuild_incoming_parent_index();
     }
