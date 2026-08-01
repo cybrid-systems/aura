@@ -6845,6 +6845,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2345", 2345);
                 insert_kv("issue-2345", 2345);
             }
+            // Issue #2458: truncate-commit Soft observe / Hard full-solve-or-reject.
+            // Additive keys on fidelity-stats (anti half-green under multi-round).
+            {
+                using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                using aura::compiler::typed_audit::truncate_commit_hard_enabled;
+                insert_kv("truncate-commit-observe-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.truncate_commit_observe_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("truncate-commit-reject-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.truncate_commit_reject_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "truncate-commit-full-solve-recover-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.truncate_commit_full_solve_recover_total
+                            .load(std::memory_order_relaxed)));
+                insert_kv("truncate-commit-hard-wired",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.truncate_commit_hard_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("truncate-commit-hard-enabled", truncate_commit_hard_enabled() ? 1 : 0);
+                insert_kv("schema-2458", 2458);
+                insert_kv("issue-2458", 2458);
+            }
             // Issue #2359: unify occurrence_goals + predicate_memo epoch
             // health on the fidelity-stats surface (pure read; no solve
             // side effects). Agents use these keys to decide whether

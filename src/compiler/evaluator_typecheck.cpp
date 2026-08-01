@@ -738,7 +738,32 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 // escalated to a one-shot full fixpoint (Option A). If still not
                 // SOLVED, solve_ok stays false here — never half-solved ship.
                 auto post_escalate = cs_ptr->escalate_if_production(sdo.status, &unresolved);
-                cr.solve_ok = (post_escalate == SolveResult::SOLVED) && !sdo.truncated_reverify;
+                // Base: SOLVED after optional TIMEOUT escalate.
+                // Soft (#2458 AC1): truncated may still commit (observe only).
+                // Hard: require !truncated unless gate full-solve recovers.
+                const bool trunc_hard = aura::compiler::typed_audit::truncate_commit_hard_enabled();
+                cr.solve_ok = (post_escalate == SolveResult::SOLVED) &&
+                              (!sdo.truncated_reverify || !trunc_hard);
+                // Issue #2458: anti half-green — truncated reverify or incomplete
+                // non-vacuous blame under production/Full/HARD → full solve or reject.
+                // Soft Sampled: observe only (AC1); happy path skips full solve (AC4).
+                {
+                    SolveDeltaOccurrenceResult sdo_gate = sdo;
+                    sdo_gate.status = post_escalate;
+                    sdo_gate.truncated_reverify =
+                        sdo.truncated_reverify || cs_ptr->last_reverify_truncated();
+                    auto gate = aura::compiler::commit_ok_after_delta_snapshot(*cs_ptr, &sdo_gate,
+                                                                               &unresolved);
+                    if (gate.rejected) {
+                        cr.solve_ok = false;
+                    } else if (gate.recovered) {
+                        cr.solve_ok = true;
+                        sdo.truncated_reverify = false;
+                    } else if (gate.observed && post_escalate == SolveResult::SOLVED) {
+                        // Soft: allow SOLVED even when truncated (AC1).
+                        cr.solve_ok = true;
+                    }
+                }
                 // Issue #2262 / #2345: expected-partial + empty CS anti false-green.
                 // Production defaults / Full / AURA_COMPOSITE_EMPTY_CS_HARD=1 →
                 // hard-reject (solve_ok=false). Dev Sampled soft → observe only
@@ -968,8 +993,27 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     // partial-recovery re-solve path. If escalate returns
                     // TIMEOUT, solve_ok remains false (no half-solved ship).
                     auto post_escalate2 = cs.escalate_if_production(sdo2.status, nullptr);
-                    cr.solve_ok =
-                        (post_escalate2 == SolveResult::SOLVED) && !sdo2.truncated_reverify;
+                    const bool trunc_hard2 =
+                        aura::compiler::typed_audit::truncate_commit_hard_enabled();
+                    cr.solve_ok = (post_escalate2 == SolveResult::SOLVED) &&
+                                  (!sdo2.truncated_reverify || !trunc_hard2);
+                    // Issue #2458: re-apply truncate-commit gate on recovery path
+                    // so Full partial recovery cannot half-green after a soft
+                    // SOLVED+truncated residual.
+                    {
+                        SolveDeltaOccurrenceResult sdo2_gate = sdo2;
+                        sdo2_gate.status = post_escalate2;
+                        sdo2_gate.truncated_reverify =
+                            sdo2.truncated_reverify || cs.last_reverify_truncated();
+                        auto gate2 =
+                            aura::compiler::commit_ok_after_delta_snapshot(cs, &sdo2_gate, nullptr);
+                        if (gate2.rejected)
+                            cr.solve_ok = false;
+                        else if (gate2.recovered)
+                            cr.solve_ok = true;
+                        else if (gate2.observed && post_escalate2 == SolveResult::SOLVED)
+                            cr.solve_ok = true;
+                    }
                     if (!cr.solve_ok)
                         c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
                 } catch (...) {
@@ -1262,7 +1306,37 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
             if (out_truncated)
                 *out_truncated = true;
         }
-        // Soft/Sampled: observe truncation, allow continue (AC2).
+        // Issue #2458: Soft observe / Hard full-solve-or-reject on truncated
+        // or incomplete blame (residual half-green after #2260 soft continue).
+        {
+            SolveDeltaOccurrenceResult sdo_gate{};
+            sdo_gate.status = sdo.status;
+            sdo_gate.truncated_reverify = truncated;
+            sdo_gate.unresolved = sdo.unresolved;
+            auto gate = aura::compiler::commit_ok_after_delta_snapshot(*cs_ptr, &sdo_gate, nullptr);
+            if (gate.observed && !hard_gate)
+                return true; // Soft AC1
+            if (gate.recovered) {
+                if (out_truncated)
+                    *out_truncated = false;
+                return true; // Hard recovered via full solve
+            }
+            if (gate.rejected) {
+                // Fall through to hard-gate force-fail / soft still continues below.
+                if (!hard_gate)
+                    return true; // Soft never force-fails here
+                solved = false;
+                truncated = true;
+                if (out_truncated)
+                    *out_truncated = true;
+            } else if (!hard_gate) {
+                // Happy path soft: continue.
+                return true;
+            } else if (solved && !truncated && gate.allow) {
+                return true; // AC4 hard happy path
+            }
+        }
+        // Soft/Sampled without CS-side bad snap already returned above.
         if (!hard_gate)
             return true;
         if (solved && !truncated)

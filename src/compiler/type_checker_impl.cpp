@@ -1933,6 +1933,60 @@ SolverSnapshot snapshot_constraint_system(ConstraintSystem& cs,
     return s;
 }
 
+// Issue #2458: Soft observe vs production full-solve/reject on truncated
+// reverify or incomplete non-vacuous blame (anti half-green commit).
+TruncateCommitGateResult commit_ok_after_delta_snapshot(ConstraintSystem& cs,
+                                                        const SolveDeltaOccurrenceResult* last,
+                                                        std::vector<Constraint>* unresolved_out) {
+    TruncateCommitGateResult r;
+    r.snap = snapshot_constraint_system(cs, last);
+    // Vacuous empty blame (no frames, not complete/partial) is exempt —
+    // same non-vacuous rule as composite_txn_commit #2221.
+    const auto& blame = r.snap.blame;
+    const bool blame_nonvacuous = !blame.frames.empty() || blame.complete || blame.partial ||
+                                  r.snap.truncated_reverify ||
+                                  r.snap.unscanned_constraint_count > 0;
+    const bool blame_bad = blame_nonvacuous && !blame.is_complete();
+    const bool bad = r.snap.truncated_reverify || blame_bad;
+    if (!bad) {
+        // AC4: happy path — no extra full solve.
+        return r;
+    }
+    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const bool hard = aura::compiler::typed_audit::truncate_commit_hard_enabled();
+    if (!hard) {
+        // AC1 Soft: observe only; commit may still succeed.
+        c.truncate_commit_observe_total.fetch_add(1, std::memory_order_relaxed);
+        r.observed = true;
+        r.allow = true;
+        return r;
+    }
+    // AC2/AC3 Hard: one full fixpoint attempt (mirror #2277 escalate body).
+    r.attempted_full_solve = true;
+    const SolveResult full = cs.solve(unresolved_out);
+    if (full == SolveResult::SOLVED)
+        cs.note_full_solve_cleared_truncation();
+    r.snap = snapshot_constraint_system(cs, last);
+    const auto& blame2 = r.snap.blame;
+    const bool blame2_nonvacuous = !blame2.frames.empty() || blame2.complete || blame2.partial ||
+                                   r.snap.truncated_reverify ||
+                                   r.snap.unscanned_constraint_count > 0;
+    const bool still_bad = (full != SolveResult::SOLVED) || r.snap.truncated_reverify ||
+                           (blame2_nonvacuous && !blame2.is_complete());
+    if (still_bad) {
+        c.truncate_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+        r.rejected = true;
+        r.allow = false;
+        r.snap.status = full;
+    } else {
+        c.truncate_commit_full_solve_recover_total.fetch_add(1, std::memory_order_relaxed);
+        r.recovered = true;
+        r.allow = true;
+        r.snap.status = SolveResult::SOLVED;
+    }
+    return r;
+}
+
 // Issue #1414: hash helpers for solved_delta_cache_ in
 // CompilerService. FNV-1a 64-bit hash, deterministic across
 // processes (no address-based mixing).
