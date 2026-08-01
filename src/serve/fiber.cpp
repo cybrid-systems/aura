@@ -193,10 +193,16 @@ std::atomic<std::uint64_t> Fiber::mutation_steal_snapshot_mismatch_total_{0};
 std::atomic<std::uint64_t> Fiber::steal_snapshot_mismatch_force_deopt_total_{0};
 // Issue #2346: resume hard-fail (mark-failed) total.
 std::atomic<std::uint64_t> Fiber::steal_snapshot_hard_fail_total_{0};
+// Issue #2518: resume safety ticket mismatch total.
+std::atomic<std::uint64_t> Fiber::steal_safety_ticket_mismatch_total_{0};
 
 // Issue #2346: C ABI for hard-fail total (query / tests without Fiber type).
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total() {
     return Fiber::steal_snapshot_hard_fail_total();
+}
+// Issue #2518: C ABI for safety ticket mismatch total.
+extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total() {
+    return Fiber::steal_safety_ticket_mismatch_total();
 }
 
 // Issue #2346 production canary: strong def in typed_mutation_audit_hooks.cpp
@@ -264,16 +270,30 @@ bool is_steal_snapshot_hard_abort() noexcept {
     return v && v[0] == '1';
 }
 
-// Issue #2346: post-sync resume invariant (Soft metric / Hard mark-failed).
+// Issue #2346 / #2518: post-sync resume invariant (Soft metric / Hard mark-failed).
 // See decision table on is_steal_snapshot_hard_mode() in fiber.h.
+// Issue #2518: if steal stamped resume_safety_ticket_, current even seq must
+// match — Guard enter/exit between sample and resume advances safety_seq_ and
+// is treated as inconsistent (closes the sample→resume window).
 bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
-    // Single snapshot sample (AC3 zero extra cost on happy path beyond
-    // this existing load used by resume).
+    // Single snapshot sample (happy path: one seqlock read; ticket compare
+    // is a plain load of the one-shot flag + field — AC4).
     const auto snap = mutation_safety_snapshot();
-    if (!mutation_safety_snapshot_inconsistent(snap))
+    bool ticket_miss = false;
+    if (has_resume_safety_ticket_) {
+        // Compare against ticket captured in this snap (same even seq as
+        // current_safety_ticket on happy path). Mismatch ⇒ mid-window publish.
+        if (snap.ticket != resume_safety_ticket_)
+            ticket_miss = true;
+        // One-shot: consume so non-steal resumes and re-tries are clean.
+        clear_resume_safety_ticket();
+    }
+    if (!mutation_safety_snapshot_inconsistent(snap) && !ticket_miss)
         return true; // consistent — continue
     // Soft always bumps the observed mismatch counter first.
     bump_mutation_steal_snapshot_mismatch();
+    if (ticket_miss)
+        bump_steal_safety_ticket_mismatch();
     if (!is_steal_snapshot_hard_mode())
         return true; // Soft: continue resume
     // Hard: mark-failed so orch can drain (prefer over silent continue).
@@ -283,9 +303,10 @@ bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
     if (is_steal_snapshot_hard_abort()) {
         std::fprintf(stderr,
                      "FATAL: Fiber::resume MutationSafetySnapshot inconsistent "
-                     "(AURA_STEAL_SNAPSHOT_HARD_ABORT=1, fiber=%llu depth=%zu yield=%u)\n",
+                     "(AURA_STEAL_SNAPSHOT_HARD_ABORT=1, fiber=%llu depth=%zu yield=%u "
+                     "ticket_miss=%d)\n",
                      static_cast<unsigned long long>(id_), snap.depth,
-                     static_cast<unsigned>(snap.last_yield));
+                     static_cast<unsigned>(snap.last_yield), ticket_miss ? 1 : 0);
         std::abort();
     }
     return false; // caller must not swapcontext

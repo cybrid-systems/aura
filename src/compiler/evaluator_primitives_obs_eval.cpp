@@ -82,6 +82,7 @@ extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferre
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
+extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
@@ -12905,6 +12906,16 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("steal-snapshot-hard-wired", 1);
             insert_kv("schema-2346", 2346);
             insert_kv("issue-2346", 2346);
+            // Issue #2518: safety ticket (sample seq) vs resume current seq.
+            // Closes sample→steal→resume window after Guard enter/exit.
+            // Independent of LayoutStamp restamp (#2510) — no dual-compute.
+            insert_kv(
+                "steal-safety-ticket-mismatch-total",
+                static_cast<std::int64_t>(aura_fiber_static_steal_safety_ticket_mismatch_total()));
+            insert_kv("steal-safety-ticket-wired", 1);
+            insert_kv("schema-2518", 2518);
+            insert_kv("issue-2518", 2518);
+            insert_kv("schema-2510", 2510); // coexist / lineage with restamp txn
             // Issue #2372: production hard-forbid Soft steal-snapshot +
             // require force-deopt ABI. soft-forbidden-wired=1 is a compile-
             // time sentinel that the production lock path exists;
