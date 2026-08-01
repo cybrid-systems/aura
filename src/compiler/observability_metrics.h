@@ -461,13 +461,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_closure_dual_check_total{0};
     std::atomic<std::uint64_t> jit_closure_stale_deopt_total{0};
     std::atomic<std::uint64_t> jit_closure_safe_fallbacks{0};
-    // Issue #2371: cross-COW / dual-epoch soft restamp vs hard-reject.
-    // Soft migrate: read-only restamp of bridge+defuse (+ remount) when
-    // the closure is still safe (live slot, linear OK, drift within cap).
-    // Hard reject: existing safe-fallback path for freed / linear-moved /
-    // far-behind generation. Production default soft path on.
+    // Issue #2371 / #2505: cross-COW / dual-epoch soft restamp vs hard-reject.
+    // Soft migrate: call-time restamp of bridge+defuse (+ remount) when
+    // the closure is still safe (live slot, linear OK, |epoch_delta| ≤ K).
+    // Hard reject: safe-fallback for freed / linear-moved / far-behind /
+    // remount-fail / soft-disabled. Production default soft on.
+    // #2505: reason breakdown (Agents plan recreate-closure vs soft recovery).
     std::atomic<std::uint64_t> cross_cow_soft_migrate_total{0};
     std::atomic<std::uint64_t> cross_cow_hard_reject_total{0};
+    std::atomic<std::uint64_t> cross_cow_hard_reject_disabled_total{0};     // #2505
+    std::atomic<std::uint64_t> cross_cow_hard_reject_freed_total{0};        // #2505
+    std::atomic<std::uint64_t> cross_cow_hard_reject_far_behind_total{0};   // #2505
+    std::atomic<std::uint64_t> cross_cow_hard_reject_linear_total{0};       // #2505
+    std::atomic<std::uint64_t> cross_cow_hard_reject_remount_fail_total{0}; // #2505
+    std::atomic<std::uint64_t> cross_cow_hard_reject_other_total{0};        // #2505
+    std::atomic<std::uint8_t> cross_cow_last_hard_reject_reason{0};         // #2505 enum
     // Issue #1522: fn_trackers_ batch_deopt notify (aliases AC names *_total).
     // jit_closure_safe_fallbacks_total mirrors jit_closure_safe_fallbacks
     // (kept as distinct field for Agent queries that use the AC name).

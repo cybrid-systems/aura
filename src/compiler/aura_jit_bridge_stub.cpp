@@ -364,6 +364,19 @@ aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t /*n*/) {}
 // Issue #2371: weak stubs for cross-COW soft migrate counters.
 extern "C" __attribute__((weak)) void aura_bump_cross_cow_soft_migrate_total(void) noexcept {}
 extern "C" __attribute__((weak)) void aura_bump_cross_cow_hard_reject_total(void) noexcept {}
+extern "C" __attribute__((weak)) void
+aura_bump_cross_cow_hard_reject_reason(std::uint8_t /*reason*/) noexcept {}
+extern "C" __attribute__((weak)) std::uint8_t
+aura_cross_cow_last_hard_reject_reason(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_cross_cow_soft_migrate_enabled(void) noexcept {
+    return 1;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_cross_cow_soft_migrate_max_drift(void) noexcept {
+    return 4096;
+}
 // Issue #2092: stable-id-keyed remap (no display-name arg). Stub
 // returns 0 so light test binaries without the production TU observe
 // no remap (consistent with no reemit candidates).

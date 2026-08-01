@@ -1383,7 +1383,7 @@ extern "C" void aura_jit_closure_record_safe_fallback(void) {
     }
 }
 
-// Issue #2371: cross-COW soft migrate / hard reject counters.
+// Issue #2371 / #2505: cross-COW soft migrate / hard reject counters.
 extern "C" void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
     if (aot_metrics())
         aot_metrics()->cross_cow_soft_migrate_total.fetch_add(1, std::memory_order_relaxed);
@@ -1391,6 +1391,38 @@ extern "C" void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
 extern "C" void aura_bump_cross_cow_hard_reject_total(void) noexcept {
     if (aot_metrics())
         aot_metrics()->cross_cow_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
+}
+// Issue #2505: reason breakdown (1=Disabled … 6=Other). Also stamps last reason.
+extern "C" void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept {
+    auto* m = aot_metrics();
+    if (!m)
+        return;
+    m->cross_cow_last_hard_reject_reason.store(reason, std::memory_order_relaxed);
+    switch (reason) {
+        case 1:
+            m->cross_cow_hard_reject_disabled_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 2:
+            m->cross_cow_hard_reject_freed_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 3:
+            m->cross_cow_hard_reject_far_behind_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 4:
+            m->cross_cow_hard_reject_linear_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 5:
+            m->cross_cow_hard_reject_remount_fail_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 6:
+        default:
+            m->cross_cow_hard_reject_other_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+    }
+}
+extern "C" std::uint8_t aura_cross_cow_last_hard_reject_reason(void) noexcept {
+    auto* m = aot_metrics();
+    return m ? m->cross_cow_last_hard_reject_reason.load(std::memory_order_relaxed) : 0;
 }
 
 extern "C" std::uint64_t aura_jit_closure_dual_check_total(void) {

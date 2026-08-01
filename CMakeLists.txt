@@ -3404,6 +3404,11 @@ aura_add_issue_test(test_specjit_pereval_storm_e2e_2504)
 aura_issue_test_link_llvm_jit(test_specjit_pereval_storm_e2e_2504)
 add_dependencies(all_test_issue_targets test_specjit_pereval_storm_e2e_2504)
 
+# Issue #2505: cross-COW soft-migrate drift threshold + hard-reject reasons.
+aura_add_issue_test(test_cross_cow_drift_contract_2505)
+aura_issue_test_link_llvm_jit(test_cross_cow_drift_contract_2505)
+add_dependencies(all_test_issue_targets test_cross_cow_drift_contract_2505)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
