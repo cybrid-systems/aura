@@ -3211,6 +3211,11 @@ aura_add_issue_test(test_ir_soa_layout_stamp_2432)
 aura_issue_test_link_llvm_jit(test_ir_soa_layout_stamp_2432)
 add_dependencies(all_test_issue_targets test_ir_soa_layout_stamp_2432)
 
+# Issue #2520: production ban residual to_aos_view under SoA-only.
+aura_add_issue_test(test_soa_ban_residual_aos_bridge_2520)
+aura_issue_test_link_llvm_jit(test_soa_ban_residual_aos_bridge_2520)
+add_dependencies(all_test_issue_targets test_soa_ban_residual_aos_bridge_2520)
+
 # Issue #2519: LayoutStamp operator== full 8-field equality.
 aura_add_issue_test(test_layout_stamp_equality_8field_2519)
 aura_issue_test_link_llvm_jit(test_layout_stamp_equality_8field_2519)

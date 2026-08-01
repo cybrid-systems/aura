@@ -896,13 +896,15 @@ struct CompilerMetrics {
     // a single source of truth.
     std::atomic<std::uint64_t> ir_soa_instructions_emitted{0};
     std::atomic<std::uint64_t> ir_soa_functions_emitted{0};
-    // Issue #2254: SoA single source of truth observability.
+    // Issue #2254 / #2520: SoA single source of truth observability.
     //   - soa_only_path_total: # of lowers under AURA_IR_SOA_ONLY=1
     //     (production default; the SoA emit path bumps this)
-    //   - residual_aos_bridge_total: # of dual-emit bridges under
-    //     production (must be 0 in prod; tests can force)
+    //   - residual_aos_bridge_total: # of residual SoA→AoS materializes
+    //     (to_aos_view / dual-emit). Issue #2520: TEST-ONLY metric under
+    //     production SoA-only — target 0 on production smoke; non-zero
+    //     without AURA_ALLOW_AOS_BRIDGE hard-fails at the call site.
     std::atomic<std::uint64_t> soa_only_path_total{0};
-    std::atomic<std::uint64_t> residual_aos_bridge_total{0};
+    std::atomic<std::uint64_t> residual_aos_bridge_total{0}; // #2520 test-only on prod
     // Issue #603: full consumer adoption + per-block dirty-driven
     // minimal re-lower observability. Companion to the existing
     // (compile:ir-soa-stats) hash primitive — those two fields

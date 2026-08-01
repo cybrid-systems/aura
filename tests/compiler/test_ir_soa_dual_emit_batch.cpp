@@ -243,10 +243,13 @@ static void ac1920_1_views() {
     CHECK(fview.size() >= 3, "instrs >= 3");
     auto col = fview.columnar_accessor();
     CHECK(col.size() >= 3, "columnar");
+    // Issue #2520: residual to_aos_view is test opt-in only under SoA-only.
+    aura::compiler::set_allow_aos_bridge_for_test(true);
     auto aos = to_aos_view(mod.functions[0]);
     CHECK(aos.blocks.size() >= 1, "aos blocks");
     auto aos_mod = to_aos_module(mod);
     CHECK(aos_mod.functions.size() == 1, "aos module");
+    aura::compiler::reset_allow_aos_bridge_for_test();
     auto walk = walk_soa_function_hotpath(mod.functions[0], true);
     CHECK(walk.dirty_runs >= 1, "dirty runs");
     CHECK(walk.clean_skips >= 0, "clean skips");

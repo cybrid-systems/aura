@@ -46,6 +46,8 @@ module;
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <memory_resource>
 #include <string>
 #include <vector>
@@ -72,6 +74,38 @@ export inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() n
     static std::atomic<std::uint64_t> v{0};
     return v;
 }
+
+// Issue #2520: residual AoS bridge is test/opt-in only under AURA_IR_SOA_ONLY.
+// Production packs must not call to_aos_view / to_aos_module without
+// AURA_ALLOW_AOS_BRIDGE (compile-time) or set_allow_aos_bridge_for_test /
+// AURA_ALLOW_AOS_BRIDGE=1 (runtime test seam). residual_aos_bridge_total
+// remains a test-only observability metric on production smoke (target 0).
+export inline std::atomic<std::uint8_t>& g_allow_aos_bridge_for_test() noexcept {
+    static std::atomic<std::uint8_t> v{0};
+    return v;
+}
+export inline void set_allow_aos_bridge_for_test(bool allow) noexcept {
+    g_allow_aos_bridge_for_test().store(allow ? 1u : 0u, std::memory_order_release);
+}
+export inline void reset_allow_aos_bridge_for_test() noexcept {
+    g_allow_aos_bridge_for_test().store(0u, std::memory_order_release);
+}
+// True when residual AoS materialize is permitted (test opt-in only under
+// production SOA_ONLY). Compile-time AURA_ALLOW_AOS_BRIDGE always allows.
+export [[nodiscard]] inline bool aos_bridge_allowed() noexcept {
+#if defined(AURA_ALLOW_AOS_BRIDGE)
+    return true;
+#else
+    if (g_allow_aos_bridge_for_test().load(std::memory_order_acquire) != 0)
+        return true;
+    const char* e = std::getenv("AURA_ALLOW_AOS_BRIDGE");
+    return e != nullptr && e[0] == '1';
+#endif
+}
+// Observability: residual_aos_bridge_total is a test-only metric under
+// production SoA-only (AC5). Production pipeline target remains 0.
+export inline constexpr int kResidualAosBridgeTestOnly = 1;
+export inline constexpr std::uint64_t kSchemaResidualAosBan = 2520;
 
 // Issue #2432: process-global IR SoA generation fence (LayoutStamp 8th field).
 // Advanced on every IRFunctionSoA / IRModuleV2 generation bump so Fiber
@@ -713,21 +747,30 @@ export struct IRModuleV2 {
 static_assert(sizeof(IRInstructionView) <= 16,
               "IRInstructionView should be a small POD (pointer + uint32)");
 
-// ── Issue #463: SoA → AoS view conversion (Phase 2 wiring) ───────
+// ── Issue #463 / #2520: SoA → AoS view conversion (TEST SEAM only) ─
 //
-// Converts an IRFunctionSoA into an AoS IRFunction so the
-// existing Pass pipeline (which operates on IRModule) can
-// run on a SoA-built function. The conversion is O(n) in
-// the number of instructions — one pass over the SoA
-// columns to build a vector of IRInstructions, then a
-// second pass to lay out the basic blocks.
+// Converts an IRFunctionSoA into an AoS IRFunction. O(n) in instructions.
 //
-// This is a TEST SEAM (production code should migrate the
-// Pass pipeline to consume IRInstructionView directly). The
-// SoAtoAoSBridgePass below uses this conversion to let the
-// existing Passes run on SoA-built functions while the
-// per-Pass SoA-aware overloads ship in subsequent cycles.
+// Issue #2520 (P0): under AURA_IR_SOA_ONLY (production default), this
+// bridge is FORBIDDEN unless aos_bridge_allowed() (AURA_ALLOW_AOS_BRIDGE
+// compile-time, set_allow_aos_bridge_for_test, or env=1). Production
+// packs must use IRModuleV2 / IRInstructionView / for_each_block /
+// walk_soa_function_hotpath / run_dirty — never materialize AoS.
+// residual_aos_bridge_total is a test-only metric (target 0 in production).
+//
+// Prefer compile-time AURA_ALLOW_AOS_BRIDGE only for dedicated dual-emit
+// test TUs; default production TUs hard-fail at the first residual call.
 export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
+    // Count every residual materialize (production smoke expects 0).
+    g_residual_aos_bridge_total_atomic().fetch_add(1, std::memory_order_relaxed);
+#if AURA_IR_SOA_ONLY
+    if (!aos_bridge_allowed()) {
+        std::fprintf(stderr, "FATAL: to_aos_view under AURA_IR_SOA_ONLY without "
+                             "AURA_ALLOW_AOS_BRIDGE (#2520); residual AoS bridge banned "
+                             "on production path\n");
+        std::abort();
+    }
+#endif
     aura::ir::IRFunction f;
     f.name = soa.name;
     f.local_count = soa.local_count;
@@ -755,8 +798,10 @@ export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
     return f;
 }
 
-// Issue #1920: full-module SoA → AoS conversion for pipeline bridges.
+// Issue #1920 / #2520: full-module SoA → AoS conversion (test seam only).
+// Same production ban as to_aos_view under AURA_IR_SOA_ONLY.
 export inline aura::ir::IRModule to_aos_module(const IRModuleV2& soa) {
+    // to_aos_view already bumps residual + hard-fails when banned.
     aura::ir::IRModule mod;
     mod.entry_function_id = soa.entry_function_id;
     mod.string_pool = soa.string_pool;
