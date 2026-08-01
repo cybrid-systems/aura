@@ -375,6 +375,12 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_command_line_cap_io_read_2478.cpp",
+      "category": "unit",
+      "reason": "Issue #2478 — command-line requires kCapIoRead (capability",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_compile02_no_dup_imports.cpp",
       "category": "unit",
       "reason": "Issue #1857 — compile_02.cpp must not re-import",
