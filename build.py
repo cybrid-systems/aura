@@ -3927,6 +3927,25 @@ def cmd_castop_density_hard_coverage():
     return 0
 
 
+def cmd_castop_density_closed_loop_coverage():
+    """Issue #2459: production CastOp density closed-loop (streak + gate).
+
+    production_defaults / HARD: force-JIT then streak MutateTypeGate reject;
+    Soft: observe/hint only; under budget resets streak.
+    """
+    print(f"{B}=== castop density closed-loop coverage (#2459) ==={N}")
+    script = ROOT / "scripts" / "check_castop_density_closed_loop_2459.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("castop density closed-loop (#2459) coverage contract rows failed")
+        return 1
+    ok("castop density closed-loop (#2459) coverage clean")
+    return 0
+
+
 def cmd_memo_goal_epoch_health_coverage():
     """Issue #2359: occurrence_goals + predicate_memo epoch health query.
 
@@ -4746,6 +4765,7 @@ def cmd_gate():
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
         or cmd_castop_density_hard_coverage()
+        or cmd_castop_density_closed_loop_coverage()
         or cmd_memo_goal_epoch_health_coverage()
         or cmd_densify_envframe_ok_coverage()
         or cmd_densify_last_call_axes_coverage()

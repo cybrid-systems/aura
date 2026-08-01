@@ -816,6 +816,15 @@ struct CompilerMetrics {
     // under AURA_CASTOP_DENSITY_HARD=1; hard_enabled mirrors env (0/1).
     std::atomic<std::uint64_t> castop_density_hard_action_total{0}; // #2358
     std::atomic<std::uint64_t> castop_density_hard_enabled{0};      // #2358
+    // Issue #2459: production closed-loop streak + MutateTypeGate pressure.
+    //   - castop_density_streak: consecutive over-budget unannotated scopes
+    //   - castop_density_gate_reject_total: reject after streak threshold
+    //   - castop_density_soft_warn_total: Soft mode streak warnings
+    //   - castop_density_production_default_wired: sentinel = 1 when present
+    std::atomic<std::uint64_t> castop_density_streak{0};                   // #2459
+    std::atomic<std::uint64_t> castop_density_gate_reject_total{0};        // #2459
+    std::atomic<std::uint64_t> castop_density_soft_warn_total{0};          // #2459
+    std::atomic<std::uint64_t> castop_density_production_default_wired{0}; // #2459
     // Issue #691: CoercionMap + NarrowingRecord provenance linkage.
     //   - coercion_post_narrow_elim_opportunities_total: deferred
     //     coercions recorded with narrowing evidence/provenance

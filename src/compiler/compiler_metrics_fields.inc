@@ -739,6 +739,11 @@ AURA_COMPILER_METRICS_FIELD(linear_synth_hard_fail_total)
 // Issue #2358: CastOp density hard policy (force-JIT, not mutate fail).
 AURA_COMPILER_METRICS_FIELD(castop_density_hard_action_total)
 AURA_COMPILER_METRICS_FIELD(castop_density_hard_enabled)
+// Issue #2459: production density closed-loop streak + gate reject.
+AURA_COMPILER_METRICS_FIELD(castop_density_streak)
+AURA_COMPILER_METRICS_FIELD(castop_density_gate_reject_total)
+AURA_COMPILER_METRICS_FIELD(castop_density_soft_warn_total)
+AURA_COMPILER_METRICS_FIELD(castop_density_production_default_wired)
 AURA_COMPILER_METRICS_FIELD(let_poly_priority_reverify_hits_total)
 AURA_COMPILER_METRICS_FIELD(let_poly_post_mutation_scope_total)
 AURA_COMPILER_METRICS_FIELD(solve_delta_worklist_size_peak)

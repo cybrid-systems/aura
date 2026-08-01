@@ -1298,11 +1298,12 @@ void CompilerService::invalidate_function(const std::string& name) {
                 metrics_.castop_density_over_budget_total.fetch_add(1, std::memory_order_relaxed);
             }
 
-            // Issue #2319 / #2358: opt-in HARD CastOp density policy
-            // (refine #2287 soft hint). Default HARD=0 soft-only.
-            // HARD=1 + dens>budget → force-JIT (#2358) + optional
-            // unannotated-Dynamic hard_reject metric (#2319). Mutate
-            // always continues (AC3). Under budget: no action (AC4).
+            // Issue #2319 / #2358 / #2459: CastOp density closed-loop.
+            // Soft: hint only. HARD env or production_defaults → force-JIT
+            // (#2358); consecutive unannotated over-budget scopes accumulate
+            // streak and may MutateTypeGate-reject after threshold (#2459).
+            // First over-budget fire still allows mutate (AC4). Under budget
+            // resets streak (AC3). Soft default: no gate reject (AC1).
             (void)castop_density::apply_hard_policy(metrics_, dens, budget);
             (void)mutate_type_gate::is_hard(); // #2219 lineage retained
         }
