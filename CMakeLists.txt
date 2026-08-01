@@ -3242,6 +3242,11 @@ aura_add_issue_test(test_restore_children_structural_lock_2455)
 aura_issue_test_link_llvm_jit(test_restore_children_structural_lock_2455)
 add_dependencies(all_test_issue_targets test_restore_children_structural_lock_2455)
 
+# Issue #2456: hoist subtree_uses_sym find_first_node_with to single TU
+aura_add_issue_test(test_subtree_uses_sym_template_bloat_2456)
+aura_issue_test_link_llvm_jit(test_subtree_uses_sym_template_bloat_2456)
+add_dependencies(all_test_issue_targets test_subtree_uses_sym_template_bloat_2456)
+
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)

@@ -3803,23 +3803,22 @@ public:
     // Recursive helper: does the subtree rooted at `root`
     // contain a Variable node whose sym_id == `sym`?
     //
-    // Phase A hoisting migration: now uses
-    // aura::ast::find_first_node_with<Id, C, P> from the
-    // generic AST traversal helpers (originally defined in
+    // Phase A hoisting migration: uses
+    // aura::ast::find_first_node_with from the generic AST
+    // traversal helpers (originally defined in
     // aura.compiler.query, hoisted here to break the ast ↔
     // query import cycle). Same semantics — walks the subtree
     // recursively, returns true on first matching Variable
-    // node. Zero behavior change at -O3 (template-inlined).
-    bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const {
-        if (root == aura::ast::NULL_NODE || root >= size())
-            return false;
-        auto found =
-            find_first_node_with<std::uint32_t>(*this, root, [this, sym](aura::ast::NodeId id) {
-                auto v = this->get(id);
-                return v.tag == aura::ast::NodeTag::Variable && v.sym_id == sym;
-            });
-        return found.has_value();
-    }
+    // node.
+    //
+    // Issue #2456 (Option A): definition lives in
+    // ast_impl.cpp so the VariableUsesSymPred specialization
+    // of find_first_node_with is emitted once (single TU),
+    // not per-importer via an interface-unit lambda type.
+    // Named functor reuses one capture layout across all
+    // call sites of this method (defines_referencing_sym,
+    // etc.).
+    [[nodiscard]] bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const;
 
     // Issue #372: name-based Define lookup.
     //
@@ -3839,21 +3838,13 @@ public:
     // Returns std::nullopt if the name isn't interned in the
     // pool, the root is NULL_NODE, or no Define with that
     // sym_id exists in the reachable subtree.
+    //
+    // Issue #2456 (Option A): out-of-line in ast_impl.cpp with
+    // a named DefineSymPred functor — same single-TU
+    // instantiation strategy as subtree_uses_sym.
     [[nodiscard]] std::optional<aura::ast::NodeId>
     find_define_by_name(const StringPool& pool, std::string_view name,
-                        std::optional<aura::ast::NodeId> search_root = std::nullopt) const {
-        const auto sym = pool.find_by_name(name);
-        if (!sym)
-            return std::nullopt;
-        const auto start = search_root.value_or(root);
-        if (start == aura::ast::NULL_NODE || start >= size())
-            return std::nullopt;
-        return find_first_node_with<std::uint32_t>(
-            *this, start, [this, sym_id = *sym](aura::ast::NodeId id) {
-                auto v = this->get(id);
-                return v.tag == aura::ast::NodeTag::Define && v.sym_id == sym_id;
-            });
-    }
+                        std::optional<aura::ast::NodeId> search_root = std::nullopt) const;
 
     // Issue #1685 / #1687: re-resolve a Define after parse_to_flat appends
     // into this FlatAST. Prefer `preferred` when it is still a live matching

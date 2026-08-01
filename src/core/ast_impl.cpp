@@ -423,4 +423,53 @@ resolve_across_layer(const FlatAST& target_flat, const mutation::NodeIdRemapTabl
     return FlatAST::StableNodeRef{mapped, target_flat.generation()};
 }
 
+// ── Issue #2456: single-TU find_first_node_with specializations ──
+//
+// Named functors (not per-call lambdas) so the recursive
+// find_first_node_with template has one stable P type per
+// predicate and is instantiated only in this implementation
+// unit. Callers of subtree_uses_sym / find_define_by_name
+// share those specializations (no per-importer lambda types).
+namespace {
+
+    struct VariableUsesSymPred {
+        const FlatAST* self;
+        SymId sym;
+        [[nodiscard]] bool operator()(NodeId id) const {
+            auto v = self->get(id);
+            return v.tag == NodeTag::Variable && v.sym_id == sym;
+        }
+    };
+
+    struct DefineSymPred {
+        const FlatAST* self;
+        SymId sym;
+        [[nodiscard]] bool operator()(NodeId id) const {
+            auto v = self->get(id);
+            return v.tag == NodeTag::Define && v.sym_id == sym;
+        }
+    };
+
+} // namespace
+
+bool FlatAST::subtree_uses_sym(NodeId root, SymId sym) const {
+    if (root == NULL_NODE || root >= size())
+        return false;
+    VariableUsesSymPred pred{this, sym};
+    auto found = find_first_node_with<std::uint32_t>(*this, root, pred);
+    return found.has_value();
+}
+
+std::optional<NodeId> FlatAST::find_define_by_name(const StringPool& pool, std::string_view name,
+                                                   std::optional<NodeId> search_root) const {
+    const auto sym = pool.find_by_name(name);
+    if (!sym)
+        return std::nullopt;
+    const auto start = search_root.value_or(root);
+    if (start == NULL_NODE || start >= size())
+        return std::nullopt;
+    DefineSymPred pred{this, *sym};
+    return find_first_node_with<std::uint32_t>(*this, start, pred);
+}
+
 } // namespace aura::ast
