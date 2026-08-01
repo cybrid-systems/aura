@@ -6518,6 +6518,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       (m && m->delta_truncate_anti_starve_wired.load() != 0) ? 1 : 0);
             insert_kv("schema-2318", 2318);
             insert_kv("issue-2318", 2318);
+            // Issue #2508: goal-priority reverify before anti-starve full solve.
+            // Runs when truncate streak hits AURA_DELTA_TRUNCATE_STREAK_FULL and
+            // occurrence_goals_ / priority roots are live. Recovered → no force-full.
+            const std::int64_t goal_pri_reverify =
+                m ? static_cast<std::int64_t>(m->delta_truncate_goal_priority_reverify_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t goal_pri_recovered =
+                m ? static_cast<std::int64_t>(m->delta_truncate_goal_priority_recovered_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            insert_kv("delta-truncate-goal-priority-reverify-total", goal_pri_reverify);
+            insert_kv("delta_truncate_goal_priority_reverify_total", goal_pri_reverify);
+            insert_kv("delta-truncate-goal-priority-recovered-total", goal_pri_recovered);
+            insert_kv("delta_truncate_goal_priority_recovered_total", goal_pri_recovered);
+            insert_kv("delta-truncate-goal-priority-wired", 1);
+            insert_kv("schema-2508", 2508);
+            insert_kv("issue-2508", 2508);
             // Issue #2321: OccurrenceGoal refined-drift observability.
             //   - occurrence-goal-refined-drift-total: cumulative count of
             //     goals dropped from solve_delta_occurrence replay when the
