@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Issue #2443: region_by_sym/lambda_dense concurrent-safe (atomic_ref + lock).
+
+Contract:
+  AC1 region_table_mtx_ + atomic_ref store/load on dense SoA
+  AC2 concurrent set+get covered by gate test
+  AC3 encoding / get_* semantics preserved in test
+
+Exit 0 = all rows satisfied.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _read(rel: str) -> str:
+    p = ROOT / rel
+    if not p.is_file():
+        return ""
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def main() -> int:
+    fails: list[str] = []
+
+    def must(n: str, label: str, hay: str) -> None:
+        if n not in hay:
+            fails.append(f"{label}: missing {n!r}")
+
+    ast = _read("src/core/ast.ixx")
+    test = _read("tests/core/test_region_dense_atomic_2443.cpp")
+    build = _read("build.py")
+    cmake = _read("CMakeLists.txt")
+
+    must("Issue #2443", "AC1", ast)
+    must("region_table_mtx_", "AC1", ast)
+    must("region_by_sym_dense_", "AC1", ast)
+    must("region_by_lambda_dense_", "AC1", ast)
+    must("std::atomic_ref<std::uint8_t>", "AC1", ast)
+    must("set_function_region", "AC1", ast)
+    must("2443 AC1", "AC1", test)
+
+    must("get_function_region_for_sym", "AC2", ast)
+    must("get_function_region_for_lambda", "AC2", ast)
+    must("shared_lock", "AC2", ast)
+    must("2443 AC2", "AC2", test)
+
+    must("kRegionDenseCap", "AC3", ast)
+    must("2443 AC3", "AC3", test)
+
+    must("check_region_dense_atomic_2443", "gate", build)
+    must("cmd_region_dense_atomic_coverage", "gate", build)
+    must("test_region_dense_atomic_2443", "gate", cmake)
+
+    if fails:
+        for f in fails:
+            print(f"FAIL: {f}", file=sys.stderr)
+        print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
+        return 1
+    print("OK: region dense atomic #2443 coverage contract clean")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
