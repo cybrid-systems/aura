@@ -30,13 +30,16 @@
 //             — no crash, region values only in published set
 //   #2446 AC: concurrent set_function_region_lambda + get_for_lambda
 //   #2447 AC: concurrent region_by_sym_ map insert + find (no rehash UB)
+//   #2449 AC: param_data_ single-threaded mutation contract (seq builders)
 
 #include "test_harness.hpp"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <print>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -435,6 +438,22 @@ int main() {
             auto r = flat.get_function_region_for_sym(static_cast<SymId>(kBase + i));
             CHECK(r.has_value() && *r <= kMaxRegion, "#2447: final map region coherent");
         }
+    }
+
+    // ── Issue #2449: param_data_ sequential builders (contract path) ─
+    // Concurrent param_data_.insert is not enabled (parser-only contract);
+    // sequential multi-lambda growth verifies production builder path.
+    {
+        std::println("\n--- #2449: sequential param_data_ growth (mutation contract) ---");
+        FlatAST flat;
+        constexpr int kN = 24;
+        for (int i = 0; i < kN; ++i) {
+            const auto body = flat.add_literal(i);
+            std::array<SymId, 2> params{static_cast<SymId>(50 + i), static_cast<SymId>(150 + i)};
+            const auto lam = flat.add_lambda(std::span<const SymId>{params}, body, false);
+            CHECK(flat.tag(lam) == NodeTag::Lambda, "#2449: lambda after param insert");
+        }
+        CHECK(flat.size() >= static_cast<std::size_t>(kN * 2), "#2449: bulk builders sized");
     }
 
     std::println("\n=== test_ast_concurrency results: {} passed, {} failed ===", g_passed,
