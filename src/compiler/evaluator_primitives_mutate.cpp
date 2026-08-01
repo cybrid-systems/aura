@@ -6921,6 +6921,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 static_cast<std::int64_t>(aura_specjit_per_eval_storm_skip_foreign_total_v_read()));
             insert_kv("schema-2370", 2370);
             insert_kv("issue-2370", 2370);
+            // Issue #2504: e2e PerEval dual-eval storm isolation regression gate.
+            // Production multi-eval hosts use PerRegion/PerEval heuristic (#2274).
+            insert_kv("specjit-pereval-e2e-isolation-wired", 1);
+            insert_kv("multi-eval-host-pereval-heuristic-wired", 1);
+            insert_kv("schema-2504", 2504);
+            insert_kv("issue-2504", 2504);
             // Issue #2367: cross-link ReloadRecovery keys on the existing
             // hot-update surface (agents that already poll this query get
             // schema lineage without switching primitives). Full snapshot

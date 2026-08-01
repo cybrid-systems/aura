@@ -4750,6 +4750,25 @@ def cmd_specjit_per_eval_storm_isolation_coverage():
     return 0
 
 
+def cmd_specjit_pereval_storm_e2e_coverage():
+    """Issue #2504: e2e dual-eval PerEval SpecJIT storm isolation gate.
+
+    Hard regression: dual controllers + hit path + Global clear both +
+    no process-global shape_version bump under PerEval + concurrent foreign skips.
+    """
+    print(f"{B}=== SpecJIT PerEval storm e2e isolation coverage (#2504) ==={N}")
+    script = ROOT / "scripts" / "check_specjit_pereval_storm_e2e_2504.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("SpecJIT PerEval storm e2e isolation (#2504) coverage contract rows failed")
+        return 1
+    ok("SpecJIT PerEval storm e2e isolation (#2504) coverage clean")
+    return 0
+
+
 def cmd_cross_cow_soft_migrate_coverage():
     """Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.
 
@@ -5381,6 +5400,7 @@ def cmd_gate():
         or cmd_densify_remap_pairing_coverage()
         or cmd_live_closure_stable_id_only_coverage()
         or cmd_specjit_per_eval_storm_isolation_coverage()
+        or cmd_specjit_pereval_storm_e2e_coverage()
         or cmd_cross_cow_soft_migrate_coverage()
         or cmd_lifetime_pin_remap_coverage()
         or cmd_shape_storm_isolation_coverage()
