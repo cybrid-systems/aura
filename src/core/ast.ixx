@@ -2976,12 +2976,12 @@ public:
     mutable OwnedSharedMutex region_table_mtx_;
     std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
     std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
-    // Issue #1520 / #2443 / #2444: dense SoA side-tables for region
-    // lookups (index = SymId/NodeId, 0 = unset, else region+1). Cap
-    // keeps memory bounded. mutable for atomic_ref load in const
+    // Issue #2446 / #2444 / #2443 / #1520: dense SoA side-tables for
+    // region lookups (index = SymId/NodeId, 0 = unset, else region+1).
+    // Cap keeps memory bounded. mutable for atomic_ref load in const
     // getters; resize under exclusive region_table_mtx_; cells via
-    // atomic_ref. Issue #2444 focuses region_by_sym_dense_ vs
-    // concurrent set_function_region / get_function_region_for_sym.
+    // atomic_ref. #2444 = region_by_sym_dense_; Issue #2446 =
+    // region_by_lambda_dense_ + region_by_lambda_id_.
     static constexpr std::size_t kRegionDenseCap = 65536;
     mutable std::pmr::vector<std::uint8_t> region_by_sym_dense_;
     mutable std::pmr::vector<std::uint8_t> region_by_lambda_dense_;
@@ -3643,11 +3643,13 @@ public:
     // overloads don't collide on the same uint32_t underlying
     // type. Callers use set_function_region_sym and
     // set_function_region_lambda explicitly.
-    // Issue #2443: exclusive region_table_mtx_ + atomic dense store.
+    // Issue #2446 / #2443: exclusive region_table_mtx_ for
+    // region_by_lambda_id_ map + region_by_lambda_dense_ resize +
+    // atomic_ref store (no mid-resize UB vs concurrent get_for_lambda).
     void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
         std::unique_lock<std::shared_mutex> wlock(region_table_mtx_.mutable_get());
         region_by_lambda_id_[lambda_id] = region;
-        // Issue #1520: dense side-table for hot lambda NodeId lookups.
+        // Issue #2446 / #1520: dense side-table for hot lambda NodeId lookups.
         if (static_cast<std::size_t>(lambda_id) < kRegionDenseCap) {
             if (region_by_lambda_dense_.size() <= static_cast<std::size_t>(lambda_id))
                 region_by_lambda_dense_.resize(static_cast<std::size_t>(lambda_id) + 1, 0);
@@ -3676,7 +3678,8 @@ public:
             return std::nullopt;
         return it->second;
     }
-    // Issue #2443: shared region_table_mtx_ + atomic_ref load on dense.
+    // Issue #2446 / #2443: shared region_table_mtx_ + atomic_ref load on
+    // region_by_lambda_dense_ (map fallback under same lock).
     [[nodiscard]] std::optional<std::uint8_t>
     get_function_region_for_lambda(NodeId lambda_id) const {
         std::shared_lock<std::shared_mutex> rlock(region_table_mtx_.mutable_get());
