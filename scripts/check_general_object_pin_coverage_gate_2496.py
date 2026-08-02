@@ -98,7 +98,7 @@ def main() -> int:
         cmake,
     )
     must(
-        "aura_issue_test_link_llvm_jit(test_general_object_pin_coverage_gate_2496)",
+        "aura_issue_test_link_light(test_general_object_pin_coverage_gate_2496)",
         "AC5",
         cmake,
     )

@@ -103,7 +103,7 @@ def main() -> int:
     must("AC5", "AC5", test)
     must("zero cost", "AC5", test)
     must("aura_add_issue_test(test_orch_soft_boundary_unified_2515)", "AC5", cmake)
-    must("aura_issue_test_link_llvm_jit(test_orch_soft_boundary_unified_2515)", "AC5", cmake)
+    must("aura_issue_test_link_light(test_orch_soft_boundary_unified_2515)", "AC5", cmake)
     must("add_dependencies(all_test_issue_targets test_orch_soft_boundary_unified_2515)", "AC5", cmake)
     must("check_orch_soft_boundary_unified_2515", "AC5", build)
 

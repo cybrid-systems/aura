@@ -103,7 +103,7 @@ def main() -> int:
     must("AC6", "AC6", test)
     must("additive schema", "AC6", test)
     must("aura_add_issue_test(test_restamp_sla_observability_2528)", "AC6", cmake)
-    must("aura_issue_test_link_llvm_jit(test_restamp_sla_observability_2528)", "AC6", cmake)
+    must("aura_issue_test_link_light(test_restamp_sla_observability_2528)", "AC6", cmake)
     must("add_dependencies(all_test_issue_targets test_restamp_sla_observability_2528)", "AC6", cmake)
     must("check_restamp_sla_observability_2528", "AC6", build)
 

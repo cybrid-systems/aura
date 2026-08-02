@@ -81,7 +81,7 @@ def main() -> int:
     must("Issue #2489", "AC6", sch)
     must("test_capability_high_risk_promote_2489", "AC6", cmake)
     must("aura_add_issue_test(test_capability_high_risk_promote_2489)", "AC6", cmake)
-    must("aura_issue_test_link_llvm_jit(test_capability_high_risk_promote_2489)", "AC6", cmake)
+    must("aura_issue_test_link_light(test_capability_high_risk_promote_2489)", "AC6", cmake)
     must("check_capability_high_risk_promote_2489", "AC6", build)
     must("cmd_capability_high_risk_promote_2489_coverage", "AC6", build)
     must("ac1_registry_only_promoted_caps", "AC1", test)

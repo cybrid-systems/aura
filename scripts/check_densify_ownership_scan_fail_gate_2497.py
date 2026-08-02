@@ -113,7 +113,7 @@ def main() -> int:
     must("scan_fail_baseline", "AC5", test)
     must("!scan_fail_delta", "AC5", test)
     must("aura_add_issue_test(test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
-    must("aura_issue_test_link_llvm_jit(test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
+    must("aura_issue_test_link_light(test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
     must("add_dependencies(all_test_issue_targets test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
     must("check_densify_ownership_scan_fail_gate_2497", "AC5", build)
 

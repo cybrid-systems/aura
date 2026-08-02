@@ -92,7 +92,7 @@ def main() -> int:
     must("Issue #2491", "AC7", em)
     must("test_tenant_scope_fiber_mandate_2491", "AC7", cmake)
     must("aura_add_issue_test(test_tenant_scope_fiber_mandate_2491)", "AC7", cmake)
-    must("aura_issue_test_link_llvm_jit(test_tenant_scope_fiber_mandate_2491)", "AC7", cmake)
+    must("aura_issue_test_link_light(test_tenant_scope_fiber_mandate_2491)", "AC7", cmake)
     must("check_tenant_scope_fiber_mandate_2491", "AC7", build)
     must("cmd_tenant_scope_fiber_mandate_2491_coverage", "AC7", build)
 
