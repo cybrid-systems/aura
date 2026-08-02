@@ -4138,6 +4138,11 @@ aura_add_issue_test(test_agent_ask_2231)
 aura_issue_test_link_light(test_agent_ask_2231)
 add_dependencies(all_test_issue_targets test_agent_ask_2231)
 
+# Issue #2538: typed agent-ask correlation (MailKind + correlation_id).
+aura_add_issue_test(test_agent_ask_typed_corr_2538)
+aura_issue_test_link_light(test_agent_ask_typed_corr_2538)
+add_dependencies(all_test_issue_targets test_agent_ask_typed_corr_2538)
+
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
 
 aura_add_issue_test(test_gc_compact_batch)

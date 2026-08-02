@@ -276,6 +276,11 @@ struct OrchModuleStats {
     // agent_reply_fail_total = unknown-corr / closed / backpressure.
     std::atomic<std::uint64_t> agent_reply_total{0};
     std::atomic<std::uint64_t> agent_reply_fail_total{0};
+    // Issue #2538: typed correlation path (MailKind + correlation_id).
+    // agent_ask_typed_match_total: Ok match via kind/corr fields (no text parse).
+    // agent_reply_typed_total: reply pushes that stamped typed fields.
+    std::atomic<std::uint64_t> agent_ask_typed_match_total{0};
+    std::atomic<std::uint64_t> agent_reply_typed_total{0};
     // Issue #2008: keepalive / liveness.
     std::atomic<std::uint64_t> keepalive_emitted_total{0};
     std::atomic<std::uint64_t> stalled_agents_total{0};
@@ -1209,20 +1214,23 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
     return m;
 }
 
-// Issue #2231 / #2401: agent-ask request/response helpers.
-// No process-global AgentRegistry (#1966): correlation lives in-band
-// in the payload prefix; a short-lived pending-ask table maps
-// corr_id → per-ask reply mailbox so agent_reply can find the
-// destination (not an agent map).
+// Issue #2231 / #2401 / #2538: agent-ask request/response helpers.
+// No process-global AgentRegistry (#1966): a short-lived pending-ask
+// table maps corr_id → per-ask reply mailbox so agent_reply can find
+// the destination (not an agent map).
 //
-// Convention (text-prefix, no struct change to MailMessage):
-//   request: payload = "ask:<corr-id>:" + body
-//   reply:   payload = "reply:<corr-id>:" + body
+// Protocol layers (both active; dual-write for compatibility):
+//   Typed (#2538): MailMessage.kind = Ask|Reply + correlation_id
+//     → ask↔reply match without parsing payload text.
+//   Legacy (#2231/#2401): payload prefixes
+//     request: "ask:<corr-id>:" + body
+//     reply:   "reply:<corr-id>:" + body
 //
 // Interleave safety (AC5 #2231): the reply mailbox is unique per ask,
 // so concurrent asks to the same target don't drop unrelated messages.
 inline constexpr int kAgentAskIssue = 2231;
 inline constexpr int kAgentReplyIssue = 2401;
+inline constexpr int kAgentAskTypedCorrIssue = 2538;
 
 struct AskResult {
     bool ok = false;
@@ -1238,6 +1246,13 @@ struct ReplyResult {
     std::string status;
 };
 
+// Issue #2538: parsed ask envelope (typed fields preferred, text fallback).
+struct AskEnvelope {
+    std::uint64_t correlation_id = 0;
+    std::string_view body; // view into MailMessage::payload
+    bool typed = false;    // true when match used MailKind/correlation_id
+};
+
 // Pending-ask table: corr_id → per-ask reply mailbox.
 // Lifetime = one agent_ask wait window only (RAII unregister).
 // NOT AgentRegistry / global agent map (#1966).
@@ -1245,29 +1260,110 @@ inline std::mutex g_pending_ask_mu;
 inline std::unordered_map<std::uint64_t, std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox>>
     g_pending_asks;
 
-[[nodiscard]] inline std::string format_ask_payload(std::uint64_t corr_id, std::string_view body) {
+[[nodiscard]] inline std::string format_ask_prefix(std::uint64_t corr_id) {
     std::string p;
-    p.reserve(16 + body.size());
+    p.reserve(24);
     p.append("ask:");
     p.append(std::to_string(corr_id));
     p.append(":");
+    return p;
+}
+
+[[nodiscard]] inline std::string format_reply_prefix(std::uint64_t corr_id) {
+    std::string p;
+    p.reserve(24);
+    p.append("reply:");
+    p.append(std::to_string(corr_id));
+    p.append(":");
+    return p;
+}
+
+[[nodiscard]] inline std::string format_ask_payload(std::uint64_t corr_id, std::string_view body) {
+    std::string p = format_ask_prefix(corr_id);
     p.append(body);
     return p;
 }
 
 [[nodiscard]] inline std::string format_reply_payload(std::uint64_t corr_id,
                                                       std::string_view body) {
-    std::string p;
-    p.reserve(16 + body.size());
-    p.append("reply:");
-    p.append(std::to_string(corr_id));
-    p.append(":");
+    std::string p = format_reply_prefix(corr_id);
     p.append(body);
     return p;
 }
 
-// Issue #2401: standard worker-side reply path.
-// Builds "reply:<corr>:" + body and pushes to:
+// Issue #2538: extract ask corr+body. Prefers typed MailKind::Ask +
+// correlation_id (no payload text parse). Falls back to "ask:<id>:" prefix.
+[[nodiscard]] inline std::optional<AskEnvelope>
+try_parse_ask(const serve::mf_mailbox::MailMessage& m) noexcept {
+    using serve::mf_mailbox::MailKind;
+    if (m.kind == MailKind::Ask && m.correlation_id != 0) {
+        AskEnvelope e;
+        e.correlation_id = m.correlation_id;
+        e.typed = true;
+        const auto prefix = format_ask_prefix(m.correlation_id);
+        if (m.payload.size() >= prefix.size() && m.payload.compare(0, prefix.size(), prefix) == 0) {
+            e.body = std::string_view(m.payload).substr(prefix.size());
+        } else {
+            // Pure typed body (no dual-write prefix).
+            e.body = std::string_view(m.payload);
+        }
+        return e;
+    }
+    // Legacy text-prefix path (#2231).
+    constexpr std::string_view kAsk = "ask:";
+    if (m.payload.size() < kAsk.size() || m.payload.compare(0, kAsk.size(), kAsk) != 0)
+        return std::nullopt;
+    const auto colon = m.payload.find(':', kAsk.size());
+    if (colon == std::string::npos)
+        return std::nullopt;
+    const auto corr_s = m.payload.substr(kAsk.size(), colon - kAsk.size());
+    std::uint64_t corr = 0;
+    try {
+        corr = static_cast<std::uint64_t>(std::stoull(corr_s));
+    } catch (...) {
+        return std::nullopt;
+    }
+    if (corr == 0)
+        return std::nullopt;
+    AskEnvelope e;
+    e.correlation_id = corr;
+    e.typed = false;
+    e.body = std::string_view(m.payload).substr(colon + 1);
+    return e;
+}
+
+// Issue #2538: extract reply body for expected corr. Typed path first.
+// Returns nullopt when message is not a matching reply.
+[[nodiscard]] inline std::optional<std::string>
+try_match_reply(const serve::mf_mailbox::MailMessage& m, std::uint64_t expected_corr,
+                bool* matched_typed = nullptr) noexcept {
+    using serve::mf_mailbox::MailKind;
+    if (matched_typed)
+        *matched_typed = false;
+    if (m.kind == MailKind::Reply && m.correlation_id == expected_corr && expected_corr != 0) {
+        if (matched_typed)
+            *matched_typed = true;
+        const auto prefix = format_reply_prefix(expected_corr);
+        if (m.payload.size() >= prefix.size() && m.payload.compare(0, prefix.size(), prefix) == 0) {
+            return m.payload.substr(prefix.size());
+        }
+        // Pure typed body (no dual-write prefix) — AC1: no text parse needed
+        // for match; body is the full payload.
+        return m.payload;
+    }
+    // Legacy text-prefix path (#2231 / #2401).
+    const auto prefix = format_reply_prefix(expected_corr);
+    if (m.payload.size() >= prefix.size() && m.payload.compare(0, prefix.size(), prefix) == 0) {
+        if (matched_typed)
+            *matched_typed = false;
+        return m.payload.substr(prefix.size());
+    }
+    return std::nullopt;
+}
+
+// Issue #2401 / #2538: standard worker-side reply path.
+// Stamps MailKind::Reply + correlation_id (typed) and dual-writes
+// "reply:<corr>:" + body for legacy consumers. Pushes to:
 //   1) explicit reply_dest if non-null, else
 //   2) pending-ask table entry for corr_id (registered by agent_ask).
 // Priority Normal (documented). Unknown corr / closed → structured fail
@@ -1301,9 +1397,12 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
         return out;
     }
     serve::mf_mailbox::MailMessage msg;
-    msg.payload = format_reply_payload(corr_id, body);
+    msg.payload = format_reply_payload(corr_id, body); // dual-write legacy prefix
     msg.priority = serve::mf_mailbox::MailPriority::Normal;
     msg.to_fiber = 0; // any / broadcast on per-ask temp mailbox
+    // Issue #2538: typed correlation fields (primary match path).
+    msg.correlation_id = corr_id;
+    msg.kind = serve::mf_mailbox::MailKind::Reply;
     if (from && from->ok)
         msg.from_fiber = from->id;
     const auto st = dest->push(std::move(msg));
@@ -1311,6 +1410,7 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
         out.ok = true;
         out.status = "ok";
         g_orch_module_stats.agent_reply_total.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.agent_reply_typed_total.fetch_add(1, std::memory_order_relaxed);
         return out;
     }
     if (st == serve::mf_mailbox::PushStatus::Backpressure) {
@@ -1338,8 +1438,7 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         out.status = "no-mailbox";
         return out;
     }
-    // Process atomic correlation id (no global agent map; the id is
-    // embedded in the payload prefix).
+    // Process atomic correlation id (no global agent map).
     static std::atomic<std::uint64_t> g_ask_corr_id{0};
     const auto corr_id = g_ask_corr_id.fetch_add(1, std::memory_order_relaxed) + 1;
     out.correlation_id = corr_id;
@@ -1360,9 +1459,12 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     } pending_guard{corr_id};
 
     serve::mf_mailbox::MailMessage msg;
-    msg.payload = format_ask_payload(corr_id, body);
+    msg.payload = format_ask_payload(corr_id, body); // dual-write legacy prefix
     msg.priority = serve::mf_mailbox::MailPriority::Normal;
     msg.to_fiber = target.id;
+    // Issue #2538: typed correlation fields (primary match path).
+    msg.correlation_id = corr_id;
+    msg.kind = serve::mf_mailbox::MailKind::Ask;
     auto st = target.mailbox->push(std::move(msg));
     if (st == serve::mf_mailbox::PushStatus::Closed) {
         out.status = "no-mailbox";
@@ -1375,11 +1477,6 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         return out;
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    std::string reply_prefix;
-    reply_prefix.reserve(16);
-    reply_prefix.append("reply:");
-    reply_prefix.append(std::to_string(corr_id));
-    reply_prefix.append(":");
     for (;;) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
@@ -1392,12 +1489,17 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         auto m = reply_mb->recv(/*wait=*/true, remaining_ms, /*fiber_id=*/0);
         if (!m)
             continue;
-        if (m->payload.size() >= reply_prefix.size() &&
-            m->payload.compare(0, reply_prefix.size(), reply_prefix) == 0) {
+        // Issue #2538: typed match first, then legacy text prefix (AC1/AC2).
+        bool typed = false;
+        if (auto body_opt = try_match_reply(*m, corr_id, &typed)) {
             out.ok = true;
             out.status = "ok";
-            out.payload = m->payload.substr(reply_prefix.size());
+            out.payload = std::move(*body_opt);
             g_orch_module_stats.agent_ask_total.fetch_add(1, std::memory_order_relaxed);
+            if (typed) {
+                g_orch_module_stats.agent_ask_typed_match_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             return out;
         }
         // Non-matching on per-ask mailbox → malformed (AC5: no silent drop).
