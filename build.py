@@ -4954,6 +4954,25 @@ def cmd_commit_readiness_score_coverage():
     return 0
 
 
+def cmd_transaction_guard_migration_coverage():
+    """Issue #2555: real TransactionGuard host path + migration coverage.
+
+    Scaffold simulation removed; agent body + set-body use TransactionGuard;
+    type-erased host factories on Evaluator.
+    """
+    print(f"{B}=== TransactionGuard migration coverage (#2555) ==={N}")
+    script = ROOT / "scripts" / "check_transaction_guard_migration_2555.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("TransactionGuard migration (#2555) coverage contract rows failed")
+        return 1
+    ok("TransactionGuard migration (#2555) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6122,6 +6141,7 @@ def cmd_gate():
         or cmd_mailbox_hold_starvation_hard_coverage()
         or cmd_type_freshness_steal_densify_coverage()
         or cmd_commit_readiness_score_coverage()
+        or cmd_transaction_guard_migration_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
@@ -6929,6 +6949,7 @@ def main():
         "production-concurrency-coverage": cmd_production_concurrency_coverage,
         "chaos-pr-hard-fail": cmd_chaos_pr_hard_fail_gate,
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
+        "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

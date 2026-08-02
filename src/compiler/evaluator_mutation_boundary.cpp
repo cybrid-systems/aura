@@ -2776,4 +2776,72 @@ std::uint64_t Evaluator::get_ir_generation_fence_hit_total() const noexcept {
     return m ? m->ir_generation_fence_hit_total.load(std::memory_order_relaxed) : 0;
 }
 
+// ── Issue #2555: TransactionGuardHost factories ──────────────────────────
+// Type-erased try_acquire/release so core TransactionGuard never imports
+// Evaluator. Handle is a heap-allocated MutationBoundaryGuard; release
+// deletes it (dtor commits or restores panic via *success_flag).
+namespace {
+
+    // Region key for transaction_guard_host_for_region — set by factory
+    // immediately before TransactionGuard ctor invokes try_acquire.
+    thread_local std::uint64_t g_tg_region_key = 0;
+
+    void* transaction_guard_try_acquire(void* ctx, std::uint64_t pending,
+                                        bool* success_flag) noexcept {
+        auto* ev = static_cast<Evaluator*>(ctx);
+        if (!ev)
+            return nullptr;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire(*ev, pending, success_flag);
+        if (!g)
+            return nullptr;
+        // unique_ptr → raw; TransactionGuard::release deletes.
+        return (*g).release();
+    }
+
+    void* transaction_guard_try_acquire_region(void* ctx, std::uint64_t pending,
+                                               bool* success_flag) noexcept {
+        auto* ev = static_cast<Evaluator*>(ctx);
+        if (!ev)
+            return nullptr;
+        auto g = Evaluator::MutationBoundaryGuard::try_acquire_for_region(*ev, g_tg_region_key,
+                                                                          pending, success_flag);
+        if (!g)
+            return nullptr;
+        return (*g).release();
+    }
+
+    void transaction_guard_release(void* /*ctx*/, void* handle) noexcept {
+        delete static_cast<Evaluator::MutationBoundaryGuard*>(handle);
+    }
+
+} // namespace
+
+aura::core::TransactionGuardHost Evaluator::transaction_guard_host(Evaluator& ev) noexcept {
+    return aura::core::TransactionGuardHost{
+        &ev,
+        &ev, // expected_evaluator_id
+        &transaction_guard_try_acquire,
+        &transaction_guard_release,
+        /*save=*/nullptr,
+        /*restore=*/nullptr,
+        /*clear=*/nullptr,
+        /*host_owns_panic_checkpoint=*/true, // MBG outermost saves panic
+    };
+}
+
+aura::core::TransactionGuardHost
+Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region_key) noexcept {
+    g_tg_region_key = region_key;
+    return aura::core::TransactionGuardHost{
+        &ev,
+        &ev,
+        &transaction_guard_try_acquire_region,
+        &transaction_guard_release,
+        /*save=*/nullptr,
+        /*restore=*/nullptr,
+        /*clear=*/nullptr,
+        /*host_owns_panic_checkpoint=*/true,
+    };
+}
+
 } // namespace aura::compiler

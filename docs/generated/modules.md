@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**67** `export module` declarations in `src/**/*.ixx`.
+**68** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -57,6 +57,7 @@
 | `aura.core.panic_checkpoint_raii` | `src/core/panic_checkpoint_raii.ixx` |
 | `aura.core.resource_quota` | `src/core/resource_quota.ixx` |
 | `aura.core.sandbox` | `src/core/sandbox.ixx` |
+| `aura.core.transaction_guard` | `src/core/transaction_guard.ixx` |
 | `aura.core.type` | `src/core/type.ixx` |
 | `aura.core.type_arena` | `src/core/type_arena.ixx` |
 | `aura.core.workspace_isolation` | `src/core/workspace_isolation.ixx` |

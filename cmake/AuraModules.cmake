@@ -22,6 +22,8 @@ set(AURA_CXX_MODULE_CORE
     # fiber-steal probe, and compact_sweep paths).
     src/core/envframe_lifetime.ixx
     src/core/panic_checkpoint_raii.ixx
+    # Issue #2555: real TransactionGuard type-erased host (before core.ixx re-export).
+    src/core/transaction_guard.ixx
     src/core/core.ixx
     src/core/type_arena.ixx
     src/core/type.ixx

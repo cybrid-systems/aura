@@ -24,7 +24,8 @@ module;
 #include <algorithm>            // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
-#include <memory> // Issue #1880: unique_ptr for orch agent body guard
+#include <memory>   // Issue #1880: unique_ptr for soft-path sentinel
+#include <optional> // Issue #2555: optional TransactionGuard for orch agent body
 
 module aura.compiler.evaluator;
 
@@ -1961,12 +1962,25 @@ extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber) {
     ev->complete_post_join_linear_enforcement(joined_fiber);
 }
 
-// Issue #1880 / #2118: thread-local MutationBoundaryGuard for orch agent body
-// (host path) + soft per-fiber depth registration (fiber path).
+// Issue #1880 / #2118 / #2555: thread-local TransactionGuard for orch agent body
+// (host path: full MBG via TransactionGuardHost) + soft per-fiber depth
+// registration (fiber path: soft sentinel host, no full MBG stack).
 // try_acquire → typed ResourceQuotaExceeded (never panic/throw).
 namespace {
-    thread_local std::unique_ptr<aura::compiler::Evaluator::MutationBoundaryGuard>
-        g_orch_agent_body_guard{};
+    // Issue #2555: unified transaction layer replaces bare MBG unique_ptr.
+    thread_local std::optional<aura::core::TransactionGuard> g_orch_agent_body_tx{};
+    // Soft-path sentinel handle for fiber TransactionGuardHost (not a real MBG*).
+    // Address of a process-lifetime object — avoids integer→pointer cast (Werror).
+    inline char g_orch_soft_tx_sentinel = 0;
+    inline void* kOrchSoftTxHandle() noexcept {
+        return static_cast<void*>(&g_orch_soft_tx_sentinel);
+    }
+    // Soft host ctx for fiber agent body (stable for TG lifetime).
+    struct OrchSoftTxState {
+        Evaluator* ev = nullptr;
+        int register_soft = 1;
+    };
+    thread_local OrchSoftTxState g_orch_soft_tx_state{};
     // Issue #2118: soft boundary depth pushed on fiber agent body (nested-safe).
     thread_local int g_orch_soft_boundary_depth = 0;
     // Issue #2515: track the Evaluator that owns the soft window so
@@ -2050,11 +2064,11 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
                 d.health.force_reason_code, std::memory_order_relaxed);
         }
     }
-    // Release any stale full Guard from a previous host agent.
+    // Release any stale TransactionGuard from a previous host agent.
     // Soft depth is nested-safe (AC3): re-enter pushes without clearing.
     // Stale soft depth (fiber died without release) is drained when fiber
     // flag is clear or soft depth is unbalanced at next outermost release.
-    g_orch_agent_body_guard.reset();
+    g_orch_agent_body_tx.reset();
     if (g_orch_soft_boundary_depth > 0 &&
         (aura::serve::g_current_fiber == nullptr ||
          !aura::serve::g_current_fiber->orch_agent_boundary_active())) {
@@ -2067,65 +2081,101 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
     // Issue #1881 / #2118: Fiber stacks are small — do not construct a full
     // MutationBoundaryGuard on the fiber path (stack smash under spawn
     // stress). Lightweight: quota check + optional soft depth push for
-    // steal/GC visibility. Host-side call sites still get full Guard.
+    // steal/GC visibility via TransactionGuard soft host (#2555).
+    // Host-side call sites still get full MBG via transaction_guard_host.
     const bool on_fiber =
         (Evaluator::get_current_fiber() != nullptr) || (aura::serve::g_current_fiber != nullptr);
     if (on_fiber) {
-        if (auto err = ev->check_mutation_quota(/*pending=*/1)) {
-            (void)err;
-            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
-                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
-                m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
-                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        // Soft TransactionGuardHost: try_acquire = quota + soft enter.
+        g_orch_soft_tx_state.ev = ev;
+        g_orch_soft_tx_state.register_soft = register_soft_boundary;
+        aura::core::TransactionGuardHost soft_host{};
+        soft_host.ctx = &g_orch_soft_tx_state;
+        soft_host.expected_evaluator_id = ev;
+        soft_host.host_owns_panic_checkpoint = false;
+        soft_host.try_acquire = [](void* ctx, std::uint64_t pending,
+                                   bool* success_flag) noexcept -> void* {
+            auto* st = static_cast<OrchSoftTxState*>(ctx);
+            if (!st || !st->ev)
+                return nullptr;
+            if (auto err = st->ev->check_mutation_quota(pending)) {
+                (void)err;
+                if (auto* m = static_cast<CompilerMetrics*>(st->ev->compiler_metrics())) {
+                    m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+                    m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+                    m->mutation_guard_try_acquire_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                if (success_flag)
+                    *success_flag = false;
+                return nullptr;
             }
+            if (auto* m = static_cast<CompilerMetrics*>(st->ev->compiler_metrics()))
+                m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
+            if (st->register_soft) {
+                orch_soft_boundary_enter(st->ev);
+            } else {
+                aura::orch::g_orch_module_stats.orch_agent_boundary_skip_pure_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            if (success_flag)
+                *success_flag = true;
+            return kOrchSoftTxHandle();
+        };
+        soft_host.release = [](void* ctx, void* handle) noexcept {
+            (void)handle;
+            auto* st = static_cast<OrchSoftTxState*>(ctx);
+            if (st && st->register_soft)
+                orch_soft_boundary_exit();
+        };
+        // Optional soft-path panic checkpoint (save current source).
+        soft_host.save = [](void* ctx) noexcept -> bool {
+            auto* st = static_cast<OrchSoftTxState*>(ctx);
+            return st && st->ev ? st->ev->save_panic_checkpoint() : false;
+        };
+        soft_host.restore = [](void* ctx) noexcept -> bool {
+            auto* st = static_cast<OrchSoftTxState*>(ctx);
+            return st && st->ev ? st->ev->restore_panic_checkpoint() : false;
+        };
+        soft_host.clear = [](void* ctx) noexcept -> bool {
+            auto* st = static_cast<OrchSoftTxState*>(ctx);
+            if (st && st->ev) {
+                st->ev->clear_panic_checkpoint();
+                return true;
+            }
+            return false;
+        };
+        g_orch_agent_body_tx.emplace(soft_host, /*pending=*/1);
+        if (g_orch_agent_body_tx->result() != aura::core::TransactionGuardResult::Acquired) {
+            g_orch_agent_body_tx.reset();
             return 1;
-        }
-        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
-            m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
-        if (register_soft_boundary) {
-            orch_soft_boundary_enter(ev);
-        } else {
-            // AC2: pure-reasoning agent — no soft depth (zero extra cost).
-            aura::orch::g_orch_module_stats.orch_agent_boundary_skip_pure_total.fetch_add(
-                1, std::memory_order_relaxed);
         }
         return 0;
     }
-    bool ok = true;
     // Issue #2523 residual soft path: when region concurrency is enabled,
     // host orch agents prefer try_acquire_for_region with a thread-keyed
     // soft region so disjoint multi-Agent mutates avoid dual global
     // exclusive holds. Policy OFF / atomic-batch fall back inside the
     // factory to GlobalExclusive (AC3). Topology-changing Agents that
     // need full exclusive should call try_acquire directly.
-    std::unique_ptr<aura::compiler::Evaluator::MutationBoundaryGuard> guard;
+    // Issue #2555: both paths go through TransactionGuard (MBG + panic).
     if (ev->workspace_region_concurrency_enabled()) {
         const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
         const auto key = aura::compiler::Evaluator::workspace_region_key_from_name(
             std::format("orch-agent-{}", tid));
-        auto g = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire_for_region(
-            *ev, key, /*pending=*/1, &ok);
-        if (!g) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
-                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
-                m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return 1; // typed reject — caller skips body, no panic
-        }
-        guard = std::move(*g);
+        g_orch_agent_body_tx.emplace(Evaluator::transaction_guard_host_for_region(*ev, key),
+                                     /*pending=*/1);
     } else {
-        auto g =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(*ev, /*pending=*/1, &ok);
-        if (!g) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
-                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
-                m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return 1; // typed reject — caller skips body, no panic
-        }
-        guard = std::move(*g);
+        g_orch_agent_body_tx.emplace(Evaluator::transaction_guard_host(*ev), /*pending=*/1);
     }
-    g_orch_agent_body_guard = std::move(guard);
+    if (g_orch_agent_body_tx->result() != aura::core::TransactionGuardResult::Acquired) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        g_orch_agent_body_tx.reset();
+        return 1; // typed reject — caller skips body, no panic
+    }
     if (register_soft_boundary) {
         // Host path already has full Guard (depth via slot). Still count enter.
         aura::orch::g_orch_module_stats.orch_agent_boundary_entered_total.fetch_add(
@@ -2137,8 +2187,16 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
 }
 
 extern "C" void aura_orch_agent_body_release_guard() {
+    // Issue #2555: TransactionGuard dtor releases MBG / soft host.
+    // Soft depth is also released via soft_host.release when handle was soft.
+    // Call orch_soft_boundary_exit only if soft depth remains (legacy dual
+    // path safety when TG was not constructed).
+    if (g_orch_agent_body_tx) {
+        g_orch_agent_body_tx->commit(); // agent body completed → commit path
+        g_orch_agent_body_tx.reset();
+    }
+    // Drain any residual soft depth (e.g. pure-skip path or pre-#2555).
     orch_soft_boundary_exit();
-    g_orch_agent_body_guard.reset();
 }
 
 // Issue #2118: worker steal path notes orch agent soft-boundary skip.

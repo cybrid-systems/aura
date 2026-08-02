@@ -3883,6 +3883,11 @@ aura_add_issue_test(test_commit_readiness_score_2553)
 aura_issue_test_link_light(test_commit_readiness_score_2553)
 add_dependencies(all_test_issue_targets test_commit_readiness_score_2553)
 
+# Issue #2555: real TransactionGuard (type-erased host) + agent body migration
+aura_add_issue_test(test_transaction_guard_2555)
+aura_issue_test_link_light(test_transaction_guard_2555)
+add_dependencies(all_test_issue_targets test_transaction_guard_2555)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

@@ -41,9 +41,9 @@ import aura.compiler.soa_view;
 #include "compiler/mutation_guard_helpers.hh"
 // Issue #1964 cycle 4: unified mutate dispatch metrics (header-only).
 #include "compiler/mutate_dispatch.hh"
-// Issue #1964 cycle 3: TransactionGuard metrics surface.
-#include "core/transaction_guard.hh"
 // Issue #1964 cycle 2: WorkspaceEpoch accessors.
+// Issue #2555: TransactionGuard via import aura.core (module; no .hh include —
+// avoids dual type identity with evaluator.ixx interface).
 #include "core/workspace_epoch.hh"
 // Issue #2176: C-linkage helper for mutate:rollback-macro-introduced
 // (calls FlatAST::unstamp_macro_introduced + bumps the file-level
@@ -2846,22 +2846,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #1964 cycle 4: bookkeep through unified mutate_dispatch
         // (metrics only until full routing lands in cycle 4-followup).
         (void)mutate_dispatch(MutateKind::SetBody, /*target=*/"", /*body=*/"");
-        bool ok = true;
-        // Issue #1556: typed try_acquire (parity with rebind / typed_mutate).
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
-        if (!guard_r) {
-            return mev("resource-quota-exceeded", guard_r.error().message);
+        // Issue #2555: unified TransactionGuard (MBG try_acquire + panic).
+        // Replaces dual MutationBoundaryGuard + scaffold TransactionGuard.
+        aura::core::TransactionGuard tg(Evaluator::transaction_guard_host(ev), /*pending=*/1);
+        if (tg.result() != aura::core::TransactionGuardResult::Acquired) {
+            return mev("resource-quota-exceeded", "mutation quota exceeded");
         }
-        auto guard = std::move(*guard_r);
-        // Issue #1964 cycle 3: TransactionGuard surface is also exercised
-        // for observability (real MBG above remains the authority).
-        {
-            aura::core::TransactionGuard tg;
-            (void)tg.result();
-        }
+        bool& ok = *tg.success_flag();
         if (ev.workspace_read_only_) {
-            ok = false;
+            tg.mark_failed();
             return mev("read-only", "workspace is read-only");
         }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
@@ -3026,57 +3019,65 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                               aura::ast::FlatAST::kConstraintDirty);
 
                 // ── Auto-typecheck (Issue #107 / #526 / #1684 / #1686) ──
-                // #1686: set-body sibling of rebind — throws must mark_failed.
-                {
-                    std::string threw;
-                    if (!guard->run_or_rollback(
-                            [&] { (void)ev.run_post_mutate_typecheck_no_lock(); }, &threw)) {
-                        ok = false;
-                        return mev("typecheck-threw",
-                                   std::string("post-mutate typecheck threw: ") + threw);
-                    }
+                // #1686 / #2555: throws must mark_failed via TransactionGuard.
+                try {
+                    (void)ev.run_post_mutate_typecheck_no_lock();
+                } catch (const std::exception& e) {
+                    tg.mark_failed();
+                    ok = false;
+                    return mev("typecheck-threw",
+                               std::string("post-mutate typecheck threw: ") + e.what());
+                } catch (...) {
+                    // [SILENCE-PRIM-#1684/#2555] intentional: convert unknown throw into
+                    // TransactionGuard mark_failed + typed error so mutate does not commit.
+                    tg.mark_failed();
+                    ok = false;
+                    return mev("typecheck-threw", "post-mutate typecheck threw: unknown exception");
                 }
 
                 // ── Ownership validation (Issue #1458 / #1684 / #1686) ──
                 if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
-                    std::string threw;
-                    if (!guard->run_or_rollback(
-                            [&] {
-                                std::unordered_set<std::string> linear_bindings;
+                    try {
+                        std::unordered_set<std::string> linear_bindings;
+                        aura::compiler::discover_linear_bindings_in_subtree(
+                            flat, *ev.workspace_pool_, id, linear_bindings);
+                        for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                            if (dep_callers[ui] < flat.size()) {
                                 aura::compiler::discover_linear_bindings_in_subtree(
-                                    flat, *ev.workspace_pool_, id, linear_bindings);
-                                for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
-                                    if (dep_callers[ui] < flat.size()) {
-                                        aura::compiler::discover_linear_bindings_in_subtree(
-                                            flat, *ev.workspace_pool_, dep_callers[ui],
-                                            linear_bindings);
-                                    }
-                                }
-                                if (!linear_bindings.empty() && id < flat.size()) {
-                                    flat.mark_dirty(id, static_cast<std::uint8_t>(
-                                                            aura::ast::FlatAST::kOwnershipDirty));
-                                }
-                                if (!linear_bindings.empty()) {
-                                    std::vector<aura::compiler::OwnershipNote> onotes;
-                                    bool opass = aura::compiler::OwnershipEnv::validate_ownership(
-                                        flat, *ev.workspace_pool_, flat.root, linear_bindings,
-                                        onotes);
-                                    aura::compiler::record_linear_ownership_mutation_metrics(
-                                        ev.compiler_metrics(), true, onotes, opass);
-                                    if (!opass) {
-                                        std::string err =
-                                            "ownership validation after mutate:set-body failed:";
-                                        for (auto& n : onotes)
-                                            err += " [" + n.kind + " at node " +
-                                                   std::to_string(n.node) + "] " + n.message + ";";
-                                        ev.last_mutate_error_ = err;
-                                    }
-                                }
-                            },
-                            &threw)) {
+                                    flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
+                            }
+                        }
+                        if (!linear_bindings.empty() && id < flat.size()) {
+                            flat.mark_dirty(
+                                id, static_cast<std::uint8_t>(aura::ast::FlatAST::kOwnershipDirty));
+                        }
+                        if (!linear_bindings.empty()) {
+                            std::vector<aura::compiler::OwnershipNote> onotes;
+                            bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                                flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
+                            aura::compiler::record_linear_ownership_mutation_metrics(
+                                ev.compiler_metrics(), true, onotes, opass);
+                            if (!opass) {
+                                std::string err =
+                                    "ownership validation after mutate:set-body failed:";
+                                for (auto& n : onotes)
+                                    err += " [" + n.kind + " at node " + std::to_string(n.node) +
+                                           "] " + n.message + ";";
+                                ev.last_mutate_error_ = err;
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        tg.mark_failed();
                         ok = false;
                         return mev("ownership-threw",
-                                   std::string("ownership validation threw: ") + threw);
+                                   std::string("ownership validation threw: ") + e.what());
+                    } catch (...) {
+                        // [SILENCE-PRIM-#1684/#2555] intentional: convert unknown throw into
+                        // TransactionGuard mark_failed + typed error so mutate does not commit.
+                        tg.mark_failed();
+                        ok = false;
+                        return mev("ownership-threw",
+                                   "ownership validation threw: unknown exception");
                     }
                 }
 
