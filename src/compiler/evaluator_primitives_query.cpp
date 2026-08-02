@@ -6723,6 +6723,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-provenance-reject-production-wired", 1);
             insert_kv("schema-2185", 2185);
             insert_kv("issue-2185", 2185);
+            // Issue #2558: completeness SLO health (backstop force Full).
+            {
+                const std::int64_t slo_bp =
+                    static_cast<std::int64_t>(aura::compiler::coercion_prov_slo_bp());
+                const std::int64_t breach =
+                    static_cast<std::int64_t>(aura::compiler::g_coercion_prov_slo_breach_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t observe = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_prov_slo_observe_only_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t armed = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_prov_slo_force_armed_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t consumed = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_prov_slo_force_consumed_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("coercion-prov-slo-bp", slo_bp);
+                insert_kv("coercion-prov-slo-breach-total", breach);
+                insert_kv("coercion-prov-slo-observe-only-total", observe);
+                insert_kv("coercion-prov-slo-force-armed-total", armed);
+                insert_kv("coercion-prov-slo-force-consumed-total", consumed);
+                insert_kv("coercion-prov-slo-force-full-pending",
+                          aura::compiler::coercion_prov_slo_force_full_pending() ? 1 : 0);
+                insert_kv("schema-2558", 2558);
+                insert_kv("issue-2558", 2558);
+            }
             // Issue #2261: Sampled ban weak mid / no CoercionNode pretend stamps
             {
                 const std::int64_t sampled_rej = static_cast<std::int64_t>(
@@ -7684,6 +7710,76 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("dirty-cone-cast-sites-scanned",
                       static_cast<std::int64_t>(cast_sites_scanned));
             insert_kv("full-scan-runs", static_cast<std::int64_t>(full_scan_runs));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2558: query:coercion-provenance-health — completeness SLO + force
+    // Full pending for Agents under long Sampled production sessions.
+    ObservabilityPrims::register_stats_impl(
+        "query:coercion-provenance-health",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema-2558", 2558);
+            insert_kv(
+                "completeness-bp",
+                static_cast<std::int64_t>(aura::compiler::coercion_provenance_completeness_bp()));
+            insert_kv("miss-total", static_cast<std::int64_t>(
+                                        aura::compiler::g_coercion_provenance_miss_total.load(
+                                            std::memory_order_relaxed)));
+            insert_kv(
+                "complete-total",
+                static_cast<std::int64_t>(aura::compiler::g_coercion_provenance_complete_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("slo-bp", static_cast<std::int64_t>(aura::compiler::coercion_prov_slo_bp()));
+            insert_kv("slo-breach-total", static_cast<std::int64_t>(
+                                              aura::compiler::g_coercion_prov_slo_breach_total.load(
+                                                  std::memory_order_relaxed)));
+            insert_kv("slo-observe-only-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::g_coercion_prov_slo_observe_only_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("force-full-pending",
+                      aura::compiler::coercion_prov_slo_force_full_pending() ? 1 : 0);
+            insert_kv("force-armed-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::g_coercion_prov_slo_force_armed_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("force-consumed-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::g_coercion_prov_slo_force_consumed_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("stamp-at-add-total",
+                      static_cast<std::int64_t>(aura::compiler::g_coercion_stamp_at_add_total.load(
+                          std::memory_order_relaxed)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

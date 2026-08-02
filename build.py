@@ -5010,6 +5010,25 @@ def cmd_lock_order_production_soft_coverage():
     return 0
 
 
+def cmd_coercion_prov_slo_coverage():
+    """Issue #2558: coercion provenance completeness SLO → force Full audit.
+
+    Production Sampled miss pressure arms force Full on next outermost boundary;
+    Soft observes only; vacuous 10000 bp with no samples.
+    """
+    print(f"{B}=== coercion provenance SLO coverage (#2558) ==={N}")
+    script = ROOT / "scripts" / "check_coercion_prov_slo_2558.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("coercion provenance SLO (#2558) coverage contract rows failed")
+        return 1
+    ok("coercion provenance SLO (#2558) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6181,6 +6200,7 @@ def cmd_gate():
         or cmd_transaction_guard_migration_coverage()
         or cmd_dead_coercion_dirty_cone_coverage()
         or cmd_lock_order_production_soft_coverage()
+        or cmd_coercion_prov_slo_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
@@ -6991,6 +7011,7 @@ def main():
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
+        "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

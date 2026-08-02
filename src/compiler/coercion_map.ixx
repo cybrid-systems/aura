@@ -74,6 +74,19 @@ export using ::aura::compiler::reset_coercion_provenance_miss_policy_for_test;
 export using ::aura::compiler::apply_production_coercion_provenance_defaults;
 export using ::aura::compiler::apply_coercion_provenance_reject_env_override;
 export using ::aura::compiler::apply_blame_commit_require_env_override;
+// Issue #2558: completeness SLO → force Full audit on next boundary.
+export using ::aura::compiler::kCoercionProvSloIssue;
+export using ::aura::compiler::kCoercionProvSloBpDefault;
+export using ::aura::compiler::g_coercion_prov_slo_breach_total;
+export using ::aura::compiler::g_coercion_prov_slo_observe_only_total;
+export using ::aura::compiler::g_coercion_prov_slo_force_armed_total;
+export using ::aura::compiler::g_coercion_prov_slo_force_consumed_total;
+export using ::aura::compiler::g_coercion_prov_slo_force_full_pending;
+export using ::aura::compiler::coercion_prov_slo_bp;
+export using ::aura::compiler::set_coercion_prov_slo_bp_for_test;
+export using ::aura::compiler::evaluate_coercion_provenance_slo;
+export using ::aura::compiler::coercion_prov_slo_force_full_pending;
+export using ::aura::compiler::consume_coercion_prov_slo_force_full;
 
 // Issue #2024: forensic sentinel base for incomplete occurrence-narrowing
 // provenance (high nibble C0E5 = "coercion"). Low 16 bits carry original_child
@@ -351,6 +364,10 @@ export [[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatA
         e.predicate_cond_node != 0 && e.source_mutation_id != 0 && !is_weak_coercion_mutation_id(e);
     if (true_complete) {
         g_coercion_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2558: re-evaluate completeness SLO after complete sample
+        // (may clear pressure when bp recovers; evaluate only breaches).
+        evaluate_coercion_provenance_slo(coercion_provenance_completeness_bp(),
+                                         aura::compiler::typed_audit::production_defaults_active());
         return true;
     }
 
@@ -359,6 +376,10 @@ export [[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatA
     // when force_audit policy is on (default).
     if (force_audit_on_provenance_miss())
         note_provenance_miss_for_boundary();
+    // Issue #2558: completeness SLO backstop — production Sampled hosts
+    // that accumulate miss pressure arm force Full for next boundary.
+    evaluate_coercion_provenance_slo(coercion_provenance_completeness_bp(),
+                                     aura::compiler::typed_audit::production_defaults_active());
     // Reject-on-miss: leave fields incomplete so apply can skip insert;
     // do not stamp sentinel (Agent re-infers with active_mutation_id).
     if (reject_apply_on_provenance_miss())
