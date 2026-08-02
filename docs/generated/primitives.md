@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**537** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**538** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 98 primitives (18%)
-- **core**: 382 primitives (71%)
+- **core**: 383 primitives (71%)
 - **internal-observable**: 49 primitives (9%)
 - **convenience**: 8 primitives (1%)
 
@@ -183,7 +183,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (264)
+## Core builtins (265)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -424,6 +424,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `tcp-connect` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
+- `trunc` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
@@ -793,7 +794,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (382)
+### Core builtins (must remain primitive) (383)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1130,6 +1131,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `terminal:present` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `terminal:present-delta` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `trunc` — `src/compiler/evaluator_primitives_math.cpp`
 - `tui:enable-mouse` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:get-cell` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:hide-cursor` — `src/compiler/evaluator_primitives_tui.cpp`

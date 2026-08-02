@@ -24,9 +24,11 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_float;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
 using aura::test::g_failed;
@@ -137,6 +139,51 @@ static void ac4_source_gate() {
     CHECK(build.find("cmd_module_load_tail_coverage") != std::string::npos, "AC4: gate cmd");
 }
 
+// Follow-up: multi-define (letrec) pre-allocates void cells; (define ceil ceil)
+// must re-export the primitive, not fail void-export / leave uncallable.
+// Also covers trunc prim registration used by std/math.
+static void ac5_prim_reexport_math() {
+    std::println("\n--- #2570 AC5: prim re-export + trunc + std/math ---");
+    const std::string dir = "/tmp/aura_test_mod2570_ac5";
+    CHECK(write_mod(dir, "reexport.aura",
+                    R"((export floor ceil trunc round my-sq)
+(define floor floor)
+(define ceil ceil)
+(define trunc trunc)
+(define round round)
+(define (my-sq x) (* x x))
+)"),
+          "write reexport.aura");
+    setenv("AURA_PATH", dir.c_str(), 1);
+    CompilerService cs;
+    auto req = cs.eval("(require \"reexport\" all:)");
+    CHECK(req.has_value() && !(is_error(*req) && !is_string(*req)), "AC5: reexport require");
+    auto c = cs.eval("(ceil 3.2)");
+    const bool ceil_ok =
+        c && ((is_int(*c) && as_int(*c) == 4) || (is_float(*c) && as_float(*c) == 4.0));
+    CHECK(ceil_ok, "AC5: ceil re-export callable");
+    auto t = cs.eval("(trunc 3.7)");
+    CHECK(t && is_float(*t) && as_float(*t) == 3.0, "AC5: trunc → 3.0");
+    auto sq = cs.eval("(my-sq 5)");
+    CHECK(sq && is_int(*sq) && as_int(*sq) == 25, "AC5: non-prim define still works");
+    unsetenv("AURA_PATH");
+
+    // std/math must load (was failing: export ceil/asin void; missing trunc).
+    CompilerService cs2;
+    auto math = cs2.eval("(begin (require \"std/math\" all:) (square 5))");
+    CHECK(math && is_int(*math) && as_int(*math) == 25, "AC5: std/math square");
+    auto asin0 = cs2.eval("(asin 0)");
+    CHECK(asin0.has_value() && !(is_error(*asin0) && !is_string(*asin0)), "AC5: asin export");
+
+    const auto math_cpp = read_file("src/compiler/evaluator_primitives_math.cpp");
+    CHECK(math_cpp.find("add(\"trunc\"") != std::string::npos ||
+              math_cpp.find("add(\"trunc\",") != std::string::npos,
+          "AC5: trunc registered in math prims");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("void") != std::string::npos && flat.find("slot_for_name") != std::string::npos,
+          "AC5: Variable void-cell→prim path");
+}
+
 } // namespace
 
 int main() {
@@ -145,6 +192,7 @@ int main() {
     ac2_mid_error_fail_closed();
     ac3_nested_require_fail();
     ac4_source_gate();
+    ac5_prim_reexport_math();
     std::println("\n=== #2570: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

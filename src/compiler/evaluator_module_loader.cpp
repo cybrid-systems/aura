@@ -331,18 +331,33 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         // those names. Missing export names (declared but never defined)
         // are filtered out below — some std modules historically export
         // names that live as primitives only; do not hard-fail those.
+        //
+        // Exception: `(define ceil ceil)` under multi-define letrec used
+        // to re-bind the pre-allocated void cell to itself (RHS shadowed
+        // the primitive). Variable lookup now falls through void→prim, but
+        // if a cell is still void and a same-named primitive exists, fill
+        // the cell so the export is usable (std/math floor/ceil/sin/…).
         for (const auto& exp : *current_export_set_) {
             auto bound = mod_env->lookup_binding(exp);
             if (!bound)
                 continue;
             types::EvalValue actual = *bound;
+            std::optional<std::size_t> cell_idx;
             if (types::is_cell(actual)) {
                 auto ci = types::as_cell_id(actual);
                 if (ci >= cells_.size())
                     return fail_load("export '" + exp + "' has invalid cell");
+                cell_idx = ci;
                 actual = cells_[ci];
             }
             if (types::is_void(actual)) {
+                auto slot = primitives_.slot_for_name(exp);
+                if (slot != std::numeric_limits<std::size_t>::max()) {
+                    auto prim = types::make_primitive(slot);
+                    if (cell_idx)
+                        cells_[*cell_idx] = prim;
+                    continue;
+                }
                 return fail_load("export '" + exp +
                                  "' is unbound (void); define may have failed or been skipped");
             }
