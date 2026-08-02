@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 743 | Preferred destination suites |
-| **Total scanned** | **743** | |
+| `tests/core/test_*.cpp` | 744 | Preferred destination suites |
+| **Total scanned** | **744** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 49 | 49 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 50 | 50 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -545,6 +545,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_memo_goal_epoch_health_2359.cpp`
 - `tests/core/test_module_boundary.cpp`
 - `tests/compiler/test_module_export_cache.cpp`
+- `tests/compiler/test_module_export_display_2572.cpp`
 - `tests/compiler/test_module_load_tail_export_2570.cpp`
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp`
 - `tests/compiler/test_module_partition_map_2524.cpp`
@@ -1697,13 +1698,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention_2523.cpp` (#2523) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (49)
+### `uncategorized` — Uncategorized / mixed (50)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (49)
+#### domain/ (50)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1726,6 +1727,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_json_parse_object_grow_2481.cpp` (#2481) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/compiler/test_list_end_of_list_void_2482.cpp` (#2482) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true
 - `tests/compiler/test_load_cap_io_read_2485.cpp` (#2485) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
+- `tests/compiler/test_module_export_display_2572.cpp` (#2572) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
 - `tests/compiler/test_module_load_tail_export_2570.cpp` (#2570) [domain_suite, theme_compiler] — AC1: tail defines always export after require
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_prefix_dead_heap.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1693 (#1978 renamed): issue# moved from filename to header.
