@@ -2116,6 +2116,11 @@ export struct TypeChecker {
     // Empty dirty → no invalidate / no mirror cost. Prefer this name in
     // new call sites; existing infer_flat_partial callers already run
     // the same ordered txn (single production body).
+    //
+    // Issue #2560: after cone build (primary + type_dep + cascade + #2283
+    // merge), soft/hard cone caps apply before phase 1 (env
+    // AURA_PARTIAL_CONE_SOFT / HARD; per-TypeId fan-out
+    // AURA_TYPE_DEP_FANOUT_CAP). Order of #2516 phases is unchanged.
     std::size_t infer_flat_partial_with_dirty_txn(aura::ast::FlatAST& flat,
                                                   const aura::ast::StringPool& pool,
                                                   const aura::ast::MutationRecord& rec,

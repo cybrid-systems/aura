@@ -5049,6 +5049,25 @@ def cmd_linear_three_layer_wire_coverage():
     return 0
 
 
+def cmd_partial_cone_cap_coverage():
+    """Issue #2560: partial re-infer cone soft/hard cap (type-layer SLA).
+
+    Soft overflow (default 256) + hard fallback under production (2048) +
+    type_dep degree truncation; #2516 txn order preserved.
+    """
+    print(f"{B}=== partial cone soft/hard cap coverage (#2560) ==={N}")
+    script = ROOT / "scripts" / "check_partial_cone_cap_2560.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("partial cone soft/hard cap (#2560) coverage contract rows failed")
+        return 1
+    ok("partial cone soft/hard cap (#2560) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6222,6 +6241,7 @@ def cmd_gate():
         or cmd_lock_order_production_soft_coverage()
         or cmd_coercion_prov_slo_coverage()
         or cmd_linear_three_layer_wire_coverage()
+        or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
@@ -7034,6 +7054,7 @@ def main():
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
+        "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

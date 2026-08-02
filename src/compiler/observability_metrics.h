@@ -8558,6 +8558,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_dirty_txn_phase1_invalidate_total{0}; // #2516
     std::atomic<std::uint64_t> type_dirty_txn_phase2_reinfer_total{0};    // #2516
     std::atomic<std::uint64_t> type_dirty_txn_phase3_mirror_total{0};     // #2516
+    // Issue #2560: partial re-infer cone soft/hard SLA (type layer).
+    // soft_overflow: cone.size() > AURA_PARTIAL_CONE_SOFT (default 256)
+    // hard_fallback: production + cone > AURA_PARTIAL_CONE_HARD (default 2048)
+    //   after degree-truncate / seed-preserving truncate (no silent O(n)).
+    // type_dep_degree_truncated_total: per-TypeId fan-out capped during expand.
+    // last_size: last non-empty partial cone size (Agent SLA dashboards).
+    std::atomic<std::uint64_t> partial_cone_soft_overflow_total{0};         // #2560
+    std::atomic<std::uint64_t> partial_cone_hard_fallback_total{0};         // #2560
+    std::atomic<std::uint64_t> partial_cone_type_dep_degree_trunc_total{0}; // #2560
+    std::atomic<std::uint64_t> partial_cone_last_size{0};                   // #2560
+    std::atomic<std::uint32_t> partial_cone_cap_wired{1};                   // #2560
     std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
     // Issue #2065: solve_delta_epoch_skip_total — count of touched /
