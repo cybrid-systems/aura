@@ -45,11 +45,20 @@ inline std::array<std::atomic<std::uint64_t>, 16> opt_pass_runs_by_kind{};
 // (Issue #2282 AC1: one Agent-facing key = sum of three components).
 // Issue #2106: layered story = AST elision + IR CastOp elision + dirty-cone
 // early-out (dead_coercion_dirty_cone_skips) + cascade_skip_subtree_total.
+// Issue #2556: dirty_cone_skips counts CastOp sites outside the type∪IR
+// dirty cone (or all sites on soft empty-cone early-out); partial-runs +
+// cast-sites-scanned are additive Agent keys for local-mutate latency.
 // Keep inside opt_registry namespace (already exported at line 17). No `export` needed.
 inline std::atomic<std::uint64_t> dead_coercion_ir_elided_total{0};
 inline std::atomic<std::uint64_t> dead_coercion_ir_narrow_evidence_hits{0};
 inline std::atomic<std::uint64_t> dead_coercion_pipeline_runs_total{0};
 inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_skips{0};
+// Issue #2556: partial dirty-cone DCE invocations (block_dirty_fn set + ≥1 dirty).
+inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_partial_runs{0};
+// Issue #2556: CastOp sites actually scanned under partial cone (cone interior).
+inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_cast_sites_scanned{0};
+// Issue #2556: full-module / no-cone DCE runs (regression counter for AC2).
+inline std::atomic<std::uint64_t> dead_coercion_full_scan_runs{0};
 
 // Issue #2130: ShapeAwareFold / LinearOwnership dirty-aware peel metrics.
 inline std::atomic<std::uint64_t> shape_fold_dirty_blocks_processed{0};
@@ -445,6 +454,20 @@ public:
     void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
         note_pass_run(PassKind::DeadCoercion, false);
         dead_coercion_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2556: when a type∪IR dirty cone is wired (block_dirty_fn_),
+        // peel per-function so DCE never walks cone-external CastOps on
+        // large modules after local typed_mutate. No cone → full scan (AC2).
+        if (block_dirty_fn_) {
+            last_eliminated_ = 0;
+            last_narrow_hits_ = 0;
+            error_ = false;
+            for (auto& func : m.functions)
+                run(func);
+            if (!dirty_flags_cleared_or_ok(m, error_))
+                opt_contract_violations_soft_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        dead_coercion_full_scan_runs.fetch_add(1, std::memory_order_relaxed);
         // Rebind registry if set (ctor default is nullptr).
         aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
         pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
@@ -469,22 +492,49 @@ public:
         if (instruction_dirty_fn_)
             pass.set_instruction_dirty_fn(instruction_dirty_fn_);
         // Dirty-aware: when a block dirty fn is set, only process dirty blocks.
-        // Issue #2106: empty dirty cone after cascade skip → early-out without
-        // a full IR walk (zero-overhead synergy with cascade_skip_subtree).
+        // Issue #2106 / #2556: empty dirty cone → soft early-out (no dirty-mask
+        // allocation storm; count CastOp sites as cone-skips for Agents).
+        // Non-empty cone → scan only dirty blocks; cone-external CastOps bump
+        // dirty_cone_skips (AC1 large-module local-mutate latency).
         if (block_dirty_fn_) {
-            std::vector<std::uint8_t> dirty(f.blocks.size(), 0);
+            // Soft probe: any dirty? Avoid allocating dirty[] when empty (AC4).
             bool any_dirty = false;
+            for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+                if (is_block_dirty(static_cast<std::uint32_t>(bi))) {
+                    any_dirty = true;
+                    break;
+                }
+            }
+            if (!any_dirty) {
+                // Soft empty cone: count CastOps as skips (or 1 if none so
+                // Agents still see the early-out — #2106 lineage).
+                const auto casts = count_cast_ops_in_function(f);
+                dead_coercion_dirty_cone_skips.fetch_add(casts > 0 ? casts : 1,
+                                                         std::memory_order_relaxed);
+                return;
+            }
+            // Materialize dirty mask only when the cone is non-empty.
+            std::vector<std::uint8_t> dirty(f.blocks.size(), 0);
+            std::uint64_t skipped_casts = 0;
+            std::uint64_t scanned_casts = 0;
             for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
                 const bool d = is_block_dirty(static_cast<std::uint32_t>(bi));
                 dirty[bi] = d ? 1 : 0;
-                any_dirty = any_dirty || d;
+                const auto block_casts = count_cast_ops_in_block(f.blocks[bi]);
+                if (d)
+                    scanned_casts += block_casts;
+                else
+                    skipped_casts += block_casts;
             }
-            if (!any_dirty) {
-                dead_coercion_dirty_cone_skips.fetch_add(1, std::memory_order_relaxed);
-                return;
-            }
+            dead_coercion_dirty_cone_partial_runs.fetch_add(1, std::memory_order_relaxed);
+            if (scanned_casts)
+                dead_coercion_dirty_cone_cast_sites_scanned.fetch_add(scanned_casts,
+                                                                      std::memory_order_relaxed);
+            if (skipped_casts)
+                dead_coercion_dirty_cone_skips.fetch_add(skipped_casts, std::memory_order_relaxed);
             pass.run_function(f, dirty);
         } else {
+            dead_coercion_full_scan_runs.fetch_add(1, std::memory_order_relaxed);
             pass.run_function(f);
         }
         last_eliminated_ += pass.eliminated_count();
@@ -530,6 +580,24 @@ public:
     static constexpr bool kPureWrap = true;
 
 private:
+    // Issue #2556: CastOp site counters for dirty-cone skip / scan metrics.
+    [[nodiscard]] static std::uint64_t
+    count_cast_ops_in_block(const aura::ir::BasicBlock& block) noexcept {
+        std::uint64_t n = 0;
+        for (const auto& instr : block.instructions) {
+            if (instr.opcode == aura::ir::IROpcode::CastOp)
+                ++n;
+        }
+        return n;
+    }
+    [[nodiscard]] static std::uint64_t
+    count_cast_ops_in_function(const aura::ir::IRFunction& f) noexcept {
+        std::uint64_t n = 0;
+        for (const auto& block : f.blocks)
+            n += count_cast_ops_in_block(block);
+        return n;
+    }
+
     aura::compiler::DeadCoercionEliminationPass impl_;
     const aura::core::TypeRegistry* type_reg_ = nullptr;
     std::function<bool(std::uint32_t)> block_dirty_fn_;
