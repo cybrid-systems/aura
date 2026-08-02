@@ -3635,6 +3635,11 @@ aura_add_issue_test(test_epoch_invariant_complete_2501)
 aura_issue_test_link_llvm_jit(test_epoch_invariant_complete_2501)
 add_dependencies(all_test_issue_targets test_epoch_invariant_complete_2501)
 
+# Issue #2541: production default epoch-invariant soft + force clear on violation.
+aura_add_issue_test(test_epoch_invariant_soft_prod_2541)
+aura_issue_test_link_llvm_jit(test_epoch_invariant_soft_prod_2541)
+add_dependencies(all_test_issue_targets test_epoch_invariant_soft_prod_2541)
+
 # Issue #2502: auto re-promote force-JIT regions after stable recovery window.
 aura_add_issue_test(test_force_jit_repromote_2502)
 aura_issue_test_link_llvm_jit(test_force_jit_repromote_2502)

@@ -11674,26 +11674,28 @@ public:
         run_epoch_invariant_if_enabled();
     }
 
-    // Issue #2304 / #2366 / #2501: post-bump epoch invariant walk.
+    // Issue #2304 / #2366 / #2501 / #2541: post-bump epoch invariant walk.
     //
     // Mode source: process-level aura_epoch_invariant_mode() (env +
-    // C setter + production soft default #2501) OR local hard flag.
-    //   0 = off — single relaxed load (AC3 zero-cost when disabled)
-    //   1 = soft — walk + metrics only (never abort)
-    //   2 = hard — walk + metrics + clear stale AOT slots + abort if
-    //       violations remain after enforcement
+    // C setter + production soft default #2501/#2541) OR local hard flag.
+    //   0 = off — single relaxed load (zero-cost when disabled)
+    //   1 = soft — walk + force MustDeopt + physically clear stale AOT
+    //       slots (never abort). #2541: soft is not metric-only for slots.
+    //   2 = hard — same enforcement + abort if violations remain
+    //       after enforcement (stale IR stamps cannot be auto-healed)
     //
-    // Invariant (#2366/#2501): after an epoch bump, every live AOT/JIT
+    // Invariant (#2366/#2501/#2541): after an epoch bump, every live AOT/JIT
     // executable slot is either current-generation or null; every
     // live closure is either remounted (bridge_epoch==current / 0) or
     // MustDeopt; every clean IR cache entry has a current bridge stamp.
     //
-    // #2501 completes the #2304 residual:
-    //   - hard mode nulls generation-behind AOT fn_ptr (order = #2271)
+    // #2541 closes the production post-bump native-stale window:
+    //   - production defaults → soft when AURA_EPOCH_INVARIANT unset
+    //   - soft nulls generation-behind AOT fn_ptr (same order as #2271)
     //   - soft+hard set MustDeopt on tree-walker + JIT live closures
     //   - additive counters: slot-stale / closure-must-deopt
     void run_epoch_invariant_if_enabled() noexcept {
-        // AC3: zero-cost when off — prefer process mode, fall back to local hard flag.
+        // Zero-cost when off — prefer process mode, fall back to local hard flag.
         int mode = aura_epoch_invariant_mode();
         if (mode == 0 && epoch_invariant_hard_enabled_.load(std::memory_order_relaxed) != 0)
             mode = 2; // local hard enable (tests)
@@ -11720,11 +11722,12 @@ public:
         }
 
         // ── 2. AOT func table: live slots (fn_ptr≠0) must be current gen ──
-        // Count first (soft metric). Hard mode then physically nulls
-        // fn_ptr (same order as #2271: fn_ptr release then generation).
+        // Count then physically null fn_ptr under soft+hard (#2541 soft
+        // enforce). Order = #2271: fn_ptr release then generation.
+        // Soft never aborts; hard may still abort on residual IR stamps.
         slot_stale = static_cast<std::uint64_t>(aura_aot_count_live_generation_behind_slots());
         violations += slot_stale;
-        if (mode >= 2 && slot_stale > 0) {
+        if (mode >= 1 && slot_stale > 0) {
             // Process-wide clear of generation-behind slots (eval_ptr=null).
             (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
         }
@@ -11766,11 +11769,11 @@ public:
         aura_epoch_invariant_note_slot_stale(slot_stale);
         aura_epoch_invariant_note_closure_must_deopt(closure_must_deopt);
 
-        // Soft never aborts (AC4). Hard aborts only if violations remain
-        // after enforcement (stale IR stamps cannot be auto-healed here).
+        // Soft never aborts (#2541 AC / #2501 AC4). Hard aborts only if
+        // violations remain after enforcement (stale IR stamps).
         if (violations > 0 && mode >= 2) {
             std::fprintf(stderr,
-                         "[#2366][#2501] epoch invariant HARD fail: %llu generation-behind "
+                         "[#2366][#2501][#2541] epoch invariant HARD fail: %llu generation-behind "
                          "AOT/IR/closure survivors after bump "
                          "(slot_stale=%llu closure_must_deopt=%llu cur_bridge=%llu) — aborting\n",
                          static_cast<unsigned long long>(violations),

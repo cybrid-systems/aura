@@ -444,18 +444,27 @@ inline void apply_production_security_defaults() noexcept {
         mutate_type_gate::check_soft_in_production_or_abort();
     }
 
-    // 12) Issue #2501: post-bump epoch invariant soft-on under production
-    //     so long-running Agents detect gen-behind AOT/closure survivors.
-    //     AURA_EPOCH_INVARIANT=soft|hard|0 still wins (env applied at
-    //     static init + re-read here). AURA_SANDBOX=off keeps mode off
-    //     for unit tests (zero walk cost). Soft never aborts.
+    // 12) Issue #2501 / #2541: post-bump epoch invariant soft-on under
+    //     production so long-running Agents detect gen-behind AOT/closure
+    //     survivors and force MustDeopt + physical slot clear (soft never
+    //     aborts). AURA_EPOCH_INVARIANT=soft|hard|0|off still wins.
+    //     AURA_SANDBOX=off leaves mode alone (unit Soft path / zero walk
+    //     unless tests set mode explicitly).
     if (!dev_off) {
         const char* ei = std::getenv("AURA_EPOCH_INVARIANT");
         if (!ei || !*ei) {
-            // Unset under production → soft (mode 1).
+            // Unset under production Restricted → soft (mode 1). #2541 AC1.
             aura_set_epoch_invariant_mode(1);
+        } else {
+            // Explicit env re-apply (covers "0"/"off" after prior soft set).
+            const std::string_view v(ei);
+            if (v == "0" || v == "off" || v == "false" || v == "no")
+                aura_set_epoch_invariant_mode(0); // #2541 AC5 unit Soft path
+            else if (v == "hard")
+                aura_set_epoch_invariant_mode(2);
+            else if (v == "soft" || v == "1" || v == "true" || v == "on")
+                aura_set_epoch_invariant_mode(1);
         }
-        // If env set, EpochInvariantEnvInit / existing mode already applied.
     }
 }
 

@@ -3948,8 +3948,9 @@ extern "C" void aura_aot_clear_slot_for_test(std::int64_t func_id) {
     slot.owner_eval.store(0, std::memory_order_release);
 }
 
-// Issue #2304 / #2366: AURA_EPOCH_INVARIANT env-var bridge.
-// soft|1 → soft mode; hard → hard mode; unset → off.
+// Issue #2304 / #2366 / #2541: AURA_EPOCH_INVARIANT env-var bridge.
+// soft|1 → soft; hard → hard; 0|off → force off; unset → leave default
+// (production apply_production_security_defaults sets soft when unset).
 namespace {
 struct EpochInvariantEnvInit {
     EpochInvariantEnvInit() noexcept {
@@ -3959,6 +3960,8 @@ struct EpochInvariantEnvInit {
                 aura_set_epoch_invariant_mode(2);
             else if (v == "soft" || v == "1" || v == "true" || v == "on")
                 aura_set_epoch_invariant_mode(1);
+            else if (v == "0" || v == "off" || v == "false" || v == "no")
+                aura_set_epoch_invariant_mode(0); // #2541 AC5
         }
     }
 };
