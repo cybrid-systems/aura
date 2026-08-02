@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 710 | Preferred destination suites |
-| **Total scanned** | **710** | |
+| `tests/core/test_*.cpp` | 711 | Preferred destination suites |
+| **Total scanned** | **711** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 203 | 203 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 204 | 204 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 79 | 79 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **70**
+- Existing `*_batch` drivers (migration milestones): **71**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -135,6 +135,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_panic_checkpoint_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_per_defuse_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_production_readiness_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_query_and_replace_batch_2527.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_query_pattern_batch.cpp` → theme `edsl_hygiene`
 - `tests/compiler/test_reflect_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp` → theme `edsl_hygiene`
@@ -644,6 +645,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp`
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp`
 - `tests/compiler/test_provenance_blame_hygiene.cpp`
+- `tests/compiler/test_query_and_replace_batch_2527.cpp`
 - `tests/compiler/test_query_by_marker_provenance_2242.cpp`
 - `tests/compiler/test_query_dispatch.cpp`
 - `tests/compiler/test_query_epoch_contract_2192.cpp`
@@ -986,13 +988,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (203)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (204)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (203)
+#### domain/ (204)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1140,6 +1142,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_production_readiness_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_production_readiness_batch.cpp
 - `tests/compiler/test_production_security_defaults_2053.cpp` (#2053) [domain_suite, theme_compiler] — AC1: apply_production_security_defaults → Restricted (unset AURA_SANDBOX)
 - `tests/compiler/test_provenance_blame_hygiene.cpp` (—) [domain_suite, theme_compiler] — Issue #1877 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_query_and_replace_batch_2527.cpp` (#2527) [batch_driver, domain_suite, theme_compiler] — Issue #2527: mutate:query-and-replace-batch — first-class sugar
 - `tests/compiler/test_query_by_marker_provenance_2242.cpp` (#2242) [domain_suite, theme_compiler] — AC1: all 3 individual primitives are registered and return schema=2242
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
 - `tests/renderer/test_render3d_primitives.cpp` (—) [domain_suite, theme_renderer] — test_render3d_primitives.cpp — Issue #1986 / Epic #1979
