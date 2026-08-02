@@ -3670,6 +3670,11 @@ aura_add_issue_test(test_aot_hot_update_health_2506)
 aura_issue_test_link_llvm_jit(test_aot_hot_update_health_2506)
 add_dependencies(all_test_issue_targets test_aot_hot_update_health_2506)
 
+# Issue #2543: orch self-throttle over aot-hot-update-health (control plane).
+aura_add_issue_test(test_orch_hot_update_health_throttle_2543)
+aura_issue_test_link_llvm_jit(test_orch_hot_update_health_throttle_2543)
+add_dependencies(all_test_issue_targets test_orch_hot_update_health_throttle_2543)
+
 # Issue #2507: clear escape MoveOp elision gate on steal-complete + densify.
 aura_add_issue_test(test_escape_gate_steal_densify_clear_2507)
 aura_issue_test_link_light(test_escape_gate_steal_densify_clear_2507)

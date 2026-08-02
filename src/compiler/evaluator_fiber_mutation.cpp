@@ -16,8 +16,9 @@ module;
 #include "orch/agent_spawn.h" // #2010: g_orch_module_stats for mailbox BP mirror
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
-#include "core/sandbox.hh"                 // #2056: is_strict for cross-tenant ensure
-#include "compiler/hot_update_registry.hh" // Issue #2162: aura_hot_update_has_deferred_reemit
+#include "core/sandbox.hh"                   // #2056: is_strict for cross-tenant ensure
+#include "compiler/hot_update_registry.hh"   // Issue #2162: aura_hot_update_has_deferred_reemit
+#include "compiler/aot_hot_update_health.hh" // Issue #2543: orch hot-update health throttle tick
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
 #include "core/layout_stamp.hh" // Issue #2519: full 8-field LayoutStamp equality
 #include <algorithm>            // Issue #2189: remove_if for pin table invalidate
@@ -2037,6 +2038,18 @@ extern "C" int aura_orch_agent_body_try_acquire() {
 }
 
 extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
+    // Issue #2543: once per agent-body enter — sample hot-update health and
+    // record advisory throttle (never rejects the body; agents/orchestrators
+    // observe orch-hot-update-health-throttle-total + last force_reason).
+    {
+        const auto d = aura::compiler::orch_hot_update_health_throttle_tick();
+        if (d.throttle) {
+            aura::orch::g_orch_module_stats.orch_hot_update_health_throttle_total.fetch_add(
+                1, std::memory_order_relaxed);
+            aura::orch::g_orch_module_stats.orch_hot_update_health_last_force_reason.store(
+                d.health.force_reason_code, std::memory_order_relaxed);
+        }
+    }
     // Release any stale full Guard from a previous host agent.
     // Soft depth is nested-safe (AC3): re-enter pushes without clearing.
     // Stale soft depth (fiber died without release) is drained when fiber

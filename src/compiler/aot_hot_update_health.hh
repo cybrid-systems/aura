@@ -1,4 +1,5 @@
 // aot_hot_update_health.hh — Issue #2506: single Agent JIT/AOT recovery gate score.
+// Issue #2543: orch agent self-throttle control plane over the same score.
 //
 // Pure, read-only aggregation of ReloadRecovery / StormLevel / remount /
 // epoch-invariant signals so Agents stop OR-ing many hot-update queries:
@@ -8,7 +9,7 @@
 //   epoch invariant walks (#2366 / #2501)
 //
 // Pattern: query:mutation-concurrency-health (#2379), query:security-health (#2389).
-// Gate signal only — does NOT change recovery policy actions.
+// #2506: gate signal only. #2543: advisory throttle (never hard-fails mutate).
 //
 // ── Score definition (AC1 / AC2) ──
 //
@@ -42,14 +43,21 @@
 #ifndef AURA_COMPILER_AOT_HOT_UPDATE_HEALTH_HH
 #define AURA_COMPILER_AOT_HOT_UPDATE_HEALTH_HH
 
+#include "compiler/hot_update_registry.hh" // aura_reload_recovery_snapshot + get
+
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <string_view>
 
+extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void);
+
 namespace aura::compiler {
 
 inline constexpr int kAotHotUpdateHealthIssue = 2506;
+// Issue #2543: orch self-throttle over health_bp (control plane).
+inline constexpr int kAotHotUpdateHealthThrottleIssue = 2543;
 
 struct AotHotUpdateHealthSnapshot {
     // ReloadRecoveryState core (#2302 / #2367).
@@ -185,6 +193,139 @@ compute_aot_hot_update_health(const AotHotUpdateHealthSnapshot& s) noexcept {
         r.force_reason_code = 0;
     }
     return r;
+}
+
+// ── Issue #2543: orch agent self-throttle control plane ──
+//
+// Advisory only (never hard-fails mutate / spawn). When
+// health_bp < health_budget_bp, map force_reason_code → action:
+//
+//   storm (1) / force-jit (2)     → split-batch   (cap concurrency=1)
+//   reload-fail (3) / remount (4) /
+//     epoch-invariant (5)         → delay-mutate  (cap concurrency=2)
+//   deferred-reemit (6)           → skip-reemit   (cap concurrency=4)
+//   healthy (health_bp ≥ budget)  → none          (no metric bump)
+//
+// Soft empty / idle → health_bp=10000 → zero throttle cost (AC2).
+enum class HotUpdateThrottleAction : std::uint8_t {
+    None = 0,
+    SplitBatch = 1,
+    DelayMutate = 2,
+    SkipReemit = 3,
+};
+
+struct HotUpdateThrottleDecision {
+    bool throttle = false;
+    HotUpdateThrottleAction action = HotUpdateThrottleAction::None;
+    std::string_view action_name = "none";
+    // Suggested max_concurrency cap for parallel_intend / agent batches.
+    std::uint32_t max_concurrency_cap = 1024;
+    AotHotUpdateHealthResult health{};
+};
+
+// Pure: map scored health → throttle decision (no atomics / side effects).
+[[nodiscard]] inline HotUpdateThrottleDecision
+decide_hot_update_throttle(const AotHotUpdateHealthResult& h) noexcept {
+    HotUpdateThrottleDecision d;
+    d.health = h;
+    if (h.health_bp >= h.health_budget_bp) {
+        d.throttle = false;
+        d.action = HotUpdateThrottleAction::None;
+        d.action_name = "none";
+        d.max_concurrency_cap = 1024;
+        return d;
+    }
+    d.throttle = true;
+    switch (h.force_reason_code) {
+        case 1: // storm
+        case 2: // force-jit
+            d.action = HotUpdateThrottleAction::SplitBatch;
+            d.action_name = "split-batch";
+            d.max_concurrency_cap = 1;
+            break;
+        case 3: // reload-fail
+        case 4: // remount-fail
+        case 5: // epoch-invariant
+            d.action = HotUpdateThrottleAction::DelayMutate;
+            d.action_name = "delay-mutate";
+            d.max_concurrency_cap = 2;
+            break;
+        case 6: // deferred-reemit
+            d.action = HotUpdateThrottleAction::SkipReemit;
+            d.action_name = "skip-reemit";
+            d.max_concurrency_cap = 4;
+            break;
+        default:
+            d.action = HotUpdateThrottleAction::SplitBatch;
+            d.action_name = "split-batch";
+            d.max_concurrency_cap = 2;
+            break;
+    }
+    return d;
+}
+
+// Live sample of recovery + epoch signals (pure relaxed loads).
+// Remount counters optional (0 when metrics unavailable) — storm/force-jit
+// still drive the primary throttle path.
+[[nodiscard]] inline AotHotUpdateHealthSnapshot sample_aot_hot_update_health_snapshot() noexcept {
+    AotHotUpdateHealthSnapshot snap;
+    aura_reload_recovery_snapshot rs{};
+    aura_hot_update_reload_recovery_get_snapshot(&rs);
+    snap.attempts_left = static_cast<std::uint32_t>(rs.attempts_left);
+    snap.force_jit_regions_mask = static_cast<std::uint64_t>(rs.force_jit_regions_mask);
+    snap.pending_dirty_count = static_cast<std::uint64_t>(rs.pending_dirty_count);
+    snap.deferred_reemit_pending = static_cast<std::uint8_t>(rs.deferred_reemit_pending);
+    snap.storm_level = static_cast<std::uint8_t>(rs.storm_level);
+    snap.hard_storm_active = rs.hard_storm_active;
+    snap.last_reload_fail_reason = static_cast<std::uint8_t>(rs.last_reason);
+    snap.recovery_active = rs.recovery_active;
+    snap.epoch_invariant_violation_total = aura_epoch_invariant_violation_total_v_read();
+    return snap;
+}
+
+// Process-level orch throttle observability (#2543).
+// Zero bump when healthy (AC2).
+inline std::atomic<std::uint64_t> g_orch_hot_update_health_throttle_total{0};
+inline std::atomic<std::uint64_t> g_orch_hot_update_health_checks_total{0};
+inline std::atomic<std::int64_t> g_orch_hot_update_health_last_force_reason{0};
+inline std::atomic<std::int64_t> g_orch_hot_update_health_last_action{0};
+
+// Tick: sample → score → decide. Bumps throttle metric only when
+// throttle==true. Safe to call from agent body / parallel_intend / boundary.
+[[nodiscard]] inline HotUpdateThrottleDecision orch_hot_update_health_throttle_tick() noexcept {
+    g_orch_hot_update_health_checks_total.fetch_add(1, std::memory_order_relaxed);
+    const auto snap = sample_aot_hot_update_health_snapshot();
+    const auto scored = compute_aot_hot_update_health(snap);
+    auto d = decide_hot_update_throttle(scored);
+    g_orch_hot_update_health_last_force_reason.store(scored.force_reason_code,
+                                                     std::memory_order_relaxed);
+    g_orch_hot_update_health_last_action.store(static_cast<std::int64_t>(d.action),
+                                               std::memory_order_relaxed);
+    if (d.throttle) {
+        g_orch_hot_update_health_throttle_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return d;
+}
+
+// Cap requested concurrency for parallel_intend / agent batches.
+// Healthy path returns requested unchanged (no throttle metric when
+// already healthy — tick still records checks_total).
+[[nodiscard]] inline std::uint32_t
+apply_hot_update_health_concurrency_cap(std::uint32_t requested) noexcept {
+    if (requested == 0)
+        requested = 1;
+    const auto d = orch_hot_update_health_throttle_tick();
+    if (!d.throttle)
+        return requested;
+    return std::min(requested, d.max_concurrency_cap);
+}
+
+// Should non-critical reemit be skipped (deferred-reemit / unhealthy)?
+[[nodiscard]] inline bool orch_hot_update_health_should_skip_reemit() noexcept {
+    const auto d = orch_hot_update_health_throttle_tick();
+    return d.throttle && (d.action == HotUpdateThrottleAction::SkipReemit ||
+                          d.action == HotUpdateThrottleAction::SplitBatch ||
+                          d.action == HotUpdateThrottleAction::DelayMutate);
 }
 
 } // namespace aura::compiler

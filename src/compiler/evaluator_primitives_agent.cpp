@@ -31,6 +31,7 @@ module;
 // Issue #2078: header-only AgentNameTable definition (see .h for why
 // not in evaluator.ixx's global fragment).
 #include "compiler/agent_name_table.h"
+#include "compiler/aot_hot_update_health.hh" // Issue #2543: hot-update health throttle
 #include "orch/orch.h"
 #include <atomic>
 #include <cstdio>
@@ -2627,6 +2628,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             });
         }
 
+        // Issue #2543: self-throttle max_concurrency from aot-hot-update-health
+        // when health_bp < budget (storm / force-jit → split-batch cap=1, etc.).
+        // Advisory only — never hard-fails the batch.
+        {
+            const auto req = std::max<std::uint32_t>(policy.max_concurrency, 1);
+            const auto capped = aura::compiler::apply_hot_update_health_concurrency_cap(req);
+            policy.max_concurrency = capped;
+            if (capped < req) {
+                aura::orch::g_orch_module_stats.orch_hot_update_health_throttle_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
         const int workers = static_cast<int>(
             std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
         aura::serve::Scheduler sched(workers);
@@ -3711,6 +3724,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2540", aura::orch::kAgentMaxNoYieldIssue);
             insert_kv("issue-2540", aura::orch::kAgentMaxNoYieldIssue);
             insert_kv("agent-max-no-yield-wired", 1);
+            // Issue #2543: orch self-throttle over aot-hot-update-health.
+            insert_kv("orch-hot-update-health-throttle-total",
+                      static_cast<std::int64_t>(os.orch_hot_update_health_throttle_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("orch-hot-update-health-last-force-reason",
+                      os.orch_hot_update_health_last_force_reason.load(std::memory_order_relaxed));
+            insert_kv("orch-hot-update-health-checks-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::g_orch_hot_update_health_checks_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2543", aura::compiler::kAotHotUpdateHealthThrottleIssue);
+            insert_kv("issue-2543", aura::compiler::kAotHotUpdateHealthThrottleIssue);
+            insert_kv("orch-hot-update-health-throttle-wired", 1);
             insert_kv("join-drain-us-total", static_cast<std::int64_t>(os.join_drain_us_total.load(
                                                  std::memory_order_relaxed)));
             insert_kv("join-drain-default-ms",
