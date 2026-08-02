@@ -3826,6 +3826,10 @@ public:
     // AC3: had_moving_densify==false OR no linear → early true, zero new atomics.
     // Returns joint ok (linear && type). Bumps post_densify_linear_type_* counters.
     [[nodiscard]] bool run_post_densify_linear_type_revalidate(bool had_moving_densify) noexcept;
+    // Issue #2552: joint OccurrenceGoal + type_dep epoch fence after
+    // successful steal restamp or Moving densify (escape-clear path).
+    // Soft free when no live TypeChecker. Hard-fail steal must not call.
+    void note_type_freshness_after_steal_or_densify() noexcept;
     // Issue #356: is_env_frame_invalid — true if the frame's
     // version_ has been marked INVALID_VERSION by a post-rollback
     // invalidation pass. Distinct from is_env_frame_stale:

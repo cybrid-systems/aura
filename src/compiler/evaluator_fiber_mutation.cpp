@@ -2347,7 +2347,7 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
-// Issue #2203 / #2314 / #2351 / #2377 / #2510 / #2546: single mandatory
+// Issue #2203 / #2314 / #2351 / #2377 / #2510 / #2546 / #2552: single mandatory
 // steal-complete entry. Called from WorkerThread::try_steal_from on every
 // successful cross-worker steal (strong symbol linked). Production multi-
 // worker MUST link this strong def (Issue #2377) — weak no-op / null ABI
@@ -2363,6 +2363,8 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
 //        Hard/production mismatch → hard-fail (cancel + Done); no Ready enqueue
 //   5. Issue #2510: forced transactional restamp on success path
 //        (refresh_stale_frames_after_steal + StableNodeRef provenance restamp)
+//   5b. Issue #2552: type OccurrenceGoal + type_dep joint epoch fence
+//        (only on success; skipped after hard-fail)
 //   6. Escape-gate clear (#2507)
 //   7. Linear probe + outermost-enforced metrics
 //   8. Issue #2546: hard-AND residual GcDeferReason == 0 on success path
@@ -2544,6 +2546,10 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                 m->steal_complete_restamp_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // (5b) Issue #2552: joint type freshness fence after successful
+            // LayoutStamp/provenance restamp. Soft free when no live TC.
+            // Hard-fail path above skips this (AC2: goals preserved).
+            ev->note_type_freshness_after_steal_or_densify();
         }
     }
 

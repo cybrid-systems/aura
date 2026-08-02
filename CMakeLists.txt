@@ -3873,6 +3873,11 @@ aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)
 add_dependencies(all_test_issue_targets test_mailbox_hold_starvation_hard_2551)
 
+# Issue #2552: steal/densify joint OccurrenceGoal + type_dep freshness fence.
+aura_add_issue_test(test_type_freshness_steal_densify_2552)
+aura_issue_test_link_light(test_type_freshness_steal_densify_2552)
+add_dependencies(all_test_issue_targets test_type_freshness_steal_densify_2552)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

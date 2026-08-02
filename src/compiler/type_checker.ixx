@@ -1917,6 +1917,41 @@ export struct TypeChecker {
             cache_epoch_ = epoch;
         }
     }
+    // Issue #2552: joint steal/densify freshness fence for OccurrenceGoal
+    // + type_dep. On LayoutStamp-success restamp (or Moving densify that
+    // clears escape keys): advance cache_epoch → prune type_dep epoch
+    // edges + long-lived solve_delta_cs_ occurrence goals. Soft/hard-fail
+    // steal paths must NOT call this. AC4: same epoch → zero prune cost
+    // (returns 0, counters stable). Returns occurrence goals dropped.
+    // Bumps occurrence_goal_steal_prune_total / type_dep_steal_prune_total
+    // when an advance actually prunes.
+    std::size_t note_steal_or_densify_epoch_fence(std::uint64_t new_epoch) noexcept {
+        if (new_epoch == 0 || new_epoch == cache_epoch_)
+            return 0; // AC4: zero cost when epoch unchanged
+        // type_dep epoch prune via set_cache_epoch (records stale drops).
+        const auto edges_before = type_dep_graph_edge_count();
+        set_cache_epoch(new_epoch);
+        const auto edges_after = type_dep_graph_edge_count();
+        const auto edges_dropped = edges_before > edges_after ? edges_before - edges_after : 0;
+        // OccurrenceGoal prune on long-lived CS (sole authority for
+        // solve_delta_occurrence priority under multi-delta).
+        if (metrics_)
+            solve_delta_cs_.set_metrics(metrics_);
+        solve_delta_cs_.set_current_epoch(new_epoch);
+        const auto goals_dropped = solve_delta_cs_.prune_occurrence_goals(new_epoch);
+        if (metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(metrics_);
+            m->occurrence_goal_steal_prune_total.fetch_add(1, std::memory_order_relaxed);
+            if (goals_dropped > 0)
+                m->occurrence_goal_steal_prune_entries_total.fetch_add(goals_dropped,
+                                                                       std::memory_order_relaxed);
+            m->type_dep_steal_prune_total.fetch_add(1, std::memory_order_relaxed);
+            if (edges_dropped > 0)
+                m->type_dep_steal_prune_entries_total.fetch_add(edges_dropped,
+                                                                std::memory_order_relaxed);
+        }
+        return goals_dropped;
+    }
     // Issue #258: plumb the CompilerMetrics pointer through
     // to ConstraintSystem::solve_delta() for timing. Today
     // solve_delta isn't called from infer_flat_partial, so
