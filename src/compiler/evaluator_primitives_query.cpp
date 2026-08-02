@@ -7602,22 +7602,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #2282: query:dead-coercion-layered-stats. Hash view of the
+    // Issue #2282 / #2556: query:dead-coercion-layered-stats. Hash view of the
     // 3 layered dead-coercion elision sources (AST identity + IR CastOp DCE
     // + dirty-cone early-out), so Agents can compute "this mutate removed
     // N Casts" without joining multiple schemas:
     //   - dead-coercion-layered-total: ast_elided + ir_elided + dirty_cone_skips
     //   - ast-elided: g_dead_coercion_ast_elided_total (#1425 / #2025)
     //   - ir-elided: dead_coercion_ir_elided_total (#2025 / #2066)
-    //   - dirty-cone-skips: dead_coercion_dirty_cone_skips (#2106)
+    //   - dirty-cone-skips: dead_coercion_dirty_cone_skips (#2106 / #2556
+    //     CastOp sites outside type∪IR cone, or soft empty-cone count)
     //   - ir-narrow-evidence-hits: dead_coercion_ir_narrow_evidence_hits
     //   - pipeline-runs-total: dead_coercion_pipeline_runs_total
+    // Issue #2556 additive keys (schema-2556):
+    //   - dirty-cone-partial-runs / dirty-cone-cast-sites-scanned / full-scan-runs
     // Components stay individually queryable for additive schema lineage (AC4).
     ObservabilityPrims::register_stats_impl(
         "query:dead-coercion-layered-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7658,6 +7661,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t pipeline_runs =
                 ::aura::compiler::opt_registry::dead_coercion_pipeline_runs_total.load(
                     std::memory_order_relaxed);
+            const std::uint64_t partial_runs =
+                ::aura::compiler::opt_registry::dead_coercion_dirty_cone_partial_runs.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t cast_sites_scanned =
+                ::aura::compiler::opt_registry::dead_coercion_dirty_cone_cast_sites_scanned.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t full_scan_runs =
+                ::aura::compiler::opt_registry::dead_coercion_full_scan_runs.load(
+                    std::memory_order_relaxed);
             const std::uint64_t layered_total = ast_elided + ir_elided + dirty_cone_skips;
             insert_kv("dead-coercion-layered-total", static_cast<std::int64_t>(layered_total));
             insert_kv("ast-elided", static_cast<std::int64_t>(ast_elided));
@@ -7665,6 +7677,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("dirty-cone-skips", static_cast<std::int64_t>(dirty_cone_skips));
             insert_kv("ir-narrow-evidence-hits", static_cast<std::int64_t>(narrow_evidence));
             insert_kv("pipeline-runs-total", static_cast<std::int64_t>(pipeline_runs));
+            // Issue #2556 additive Agent keys (schema-2556).
+            insert_kv("schema-2556", 2556);
+            insert_kv("dirty-cone-partial-runs", static_cast<std::int64_t>(partial_runs));
+            insert_kv("dirty-cone-cast-sites-scanned",
+                      static_cast<std::int64_t>(cast_sites_scanned));
+            insert_kv("full-scan-runs", static_cast<std::int64_t>(full_scan_runs));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

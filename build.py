@@ -4973,6 +4973,25 @@ def cmd_transaction_guard_migration_coverage():
     return 0
 
 
+def cmd_dead_coercion_dirty_cone_coverage():
+    """Issue #2556: DeadCoercion DCE scan limited to type∪IR dirty cone.
+
+    CastOp sites outside the dirty cone bump dirty-cone-skips; soft empty
+    cone avoids dirty-mask allocation; full-scan path unchanged without cone.
+    """
+    print(f"{B}=== DCE dirty-cone scan limit coverage (#2556) ==={N}")
+    script = ROOT / "scripts" / "check_dead_coercion_dirty_cone_2556.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("DCE dirty-cone scan limit (#2556) coverage contract rows failed")
+        return 1
+    ok("DCE dirty-cone scan limit (#2556) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6142,6 +6161,7 @@ def cmd_gate():
         or cmd_type_freshness_steal_densify_coverage()
         or cmd_commit_readiness_score_coverage()
         or cmd_transaction_guard_migration_coverage()
+        or cmd_dead_coercion_dirty_cone_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
@@ -6950,6 +6970,7 @@ def main():
         "chaos-pr-hard-fail": cmd_chaos_pr_hard_fail_gate,
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
+        "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

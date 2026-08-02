@@ -522,6 +522,25 @@ inline thread_local std::vector<NodeId> t_last_type_cone_ast{};
     return t_last_type_cone_ast;
 }
 
+// Issue #2556: soft size of the hybrid type∪IR dirty cone for DCE Agents.
+// |last type AST cone| + non-AST dirty nodes (fn/block encodings). Zero
+// allocation; empty → 0 so DeadCoercionPass takes full-scan or soft-empty path.
+[[nodiscard]] inline std::size_t type_ir_union_cone_size() noexcept {
+    std::size_t ir_n = 0;
+    for (NodeId d : g_global_dirty.dirty_nodes()) {
+        if (!is_ast_dep_node(d))
+            ++ir_n;
+    }
+    return t_last_type_cone_ast.size() + ir_n;
+}
+
+// Issue #2556: true when type∪IR cone has any mark (partial DCE eligible).
+[[nodiscard]] inline bool type_ir_union_cone_nonempty() noexcept {
+    if (!t_last_type_cone_ast.empty())
+        return true;
+    return !g_global_dirty.dirty_nodes().empty();
+}
+
 [[nodiscard]] inline double type_ir_cone_union_size_avg() noexcept {
     const auto n = type_ir_cone_union_samples.load(std::memory_order_relaxed);
     if (n == 0)
