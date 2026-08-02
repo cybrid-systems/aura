@@ -5220,6 +5220,25 @@ def cmd_while_define_oneshot_coverage():
     return 0
 
 
+def cmd_module_export_display_coverage():
+    """Issue #2572: module-export multi-display ConstString pool.
+
+    cache_module must persist ir_cache_strings_ so call-site IR remaps
+    body string literals; JIT PrimDisplay uses tagged aura_display_value.
+    """
+    print(f"{B}=== module export multi-display coverage (#2572) ==={N}")
+    script = ROOT / "scripts" / "check_module_export_display_2572.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module export multi-display (#2572) coverage contract rows failed")
+        return 1
+    ok("module export multi-display (#2572) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6455,6 +6474,7 @@ def cmd_gate():
         or cmd_setcode_rebind_coverage()
         or cmd_module_load_tail_coverage()
         or cmd_while_define_oneshot_coverage()
+        or cmd_module_export_display_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7278,6 +7298,7 @@ def main():
         "setcode-rebind": cmd_setcode_rebind_coverage,
         "module-load-tail": cmd_module_load_tail_coverage,
         "while-define-oneshot": cmd_while_define_oneshot_coverage,
+        "module-export-display": cmd_module_export_display_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

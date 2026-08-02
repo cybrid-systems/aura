@@ -301,6 +301,7 @@ struct LLVMBuilder {
     llvm::Function* fn_prim_call = nullptr;
     llvm::Function* fn_display_int = nullptr;
     llvm::Function* fn_display_char = nullptr;
+    llvm::Function* fn_display_value = nullptr; // Issue #2572: tagged-value display
     llvm::Function* fn_newline = nullptr;
     llvm::Function* fn_epoch_acquire_fence = nullptr;
     llvm::Function* fn_linear_jit_safety = nullptr;
@@ -497,6 +498,11 @@ struct LLVMBuilder {
         fn_display_char =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, {i8_ty}, false),
                                    llvm::Function::ExternalLinkage, "aura_display_char", mod);
+
+        // Issue #2572: (display/write tagged-val) — not raw fprintf %ld
+        fn_display_value =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_display_value", mod);
 
         fn_newline = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                             llvm::Function::ExternalLinkage, "aura_newline", mod);
@@ -1877,9 +1883,15 @@ struct LLVMBuilder {
                         return true;
                     case PrimDisplay:
                     case PrimWrite:
-                        irb->CreateCall(llvm::FunctionCallee(fn_display_int),
-                                        llvm::ArrayRef<llvm::Value*>{a1});
-                        store(result_slot, a1);
+                        // Issue #2572: was aura_display_int (raw %ld of tagged bits)
+                        // so string constants printed as huge negatives and module
+                        // multi-display helpers looked like "msgmsg". Use tagged
+                        // display (string/bool/void/fixnum/float). write_mode=1
+                        // quotes strings. Result is void (special 11).
+                        irb->CreateCall(
+                            llvm::FunctionCallee(fn_display_value),
+                            llvm::ArrayRef<llvm::Value*>{a1, c64(prim_id == PrimWrite ? 1 : 0)});
+                        store(result_slot, c64(11)); // kSpecialVoid
                         bump_fastpath();
                         return true;
                     case PrimQuotient: {
@@ -2442,6 +2454,7 @@ uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
 void aura_display_int(int64_t);
 void aura_display_char(char);
+void aura_display_value(int64_t, int); // Issue #2572
 void aura_newline();
 void aura_jit_epoch_acquire_fence(void);
 void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint32_t opcode);
@@ -2834,6 +2847,7 @@ struct AuraJIT::Impl {
         reg("aura_hash_remove", (void*)aura_hash_remove);
         reg("aura_display_int", (void*)aura_display_int);
         reg("aura_display_char", (void*)aura_display_char);
+        reg("aura_display_value", (void*)aura_display_value); // Issue #2572
         reg("aura_newline", (void*)aura_newline);
         reg("aura_jit_epoch_acquire_fence", (void*)aura_jit_epoch_acquire_fence);
         reg("aura_jit_linear_post_invalidate_safety",

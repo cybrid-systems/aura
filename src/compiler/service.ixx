@@ -4069,8 +4069,12 @@ public:
                         break;
                     }
                 }
+                // Issue #2572: bind_in_env=false — load_module_file already
+                // injects TW closures for exports. Only cache IR (+ strings)
+                // here; do not overwrite env bindings. ConstString remap
+                // depends on ir_cache_strings_ (saved by cache_define).
                 auto bind_result = cache_define(source, flat, pool, node_id, fname,
-                                                /*bind_in_env=*/true, name);
+                                                /*bind_in_env=*/false, name);
                 if (!bind_result)
                     return bind_result;
                 user_bindings_.insert(fname);
@@ -4090,8 +4094,9 @@ public:
                 if (flat.get(body_id).tag == aura::ast::NodeTag::Lambda) {
                     if (ir_cache_.count(fname))
                         continue;
+                    // Issue #2572: bind_in_env=false (module already injected TW).
                     auto result = cache_define(source, flat, pool, node_id, fname,
-                                               /*bind_in_env=*/true, name);
+                                               /*bind_in_env=*/false, name);
                     if (!result)
                         return result;
                     user_bindings_.insert(fname);
@@ -7115,6 +7120,15 @@ public:
             }
             ir_cache_[name] = std::move(bundle);
             ir_cache_bridge_[name] = std::move(bridge_bundle);
+            // Issue #2572: persist the module's ConstString pool with the
+            // cached IR. Without this, call-site lower_to_ir_with_cache
+            // copies the function but cannot remap ConstString indices
+            // into the new IRModule::string_pool — body literals such as
+            // "[flux] " resolve against the caller's pool and multi-
+            // (display …) in exported helpers prints garbled/duplicated
+            // args (e.g. "hello-oncehello-once" instead of "[flux] hello-once").
+            // cache_define already stores ir_cache_strings_; mirror it here.
+            ir_cache_strings_[name] = ir_mod.string_pool;
             // Self-referencing cached functions need tree-walker fallback
             user_bindings_.insert(name);
             function_sources_[name] = content;
