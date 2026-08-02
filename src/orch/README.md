@@ -6,7 +6,8 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 
 | Primitive | Calling convention | Result |
 |-----------|-------------------|--------|
-| `(orch:spawn-agent name [thunk] [:attach-mailbox bool] [:high-water n] [:keepalive-interval-ms n])` | `name` string; optional 0-arg thunk; optional keywords | hash `{ok, id, name, schema=1588, schema-2011, quota-exceeded[, error]}`; **quota reject → typed Aura error** |
+| `(orch:spawn-agent name [thunk] [:attach-mailbox bool] [:high-water n] [:keepalive-interval-ms n] [:max-no-yield-ms n])` | `name` string; optional 0-arg thunk; optional keywords | hash `{ok, id, name, schema=1588, schema-2011, quota-exceeded[, error]}`; **quota reject → typed Aura error** |
+| `(orch:agent-poll name)` | Issue #2540 coop yield edge | hash `{ok, yielded, schema-2540}` — forces `Fiber::yield` when `max_no_yield_ms` window elapsed |
 | `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid) |
 | `(orch:agent-send name payload)` | payload string/int/bool | hash `{ok, status, schema}` (`status` = ok/backpressure/closed); unknown agent → error |
 | `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` |
@@ -215,6 +216,36 @@ Rules (per Issue #2229 AC2-AC3):
 4. Optional Phase C (`CircuitBreaker` mirror of #2007) is deferred
    — the `consecutive_stall_limit` cap is the simpler version of
    the same idea and ships in #2229.
+
+### Cooperative yield contract (Issue #2540)
+
+Long-running LLM-style agent bodies that never yield starve cancel/steal/GC
+and force residual hard-reclaim (#2227 / #2533). Optional **`AgentSpec.max_no_yield_ms`**
+(default **0 = off**, zero cost) documents a cooperative budget; bodies call
+`agent_poll()` / `orch:agent-poll` (or `note_agent_progress` / `orch:agent-touch`)
+so a `Fiber::yield` runs when the window elapses.
+
+```cpp
+AgentSpec spec{.name = "worker", .max_no_yield_ms = 10};
+spec.body = [] {
+    for (;;) {
+        if (g_current_fiber && g_current_fiber->is_cancel_requested())
+            break;
+        // work...
+        (void)aura::orch::agent_poll(); // forced yield if window elapsed
+    }
+};
+```
+
+| Setting | Behaviour |
+|---------|-----------|
+| `max_no_yield_ms == 0` | identical to pre-#2540 (no coop state, poll no-op) |
+| `max_no_yield_ms > 0` | spawn installs `AgentCoopYield`; poll yields after window |
+
+Metrics: `agent-forced-yield-total`, `schema-2540`, `agent-max-no-yield-wired`.
+Complements residual force-safepoint (#2533): cooperate first, hard-reclaim second.
+
+Regression: `tests/orch/test_agent_max_no_yield_2540`.
 
 ### FailurePolicy ↔ AgentFailurePolicy bridge (Issue #2539)
 

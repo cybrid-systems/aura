@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**536** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**537** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 98 primitives (18%)
-- **core**: 381 primitives (71%)
+- **core**: 382 primitives (71%)
 - **internal-observable**: 49 primitives (9%)
 - **convenience**: 8 primitives (1%)
 
@@ -542,10 +542,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
-## Orch: (9)
+## Orch: (10)
 
 - `orch:agent-ask` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-poll` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-recv` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-reply` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-send` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -792,7 +793,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (381)
+### Core builtins (must remain primitive) (382)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -986,6 +987,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `number?` — `src/compiler/evaluator_primitives_core.cpp`
 - `orch:agent-ask` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-poll` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-recv` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-reply` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-send` — `src/compiler/evaluator_primitives_agent.cpp`

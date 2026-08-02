@@ -2863,6 +2863,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             bool attach_mailbox = true;
             std::size_t high_water = 256;
             std::uint32_t keepalive_interval_ms = 0;
+            std::uint32_t max_no_yield_ms = 0; // Issue #2540
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -2875,6 +2876,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
                            types::is_int(val)) {
                     keepalive_interval_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "max-no-yield-ms" || k == "max_no_yield_ms") &&
+                           types::is_int(val)) {
+                    // Issue #2540: cooperative yield budget (0 = off).
+                    max_no_yield_ms =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
@@ -2915,6 +2921,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.attach_mailbox = attach_mailbox;
             spec.mailbox_high_water = high_water;
             spec.keepalive_interval_ms = keepalive_interval_ms;
+            spec.max_no_yield_ms = max_no_yield_ms; // Issue #2540
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
             const bool ok = handle.ok;
@@ -3293,7 +3300,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (attach_mailbox=#f + keepalive_interval_ms > 0). Updates the shared
     // last_keepalive_us clock so watch_agent_liveness can distinguish Alive
     // vs Stalled. No-op for MailboxKeepalive (host helper owns the clock)
-    // or Off (no liveness).
+    // or Off (no liveness). Issue #2540: also a recommended coop poll edge.
     add("orch:agent-touch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -3313,6 +3320,33 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"schema", make_int(1588)},
             {"schema-2008", make_int(2008)},
             {"schema-2080", make_int(2080)},
+            {"schema-2540", make_int(aura::orch::kAgentMaxNoYieldIssue)},
+        };
+        return build_orch_hash(kv);
+    });
+
+    // Issue #2540: cooperative yield poll for long-running agent bodies.
+    // (orch:agent-poll name) → hash {ok, yielded, schema-2540}.
+    // Forces Fiber::yield when max_no_yield_ms window elapsed; no-op when 0.
+    add("orch:agent-poll", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-poll: usage (orch:agent-poll name)",
+                                        ev.primitive_error_counter_ptr());
+        }
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        auto* hp = ev.agent_names_->find(name);
+        if (!hp || !hp->ok) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-poll: unknown agent",
+                                        ev.primitive_error_counter_ptr());
+        }
+        const bool yielded = aura::orch::agent_poll(*hp);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(true)},
+            {"yielded", make_bool(yielded)},
+            {"schema", make_int(aura::orch::kAgentMaxNoYieldIssue)},
+            {"schema-2540", make_int(aura::orch::kAgentMaxNoYieldIssue)},
         };
         return build_orch_hash(kv);
     });
@@ -3670,6 +3704,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2533", 2533);
             insert_kv("issue-2533", 2533);
             insert_kv("residual-force-safepoint-wired", 1);
+            // Issue #2540: cooperative yield contract (max_no_yield_ms).
+            insert_kv("agent-forced-yield-total",
+                      static_cast<std::int64_t>(
+                          os.agent_forced_yield_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2540", aura::orch::kAgentMaxNoYieldIssue);
+            insert_kv("issue-2540", aura::orch::kAgentMaxNoYieldIssue);
+            insert_kv("agent-max-no-yield-wired", 1);
             insert_kv("join-drain-us-total", static_cast<std::int64_t>(os.join_drain_us_total.load(
                                                  std::memory_order_relaxed)));
             insert_kv("join-drain-default-ms",
