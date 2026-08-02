@@ -6594,6 +6594,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-sampled-insert-policy-wired", 1);
             insert_kv("schema-2317", 2317);
             insert_kv("issue-2317", 2317);
+            // Issue #2562: dual-field (pred+mid) require-or-drop under
+            // production / Full / AURA_COERCION_DUAL_REQUIRE.
+            {
+                const std::int64_t dual_drop = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_dual_require_drop_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("coercion-dual-require-drop-total", dual_drop);
+                insert_kv("coercion_dual_require_drop_total", dual_drop);
+                insert_kv("coercion-dual-require-enabled",
+                          aura::compiler::coercion_dual_require_active() ? 1 : 0);
+                insert_kv(
+                    "coercion-dual-require-wired",
+                    static_cast<std::int64_t>(aura::compiler::g_coercion_dual_require_wired.load(
+                        std::memory_order_relaxed)));
+                insert_kv("schema-2562", 2562);
+                insert_kv("issue-2562", 2562);
+            }
             // Issue #2318: anti-starvation streak gate. N consecutive
             // truncated delta solves → force one full ConstraintSystem::
             // solve() (mirror #2277 escalation body). Reads from the
@@ -7696,7 +7713,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         "query:dead-coercion-layered-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7759,6 +7776,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("dirty-cone-cast-sites-scanned",
                       static_cast<std::int64_t>(cast_sites_scanned));
             insert_kv("full-scan-runs", static_cast<std::int64_t>(full_scan_runs));
+            // Issue #2562: dual-require drop observability (layered dead-coercion
+            // + dual gate for Agent pre-check / insert integrity).
+            insert_kv(
+                "coercion-dual-require-drop-total",
+                static_cast<std::int64_t>(aura::compiler::g_coercion_dual_require_drop_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("coercion-dual-require-enabled",
+                      aura::compiler::coercion_dual_require_active() ? 1 : 0);
+            insert_kv("coercion-dual-require-wired", 1);
+            insert_kv("schema-2562", 2562);
+            insert_kv("issue-2562", 2562);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -7842,6 +7870,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           std::memory_order_relaxed)));
             insert_kv("schema-2561", 2561);
             insert_kv("issue-2561", 2561);
+            // Issue #2562: dual-require gate keys (completeness pre-check).
+            insert_kv(
+                "coercion-dual-require-drop-total",
+                static_cast<std::int64_t>(aura::compiler::g_coercion_dual_require_drop_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("coercion-dual-require-enabled",
+                      aura::compiler::coercion_dual_require_active() ? 1 : 0);
+            insert_kv("schema-2562", 2562);
+            insert_kv("issue-2562", 2562);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
