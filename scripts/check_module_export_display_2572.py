@@ -53,6 +53,11 @@ def main() -> int:
     must("aura_display_value", "AC3", jit_rt)
     must("#2572", "AC3", jit_rt)
     must("PrimDisplay", "AC3", jit)
+    # Standalone --emit-binary links only lib/runtime.c (not aura_jit_runtime.cpp).
+    # Missing symbol → emit:display / p0 aot / bash emit suite link failures.
+    aot_rt = _read("lib/runtime.c")
+    must("aura_display_value", "AC3-aot", aot_rt)
+    must("#2572", "AC3-aot", aot_rt)
 
     must("ac1_exported_multi_display", "AC4", test)
     must("test_module_export_display_2572", "AC4", cmake)
