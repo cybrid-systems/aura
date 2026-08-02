@@ -448,12 +448,37 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             context_.metrics->compiler_closure_safe_fallbacks.fetch_add(1,
                                                                         std::memory_order_relaxed);
         }
-        if (auto tw = context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
-            return *tw;
-        return std::unexpected(
-            Diagnostic{ErrorKind::InvalidClosure,
-                       "stale IR closure after mutation (bridge_epoch/env_version mismatch)"}
-                .with_suggestion("re-run (eval-current) after mutate"));
+        // Issue #2569: soft-recover IR closures whose func body is still in
+        // this module after an unrelated mutate:rebind / mark_define_dirty
+        // global epoch bump. Top-level helpers (bump, hash telemetry) are
+        // IR-define bound; without restamp they hard-fail while score rebinds.
+        // Only restamp when the IR function is still present — cleared views
+        // (func_id OOB / empty module) still refuse.
+        if (closure.func_id < module_.functions.size()) {
+            closure.bridge_epoch = context_.evaluator->current_bridge_epoch();
+            const auto defuse = context_.evaluator->defuse_version();
+            if (defuse != 0)
+                closure.env_version = defuse;
+            constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
+            if (closure.env_id != kNullEnv) {
+                const auto eid = static_cast<EnvId>(closure.env_id);
+                if (context_.evaluator->is_valid_env_id(eid))
+                    context_.evaluator->refresh_stale_frame_in_walk(
+                        eid, "ir_call_closure_soft_recover_2569");
+            }
+            if (context_.metrics)
+                context_.metrics->live_closure_epoch_restamp_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            // Fall through to IR dispatch with restamped epochs.
+        } else {
+            if (auto tw =
+                    context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
+                return *tw;
+            return std::unexpected(
+                Diagnostic{ErrorKind::InvalidClosure,
+                           "stale IR closure after mutation (bridge_epoch/env_version mismatch)"}
+                    .with_suggestion("re-run (eval-current) after mutate"));
+        }
     }
     if (context_.metrics && closure.bridge_epoch != 0)
         context_.metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);

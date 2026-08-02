@@ -5163,6 +5163,25 @@ def cmd_symbol_eq_coverage():
     return 0
 
 
+def cmd_setcode_rebind_coverage():
+    """Issue #2569: set-code / mutate:rebind must not kill unimpacted state.
+
+    Soft expire restamps IR/TW closures with live bodies; hash-ref 3-arg
+    honors default (no MakePair packing). Aether closed-loop telemetry.
+    """
+    print(f"{B}=== set-code/rebind survival coverage (#2569) ==={N}")
+    script = ROOT / "scripts" / "check_setcode_rebind_2569.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("set-code/rebind (#2569) coverage contract rows failed")
+        return 1
+    ok("set-code/rebind (#2569) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6381,6 +6400,7 @@ def cmd_gate():
         or cmd_module_require_freevar_coverage()
         or cmd_try_catch_bind_coverage()
         or cmd_symbol_eq_coverage()
+        or cmd_setcode_rebind_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7201,6 +7221,7 @@ def main():
         "module-require-freevar": cmd_module_require_freevar_coverage,
         "try-catch-bind": cmd_try_catch_bind_coverage,
         "symbol-eq": cmd_symbol_eq_coverage,
+        "setcode-rebind": cmd_setcode_rebind_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

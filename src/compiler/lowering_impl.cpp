@@ -729,29 +729,35 @@ static std::uint32_t lower_flat_expr(
                         {"pair?", PrimId::PairP},
                         {"null?", PrimId::NullP},
                     };
-                // Hash operations: emit inline opcodes (avoid PrimCall dispatch)
-                static const std::unordered_map<std::string, IROpcode,
-                                                aura::core::TransparentStringHash, std::equal_to<>>
-                    hash_op_map = {
-                        {"hash-ref", IROpcode::HashRef},
-                        {"hash-set!", IROpcode::HashSet},
-                        {"hash-remove!", IROpcode::HashRemove},
-                    };
-                auto hop = hash_op_map.find(std::string(callee_name));
-                if (hop != hash_op_map.end()) {
+                // Hash operations: emit inline opcodes (avoid PrimCall dispatch).
+                // Issue #2569: (hash-ref h k default) has 4 children but must NOT
+                // share the MakePair packing used by (hash-set! h k v) — that
+                // path treated the default as a value, built (k . default) as
+                // the "key", and HashRef looked up a pair → always miss → ().
+                // 2-arg hash-ref / hash-remove! → HashRef/HashRemove.
+                // 3-arg hash-ref (with default) → general Call (prim honors default).
+                // hash-set! with 3 data args keeps MakePair packing.
+                if ((callee_name == "hash-ref" || callee_name == "hash-remove!" ||
+                     callee_name == "hash-set!") &&
+                    !(callee_name == "hash-ref" && v.children.size() >= 4) &&
+                    v.children.size() >= 3) {
+                    IROpcode hop = callee_name == "hash-set!"
+                                       ? IROpcode::HashSet
+                                       : (callee_name == "hash-remove!" ? IROpcode::HashRemove
+                                                                        : IROpcode::HashRef);
                     auto result_slot = state.alloc_local();
                     auto hash_slot =
                         lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
                     auto key_slot =
                         lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
-                    if (v.children.size() >= 4) {
+                    if (callee_name == "hash-set!" && v.children.size() >= 4) {
                         auto val_slot =
                             lower_flat_expr(state, flat, pool, v.child(3), cache, cache_hits);
                         auto pair_slot = state.alloc_local();
                         state.emit(IROpcode::MakePair, pair_slot, key_slot, val_slot);
-                        state.emit(hop->second, result_slot, hash_slot, pair_slot);
+                        state.emit(hop, result_slot, hash_slot, pair_slot);
                     } else {
-                        state.emit(hop->second, result_slot, hash_slot, key_slot);
+                        state.emit(hop, result_slot, hash_slot, key_slot);
                     }
                     return result_slot;
                 }

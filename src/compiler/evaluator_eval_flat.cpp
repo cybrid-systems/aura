@@ -537,14 +537,58 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 // Issue #1525: multi-fiber safe fallback tally.
                 metrics->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
             }
-            // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
-            if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
-                                                             metrics, &cl_copy))
-                return bridged;
-            if (metrics)
-                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-            bump_compiler_root_dangling_prevented();
-            return std::nullopt;
+            // Issue #2569: soft-recover unimpacted tree-walker closures after
+            // global bridge/defuse epoch bumps from mutate:rebind / set-code of
+            // *other* defines. If flat/pool/body are still addressable and the
+            // EnvFrame is not terminally INVALID, re-stamp epochs and proceed
+            // with eval_flat — do not require IR bridge (top-level helpers
+            // often have none). Missing flat still goes through bridge/refuse.
+            // Do not require flat->is_valid(gen): workspace COW gen bumps must
+            // not kill unrelated eval-arena closures.
+            const bool body_live = cl_copy.flat && cl_copy.pool &&
+                                   cl_copy.body_id != aura::ast::NULL_NODE &&
+                                   cl_copy.body_id < cl_copy.flat->size();
+            // Terminal = OOB/NULL frame id, or frame.version_ == INVALID_VERSION.
+            // Version-stale alone is refreshable (refresh_stale_frame_in_walk).
+            bool env_terminal = false;
+            if (cl_copy.env_id != NULL_ENV_ID) {
+                if (!is_valid_env_id(cl_copy.env_id))
+                    env_terminal = true;
+                else {
+                    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+                    if (cl_copy.env_id < env_frames_.size() &&
+                        env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
+                        env_terminal = true;
+                }
+            }
+            if (body_live && !env_terminal && !cl_copy.must_deopt_before_next_call) {
+                {
+                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    auto it = closures_.find(cid);
+                    if (it != closures_.end()) {
+                        stamp_closure_bridge_epoch(it->second);
+                        cl_copy = it->second;
+                    } else {
+                        stamp_closure_bridge_epoch(cl_copy);
+                    }
+                }
+                if (cl_copy.env_id != NULL_ENV_ID && is_valid_env_id(cl_copy.env_id))
+                    refresh_stale_frame_in_walk(cl_copy.env_id, "apply_closure_soft_recover_2569");
+                if (metrics) {
+                    metrics->live_closure_epoch_restamp_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                }
+                // Fall through to materialize + eval_flat with restamped epochs.
+            } else {
+                // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
+                if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                                 metrics, &cl_copy))
+                    return bridged;
+                if (metrics)
+                    metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                bump_compiler_root_dangling_prevented();
+                return std::nullopt;
+            }
         }
         // Issue #145 Phase 2.3 — materialize the call env from
         // the SoA arena (env_frames_[cl.env_id]) -- legacy cl.env pointer path removed in P0.
@@ -652,13 +696,49 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     bump_stale_closure_prevented();
                     bump_closure_epoch_mismatch_fallback();
                     bump_compiler_live_closure_stale_prevented();
-                    // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
-                    if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid,
-                                                                     args, metrics, &cl_copy))
-                        return bridged;
-                    if (metrics)
-                        metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-                    return std::nullopt;
+                    // Issue #2569: race-window soft-recover when body AST still live
+                    // (same policy as pre-materialize path).
+                    const bool race_body_live = cl_copy.flat && cl_copy.pool &&
+                                                cl_copy.body_id != aura::ast::NULL_NODE &&
+                                                cl_copy.body_id < cl_copy.flat->size();
+                    bool race_env_terminal = false;
+                    if (cl_copy.env_id != NULL_ENV_ID) {
+                        if (!is_valid_env_id(cl_copy.env_id))
+                            race_env_terminal = true;
+                        else {
+                            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+                            if (cl_copy.env_id < env_frames_.size() &&
+                                env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
+                                race_env_terminal = true;
+                        }
+                    }
+                    if (race_body_live && !race_env_terminal) {
+                        {
+                            std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                            auto it = closures_.find(cid);
+                            if (it != closures_.end()) {
+                                stamp_closure_bridge_epoch(it->second);
+                                cl_copy = it->second;
+                            } else {
+                                stamp_closure_bridge_epoch(cl_copy);
+                            }
+                        }
+                        if (cl_copy.env_id != NULL_ENV_ID && is_valid_env_id(cl_copy.env_id))
+                            refresh_stale_frame_in_walk(cl_copy.env_id,
+                                                        "apply_closure_race_soft_recover_2569");
+                        if (metrics)
+                            metrics->live_closure_epoch_restamp_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        // Continue to eval_flat below.
+                    } else {
+                        // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
+                        if (auto bridged = invoke_closure_bridge_checked(
+                                *this, closure_bridge_, cid, args, metrics, &cl_copy))
+                            return bridged;
+                        if (metrics)
+                            metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                        return std::nullopt;
+                    }
                 }
             }
             if (metrics)
