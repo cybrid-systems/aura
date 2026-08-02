@@ -267,8 +267,13 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                     return as_float(x) == as_float(y);
                 if (is_bool(x) && is_bool(y))
                     return as_bool(x) == as_bool(y);
+                // Issue #2568: quoted symbols are string-heap values; equal?
+                // compares by content so same-name symbols/strings match even
+                // if intern paths produced distinct indices (defense in depth).
                 if (is_string(x) && is_string(y)) {
                     auto xi = as_string_idx(x), yi = as_string_idx(y);
+                    if (xi == yi)
+                        return true;
                     if (xi < e.string_heap_.size() && yi < e.string_heap_.size())
                         return e.string_heap_[xi] == e.string_heap_[yi];
                     return false;

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 739 | Preferred destination suites |
-| **Total scanned** | **739** | |
+| `tests/core/test_*.cpp` | 740 | Preferred destination suites |
+| **Total scanned** | **740** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 213 | 213 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 86 | 86 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 19 | 19 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
@@ -831,6 +831,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_subtype_constraint_meet_2195.cpp`
 - `tests/core/test_summary_flags_guard_2415.cpp`
 - `tests/core/test_summary_recompute_sym_2414.cpp`
+- `tests/compiler/test_symbol_eq_2568.cpp`
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp`
 - `tests/compiler/test_sys_open_path_harden_2487.cpp`
 - `tests/core/test_tag_arity_index_lock_2419.cpp`
@@ -1362,13 +1363,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (40)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (41)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (40)
+#### domain/ (41)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1410,6 +1411,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp` (#2239) [domain_suite, theme_compiler] — AC1: source cites #2239; counters + v_read accessors + helper +
 - `tests/compiler/test_rollback_by_marker_2237.cpp` (#2237) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_symbol_eq_2568.cpp` (#2568) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 
 ### `jit_incremental` — JIT / AOT / incremental relower (72)
 

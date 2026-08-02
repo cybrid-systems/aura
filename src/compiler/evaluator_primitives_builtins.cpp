@@ -172,8 +172,20 @@ Primitives::Primitives() {
                 return a[i];
         return a.empty() ? make_int(0) : a.back();
     };
+    // Issue #2568: bit-identity first; for strings (quoted symbols are
+    // string-heap interned) fall back to index equality which is identity
+    // after #2568 intern fix. Content equality for strings is equal?.
     table_["eq?"] = [](std::span<const EvalValue> a) {
-        return make_bool(a.size() >= 2 && a[0] == a[1]);
+        if (a.size() < 2)
+            return make_bool(false);
+        if (a[0] == a[1])
+            return make_bool(true);
+        // String/symbol: same heap index ⇒ same interned name (eq? #t).
+        // Different indices with same content: equal? is #t, eq? stays #f
+        // only if intern failed — after #2568 intern, same name ⇒ same idx.
+        if (is_string(a[0]) && is_string(a[1]))
+            return make_bool(as_string_idx(a[0]) == as_string_idx(a[1]));
+        return make_bool(false);
     };
     table_["current-time"] = [](std::span<const EvalValue> a) {
         (void)a;

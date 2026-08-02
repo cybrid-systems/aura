@@ -2355,6 +2355,18 @@ public:
                 user_bindings_.insert(std::string(name));
                 return EvalResult(types::make_void());
             }
+            // Issue #2568 / #2213: Quote body must tree-walk BEFORE IR bind.
+            // IR Quote-of-Variable used to fall through to variable lookup
+            // (unbound → 0), and bind_value_define_via_ir "succeeded" with
+            // that 0 — so `(define d 'commit)` bound fixnum 0 and never
+            // reached the Quote special-case below. ast_to_data interns the
+            // symbol on the string heap so eq?/equal? work with later quotes.
+            if (body_node.tag == aura::ast::NodeTag::Quote) {
+                auto result =
+                    evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+                user_bindings_.insert(std::string(name));
+                return result;
+            }
             // Issue #272 Cycle 3: value define via IR when the body is lowerable.
             if (!define_body_needs_tree_walker_fallback(*flat_ptr, *pool_ptr, body_id,
                                                         std::string(name))) {
@@ -2372,20 +2384,6 @@ public:
                 auto ci = bind_define_value_in_env(std::string(name), *const_val);
                 ir_value_cell_bindings_[std::string(name)] = ci;
                 return *const_val;
-            }
-            // Issue #2213 follow-up (lyapunov-fact demo 2026-07-28):
-            // Quote body is literal data — IR lowering + try_const_eval may
-            // not handle it cleanly, but tree-walker's eval_flat returns the
-            // quoted value natively. Skip the gate below (which is for bodies
-            // that genuinely need tree-walker fallback) and go straight to
-            // tree-walker for env persistence. Without this, `(define X
-            // (quote ...))` hits the value-define HardError and Aura REPL
-            // reports to stderr (runner reads stdout only) → 30s timeout.
-            if (body_node.tag == aura::ast::NodeTag::Quote) {
-                auto result =
-                    evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
-                user_bindings_.insert(std::string(name));
-                return result;
             }
             // Issue #2213: value-define tree-walker fallback is also gated.
             // Body needed walker or IR bind failed — under Forbidden hard-fail;
