@@ -3903,6 +3903,11 @@ aura_add_issue_test(test_coercion_prov_slo_2558)
 aura_issue_test_link_light(test_coercion_prov_slo_2558)
 add_dependencies(all_test_issue_targets test_coercion_prov_slo_2558)
 
+# Issue #2559: three-layer linear invariant wire inventory gate
+aura_add_issue_test(test_linear_three_layer_wire_2559)
+aura_issue_test_link_light(test_linear_three_layer_wire_2559)
+add_dependencies(all_test_issue_targets test_linear_three_layer_wire_2559)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

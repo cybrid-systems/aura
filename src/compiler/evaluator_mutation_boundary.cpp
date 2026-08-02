@@ -571,8 +571,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 const bool strict_sandbox = aura::core::sandbox::is_strict();
                 const bool hard_gate = typed_audit::requires_invariant_hard_gate(
                     nodes_changed, linear_hint, strict_sandbox, match_sites);
-                // Issue #2514 / #2545: unified linear force entry is single
-                // rollback authority for synth + sticky post-mutate / escape.
+                // Issue #2514 / #2545 / Issue #2559: unified linear force entry
+                // is single rollback authority for synth + sticky post-mutate /
+                // escape (three-layer type-half inventory site).
                 // Decision table (see force_linear_rollback / typecheck):
                 //   SynthHardFail (prod/strict) → force + skip soft recovery
                 //   Soft Warning only           → no force; continue audit below
@@ -1907,16 +1908,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2353: true only when Moving densify actually relocated live objects
         // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
         bool had_moving_densify = false;
-        // Issue #2499: densify-call RootRemap axis (last-call fail totals == 0).
+        // Issue #2499 / #2559: densify-call RootRemap axis (last-call fail totals
+        // == 0). Three-layer memory inventory: pin ∧ root_remap ∧ scan_fail.
         // Soft / no Moving → vacuous true. Used for DensifyConsistencyReport so
         // force_reason reports "root_remap" when only RootRemap fails (not "pin").
         bool densify_root_remap_call_ok = true;
         // Pin axis for the report (pin-verify only when RootRemap fails alone).
         bool densify_pin_axis_ok = true;
-        // Issue #2497: baseline ownership-scan fail counter BEFORE the Moving
-        // densify window opens. Any fail delta across compact + pairing + injected
-        // tests must suppress Phase 5 success the same way pin_contract_held does
-        // (no path where scan fail is metrics-only — mirrors #2266 fail-closed).
+        // Issue #2497 / #2559: baseline ownership-scan fail counter BEFORE the
+        // Moving densify window opens. Any fail delta across compact + pairing
+        // + injected tests must suppress Phase 5 success the same way
+        // pin_contract_held does (no path where scan fail is metrics-only —
+        // mirrors #2266 fail-closed). Cross-layer inventory gate: #2559.
         std::uint64_t scan_fail_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
             // Issue #2497: snapshot densify-ownership-scan fail baseline before
