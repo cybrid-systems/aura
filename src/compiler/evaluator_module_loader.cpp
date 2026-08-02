@@ -413,13 +413,17 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         if (tf) {
             std::string line;
             while (std::getline(tf, line)) {
-                // 格式: "name: param1 param2 -> rettype"
-                // 例如 "add: Int Int -> Int"
-                auto colon = line.find(':');
-                if (colon == std::string::npos)
-                    continue;
-                auto arrow = line.find("->", colon);
+                // Format: "name: param1 param2 -> rettype"
+                // e.g. "add: Int Int -> Int"
+                // Issue #2578: namespaced names contain ':' (orch:parallel).
+                // Find "->" first, then the *last* ':' before the arrow as
+                // the name/params separator — first-colon split mis-parses
+                // "orch:parallel: Any Any -> Any" as name="orch".
+                auto arrow = line.find("->");
                 if (arrow == std::string::npos)
+                    continue;
+                auto colon = line.rfind(':', arrow);
+                if (colon == std::string::npos)
                     continue;
                 auto name = line.substr(0, colon);
                 name.erase(name.find_last_not_of(" \t\r") + 1);
@@ -462,6 +466,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                         param_str += " ";
                     param_str += "Any";
                 }
+                // Issue #2578 / Aether H6: dotted-rest closures (a b . rest)
+                // — mark with trailing "..." so inject_type_sigs sets
+                // FuncType.variadic (min arity = n-1).
+                if (cit->second.dotted)
+                    param_str += " ...";
                 param_str += " ";
             }
             declared_type_sigs_[fname] = {

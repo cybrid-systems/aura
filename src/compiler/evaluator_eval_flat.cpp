@@ -497,34 +497,81 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         }
         // Issue #2128: MustDeoptBeforeNextCall — force safe path; never
         // silently eval pre-reemit body after a failed live remount.
+        // Issue #2578 / #2581: when body AST is still live (module / tree-
+        // walker closures after unimpacted rebind), soft-recover like #2569
+        // instead of poisoning bridge_epoch=0 (which emptied capture Env
+        // and unbound private free-vars e.g. orch-yield-safe).
         if (cl_copy.must_deopt_before_next_call) {
-            {
-                std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-                auto it = closures_.find(cid);
-                if (it != closures_.end() && it->second.must_deopt_before_next_call) {
-                    it->second.must_deopt_before_next_call = false;
-                    // Poison bridge so dual-path also refuses stale views.
-                    it->second.bridge_epoch = 0;
-                    cl_copy = it->second;
-                    if (metrics)
-                        metrics->must_deopt_force_deopt_success_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                } else if (metrics) {
-                    metrics->must_deopt_force_deopt_success_total.fetch_add(
-                        1, std::memory_order_relaxed);
+            const bool body_live_md = cl_copy.flat && cl_copy.pool &&
+                                      cl_copy.body_id != aura::ast::NULL_NODE &&
+                                      cl_copy.body_id < cl_copy.flat->size();
+            bool env_terminal_md = false;
+            if (cl_copy.env_id != NULL_ENV_ID) {
+                if (!is_valid_env_id(cl_copy.env_id))
+                    env_terminal_md = true;
+                else {
+                    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+                    if (cl_copy.env_id < env_frames_.size() &&
+                        env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
+                        env_terminal_md = true;
                 }
             }
-            if (metrics) {
-                metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
-                metrics->closure_safe_fallback_apply_count_total.fetch_add(
-                    1, std::memory_order_relaxed);
+            if (body_live_md && !env_terminal_md) {
+                {
+                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    auto it = closures_.find(cid);
+                    if (it != closures_.end()) {
+                        it->second.must_deopt_before_next_call = false;
+                        stamp_closure_bridge_epoch(it->second);
+                        cl_copy = it->second;
+                    } else {
+                        cl_copy.must_deopt_before_next_call = false;
+                        stamp_closure_bridge_epoch(cl_copy);
+                    }
+                }
+                if (cl_copy.env_id != NULL_ENV_ID && is_valid_env_id(cl_copy.env_id))
+                    refresh_stale_frame_in_walk(cl_copy.env_id,
+                                                "apply_closure_must_deopt_soft_2581");
+                if (metrics) {
+                    metrics->must_deopt_force_deopt_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics->live_closure_epoch_restamp_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                }
+                // Fall through to materialize + eval_flat with restamped epochs.
+            } else {
+                {
+                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    auto it = closures_.find(cid);
+                    if (it != closures_.end() && it->second.must_deopt_before_next_call) {
+                        it->second.must_deopt_before_next_call = false;
+                        // Poison bridge so dual-path also refuses stale views.
+                        it->second.bridge_epoch = 0;
+                        cl_copy = it->second;
+                        if (metrics)
+                            metrics->must_deopt_force_deopt_success_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    } else if (metrics) {
+                        metrics->must_deopt_force_deopt_success_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+                if (metrics) {
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    metrics->closure_safe_fallback_apply_count_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                                 metrics, &cl_copy))
+                    return bridged;
+                if (metrics)
+                    metrics->must_deopt_force_deopt_fail_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                return std::nullopt;
             }
-            if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
-                                                             metrics, &cl_copy))
-                return bridged;
-            if (metrics)
-                metrics->must_deopt_force_deopt_fail_total.fetch_add(1, std::memory_order_relaxed);
-            return std::nullopt;
         }
         // Issue #681: epoch + EnvFrame version pre-check before
         // materialize_call_env (live closure across post-mutate inval).
@@ -561,14 +608,18 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         env_terminal = true;
                 }
             }
-            if (body_live && !env_terminal && !cl_copy.must_deopt_before_next_call) {
+            // Issue #2578: allow soft-recover even when must_deopt was set —
+            // clear it and restamp (module free-vars survive unimpacted rebind).
+            if (body_live && !env_terminal) {
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
                     auto it = closures_.find(cid);
                     if (it != closures_.end()) {
+                        it->second.must_deopt_before_next_call = false;
                         stamp_closure_bridge_epoch(it->second);
                         cl_copy = it->second;
                     } else {
+                        cl_copy.must_deopt_before_next_call = false;
                         stamp_closure_bridge_epoch(cl_copy);
                     }
                 }
