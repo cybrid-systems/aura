@@ -14306,7 +14306,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(aura_epoch_invariant_violation_total_v_read()))},
             {"epoch-invariant-live-aot-behind-slots",
              make_int(static_cast<std::int64_t>(aura_aot_count_live_generation_behind_slots()))},
-            // Issue #2501: additive breakdown (slot-stale / closure-must-deopt).
+            // Issue #2501 / #2541: additive breakdown (slot-stale / closure-must-deopt).
+            // Soft production default + soft force-clear of gen-behind slots (#2541).
             {"epoch-invariant-slot-stale",
              make_int(static_cast<std::int64_t>(aura_epoch_invariant_slot_stale_total_v_read()))},
             {"epoch-invariant-closure-must-deopt",
@@ -14315,6 +14316,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"epoch-invariant-wired", make_int(1)},
             {"schema-2501", make_int(2501)},
             {"issue-2501", make_int(2501)},
+            {"schema-2541", make_int(2541)},
+            {"issue-2541", make_int(2541)},
+            {"epoch-invariant-soft-prod-wired", make_int(1)},
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},
             {"schema-2304", make_int(2304)},
