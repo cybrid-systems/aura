@@ -2998,6 +2998,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> atomic_batch_metadata_captured_total{0};
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
+    // Issue #2527: mutate:query-and-replace-batch sugar primitive metrics.
+    // Additive on existing mutation-stats surface; source-cited in the
+    // primitive body (`evaluator_primitives_mutate.cpp`) + the
+    // `query:query-and-replace-batch-stats` surface (`evaluator_primitives_query.cpp`).
+    //   - query_replace_batch_size: total invocations (each call bumps once).
+    //   - query_replace_batch_partial_fail_total: # of calls that hit
+    //       >=1 partial-fail (parse / stale-ref / macro-hygiene) and
+    //       auto-rolled back. Failure rate = partial_fail_total / size.
+    //   - query_replace_batch_hygiene_preserved_total: # of MacroIntroduced
+    //       markers kept on skipped refs under :hygiene-keep default
+    //       (:macro-introduced-only per #2525). Counted per match kept.
+    std::atomic<std::uint64_t> query_replace_batch_size{0};
+    std::atomic<std::uint64_t> query_replace_batch_partial_fail_total{0};
+    std::atomic<std::uint64_t> query_replace_batch_hygiene_preserved_total{0};
 
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended

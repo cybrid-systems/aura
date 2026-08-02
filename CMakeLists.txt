@@ -2288,6 +2288,14 @@ aura_add_issue_test(test_fiber_native_keepalive_2159)
 aura_issue_test_link_light(test_fiber_native_keepalive_2159)
 add_dependencies(all_test_issue_targets test_fiber_native_keepalive_2159)
 
+# Issue #2527: mutate:query-and-replace-batch sugar primitive (single Guard
+# + atomic-batch wrapping, structured result hash, source-cited in
+# evaluator_primitives_mutate.cpp). Tests under tests/compiler/ per
+# #81934/#81967 (new file — no existing test_mutate_query_and_replace_*).
+aura_add_issue_test(test_query_and_replace_batch_2527)
+aura_issue_test_link_llvm_jit(test_query_and_replace_batch_2527)
+add_dependencies(all_test_issue_targets test_query_and_replace_batch_2527)
+
 # Issue #2083: opt-in AgentScope (feature-flagged via AURA_ENABLE_AGENT_SCOPE).
 # The test file #defines the flag so the AgentScope class body is visible.
 aura_add_issue_test(test_agent_scope_2083)

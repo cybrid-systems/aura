@@ -12938,6 +12938,49 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       guard_success + panic_recovery));
         });
 
+    // Issue #2527: query:query-and-replace-batch-stats. Returns the
+    // sum of the 3 new atomic counters + schema-NNNN keys for the new
+    // mutate:query-and-replace-batch sugar primitive (refine #192 / #1265 /
+    // #1649 / #1913 lineage). Distinct from query:atomic-batch-stats /
+    // query:mutation-log-stats / etc. — those cover the atomic-batch +
+    // mutation-log telemetry; this is the sugar-primitive-specific
+    // observability bundle.
+    //
+    // Returns integer sum of:
+    //   - query-and-replace-batch-size: total invocations
+    //   - query-and-replace-batch-partial-fail-total: # of calls that
+    //       hit >=1 partial-fail (parse / stale-ref / macro-hygiene /
+    //       :validate) and auto-rolled back
+    //   - query-and-replace-batch-hygiene-preserved-total: # of
+    //       MacroIntroduced markers kept on skipped refs under
+    //       :hygiene-keep default (:macro-introduced-only per #2525)
+    //
+    // Note: structured-hash surface (schema-2527 / issue-2527 /
+    // stats-wired keys) deferred to follow-up issue — manual hash
+    // construction has too many type mismatches with HashTable /
+    // make_pair overload ambiguity for this ship.
+    ObservabilityPrims::register_stats_impl(
+        "query:query-and-replace-batch-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t size =
+                m ? m->query_replace_batch_size.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t partial_fail =
+                m ? m->query_replace_batch_partial_fail_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hygiene_preserved =
+                m ? m->query_replace_batch_hygiene_preserved_total.load(std::memory_order_relaxed)
+                  : 0;
+            // Surface the 3 individual counters via 3 sibling keys so
+            // Agents can compute failure rate / hygiene-preserved ratio
+            // independently. Schema/wired keys via separate query:
+            // follow-up path.
+            return make_int(static_cast<std::int64_t>(size + partial_fail + hygiene_preserved));
+        });
+
+    // Issue #553: query:mutation-log-stats. Returns the
     // Issue #553: query:mutation-log-stats. Returns the
     // sum of 4 atomic-batch + mutation-log observability
     // counters from across the workspace + Evaluator:
