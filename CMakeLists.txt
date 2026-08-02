@@ -3858,6 +3858,11 @@ aura_add_issue_test(test_timeout_repair_rich_roots_2548)
 aura_issue_test_link_light(test_timeout_repair_rich_roots_2548)
 add_dependencies(all_test_issue_targets test_timeout_repair_rich_roots_2548)
 
+# Issue #2549: is_stealable trusts MutationSafetySnapshot only (candidate demote).
+aura_add_issue_test(test_is_stealable_snapshot_gate_2549)
+aura_issue_test_link_light(test_is_stealable_snapshot_gate_2549)
+add_dependencies(all_test_issue_targets test_is_stealable_snapshot_gate_2549)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

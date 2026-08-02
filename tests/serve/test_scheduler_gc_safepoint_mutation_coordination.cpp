@@ -31,21 +31,15 @@
 //   - eval() is exercised in regression scenarios only
 //     (single-threaded, scoped to AC9).
 //
-// Note on current behavior: as of #545, the work-steal
-// path uses Fiber::is_stealable() (a weak check that
-// returns true for MutationBoundary). The stronger
-// is_at_mutation_boundary_safe() (depth == 0) is wired
-// in the header but NOT yet invoked from try_steal_from().
-// This test:
-//   1. Documents that current steal succeeds on
+// Note: as of #2115/#2184/#2549, try_steal_from uses
+// is_stealable(snap) = candidate + MutationSafetySnapshot
+// (never reason-class alone). This test:
+//   1. Documents that steal can succeed on depth0
 //      MutationBoundary yields (steal_success_count_ bumps).
-//   2. Documents that steal_deferred_mutation_boundary_count_
-//      stays at 0 in the current path (since the strong
-//      check isn't invoked yet — known limitation, tracked
-//      separately).
+//   2. Documents deferred-MB counters when depth>0 / held.
 //   3. Asserts the public API (the accessors and bump
 //      helpers) remain reachable + monotonic — so when
-//      the deeper deferral wiring lands, the test
+//      further deferral wiring lands, the test
 //      already passes the assertions that flip from
 //      "current behavior" to "new behavior".
 

@@ -4,7 +4,7 @@
 //
 // Closes the test-coverage gap for the runtime production
 // review: MutationBoundaryGuard RAII + per-fiber mutation
-// stack + YieldReason::MutationBoundary + is_stealable() /
+// stack + YieldReason::MutationBoundary + is_stealable(snap) /
 // is_at_mutation_boundary_safe() + scheduler work-stealing
 // deferral + GC safepoint coordination under high concurrent
 // mutation load.
@@ -38,14 +38,11 @@
 //     the steal pressure is real without starving the
 //     scheduler.
 //
-// Note on current behavior: as of #542, the work-steal
-// path uses Fiber::is_stealable() (a weak check that
-// returns true for MutationBoundary). The stronger
-// is_at_mutation_boundary_safe() (depth == 0) is wired
-// in the header but NOT yet invoked from try_steal_from().
-// This test documents the current behavior + asserts the
-// public API surface (accessors + bump helpers) remains
-// reachable and monotonic.
+// Note: as of #2115/#2184/#2549, try_steal_from uses
+// is_stealable(snap) = is_steal_candidate &&
+// is_at_mutation_boundary_safe(snap). This test documents
+// steal defer metrics + asserts the public API surface
+// (accessors + bump helpers) remains reachable and monotonic.
 
 #include "test_harness.hpp" // #1960 unified harness
 #include "serve/fiber.h"
