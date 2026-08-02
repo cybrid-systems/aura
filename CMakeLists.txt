@@ -3983,6 +3983,11 @@ aura_add_issue_test(test_jit_dual_string_heap_2575)
 aura_issue_test_link_light(test_jit_dual_string_heap_2575)
 add_dependencies(all_test_issue_targets test_jit_dual_string_heap_2575)
 
+# Issue #2576: JIT PrimCall N-arg (pack frame locals; not binary-only)
+aura_add_issue_test(test_primcall_narg_2576)
+aura_issue_test_link_light(test_primcall_narg_2576)
+add_dependencies(all_test_issue_targets test_primcall_narg_2576)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

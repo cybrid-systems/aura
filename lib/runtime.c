@@ -1022,14 +1022,17 @@ static int is_pair_val(int64_t v) {
 
 // aura_prim_call: slow-path primitive dispatch for AOT-compiled binaries.
 //
+// Issue #2576: ABI is (prim_id, args*, count) — full N-arg vector.
 // PrimId values MUST match the C++ PrimId enum in src/compiler/ir.ixx.
 // If you add/remove/reorder a PrimId entry there, mirror it here.
 //
 // The fast-path prims (Display, Write, Newline, Quotient, Remainder,
 // PairP, NullP) are inlined by the LLVM builder in src/compiler/aura_jit.cpp
 // and rarely reach this function. Everything else falls through here.
-int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
-    (void)argc;
+int64_t aura_prim_call(int64_t prim_id, int64_t* args, int64_t argc) {
+    int64_t a1 = (args && argc > 0) ? args[0] : 0;
+    int64_t a2 = (args && argc > 1) ? args[1] : 0;
+    int64_t a3 = (args && argc > 2) ? args[2] : 0;
 
     // Guard against corrupt prim_id: Aura PrimId has 44 entries (0..43).
     // An out-of-range value would otherwise hit the default branch and
@@ -1038,16 +1041,28 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         return 0;
 
     switch (prim_id) {
-        case 5: { // StringAppend
-            const char* s1 = aura_string_ref(a1);
-            const char* s2 = aura_string_ref(a2);
-            size_t len1 = s1 ? strlen(s1) : 0;
-            size_t len2 = s2 ? strlen(s2) : 0;
-            char* buf = (char*)malloc(len1 + len2 + 1);
-            if (s1)
-                memcpy(buf, s1, len1);
-            if (s2)
-                memcpy(buf + len1, s2, len2 + 1);
+        case 5: { // StringAppend — concatenate argc strings (Issue #2576 N-arg)
+            size_t total = 0;
+            for (int64_t i = 0; i < argc; ++i) {
+                const char* s = aura_string_ref(args ? args[i] : 0);
+                if (s)
+                    total += strlen(s);
+            }
+            char* buf = (char*)malloc(total + 1);
+            if (!buf)
+                return aura_alloc_string("");
+            size_t off = 0;
+            for (int64_t i = 0; i < argc; ++i) {
+                const char* s = aura_string_ref(args ? args[i] : 0);
+                if (s && *s) {
+                    size_t L = strlen(s);
+                    memcpy(buf + off, s, L);
+                    off += L;
+                } else if (s) {
+                    /* empty string contributes nothing */
+                }
+            }
+            buf[off] = 0;
             int64_t result = aura_alloc_string(buf);
             free(buf);
             return result;
@@ -1057,14 +1072,23 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         case 7: { // StringRef
             const char* s = aura_string_ref(a1);
             int64_t idx = a2;
-            if (idx >= 0 && idx < (int64_t)strlen(s))
+            // a2 may be fixnum-encoded
+            if ((idx & 1) == 0)
+                idx >>= 1;
+            if (s && idx >= 0 && idx < (int64_t)strlen(s))
                 return (int64_t)(unsigned char)s[idx];
             return 0;
         }
-        case 8: { // Substring
+        case 8: { // Substring(s, start, end)
             const char* s = aura_string_ref(a1);
             int64_t start = a2;
-            int64_t end = argc >= 2 ? (int64_t)1 : (int64_t)0; // end default
+            int64_t end = a3;
+            if ((start & 1) == 0)
+                start >>= 1;
+            if ((end & 1) == 0)
+                end >>= 1;
+            if (!s)
+                return aura_alloc_string("");
             size_t len = strlen(s);
             if (start < 0)
                 start = 0;

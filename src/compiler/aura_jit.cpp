@@ -487,9 +487,10 @@ struct LLVMBuilder {
             llvm::FunctionType::get(i64, {ptr_i8}, false), llvm::Function::ExternalLinkage,
             "aura_jit_deopt_to_interpreter", mod);
 
-        fn_prim_call =
-            llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
-                                   llvm::Function::ExternalLinkage, "aura_prim_call", mod);
+        // Issue #2576: (slot, args*, count) — full N-arg PrimCall
+        fn_prim_call = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64, ptr_i8 /* int64_t* */, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_prim_call", mod);
 
         fn_display_int =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
@@ -1957,19 +1958,31 @@ struct LLVMBuilder {
                         break;
                 }
 
-                // Slow-path: call aura_prim_call which is the
-                // dispatcher in BOTH the JIT runtime
-                // (aura_jit_runtime.cpp) and the AOT runtime
-                // (lib/runtime.c). Earlier we tried calling
-                // aura_jit_prim_dispatch directly to skip the
-                // wrapper, but that symbol doesn't exist in the
-                // AOT runtime, so the AOT link fails for any
-                // expression with a slow-path primitive. The
-                // wrapper overhead (~5ns) is minor compared to
-                // the LLVM compile cost for AOT.
+                // Slow-path: Issue #2576 — pack all frame args into a
+                // contiguous stack buffer and pass (slot, args*, count).
+                // Previous ABI only forwarded a1/a2 so 3+ arity prims
+                // (string-append, substring, …) saw arg2=0 / missing.
+                // aura_prim_call is shared with AOT (lib/runtime.c).
+                // Same packing pattern as OpCall (locals are per-slot alloca).
                 {
-                    auto call =
-                        irb->CreateCall(fn_prim_call, {c64(prim_id), a1, a2, c64(arg_count)});
+                    // Cap matches kAuraPrimCallMaxArgs in aura_jit_runtime.
+                    constexpr uint32_t kMax = 32;
+                    uint32_t n = arg_count;
+                    if (n > kMax)
+                        n = kMax;
+                    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                    auto* ptr_ty = llvm::PointerType::getUnqual(ctx);
+                    auto* alloca_ty = llvm::ArrayType::get(i64_ty, n > 0 ? n : 1);
+                    auto* args_arr = irb->CreateAlloca(alloca_ty);
+                    for (uint32_t i = 0; i < n; ++i) {
+                        auto* slot_val =
+                            (arg_base + i < fn.local_count) ? load(arg_base + i) : c64(0);
+                        auto* gep = irb->CreateGEP(i64_ty, args_arr, c64(static_cast<int64_t>(i)));
+                        irb->CreateStore(slot_val, gep);
+                    }
+                    auto call = irb->CreateCall(fn_prim_call,
+                                                {c64(prim_id), irb->CreateBitCast(args_arr, ptr_ty),
+                                                 c64(static_cast<int64_t>(n))});
                     store(result_slot, call);
                 }
                 return true;
@@ -2449,7 +2462,7 @@ int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
-int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
+int64_t aura_prim_call(int64_t, int64_t*, int64_t); // Issue #2576 N-arg
 uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
 void aura_display_int(int64_t);

@@ -2755,7 +2755,19 @@ void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t)) {
     aura_unlock_workspace_write();
 }
 
-int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
+// Issue #2576: N-arg PrimCall ABI.
+//   int64_t aura_prim_call(int64_t slot, int64_t* args, int64_t count);
+// JIT packs consecutive frame locals into a stack buffer and passes
+// the pointer. Caps argc so a corrupt count cannot overrun a fixed
+// scratch used by AOT stubs; real args beyond the cap are dropped
+// only at the safety limit (not silently zero-filled as the old
+// binary ABI did for arg2+).
+//
+// Max matches typical varargs prims (string-append, format-like).
+// Above the cap: clamp + still call (partial) — prefer over crash.
+static constexpr int32_t kAuraPrimCallMaxArgs = 32;
+
+int64_t aura_prim_call(int64_t slot, int64_t* args, int64_t count) {
     // Issue #157 Phase 1: read lock — read of g_prim_dispatcher
     // races with aura_set_prim_dispatcher. The dispatcher function
     // itself is the FFI boundary into the evaluator (where the
@@ -2770,16 +2782,17 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
     auto t0 = std::chrono::steady_clock::now();
     int64_t result = 0;
     if (g_prim_dispatcher) {
-        // Fast-pack: fixed 3-element stack array (a, b, sentinel 0).
-        // Issue #1711: clamp argc to 3 — dispatcher may index args[0..argc).
-        // Passing count>3 was a stack buffer overflow (read past args[3]).
-        int64_t args[3] = {a, b, 0};
         int32_t safe_count = static_cast<int32_t>(count);
         if (safe_count < 0)
             safe_count = 0;
-        if (safe_count > 3)
-            safe_count = 3;
-        result = g_prim_dispatcher(slot, args, safe_count);
+        if (safe_count > kAuraPrimCallMaxArgs)
+            safe_count = kAuraPrimCallMaxArgs;
+        // Null args with positive count → empty call (defensive).
+        int64_t empty = 0;
+        int64_t* pass = (args && safe_count > 0) ? args : &empty;
+        if (!args || safe_count == 0)
+            safe_count = 0;
+        result = g_prim_dispatcher(slot, pass, safe_count);
     }
     auto t1 = std::chrono::steady_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
