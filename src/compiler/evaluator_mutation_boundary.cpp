@@ -1892,6 +1892,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2353: true only when Moving densify actually relocated live objects
         // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
         bool had_moving_densify = false;
+        // Issue #2499: densify-call RootRemap axis (last-call fail totals == 0).
+        // Soft / no Moving → vacuous true. Used for DensifyConsistencyReport so
+        // force_reason reports "root_remap" when only RootRemap fails (not "pin").
+        bool densify_root_remap_call_ok = true;
+        // Pin axis for the report (pin-verify only when RootRemap fails alone).
+        bool densify_pin_axis_ok = true;
         // Issue #2497: baseline ownership-scan fail counter BEFORE the Moving
         // densify window opens. Any fail delta across compact + pairing + injected
         // tests must suppress Phase 5 success the same way pin_contract_held does
@@ -1914,16 +1920,22 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             pin_contract_held = compact_r.pin_contract_held;
             had_moving_densify = compact_r.moved_live_objects;
-            // Issue #2499: unify RootRemapPass fail into pin_contract_held.
-            // Per-call fail totals (not process-cumulative — last-call semantics
-            // #2376) aggregated into AdaptiveCompactResult by compact_all_moving_pinned.
-            // Any fail this densify call → pin_contract_held = false → Phase 5
-            // success suppressed (same fail-closed shape as #2266 pin verify +
-            // #2497 ownership scan). Closes "pin ok + root_remap fail cumulative"
-            // mixed-signal gap from 2026-07-31 production review 建议 5.
-            pin_contract_held = pin_contract_held &&
-                                compact_r.root_remap_stable_ref_fail_total == 0 &&
-                                compact_r.root_remap_closure_capture_fail_total == 0;
+            // Issue #2499: densify-call RootRemap fail axis (last-call totals
+            // aggregated by compact_all_moving_pinned). live_compact already
+            // folds non-zero fails into pin_contract_held at the densify source;
+            // keep a defensive AND so AdaptiveCompactResult + Phase 5 always
+            // share one Moving success gate (#2266 pin shape + #2497 scan).
+            // Closes "pin ok + root_remap fail cumulative" mixed-signal gap
+            // from 2026-07-31 production review 建议 5.
+            const bool root_remap_call_ok = compact_r.root_remap_stable_ref_fail_total == 0 &&
+                                            compact_r.root_remap_closure_capture_fail_total == 0;
+            pin_contract_held = pin_contract_held && root_remap_call_ok;
+            // Stash axis for DensifyConsistencyReport below (force_reason).
+            // When only RootRemap fails, pin_contract_held is false (unified)
+            // but pin_ok for the report stays true so force_reason == root_remap
+            // (not pin) — matches AC1 + densify_consistency priority table.
+            densify_root_remap_call_ok = root_remap_call_ok;
+            densify_pin_axis_ok = root_remap_call_ok ? pin_contract_held : true;
             if (!pin_contract_held) {
                 // Issue #2266 AC2: contract failed — bump fail counter + do not
                 // publish success metrics as if contract held. Optional env
@@ -1961,7 +1973,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // empty densify / no linear → early true (AC3 zero cost). Fail
         // suppresses Phase 5 success via overall_ok() (AC2 fail-closed).
         aura::core::densify_consistency::DensifyConsistencyReport densify_consistency;
-        densify_consistency.pin_ok = pin_contract_held;
+        // Issue #2499: pin_ok is pin-verify axis only when RootRemap alone fails
+        // (densify_pin_axis_ok); unified pin_contract_held still gates success.
+        densify_consistency.pin_ok = densify_pin_axis_ok;
         // Issue #2353: linear_ok + type_ok from post-densify revalidate
         // (pin-subsumed linear pin verify remains in pin_ok; this is the
         // ownership + type axis complementary to #2341 object-axis).
@@ -1972,8 +1986,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         densify_consistency.type_ok = linear_type_ok;
         // Issue #2365 / #2368: densify-success closed-loop. Soft / no Moving
         // densify → root_remap / closure / envframe vacuous true (zero cost).
-        // Moving + pin held → force_densify_remap_pairing() encodes permanent
-        // order (do not open-code steps 3–5 here — pairing is never optional):
+        // Moving + unified contract held → force_densify_remap_pairing() encodes
+        // permanent order (do not open-code steps 3–5 here — pairing is never
+        // optional):
         //   1 RootRemap probe (inside densify) → last_root_remap_any_fail
         //   2 pin verify (pin_contract_held above)
         //   3 EnvFrame live-ref transfer
@@ -1991,7 +2006,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const auto scan_fail_after = aura::core::envframe_lifetime::
                 envframe_lifetime_densify_ownership_scan_fail_total();
             const bool scan_fail_delta = (scan_fail_after > scan_fail_baseline);
-            densify_consistency.root_remap_ok = pairing.root_remap_ok;
+            // Issue #2499: AND densify-call RootRemap fail totals into axis.
+            densify_consistency.root_remap_ok = pairing.root_remap_ok && densify_root_remap_call_ok;
             densify_consistency.closure_remount_ok = pairing.closure_remount_ok;
             // Issue #2497: scan_fail_delta ANDs into envframe_ok. Pairing already
             // checks within-pairing delta — this gate widens the window so a
@@ -2001,9 +2017,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 pairing.envframe_ok && linear_type_ok && !scan_fail_delta;
             aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
+        } else if (had_moving_densify) {
+            // Issue #2499: Moving densify ran but unified contract failed —
+            // still publish densify-call RootRemap axis (not vacuous true).
+            // Soft vacuous remains on the Soft / empty branch below.
+            densify_consistency.root_remap_ok = densify_root_remap_call_ok;
+            densify_consistency.closure_remount_ok = true;
+            densify_consistency.envframe_ok = true;
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
         } else {
-            // Soft / empty densify / pin fail: vacuous axes (do not read
-            // stale last_root_remap or cumulative closure fails).
+            // Soft / empty densify: vacuous axes (do not read stale
+            // last_root_remap or cumulative closure fails).
             densify_consistency.root_remap_ok = true;
             densify_consistency.closure_remount_ok = true;
             densify_consistency.envframe_ok = true;
