@@ -997,6 +997,65 @@ int64_t aura_display_char(int64_t val) {
     return val;
 }
 
+// Issue #2574: Scheme `write` string external form (quotes + escapes).
+static void aura_fputs_scheme_write_string(const char* s) {
+    if (!s)
+        s = "";
+    putchar('"');
+    for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
+        switch (*p) {
+            case '"':
+                fputs("\\\"", stdout);
+                break;
+            case '\\':
+                fputs("\\\\", stdout);
+                break;
+            case '\n':
+                fputs("\\n", stdout);
+                break;
+            case '\r':
+                fputs("\\r", stdout);
+                break;
+            case '\t':
+                fputs("\\t", stdout);
+                break;
+            default:
+                if (*p < 0x20 || *p == 0x7f)
+                    printf("\\x%02X;", (unsigned)*p);
+                else
+                    putchar((int)*p);
+                break;
+        }
+    }
+    putchar('"');
+}
+
+// Issue #2572 / #2575: JIT PrimCall Display/Write fast-path emits
+// `aura_display_value(val, write_mode)` (i64 ABI). Host/JIT provides a
+// strong def in aura_jit_runtime.cpp; standalone --emit-binary only
+// links this runtime.c — without this symbol link fails:
+//   undefined reference to `aura_display_value'
+// write_mode: 0 = display (raw), 1 = write (quoted strings).
+// AOT uses runtime.c tag macros (pairs / fixnums / specials / strings);
+// reuse aura_display_int for the display path.
+void aura_display_value(int64_t val, int64_t write_mode) {
+    if (write_mode) {
+        // write: quote string contents; other tags share display form
+        const char* s = NULL;
+        if (IS_STRING(val))
+            s = aura_string_ref((uint64_t)STRING_IDX(val));
+        else if (val >= STRING_BIAS)
+            s = aura_string_ref(val);
+        if (s) {
+            aura_fputs_scheme_write_string(s);
+            fflush(stdout);
+            g_display_was_called = 1;
+            return;
+        }
+    }
+    (void)aura_display_int(val);
+}
+
 void aura_newline(void) {
     putchar('\n');
     fflush(stdout);
