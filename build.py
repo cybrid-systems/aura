@@ -2262,6 +2262,21 @@ def cmd_check_2533_coverage():
     return 0
 
 
+def cmd_check_2536_coverage():
+    """Issue #2536: Restricted hard-fiber optional policy."""
+    print(f"{B}=== hard-fiber Restricted policy coverage (#2536) ==={N}")
+    script = ROOT / "scripts" / "check_2536.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hard-fiber Restricted policy (#2536) coverage failed")
+        return 1
+    ok("hard-fiber Restricted policy (#2536) coverage clean")
+    return 0
+
+
 def cmd_check_2535_coverage():
     """Issue #2535: production default mild mailbox BP admit (threshold=32)."""
     print(f"{B}=== mailbox BP admit default-on coverage (#2535) ==={N}")
@@ -5987,6 +6002,7 @@ def cmd_gate():
         or cmd_check_2533_coverage()
         or cmd_check_2534_coverage()
         or cmd_check_2535_coverage()
+        or cmd_check_2536_coverage()
     )
 
 

@@ -4357,6 +4357,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("grant-epoch-retain-window",
                       static_cast<std::int64_t>(reg.grant_epoch_retain_window));
             insert_kv("hard-fiber-isolation", reg.hard_fiber_isolation ? 1 : 0);
+            // Issue #2536: Agent self-throttle surface — mismatch rate + hard-deny.
+            insert_kv("fiber-mismatch-total", static_cast<std::int64_t>(cap.fiber_mismatch));
+            insert_kv("fiber-hard-deny-total", static_cast<std::int64_t>(cap.fiber_hard_deny));
+            const auto fiber_grant_denom = (cap.checks == 0 ? 1 : cap.checks);
+            insert_kv("fiber-mismatch-rate-bp",
+                      static_cast<std::int64_t>((cap.fiber_mismatch * 10000) / fiber_grant_denom));
+            insert_kv("schema-2536", 2536);
+            insert_kv("issue-2536", 2536);
+            insert_kv("hard-fiber-restricted-policy-wired", 1);
             const auto checks = cap.checks == 0 ? 1 : cap.checks;
             insert_kv("effect-deny-rate-bp",
                       static_cast<std::int64_t>((cap.denied * 10000) / checks));
