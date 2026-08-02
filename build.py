@@ -5201,6 +5201,25 @@ def cmd_module_load_tail_coverage():
     return 0
 
 
+def cmd_while_define_oneshot_coverage():
+    """Issue #2571: while + define loop-counter footgun.
+
+    set! must resolve the newest cell; multi-define in while reuses cells;
+    education warning + preferred outer-define + set! pattern documented.
+    """
+    print(f"{B}=== while+define oneshot coverage (#2571) ==={N}")
+    script = ROOT / "scripts" / "check_while_define_oneshot_2571.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("while+define oneshot (#2571) coverage contract rows failed")
+        return 1
+    ok("while+define oneshot (#2571) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6435,6 +6454,7 @@ def cmd_gate():
         or cmd_symbol_eq_coverage()
         or cmd_setcode_rebind_coverage()
         or cmd_module_load_tail_coverage()
+        or cmd_while_define_oneshot_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7257,6 +7277,7 @@ def main():
         "symbol-eq": cmd_symbol_eq_coverage,
         "setcode-rebind": cmd_setcode_rebind_coverage,
         "module-load-tail": cmd_module_load_tail_coverage,
+        "while-define-oneshot": cmd_while_define_oneshot_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

@@ -3958,6 +3958,11 @@ aura_add_issue_test(test_module_load_tail_export_2570)
 aura_issue_test_link_light(test_module_load_tail_export_2570)
 add_dependencies(all_test_issue_targets test_module_load_tail_export_2570)
 
+# Issue #2571: (define) inside (while) loop-counter footgun / multi-define set!
+aura_add_issue_test(test_while_define_oneshot_2571)
+aura_issue_test_link_light(test_while_define_oneshot_2571)
+add_dependencies(all_test_issue_targets test_while_define_oneshot_2571)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

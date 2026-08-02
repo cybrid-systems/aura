@@ -3786,6 +3786,40 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             auto c2_node = v.child(2) < f->size() ? f->get(v.child(2)) : v;
                             if (c1_node.tag != aura::ast::NodeTag::Lambda &&
                                 c2_node.tag != aura::ast::NodeTag::Lambda) {
+                                // Issue #2571: education-mode warning — agents copy
+                                // nested-for patterns using (define counter 0) inside
+                                // the while body. Prefer outer (define x 0) + (set! x 0)
+                                // each iteration. (define) rebinds/reassigns the cell
+                                // when already bound, but multi-define + set! previously
+                                // could freeze counters; warn once per process.
+                                {
+                                    static std::atomic<bool> warned_define_in_while{false};
+                                    if (!warned_define_in_while.load(std::memory_order_relaxed)) {
+                                        auto body_id = v.child(2);
+                                        std::function<bool(aura::ast::NodeId)> has_define =
+                                            [&](aura::ast::NodeId nid) -> bool {
+                                            if (nid == aura::ast::NULL_NODE || nid >= f->size())
+                                                return false;
+                                            auto nv = f->get(nid);
+                                            if (nv.tag == aura::ast::NodeTag::Define)
+                                                return true;
+                                            for (auto c : nv.children)
+                                                if (has_define(c))
+                                                    return true;
+                                            return false;
+                                        };
+                                        if (has_define(body_id) &&
+                                            !warned_define_in_while.exchange(true)) {
+                                            std::println(
+                                                std::cerr,
+                                                "warning: (define …) inside (while …) body "
+                                                "(Issue #2571). Loop counters should usually be "
+                                                "outer-define + (set! name …) each iteration; "
+                                                "inner define is easy to misread as "
+                                                "per-iteration init from other languages.");
+                                        }
+                                    }
+                                }
                                 while (true) {
                                     auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
                                     if (!cond_result)
@@ -4773,6 +4807,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 mutable_env.set_pool(p);
 
                             for (auto& d : letrec_defs) {
+                                // Issue #2571: re-entering a multi-define begin
+                                // inside (while …) must reuse an existing cell
+                                // for the same name. Fresh bind() stacks a new
+                                // cell; if set! resolved the oldest cell, loop
+                                // counters froze. Prefer update-in-place.
+                                if (auto existing = mutable_env.lookup_cell_index(d.first)) {
+                                    cell_ids.push_back(static_cast<std::size_t>(*existing));
+                                    continue;
+                                }
                                 auto ci = alloc_cell(make_void());
                                 mutable_env.bind(d.first, make_cell(ci));
                                 cell_ids.push_back(ci);

@@ -1,5 +1,27 @@
 // evaluator_primitives_control.cpp — P0 step 29: while primitive
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+//
+// Issue #2571 (language note — while + define):
+//   Expression form: (while cond body) re-evaluates cond/body each iteration
+//   (tree-walker special form). Closure form: (while (lambda () cond)
+//   (lambda () body)) is the EDSL / first-class primitive.
+//
+//   (define x 0) inside the body is NOT a fresh per-iteration lexical
+//   like Python/JS for-loop vars. It binds (or reassigns an existing
+//   cell) in the enclosing env. Preferred AI-native pattern (outer-define
+//   + set! x 0 each outer iter) for nested loops:
+//
+//     (define z 0)
+//     (define x 0)
+//     (while (< z n)
+//       (begin
+//         (set! x 0)            ; re-init each outer iter
+//         (while (< x m) …)
+//         (set! z (+ z 1))))
+//
+//   Avoid relying on inner (define x 0) as "loop init" — agents often
+//   copy that from other languages; see education warning on the
+//   special-form path and tests/compiler/test_while_define_oneshot_2571.cpp.
 
 module;
 
