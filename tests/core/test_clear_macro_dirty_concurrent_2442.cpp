@@ -41,7 +41,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_clear_macro_dirty_concurrent_2442() {
     std::println("=== Issue #2442: clear_macro_dirty_all concurrent with readers ===");
 
     // ── AC3: single-thread clear semantics ─────────────────────────
@@ -219,3 +219,9 @@ int main() {
     std::println("\n=== #2442 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_clear_macro_dirty_concurrent_2442();
+}
+#endif

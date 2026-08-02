@@ -45,7 +45,7 @@ void drain_panic() {
 
 } // namespace
 
-int main() {
+int run_test_gc_defer_arm_fetch_or_2428() {
     std::println("=== Issue #2428: arm_defer fetch_or first-arm metrics ===");
 
     // ── AC3/AC4 single-thread first-arm + nested ───────────────────
@@ -231,3 +231,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_defer_arm_fetch_or_2428();
+}
+#endif

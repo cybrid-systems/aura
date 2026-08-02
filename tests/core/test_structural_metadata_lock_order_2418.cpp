@@ -30,7 +30,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_structural_metadata_lock_order_2418() {
     std::println("=== Issue #2418: structural → metadata lock order ===");
 
     // ── AC1 combined guard API ─────────────────────────────────────
@@ -161,3 +161,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_structural_metadata_lock_order_2418();
+}
+#endif

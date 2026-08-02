@@ -641,6 +641,129 @@ extern "C" bool aura_aot_mangle_version_is_stale_ex(const char* mangled,
 // Light bundles link the bridge stub only; provide no-ops so the link
 // succeeds when those object files are not in the executable.
 
+// Issue #2304 / #2366 / #2501: epoch-invariant counters (full impl in
+// aura_jit_bridge.cpp). Light issue tests that pull CompilerService via
+// aura_test_objects need these symbols without linking full LLVM bridge.
+static std::atomic<std::uint64_t> g_epoch_invariant_violation_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_walks_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total_stub{0};
+static std::atomic<std::uint8_t> g_epoch_invariant_mode_stub{0};
+
+extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
+    return g_epoch_invariant_violation_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_walks_total_v_read(void) {
+    return g_epoch_invariant_walks_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void) {
+    return g_epoch_invariant_slot_stale_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_closure_must_deopt_total_v_read(void) {
+    return g_epoch_invariant_closure_must_deopt_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void aura_set_epoch_invariant_mode(int mode) {
+    if (mode < 0)
+        mode = 0;
+    if (mode > 2)
+        mode = 2;
+    g_epoch_invariant_mode_stub.store(static_cast<std::uint8_t>(mode), std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) int aura_epoch_invariant_mode(void) {
+    return static_cast<int>(g_epoch_invariant_mode_stub.load(std::memory_order_relaxed));
+}
+extern "C" __attribute__((weak)) void aura_set_epoch_invariant_hard_enabled(int enabled) {
+    aura_set_epoch_invariant_mode(enabled != 0 ? 2 : 0);
+}
+extern "C" __attribute__((weak)) void
+aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept {
+    g_epoch_invariant_walks_total_stub.fetch_add(1, std::memory_order_relaxed);
+    if (violations > 0)
+        g_epoch_invariant_violation_total_stub.fetch_add(violations, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_epoch_invariant_note_slot_stale(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_slot_stale_total_stub.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_closure_must_deopt_total_stub.fetch_add(n, std::memory_order_relaxed);
+}
+// No AOT slot table in light stubs — always 0 generation-behind.
+extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_aot_inject_live_stale_slot_for_test(std::int64_t /*func_id*/) {}
+extern "C" __attribute__((weak)) void aura_aot_clear_slot_for_test(std::int64_t /*func_id*/) {}
+
+// Issue #2050 / runtime soft-dirty path: weak counter bump.
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_must_deopt_kept_total(std::uint64_t /*n*/) {}
+
+// Issue #2177: AOT macro marker propagation counters (full impl in bridge).
+static std::atomic<std::uint64_t> g_2177_aot_macro_marker_propagated_stub{0};
+static std::atomic<std::uint64_t> g_2177_aot_macro_marker_stripped_stub{0};
+extern "C" __attribute__((weak)) std::uint64_t aura_2177_aot_macro_marker_propagated_total(void) {
+    return g_2177_aot_macro_marker_propagated_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_2177_aot_macro_marker_stripped_total(void) {
+    return g_2177_aot_macro_marker_stripped_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_2177_record_aot_marker_propagated(int propagated) noexcept {
+    if (propagated)
+        g_2177_aot_macro_marker_propagated_stub.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_2177_aot_macro_marker_stripped_stub.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1996: clear batch-deopt target (symmetric to set stub above).
+extern "C" __attribute__((weak)) void aura_clear_jit_batch_deopt_target(void* /*aura_jit_ptr*/) {}
+
+// Issue #2366: no live AOT slots in light stubs.
+extern "C" __attribute__((weak)) std::size_t
+aura_aot_invalidate_all_stale_slots_for_eval(void* /*eval_ptr*/) {
+    return 0;
+}
+
+// Issue #2178 / #2240: cross-workspace reject observability (bridge full impl).
+static std::atomic<std::uint64_t> g_cross_workspace_rejected_stub{0};
+static std::atomic<std::uint8_t> g_last_cross_workspace_reject_reason_stub{0};
+extern "C" __attribute__((weak)) std::uint64_t
+aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept {
+    return g_cross_workspace_rejected_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint8_t
+aura_last_cross_workspace_reject_reason_v_read(void) noexcept {
+    return g_last_cross_workspace_reject_reason_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) const char*
+aura_cross_workspace_reject_reason_string(std::uint8_t v) noexcept {
+    switch (v) {
+        case 0:
+            return "none";
+        case 1:
+            return "foreign_eval";
+        case 2:
+            return "cow_gen_mismatch";
+        default:
+            return "unknown";
+    }
+}
+
+// Issue #2162: deferred reemit hooks (production in hot_update_registry.cpp).
+// Weak so linking the real registry wins; light-only binaries stay linkable.
+extern "C" __attribute__((weak)) int aura_hot_update_has_deferred_reemit(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_hot_update_on_deferred_reemit_seen_on_steal(std::int64_t /*fiber_id*/) {}
+extern "C" __attribute__((weak)) void aura_hot_update_notify_epoch_bump(std::uint64_t /*epoch*/) {}
+
 extern "C" __attribute__((weak)) void
 aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out) {
     if (!out)

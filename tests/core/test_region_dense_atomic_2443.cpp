@@ -43,7 +43,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_region_dense_atomic_2443() {
     std::println("=== Issue #2443: region dense SoA atomic_ref ===");
 
     // ── AC3: single-thread semantics (encoding region+1) ───────────
@@ -226,3 +226,9 @@ int main() {
     std::println("\n=== #2443 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_region_dense_atomic_2443();
+}
+#endif

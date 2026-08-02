@@ -43,7 +43,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_soa_column_atomic_2440() {
     std::println("=== Issue #2440: SoA column atomic_ref (no torn reads) ===");
 
     // ── AC4 is_always_lock_free ────────────────────────────────────
@@ -257,3 +257,9 @@ int main() {
     std::println("\n=== #2440 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_soa_column_atomic_2440();
+}
+#endif

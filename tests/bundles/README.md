@@ -23,10 +23,13 @@ python3 scripts/gen_issue_bundles.py --check  # CI freshness
 
 | Profile | Link helper | Notes |
 |---------|-------------|-------|
-| light / light_late | stub JIT + observability | light_late adds reflect TU for #178 |
-| jit / jit_late1–5 | full LLVM JIT | late* split only for link-time size |
+| light / light_late | `aura_issue_test_link_light` (shared `aura_jit_light_test_objects`, no LLVM) | light_late adds reflect TU for #178 |
+| jit / jit_late1–5 | `aura_issue_test_link_llvm_jit` (full LLVM) | late* split only for link-time size |
 | jit_minimal / jit_contract / jit_tests | thinner JIT | |
 | fiber | fiber stubs | |
+
+Standalone issue tests should prefer **light** by default (see `tests/README.md` · link profiles).
+Full LLVM is opt-in; the allow-list is `cmake/issue_tests_need_full_llvm.txt`.
 
 Merging **profiles** into fewer binaries would re-create multi-GB link units
 and mix incompatible stubs. Deduping the **12 identical main skeletons** into

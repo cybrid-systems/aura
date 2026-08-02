@@ -108,7 +108,26 @@ function(aura_issue_test_observability TARGET)
     target_sources(${TARGET} PRIVATE src/compiler/observability_metrics.h)
 endfunction()
 
-# LLVM JIT via shared aura_jit_test_objects (see CMakeLists.txt).
+# Light JIT/ABI via shared aura_jit_light_test_objects (no LLVM).
+# Default for issue tests that only need CompilerService / AOT bridge
+# symbols resolved — not real OrcJIT. See CMakeLists.txt comment on
+# aura_jit_light_test_objects and tests/README.md · link profiles.
+function(aura_issue_test_link_light TARGET)
+    if(NOT TARGET aura_jit_light_test_objects)
+        message(FATAL_ERROR
+            "aura_issue_test_link_light(${TARGET}): aura_jit_light_test_objects missing")
+    endif()
+    target_include_directories(${TARGET} PRIVATE src/compiler)
+    target_sources(${TARGET} PRIVATE
+        src/compiler/observability_metrics.h
+        src/compiler/observability_snapshot.h
+    )
+    target_link_libraries(${TARGET} PRIVATE aura_jit_light_test_objects)
+endfunction()
+
+# Full LLVM OrcJIT via shared aura_jit_test_objects (see CMakeLists.txt).
+# Opt-in only: ~70MB per binary (PUBLIC llvm_libs). Use for tests that
+# actually compile/emit/run native code through AuraJIT.
 # Compiling aura_jit*.cpp once avoids 100+ concurrent GCC module
 # dyndep scans that flaked CI with:
 #   when writing output to ...aura_jit_bridge.cpp.o.ddi.i: Invalid argument

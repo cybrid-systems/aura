@@ -50,7 +50,7 @@ static std::size_t sequential_bytes_expect(const std::vector<std::string>& strs)
 
 } // namespace
 
-int main() {
+int run_test_stringpool_bytes_total_lock_2408() {
     std::println("=== Issue #2408: string_bytes_total single shared_lock ===");
 
     // ── AC2: sequential correctness ────────────────────────────────
@@ -148,3 +148,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stringpool_bytes_total_lock_2408();
+}
+#endif

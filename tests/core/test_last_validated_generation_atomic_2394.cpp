@@ -129,7 +129,7 @@ static void ac4_ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_last_validated_generation_atomic_2394() {
     std::println("=== Issue #2394: last_validated_generation atomic ===");
     ac1_ac2_concurrent_validate();
     ac3_copy_and_assign();
@@ -137,3 +137,9 @@ int main() {
     std::println("\n=== #2394 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_last_validated_generation_atomic_2394();
+}
+#endif

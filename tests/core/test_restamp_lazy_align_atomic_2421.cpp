@@ -35,7 +35,7 @@ void force_one_wrap(FlatAST& ast) {
 
 } // namespace
 
-int main() {
+int run_test_restamp_lazy_align_atomic_2421() {
     std::println("=== Issue #2421: restamp_lazy_align_enabled_ atomic ===");
 
     // ── AC1 default off ────────────────────────────────────────────
@@ -120,3 +120,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_restamp_lazy_align_atomic_2421();
+}
+#endif
