@@ -59,10 +59,10 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
     return id;
 }
 
-TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
+TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret, bool variadic) {
     // Issue #1431: lock TypeRegistry for mutator `register_func`
     std::lock_guard<std::recursive_mutex> lock(type_registry_mutex_);
-    // Dedup: same (args, ret) returns the existing TypeId. The
+    // Dedup: same (args, ret, variadic) returns the existing TypeId. The
     // existing entry's name may differ from what we'd compute
     // (e.g. user named it via register_func_named); we keep the
     // first registration's name to preserve identity.
@@ -70,6 +70,8 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
         if (entries_[i]->tag != TypeTag::FUNC || !entries_[i]->func)
             continue;
         const auto& f = *entries_[i]->func;
+        if (f.variadic != variadic)
+            continue;
         if (f.args.size() != args.size())
             continue;
         if (!(f.ret == ret) && !type_equals(f.ret, ret))
@@ -90,27 +92,31 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    auto ft = FuncType{std::move(args), ret};
+    auto ft = FuncType{std::move(args), ret, variadic};
     auto tag = TypeTag::FUNC;
-    std::string tmp_name = "(" + std::to_string(ft.args.size()) + "->)";
+    std::string tmp_name = "(" + std::to_string(ft.args.size()) + (variadic ? "+->" : "->") + ")";
     entries_.push_back(arena_.allocate(Entry{tag, tmp_name, std::move(ft), std::nullopt,
                                              std::nullopt, std::nullopt, std::nullopt, std::nullopt,
                                              std::nullopt, std::nullopt, std::nullopt}));
     std::string name = "(";
     for (auto& a : entries_.back()->func->args)
         name += std::string(name_of(a)) + " ";
+    if (variadic)
+        name += "... ";
     name += std::string("-> ") + std::string(name_of(ret)) + ")";
     entries_.back()->name = name;
     return id;
 }
 
-TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, std::string name) {
+TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, std::string name,
+                                         bool variadic) {
     // Issue #1431: lock TypeRegistry for mutator `register_func_named`
     std::lock_guard<std::recursive_mutex> lock(type_registry_mutex_);
     // Register via the standard path (which dedups), then OVERWRITE
-    // the name. If the same (args, ret) was already registered, we
-    // still update the name so the user's chosen name takes effect.
-    auto id = register_func(std::move(args), ret);
+    // the name. If the same (args, ret, variadic) was already registered,
+    // we still update the name so the user's chosen name takes effect.
+    // Issue #2578: forward variadic for dotted-rest .aura-type sigs.
+    auto id = register_func(std::move(args), ret, variadic);
     if (id.valid() && id.index < entries_.size()) {
         entries_[id.index]->name = std::move(name);
     }
@@ -785,7 +791,8 @@ TypeId TypeRegistry::substitute(TypeId ty, const std::unordered_map<std::uint32_
             new_args.reserve(f->args.size());
             for (auto& a : f->args)
                 new_args.push_back(substitute(a, subst));
-            return register_func(std::move(new_args), substitute(f->ret, subst));
+            // Issue #2578: preserve dotted-rest variadic flag through subst.
+            return register_func(std::move(new_args), substitute(f->ret, subst), f->variadic);
         }
         case TypeTag::FORALL: {
             auto* ft = forall_of(ty);

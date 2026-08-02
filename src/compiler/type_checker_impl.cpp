@@ -1213,7 +1213,7 @@ TypeId ConstraintSystem::find(TypeId id) {
         if (new_ret != f->ret)
             changed = true;
         if (changed)
-            return reg_.register_func(std::move(new_args), new_ret);
+            return reg_.register_func(std::move(new_args), new_ret, f->variadic);
     }
     if (auto* ft = reg_.forall_of(id)) {
         auto new_body = find(ft->body);
@@ -4005,7 +4005,8 @@ TypeId InferenceEngine::synthesize_flat_define_module(FlatAST& flat, StringPool&
                 // substitution can still match their type var IDs.
                 if (auto* ft = reg_.func_of(fn_type)) {
                     auto new_ret = cs_.normalize(ft->ret);
-                    fn_type = reg_.register_func(ft->args, new_ret);
+                    // Issue #2578: preserve dotted-rest flag
+                    fn_type = reg_.register_func(ft->args, new_ret, ft->variadic);
                 }
             }
             members.push_back({fn_name, fn_type});
@@ -4268,12 +4269,12 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
-        // Skip arity check for variadic primitives
-        bool is_variadic = false;
+        // Skip arity check for known variadic primitives (and/or/+ / …)
+        bool named_variadic = false;
         auto callee_v = flat.get(func_id);
         if (callee_v.sym_id != INVALID_SYM && callee_v.tag == NodeTag::Variable) {
             auto cname = pool.resolve(callee_v.sym_id);
-            is_variadic =
+            named_variadic =
                 (cname == "and" || cname == "or" || cname == "list" || cname == "vector" ||
                  cname == "hash" || cname == "+" || cname == "-" || cname == "*" || cname == "/" ||
                  cname == "=" || cname == "<" || cname == ">" || cname == "<=" || cname == ">=" ||
@@ -4281,13 +4282,27 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                  // :key value keyword args, so are variadic.
                  cname == "define-strategy" || cname == "evolve-strategy");
         }
-        if (num_args != ft.args.size() && !ft.args.empty() && !is_variadic) {
-            auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
-                       "': expected " + std::to_string(ft.args.size()) + " arguments, got " +
-                       std::to_string(num_args);
-            diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
-            // Issue #79: tag the call node so AuraQuery can find it.
-            flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
+        // Issue #2578 / Aether H6: dotted-rest FuncType (ft.variadic) —
+        // min arity is args.size()-1 (rest may be empty); no upper bound.
+        // Fixed arity: exact match. Named variadics (and/or/+): skip check.
+        if (!ft.args.empty() && !named_variadic) {
+            if (ft.variadic) {
+                const std::size_t fixed = ft.args.size() > 0 ? ft.args.size() - 1 : 0;
+                if (num_args < fixed) {
+                    auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
+                               "': expected at least " + std::to_string(fixed) +
+                               " arguments, got " + std::to_string(num_args);
+                    diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+                    flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
+                }
+            } else if (num_args != ft.args.size()) {
+                auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
+                           "': expected " + std::to_string(ft.args.size()) + " arguments, got " +
+                           std::to_string(num_args);
+                diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+                // Issue #79: tag the call node so AuraQuery can find it.
+                flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
+            }
         }
 
 
@@ -4495,7 +4510,11 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
         cs_.consistent_unify(body_type, expected_ret_norm);
     }
     env_.pop_scope();
-    return reg_.register_func(std::move(param_types), body_type);
+    // Issue #2578 / Aether H6: Lambda.int_value != 0 marks dotted rest
+    // (params a b . rest). Register FuncType.variadic so call-site
+    // arity accepts num_args >= fixed (args.size()-1).
+    const bool dotted = (v.int_value != 0);
+    return reg_.register_func(std::move(param_types), body_type, dotted);
 }
 // Issue #280: narrow predicate → bitmask mapping. The bit values
 // are part of the public IR contract (consumed by
@@ -6741,12 +6760,20 @@ void TypeChecker::inject_type_sigs(
         if (pipe == std::string::npos)
             continue;
         std::vector<TypeId> param_types;
+        // Issue #2578 / Aether H6: trailing "..." token marks dotted-rest
+        // (FuncType.variadic). E.g. "Any Any Any ...|Any" → 3 args, min 2.
+        bool variadic = false;
         std::istringstream iss(sig.substr(0, pipe));
         std::string tok;
-        while (iss >> tok)
+        while (iss >> tok) {
+            if (tok == "...") {
+                variadic = true;
+                continue;
+            }
             param_types.push_back(lookup(tok));
+        }
         auto tid = types.register_func_named(std::move(param_types), lookup(sig.substr(pipe + 1)),
-                                             "__decl_" + name);
+                                             "__decl_" + name, variadic);
         // Record the name → TypeId mapping so InferenceEngine can
         // bind each declared name to the env, even if multiple names
         // share the same TypeId post-interning. (See #70 follow-up

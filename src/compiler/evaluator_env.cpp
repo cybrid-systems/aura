@@ -1009,26 +1009,54 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         }
     };
     // Issue #1916: bridge_epoch mismatch after invalidate_function /
-    // fiber steal / GC compact → NEVER walk captured EnvFrame bindings
-    // (may reference freed AST/pool). Empty Env keeps globals reachable;
-    // caller (apply_closure) re-dispatches via bridge / re-parse.
+    // fiber steal / GC compact → prefer not to walk captured EnvFrame
+    // bindings (may reference freed AST/pool). Empty Env keeps globals
+    // reachable; caller (apply_closure) re-dispatches via bridge / re-parse.
+    //
+    // Issue #2578 / #2581 (Aether H6): exception when body AST is still
+    // addressable and the EnvFrame is not terminally INVALID. Module
+    // exports (orch:parallel) keep private free-vars (orch-yield-safe)
+    // only in the capture frame; emptying after unimpacted mutate:rebind
+    // of a workspace define made those free-vars unbound. Soft-recover
+    // (#2569) restamps bridge_epoch before materialize when possible;
+    // this is defense-in-depth when materialize is reached still stale
+    // (must_deopt poison bridge_epoch=0, race window, etc.).
     if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch())) {
-        ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
-        bump_dangling_env("materialize-bridge-stale");
-        bump_closure_epoch_mismatch_fallback();
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-            m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
-            m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1928 / #1895: force-Drop (bridge_epoch=0) + NULL_ENV_ID
-            // hits this path first (is_bridge_stale(0,cur)=true). Still
-            // record null-env safe-fallback so agents can audit force Drop.
-            if (cl.env_id == NULL_ENV_ID && cl.bridge_epoch == 0)
-                m->linear_null_env_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
-            else if (cl.env_id == NULL_ENV_ID)
-                m->linear_post_mutate_null_env_id_total.fetch_add(1, std::memory_order_relaxed);
+        const bool body_live = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
+                               cl.body_id < cl.flat->size();
+        bool env_terminal = false;
+        if (cl.env_id == NULL_ENV_ID || !is_valid_env_id(cl.env_id)) {
+            env_terminal = true;
+        } else {
+            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            if (cl.env_id < env_frames_.size() &&
+                env_frames_[cl.env_id].version_ == INVALID_VERSION)
+                env_terminal = true;
         }
-        wire_global_access(ne);
-        return ne;
+        if (!(body_live && !env_terminal)) {
+            ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+            bump_dangling_env("materialize-bridge-stale");
+            bump_closure_epoch_mismatch_fallback();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+                m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1928 / #1895: force-Drop (bridge_epoch=0) + NULL_ENV_ID
+                // hits this path first (is_bridge_stale(0,cur)=true). Still
+                // record null-env safe-fallback so agents can audit force Drop.
+                if (cl.env_id == NULL_ENV_ID && cl.bridge_epoch == 0)
+                    m->linear_null_env_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                else if (cl.env_id == NULL_ENV_ID)
+                    m->linear_post_mutate_null_env_id_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            wire_global_access(ne);
+            return ne;
+        }
+        // Live body + non-terminal env: fall through and materialize
+        // capture bindings (same policy as apply_closure soft-recover #2569).
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->live_closure_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+            m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // Defensive: a closure with env_id == NULL_ENV_ID would
     // trip the env_frame() contract and crash. This can happen

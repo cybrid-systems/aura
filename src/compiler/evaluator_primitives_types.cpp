@@ -314,11 +314,13 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
             if (tf) {
                 std::string line;
                 while (std::getline(tf, line)) {
-                    auto colon = line.find(':');
-                    if (colon == std::string::npos)
-                        continue;
-                    auto arrow = line.find("->", colon);
+                    // Issue #2578: namespaced names (orch:parallel) contain
+                    // ':'. Split on last ':' before "->" (not first ':').
+                    auto arrow = line.find("->");
                     if (arrow == std::string::npos)
+                        continue;
+                    auto colon = line.rfind(':', arrow);
+                    if (colon == std::string::npos)
                         continue;
                     auto name = line.substr(0, colon);
                     name.erase(name.find_last_not_of(" \t\r") + 1);

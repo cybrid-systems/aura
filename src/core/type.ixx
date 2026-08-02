@@ -97,6 +97,10 @@ export struct TypeInfo {
 export struct FuncType {
     std::vector<TypeId> args;
     TypeId ret;
+    // Issue #2578 / Aether H6: true when the last param is a dotted
+    // rest (lambda (a b . rest)). Call arity must be >= args.size()-1
+    // (rest may be omitted as empty). Default false preserves fixed arity.
+    bool variadic = false;
 };
 
 export struct ForallType {
@@ -163,8 +167,11 @@ public:
     void register_adt_constructors(aura::core::TypeId type_id,
                                    std::vector<std::string> constructors);
     const std::vector<std::string>* get_adt_constructors(aura::core::TypeId type_id) const;
-    TypeId register_func(std::vector<TypeId> args, TypeId ret) post(r : r.valid());
-    TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name);
+    // Issue #2578: variadic=true for dotted-rest lambdas (a b . rest).
+    TypeId register_func(std::vector<TypeId> args, TypeId ret, bool variadic = false)
+        post(r : r.valid());
+    TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name,
+                               bool variadic = false);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
     TypeId register_variant(VariantType vt);
