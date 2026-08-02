@@ -71,11 +71,23 @@ enum class PushStatus : std::uint8_t {
     Closed = 2,
 };
 
+// Issue #2538: typed ask/reply correlation on MailMessage.
+// kind=Normal + correlation_id=0 preserves the legacy text-prefix path
+// ("ask:<id>:" / "reply:<id>:") for #2231/#2401 compatibility.
+enum class MailKind : std::uint8_t {
+    Normal = 0,
+    Ask = 1,
+    Reply = 2,
+};
+
 struct MailMessage {
     std::uint64_t from_fiber = 0;
     std::uint64_t to_fiber = 0; // 0 = broadcast / any
     MailPriority priority = MailPriority::Normal;
     std::string payload;
+    // Issue #2538: typed correlation (0 = none / legacy text-prefix only).
+    std::uint64_t correlation_id = 0;
+    MailKind kind = MailKind::Normal;
 };
 
 struct MultiFiberMailboxStats {

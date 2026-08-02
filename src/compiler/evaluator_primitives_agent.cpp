@@ -3071,15 +3071,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
-    // Issue #2231: orch:agent-ask name payload [:timeout-ms n] → hash
-    // {ok, status, payload, correlation-id, schema-2231}. Standard
-    // cross-agent request/response channel without a global registry
-    // (per #1966): the C++ helper `aura::orch::agent_ask(target,
-    // body, timeout_ms)` builds a fresh per-ask reply mailbox,
-    // encodes the correlation id in-band in the payload prefix
-    // ("ask:<id>:<body>" + "reply:<id>:<body>"), and surfaces the
-    // structured AskResult. No process-global state beyond a
-    // process atomic correlation-id counter.
+    // Issue #2231 / #2538: orch:agent-ask name payload [:timeout-ms n] → hash
+    // {ok, status, payload, correlation-id, schema-2231, schema-2538}.
+    // Standard cross-agent request/response without a global registry
+    // (#1966): C++ helper agent_ask builds a per-ask reply mailbox,
+    // stamps MailKind::Ask + correlation_id (#2538 typed path) and
+    // dual-writes the legacy "ask:<id>:<body>" prefix (#2231).
     add("orch:agent-ask", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0])) {
             return make_primitive_error(
@@ -3111,11 +3108,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (t > 0)
                 timeout_ms = static_cast<std::uint64_t>(t);
         }
-        // Delegate to the C++ helper (same metric + text-prefix
-        // protocol as the helper path).
+        // Delegate to the C++ helper (typed + dual-write legacy protocol).
         const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
         // Encode the structured hash: ok / status / payload /
-        // correlation-id / schema-2231.
+        // correlation-id / schema-2231 / schema-2538.
         auto st_s = r.status; // already "ok" | "timeout" | "no-mailbox" | "malformed"
         auto st_idx = ev.string_heap_.size();
         ev.string_heap_.push_back(st_s);
@@ -3130,15 +3126,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"correlation-id", make_string(corr_idx)},
             {"schema", make_int(aura::orch::kAgentAskIssue)},
             {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+            {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
         };
         return build_orch_hash(kv);
     });
 
-    // Issue #2401: orch:agent-reply corr payload → hash {ok, status, schema-2401}.
+    // Issue #2401 / #2538: orch:agent-reply corr payload → hash
+    // {ok, status, schema-2401, schema-2538}.
     // Standard worker-side response for orch:agent-ask. Corr is int or
-    // string (correlation id from ask:<id>:… prefix). Looks up the
-    // pending-ask reply mailbox (no AgentRegistry). Unknown corr /
-    // closed → structured fail, no hang.
+    // string. Stamps MailKind::Reply + correlation_id (#2538) and
+    // dual-writes reply:<id>: prefix. Looks up the pending-ask reply
+    // mailbox (no AgentRegistry). Unknown corr / closed → structured
+    // fail, no hang.
     add("orch:agent-reply", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -3187,6 +3186,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"schema", make_int(aura::orch::kAgentReplyIssue)},
             {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
             {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+            {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
         };
         return build_orch_hash(kv);
     });
@@ -3500,7 +3500,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("issue-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("agent-scope-concurrent-detect-wired", 1);
-            // Issue #2231 / #2401: agent-ask + agent-reply metrics (additive).
+            // Issue #2231 / #2401 / #2538: agent-ask + agent-reply metrics (additive).
             insert_kv("agent-ask-total", static_cast<std::int64_t>(
                                              os.agent_ask_total.load(std::memory_order_relaxed)));
             insert_kv("agent-ask-timeout-total",
@@ -3511,10 +3511,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("agent-reply-fail-total",
                       static_cast<std::int64_t>(
                           os.agent_reply_fail_total.load(std::memory_order_relaxed)));
+            // Issue #2538: typed correlation (MailKind + correlation_id).
+            insert_kv("agent-ask-typed-match-total",
+                      static_cast<std::int64_t>(
+                          os.agent_ask_typed_match_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-reply-typed-total",
+                      static_cast<std::int64_t>(
+                          os.agent_reply_typed_total.load(std::memory_order_relaxed)));
             insert_kv("schema-2231", aura::orch::kAgentAskIssue);
             insert_kv("issue-2231", aura::orch::kAgentAskIssue);
             insert_kv("schema-2401", aura::orch::kAgentReplyIssue);
             insert_kv("issue-2401", aura::orch::kAgentReplyIssue);
+            insert_kv("schema-2538", aura::orch::kAgentAskTypedCorrIssue);
+            insert_kv("issue-2538", aura::orch::kAgentAskTypedCorrIssue);
+            insert_kv("agent-ask-typed-corr-wired", 1);
             insert_kv("agent-reply-wired", 1);
             insert_kv("send-closed", static_cast<std::int64_t>(
                                          os.send_closed_total.load(std::memory_order_relaxed)));
