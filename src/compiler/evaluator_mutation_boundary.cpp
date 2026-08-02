@@ -1850,11 +1850,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // mutates do not accumulate a stale threshold across outermost
         // boundaries (Soft dashboard + Strict force-rollback both reset).
         aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
-        // Issue #2378 / #2511: outermost exit forces mailbox deferred drain
-        // under budget (hold-exit SLA). Success + exception paths both hit
-        // this Phase-5 block (Guard dtor). AC5: free when deferred_depth==0
+        // Issue #2378 / #2511 / #2551: outermost exit forces mailbox deferred
+        // drain under budget (hold-exit SLA). Success + exception paths both
+        // hit this Phase-5 block (Guard dtor). AC5: free when deferred_depth==0
         // (single relaxed load). Soft: retain open depth + starvation bump;
-        // Strict/production: force-resolve remaining + audit.
+        // Strict/production: force-resolve remaining + audit; residual after
+        // budget → hard counter + Agent throttle flag (#2551).
         // Wraps note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
         (void)aura::serve::mf_mailbox::drain_deferred_under_budget();
         ev_->unbind_yield_hook_evaluator();

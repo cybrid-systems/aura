@@ -141,6 +141,12 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_hold_exit_drain_us_max{0};         // #2511
     std::atomic<std::uint64_t> mailbox_hold_exit_starvation_total{0};     // #2511
     std::atomic<std::uint64_t> mailbox_hold_exit_force_resolved_total{0}; // #2511
+    // Issue #2551: production hard signal when residual deferred after budget.
+    // Hard counter advances under Strict/production on starve; Soft retains
+    // metric-only (#2511 starvation_total). Agent throttle flag is separate
+    // (query-visible) so orch can refuse new mutate until depth clears.
+    std::atomic<std::uint64_t> mailbox_hold_starvation_hard_total{0};    // #2551
+    std::atomic<std::uint64_t> agent_throttle_for_mailbox_starvation{0}; // #2551 0/1
 };
 
 // Process-wide aggregate (tests / observability).
@@ -189,6 +195,12 @@ inline void note_mailbox_mutation_hold_defer() noexcept {
                                                                 std::memory_order_relaxed);
 }
 
+// Issue #2551: clear Agent throttle once deferred mailbox pressure is gone.
+// Called on free drain path (depth==0) and when open window closes (1→0).
+inline void clear_agent_throttle_for_mailbox_starvation() noexcept {
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2378: successful enqueue after possible open defer window.
 // AC3: when deferred_depth==0, single relaxed load then return (no maps).
 inline void note_mailbox_push_ok_drain_progress() noexcept {
@@ -225,6 +237,8 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
                        mx, us, std::memory_order_relaxed)) {
             }
         }
+        // Issue #2551 AC3: window closed → clear Agent throttle.
+        clear_agent_throttle_for_mailbox_starvation();
     }
 }
 
@@ -282,21 +296,27 @@ struct MailboxHoldDrainResult {
     bool had_open_defer = false; // depth > 0 at entry
 };
 
-// Issue #2511: outermost Guard exit forced deferred drain under budget.
+// Issue #2511 / #2551: outermost Guard exit forced deferred drain under budget.
 // AC5: when deferred_depth==0, single relaxed load then return (no maps,
 // no spin). Always stamps last_outermost_exit_ns when depth was open (via
 // note_mailbox_outermost_exit_drain). Soft: retain open depth + starvation
 // bump when budget exhausted. Strict/production: force-resolve remaining
 // depth (accounting close — senders already got BP and will retry) + audit.
+// Issue #2551: production/Strict residual after budget → hard counter +
+// Agent throttle flag (query-visible). Soft residual: metric-only. Flag
+// clears on free path (depth0 entry) or window close (1→0 push Ok).
 [[nodiscard]] inline MailboxHoldDrainResult
 drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
     MailboxHoldDrainResult r;
-    // AC5: zero extra work when no pending defer (one relaxed load).
+    // AC5 / #2551 AC2: zero extra work when no pending defer (one relaxed load).
     const auto depth0 = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
     if (depth0 == 0) {
         // Still stamp exit_ns so a later open-window flush can baseline
         // against this outermost exit (cheap store; not a depth walk).
         g_mailbox_last_outermost_exit_ns.store(mailbox_steady_ns(), std::memory_order_relaxed);
+        // Issue #2551 AC3: subsequent free drain (depth already zero) clears
+        // Agent throttle — mailbox has caught up.
+        clear_agent_throttle_for_mailbox_starvation();
         return r;
     }
     r.had_open_defer = true;
@@ -318,6 +338,8 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
         if (d == 0) {
             r.remaining_depth = 0;
             r.elapsed_us = elapsed_us;
+            // Natural resolve under budget → clear throttle (#2551 AC3).
+            clear_agent_throttle_for_mailbox_starvation();
             break;
         }
         if (elapsed_us >= budget) {
@@ -336,13 +358,34 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
             const char* strict_e = std::getenv("AURA_MUTATE_MAILBOX_STRICT");
             const bool hard_resolve =
                 (strict_e && strict_e[0] == '1') || aura_production_defaults_active_probe() != 0;
+            // Issue #2551 AC1: production/Strict residual after budget →
+            // hard counter + Agent throttle (do not clear here even if
+            // force-resolve zeros depth; subsequent free drain clears).
+            if (hard_resolve) {
+                g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(
+                    1, std::memory_order_relaxed);
+            }
             if (hard_resolve) {
                 std::uint64_t resolved = 0;
                 std::uint64_t guard = d + 8;
                 while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >
                            0 &&
                        guard-- > 0) {
-                    note_mailbox_push_ok_drain_progress();
+                    // Force-resolve uses depth CAS only — do not clear
+                    // throttle via push_ok window close (would race AC1).
+                    auto cur =
+                        g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+                    while (cur > 0 &&
+                           !g_mf_mailbox_stats.mailbox_deferred_depth.compare_exchange_weak(
+                               cur, cur - 1, std::memory_order_relaxed)) {
+                    }
+                    if (cur == 0)
+                        break;
+                    if (cur == 1) {
+                        (void)g_mailbox_first_open_defer_ns.exchange(0, std::memory_order_relaxed);
+                    }
                     ++resolved;
                 }
                 r.force_resolved = resolved;
