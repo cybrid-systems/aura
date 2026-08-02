@@ -3336,7 +3336,12 @@ double aura_float_ref(std::int64_t val) {
 // ── String pool ────────────────────────────────────────────
 // Uses EvalValue-compatible encoding: STRING_BIAS_VAL - idx
 // Issue #1306 (P0): mutex — concurrent push_back + index read was UB.
+// Issue #2577: content intern map so repeated aura_alloc_string of the
+// same text (PrimCall re-intern of identical results) reuses one slot.
 static std::vector<std::string> g_string_pool;
+static std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                          std::equal_to<>>
+    g_string_intern;
 static std::mutex g_string_pool_mtx;
 
 // Expose the JIT string pool for use by the evaluator's hash wrappers
@@ -3368,8 +3373,14 @@ std::size_t aura_jit_pool_size() {
 std::int64_t aura_alloc_string(const char* s) {
     using aura::compiler::types::make_string_raw_v2;
     std::lock_guard<std::mutex> lock(g_string_pool_mtx); // Issue #1306
-    std::int64_t idx = (std::int64_t)g_string_pool.size();
-    g_string_pool.push_back(s ? s : "");
+    // Issue #2577: intern by content — PrimCall re-intern of the same
+    // result (e.g. repeated string-append of fixed args) reuses one slot.
+    std::string_view sv(s ? s : "");
+    if (auto it = g_string_intern.find(sv); it != g_string_intern.end())
+        return make_string_raw_v2(static_cast<std::uint64_t>(it->second));
+    auto idx = g_string_pool.size();
+    g_string_pool.emplace_back(sv);
+    g_string_intern.emplace(g_string_pool.back(), idx);
     // Issue #181 Cycle 2: v2 string encoding.
     return make_string_raw_v2(static_cast<std::uint64_t>(idx));
 }
@@ -3510,6 +3521,7 @@ void aura_reset_runtime() {
     {
         std::lock_guard<std::mutex> lock(g_string_pool_mtx);
         g_string_pool.clear();
+        g_string_intern.clear(); // Issue #2577
     }
     {
         std::lock_guard<std::mutex> lock(g_float_pool_mtx);

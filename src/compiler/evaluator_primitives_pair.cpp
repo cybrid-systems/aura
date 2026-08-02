@@ -411,6 +411,12 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 result += std::to_string(as_int(v));
             }
         }
+        // Issue #2577: content intern — repeated append of the same pieces
+        // (hot PrimCall loops) reuses one heap slot instead of O(N) growth.
+        for (std::size_t i = 0; i < string_heap.size(); ++i) {
+            if (string_heap[i] == result)
+                return make_string(i);
+        }
         auto id = string_heap.size();
         string_heap.push_back(std::move(result));
         return make_string(id);

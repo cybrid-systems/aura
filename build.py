@@ -5316,6 +5316,25 @@ def cmd_primcall_narg_coverage():
     return 0
 
 
+def cmd_primcall_str_intern_coverage():
+    """Issue #2577: PrimCall string re-intern content intern.
+
+    convert_str_for_eval caches JIT idx→eval; aura_alloc_string interns
+    by content so hot fixed-arg PrimCall loops do not grow heaps O(N).
+    """
+    print(f"{B}=== PrimCall str intern coverage (#2577) ==={N}")
+    script = ROOT / "scripts" / "check_primcall_str_intern_2577.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("PrimCall str intern (#2577) coverage contract rows failed")
+        return 1
+    ok("PrimCall str intern (#2577) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6556,6 +6575,7 @@ def cmd_gate():
         or cmd_write_string_escape_coverage()
         or cmd_jit_dual_string_heap_coverage()
         or cmd_primcall_narg_coverage()
+        or cmd_primcall_str_intern_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7384,6 +7404,7 @@ def main():
         "write-string-escape": cmd_write_string_escape_coverage,
         "jit-dual-string-heap": cmd_jit_dual_string_heap_coverage,
         "primcall-narg": cmd_primcall_narg_coverage,
+        "primcall-str-intern": cmd_primcall_str_intern_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),
