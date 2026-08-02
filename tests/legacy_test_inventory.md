@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 738 | Preferred destination suites |
-| **Total scanned** | **738** | |
+| `tests/core/test_*.cpp` | 739 | Preferred destination suites |
+| **Total scanned** | **739** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 46 | 46 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 47 | 47 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -848,6 +848,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_transaction_guard_2555.cpp`
 - `tests/compiler/test_tree_walker_fallback_strict_2213.cpp`
 - `tests/compiler/test_truncate_commit_gate_2458.cpp`
+- `tests/compiler/test_try_catch_bind_2567.cpp`
 - `tests/core/test_try_lock_workspace_lock_order.cpp`
 - `tests/compiler/test_tui_batch_draw_present_2134.cpp`
 - `tests/compiler/test_tui_present_dirty_2214.cpp`
@@ -1690,13 +1691,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention_2523.cpp` (#2523) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (46)
+### `uncategorized` — Uncategorized / mixed (47)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (46)
+#### domain/ (47)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1739,6 +1740,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_deprecation.cpp` (—) [domain_suite, theme_renderer] — test_terminal_deprecation.cpp — Issue #1351: deprecate 7 no-op terminal:* primitives
 - `tests/repl/test_terminal_domain_batch.cpp` (—) [batch_driver, domain_suite, theme_repl] — test_terminal_domain_batch.cpp — terminal domain batch driver.
 - `tests/compiler/test_truncate_commit_gate_2458.cpp` (#2458) [domain_suite, theme_compiler] — AC1: Soft Sampled + truncated → observe; commit_ok allows; no reject
+- `tests/compiler/test_try_catch_bind_2567.cpp` (#2567) [domain_suite, theme_compiler] — AC1: (try (no-such-fn …) (catch (e) (string? e))) → #t; list/cons usable
 - `tests/core/test_try_lock_workspace_lock_order.cpp` (—) [domain_suite, theme_core] — Issue #1768 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_voxel_raycast.cpp` (—) [domain_suite, theme_renderer] — test_voxel_raycast.cpp — Issue #1983 / Epic #1979
 - `tests/renderer/test_voxel_shade.cpp` (—) [domain_suite, theme_renderer] — test_voxel_shade.cpp — Issue #1984 / Epic #1979
