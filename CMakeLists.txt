@@ -4070,6 +4070,11 @@ aura_add_issue_test(test_mailbox_bp_admit_2228)
 aura_issue_test_link_light(test_mailbox_bp_admit_2228)
 add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 
+# Issue #2535: production default mild mailbox BP admit (threshold=32)
+aura_add_issue_test(test_mailbox_bp_admit_default_2535)
+aura_issue_test_link_light(test_mailbox_bp_admit_default_2535)
+add_dependencies(all_test_issue_targets test_mailbox_bp_admit_default_2535)
+
 # Issue #2465: decay window on mailbox_bp_recent_total so the #2228 admission
 # gate doesn't permanently deny every spawn_agent_with_mailbox after the first
 # BP event. Default 30s (matches kJoinDrainResidualHardMsDefault); env override

@@ -108,13 +108,15 @@ int main() {
     CompilerService cs;
     (void)cs;
 
-    // Sanity: default threshold is 0 (admit control off — legacy).
-    CHECK(resolve_mailbox_bp_admit_threshold() == 0,
-          "AC0: default threshold = 0 (admit control off)");
+    // Sanity: production default is mild threshold (#2535); env overrides.
+    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    CHECK(resolve_mailbox_bp_admit_threshold() == aura::orch::kMailboxBpAdmitThresholdDefault,
+          "AC0: default threshold = kMailboxBpAdmitThresholdDefault (#2535)");
+    CHECK(aura::orch::kMailboxBpAdmitThresholdDefault == 32, "AC0: default == 32");
     setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "5", 1);
     CHECK(resolve_mailbox_bp_admit_threshold() == 5,
           "AC0: env override AURA_ORCH_BP_ADMIT_THRESHOLD=5 parsed");
-    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1); // restore default
+    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "0", 1); // opt-out for remaining AC blocks
 
     // ── AC1 + AC2: high-water fill → BP → spawn soft-reject + counters
     {

@@ -17,8 +17,10 @@ sites) when deciding whether to admit a new agent with `attach_mailbox`.
 
 - Env override: `AURA_ORCH_BP_ADMIT_THRESHOLD=N` (uint64; invalid input
   falls back to default).
-- Default: `0` (admission gate disabled — every spawn is admitted).
-- When set to `N > 0`, the gate soft-rejects spawns with
+- **Default: `32`** (`#2535` mild production gate — producer BP storms cannot
+  unbounded-spawn consumers). Opt-out: `AURA_ORCH_BP_ADMIT_THRESHOLD=0`
+  (legacy / diagnostic; zero cost on admit path).
+- When threshold is `N > 0`, the gate soft-rejects spawns with
   `quota_dimension = "mailbox-bp"` once the BP counter is `>= N`. The
   reject path is no-leak by `#2155` parity (`reserved_memory_bytes == 0`,
   no name-table put).

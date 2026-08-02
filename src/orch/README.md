@@ -245,3 +245,10 @@ Metrics (`query:orch-module-stats`, schema-2231 / schema-2401):
 - `agent-reply-fail-total` — unknown-corr / closed / backpressure (#2401).
 
 See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.md`](../../docs/wire-formats.md) §10.
+## Mailbox BP admission (default on, #2228 / #2535)
+
+Production default: `kMailboxBpAdmitThresholdDefault = 32` — spawn with
+`attach_mailbox` soft-rejects when `mailbox_bp_recent_total >= 32`.
+
+Opt-out (legacy / diagnostic): `AURA_ORCH_BP_ADMIT_THRESHOLD=0`.
+Quiet-period recovery: `#2398` / `AURA_ORCH_BP_WINDOW_MS` (default 30s).
