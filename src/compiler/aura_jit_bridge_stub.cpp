@@ -377,6 +377,16 @@ extern "C" __attribute__((weak)) std::uint64_t
 aura_cross_cow_soft_migrate_max_drift(void) noexcept {
     return 4096;
 }
+// Issue #2547: weak stubs for workspace COW gen (full impl in aura_jit_bridge.cpp).
+extern "C" __attribute__((weak)) void
+aura_set_live_workspace_cow_gen(std::uint64_t /*gen*/) noexcept {}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_get_closure_cow_gen(std::int64_t /*closure_id*/) {
+    return 0;
+}
 // Issue #2092: stable-id-keyed remap (no display-name arg). Stub
 // returns 0 so light test binaries without the production TU observe
 // no remap (consistent with no reemit candidates).
@@ -740,6 +750,14 @@ aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept {
 extern "C" __attribute__((weak)) std::uint8_t
 aura_last_cross_workspace_reject_reason_v_read(void) noexcept {
     return g_last_cross_workspace_reject_reason_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_test_set_last_cross_workspace_reject_reason(std::uint8_t v) noexcept {
+    g_last_cross_workspace_reject_reason_stub.store(v, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_test_reset_last_cross_workspace_reject_reason(void) noexcept {
+    g_last_cross_workspace_reject_reason_stub.store(0, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) const char*
 aura_cross_workspace_reject_reason_string(std::uint8_t v) noexcept {

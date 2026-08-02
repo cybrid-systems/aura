@@ -897,7 +897,24 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                                 m->type_repair_suggested_roots[i].store(
                                     i < rc ? sdo.suggested_roots[i] : 0u,
                                     std::memory_order_relaxed);
+                                // Issue #2548: re-mirror structured reason + degree.
+                                const std::uint8_t why = i < sdo.suggested_root_reasons.size()
+                                                             ? sdo.suggested_root_reasons[i]
+                                                             : 0u;
+                                const std::uint32_t deg = i < sdo.suggested_root_degrees.size()
+                                                              ? sdo.suggested_root_degrees[i]
+                                                              : 0u;
+                                m->type_repair_suggested_root_reasons[i].store(
+                                    why, std::memory_order_relaxed);
+                                m->type_repair_suggested_root_degrees[i].store(
+                                    deg, std::memory_order_relaxed);
                             }
+                            m->type_repair_occurrence_replay_miss_count.store(
+                                sdo.occurrence_replay_miss_count, std::memory_order_relaxed);
+                            m->type_repair_let_poly_suggested_count.store(
+                                sdo.let_poly_suggested_count, std::memory_order_relaxed);
+                            m->type_repair_occurrence_suggested_count.store(
+                                sdo.occurrence_suggested_count, std::memory_order_relaxed);
                             for (std::size_t i = 0; i < kUnresolvedGraphEdgeQueryCap; ++i) {
                                 if (i < ec) {
                                     const auto& e = sdo.unresolved_graph_edges[i];

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 721 | Preferred destination suites |
-| **Total scanned** | **721** | |
+| `tests/core/test_*.cpp` | 722 | Preferred destination suites |
+| **Total scanned** | **722** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 46 | 46 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -830,6 +830,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_terminal_render_production.cpp`
 - `tests/compiler/test_test_strategy.cpp`
 - `tests/compiler/test_tier_dispatch.cpp`
+- `tests/compiler/test_timeout_repair_rich_roots_2548.cpp`
 - `tests/compiler/test_tree_walker_fallback_strict_2213.cpp`
 - `tests/compiler/test_truncate_commit_gate_2458.cpp`
 - `tests/core/test_try_lock_workspace_lock_order.cpp`
@@ -1514,13 +1515,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (133)
+### `observability` — Observability / metrics / query:*-stats (134)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (133)
+#### domain/ (134)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1645,6 +1646,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_tenant_isolation_enforcement.cpp` (—) [domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
 - `tests/compiler/test_test_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #1623/#1624/#1627/#1887 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
+- `tests/compiler/test_timeout_repair_rich_roots_2548.cpp` (#2548) [domain_suite, theme_compiler] — AC1: TIMEOUT with live occurrence goals → suggested set includes
 - `tests/compiler/test_tree_walker_fallback_strict_2213.cpp` (#2213) [domain_suite, theme_compiler] — AC1: Under Forbidden (production-strict), needs_tree_walker → HardError
 - `tests/compiler/test_tui_batch_draw_present_2134.cpp` (#2134) [batch_driver, domain_suite, theme_compiler] — AC1: draw-batch + fill-rect update cells and expand dirty AABB
 - `tests/core/test_type_cache_stats_snapshot.cpp` (—) [domain_suite, theme_core] — Issue #1797 (#1978 renamed): issue# moved from filename to header.

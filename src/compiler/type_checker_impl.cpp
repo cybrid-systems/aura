@@ -9386,59 +9386,93 @@ uint64_t TypeChecker::hash_node_shape_recursive(const aura::ast::FlatAST& flat,
 
 // ── Issue #2028: stable constraint solver surface ─────────────────────────
 
-// Issue #2343: bounded var↔constraint subgraph for Agent self-repair.
-// Seeds UF reps from live root sets + unresolved endpoints, then walks
-// var_to_constraints_ under a hard edge cap. Ranks seeds by edge degree
-// into suggested_roots (top-k). Must stay O(seeds × adj) with caps —
-// never dump the full CS.
+// Issue #2343 / #2548: bounded var↔constraint subgraph for Agent self-repair.
+// Seeds UF reps from live root sets + unresolved endpoints + occurrence
+// goal replay misses, then walks var_to_constraints_ under a hard edge
+// cap. Ranks seeds by edge degree DESC then reason DESC (prefer
+// occurrence / let-poly over plain touched). Must stay O(seeds × adj)
+// with caps — never dump the full CS. Caps unchanged (#2548 AC4).
 void ConstraintSystem::export_unresolved_var_constraint_graph(
     const std::vector<Constraint>& unresolved, std::vector<UnresolvedGraphEdge>& edges_out,
-    std::vector<std::uint32_t>& suggested_roots_out, std::size_t edge_cap, std::size_t root_cap) {
+    std::vector<std::uint32_t>& suggested_roots_out, std::size_t edge_cap, std::size_t root_cap,
+    std::vector<std::uint8_t>* suggested_root_reasons_out,
+    std::vector<std::uint32_t>* suggested_root_degrees_out) {
     edges_out.clear();
     suggested_roots_out.clear();
+    if (suggested_root_reasons_out)
+        suggested_root_reasons_out->clear();
+    if (suggested_root_degrees_out)
+        suggested_root_degrees_out->clear();
     if (edge_cap == 0)
         return;
 
-    std::unordered_set<std::uint32_t> seeds;
-    seeds.reserve(touched_roots_.size() + occurrence_priority_roots_.size() +
-                  let_poly_dirty_roots_.size() + pending_full_solve_roots_.size() +
-                  unresolved.size() * 2);
+    // Best reason per seed rep (higher SuggestedRootReason wins).
+    std::unordered_map<std::uint32_t, std::uint8_t> seed_reason;
+    seed_reason.reserve(touched_roots_.size() + occurrence_priority_roots_.size() +
+                        let_poly_dirty_roots_.size() + pending_full_solve_roots_.size() +
+                        unresolved.size() * 2 + occurrence_goals_.size());
+    auto note_seed = [&](std::uint32_t rep, SuggestedRootReason why) {
+        const auto w = static_cast<std::uint8_t>(why);
+        auto it = seed_reason.find(rep);
+        if (it == seed_reason.end() || it->second < w)
+            seed_reason[rep] = w;
+    };
+
     for (auto r : touched_roots_)
-        seeds.insert(r);
+        note_seed(r, SuggestedRootReason::Touched);
     for (auto r : occurrence_priority_roots_)
-        seeds.insert(r);
+        note_seed(r, SuggestedRootReason::Occurrence);
     for (auto r : let_poly_dirty_roots_)
-        seeds.insert(r);
+        note_seed(r, SuggestedRootReason::LetPoly);
     for (auto r : pending_full_solve_roots_)
-        seeds.insert(r);
+        note_seed(r, SuggestedRootReason::PendingFull);
     for (const auto& c : unresolved) {
         if (c.lhs.valid())
-            seeds.insert(find(c.lhs).index);
+            note_seed(find(c.lhs).index, SuggestedRootReason::UnresolvedEndpoint);
         if (c.rhs.valid())
-            seeds.insert(find(c.rhs).index);
+            note_seed(find(c.rhs).index, SuggestedRootReason::UnresolvedEndpoint);
+    }
+    // Issue #2548: occurrence goals whose refined no longer matches live UF
+    // (replay miss) — seed with OccurrenceReplayMiss so Agents reinfer those
+    // vars first under TIMEOUT without a blind full solve.
+    {
+        const auto cur_epoch = current_epoch();
+        for (const auto& goal : occurrence_goals_) {
+            if (!goal.var.valid())
+                continue;
+            if (goal.epoch > 0 && goal.epoch < cur_epoch)
+                continue;
+            auto cur = find(goal.var);
+            if (!consistent_unify(cur, goal.refined) && !consistent_unify(goal.refined, cur)) {
+                note_seed(find(goal.var).index, SuggestedRootReason::OccurrenceReplayMiss);
+            } else {
+                // Live goal still consistent — still prefer as occurrence seed.
+                note_seed(find(goal.var).index, SuggestedRootReason::Occurrence);
+            }
+        }
     }
     // Force-TIMEOUT path clears touched_roots_ before return; if seeds
     // still empty but reverse map has dirty entries, seed those reps so
     // Agents still see a non-empty subgraph under residual dirty.
-    if (seeds.empty() && !var_to_constraints_.empty()) {
+    if (seed_reason.empty() && !var_to_constraints_.empty()) {
         for (const auto& [rep, indices] : var_to_constraints_) {
             for (auto idx : indices) {
                 if (idx < constraint_dirty_.size() && constraint_dirty_[idx]) {
-                    seeds.insert(rep);
+                    note_seed(rep, SuggestedRootReason::Touched);
                     break;
                 }
             }
         }
     }
-    if (seeds.empty())
+    if (seed_reason.empty())
         return;
 
     std::unordered_map<std::uint32_t, std::size_t> degree;
     std::unordered_set<std::uint64_t> seen_edge;
-    degree.reserve(seeds.size());
+    degree.reserve(seed_reason.size());
     seen_edge.reserve(edge_cap * 2);
 
-    for (auto rep : seeds) {
+    for (const auto& [rep, _] : seed_reason) {
         auto it = var_to_constraints_.find(rep);
         if (it == var_to_constraints_.end())
             continue;
@@ -9465,20 +9499,55 @@ void ConstraintSystem::export_unresolved_var_constraint_graph(
             break;
     }
 
-    if (root_cap == 0 || degree.empty())
+    if (root_cap == 0)
         return;
-    std::vector<std::pair<std::size_t, std::uint32_t>> ranked;
+    // Include seeds with degree 0 (no reverse edges) so occurrence /
+    // let-poly roots still surface under residual-empty reverse map.
+    for (const auto& [rep, _] : seed_reason) {
+        if (degree.find(rep) == degree.end())
+            degree[rep] = 0;
+    }
+    if (degree.empty())
+        return;
+
+    // Rank: degree DESC, then reason DESC (occurrence/let-poly preferred),
+    // then rep ASC for stability.
+    struct Ranked {
+        std::size_t degree = 0;
+        std::uint8_t reason = 0;
+        std::uint32_t rep = 0;
+    };
+    std::vector<Ranked> ranked;
     ranked.reserve(degree.size());
-    for (const auto& [rep, d] : degree)
-        ranked.emplace_back(d, rep);
-    std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
-        if (a.first != b.first)
-            return a.first > b.first; // higher degree first
-        return a.second < b.second;   // stable tie-break by rep
+    for (const auto& [rep, d] : degree) {
+        Ranked r;
+        r.degree = d;
+        r.rep = rep;
+        auto it = seed_reason.find(rep);
+        r.reason = it != seed_reason.end()
+                       ? it->second
+                       : static_cast<std::uint8_t>(SuggestedRootReason::Touched);
+        ranked.push_back(r);
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+        if (a.degree != b.degree)
+            return a.degree > b.degree;
+        if (a.reason != b.reason)
+            return a.reason > b.reason; // prefer Occurrence / LetPoly
+        return a.rep < b.rep;
     });
     suggested_roots_out.reserve(std::min(root_cap, ranked.size()));
-    for (std::size_t i = 0; i < ranked.size() && suggested_roots_out.size() < root_cap; ++i)
-        suggested_roots_out.push_back(ranked[i].second);
+    if (suggested_root_reasons_out)
+        suggested_root_reasons_out->reserve(std::min(root_cap, ranked.size()));
+    if (suggested_root_degrees_out)
+        suggested_root_degrees_out->reserve(std::min(root_cap, ranked.size()));
+    for (std::size_t i = 0; i < ranked.size() && suggested_roots_out.size() < root_cap; ++i) {
+        suggested_roots_out.push_back(ranked[i].rep);
+        if (suggested_root_reasons_out)
+            suggested_root_reasons_out->push_back(ranked[i].reason);
+        if (suggested_root_degrees_out)
+            suggested_root_degrees_out->push_back(static_cast<std::uint32_t>(ranked[i].degree));
+    }
 }
 
 SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
@@ -9581,13 +9650,25 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
         if (r.unresolved_affected_nodes.size() > kAffectedSampleCap)
             r.unresolved_affected_nodes.resize(kAffectedSampleCap);
     }
-    // Issue #2343: var↔constraint subgraph export on TIMEOUT / CONFLICT.
-    // SOLVED + empty worklist → skip (zero-cost happy path — AC3).
+    // Issue #2343 / #2548: var↔constraint subgraph export on TIMEOUT /
+    // CONFLICT. SOLVED + empty worklist → skip (zero-cost happy path).
+    // Fills suggested_roots + parallel reasons/degrees (#2548).
     if (r.status == SolveResult::TIMEOUT ||
         (r.status == SolveResult::CONFLICT && !r.unresolved.empty())) {
-        cs.export_unresolved_var_constraint_graph(r.unresolved, r.unresolved_graph_edges,
-                                                  r.suggested_roots, kUnresolvedGraphEdgeCap,
-                                                  kUnresolvedGraphSuggestedRootsCap);
+        cs.export_unresolved_var_constraint_graph(
+            r.unresolved, r.unresolved_graph_edges, r.suggested_roots, kUnresolvedGraphEdgeCap,
+            kUnresolvedGraphSuggestedRootsCap, &r.suggested_root_reasons,
+            &r.suggested_root_degrees);
+        // Count structured reasons for Agent dashboards.
+        for (auto why : r.suggested_root_reasons) {
+            if (why == static_cast<std::uint8_t>(SuggestedRootReason::LetPoly))
+                ++r.let_poly_suggested_count;
+            if (why == static_cast<std::uint8_t>(SuggestedRootReason::Occurrence) ||
+                why == static_cast<std::uint8_t>(SuggestedRootReason::OccurrenceReplayMiss))
+                ++r.occurrence_suggested_count;
+            if (why == static_cast<std::uint8_t>(SuggestedRootReason::OccurrenceReplayMiss))
+                ++r.occurrence_replay_miss_count;
+        }
     }
     if (m) {
         m->solve_delta_occurrence_total.fetch_add(1, std::memory_order_relaxed);
@@ -9643,7 +9724,20 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
             for (std::size_t i = 0; i < kUnresolvedGraphSuggestedRootsCap; ++i) {
                 m->type_repair_suggested_roots[i].store(i < root_pub ? r.suggested_roots[i] : 0u,
                                                         std::memory_order_relaxed);
+                // Issue #2548: parallel reason + degree tags.
+                const std::uint8_t why =
+                    i < r.suggested_root_reasons.size() ? r.suggested_root_reasons[i] : 0u;
+                const std::uint32_t deg =
+                    i < r.suggested_root_degrees.size() ? r.suggested_root_degrees[i] : 0u;
+                m->type_repair_suggested_root_reasons[i].store(why, std::memory_order_relaxed);
+                m->type_repair_suggested_root_degrees[i].store(deg, std::memory_order_relaxed);
             }
+            m->type_repair_occurrence_replay_miss_count.store(r.occurrence_replay_miss_count,
+                                                              std::memory_order_relaxed);
+            m->type_repair_let_poly_suggested_count.store(r.let_poly_suggested_count,
+                                                          std::memory_order_relaxed);
+            m->type_repair_occurrence_suggested_count.store(r.occurrence_suggested_count,
+                                                            std::memory_order_relaxed);
             const std::size_t edge_pub =
                 std::min(ec, static_cast<std::size_t>(kUnresolvedGraphEdgeQueryCap));
             for (std::size_t i = 0; i < kUnresolvedGraphEdgeQueryCap; ++i) {
@@ -9666,6 +9760,9 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
             // (Agent dashboard: repair graph fire rate).
             if (ec > 0)
                 m->type_repair_graph_export_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2548: export with structured reasons (even if edge empty).
+            if (rc > 0)
+                m->type_repair_rich_roots_export_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     return r;
