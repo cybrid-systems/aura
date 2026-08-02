@@ -5297,6 +5297,25 @@ def cmd_jit_dual_string_heap_coverage():
     return 0
 
 
+def cmd_primcall_narg_coverage():
+    """Issue #2576: JIT PrimCall N-arg ABI.
+
+    Packs frame locals into a stack buffer; aura_prim_call(slot, args*,
+    count) forwards all args (cap 32). Fixes string-append/substring 3+.
+    """
+    print(f"{B}=== PrimCall N-arg coverage (#2576) ==={N}")
+    script = ROOT / "scripts" / "check_primcall_narg_2576.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("PrimCall N-arg (#2576) coverage contract rows failed")
+        return 1
+    ok("PrimCall N-arg (#2576) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6536,6 +6555,7 @@ def cmd_gate():
         or cmd_ir_const_string_intern_coverage()
         or cmd_write_string_escape_coverage()
         or cmd_jit_dual_string_heap_coverage()
+        or cmd_primcall_narg_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7363,6 +7383,7 @@ def main():
         "ir-const-string-intern": cmd_ir_const_string_intern_coverage,
         "write-string-escape": cmd_write_string_escape_coverage,
         "jit-dual-string-heap": cmd_jit_dual_string_heap_coverage,
+        "primcall-narg": cmd_primcall_narg_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),
