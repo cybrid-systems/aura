@@ -6237,6 +6237,43 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence_goal_stale_drop_total", occurrence_goal_stale_drop);
             insert_kv("schema-2278", 2278);
             insert_kv("issue-2278", 2278);
+            // Issue #2564: ADT match exhaustiveness goal table + reverify roots.
+            {
+                const std::int64_t adt_goal_note =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_goal_note_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t adt_goal_inv =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_goal_invalidate_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t adt_reverify =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_reverify_root_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t adt_cap_drop =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_goal_cap_drop_total.load(std::memory_order_relaxed))
+                      : 0;
+                std::int64_t adt_table_size = 0;
+                if (ev) {
+                    if (auto* ctc = static_cast<aura::compiler::TypeChecker*>(
+                            ev->commit_type_checker_handle()))
+                        adt_table_size = static_cast<std::int64_t>(
+                            ctc->constraint_system().adt_match_goals_size());
+                }
+                insert_kv("adt-goal-table-size", adt_table_size);
+                insert_kv("adt_goal_table_size", adt_table_size);
+                insert_kv("adt-goal-invalidate-total", adt_goal_inv);
+                insert_kv("adt_goal_invalidate_total", adt_goal_inv);
+                insert_kv("adt-reverify-root-total", adt_reverify);
+                insert_kv("adt_reverify_root_total", adt_reverify);
+                insert_kv("adt-goal-note-total", adt_goal_note);
+                insert_kv("adt-goal-cap-drop-total", adt_cap_drop);
+                insert_kv("adt-goal-table-wired", 1);
+                insert_kv("schema-2564", 2564);
+                insert_kv("issue-2564", 2564);
+            }
             // Issue #2552: joint steal/densify OccurrenceGoal + type_dep fence.
             const std::int64_t steal_goal_prune =
                 m ? static_cast<std::int64_t>(

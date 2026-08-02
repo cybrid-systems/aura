@@ -1335,6 +1335,13 @@ struct CompilerMetrics {
     // (#2264) catches it under Full. Distinct from adt_non_exhaustive_caught_total
     // (which counts Full-audit catches).
     std::atomic<std::uint64_t> adt_partial_non_exhaustive_total{0};
+    // Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
+    // adt_goal_table_size is a live snapshot key (queried from CS); counters:
+    std::atomic<std::uint64_t> adt_goal_note_total{0};
+    std::atomic<std::uint64_t> adt_goal_invalidate_total{0};
+    std::atomic<std::uint64_t> adt_reverify_root_total{0};
+    std::atomic<std::uint64_t> adt_goal_cap_drop_total{0};
+    std::atomic<std::uint32_t> adt_goal_table_wired{1};
     // Issue #693: Hardware backend SV commercial closed-loop.
     std::atomic<std::uint64_t> hardware_backend_hook_calls_total{0};
     std::atomic<std::uint64_t> commercial_reemits_total{0};

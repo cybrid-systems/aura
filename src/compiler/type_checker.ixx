@@ -240,6 +240,18 @@ export struct OccurrenceGoal {
     std::uint64_t epoch = 0;
 };
 
+// Issue #2564: ADT match exhaustiveness goal — first-class priority root
+// for Soft delta reverify when ADT variants / match arms mutate.
+// Keyed by match_node + adt TypeId index; covered_variants_hash fingerprints
+// the arm set so Agents can detect drift. Cap via AURA_ADT_GOAL_TABLE_CAP
+// (default 256, same soft-cone discipline as #2560).
+export struct AdtMatchGoal {
+    std::uint32_t match_node = 0;
+    std::uint32_t adt_type_id = 0; // TypeId.index of subject ADT
+    std::uint64_t covered_variants_hash = 0;
+    std::uint64_t epoch = 0;
+};
+
 export class ConstraintSystem {
     aura::core::TypeRegistry& reg_;
     std::vector<Constraint> constraints_;
@@ -297,6 +309,11 @@ export class ConstraintSystem {
     // which is delta-time only). `note_occurrence_goal` appends on
     // narrowing apply; `prune_occurrence_goals` drops `epoch < min`.
     std::vector<OccurrenceGoal> occurrence_goals_;
+    // Issue #2564: ADT match exhaustiveness goals + pending reverify roots
+    // (match NodeIds). Survives clear_blame_context; invalidate on ADT
+    // variant mutate pushes match sites into adt_reverify_roots_.
+    std::vector<AdtMatchGoal> adt_match_goals_;
+    std::unordered_set<std::uint32_t> adt_reverify_roots_;
     // Issue #1617: Union-Find roots tied to Let-Polymorphism
     // generalization / instantiation sites. Priority between
     // occurrence (4) and plain touched (1); targeted reverify
@@ -718,6 +735,29 @@ public:
     }
     void set_current_epoch(std::uint64_t epoch) noexcept { current_epoch_ = epoch; }
     [[nodiscard]] std::uint64_t current_epoch() const noexcept { return current_epoch_; }
+    // Issue #2564: ADT match goal table API.
+    // note: upsert by match_node (cap-enforced). invalidate: drop goals for
+    // adt_type_id and push match_node into reverify roots. drain: move
+    // reverify roots out for Soft delta / partial recheck. Zero cost when
+    // table empty (AC2).
+    void note_adt_match_goal(std::uint32_t match_node, std::uint32_t adt_type_id,
+                             std::uint64_t covered_variants_hash) noexcept;
+    [[nodiscard]] std::size_t invalidate_adt_goals_for(std::uint32_t adt_type_id) noexcept;
+    [[nodiscard]] std::size_t adt_match_goals_size() const noexcept {
+        return adt_match_goals_.size();
+    }
+    [[nodiscard]] std::size_t adt_reverify_roots_size() const noexcept {
+        return adt_reverify_roots_.size();
+    }
+    [[nodiscard]] const std::vector<AdtMatchGoal>& adt_match_goals_for_test() const noexcept {
+        return adt_match_goals_;
+    }
+    // Drain pending reverify match NodeIds (clears internal set).
+    std::vector<std::uint32_t> drain_adt_reverify_roots() noexcept;
+    // Absorb TLS pending roots from ADT variant invalidate (static path).
+    void absorb_pending_adt_reverify_roots() noexcept;
+    // Cap for table (env AURA_ADT_GOAL_TABLE_CAP, default 256).
+    [[nodiscard]] static std::size_t adt_goal_table_cap() noexcept;
     // Issue #1871: size of pending full-solve root backlog.
     [[nodiscard]] std::size_t pending_full_solve_roots_size() const noexcept {
         return pending_full_solve_roots_.size();
