@@ -779,18 +779,33 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::ConstString: {
-                    // Store string in both heaps: primitives (for primitives) and local (for
-                    // coercion)
+                    // Issue #2573: intern by module string_pool index.
+                    // Previously every execution pushed a new copy into
+                    // prim_heap + string_heap_ → O(iterations) growth for
+                    // (display "lit") in IR-path loops. Same pool index ⇒
+                    // same content for this module_; reuse first materialize.
+                    const std::uint32_t pool_idx = ops[1];
+                    if (auto cit = const_string_cache_.find(pool_idx);
+                        cit != const_string_cache_.end()) {
+                        locals[ops[0]] = cit->second;
+                        break;
+                    }
+                    // First hit: store in both heaps — primitives (display /
+                    // prims) and local (coercion / eq_str_content). Keep
+                    // indices lockstep so make_string(prim_idx) is valid
+                    // for both.
                     auto& prim_heap = context_.primitives.string_heap();
                     auto prim_idx = prim_heap.size();
-                    if (ops[1] < module_.string_pool.size()) {
-                        prim_heap.push_back(module_.string_pool[ops[1]]);
-                        string_heap_.push_back(module_.string_pool[ops[1]]);
+                    if (pool_idx < module_.string_pool.size()) {
+                        prim_heap.push_back(module_.string_pool[pool_idx]);
+                        string_heap_.push_back(module_.string_pool[pool_idx]);
                     } else {
                         prim_heap.push_back("");
                         string_heap_.push_back("");
                     }
-                    locals[ops[0]] = make_string(prim_idx);
+                    auto val = make_string(prim_idx);
+                    const_string_cache_.emplace(pool_idx, val);
+                    locals[ops[0]] = val;
                     break;
                 }
 

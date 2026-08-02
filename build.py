@@ -5239,6 +5239,25 @@ def cmd_module_export_display_coverage():
     return 0
 
 
+def cmd_ir_const_string_intern_coverage():
+    """Issue #2573: IR ConstString intern — no O(N) string_heap growth.
+
+    IR interpreter caches ConstString by module string_pool index so
+    hot loops with body literals reuse one heap entry.
+    """
+    print(f"{B}=== IR ConstString intern coverage (#2573) ==={N}")
+    script = ROOT / "scripts" / "check_ir_const_string_intern_2573.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("IR ConstString intern (#2573) coverage contract rows failed")
+        return 1
+    ok("IR ConstString intern (#2573) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6475,6 +6494,7 @@ def cmd_gate():
         or cmd_module_load_tail_coverage()
         or cmd_while_define_oneshot_coverage()
         or cmd_module_export_display_coverage()
+        or cmd_ir_const_string_intern_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7299,6 +7319,7 @@ def main():
         "module-load-tail": cmd_module_load_tail_coverage,
         "while-define-oneshot": cmd_while_define_oneshot_coverage,
         "module-export-display": cmd_module_export_display_coverage,
+        "ir-const-string-intern": cmd_ir_const_string_intern_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),
