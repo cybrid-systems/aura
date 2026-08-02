@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #2579 — module free-vars / multi-define value init / export
 //          residuals after #2566 #2569 #2570 #2581.
+//          Also locks #2581 two-pass multi-define (private free-vars + export).
 //
 //   AC1: set-code multi-define (define g (f)) binds call result, not procedure
 //   AC2: split stats+loop modules survive unimpacted mutate:rebind

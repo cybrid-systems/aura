@@ -65,6 +65,9 @@ static void ac1_orch_parallel_typecheck() {
 }
 
 static void ac2_orch_freevar_survive_rebind() {
+    // Issue #2581 / regression after #2579: multi-define with non-Lambda
+    // (*agents*) must still snapshot private free-vars (orch-yield-safe)
+    // before export filtering — two-pass letrec (lambdas then values).
     std::println("\n--- #2578 AC2: orch free-vars survive unimpacted rebind ---");
     CompilerService cs;
     CHECK(eval_ok(cs, "(require \"std/orchestrator\" all:)"), "require orch");
