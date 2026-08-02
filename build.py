@@ -5201,6 +5201,25 @@ def cmd_aether_denseness_coverage():
     return 0
 
 
+def cmd_module_rebind_residual_coverage():
+    """Issue #2579: multi-define value init + split-module rebind survival.
+
+    Stop eager IR env bind on set-code populate; sequential multi-define
+    for non-lambda values; sync value cells after eval-current.
+    """
+    print(f"{B}=== module rebind residual coverage (#2579) ==={N}")
+    script = ROOT / "scripts" / "check_module_rebind_2579.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module rebind residual (#2579) coverage contract rows failed")
+        return 1
+    ok("module rebind residual (#2579) coverage clean")
+    return 0
+
+
 def cmd_module_load_tail_coverage():
     """Issue #2570: module load fail-closed; trailing defines export.
 
@@ -6588,6 +6607,7 @@ def cmd_gate():
         or cmd_symbol_eq_coverage()
         or cmd_setcode_rebind_coverage()
         or cmd_aether_denseness_coverage()
+        or cmd_module_rebind_residual_coverage()
         or cmd_module_load_tail_coverage()
         or cmd_while_define_oneshot_coverage()
         or cmd_module_export_display_coverage()
@@ -7418,6 +7438,7 @@ def main():
         "symbol-eq": cmd_symbol_eq_coverage,
         "setcode-rebind": cmd_setcode_rebind_coverage,
         "aether-denseness": cmd_aether_denseness_coverage,
+        "module-rebind-residual": cmd_module_rebind_residual_coverage,
         "module-load-tail": cmd_module_load_tail_coverage,
         "while-define-oneshot": cmd_while_define_oneshot_coverage,
         "module-export-display": cmd_module_export_display_coverage,

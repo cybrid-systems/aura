@@ -682,6 +682,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
         auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
 
+        // Issue #2579 / #687: after tree-walker multi-define, record value
+        // define cell indices for IR lowering (replaces eager
+        // bind_value_define_via_ir during set-code populate which overwrote
+        // TW results with IR closures).
+        if (result && ev.sync_workspace_value_cells_fn_)
+            ev.sync_workspace_value_cells_fn_();
+
         // Cache + clear dirty only if workspace pin still points at the
         // same generation (no intervening set_workspace_flat).
         {
