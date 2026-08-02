@@ -7316,6 +7316,36 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("type-dirty-txn-phase3-mirror-total", txn_p3);
             insert_kv("schema-2516", 2516);
             insert_kv("issue-2516", 2516);
+            // Issue #2560: partial re-infer cone soft/hard SLA (type layer).
+            {
+                const std::int64_t soft_ov =
+                    m ? static_cast<std::int64_t>(
+                            m->partial_cone_soft_overflow_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t hard_fb =
+                    m ? static_cast<std::int64_t>(
+                            m->partial_cone_hard_fallback_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t deg_trunc =
+                    m ? static_cast<std::int64_t>(m->partial_cone_type_dep_degree_trunc_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t last_sz =
+                    m ? static_cast<std::int64_t>(
+                            m->partial_cone_last_size.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t wired =
+                    m ? static_cast<std::int64_t>(
+                            m->partial_cone_cap_wired.load(std::memory_order_relaxed))
+                      : 1;
+                insert_kv("partial-cone-soft-overflow-total", soft_ov);
+                insert_kv("partial-cone-hard-fallback-total", hard_fb);
+                insert_kv("partial-cone-type-dep-degree-trunc-total", deg_trunc);
+                insert_kv("partial-cone-last-size", last_sz);
+                insert_kv("partial-cone-cap-wired", wired);
+                insert_kv("schema-2560", 2560);
+                insert_kv("issue-2560", 2560);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

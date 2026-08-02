@@ -1,12 +1,15 @@
 module;
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -38,6 +41,92 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 #include "observability_metrics.h"
 #include "ownership_escape_lowering_gate.h" // Issue #2263: set_escape_move_elision_gate
 // Issue #1872: shared LRU victim helper for predicate_memo_ overflow.
+
+// ── Issue #2560: partial re-infer cone soft/hard caps ───────────────────
+// Env: AURA_PARTIAL_CONE_SOFT (default 256), AURA_PARTIAL_CONE_HARD (2048),
+// AURA_TYPE_DEP_FANOUT_CAP (default 64 per TypeId expand step).
+// Zero extra work when cone under soft cap (AC3).
+namespace {
+[[nodiscard]] std::size_t partial_cone_soft_cap() noexcept {
+    static const std::size_t v = []() noexcept -> std::size_t {
+        const char* e = std::getenv("AURA_PARTIAL_CONE_SOFT");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto n = std::strtoull(e, &end, 10);
+            if (end != e && n > 0 && n <= 1'000'000ull)
+                return static_cast<std::size_t>(n);
+        }
+        return 256;
+    }();
+    return v;
+}
+[[nodiscard]] std::size_t partial_cone_hard_cap() noexcept {
+    static const std::size_t v = []() noexcept -> std::size_t {
+        const char* e = std::getenv("AURA_PARTIAL_CONE_HARD");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto n = std::strtoull(e, &end, 10);
+            if (end != e && n > 0 && n <= 10'000'000ull)
+                return static_cast<std::size_t>(n);
+        }
+        return 2048;
+    }();
+    return v;
+}
+[[nodiscard]] std::size_t type_dep_fanout_cap() noexcept {
+    static const std::size_t v = []() noexcept -> std::size_t {
+        const char* e = std::getenv("AURA_TYPE_DEP_FANOUT_CAP");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto n = std::strtoull(e, &end, 10);
+            if (end != e && n > 0 && n <= 100'000ull)
+                return static_cast<std::size_t>(n);
+        }
+        return 64;
+    }();
+    return v;
+}
+
+// Seed-preserving deterministic truncate: keep seeds first, then fill to
+// limit with remaining nodes in stable order. Returns nodes dropped.
+std::size_t truncate_partial_cone_seed_preserving(std::vector<aura::ast::NodeId>& affected,
+                                                  std::span<const aura::ast::NodeId> seeds,
+                                                  std::size_t limit) {
+    if (affected.size() <= limit)
+        return 0;
+    std::unordered_set<aura::ast::NodeId> seed_set;
+    seed_set.reserve(seeds.size() * 2 + 4);
+    for (auto s : seeds) {
+        if (s != aura::ast::NULL_NODE)
+            seed_set.insert(s);
+    }
+    std::vector<aura::ast::NodeId> kept;
+    kept.reserve(limit);
+    std::unordered_set<aura::ast::NodeId> seen;
+    seen.reserve(limit * 2);
+    // Phase 1: seeds that appear in affected (preserve locality).
+    for (auto id : affected) {
+        if (seed_set.count(id) && seen.insert(id).second) {
+            kept.push_back(id);
+            if (kept.size() >= limit)
+                break;
+        }
+    }
+    // Phase 2: remaining affected in original order.
+    if (kept.size() < limit) {
+        for (auto id : affected) {
+            if (seen.insert(id).second) {
+                kept.push_back(id);
+                if (kept.size() >= limit)
+                    break;
+            }
+        }
+    }
+    const auto dropped = affected.size() - kept.size();
+    affected = std::move(kept);
+    return dropped;
+}
+} // namespace
 #include "bounded_lru.h"
 // Issue #1877: last hygiene provenance stamp for truncated blame frames.
 #include "core/provenance_tracker.hh"
@@ -7103,7 +7192,18 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             probe.index = tid;
             if (!types.is_var(probe))
                 continue;
+            // Issue #2560: degree-truncate per-TypeId fan-out (not cone-wide).
+            std::size_t fan = 0;
+            const auto fan_cap = type_dep_fanout_cap();
             for (auto dep : affected_nodes_for_type(tid)) {
+                if (fan >= fan_cap) {
+                    if (metrics_) {
+                        static_cast<struct CompilerMetrics*>(metrics_)
+                            ->partial_cone_type_dep_degree_trunc_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    break;
+                }
                 if (dep == aura::ast::NULL_NODE || dep >= flat.size())
                     continue;
                 if (static_cast<std::uint32_t>(flat.get(dep).type_id) != tid)
@@ -7111,6 +7211,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 if (seen.insert(dep).second) {
                     affected.push_back(dep);
                     ++expanded;
+                    ++fan;
                 }
             }
         }
@@ -7193,8 +7294,19 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         if (!touched_type_ids.empty()) {
             std::unordered_set<NodeId> seen(affected.begin(), affected.end());
             std::uint64_t nodes_added = 0;
+            const auto fan_cap = type_dep_fanout_cap();
             for (auto tid : touched_type_ids) {
+                // Issue #2560: degree-truncate per-TypeId merge fan-out.
+                std::size_t fan = 0;
                 for (auto dep : affected_nodes_for_type(tid)) {
+                    if (fan >= fan_cap) {
+                        if (metrics_) {
+                            static_cast<struct CompilerMetrics*>(metrics_)
+                                ->partial_cone_type_dep_degree_trunc_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        }
+                        break;
+                    }
                     if (dep == aura::ast::NULL_NODE || dep >= flat.size())
                         continue;
                     // live_and_still_typed: drop stale graph entries whose
@@ -7204,6 +7316,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                     if (seen.insert(dep).second) {
                         affected.push_back(dep);
                         ++nodes_added;
+                        ++fan;
                     }
                 }
             }
@@ -7216,6 +7329,59 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             }
         }
     }
+
+    // ── Issue #2560: partial cone soft/hard SLA (type layer) ──
+    // After full cone build (primary + type_dep + cascade + #2283 merge),
+    // before #2516 invalidate/re-infer. Zero cost when size ≤ soft_cap (AC3).
+    // Soft overflow: seed-preserving truncate to soft_cap + counter.
+    // Hard (production only): seed-preserving truncate to hard_cap + counter
+    // (deterministic; no silent O(n) without metric — AC2).
+    // #2516 order is unchanged; empty cone already returned above (AC4).
+    {
+        auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
+        const auto soft = partial_cone_soft_cap();
+        const auto hard = partial_cone_hard_cap();
+        // Seeds: mutation primary + parent (locality for truncate).
+        std::array<aura::ast::NodeId, 4> seed_buf{};
+        std::size_t seed_n = 0;
+        auto push_seed = [&](aura::ast::NodeId id) {
+            if (id == aura::ast::NULL_NODE || seed_n >= seed_buf.size())
+                return;
+            seed_buf[seed_n++] = id;
+        };
+        push_seed(rec.target_node);
+        push_seed(rec.parent_id);
+        if (!affected.empty())
+            push_seed(affected.front());
+        const auto seeds = std::span<const aura::ast::NodeId>(seed_buf.data(), seed_n);
+
+        const auto orig_sz = affected.size();
+        if (m)
+            m->partial_cone_last_size.store(static_cast<std::uint64_t>(orig_sz),
+                                            std::memory_order_relaxed);
+
+        // Counters use pre-truncate size so Agents see true fan-out pressure.
+        if (orig_sz > soft) {
+            if (m)
+                m->partial_cone_soft_overflow_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        const bool production = aura::compiler::typed_audit::production_defaults_active();
+        if (production && orig_sz > hard) {
+            // AC2: hard path under production — seed-preserving truncate to
+            // hard_cap (deterministic; metric prevents silent O(n)).
+            if (m)
+                m->partial_cone_hard_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            (void)truncate_partial_cone_seed_preserving(affected, seeds, hard);
+        } else if (orig_sz > soft) {
+            // Soft overflow: prefer DefUse/per-symbol already selected above;
+            // still truncate seed-preserving to soft_cap for latency SLA.
+            (void)truncate_partial_cone_seed_preserving(affected, seeds, soft);
+        }
+        if (m)
+            m->partial_cone_last_size.store(static_cast<std::uint64_t>(affected.size()),
+                                            std::memory_order_relaxed);
+    }
+
     // ── Issue #2516 dirty txn (single ordered sequence; all partial paths) ──
     // Phase order (AC1 source-cite; do not reorder without updating tests):
     //   1. invalidate_type_dep_for_nodes(dirty seeds)  — drop stale edges
