@@ -261,7 +261,24 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     if (current_export_set_)
         current_export_set_->clear();
 
-    // 8. Evaluate module in its own env
+    // 8. Evaluate module in its own env.
+    // Issue #2566: nested (require)/(import) must inject into mod_env so
+    // free-vars (e.g. mutate:boundary-safe?) resolve inside module closures.
+    // RAII restores previous inject target for nested load_module_file.
+    struct RequireInjectGuard {
+        Evaluator& ev;
+        Env* prev;
+        explicit RequireInjectGuard(Evaluator& e, Env* target) noexcept
+            : ev(e)
+            , prev(e.require_inject_env_) {
+            e.require_inject_env_ = target;
+        }
+        ~RequireInjectGuard() noexcept { ev.require_inject_env_ = prev; }
+        RequireInjectGuard(const RequireInjectGuard&) = delete;
+        RequireInjectGuard& operator=(const RequireInjectGuard&) = delete;
+    };
+    RequireInjectGuard inject_guard(*this, mod_env);
+
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
     auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
 

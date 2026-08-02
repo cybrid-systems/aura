@@ -4462,7 +4462,14 @@ private:
                        std::equal_to<>>
         module_cache_;                              // path → index
     std::unordered_set<std::string> loading_stack_; // circular dep detection
-    std::vector<std::string> module_names_;         // display names for modules
+    // Issue #2566: while load_module_file evaluates a module body, nested
+    // (require)/(import) must inject exports into THIS module env (not only
+    // top_). Closures defined in the module capture free vars from the
+    // module env snapshot; binding only to top_ leaves mutate:/std free
+    // vars unbound under materialize_call_env SoA walk. Null → top-level
+    // import (inject into top_ only). Nested loads restore previous.
+    Env* require_inject_env_ = nullptr;
+    std::vector<std::string> module_names_; // display names for modules
     std::unordered_map<std::string, ast::ASTArena*, aura::core::TransparentStringHash,
                        std::equal_to<>>
         module_arena_ptrs_; // path → owning arena (for gc_module)
