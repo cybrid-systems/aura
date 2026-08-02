@@ -1072,10 +1072,9 @@ extern "C" std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept {
 // Reset to None at the start of every aura_reload_aot_module_for_eval
 // attempt (alongside g_last_reload_fail_reason reset); ForeignEval is
 // stored before the counter increment at the guard site below.
-// CowGenMismatch + Unknown values are reserved for future expansion
-// (CowGenMismatch would require wiring a COW generation compare at
-// the guard site; Unknown is defensive — bumps if a future reject
-// path forgets to set a specific reason).
+// CowGenMismatch: reload (#2275) + call-time closure stamp (#2547).
+// Unknown is defensive — bumps if a future reject path forgets to set
+// a specific reason. Cross-workspace write path remains fail-closed.
 static std::atomic<std::uint8_t> g_last_cross_workspace_reject_reason{0};
 // Issue #2275: process-level workspace cow_gen atoms. Eval tables
 // are simple (eval_ptr -> expected cow_gen) — single atomic per
@@ -1392,7 +1391,8 @@ extern "C" void aura_bump_cross_cow_hard_reject_total(void) noexcept {
     if (aot_metrics())
         aot_metrics()->cross_cow_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
 }
-// Issue #2505: reason breakdown (1=Disabled … 6=Other). Also stamps last reason.
+// Issue #2505 / #2547: reason breakdown (1=Disabled … 6=Other, 7=CowGenMismatch).
+// Also stamps last reason.
 extern "C" void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept {
     auto* m = aot_metrics();
     if (!m)
@@ -1413,6 +1413,9 @@ extern "C" void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noex
             break;
         case 5:
             m->cross_cow_hard_reject_remount_fail_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 7: // Issue #2547 CowGenMismatch
+            m->cross_cow_hard_reject_cow_gen_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             break;
         case 6:
         default:

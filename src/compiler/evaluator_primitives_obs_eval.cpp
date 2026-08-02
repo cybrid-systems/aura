@@ -10783,6 +10783,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("cross-cow-single-workspace-mvp-wired", 1);
             insert_kv("schema-2505", 2505);
             insert_kv("issue-2505", 2505);
+            // Issue #2547: explicit cow_gen_at_capture; CowGenMismatch hard.
+            insert_kv("cross-cow-hard-reject-cow-gen-mismatch-total",
+                      m ? L(&m->cross_cow_hard_reject_cow_gen_mismatch_total) : 0);
+            insert_kv("cross-cow-closure-cow-gen-stamp-wired", 1);
+            insert_kv("cross-cow-gen-mismatch-hard-wired", 1);
+            insert_kv("cross-cow-no-write-path-wired", 1); // #2178/#2275 still fail-closed
+            insert_kv("schema-2547", 2547);
+            insert_kv("issue-2547", 2547);
             insert_kv("jit_closure_stale_deopt_total",
                       m ? L(&m->jit_closure_stale_deopt_total) : 0);
             insert_kv("jit_closure_safe_fallbacks", m ? L(&m->jit_closure_safe_fallbacks) : 0);

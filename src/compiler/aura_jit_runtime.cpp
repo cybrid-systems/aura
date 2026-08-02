@@ -894,6 +894,11 @@ static std::vector<std::uint8_t> g_closure_linear_state;
 // from host env mirror + restamped on reemit restamp. aura_remount_
 // closure_captures consults this as PRIMARY (defuse remains secondary).
 static std::vector<std::uint64_t> g_closure_env_gen;
+// Issue #2547: explicit workspace COW generation at capture time.
+// True multi-COW axis (not bridge_epoch proxy). Soft-migrate within
+// same cow_gen; cross-gen dual-miss → hard CowGenMismatch (#2240).
+// Still does NOT open cross-workspace hot-update write (#2178/#2275).
+static std::vector<std::uint64_t> g_closure_cow_gens;
 
 // Issue #2092 / #2369: process-global toggle for the LEGACY name-fallback
 // rewrite path in aura_remap_live_closures_after_reemit. Off by default
@@ -1136,27 +1141,36 @@ extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
 // Issue #2272: also stamp env_generation from the host mirror so the
 // PRIMARY env axis in aura_remount_closure_captures catches compact /
 // RegionExclusive writer drift.
+// Issue #2547: stamp cow_gen_at_capture from live workspace COW generation.
 static void stamp_closure_provenance_locked(size_t cid) {
     const std::uint64_t bridge = aura_aot_func_table_epoch();
     const std::uint64_t defuse = aura_get_aot_defuse_version();
     const std::uint64_t env_gen = aura_get_aot_live_env_frame_version();
-    if (cid >= g_closure_bridge_epochs.size())
-        g_closure_bridge_epochs.resize(cid + 1, 0);
-    if (cid >= g_closure_defuse_versions.size())
-        g_closure_defuse_versions.resize(cid + 1, 0);
-    if (cid >= g_closure_env_gen.size())
-        g_closure_env_gen.resize(cid + 1, 0);
+    const std::uint64_t cow_gen = aura_get_live_workspace_cow_gen();
+    const auto n = g_closure_func_ids.size();
+    if (g_closure_bridge_epochs.size() < n)
+        g_closure_bridge_epochs.resize(n, 0);
+    if (g_closure_defuse_versions.size() < n)
+        g_closure_defuse_versions.resize(n, 0);
+    if (g_closure_env_gen.size() < n)
+        g_closure_env_gen.resize(n, 0);
+    if (g_closure_cow_gens.size() < n)
+        g_closure_cow_gens.resize(n, 0);
+    if (cid >= n)
+        return;
     g_closure_bridge_epochs[cid] = bridge;
     g_closure_defuse_versions[cid] = defuse;
     g_closure_env_gen[cid] = env_gen;
+    g_closure_cow_gens[cid] = cow_gen;
 }
 
-// Issue #2371 / #2505: production-default-on soft migrate policy.
+// Issue #2371 / #2505 / #2547: production-default-on soft migrate policy.
 // AURA_CROSS_COW_SOFT_MIGRATE=0 disables; unset / 1 → on.
 // Contract (call-time only; single-workspace MVP — see aura_jit_bridge.h):
-//   Soft: live + linear-safe + |epoch_delta| ≤ K
-//   Hard: freed / linear / far-behind / remount-fail / disabled
+//   Soft: live + linear-safe + |epoch_delta| ≤ K + same cow_gen (#2547)
+//   Hard: freed / linear / far-behind / remount-fail / disabled / cow_gen
 // Reason codes mirror aura_bump_cross_cow_hard_reject_reason.
+// #2547: CowGenMismatch=7 (cross true workspace COW gen; not bridge proxy).
 enum class CrossCowHardReject : std::uint8_t {
     None = 0,
     Disabled = 1,
@@ -1165,6 +1179,7 @@ enum class CrossCowHardReject : std::uint8_t {
     Linear = 4,
     RemountFail = 5,
     Other = 6,
+    CowGenMismatch = 7, // #2547
 };
 
 static bool cross_cow_soft_migrate_enabled_() noexcept {
@@ -1205,6 +1220,27 @@ static bool cross_cow_drift_within_cap_(std::uint64_t captured, std::uint64_t cu
 
 static void cross_cow_note_hard_(CrossCowHardReject r) noexcept {
     aura_bump_cross_cow_hard_reject_reason(static_cast<std::uint8_t>(r));
+    // Issue #2547 / #2240: stamp CrossWorkspaceReject on call path when
+    // cow_gen mismatch (Agents poll last-cross-workspace-reject-reason).
+    if (r == CrossCowHardReject::CowGenMismatch) {
+        aura_test_set_last_cross_workspace_reject_reason(
+            static_cast<std::uint8_t>(CrossWorkspaceReject::CowGenMismatch));
+    }
+}
+
+// Issue #2547: cow_gen mismatch helper. live==0 → domain inactive (no hard).
+// cap==0 && live!=0 → legacy unstamped; soft restamp will fill gen.
+// Both non-zero and unequal → hard CowGenMismatch (AC2 default).
+static bool closure_cow_gen_mismatch_(std::size_t cid) noexcept {
+    const std::uint64_t live = aura_get_live_workspace_cow_gen();
+    if (live == 0)
+        return false; // domain inactive
+    if (cid >= g_closure_cow_gens.size())
+        return false; // unstamped / OOB → restamp path
+    const std::uint64_t cap = g_closure_cow_gens[cid];
+    if (cap == 0)
+        return false; // legacy unstamped — soft restamp fills
+    return cap != live;
 }
 
 // Forward decl: remount body (defined later in this TU).
@@ -1235,6 +1271,14 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
     }
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
         cross_cow_note_hard_(CrossCowHardReject::Freed);
+        aura_unlock_workspace_write();
+        return 0;
+    }
+    // Issue #2547: explicit COW-gen axis — cross-gen hard-rejects by default
+    // (bridge_epoch soft is NOT a substitute for true COW migration).
+    // Soft within same gen continues below; unstamped (0) restamps on success.
+    if (closure_cow_gen_mismatch_(cid)) {
+        cross_cow_note_hard_(CrossCowHardReject::CowGenMismatch);
         aura_unlock_workspace_write();
         return 0;
     }
@@ -1306,6 +1350,19 @@ extern "C" void aura_closure_set_env_gen(std::int64_t closure_id, std::uint64_t 
     g_closure_env_gen[cid] = gen;
 }
 
+// Issue #2547: per-closure cow_gen_at_capture getter (Agent / tests).
+extern "C" std::uint64_t aura_get_closure_cow_gen(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_cow_gens.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    return g_closure_cow_gens[cid];
+}
+
 extern "C" std::uint64_t aura_closure_get_env_gen(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;
@@ -1334,7 +1391,8 @@ static bool closure_vectors_consistent_unlocked() noexcept {
            g_closure_defuse_versions.size() == n &&
            g_closure_stable_func_ids.size() == n && // Issue #2092
            g_closure_must_deopt.size() == n &&      // Issue #2128
-           g_closure_linear_state.size() == n;      // Issue #2129
+           g_closure_linear_state.size() == n &&    // Issue #2129
+           g_closure_cow_gens.size() == n;          // Issue #2547
 }
 
 #ifndef NDEBUG
@@ -1399,6 +1457,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
         0); // Issue #2092: legacy default; stamped in aura_closure_set_name
     g_closure_must_deopt.push_back(0);                                              // Issue #2128
     g_closure_linear_state.push_back(aura_get_aot_live_linear_state_fingerprint()); // Issue #2129
+    g_closure_cow_gens.push_back(aura_get_live_workspace_cow_gen());                // Issue #2547
     return id;
 }
 
@@ -1461,6 +1520,8 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_must_deopt[cid] = 0; // Issue #2128
     if (cid < g_closure_linear_state.size())
         g_closure_linear_state[cid] = 0; // Issue #2129
+    if (cid < g_closure_cow_gens.size())
+        g_closure_cow_gens[cid] = 0; // Issue #2547
     if (cid >= g_closure_freed.size())
         g_closure_freed.resize(g_closure_func_ids.size(), 0);
     // Issue #1708 / #1890: push free_list FIRST, then mark freed=1.
@@ -1866,6 +1927,8 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         g_closure_bridge_epochs.resize(nslots, 0);
     if (g_closure_defuse_versions.size() < nslots)
         g_closure_defuse_versions.resize(nslots, 0);
+    if (g_closure_cow_gens.size() < nslots)
+        g_closure_cow_gens.resize(nslots, 0); // Issue #2547
 
     std::uint64_t remapped = 0;
     std::uint64_t name_fallback_count = 0;
@@ -1958,6 +2021,10 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // Issue #2542: restamp env_gen to live env-frame generation so
         // remount PRIMARY axis (#2272) aligns after reemit.
         g_closure_env_gen[cid] = live_env;
+        // Issue #2547: restamp cow_gen_at_capture to live workspace COW gen
+        // on reemit remount (same-workspace restamp; still not cross-write).
+        if (cid < g_closure_cow_gens.size())
+            g_closure_cow_gens[cid] = aura_get_live_workspace_cow_gen();
         g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
@@ -2235,13 +2302,28 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         }
     }
 
-    // Issue #1508 / #2371: dual check (bridge_epoch + defuse/env version)
-    // before any JIT dispatch. Every OpApply / OpCall lowers to
-    // aura_closure_call, so this is the JIT "prologue" safety gate.
-    // Stale → try soft restamp (cross-COW migrate) when safe; else
-    // hard-reject safe-fallback (no UAF).
+    // Issue #1508 / #2371 / #2547: dual check (bridge_epoch + defuse/env)
+    // + explicit cow_gen primary check before any JIT dispatch.
+    // Every OpApply / OpCall lowers to aura_closure_call, so this is the
+    // JIT "prologue" safety gate. Stale → try soft restamp (same cow_gen)
+    // when safe; else hard-reject safe-fallback (no UAF). Cross true
+    // workspace cow_gen → CowGenMismatch hard (#2547 / #2240).
     {
         size_t cid = static_cast<size_t>(closure_id);
+        // Issue #2547: primary cow_gen check (cheap compare; zero cost when
+        // domain inactive or same gen). Mismatch without dual miss still
+        // hard-rejects — soft path is same-gen only.
+        if (closure_cow_gen_mismatch_(cid)) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            cross_cow_note_hard_(CrossCowHardReject::CowGenMismatch);
+            aura_bump_cross_cow_hard_reject_total();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
+            invalidate_closure_cache_for(closure_id);
+            return 0;
+        }
         const std::uint64_t cap_bridge =
             cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
         const std::uint64_t cap_defuse =
