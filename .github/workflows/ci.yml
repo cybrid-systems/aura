@@ -208,6 +208,10 @@ jobs:
         AURA_LINK_JOBS: "2"
       run: python3 build.py --sanitizer=asan build
 
+    # aura / test_ir NEEDED libaura-reflect.so (P2996 SHARED, Issue #2290).
+    # Artifact must ship the .so next to the binaries: RUNPATH is $ORIGIN.
+    # Missing .so → asan-verify "cannot open shared object file" (functional
+    # fail before any ASAN report).
     - name: Upload ASAN binaries
       uses: actions/upload-artifact@v7
       with:
@@ -215,6 +219,7 @@ jobs:
         path: |
           build_asan/aura
           build_asan/test_ir
+          build_asan/libaura-reflect.so
         if-no-files-found: error
         retention-days: 1
 
@@ -233,8 +238,19 @@ jobs:
         name: asan-binaries
         path: build_asan
 
-    - name: Restore executable bit
-      run: chmod +x build_asan/aura build_asan/test_ir
+    - name: Restore executable bit + shared-lib path
+      run: |
+        chmod +x build_asan/aura build_asan/test_ir
+        test -f build_asan/libaura-reflect.so
+        # Belt-and-suspenders if RUNPATH/$ORIGIN is not honored after
+        # artifact download (aura NEEDED libaura-reflect.so).
+        echo "LD_LIBRARY_PATH=$(pwd)/build_asan${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+        export LD_LIBRARY_PATH="$(pwd)/build_asan${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        ldd build_asan/aura
+        if ldd build_asan/aura | grep -q 'libaura-reflect.so => not found'; then
+          echo "::error::libaura-reflect.so still not resolved after artifact download"
+          exit 1
+        fi
 
     # Path: tests/orch/ after R9 layout (was tests/multi_session_leak_test.aura).
     # Use --load so multi-line forms work (stdin Repl is line-oriented and
