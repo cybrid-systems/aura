@@ -1139,6 +1139,16 @@ struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
 
+// Issue #2184 / ubsan-smoke: publish held/defuse mirrors for the *current*
+// fiber only. Defined out-of-line in fiber.cpp (same TU as g_current_fiber)
+// so the null check + member call cannot be split across a TLS reload that
+// UBSAN reports as "load of null pointer of type 'struct Fiber *'" when
+// callers in the evaluator module use `if (g) g->publish...` (double-load)
+// or even a local capture under some x86_64 -fsanitize=undefined builds.
+// No-op when g_current_fiber is null (host thread / test_ir set-code path).
+void publish_current_fiber_mutation_safety(std::size_t depth, bool held,
+                                           std::uint64_t defuse_version) noexcept;
+
 // Issue #2310 / #2346 / #2372: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only
 // mode for unit tests. Production default is fail-closed (force-deopt + full
 // refresh under exclusive recovery). Under production security defaults
