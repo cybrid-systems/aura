@@ -3893,6 +3893,11 @@ aura_add_issue_test(test_dead_coercion_dirty_cone_2556)
 aura_issue_test_link_light(test_dead_coercion_dirty_cone_2556)
 add_dependencies(all_test_issue_targets test_dead_coercion_dirty_cone_2556)
 
+# Issue #2557: production soft lock-order audit (metrics-only)
+aura_add_issue_test(test_lock_order_production_soft_2557)
+aura_issue_test_link_light(test_lock_order_production_soft_2557)
+add_dependencies(all_test_issue_targets test_lock_order_production_soft_2557)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

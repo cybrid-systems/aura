@@ -28,6 +28,7 @@ module;
 #include "compiler/hot_update_registry.hh"         // Issue #2506: reload recovery C snapshot
 #include "compiler/compact_policy.hh"              // Issue #2500: query:compact-policy
 #include "compiler/mutation_hold_budget.h"         // Issue #2500: hold estimate for split
+#include "compiler/lock_order_audit.h"             // Issue #2557: lock-order soft audit query
 #include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
 
 #include <algorithm>
@@ -7683,6 +7684,59 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("dirty-cone-cast-sites-scanned",
                       static_cast<std::int64_t>(cast_sites_scanned));
             insert_kv("full-scan-runs", static_cast<std::int64_t>(full_scan_runs));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2557: query:lock-order-audit-stats — soft audit active flag +
+    // inversion counters for production Restricted default. Additive schema
+    // (mode: 1=off 2=soft 3=hard; production-soft-active 0/1).
+    ObservabilityPrims::register_stats_impl(
+        "query:lock-order-audit-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            using namespace ::aura::compiler::lock_order;
+            insert_kv("schema-2557", 2557);
+            insert_kv("mode", static_cast<std::int64_t>(lock_order_mode()));
+            insert_kv("soft-active",
+                      lock_order_audit_enabled() && !lock_order_canary_enabled() ? 1 : 0);
+            insert_kv("canary-active", lock_order_canary_enabled() ? 1 : 0);
+            insert_kv("production-soft-active", lock_order_production_soft_active() ? 1 : 0);
+            insert_kv("inversion-detected-total",
+                      static_cast<std::int64_t>(
+                          g_lock_inversion_detected_total.load(std::memory_order_relaxed)));
+            insert_kv("violation-total",
+                      static_cast<std::int64_t>(
+                          g_lock_order_violation_total.load(std::memory_order_relaxed)));
+            insert_kv("acquire-total", static_cast<std::int64_t>(g_lock_order_acquire_total.load(
+                                           std::memory_order_relaxed)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

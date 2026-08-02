@@ -4992,6 +4992,24 @@ def cmd_dead_coercion_dirty_cone_coverage():
     return 0
 
 
+def cmd_lock_order_production_soft_coverage():
+    """Issue #2557: production soft lock-order audit (metrics-only).
+
+    Restricted/Strict → soft audit; sandbox=off → OFF; canary remains opt-in hard.
+    """
+    print(f"{B}=== production soft lock-order audit coverage (#2557) ==={N}")
+    script = ROOT / "scripts" / "check_lock_order_production_soft_2557.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production soft lock-order audit (#2557) coverage contract rows failed")
+        return 1
+    ok("production soft lock-order audit (#2557) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6162,6 +6180,7 @@ def cmd_gate():
         or cmd_commit_readiness_score_coverage()
         or cmd_transaction_guard_migration_coverage()
         or cmd_dead_coercion_dirty_cone_coverage()
+        or cmd_lock_order_production_soft_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
@@ -6971,6 +6990,7 @@ def main():
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
+        "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
