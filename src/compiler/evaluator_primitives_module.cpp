@@ -147,13 +147,28 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
                 prefix = ev.string_heap_[pidx];
         }
 
-        // Load module (cached, isolated env)
+        // Load module (cached, isolated env).
+        // Issue #2570: surface load failure as first-class error (not void)
+        // so half-loaded modules are never injected and nested (require)
+        // failures are visible to callers / outer module load.
         auto mod_val = ev.load_module_file(path);
-        if (!is_module(mod_val))
-            return make_void();
+        if (is_error(mod_val) && !is_string(mod_val))
+            return mod_val;
+        if (!is_module(mod_val)) {
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::string("module-load-failed: ") + path);
+            auto eidx = ev.error_values_.size();
+            ev.error_values_.push_back(make_string(sid));
+            return make_error(eidx);
+        }
         auto mod_idx = as_module_idx(mod_val);
-        if (mod_idx >= ev.modules_.size())
-            return make_void();
+        if (mod_idx >= ev.modules_.size()) {
+            auto sid = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::string("module-load-failed: bad index for ") + path);
+            auto eidx = ev.error_values_.size();
+            ev.error_values_.push_back(make_string(sid));
+            return make_error(eidx);
+        }
 
         // Issue #2566: inject into active require target (module env under
         // nested load) so free-vars resolve inside that module's closures.
