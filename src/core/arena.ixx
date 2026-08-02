@@ -1491,6 +1491,17 @@ public:
             // remap). Stats write back into LiveCompactResult + ArenaStats.
             if (result.moved_live_objects && !last_object_remap_.empty()) {
                 invoke_root_remap_callback_(result);
+                // Issue #2499: unify RootRemapPass fail into pin_contract_held at
+                // the densify source so every driver (Phase 5, ArenaGroup
+                // compact_all_moving_pinned, GC Soft path metrics) shares one
+                // Moving success gate. Fail totals are per densify call
+                // (last-call / #2376) — not process-cumulative. Soft / empty
+                // remap leaves totals 0 → pin_contract_held unchanged.
+                if (result.root_remap_stable_ref_fail_total +
+                        result.root_remap_closure_capture_fail_total >
+                    0) {
+                    result.pin_contract_held = false;
+                }
             }
         }
 
@@ -2673,13 +2684,15 @@ public:
             out.moved_live_objects = out.moved_live_objects || r.moved_live_objects;
             // Issue #2499: aggregate per-arena RootRemapPass fail totals
             // (per-call out-params from invoke_root_remap_callback_ — last-call
-            // semantics, NOT process-cumulative). Phase 5 in
-            // evaluator_mutation_boundary.cpp ANDs (fail_total == 0) into
-            // pin_contract_held so the unified gate surfaces "pin ok +
-            // root_remap fail cumulative" mixed-signal gap.
+            // semantics, NOT process-cumulative). live_compact already folds
+            // non-zero fails into r.pin_contract_held; re-AND here so the
+            // AdaptiveCompactResult gate is fail-closed even if a future path
+            // populates fail totals without the fold.
             out.root_remap_stable_ref_fail_total += r.root_remap_stable_ref_fail_total;
             out.root_remap_closure_capture_fail_total += r.root_remap_closure_capture_fail_total;
         }
+        if (out.root_remap_stable_ref_fail_total + out.root_remap_closure_capture_fail_total > 0)
+            out.pin_contract_held = false;
         return out;
     }
 };

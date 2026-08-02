@@ -175,6 +175,17 @@ static void ac5_source_cite_unified_gate() {
               emb.find("pin_contract_held") != std::string::npos &&
               emb.find("compact_r.root_remap_stable_ref_fail_total == 0") != std::string::npos,
           "AC5: Phase 5 ANDs root_remap fail totals into pin_contract_held (#2499)");
+    // force_reason axis: densify_pin_axis_ok / densify_root_remap_call_ok
+    // so only-RootRemap fail reports force_reason == root_remap (not pin).
+    CHECK(emb.find("densify_root_remap_call_ok") != std::string::npos,
+          "AC5: densify_root_remap_call_ok axis stashed for force_reason");
+    CHECK(emb.find("densify_pin_axis_ok") != std::string::npos,
+          "AC5: densify_pin_axis_ok preserves pin axis when only RootRemap fails");
+
+    // live_compact folds fail totals into pin_contract_held at densify source.
+    CHECK(arx.find("root_remap_stable_ref_fail_total") != std::string::npos &&
+              arx.find("result.pin_contract_held = false") != std::string::npos,
+          "AC5: live_compact folds RootRemap fail into pin_contract_held (#2499)");
 
     // LiveCompactResult retains root_remap_*_fail_total (no regression).
     CHECK(arx.find("LiveCompactResult") != std::string::npos, "AC5: LiveCompactResult present");

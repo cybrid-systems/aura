@@ -55,11 +55,18 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
-    # AC1 — Phase 5 ANDs root_remap fail totals into pin_contract_held.
+    # AC1 — Phase 5 ANDs root_remap fail totals into pin_contract_held +
+    # live_compact folds at densify source (single Moving success gate).
     must("pin_contract_held = compact_r.pin_contract_held", "AC1", emb)
     must("Issue #2499", "AC1", emb)
     must("compact_r.root_remap_stable_ref_fail_total == 0", "AC1", emb)
     must("compact_r.root_remap_closure_capture_fail_total == 0", "AC1", emb)
+    must("densify_root_remap_call_ok", "AC1", emb)
+    must("densify_pin_axis_ok", "AC1", emb)
+    # densify source fold after invoke_root_remap_callback_.
+    must("invoke_root_remap_callback_", "AC1", arx)
+    must("result.pin_contract_held = false", "AC1", arx)
+    must("Issue #2499", "AC1", arx)
 
     # AC2 — AdaptiveCompactResult aggregates root_remap fail totals.
     must("AdaptiveCompactResult", "AC2", arx)
@@ -69,6 +76,8 @@ def main() -> int:
     must("compact_all_moving_pinned", "AC2", arx)
     must("out.root_remap_stable_ref_fail_total +=", "AC2", arx)
     must("out.root_remap_closure_capture_fail_total +=", "AC2", arx)
+    # Re-AND aggregate fail totals into pin_contract_held.
+    must("out.pin_contract_held = false", "AC2", arx)
     # LiveCompactResult retains the per-arena fields (no regression).
     must("LiveCompactResult", "AC2", arx)
     must("std::size_t root_remap_stable_ref_fail_total = 0", "AC2", arx)
