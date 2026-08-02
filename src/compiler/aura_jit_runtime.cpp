@@ -3228,7 +3228,9 @@ static void fputs_scheme_write_string(const char* s, FILE* out) {
 // number soup. Tree-walker / AURA_FORCE_IR used evaluator io_print_val.
 // write_mode: 0 = display (raw string content), 1 = write (quoted+escaped).
 // Issue #2574: write_mode=1 escapes embedded quotes/backslashes/controls.
-void aura_display_value(int64_t val, int write_mode) {
+// Issue #2575: ABI write_mode is int64_t (matches LLVM i64); PrimCall
+// must re-intern evaluator strings into g_string_pool first.
+void aura_display_value(int64_t val, int64_t write_mode) {
     using aura::compiler::types::FLOAT_BIAS_VAL;
     using aura::compiler::types::is_fixnum;
     using aura::compiler::types::is_string_raw_v2;
