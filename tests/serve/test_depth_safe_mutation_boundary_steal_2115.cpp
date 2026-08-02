@@ -82,8 +82,12 @@ static void ac1_depth_gt0_never_steal_safe() {
             CHECK(!aura::serve::g_current_fiber->is_at_mutation_boundary_safe(),
                   "depth-safe false");
             CHECK(!aura::serve::g_current_fiber->is_at_safe_mutation_boundary(), "alias false");
-            // is_stealable still true for MB reason (class unchanged)
-            CHECK(aura::serve::g_current_fiber->is_stealable(), "MB still stealable reason class");
+            // Issue #2549: reason-class candidate still true; is_stealable
+            // now requires snapshot-safe (false when depth>0).
+            CHECK(aura::serve::g_current_fiber->is_steal_candidate(),
+                  "MB still steal candidate (reason class)");
+            CHECK(!aura::serve::g_current_fiber->is_stealable(),
+                  "MB + depth>0 not is_stealable (snapshot gate)");
             checked.store(true);
         }
         aura_evaluator_test_pop_mutation_checkpoint();

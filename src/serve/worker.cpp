@@ -234,8 +234,9 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
 
     // Try to steal a fiber from the victim's deque.
     // The deque only contains fibers that yielded (Explicit/MutationBoundary),
-    // but we also check is_stealable() as a safety measure against stale fibers
-    // that may have been mutated after being enqueued.
+    // but we re-check is_stealable(snap) (#2549: candidate + MutationSafety
+    // Snapshot jointly) against stale fibers that may have re-entered a
+    // Guard after being enqueued.
     for (int attempt = 0; attempt < 3; ++attempt) {
         Fiber* stolen = victim->try_steal();
         if (!stolen)
@@ -281,7 +282,10 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // attempt — generation-behind code must NOT silently resume.
             continue;
         }
-        if (stolen->is_stealable() && stolen->is_at_mutation_boundary_safe(snap)) {
+        // Issue #2549: authoritative enqueue gate is is_stealable(snap)
+        // (is_steal_candidate + is_at_mutation_boundary_safe on one sample).
+        // Never reason-class alone.
+        if (stolen->is_stealable(snap)) {
             const int pri = fiber_steal_priority(stolen);
             if (pri >= 2) {
                 metrics::adaptive_steal_stats().outermost_preferred.fetch_add(
@@ -389,7 +393,9 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         // aliases depth-safe (#2115). Inner path always runs
         // apply_starvation_mitigation so nested long mutations do not starve
         // other agent fibers (50+ fiber AI orch).
-        if (stolen->is_stealable() && snap.last_yield == YieldReason::MutationBoundary &&
+        // Issue #2549: defer path uses candidate filter + snapshot-safe
+        // probe (not is_stealable(), which already implies safe).
+        if (stolen->is_steal_candidate(snap) && snap.last_yield == YieldReason::MutationBoundary &&
             !stolen->is_at_mutation_boundary_safe(snap)) {
             // Issue #2115 AC4: steal skipped because victim holds a
             // mutation boundary (depth-safe probe failed).

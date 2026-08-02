@@ -172,14 +172,40 @@ public:
     // Implementation in fiber.cpp (to avoid inline issues with C++26 modules).
     static void check_gc_safepoint();
 
-    // Is this fiber at a safe point to steal/move?
-    // A fiber is stealable if it yielded for Explicit, MutationBoundary,
-    // or OperationBoundary — meaning it's not in the middle of an
-    // inconsistent state.
-    bool is_stealable() const {
+    // Issue #2549: reason-class candidate filter only.
+    // True when last_yield is Explicit / MutationBoundary / OperationBoundary /
+    // PassPipeline. Does NOT consult MutationSafetySnapshot (depth / held).
+    // Steal safety is defined solely by MutationSafetySnapshot; reason class
+    // is only a candidate filter. Prefer is_stealable() / is_stealable(snap)
+    // for enqueue decisions.
+    [[nodiscard]] bool is_steal_candidate() const noexcept {
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         return r == YieldReason::Explicit || r == YieldReason::MutationBoundary ||
                r == YieldReason::OperationBoundary || r == YieldReason::PassPipeline;
+    }
+
+    // Issue #2549: candidate filter from a pre-sampled snapshot (zero extra
+    // yield-reason load when snap already held on the steal path).
+    [[nodiscard]] bool is_steal_candidate(const MutationSafetySnapshot& s) const noexcept {
+        return s.last_yield == YieldReason::Explicit ||
+               s.last_yield == YieldReason::MutationBoundary ||
+               s.last_yield == YieldReason::OperationBoundary ||
+               s.last_yield == YieldReason::PassPipeline;
+    }
+
+    // Issue #2549: authoritative steal-safe predicate.
+    // is_steal_candidate() && is_at_mutation_boundary_safe() — returns false
+    // when depth>0 or held under MutationBoundary (matches snapshot contract).
+    // Happy path: one reason load + one snapshot sample (AC5: no extra atomics
+    // beyond the existing safe probe). Prefer the snap overload when a
+    // MutationSafetySnapshot is already held.
+    [[nodiscard]] bool is_stealable() const noexcept {
+        return is_steal_candidate() && is_at_mutation_boundary_safe();
+    }
+
+    // Issue #2549: joint decision from one pre-sampled snapshot (try_steal_from).
+    [[nodiscard]] bool is_stealable(const MutationSafetySnapshot& s) const noexcept {
+        return is_steal_candidate(s) && is_at_mutation_boundary_safe(s);
     }
 
     // Issue #2184: one acquire-ordered sample for steal path.
@@ -343,12 +369,13 @@ public:
         orch_agent_boundary_active_.store(v, std::memory_order_release);
     }
 
-    // Issue #448 / #2115: alias of depth-safe API. Historical #448
+    // Issue #448 / #2115 / #2549: alias of depth-safe API. Historical #448
     // implementation always returned false for MutationBoundary yields
     // (no depth probe), so steal callers that used this name were
-    // either over-conservative or — if mixed with is_stealable alone —
+    // either over-conservative or — if mixed with is_steal_candidate alone —
     // incomplete. Unified to is_at_mutation_boundary_safe() so all
-    // steal decision points share one truth.
+    // steal decision points share one truth. is_stealable() now also
+    // requires this probe (reason class alone is only a candidate filter).
     [[nodiscard]] bool is_at_safe_mutation_boundary() const noexcept {
         return is_at_mutation_boundary_safe();
     }

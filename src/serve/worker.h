@@ -125,7 +125,11 @@ struct StealBudget {
 // that were repeatedly deferred at an inner MutationBoundary so that,
 // once they become outermost-safe, they win the next steal round.
 inline int fiber_steal_priority(Fiber* fiber) {
-    if (!fiber || !fiber->is_stealable())
+    // Issue #2549: priority tiers among reason-class candidates; safety
+    // gate for enqueue is is_stealable(snap) in try_steal_from. Use
+    // is_steal_candidate (not is_stealable) so deferred inner-MB fibers
+    // still score base=0 instead of -1 (starvation mitigation path).
+    if (!fiber || !fiber->is_steal_candidate())
         return -1;
     int base = 1;
     if (fiber->is_at_mutation_boundary_safe()) {

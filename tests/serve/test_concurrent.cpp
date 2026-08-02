@@ -1655,7 +1655,9 @@ bool test_yield_reason_tracking() {
     std::atomic<int> stage{0};
 
     sched.spawn([&stage]() {
-        // Default reason after construction should be Explicit
+        // Default reason after construction should be Explicit (depth0 safe)
+        CHECK(aura::serve::g_current_fiber->is_steal_candidate(),
+              "default fiber is steal candidate");
         CHECK(aura::serve::g_current_fiber->is_stealable(), "default fiber is stealable");
         stage.store(1);
 
@@ -1664,11 +1666,13 @@ bool test_yield_reason_tracking() {
         stage.store(2);
         CHECK(aura::serve::g_current_fiber->is_stealable(), "fiber stealable after Explicit yield");
 
-        // Yield at mutation boundary — stealable
+        // Yield at mutation boundary — stealable when depth==0 && !held (#2549)
         aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
         stage.store(3);
+        CHECK(aura::serve::g_current_fiber->is_steal_candidate(),
+              "fiber steal candidate after MutationBoundary yield");
         CHECK(aura::serve::g_current_fiber->is_stealable(),
-              "fiber stealable after MutationBoundary yield");
+              "fiber stealable after MutationBoundary yield (depth0)");
 
         // Check last_yield_reason
         CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
@@ -1775,7 +1779,10 @@ bool test_yield_reason_chain() {
         CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
                   aura::serve::YieldReason::MutationBoundary,
               "reason 2 = MutationBoundary");
-        CHECK(aura::serve::g_current_fiber->is_stealable(), "stealable after MutationBoundary");
+        CHECK(aura::serve::g_current_fiber->is_steal_candidate(),
+              "candidate after MutationBoundary");
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "stealable after MutationBoundary (depth0)");
 
         aura::serve::Fiber::yield();
         stage.store(3);

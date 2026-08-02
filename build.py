@@ -4858,6 +4858,25 @@ def cmd_residual_defer_steal_hard_and_coverage():
     return 0
 
 
+def cmd_is_stealable_snapshot_gate_coverage():
+    """Issue #2549: is_stealable trusts MutationSafetySnapshot only.
+
+    is_steal_candidate = reason class; is_stealable = candidate && safe.
+    Production steal enqueue uses is_stealable(snap); never reason-class alone.
+    """
+    print(f"{B}=== is_stealable snapshot gate coverage (#2549) ==={N}")
+    script = ROOT / "scripts" / "check_is_stealable_snapshot_gate_2549.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("is_stealable snapshot gate (#2549) coverage contract rows failed")
+        return 1
+    ok("is_stealable snapshot gate (#2549) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6004,6 +6023,7 @@ def cmd_gate():
         or cmd_steal_layout_stamp_coverage()
         or cmd_steal_complete_restamp_txn_coverage()
         or cmd_residual_defer_steal_hard_and_coverage()
+        or cmd_is_stealable_snapshot_gate_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
