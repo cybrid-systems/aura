@@ -8217,6 +8217,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("aot-hot-update-health-wired", 1);
                 insert_kv("schema-2506", 2506);
                 insert_kv("issue-2506", 2506);
+                // Issue #2543: orch self-throttle control plane over this score.
+                {
+                    const auto td = decide_hot_update_throttle(scored);
+                    insert_kv("throttle-active", td.throttle ? 1 : 0);
+                    insert_kv(
+                        "throttle-action-code",
+                        static_cast<std::int64_t>(td.action)); // 0 none 1 split 2 delay 3 skip
+                    insert_kv("throttle-max-concurrency-cap",
+                              static_cast<std::int64_t>(td.max_concurrency_cap));
+                    insert_kv(
+                        "orch-hot-update-health-throttle-total",
+                        static_cast<std::int64_t>(g_orch_hot_update_health_throttle_total.load(
+                            std::memory_order_relaxed)));
+                    insert_kv("orch-hot-update-health-checks-total",
+                              static_cast<std::int64_t>(g_orch_hot_update_health_checks_total.load(
+                                  std::memory_order_relaxed)));
+                    insert_kv(
+                        "orch-hot-update-health-last-force-reason",
+                        g_orch_hot_update_health_last_force_reason.load(std::memory_order_relaxed));
+                    insert_kv("schema-2543", kAotHotUpdateHealthThrottleIssue);
+                    insert_kv("issue-2543", kAotHotUpdateHealthThrottleIssue);
+                    insert_kv("orch-hot-update-health-throttle-wired", 1);
+                }
                 // Lineage (existing queries remain authoritative).
                 insert_kv("schema-2367", 2367);
                 insert_kv("schema-2302", 2302);

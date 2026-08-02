@@ -311,6 +311,12 @@ struct OrchModuleStats {
     // Bumped when agent_poll forces Fiber::yield after the no-yield window.
     // Zero cost when max_no_yield_ms==0 (no coop state, poll is no-op).
     std::atomic<std::uint64_t> agent_forced_yield_total{0};
+    // Issue #2543: orch self-throttle when aot-hot-update-health_bp < budget.
+    // Advisory only (never hard-fails mutate). Bumped on agent body enter /
+    // parallel-intend when throttle fires. last_force_reason mirrors
+    // force_reason_code (0=ok … 6=deferred-reemit).
+    std::atomic<std::uint64_t> orch_hot_update_health_throttle_total{0};
+    std::atomic<std::int64_t> orch_hot_update_health_last_force_reason{0};
 };
 
 // Issue #2008: conventional mailbox keepalive payload prefix.
