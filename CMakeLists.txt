@@ -3973,6 +3973,11 @@ aura_add_issue_test(test_ir_const_string_intern_2573)
 aura_issue_test_link_light(test_ir_const_string_intern_2573)
 add_dependencies(all_test_issue_targets test_ir_const_string_intern_2573)
 
+# Issue #2574: Scheme write string escape (JIT + TW)
+aura_add_issue_test(test_write_string_escape_2574)
+aura_issue_test_link_light(test_write_string_escape_2574)
+add_dependencies(all_test_issue_targets test_write_string_escape_2574)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

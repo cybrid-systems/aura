@@ -3185,13 +3185,49 @@ void aura_display_char(char c) {
     fflush(stdout);
 }
 
+// Issue #2574: Scheme `write` external representation for a string.
+// Wraps in quotes and escapes ", \, and common controls so the form is
+// re-readable. display uses raw fputs (no escapes).
+static void fputs_scheme_write_string(const char* s, FILE* out) {
+    if (!s)
+        s = "";
+    fputc('"', out);
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ++p) {
+        switch (*p) {
+            case '"':
+                fputs("\\\"", out);
+                break;
+            case '\\':
+                fputs("\\\\", out);
+                break;
+            case '\n':
+                fputs("\\n", out);
+                break;
+            case '\r':
+                fputs("\\r", out);
+                break;
+            case '\t':
+                fputs("\\t", out);
+                break;
+            default:
+                if (*p < 0x20 || *p == 0x7f)
+                    fprintf(out, "\\x%02X;", static_cast<unsigned>(*p));
+                else
+                    fputc(static_cast<int>(*p), out);
+                break;
+        }
+    }
+    fputc('"', out);
+}
+
 // Issue #2572: full tagged-value display for JIT PrimCall fast-path.
 // Previous fast-path always called aura_display_int on the raw EvalValue
 // bits, so string constants (v2 STRING_BIAS encoding) printed as huge
 // negative integers (e.g. -8999999999999999998) — multi-(display …) in
 // JIT-compiled / module-exported procedures garbling to "msgmsg" or
 // number soup. Tree-walker / AURA_FORCE_IR used evaluator io_print_val.
-// write_mode: 0 = display (raw string content), 1 = write (quoted).
+// write_mode: 0 = display (raw string content), 1 = write (quoted+escaped).
+// Issue #2574: write_mode=1 escapes embedded quotes/backslashes/controls.
 void aura_display_value(int64_t val, int write_mode) {
     using aura::compiler::types::FLOAT_BIAS_VAL;
     using aura::compiler::types::is_fixnum;
@@ -3222,7 +3258,7 @@ void aura_display_value(int64_t val, int write_mode) {
         if (!s)
             s = "";
         if (write_mode)
-            fprintf(stdout, "\"%s\"", s);
+            fputs_scheme_write_string(s, stdout);
         else
             fputs(s, stdout);
         fflush(stdout);
