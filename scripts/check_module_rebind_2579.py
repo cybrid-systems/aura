@@ -35,7 +35,8 @@ def main() -> int:
     build = _read("build.py")
 
     must("#2579", "AC1", flat)
-    must("any_non_lambda", "AC1", flat)
+    must("#2581", "AC1", flat)
+    must("two-pass", "AC1", flat)
     must("#2579", "AC2", svc)
     must("sync_workspace_value_cells_from_env", "AC2", svc)
     must("do NOT bind_value_define_via_ir here", "AC2", svc)
