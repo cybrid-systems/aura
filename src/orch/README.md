@@ -216,6 +216,50 @@ Rules (per Issue #2229 AC2-AC3):
    — the `consecutive_stall_limit` cap is the simpler version of
    the same idea and ships in #2229.
 
+### FailurePolicy ↔ AgentFailurePolicy bridge (Issue #2539)
+
+Batch `serve::parallel_orch::FailurePolicy` (#2007) and long-lived
+`AgentFailurePolicy` (#2229) stay separate surfaces. Issue #2539 adds a
+**unidirectional** mapping so Agent frameworks can promote a batch policy
+into a scope supervision policy without hand-rolled switch tables.
+
+```cpp
+#include "orch/orch.h"
+
+// From FailurePolicy enum:
+auto pol = aura::orch::to_agent_policy(
+    aura::orch::FailurePolicy::RetryN, /*max_restarts=*/3);
+
+// From ParallelPolicy (uses resolved_failure_policy + max_retries /
+// consecutive_fail_limit / retry_backoff_ms):
+aura::orch::ParallelPolicy pp;
+pp.failure_policy = aura::orch::FailurePolicy::CircuitBreaker;
+pp.consecutive_fail_limit = 5;
+auto pol2 = aura::orch::to_agent_policy(pp);
+// pol2.on_stall == Cancel, consecutive_stall_limit == 5
+
+scope.watch_all(/*stall_ms=*/100, pol);
+```
+
+| Batch `FailurePolicy` | → `AgentFailurePolicy` |
+|----------------------|-------------------------|
+| `FailFast` | `on_stall = Cancel` |
+| `CollectAll` | `on_stall = ReportOnly` |
+| `RetryN` | `on_stall = RestartN`, `max_restarts` from arg / `pp.max_retries` |
+| `CircuitBreaker` | `on_stall = Cancel`, `consecutive_stall_limit` from arg / `pp.consecutive_fail_limit` |
+
+Semantic boundary:
+1. **Batch** policies govern body-error admit/retry under `parallel_intend`.
+2. **Agent** policies govern stall response under `AgentScope::watch_all`.
+3. **RestartN** is only meaningful for long-lived agents with keepalive;
+   `max_restarts = 0` disables re-spawn (cap at zero).
+4. **Not calling the bridge leaves #2007 / #2229 defaults unchanged** (AC3).
+5. Optional sugar (`orch:supervise-batch` / auto-apply after batch fail) is
+   deferred; this issue ships the mapping API only.
+
+Regression: `tests/orch/test_failure_policy_bridge_2539` (mapping table);
+`tests/orch/test_agent_failure_policy_2229` (#2229 unchanged).
+
 ### `agent-ask` / `agent-reply` (Issue #2231 / #2401 / #2538, cross-agent request/response)
 
 Standardized request/response channel between agents without a process-global
