@@ -2347,11 +2347,11 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
-// Issue #2203 / #2314 / #2351 / #2377 / #2510: single mandatory steal-complete
-// entry. Called from WorkerThread::try_steal_from on every successful
-// cross-worker steal (strong symbol linked). Production multi-worker MUST
-// link this strong def (Issue #2377) — weak no-op / null ABI is fail-closed
-// under production.
+// Issue #2203 / #2314 / #2351 / #2377 / #2510 / #2546: single mandatory
+// steal-complete entry. Called from WorkerThread::try_steal_from on every
+// successful cross-worker steal (strong symbol linked). Production multi-
+// worker MUST link this strong def (Issue #2377) — weak no-op / null ABI
+// is fail-closed under production.
 //
 // ── steal-complete transaction (one atomic migration path; do not reorder) ──
 //   1. Publish mutation_stack / yield-CP handoff (acquire touch)
@@ -2363,7 +2363,12 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
 //        Hard/production mismatch → hard-fail (cancel + Done); no Ready enqueue
 //   5. Issue #2510: forced transactional restamp on success path
 //        (refresh_stale_frames_after_steal + StableNodeRef provenance restamp)
-//   6. Escape-gate clear (#2507) + linear probe + outermost-enforced metrics
+//   6. Escape-gate clear (#2507)
+//   7. Linear probe + outermost-enforced metrics
+//   8. Issue #2546: hard-AND residual GcDeferReason == 0 on success path
+//        force_clear residual if non-zero; if still non-zero under Hard →
+//        cancel + Done (same fail-closed shape as LayoutStamp hard-fail).
+//        Soft: leftover metric only, no cancel. Zero cost when already 0.
 // Soft: steps 3–4 free when residual zero / stamp unset (relaxed loads).
 // Does NOT clear resume_layout_stamp (resume dual-check retains it — #2351).
 // Does NOT reemit / SoftEnter (leave to Guard / #2114).
@@ -2583,6 +2588,63 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     if (!hard_failed) {
         aura_evaluator_probe_linear_on_steal();
         aura_evaluator_bump_steal_outermost_enforced();
+    }
+
+    // (8) Issue #2546: hard-AND residual GcDeferReason == 0 on success path.
+    // After LayoutStamp dual-check + restamp + linear probe, residual must
+    // be clear under Hard/production (same fail-closed shape as LayoutStamp
+    // mismatch / pin_contract_held). Soft / AURA_STEAL_SNAPSHOT_SOFT: metric
+    // only — no cancel. Happy path (already zero): one relaxed load.
+    // Next to existing #2314 residual clear (step 3) — final re-check after
+    // recovery work may re-arm bits under concurrent pressure.
+    if (fiber && !hard_failed) {
+        if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+            // Final force clear (idempotent with step 3 #2314 interlock).
+            void* clear_id = prev_eval_id;
+            if (auto* ev = evaluator_for_scheduler_hooks()) {
+                if (clear_id == nullptr)
+                    clear_id = static_cast<void*>(ev);
+                const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(clear_id);
+                if (r.panic_depth_cleared > 0 || r.bits_reconciled > 0 || r.hold_released) {
+                    aura::gc_hooks::g_residual_defer_cleared_on_steal_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                        m->residual_defer_cleared_on_steal_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (r.panic_depth_cleared > 0)
+                            m->gc_defer_orphan_cleared_total.fetch_add(r.panic_depth_cleared,
+                                                                       std::memory_order_relaxed);
+                        if (r.bits_reconciled > 0)
+                            m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
+                                r.bits_reconciled, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+        // Hard-AND: residual still non-zero after force_clear?
+        if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+            if (aura::serve::is_steal_snapshot_hard_mode()) {
+                // Production / Hard: cancel fiber — worker must not enqueue Ready.
+                aura::gc_hooks::g_residual_defer_steal_hard_fail_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (auto* ev = evaluator_for_scheduler_hooks()) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                        m->residual_defer_steal_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // Feed lifetime / mutation-concurrency health residual axis.
+                        m->mutation_boundary_residual_defer_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+                fiber->request_cancel();
+                fiber->set_state(aura::serve::FiberState::Done);
+                hard_failed = true;
+            } else {
+                // Soft: residual left uncleared — metric only, no cancel (AC3).
+                aura::gc_hooks::g_residual_defer_steal_soft_leftover_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
     }
 }
 

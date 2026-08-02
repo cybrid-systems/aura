@@ -425,6 +425,13 @@ inline std::atomic<std::uint64_t> g_gc_defer_orphan_cleared_on_steal_total{0}; /
 // that invoked the residual interlock (once per entry, regardless of
 // bits cleared).
 inline std::atomic<std::uint64_t> g_residual_defer_cleared_on_steal_total{0}; // #2314
+// Issue #2546: steal-complete success hard-AND residual GcDeferReason == 0.
+// Under Hard/production, residual non-zero AFTER force_clear → fiber
+// Cancel+Done (not enqueued Ready). Soft path only bumps leftover total.
+// Distinct from residual_defer_cleared_on_steal_total (invoked clear) and
+// mutation_boundary residual hard-fail (#2269 Guard Phase 5).
+inline std::atomic<std::uint64_t> g_residual_defer_steal_hard_fail_total{0};     // #2546
+inline std::atomic<std::uint64_t> g_residual_defer_steal_soft_leftover_total{0}; // #2546
 // Issue #2377: steal-complete strong entry missing (weak no-op or null
 // under light/sandbox). Bumped when production would abort but Soft/
 // sandbox path takes weak stub or legacy N-call fallback. Production
@@ -438,6 +445,12 @@ inline std::atomic<std::uint64_t> g_steal_complete_entry_missing_total{0}; // #2
 }
 [[nodiscard]] inline std::uint64_t residual_defer_cleared_on_steal_total() noexcept {
     return g_residual_defer_cleared_on_steal_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t residual_defer_steal_hard_fail_total() noexcept {
+    return g_residual_defer_steal_hard_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t residual_defer_steal_soft_leftover_total() noexcept {
+    return g_residual_defer_steal_soft_leftover_total.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint64_t steal_complete_entry_missing_total() noexcept {
     return g_steal_complete_entry_missing_total.load(std::memory_order_relaxed);

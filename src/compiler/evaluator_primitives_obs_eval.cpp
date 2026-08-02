@@ -6125,6 +6125,16 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
                 {"residual-defer-steal-interlock-wired", make_int(1)},
                 {"schema-2314", make_int(2314)},
+                // Issue #2546: steal-complete residual hard-AND
+                {"residual-defer-steal-hard-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::gc_hooks::residual_defer_steal_hard_fail_total()))},
+                {"residual-defer-steal-soft-leftover-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::gc_hooks::residual_defer_steal_soft_leftover_total()))},
+                {"residual-defer-steal-hard-and-wired", make_int(1)},
+                {"schema-2546", make_int(2546)},
+                {"issue-2546", make_int(2546)},
                 {"issue-2314", make_int(2314)},
             };
             return build_hash(kv);
