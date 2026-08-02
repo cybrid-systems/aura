@@ -215,9 +215,9 @@ extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void);
 //   aura_reload_aot_module_for_eval attempt.
 // - ForeignEval: rejected because eval_ptr is foreign to the current
 //   workspace AotState map (single-workspace MVP, #1943).
-// - CowGenMismatch: reserved for future cross-COW migration
-//   observability; NOT yet wired (issue explicitly defers opening
-//   cross-COW write path).
+// - CowGenMismatch: same-process diverged workspace COW generation
+//   (#2275 reload path; #2547 call-time closure stamp). Still does
+//   NOT open cross-workspace hot-update write (#2178 fail-closed).
 // - Unknown: defensive; bumped if a future reject path doesn't
 //   set a specific reason before bumping the counter.
 enum class CrossWorkspaceReject : std::uint8_t {
@@ -226,6 +226,15 @@ enum class CrossWorkspaceReject : std::uint8_t {
     CowGenMismatch = 2,
     Unknown = 3,
 };
+
+// Issue #2275 / #2547: process-level live workspace COW generation.
+// Bumped on densify / workspace restamp; stamped into closures at
+// aura_alloc_closure (#2547 cow_gen_at_capture). Call-time mismatch
+// hard-rejects with CowGenMismatch (soft only within same gen).
+extern "C" void aura_set_live_workspace_cow_gen(std::uint64_t gen) noexcept;
+extern "C" std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept;
+// Issue #2547: per-closure cow_gen_at_capture (0 = unstamped / freed).
+extern "C" std::uint64_t aura_get_closure_cow_gen(std::int64_t closure_id);
 
 // Issue #2240: C-linkage readers for the last cross-workspace reject
 // reason (file-scope atomic in aura_jit_bridge.cpp; thread-safe
@@ -533,20 +542,23 @@ void aura_jit_closure_record_safe_fallback(void);
 std::uint64_t aura_jit_closure_dual_check_total(void);
 std::uint64_t aura_jit_closure_stale_deopt_total(void);
 std::uint64_t aura_jit_closure_safe_fallbacks(void);
-// Issue #2371 / #2505: cross-COW call-time soft migrate vs hard safe-fallback.
+// Issue #2371 / #2505 / #2547: cross-COW call-time soft migrate vs hard
+// safe-fallback.
 //
 // Scope (single-workspace MVP — NOT full COW heap migration / #2275 write path):
-//   On aura_closure_call dual-freshness miss only:
-//     Soft: live slot + linear-safe + |epoch_delta| ≤ K → restamp bridge+defuse
-//           (+ remount if captures) and continue native. Default soft ON.
+//   On aura_closure_call dual-freshness miss (and primary cow_gen check):
+//     Soft: live slot + linear-safe + |epoch_delta| ≤ K + same cow_gen
+//           (#2547) → restamp bridge+defuse+cow_gen (+ remount if captures)
+//           and continue native. Default soft ON within gen.
 //     Hard: freed, linear-moved / fingerprint drift, delta > K, remount fail,
-//           or soft disabled → safe-fallback (no native body).
+//           soft disabled, or cow_gen mismatch (#2547) → safe-fallback.
 //   K = AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT (default 4096; 0 = unlimited).
-//   Soft off: AURA_CROSS_COW_SOFT_MIGRATE=0 → always hard on dual miss.
+//   Soft off: AURA_CROSS_COW_SOFT_MIGRATE=0 → always hard on dual miss / gen.
 //   Does NOT open cross-workspace hot-update write (#2178 / #2275 fail-closed).
 //
 // Hard-reject reason enum (cross_cow_last_hard_reject_reason / breakdown):
 //   0=None 1=Disabled 2=Freed 3=FarBehind 4=Linear 5=RemountFail 6=Other
+//   7=CowGenMismatch (#2547 — true workspace COW gen; wires #2240 on call)
 void aura_bump_cross_cow_soft_migrate_total(void) noexcept;
 void aura_bump_cross_cow_hard_reject_total(void) noexcept;
 // Issue #2505: reason breakdown bumpers + policy knobs (Agent query).

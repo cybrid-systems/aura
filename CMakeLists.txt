@@ -3670,6 +3670,11 @@ aura_add_issue_test(test_cross_cow_drift_contract_2505)
 aura_issue_test_link_llvm_jit(test_cross_cow_drift_contract_2505)
 add_dependencies(all_test_issue_targets test_cross_cow_drift_contract_2505)
 
+# Issue #2547: stamp cow_gen on closures; hard-reject cross-gen soft-migrate.
+aura_add_issue_test(test_closure_cow_gen_stamp_2547)
+aura_issue_test_link_llvm_jit(test_closure_cow_gen_stamp_2547)
+add_dependencies(all_test_issue_targets test_closure_cow_gen_stamp_2547)
+
 # Issue #2506: query:aot-hot-update-health single Agent recovery gate score.
 aura_add_issue_test(test_aot_hot_update_health_2506)
 aura_issue_test_link_llvm_jit(test_aot_hot_update_health_2506)

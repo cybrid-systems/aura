@@ -475,7 +475,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cross_cow_hard_reject_linear_total{0};       // #2505
     std::atomic<std::uint64_t> cross_cow_hard_reject_remount_fail_total{0}; // #2505
     std::atomic<std::uint64_t> cross_cow_hard_reject_other_total{0};        // #2505
-    std::atomic<std::uint8_t> cross_cow_last_hard_reject_reason{0};         // #2505 enum
+    // Issue #2547: hard reject when closure cow_gen_at_capture != live
+    // workspace COW generation (wires #2240 CowGenMismatch on call path).
+    std::atomic<std::uint64_t> cross_cow_hard_reject_cow_gen_mismatch_total{0}; // #2547
+    std::atomic<std::uint8_t> cross_cow_last_hard_reject_reason{0};             // #2505/#2547 enum
     // Issue #1522: fn_trackers_ batch_deopt notify (aliases AC names *_total).
     // jit_closure_safe_fallbacks_total mirrors jit_closure_safe_fallbacks
     // (kept as distinct field for Agent queries that use the AC name).
