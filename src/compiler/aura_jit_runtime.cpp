@@ -3175,13 +3175,73 @@ extern "C" void aura_exception_clear_all() {
 
 // === Display bridge ===
 void aura_display_int(int64_t val) {
-    // Printf is available in JIT because we register printf too
+    // Fixnum-only: value is already untagged (caller shifts) or raw fixnum bits.
     fprintf(stdout, "%ld", static_cast<long>(val));
     fflush(stdout);
 }
 
 void aura_display_char(char c) {
     fputc(c, stdout);
+    fflush(stdout);
+}
+
+// Issue #2572: full tagged-value display for JIT PrimCall fast-path.
+// Previous fast-path always called aura_display_int on the raw EvalValue
+// bits, so string constants (v2 STRING_BIAS encoding) printed as huge
+// negative integers (e.g. -8999999999999999998) — multi-(display …) in
+// JIT-compiled / module-exported procedures garbling to "msgmsg" or
+// number soup. Tree-walker / AURA_FORCE_IR used evaluator io_print_val.
+// write_mode: 0 = display (raw string content), 1 = write (quoted).
+void aura_display_value(int64_t val, int write_mode) {
+    using aura::compiler::types::FLOAT_BIAS_VAL;
+    using aura::compiler::types::is_fixnum;
+    using aura::compiler::types::is_string_raw_v2;
+    using aura::compiler::types::kSpecialFalse;
+    using aura::compiler::types::kSpecialTrue;
+    using aura::compiler::types::kSpecialVoid;
+    using aura::compiler::types::STRING_BIAS_VAL_2;
+
+    if (val == kSpecialVoid) {
+        fputs("()", stdout);
+        fflush(stdout);
+        return;
+    }
+    if (val == kSpecialFalse) {
+        fputs("#f", stdout);
+        fflush(stdout);
+        return;
+    }
+    if (val == kSpecialTrue) {
+        fputs("#t", stdout);
+        fflush(stdout);
+        return;
+    }
+    // v2 string: (v & 3) == 2 and in STRING_BIAS range
+    if (is_string_raw_v2(val) && val <= STRING_BIAS_VAL_2) {
+        const char* s = aura_string_ref(val);
+        if (!s)
+            s = "";
+        if (write_mode)
+            fprintf(stdout, "\"%s\"", s);
+        else
+            fputs(s, stdout);
+        fflush(stdout);
+        return;
+    }
+    // Fixnum: low bit clear, above float bias band (see classify_eval_value_tag)
+    if (is_fixnum(val) && val > FLOAT_BIAS_VAL) {
+        fprintf(stdout, "%ld", static_cast<long>(val >> 1));
+        fflush(stdout);
+        return;
+    }
+    // Float v2 (if available)
+    if (aura::compiler::types::is_float_raw_v2(val)) {
+        fprintf(stdout, "%g", aura_float_ref(val));
+        fflush(stdout);
+        return;
+    }
+    // Fallback: keep prior raw dump for unknown tags (debug visibility)
+    fprintf(stdout, "%ld", static_cast<long>(val));
     fflush(stdout);
 }
 

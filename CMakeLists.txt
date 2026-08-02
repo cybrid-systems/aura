@@ -3963,6 +3963,11 @@ aura_add_issue_test(test_while_define_oneshot_2571)
 aura_issue_test_link_light(test_while_define_oneshot_2571)
 add_dependencies(all_test_issue_targets test_while_define_oneshot_2571)
 
+# Issue #2572: module-export multi-display / ConstString pool remap on cache_module
+aura_add_issue_test(test_module_export_display_2572)
+aura_issue_test_link_light(test_module_export_display_2572)
+add_dependencies(all_test_issue_targets test_module_export_display_2572)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
