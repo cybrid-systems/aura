@@ -3963,6 +3963,11 @@ aura_add_issue_test(test_module_rebind_residual_2579)
 aura_issue_test_link_light(test_module_rebind_residual_2579)
 add_dependencies(all_test_issue_targets test_module_rebind_residual_2579)
 
+# Issue #2582: pure-Aura hot strategy (std/hot-strategy) vs AOT hot-update
+aura_add_issue_test(test_hot_strategy_2582)
+aura_issue_test_link_light(test_hot_strategy_2582)
+add_dependencies(all_test_issue_targets test_hot_strategy_2582)
+
 # Issue #2570: module load fail-closed; trailing defines always export
 aura_add_issue_test(test_module_load_tail_export_2570)
 aura_issue_test_link_light(test_module_load_tail_export_2570)
