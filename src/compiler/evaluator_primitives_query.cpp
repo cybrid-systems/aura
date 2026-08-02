@@ -8034,10 +8034,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snap.mailbox_hold_exit_starvation_total =
                 g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
                     std::memory_order_relaxed);
+            snap.mailbox_hold_starvation_hard_total =
+                g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.load(
+                    std::memory_order_relaxed);
+            snap.agent_throttle_for_mailbox_starvation =
+                g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
+                    std::memory_order_relaxed);
 
             const auto scored = compute_mutation_concurrency_health(snap);
 
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 64→128: #2551 hard starvation + throttle keys.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8118,6 +8125,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(snap.mailbox_deferred_mutation_hold_total));
             insert_kv("component-mailbox-hold-exit-starvation-total",
                       static_cast<std::int64_t>(snap.mailbox_hold_exit_starvation_total));
+            insert_kv("component-mailbox-hold-starvation-hard-total",
+                      static_cast<std::int64_t>(snap.mailbox_hold_starvation_hard_total));
+            insert_kv("component-agent-throttle-for-mailbox-starvation",
+                      static_cast<std::int64_t>(snap.agent_throttle_for_mailbox_starvation));
             insert_kv("mutation-concurrency-health-wired", 1);
             insert_kv("schema-2379", 2379);
             insert_kv("issue-2379", 2379);
@@ -8129,6 +8140,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2378", 2378);
             insert_kv("schema-2511", 2511);
             insert_kv("issue-2511", 2511);
+            insert_kv("schema-2551", 2551);
+            insert_kv("issue-2551", 2551);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

@@ -391,6 +391,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-hold-exit-drain-wired", 1);
             insert_kv("schema-2511", 2511);
             insert_kv("issue-2511", 2511);
+            // Issue #2551: production hard starvation + Agent throttle flag.
+            insert_kv("mailbox-hold-starvation-hard-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("agent-throttle-for-mailbox-starvation",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-hold-starvation-hard-wired", 1);
+            insert_kv("schema-2551", 2551);
+            insert_kv("issue-2551", 2551);
             // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
             // Soft path leaves hard-total / force-rollback-total at 0; Policy A
             // soft reject remains on recv-rejected-in-mutation-boundary.
