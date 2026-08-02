@@ -3341,7 +3341,7 @@ public:
     [[nodiscard]] bool finish_mutate_hard_gate(std::uint64_t nodes_changed = 0,
                                                bool linear_ops_present = false,
                                                std::string_view op = "mutate") noexcept;
-    // Issue #2514: single rollback authority for linear_synth_hard_fail.
+    // Issue #2514 / #2545: single rollback authority for linear hard-fail axes.
     // Returns true when production/strict synth hard-fail is pending
     // (TypeChecker last_linear_synth_hard_fail or evaluator sticky flag).
     // Soft Warning synth never sets this.
@@ -3350,9 +3350,45 @@ public:
     void note_linear_synth_hard_fail_pending() noexcept;
     // Issue #2514: clear sticky flag after boundary / hard-gate consumes it.
     void clear_linear_synth_hard_fail_pending() noexcept;
-    // Issue #2514: if synth hard-fail pending → set deny reason, bump
-    // force-rollback counters, skip soft partial recovery, return true
-    // (caller treats as commit denied). Soft path returns false (no force).
+    // Issue #2545: sticky post-mutate linear fail / cross-batch escape
+    // (set by invariant audit; consumed by force_linear_rollback).
+    [[nodiscard]] bool last_post_mutate_linear_fail() const noexcept;
+    void note_post_mutate_linear_fail() noexcept;
+    void clear_post_mutate_linear_fail() noexcept;
+    [[nodiscard]] bool last_cross_batch_escape_fail() const noexcept;
+    void note_cross_batch_escape_fail() noexcept;
+    void clear_cross_batch_escape_fail() noexcept;
+    // Issue #2545: unified linear hard-fail authority (synth + post-mutate +
+    // cross-batch escape). Pure classify — zero side effects; zero cost when
+    // all axes clean (a few relaxed atomic loads).
+    // Decision table (single source of truth for Agents):
+    //   SynthHardFail     → force + skip soft recovery; no linear_invariant_fail
+    //   PostMutateLinear  → force under hard-gate/Full (linear_invariant_fail
+    //                       already owned by audit walk)
+    //   CrossBatchEscape  → force; escape counters owned by hard_block path
+    //   None              → continue (type/provenance may still deny)
+    // Soft Warning synth never appears as SynthHardFail (#2514 AC retained).
+    enum class LinearForceAuthority : std::uint8_t {
+        None = 0,
+        SynthHardFail = 1,
+        PostMutateLinear = 2,
+        CrossBatchEscape = 3,
+    };
+    // Pure classify from sticky flags + optional precomputed audit result.
+    // When precomputed is non-null, linear_ok / cross_batch_linear_escape
+    // feed PostMutateLinear / CrossBatchEscape without re-running walks.
+    [[nodiscard]] LinearForceAuthority
+    classify_linear_force(const void* precomputed_invariant_result = nullptr) const noexcept;
+    // Issue #2545: single entry for hard-gate / outermost MutationBoundary
+    // exit / composite commit reject. When authority is SynthHardFail:
+    // early-exit, skip soft partial recovery, do NOT re-run invariant
+    // linear walk (no double-count with linear_invariant_fail). Returns
+    // true → caller force-rollbacks. Soft Warning synth → false.
+    // Prefer this over ad-hoc sticky checks at new call sites.
+    [[nodiscard]] bool
+    force_linear_rollback(std::string_view op,
+                          const void* precomputed_invariant_result = nullptr) noexcept;
+    // Issue #2514: back-compat alias → force_linear_rollback(op) (synth sticky).
     // Decision table (AC5 source-cite):
     //   synth hard (prod/strict) → force rollback, skip partial recovery,
     //                              deny kind=linear-synth-hard-fail, no Success
@@ -5078,6 +5114,11 @@ private:
     // Issue #2514: sticky synth hard-fail seen during post-mutate TC
     // (mirrors TypeChecker::last_linear_synth_hard_fail_; cleared on consume).
     std::atomic<std::uint32_t> linear_synth_hard_fail_pending_{0};
+    // Issue #2545: sticky axes for unified force_linear_rollback classify.
+    // Set by run_typed_mutation_invariant_audit / hard_block; cleared on
+    // force consume or successful commit.
+    std::atomic<std::uint32_t> last_post_mutate_linear_fail_{0};
+    std::atomic<std::uint32_t> last_cross_batch_escape_fail_{0};
     // Issue #2145: Strict sandbox — deny further mutate after hard-gate fail.
     std::atomic<std::uint32_t> strict_mutate_hold_{0};
     // Issue #2264: test inject — next run_typed_mutation_invariant_audit fails adt_ok.

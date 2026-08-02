@@ -4953,6 +4953,26 @@ def cmd_linear_synth_boundary_authority_coverage():
     return 0
 
 
+def cmd_linear_force_unified_coverage():
+    """Issue #2545: unify linear hard-fail decision entry (force_linear_rollback).
+
+    All hard-gate / outermost MutationBoundary exit / composite reject sites
+    call force_linear_rollback; synth early-exit skips soft recovery without
+    double-counting linear_invariant_fail; Soft Warning never forces.
+    """
+    print(f"{B}=== linear force unified entry coverage (#2545) ==={N}")
+    script = ROOT / "scripts" / "check_linear_force_unified_2545.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear force unified (#2545) coverage contract rows failed")
+        return 1
+    ok("linear force unified (#2545) coverage clean")
+    return 0
+
+
 def cmd_type_dirty_txn_order_coverage():
     """Issue #2516: type_dep invalidate → re-infer → cascade mirror txn.
 
@@ -5971,6 +5991,7 @@ def cmd_gate():
         or cmd_reverify_expand_coverage()
         or cmd_linear_synth_violation_coverage()
         or cmd_linear_synth_boundary_authority_coverage()
+        or cmd_linear_force_unified_coverage()
         or cmd_type_dirty_txn_order_coverage()
         or cmd_linear_partial_revalidate_coverage()
         or cmd_occurrence_cache_key_coverage()

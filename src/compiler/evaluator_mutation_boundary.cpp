@@ -561,17 +561,19 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 const bool strict_sandbox = aura::core::sandbox::is_strict();
                 const bool hard_gate = typed_audit::requires_invariant_hard_gate(
                     nodes_changed, linear_hint, strict_sandbox, match_sites);
-                // Issue #2514: linear_synth_hard_fail is single rollback authority.
-                // Decision table (see deny_if_linear_synth_hard_fail / typecheck):
-                //   synth hard (prod/strict) → force rollback, skip soft recovery
-                //   soft Warning only        → no force; continue audit below
-                //   synth clean              → post-mutate ownership defense-in-depth
+                // Issue #2514 / #2545: unified linear force entry is single
+                // rollback authority for synth + sticky post-mutate / escape.
+                // Decision table (see force_linear_rollback / typecheck):
+                //   SynthHardFail (prod/strict) → force + skip soft recovery
+                //   Soft Warning only           → no force; continue audit below
+                //   PostMutate / CrossBatch     → sticky may force if set
+                //   None                        → post-mutate ownership defense
                 // Must run before Sampled skip / partial recovery so soft recovery
                 // cannot claim Success after a synth TypeError.
-                if (linear_synth_hard_fail_pending()) {
-                    // Reuse shared deny helper (counters + deny reason + trail).
-                    (void)deny_if_linear_synth_hard_fail(
-                        composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail");
+                // force_linear_rollback classifies linear_synth_hard_fail_pending
+                // first (deny_if_linear_synth_hard_fail is the thin alias).
+                if (force_linear_rollback(composite ? "composite-linear-synth-hard-fail"
+                                                    : "linear-synth-hard-fail")) {
                     // Structural undo (mirror hard-gate force-rollback body).
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled =
@@ -710,33 +712,35 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
                         }
                     }
-                    // Issue #2145: hard-gate force rollback for Full / Strict / composite.
+                    // Issue #2145 / #2545: hard-gate force rollback for Full /
+                    // Strict / composite. Linear axes go through the unified
+                    // force_linear_rollback entry first (single counter
+                    // ownership; no double-count with linear_invariant_fail).
                     if (!inv_ok && !recovered && (composite || hard_gate)) {
                         auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                        if (strat == typed_audit::AuditStrategy::Full || hard_gate) {
+                        const bool linear_forced = force_linear_rollback(
+                            composite ? "composite-linear-force" : "linear-force-rollback", &first);
+                        if (!linear_forced &&
+                            (strat == typed_audit::AuditStrategy::Full || hard_gate)) {
+                            // Type / provenance / adt (non-linear) force path.
                             ac.full_strategy_force_rollback_total.fetch_add(
                                 1, std::memory_order_relaxed);
                             ac.hard_gate_force_rollback_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                                m->typed_mutation_full_force_rollback_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            aura_escape_move_gate_clear();
+                            g_linear_escape_gate_clear_on_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
                         }
                         if (composite) {
                             ac.composite_full_rollback_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
                         }
-                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                            m->typed_mutation_full_force_rollback_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        // Issue #2309: clear the escape → MoveOp elision gate
-                        // before control returns to the Agent. The boundary
-                        // path is the canonical rollback surface for composite
-                        // txn commit — without this clear, a stale "blocked"
-                        // set from the failed composite (or hard-gate reject)
-                        // leaks into the next independent mutate in the same
-                        // eval / process. Counter bump mirrors the typecheck
-                        // reject branches.
-                        aura_escape_move_gate_clear();
-                        g_linear_escape_gate_clear_on_rollback_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        // Issue #2309: linear force path already cleared the
+                        // escape gate inside force_linear_rollback; non-linear
+                        // path cleared above.
                         // Issue #2284: publish boundary hard-reject signal on the
                         // repair surface. The typecheck path already published the
                         // detailed unresolved_affected_nodes data; we only update

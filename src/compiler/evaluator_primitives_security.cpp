@@ -3351,6 +3351,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                          .linear_synth_authority_unified.load(std::memory_order_relaxed)))},
                 {"schema-2514", make_int(2514)},
                 {"issue-2514", make_int(2514)},
+                // Issue #2545: unified force_linear_rollback (synth+post-mutate+escape).
+                {"linear-force-unified",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_force_unified_2545.load(std::memory_order_relaxed)))},
+                {"linear-force-rollback-wired", make_int(1)},
+                {"schema-2545", make_int(2545)},
+                {"issue-2545", make_int(2545)},
             };
             return build_hash(kv);
         });

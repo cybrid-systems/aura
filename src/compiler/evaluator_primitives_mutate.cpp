@@ -6489,6 +6489,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                               c.linear_synth_authority_unified.load(std::memory_order_relaxed)));
                 insert_kv("schema-2514", 2514);
                 insert_kv("issue-2514", 2514);
+                // Issue #2545: unified force_linear_rollback entry
+                insert_kv("linear-force-unified",
+                          static_cast<std::int64_t>(
+                              c.linear_force_unified_2545.load(std::memory_order_relaxed)));
+                insert_kv("linear-force-rollback-wired", 1);
+                insert_kv("schema-2545", 2545);
+                insert_kv("issue-2545", 2545);
                 insert_kv("adt-invariant-ok", static_cast<std::int64_t>(c.adt_invariant_ok.load(
                                                   std::memory_order_relaxed)));
                 insert_kv("adt-invariant-fail", static_cast<std::int64_t>(c.adt_invariant_fail.load(
