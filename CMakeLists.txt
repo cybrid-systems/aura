@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 4.3)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
     "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 project(aura LANGUAGES CXX C)
+# P2: shared test libs (libaura_*.so) live in the build tree; every
+# test executable must find them without LD_LIBRARY_PATH.
+set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}")
+set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraCoverage.cmake) # Issue #1933 llvm-cov
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
@@ -418,11 +422,17 @@ target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 # Call from module code via C ABI / split TU. Do not put non-meta
 # sources in this library. hygiene_validate.hh is meta-free and may
 # be included from import-std TUs.
-add_library(aura-reflect STATIC
+# P2: SHARED so issue-test binaries do not each embed reflect (~264K).
+add_library(aura-reflect SHARED
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
     # Wave A1: snapshot JSON via to_json (needs -freflection)
     src/compiler/observability_json.cpp
+)
+set_target_properties(aura-reflect PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    BUILD_RPATH "${CMAKE_BINARY_DIR}"
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura-reflect PRIVATE -freflection)
@@ -653,7 +663,11 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 # re-compile the full set of .ixx modules.
 set(AURA_MODULE_BMI_DIR ${CMAKE_BINARY_DIR}/module_cache)
 file(MAKE_DIRECTORY ${AURA_MODULE_BMI_DIR})
-add_library(aura_test_objects STATIC
+# P2: SHARED — one libaura_test_objects.so (~tens of MB) instead of
+# embedding the 30MB archive into every issue-test binary. Tests
+# resolve via BUILD_RPATH=$BUILD_DIR. Static archives allowed dead
+# strip of unused .o; shared trades that for disk/link thrash wins.
+add_library(aura_test_objects SHARED
     src/core/contract_stub.cpp
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
@@ -696,8 +710,13 @@ add_library(aura_test_objects STATIC
     src/compiler/adt_runtime_impl.cpp
     src/compiler/lowering_linear_types_impl.cpp)
 set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
+set_target_properties(aura_test_objects PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    BUILD_RPATH "${CMAKE_BINARY_DIR}"
+)
 # .cpp impls require .ixx BMIs from the same module set the helper
-# wires for each test_issue_* target. Add them here so the static
+# wires for each test_issue_* target. Add them here so the shared
 # lib can compile its sources standalone. Each module is still
 # ALSO re-emitted per-test-binary (CMake FILE_SET doesn't share
 # BMIs across targets yet) — this is the duplicate work Fix #2
@@ -728,8 +747,10 @@ if(LLVM_FOUND)
     #   handle_contract_violation (contract_handler) so minimal
     #   unit tests (e.g. test_issue_1477) link without service.ixx.
     # Do NOT add aura_jit_bridge_stub.cpp here — real bridge is already
-    # in the archive (duplicate symbols).
-    add_library(aura_jit_test_objects STATIC
+    # in the library (duplicate symbols).
+    # P2: SHARED so LLVM is mapped once (~50–70MB .so) instead of
+    # baked into each full-JIT test binary.
+    add_library(aura_jit_test_objects SHARED
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
         src/compiler/aura_jit_bridge.cpp
@@ -739,6 +760,11 @@ if(LLVM_FOUND)
         src/core/contract_stub.cpp
     )
     set_property(TARGET aura_jit_test_objects PROPERTY CXX_MODULE_STD ON)
+    set_target_properties(aura_jit_test_objects PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+        BUILD_RPATH "${CMAKE_BINARY_DIR}"
+    )
     target_include_directories(aura_jit_test_objects PUBLIC
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/compiler
@@ -774,9 +800,10 @@ endif()
 #
 # Prefer aura_issue_test_link_light() (default for non-JIT issue tests).
 # Keep aura_issue_test_link_llvm_jit() only for targets that exercise real
-# OrcJIT / emit_native_object / SpecJIT paths (see /tmp/jit_need.txt audit
-# or tests/README.md · link profiles).
-add_library(aura_jit_light_test_objects STATIC
+# OrcJIT / emit_native_object / SpecJIT paths (see
+# cmake/issue_tests_need_full_llvm.txt or tests/README.md · link profiles).
+# P2: SHARED — one light ABI .so for all non-JIT issue tests.
+add_library(aura_jit_light_test_objects SHARED
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
@@ -786,6 +813,11 @@ add_library(aura_jit_light_test_objects STATIC
     src/core/contract_stub.cpp
 )
 set_property(TARGET aura_jit_light_test_objects PROPERTY CXX_MODULE_STD ON)
+set_target_properties(aura_jit_light_test_objects PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    BUILD_RPATH "${CMAKE_BINARY_DIR}"
+)
 target_include_directories(aura_jit_light_test_objects PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/compiler
@@ -838,9 +870,13 @@ function(aura_add_issue_test NAME)
     # symlinks, so test_issue_* binaries can `import` modules
     # without re-compiling the .ixx themselves.
     aura_test_compile_options(${NAME})
-    # Fix #1: link the shared test object lib. Compiled once, used
-    # by all 55 test_issue_* binaries.
+    # Fix #1: link the shared test object lib (P2: .so, not .a).
+    # BUILD_RPATH so ctest/ninja runs find libaura_*.so in build/.
     target_link_libraries(${NAME} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+    set_target_properties(${NAME} PROPERTIES
+        BUILD_RPATH "${CMAKE_BINARY_DIR}"
+        INSTALL_RPATH "$ORIGIN"
+    )
     add_test(NAME ${NAME}_verification COMMAND ./${NAME})
     # Issue #871: 减法原则 — CTest LABELS for fast filtering.
     # Each issue test gets the "issue" label so that
