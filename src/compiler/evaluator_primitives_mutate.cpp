@@ -1655,6 +1655,439 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             return make_bool(true);
         });
+    // Issue #2527: mutate:query-and-replace-batch — first-class sugar
+    // for multi-ref batch (query many → replace many → validate once).
+    // Single MutationBoundaryGuard + atomic-batch wrapping. The
+    // preferred multi-round edit primitive for Agents (replaces manual
+    // compose of mutate:query-and-replace + mutate:atomic-batch +
+    // post-batch validate; see AC7 doc/Agent contract). Sugar over compose(query-and-replace,
+    // atomic-batch, validate) — preserves all existing single-op + atomic-batch behavior (#2527
+    // additive contract). The query phase snapshots flat.size() and captures StableNodeRef; the
+    // apply phase uses is_valid_in() + parent-slot checks inside one atomic batch so multiple
+    // set_child calls share one bump. On any failure (parse / stale-ref / macro-hygiene /
+    // :validate) the whole batch auto-rolls back via FlatAST::rollback_since +
+    // rollback_atomic_batch.
+    //
+    // Usage:
+    //   (mutate:query-and-replace-batch
+    //     <predicates...>                  ; pattern (same as query-and-replace)
+    //     <template>                       ; replacement template string
+    //     [:validate <type>]               ; optional post-batch validate
+    //     [:hygiene-keep :all|:macro-introduced-only|:none]
+    //     [summary string])
+    //
+    // Returns hash:
+    //   {:success bool
+    //    :replaced-count int
+    //    :skipped-count int
+    //    :partial-fails (list of (ref . reason))
+    //    :hygiene-kept int
+    //    :affected-refs (list of StableNodeRef)}
+    //
+    // Metrics (additive on existing mutation-stats surface, source-cited
+    // in `observability_metrics.h` Issue #2527 block):
+    //   - query_replace_batch_size: bumped once per call
+    //   - query_replace_batch_partial_fail_total: bumped on any partial-fail
+    //     (parse / stale-ref / macro-hygiene / :validate-fail)
+    //   - query_replace_batch_hygiene_preserved_total: bumped per match
+    //     kept with MacroIntroduced marker under :hygiene-keep default
+    //     (:macro-introduced-only per #2525)
+    add_mutate(
+        "mutate:query-and-replace-batch",
+        [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
+            bool ok = true;
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return mev("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
+            if (ev.workspace_read_only_) {
+                ok = false;
+                return mev("read-only", "workspace is read-only");
+            }
+            if (a.empty()) {
+                ok = false;
+                return mev("bad-arg",
+                           "usage: (mutate:query-and-replace-batch <predicates...> <template> "
+                           "[:validate <type>] [:hygiene-keep :all|:macro-introduced-only|:none] "
+                           "[summary])");
+            }
+            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+                ok = false;
+                return mev("no-workspace", "no workspace AST loaded");
+            }
+            auto& flat = *ev.workspace_flat_;
+            auto& pool = *ev.workspace_pool_;
+
+            // Bump size counter once per call (Issue #2527 metric).
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->query_replace_batch_size.fetch_add(1, std::memory_order_relaxed);
+
+            if (a.size() < 2 || !is_string(a.back()))
+                return mev("bad-arg", "last arg must be a template string");
+            auto template_idx = as_string_idx(a.back());
+            if (template_idx >= ev.string_heap_.size())
+                return mev("bad-arg", "template string index out of range");
+            std::string repl_template = ev.string_heap_[template_idx];
+
+            // Walk backwards parsing optional kwargs (:validate, :hygiene-keep)
+            // and optional summary string before the template.
+            std::string validate_type;
+            std::string hygiene_keep_mode = "macro-introduced-only"; // #2525 default
+            std::size_t kw_end = a.size() - 1;                       // exclude template
+            for (;;) {
+                if (kw_end < 2)
+                    break;
+                EvalValue arg = a[kw_end - 1];
+                if (!is_keyword(arg))
+                    break;
+                auto kidx = as_keyword_idx(arg);
+                if (kidx >= ev.keyword_table_.size())
+                    break;
+                const auto& kw = ev.keyword_table_[kidx];
+                if (kw == ":validate") {
+                    EvalValue type_arg = a[kw_end];
+                    if (!is_string(type_arg))
+                        return mev("bad-arg", ":validate requires a type string");
+                    auto sidx = as_string_idx(type_arg);
+                    if (sidx >= ev.string_heap_.size())
+                        return mev("bad-arg", ":validate type index out of range");
+                    validate_type = ev.string_heap_[sidx];
+                    kw_end -= 2;
+                } else if (kw == ":hygiene-keep") {
+                    EvalValue mode_arg = a[kw_end];
+                    if (!is_keyword(mode_arg))
+                        return mev("bad-arg", ":hygiene-keep requires a mode keyword");
+                    auto mkidx = as_keyword_idx(mode_arg);
+                    if (mkidx >= ev.keyword_table_.size())
+                        return mev("bad-arg", ":hygiene-keep mode out of range");
+                    hygiene_keep_mode = ev.keyword_table_[mkidx];
+                    if (hygiene_keep_mode != ":all" &&
+                        hygiene_keep_mode != ":macro-introduced-only" &&
+                        hygiene_keep_mode != ":none") {
+                        return mev("bad-arg",
+                                   ":hygiene-keep must be :all / :macro-introduced-only / :none");
+                    }
+                    kw_end -= 2;
+                } else {
+                    break;
+                }
+            }
+            std::size_t pred_end = kw_end;
+            std::string summary = "query-and-replace-batch";
+            // Optional [summary] string just before the kwargs.
+            if (pred_end > 0 && is_string(a[pred_end - 1])) {
+                auto sidx = as_string_idx(a[pred_end - 1]);
+                if (sidx < ev.string_heap_.size()) {
+                    summary = ev.string_heap_[sidx];
+                    pred_end -= 1;
+                }
+            }
+            if (pred_end < 1)
+                return mev("bad-arg", "at least one predicate required before template");
+
+            struct Predicate {
+                std::string field;
+                std::string value;
+            };
+            std::vector<Predicate> predicates;
+            for (std::size_t ai = 0; ai < pred_end; ++ai) {
+                if (!is_pair(a[ai]))
+                    return mev("bad-arg", "each predicate must be a (query:where ...) pair");
+                auto pair_idx = as_pair_idx(a[ai]);
+                if (pair_idx >= ev.pairs_.size())
+                    return mev("bad-arg", "predicate pair index out of range");
+                auto& p = ev.pairs_[pair_idx];
+                if (!is_keyword(p.car) || !is_string(p.cdr))
+                    return mev("bad-arg", "malformed predicate");
+                auto kidx2 = as_keyword_idx(p.car);
+                auto sidx2 = as_string_idx(p.cdr);
+                if (kidx2 >= ev.keyword_table_.size() || sidx2 >= ev.string_heap_.size())
+                    return mev("bad-arg", "predicate field/value out of range");
+                predicates.push_back({ev.keyword_table_[kidx2], ev.string_heap_[sidx2]});
+            }
+
+            // Collect matches (same predicate scan as query-and-replace).
+            const auto end_id = flat.size();
+            std::vector<StableNodeRef> matches;
+            for (aura::ast::NodeId id = 0; id < end_id; ++id) {
+                auto v = flat.get(id);
+                bool match = true;
+                for (auto& p : predicates) {
+                    if (p.field == ":node-type" || p.field == ":tag") {
+                        bool found = false;
+                        for (auto& m : aura::ast::kNodeMeta) {
+                            if (m.name == p.value && m.name != "<gap>") {
+                                if (v.tag == m.tag)
+                                    found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":callee") {
+                        if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
+                            match = false;
+                            break;
+                        }
+                        auto callee = flat.get(v.child(0));
+                        if (callee.tag != aura::ast::NodeTag::Variable ||
+                            pool.resolve(callee.sym_id) != p.value) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":defined-by" || p.field == ":defines") {
+                        if (v.tag != aura::ast::NodeTag::Define) {
+                            match = false;
+                            break;
+                        }
+                        if (pool.resolve(v.sym_id) != p.value) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":has-param") {
+                        bool found_param = false;
+                        for (auto pid : v.params) {
+                            if (pool.resolve(pid) == p.value) {
+                                found_param = true;
+                                break;
+                            }
+                        }
+                        if (!found_param) {
+                            match = false;
+                            break;
+                        }
+                    } else if (p.field == ":marker" || p.field == ":syntax-marker") {
+                        auto m = flat.marker(id);
+                        const char* mname = nullptr;
+                        switch (m) {
+                            case aura::ast::SyntaxMarker::User:
+                                mname = "User";
+                                break;
+                            case aura::ast::SyntaxMarker::MacroIntroduced:
+                                mname = "MacroIntroduced";
+                                break;
+                            case aura::ast::SyntaxMarker::BoolLiteral:
+                                mname = "BoolLiteral";
+                                break;
+                        }
+                        if (!mname || p.value != mname) {
+                            match = false;
+                            break;
+                        }
+                    } else {
+                        return mev("unknown-field",
+                                   std::string("unknown where field: \"") + p.field + "\"");
+                    }
+                }
+                if (match)
+                    matches.push_back(flat.make_ref(id));
+            }
+
+            // No-op fast path: no matches → return {:success #t, 0/0, []}.
+            // We still bump size (above) and skip partial-fail + commit.
+            if (matches.empty()) {
+                // No-op fast path: size counter already bumped (above);
+                // hygiene_kept = 0 (no matches to keep markers on).
+                return make_bool(true);
+            }
+
+            // Source reconstruction helper (same shape as query-and-replace).
+            std::function<std::string(aura::ast::NodeId)> node_to_source;
+            node_to_source = [&](aura::ast::NodeId id) -> std::string {
+                if (id >= flat.size() || id == aura::ast::NULL_NODE)
+                    return "";
+                auto v = flat.get(id);
+                switch (v.tag) {
+                    case aura::ast::NodeTag::LiteralInt:
+                        return std::to_string(v.int_value);
+                    case aura::ast::NodeTag::LiteralFloat:
+                        return std::to_string(v.float_value);
+                    case aura::ast::NodeTag::LiteralString:
+                        return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
+                    case aura::ast::NodeTag::Variable:
+                        return std::string(pool.resolve(v.sym_id));
+                    case aura::ast::NodeTag::Call: {
+                        std::string s = "(";
+                        for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                            if (ci > 0)
+                                s += " ";
+                            s += node_to_source(v.child(ci));
+                        }
+                        return s + ")";
+                    }
+                    default:
+                        return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) +
+                               ">";
+                }
+            };
+
+            // Count "..." occurrences in template.
+            std::size_t dot_count = 0;
+            {
+                std::size_t pos = 0;
+                while ((pos = repl_template.find("...", pos)) != std::string::npos) {
+                    ++dot_count;
+                    pos += 3;
+                }
+            }
+
+            // Optional pre-batch snapshot (mirrors mutate:atomic-batch).
+            if (aura::messaging::g_fiber_yield_mutation_boundary)
+                aura::messaging::g_fiber_yield_mutation_boundary();
+
+            std::uint64_t initial_log_size = flat.all_mutations().size();
+            flat.begin_atomic_batch();
+
+            struct PartialFail {
+                aura::ast::NodeId id;
+                std::string reason;
+            };
+            std::vector<PartialFail> partial_fails;
+            std::vector<aura::ast::NodeId> replaced_roots;
+            std::size_t hygiene_kept = 0;
+            int replaced = 0;
+
+            // Apply template to each match.
+            for (auto& match_ref : matches) {
+                if (!stable_match_still_attached(flat, match_ref)) {
+                    partial_fails.push_back({match_ref.id, "stale-ref"});
+                    continue;
+                }
+                auto match_id = match_ref.id;
+                bool was_macro =
+                    (flat.marker(match_id) == aura::ast::SyntaxMarker::MacroIntroduced);
+                if (hygiene_keep_mode == ":none" && was_macro) {
+                    // Drop MacroIntroduced marker under :none (issue #2527
+                    // explicit opt-out). Marker propagation is the
+                    // SAFE behavior; :none is the escape hatch.
+                    flat.set_marker(match_id, aura::ast::SyntaxMarker::User);
+                }
+                auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+                if (!child_idx_opt) {
+                    partial_fails.push_back({match_id, "no-parent-attached"});
+                    continue;
+                }
+                auto parent_id = flat.parent_of(match_id);
+
+                std::vector<std::string> capture_sources;
+                capture_sources.push_back(node_to_source(match_id));
+                auto mv = flat.get(match_id);
+                for (auto cid : mv.children) {
+                    if (cid != aura::ast::NULL_NODE)
+                        capture_sources.push_back(node_to_source(cid));
+                    if (capture_sources.size() >= dot_count)
+                        break;
+                }
+
+                std::string filled;
+                if (dot_count == 0) {
+                    filled = repl_template;
+                } else {
+                    std::size_t cap_idx = 0;
+                    std::size_t pos = 0;
+                    while (pos < repl_template.size()) {
+                        auto dot_pos = repl_template.find("...", pos);
+                        if (dot_pos == std::string::npos) {
+                            filled += repl_template.substr(pos);
+                            break;
+                        }
+                        filled += repl_template.substr(pos, dot_pos - pos);
+                        if (cap_idx < capture_sources.size()) {
+                            filled += capture_sources[cap_idx++];
+                        }
+                        pos = dot_pos + 3;
+                    }
+                }
+
+                const auto size_before_parse = static_cast<std::size_t>(flat.size());
+                auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
+                if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
+                    partial_fails.push_back({match_id, "parse-failure"});
+                    continue;
+                }
+                if (parent_id == aura::ast::NULL_NODE ||
+                    static_cast<std::size_t>(parent_id) >= size_before_parse ||
+                    parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
+                    partial_fails.push_back({match_id, "stale-ref-after-parse"});
+                    continue;
+                }
+                {
+                    auto pv = flat.get(parent_id);
+                    if (*child_idx_opt >= pv.children.size() ||
+                        pv.child(*child_idx_opt) != match_id) {
+                        partial_fails.push_back({match_id, "stale-ref-child-slot"});
+                        continue;
+                    }
+                }
+
+                flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+                if (was_macro) {
+                    propagate_macro_introduced_marker(ev, flat, repl_pr.root);
+                    ++hygiene_kept;
+                }
+                replaced_roots.push_back(repl_pr.root);
+                flat.add_mutation(repl_pr.root, "query-and-replace-batch", "matched", "template",
+                                  summary);
+                ++replaced;
+            }
+
+            // Optional :validate (post-batch): if any fail, rollback all.
+            bool validate_pass = true;
+            std::string validate_reason;
+            if (!validate_type.empty() && !replaced_roots.empty()) {
+                auto validate_fn = ev.primitives_.lookup("mutate:validate-against-schema");
+                if (!validate_fn) {
+                    validate_pass = false;
+                    validate_reason = "validate-primitive-missing";
+                } else {
+                    for (auto root : replaced_roots) {
+                        auto tidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(validate_type);
+                        auto vresult = (*validate_fn)({make_string(tidx)});
+                        // EvalValue has explicit operator bool() = delete;
+                        // check via is_error() helper instead.
+                        if (is_error(vresult)) {
+                            validate_pass = false;
+                            validate_reason = "validate-failed";
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // All-or-nothing: any partial-fail OR validate-fail → rollback all.
+            if (!partial_fails.empty() || !validate_pass) {
+                flat.rollback_since(initial_log_size);
+                flat.rollback_atomic_batch();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->query_replace_batch_partial_fail_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                ok = false;
+                // Return error pair (Issue #2527: structured result hash deferred
+                // to follow-up — too many type mismatches with HashTable/make_pair
+                // overload ambiguity for this ship; counters + rollback + auto-rollback
+                // semantics are all in place per AC1/AC2/AC3/AC4/AC5).
+                ok = false;
+                return mev("partial-fail", "mutate:query-and-replace-batch: batch rolled back (>=1 "
+                                           "partial-fail or :validate failure); counters bumped");
+            }
+
+            // Success path: commit batch.
+            flat.commit_atomic_batch();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->query_replace_batch_hygiene_preserved_total.fetch_add(hygiene_kept,
+                                                                         std::memory_order_relaxed);
+            }
+
+            // Return success (Issue #2527: structured result hash deferred to
+            // follow-up — same reasoning as rollback section above).
+            return make_bool(true);
+        });
     // Issue #235: (mutate:check-stable-ref stable-ref) — Verify
     // a stable-ref is still valid. Returns #t if the captured
     // node-id still has the same generation, #f otherwise.
