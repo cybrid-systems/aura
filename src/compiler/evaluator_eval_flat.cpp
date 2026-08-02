@@ -4846,6 +4846,36 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     }
 
                     if (has_multiple_defs) {
+                        // Issue #2579 / H8: when any define's value is not a
+                        // Lambda, prefer sequential define evaluation (same as
+                        // single-define begin path). Pure-lambda multi-define
+                        // keeps letrec pre-allocate for mutual recursion.
+                        // Mixed forms under set-code (define (f) …)(define g (f))
+                        // were binding g to the procedure f instead of (f)'s
+                        // result when using letrec cell init + TCO re-entry.
+                        bool any_non_lambda = false;
+                        for (auto& d : letrec_defs) {
+                            if (d.second != aura::ast::NULL_NODE &&
+                                f->get(d.second).tag != aura::ast::NodeTag::Lambda) {
+                                any_non_lambda = true;
+                                break;
+                            }
+                        }
+                        if (any_non_lambda) {
+                            // Sequential: each Define updates top_ as we go.
+                            for (std::size_t i = 0; i < count - 1; ++i) {
+                                auto cid = v.child(i);
+                                if (cid == aura::ast::NULL_NODE)
+                                    continue;
+                                auto r = eval_flat(*f, *p, cid, eval_env);
+                                if (!r)
+                                    return r;
+                                if (r && is_error(*r) && !is_string(*r))
+                                    return r;
+                            }
+                            current_id = last_expr;
+                            continue;
+                        }
                         // Phase 1: pre-allocate cells for all defines
                         // This ensures all function names are visible to each other
                         std::vector<std::size_t> cell_ids;
@@ -4872,7 +4902,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 cell_ids.push_back(ci);
                             }
                         }
-                        // Phase 2: evaluate values and set cells
+                        // Phase 2: evaluate values and set cells (all Lambdas).
                         for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
                             auto& d = letrec_defs[i];
                             if (d.second != aura::ast::NULL_NODE) {

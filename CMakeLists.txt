@@ -3958,6 +3958,11 @@ aura_add_issue_test(test_aether_denseness_residual_2578)
 aura_issue_test_link_light(test_aether_denseness_residual_2578)
 add_dependencies(all_test_issue_targets test_aether_denseness_residual_2578)
 
+# Issue #2579: module free-vars / multi-define value init / trailing export
+aura_add_issue_test(test_module_rebind_residual_2579)
+aura_issue_test_link_light(test_module_rebind_residual_2579)
+add_dependencies(all_test_issue_targets test_module_rebind_residual_2579)
+
 # Issue #2570: module load fail-closed; trailing defines always export
 aura_add_issue_test(test_module_load_tail_export_2570)
 aura_issue_test_link_light(test_module_load_tail_export_2570)

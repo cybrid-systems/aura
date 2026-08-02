@@ -822,6 +822,10 @@ public:
             this->populate_dep_graph_from_workspace();
             this->populate_ir_cache_v2_from_workspace();
         });
+        // Issue #2579: after tree-walker eval-current, record value-define
+        // cell ids for IR Variable lowering without re-binding env.
+        evaluator_.set_sync_workspace_value_cells_fn(
+            [this]() { this->sync_workspace_value_cells_from_env(); });
         // Issue #63723: lightweight dep_graph-only repopulate hook
         // (called from mutate:rebind / mutate:set-body after the
         // rebind success). mutate:rebind does NOT call
@@ -6362,6 +6366,34 @@ public:
     // each top-level define, which has side effects (eval_flat on top_env).
     // NOT called by default. Future work: re-enable when the side-effect
     // issue is resolved.
+    // Issue #2579: after eval-current TW, map each workspace value define
+    // name → its top_env cell index for IR Variable lowering. Does not
+    // re-evaluate or overwrite bindings (TW already did that).
+    void sync_workspace_value_cells_from_env() {
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool)
+            return;
+        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+            auto v = ws_flat->get(id);
+            if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            auto name = std::string(ws_pool->resolve(v.sym_id));
+            if (name.empty() || name[0] == '_')
+                continue;
+            if (v.children.empty())
+                continue;
+            // Skip pure function defines (Lambda body) — IR function cache
+            // owns those; only value defines need cell indices.
+            if (ws_flat->get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
+                continue;
+            auto existing = evaluator_.top_env().lookup_binding(name);
+            if (!existing || !types::is_cell(*existing))
+                continue;
+            ir_value_cell_bindings_[name] = types::as_cell_id(*existing);
+        }
+    }
+
     void populate_ir_cache_v2_from_workspace() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
@@ -6417,23 +6449,11 @@ public:
             // eval-current which uses its own env.
             (void)cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name,
                                /*bind_in_env=*/false);
-            // Issue #63723: ALSO run the IR-defined value through
-            // bind_value_define_via_ir so the cell-id of the cached
-            // value is recorded in ir_value_cell_bindings_. Without
-            // this, the lowering's Variable case (state.value_cells)
-            // sees nothing for the define, falls through to the
-            // function-cache path, and emits MakeClosure — which
-            // gives the user a closure (cell 0 when used in
-            // arithmetic) instead of the actual value 1. This
-            // manifested as `(set-code "(define a 1)") (eval-current)
-            // (+ a 2)` returning 2 (a silently 0) instead of 3.
-            //
-            // The cost is one extra lower + IRInterpreter run per
-            // define per set-code. For the long-running-agent
-            // fleet, this is amortized over many subsequent
-            // eval-ir calls that would otherwise fail. For the
-            // benchmark suite, this is negligible.
-            (void)bind_value_define_via_ir(*tmp_flat, *tmp_pool, pr.root, name);
+            // Issue #63723 / #2579: do NOT bind_value_define_via_ir here.
+            // Eager IR env bind polluted top_ before tree-walker eval-current
+            // (H8 multi-define call-init / value defines). Value cells for
+            // IR lowering are recorded post-eval via
+            // sync_workspace_value_cells_from_env.
             // Mirror cache_define output into v2 (dep_graph populate may have
             // left a source-only shell that previously blocked heavy populate).
             if (auto cit = ir_cache_.find(name); cit != ir_cache_.end()) {
