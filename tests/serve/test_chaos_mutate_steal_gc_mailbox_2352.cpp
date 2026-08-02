@@ -8,6 +8,9 @@
 // Issue #2513 — production-grade multi-fiber soak extension: non-yield
 // (LLM-style) loops + reclaim residual still-running + mailbox hold
 // starvation + hard-fail counters; configurable AURA_CHAOS_FIBERS up to 1000+.
+// Issue #2554 — PR/deploy gate: short deterministic chaos under production-like
+// hard-fail invariants in ./build.py gate (steal hard-fail Δ==0, residual
+// still-running==0). Full SOAK/FULL soak unchanged (nightly).
 //
 //   AC1: Fixed-seed chaos completes exit 0 (smoke default; full 30s via env)
 //   AC2: Injected residual Panic depth fails detection CHECK
@@ -31,6 +34,13 @@
 //   AC4: coverage linter + source-cite for soak paths
 //   AC5: production-concurrency docs / knobs updated
 //
+//   #2554 ACs (PR gate hard-fail):
+//   AC1: AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL=1 fails the PR-gate binary
+//   AC2: Clean short PR profile under production-like defaults passes
+//   AC3: AURA_CHAOS_SOAK / FULL path unchanged (still stricter / longer)
+//   AC4: build.py gate runs cmd_chaos_pr_hard_fail_gate; no flaky timeouts
+//   AC5: scripts/check_chaos_pr_hard_fail_gate_2554.py greps hard-fail asserts
+//
 // Env knobs (AURA_CHAOS_* / production gate):
 //   AURA_CHAOS_SEED          default 1 (deterministic RNG stream)
 //   AURA_CHAOS_WORKERS       smoke 4 / full ≥4 (prod gate default 4)
@@ -39,13 +49,17 @@
 //   AURA_CHAOS_FULL=1        enable full soak variant (nightly)
 //   AURA_CHAOS_SOAK=1        #2513: high-fiber soak (default fibers 256, dur 300
 //                            unless overridden); PR smoke stays light
+//   AURA_CHAOS_PR_GATE=1     #2554: short PR chaos with hard-fail invariants
+//                            (steal hard-fail Δ==0, residual still-running==0)
+//   AURA_CHAOS_PR_GATE_ONLY=1  #2554: run only PR short pass (build.py gate)
+//   AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL=1  #2554 AC1: force hard-fail delta
 //   AURA_CHAOS_FAULT=        residual_panic | snapshot_mismatch | hang_detect
 //   AURA_CHAOS_MB_STARVE_MAX default 0 (any hold-exit starvation delta fails
-//                            under prod/soak when set; absolute ceiling)
+//                            under prod/soak/pr-gate when set; absolute ceiling)
 //   AURA_STEAL_SNAPSHOT_HARD=1  for AC3 Hard canary (live getenv)
 //   AURA_LOCK_ORDER_CANARY=1    #2380: hard lock-order abort on inversion
 //   AURA_PRODUCTION_CONCURRENCY_GATE=1  #2380/#2513: densify+canary+Soft-forbid
-//   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production gate
+//   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production / PR gate
 
 #include "test_harness.hpp"
 
@@ -124,6 +138,23 @@ static bool chaos_full() noexcept {
 // Issue #2513: high-fiber / longer soak profile (optional; PR smoke free).
 [[nodiscard]] static bool chaos_soak() noexcept {
     const char* e = std::getenv("AURA_CHAOS_SOAK");
+    return e && e[0] == '1';
+}
+
+// Issue #2554: short PR/deploy gate profile (production-like hard-fail
+// invariants without multi-minute FULL/SOAK).
+[[nodiscard]] static bool chaos_pr_gate() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_PR_GATE");
+    return e && e[0] == '1';
+}
+
+[[nodiscard]] static bool chaos_pr_gate_only() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_PR_GATE_ONLY");
+    return e && e[0] == '1';
+}
+
+[[nodiscard]] static bool chaos_pr_gate_inject_hard_fail() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL");
     return e && e[0] == '1';
 }
 
@@ -230,25 +261,39 @@ static void chaos_fiber(ChaosState& st, std::uint64_t seed, int max_steps,
 //   under canary, and require workers≥4 / duration≥30 for full profile.
 // Issue #2513: also hard-fail on steal hard-fail delta, residual still-running
 //   gauge > 0 at end, mailbox hold-exit starvation over ceiling.
+// Issue #2554: PR gate enables the same hard-fail counters on a short profile.
 static long run_chaos_pass(const char* label, int workers, int n_fibers, int duration_s,
                            int steps_cap) {
     const bool prod_gate = production_concurrency_gate();
     const bool soak = chaos_soak();
+    const bool pr_gate = chaos_pr_gate();
+    // Hard-fail invariants (steal hard-fail / residual still-running / mb starve)
+    // under production gate, soak, or #2554 PR gate.
+    const bool hard_fail_invariants = prod_gate || soak || pr_gate;
     std::println("\n=== {} workers={} fibers={} duration={}s steps_cap={} seed={} prod_gate={} "
-                 "soak={} canary={} ===",
+                 "soak={} pr_gate={} canary={} ===",
                  label, workers, n_fibers, duration_s, steps_cap, chaos_seed(), prod_gate ? 1 : 0,
-                 soak ? 1 : 0, aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
+                 soak ? 1 : 0, pr_gate ? 1 : 0,
+                 aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
 
-    // Issue #2380 AC1/AC3: Soft steal forbidden under production-concurrency.
-    if (prod_gate) {
+    // Issue #2380 AC1/AC3 / #2554: Soft steal forbidden under production /
+    // PR hard-fail gates.
+    if (prod_gate || pr_gate) {
         // Ensure Soft env cannot soft-continue mismatches this run.
         unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::reset_steal_snapshot_soft_for_test();
         CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
-              "#2380: Soft steal forbidden under production-concurrency gate");
-        CHECK(workers >= 4, "#2380: workers ≥ 4 under production-concurrency");
-        if (chaos_full() || duration_s >= 30)
-            CHECK(duration_s >= 30, "#2380: full soak duration ≥ 30s");
+              "#2380/#2554: Soft steal forbidden under production/PR hard-fail gate");
+        if (prod_gate) {
+            CHECK(workers >= 4, "#2380: workers ≥ 4 under production-concurrency");
+            if (chaos_full() || duration_s >= 30)
+                CHECK(duration_s >= 30, "#2380: full soak duration ≥ 30s");
+        }
+        if (pr_gate && !prod_gate) {
+            // #2554 short profile: workers≥2, duration small (CI-safe).
+            CHECK(workers >= 2, "#2554: workers ≥ 2 under PR gate");
+            CHECK(duration_s <= 15, "#2554: PR gate duration ≤ 15s (CI resource limit)");
+        }
     }
 
     const auto mismatch0 = Fiber::mutation_steal_snapshot_mismatch_total();
@@ -297,10 +342,12 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // workers stuck in wait_for_resume — classic hang class from #2202).
     // Issue #2513: also tick orphan reaper so reclaim residual paths run.
     int host_ticks = 0;
-    // Watchdog: smoke +15s; soak/full scale with duration (min +60s).
-    const auto watchdog_slack = (soak || chaos_full() || prod_gate)
-                                    ? std::chrono::seconds(std::max(60, duration_s / 2))
-                                    : std::chrono::seconds(15);
+    // Watchdog: smoke +15s; soak/full/prod scale with duration (min +60s);
+    // #2554 PR gate uses short slack (+20s) for CI resource limits.
+    const auto watchdog_slack =
+        (soak || chaos_full() || prod_gate)
+            ? std::chrono::seconds(std::max(60, duration_s / 2))
+            : (pr_gate ? std::chrono::seconds(20) : std::chrono::seconds(15));
     const auto watchdog = deadline + watchdog_slack;
     while (st.fibers_done.load() < n_fibers && std::chrono::steady_clock::now() < watchdog) {
         if ((host_ticks++ % 10) == 0) {
@@ -326,11 +373,14 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         wall_ms, st.fibers_done.load(), n_fibers, st.ops.load(), st.yields.load(), st.guards.load(),
         st.mb_ops.load(), st.non_yield_spins.load());
 
-    // Pass criteria (production gate).
+    // Pass criteria (production / PR gate).
     CHECK(st.fibers_done.load() == n_fibers, "no hang: all fibers finished");
     // AC4: smoke wall < 90s; full/prod/soak may exceed smoke budget (not PR CI).
+    // #2554 PR gate also bounded (duration ≤15s + slack).
     if (!chaos_full() && !prod_gate && !soak)
         CHECK(wall_ms < 90'000, "AC4 smoke wall < 90s");
+    if (pr_gate && !prod_gate && !soak)
+        CHECK(wall_ms < 60'000, "#2554: PR gate wall < 60s (CI resource limit)");
     CHECK(aura_evaluator_mutation_boundary_depth() == 0, "depth 0 after chaos");
     CHECK(aura_evaluator_mutation_boundary_held() == 0, "held 0 after chaos");
 
@@ -352,24 +402,33 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
                          aura::serve::is_steal_snapshot_hard_abort());
     CHECK(delta == 0, "snapshot mismatch delta == 0 (0 silent corruption)");
 
-    // Issue #2513 AC2: steal hard-fail delta must be 0 under prod/soak.
+    // Issue #2554 AC1: intentional inject of hard-fail counter (PR gate only).
+    if (pr_gate && chaos_pr_gate_inject_hard_fail()) {
+        Fiber::bump_steal_snapshot_hard_fail();
+        std::println("  #2554 INJECT: bumped steal_snapshot_hard_fail (expect CHECK fail)");
+    }
+
+    // Issue #2513 AC2 / #2554: steal hard-fail delta must be 0 under
+    // prod / soak / PR gate.
     const auto hard_fail1 = Fiber::steal_snapshot_hard_fail_total();
     const auto hard_delta = hard_fail1 - hard_fail0;
-    if (prod_gate || soak || hard_delta != 0)
+    if (hard_fail_invariants || hard_delta != 0)
         std::println("  steal_snapshot_hard_fail delta={}", hard_delta);
-    if (prod_gate || soak)
-        CHECK(hard_delta == 0, "#2513: steal snapshot hard-fail delta == 0");
+    if (hard_fail_invariants)
+        CHECK(hard_delta == 0,
+              "#2513/#2554: steal snapshot hard-fail delta == 0 (deployment gate)");
 
-    // Issue #2513 AC3: residual body still-running gauge must be 0 at end
-    // (all reclaimed bodies retired / no orphan still-running left open).
+    // Issue #2513 AC3 / #2554: residual body still-running gauge must be 0
+    // at end (all reclaimed bodies retired / no orphan still-running left open).
     const auto still_run1 = Fiber::join_drain_residual_still_running();
-    if (prod_gate || soak || still_run1 != still_run0)
+    if (hard_fail_invariants || still_run1 != still_run0)
         std::println("  join_drain_residual_still_running end={} (start={})", still_run1,
                      still_run0);
-    if (prod_gate || soak)
-        CHECK(still_run1 == 0, "#2513: residual still-running gauge == 0 at end");
+    if (hard_fail_invariants)
+        CHECK(still_run1 == 0,
+              "#2513/#2554: residual still-running gauge == 0 at end (deployment gate)");
 
-    // Issue #2513 AC2: mailbox hold/defer starvation under ceiling.
+    // Issue #2513 AC2 / #2554: mailbox hold/defer starvation under ceiling.
     const auto mb_starve1 =
         aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
             std::memory_order_relaxed);
@@ -378,12 +437,12 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
             std::memory_order_relaxed);
     const auto mb_starve_delta = (mb_starve1 - mb_starve0) + (mb_hold_starve1 - mb_hold_starve0);
     const auto mb_starve_max = static_cast<std::uint64_t>(k_int_env("AURA_CHAOS_MB_STARVE_MAX", 0));
-    if (prod_gate || soak || mb_starve_delta != 0)
+    if (hard_fail_invariants || mb_starve_delta != 0)
         std::println("  mailbox starvation delta={} (max allowed={})", mb_starve_delta,
                      mb_starve_max);
-    if (prod_gate || soak)
+    if (hard_fail_invariants)
         CHECK(mb_starve_delta <= mb_starve_max,
-              "#2513: mailbox hold/defer starvation within ceiling");
+              "#2513/#2554: mailbox hold/defer starvation within ceiling");
 
     // Issue #2380: densify consistency fail delta (Moving may not run;
     // any fail total growth still fails the production gate).
@@ -625,6 +684,69 @@ static void ac2380_production_concurrency_docs() {
           "AC4: full soak still optional without FULL=1");
 }
 
+// ── Issue #2554: short PR/deploy gate under hard-fail invariants ──
+static void ac2554_pr_gate_short() {
+    if (!chaos_pr_gate()) {
+        std::println("\n--- #2554 PR gate: SKIPPED (set AURA_CHAOS_PR_GATE=1 for short hard-fail "
+                     "chaos) ---");
+        CHECK(true, "#2554 PR gate optional skip");
+        return;
+    }
+    std::println("\n--- #2554: short PR chaos (hard-fail counters as deployment gate) ---");
+    // Production-like defaults: Soft off, Hard on, fixed seed, short wall.
+    unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    // Defaults for PR: 4 workers / 16 fibers / 3s (override via env).
+    const int workers = k_int_env("AURA_CHAOS_WORKERS", 4);
+    const int fibers = k_int_env("AURA_CHAOS_FIBERS", 16);
+    const int dur = k_int_env("AURA_CHAOS_DURATION_S", 3);
+    CHECK(workers >= 2 && fibers >= 8 && dur >= 1, "#2554 AC2: short profile configured");
+    const auto wall = run_chaos_pass("AC2554-pr-gate", workers, fibers, dur, /*steps_cap=*/200000);
+    CHECK(wall >= 0, "#2554 AC2: clean short chaos completed under hard-fail invariants");
+    unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+}
+
+// ── Issue #2554 AC4/AC5: gate docs + source-cite ──
+static void ac2554_docs_and_source() {
+    std::println("\n--- #2554 AC4/AC5: PR hard-fail gate wiring ---");
+    const auto src = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp");
+    CHECK(src.find("Issue #2554") != std::string::npos, "AC4: cites #2554");
+    CHECK(src.find("AURA_CHAOS_PR_GATE") != std::string::npos, "AC4: documents AURA_CHAOS_PR_GATE");
+    CHECK(src.find("hard_fail_invariants") != std::string::npos ||
+              src.find("pr_gate") != std::string::npos,
+          "AC4: PR gate hard-fail path");
+    CHECK(src.find("steal snapshot hard-fail delta == 0") != std::string::npos,
+          "AC5: hard-fail assert present");
+    CHECK(src.find("residual still-running gauge == 0") != std::string::npos,
+          "AC5: residual still-running assert present");
+    CHECK(src.find("AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL") != std::string::npos,
+          "AC1: inject hard-fail documented");
+
+    const auto build = read_file("build.py");
+    CHECK(build.find("cmd_chaos_pr_hard_fail_gate") != std::string::npos ||
+              build.find("chaos_pr_hard_fail") != std::string::npos ||
+              build.find("AURA_CHAOS_PR_GATE") != std::string::npos,
+          "AC4: build.py PR gate command");
+    CHECK(build.find("check_chaos_pr_hard_fail_gate_2554") != std::string::npos,
+          "AC5: coverage script registered");
+
+    const auto gate = read_file("scripts/check_chaos_pr_hard_fail_gate_2554.py");
+    CHECK(!gate.empty(), "AC5: coverage linter present");
+    CHECK(gate.find("Issue #2554") != std::string::npos, "AC5: linter cites #2554");
+    CHECK(gate.find("steal_hard_fail") != std::string::npos ||
+              gate.find("hard-fail") != std::string::npos,
+          "AC5: linter greps hard-fail asserts");
+
+    // AC3: full soak still optional / unchanged.
+    CHECK(src.find("if (!chaos_soak())") != std::string::npos ||
+              src.find("AURA_CHAOS_SOAK") != std::string::npos,
+          "AC3: SOAK path retained");
+    CHECK(src.find("if (!chaos_full())") != std::string::npos ||
+              src.find("AURA_CHAOS_FULL") != std::string::npos,
+          "AC3: FULL path retained");
+}
+
 // ── Issue #2513 AC4/AC5: soak docs + source-cite ──
 static void ac2513_docs_and_source() {
     std::println("\n--- #2513 AC4/AC5: soak knobs + coverage + docs ---");
@@ -671,7 +793,16 @@ static void ac2513_docs_and_source() {
 } // namespace
 
 int main() {
-    std::println("=== Issue #2352/#2380/#2513: chaos mutate×steal×GC×mailbox production gate ===");
+    std::println(
+        "=== Issue #2352/#2380/#2513/#2554: chaos mutate×steal×GC×mailbox production gate ===");
+
+    // Issue #2554: build.py gate runs ONLY the short PR hard-fail profile
+    // (fast, deterministic; FULL/SOAK unchanged for nightly).
+    if (chaos_pr_gate_only()) {
+        ac2554_pr_gate_short();
+        std::println("\n=== Results (PR gate only): {} passed, {} failed ===", g_passed, g_failed);
+        return g_failed ? 1 : 0;
+    }
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
@@ -687,11 +818,13 @@ int main() {
         ac2380_inject_lock_order_violation();
         ac2513_reclaim_residual_still_running();
         ac1_smoke();
+        ac2554_pr_gate_short(); // no-op unless AURA_CHAOS_PR_GATE=1
         ac1_full_optional();
         ac2513_soak_optional();
         ac4_ac5_docs_and_source();
         ac2380_production_concurrency_docs();
         ac2513_docs_and_source();
+        ac2554_docs_and_source();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

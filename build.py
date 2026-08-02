@@ -43,6 +43,8 @@ Usage:
   ./build.py production-concurrency  # #2380/#2513 nightly gate: canary + full chaos soak
   ./build.py production-concurrency-coverage  # #2380/#2513 static AC contract rows
   #   Soak knobs: AURA_CHAOS_SOAK=1 AURA_CHAOS_FIBERS=256..1000 AURA_CHAOS_DURATION_S=300+
+  #   #2554: ./build.py gate runs short PR chaos hard-fail (steal hard-fail Δ==0,
+  #          residual still-running==0) via AURA_CHAOS_PR_GATE=1 (not FULL/SOAK)
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -5523,6 +5525,112 @@ def cmd_production_concurrency_soak_coverage():
     return 0
 
 
+def cmd_chaos_pr_hard_fail_coverage():
+    """Issue #2554: static contract for PR chaos hard-fail deployment gate."""
+    print(f"{B}=== chaos PR hard-fail gate coverage (#2554) ==={N}")
+    script = ROOT / "scripts" / "check_chaos_pr_hard_fail_gate_2554.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos PR hard-fail gate (#2554) coverage contract rows failed")
+        return 1
+    ok("chaos PR hard-fail gate (#2554) coverage clean")
+    return 0
+
+
+def cmd_chaos_pr_hard_fail_gate():
+    """Issue #2554: short PR chaos under production-like hard-fail invariants.
+
+    Part of ./build.py gate (deployment gate). Profile:
+      AURA_CHAOS_PR_GATE=1 AURA_CHAOS_PR_GATE_ONLY=1
+      workers=4 fibers=16 duration=3s seed=1 Soft steal off
+    Asserts: steal hard-fail Δ==0, residual still-running==0, no hang.
+    Full SOAK/FULL path unchanged (nightly via production-concurrency).
+
+    AC1: inject hard-fail (AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL=1) must fail.
+    AC2: clean short profile must pass.
+    """
+    print(f"{B}=== chaos PR hard-fail gate (#2554) ==={N}")
+    rc = cmd_chaos_pr_hard_fail_coverage()
+    if rc != 0:
+        return rc
+
+    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox_2352"
+    if not bin_path.exists():
+        info("building test_chaos_mutate_steal_gc_mailbox_2352…")
+        nproc = os.cpu_count() or 4
+        r = run(
+            [
+                "cmake",
+                "--build",
+                str(BUILD),
+                "--target",
+                "test_chaos_mutate_steal_gc_mailbox_2352",
+                "-j",
+                str(nproc),
+            ],
+            cwd=ROOT,
+        )
+        if r != 0:
+            fail("build test_chaos_mutate_steal_gc_mailbox_2352 failed")
+            return r
+    if not bin_path.exists():
+        fail(f"missing {bin_path} — run ./build.py build first")
+        return 1
+
+    def _pr_env(**extra):
+        env = os.environ.copy()
+        env["AURA_CHAOS_PR_GATE"] = "1"
+        env["AURA_CHAOS_PR_GATE_ONLY"] = "1"
+        env.setdefault("AURA_CHAOS_SEED", "1")
+        env.setdefault("AURA_CHAOS_WORKERS", "4")
+        env.setdefault("AURA_CHAOS_FIBERS", "16")
+        env.setdefault("AURA_CHAOS_DURATION_S", "3")
+        env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0")
+        env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)
+        env.pop("AURA_CHAOS_FULL", None)  # PR gate must not pull FULL soak
+        env.pop("AURA_CHAOS_SOAK", None)
+        env.pop("AURA_PRODUCTION_CONCURRENCY_GATE", None)
+        env.update(extra)
+        return env
+
+    # AC2: clean short profile under production-like hard-fail invariants.
+    env_clean = _pr_env()
+    info(
+        "env: AURA_CHAOS_PR_GATE=1 ONLY workers="
+        f"{env_clean['AURA_CHAOS_WORKERS']} fibers={env_clean['AURA_CHAOS_FIBERS']} "
+        f"duration={env_clean['AURA_CHAOS_DURATION_S']}s seed={env_clean['AURA_CHAOS_SEED']}"
+    )
+    timeout_s = 90  # CI resource limit; profile is ~3s + injects
+    start = time.time()
+    try:
+        r = subprocess.run([str(bin_path)], cwd=ROOT, env=env_clean, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        fail(f"chaos PR hard-fail gate timed out after {timeout_s}s (hang?)")
+        return 1
+    elapsed = time.time() - start
+    if r.returncode != 0:
+        fail(f"chaos PR hard-fail gate clean run failed exit={r.returncode} in {elapsed:.1f}s")
+        return r.returncode
+    ok(f"chaos PR hard-fail clean green in {elapsed:.1f}s")
+
+    # AC1: intentional inject of steal hard-fail must fail the gate binary.
+    env_inj = _pr_env(AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL="1")
+    info("AC1 inject: AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL=1 (expect non-zero exit)")
+    try:
+        r2 = subprocess.run([str(bin_path)], cwd=ROOT, env=env_inj, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        fail("AC1 inject timed out")
+        return 1
+    if r2.returncode == 0:
+        fail("AC1: inject hard-fail must make PR-gate binary fail (got exit 0)")
+        return 1
+    ok(f"AC1 inject hard-fail correctly failed exit={r2.returncode}")
+    return 0
+
+
 def cmd_production_concurrency():
     """Issue #2380/#2513: nightly / deploy production-concurrency hard gate.
 
@@ -6105,6 +6213,7 @@ def cmd_gate():
         or cmd_named_closure_stable_id_at_create_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
+        or cmd_chaos_pr_hard_fail_gate()
         or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lock_order_audit_2354_coverage()
         or cmd_type_dep_epoch_prune_coverage()
@@ -6818,6 +6927,8 @@ def main():
         "fuzz": cmd_fuzz,
         "production-concurrency": cmd_production_concurrency,
         "production-concurrency-coverage": cmd_production_concurrency_coverage,
+        "chaos-pr-hard-fail": cmd_chaos_pr_hard_fail_gate,
+        "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
