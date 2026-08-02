@@ -137,8 +137,14 @@ extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexce
 extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
 extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
 
+// Issue #2577: JIT-idx → last eval-heap index (validated by content).
+// Avoids O(iterations) push_back when the same ConstString is re-converted
+// on every PrimCall. Invalid entries are refreshed on content mismatch.
+static std::unordered_map<std::uint64_t, std::size_t> g_jit_idx_to_eval_idx;
+
 // JIT-pool string → evaluator heap (PrimCall args).
 // OOB of JIT pool → pass through (already evaluator-indexed).
+// Issue #2577: content intern + jit-idx cache (no O(N) growth for fixed args).
 static std::int64_t convert_str_for_eval(std::int64_t val,
                                          const aura::compiler::Primitives* prims) {
     if (!is_str_val(val) || !prims)
@@ -148,12 +154,27 @@ static std::int64_t convert_str_for_eval(std::int64_t val,
     if (!content)
         return val;
     auto& eval_heap = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
+    // Fast path: cached JIT idx still points at same content.
+    if (auto cit = g_jit_idx_to_eval_idx.find(idx); cit != g_jit_idx_to_eval_idx.end()) {
+        auto eidx = cit->second;
+        if (eidx < eval_heap.size() && eval_heap[eidx] == content)
+            return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(eidx));
+    }
+    // Content intern: reuse existing eval-heap slot with same text.
+    for (std::size_t i = 0; i < eval_heap.size(); ++i) {
+        if (eval_heap[i] == content) {
+            g_jit_idx_to_eval_idx[idx] = i;
+            return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(i));
+        }
+    }
     auto new_idx = eval_heap.size();
     eval_heap.push_back(content);
+    g_jit_idx_to_eval_idx[idx] = new_idx;
     return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(new_idx));
 }
 
 // Evaluator-heap string → JIT g_string_pool (PrimCall results).
+// Issue #2577: aura_alloc_string content-interns, so identical results share a slot.
 static std::int64_t convert_str_for_jit(std::int64_t val, const aura::compiler::Primitives* prims) {
     if (!is_str_val(val) || !prims)
         return val;
