@@ -3948,6 +3948,11 @@ aura_add_issue_test(test_symbol_eq_2568)
 aura_issue_test_link_light(test_symbol_eq_2568)
 add_dependencies(all_test_issue_targets test_symbol_eq_2568)
 
+# Issue #2569: set-code / mutate:rebind must not kill unimpacted closures/hash
+aura_add_issue_test(test_setcode_rebind_survive_2569)
+aura_issue_test_link_light(test_setcode_rebind_survive_2569)
+add_dependencies(all_test_issue_targets test_setcode_rebind_survive_2569)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

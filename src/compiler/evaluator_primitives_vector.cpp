@@ -191,11 +191,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         return make_hash(hidx);
     });
     add("hash-ref", [&string_heap](std::span<const EvalValue> a) {
+        // Issue #2569: honor optional 3rd-arg default when key is missing
+        // (Racket-compatible). 2-arg miss still returns void.
         if (a.size() < 2 || !is_hash(a[0]))
-            return make_void();
+            return a.size() >= 3 ? a[2] : make_void();
         auto hidx = as_hash_idx(a[0]);
         if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_void();
+            return a.size() >= 3 ? a[2] : make_void();
         auto* ht = g_hash_tables[hidx];
         auto meta = ht->metadata();
         auto keys = ht->keys();
@@ -216,7 +218,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             if (eq)
                 return EvalValue{vals[i]};
         }
-        return make_void();
+        return a.size() >= 3 ? a[2] : make_void();
     });
     add("hash-has-key?", [&string_heap](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_hash(a[0]))

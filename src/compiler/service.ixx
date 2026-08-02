@@ -11798,6 +11798,13 @@ public:
         std::size_t tw_expired = 0;
 
         // ── 1. IR path (all define env bindings; not just the mutated name) ──
+        // Issue #2569: previously we cleared flat/pool/body on every
+        // epoch-stale IRClosure. That made soft mark_define_dirty (rebind of
+        // score) kill unrelated top-level helpers (bump) whose IR function
+        // body was still valid in their module — call_closure then failed
+        // and returned void. Soft path: restamp bridge/env epochs when the
+        // IR func_id is still in-module so helpers keep working. Hard clear
+        // only when there is no IR function left (OOB func_id).
         for (auto& [bname, binding] : ir_define_env_bindings_) {
             (void)bname;
             if (!binding || !binding->interpreter)
@@ -11807,6 +11814,14 @@ public:
                 // Skip unstamped (legacy) and already-current stamps.
                 if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
                     return;
+                // Soft recover: keep IR dispatch alive when func is still present.
+                if (cl.func_id < binding->module.functions.size()) {
+                    cl.bridge_epoch = cur_epoch;
+                    cl.env_version = evaluator_.defuse_version();
+                    metrics_.live_closure_epoch_restamp_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    return;
+                }
                 cl.flat.reset();
                 cl.pool.reset();
                 cl.body_id = aura::ast::NULL_NODE;
@@ -11825,13 +11840,23 @@ public:
                                                               std::memory_order_relaxed);
 
         // ── 2. Tree-walker / fiber-held Closures ──
-        // Leave bridge_epoch at pre-bump value so is_bridge_stale fires;
-        // null flat/pool so no UAF even if a path skips the epoch check.
+        // Issue #2569: soft path restamps unimpacted closures that still have
+        // a live body NodeId in their captured flat (top-level helpers). Only
+        // null the view when the body is unusable (null flat or OOB body_id).
+        // Hard invalidate of a specific define still clears via
+        // clear_ir_define_env_binding / per-name bridge invalidation.
         evaluator_.walk_active_closures([&]([[maybe_unused]] ClosureId id, Closure& cl) {
             if (cur_epoch == 0)
                 return;
             if (cl.bridge_epoch != 0 && cl.bridge_epoch == cur_epoch)
                 return; // stamped at new epoch (should not happen mid-invalidate)
+            const bool body_usable = cl.flat && cl.pool && cl.body_id != aura::ast::NULL_NODE &&
+                                     cl.body_id < cl.flat->size();
+            if (body_usable) {
+                cl.bridge_epoch = cur_epoch;
+                metrics_.live_closure_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
             // Only act when there is still a live view to expire (idempotent
             // on second call after atomic_bump + hard invalidate).
             const bool has_view =
