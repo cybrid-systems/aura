@@ -392,6 +392,100 @@ void ConstraintSystem::note_occurrence_goal(TypeId var, TypeId refined, std::uin
     occurrence_goals_.push_back(g);
 }
 
+// Issue #2564: default cap matches #2560 soft cone (256). Env override.
+std::size_t ConstraintSystem::adt_goal_table_cap() noexcept {
+    static const std::size_t v = []() noexcept -> std::size_t {
+        const char* e = std::getenv("AURA_ADT_GOAL_TABLE_CAP");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto n = std::strtoull(e, &end, 10);
+            if (end != e && n > 0 && n <= 1'000'000ull)
+                return static_cast<std::size_t>(n);
+        }
+        return 256;
+    }();
+    return v;
+}
+
+void ConstraintSystem::note_adt_match_goal(std::uint32_t match_node, std::uint32_t adt_type_id,
+                                           std::uint64_t covered_variants_hash) noexcept {
+    if (match_node == 0)
+        return;
+    // Upsert by match_node.
+    for (auto& g : adt_match_goals_) {
+        if (g.match_node == match_node) {
+            g.adt_type_id = adt_type_id;
+            g.covered_variants_hash = covered_variants_hash;
+            g.epoch = current_epoch_;
+            if (metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(metrics_);
+                m->adt_goal_note_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return;
+        }
+    }
+    const auto cap = adt_goal_table_cap();
+    if (adt_match_goals_.size() >= cap) {
+        // Cap pressure: drop oldest (front) — no full workspace walk (AC3).
+        if (!adt_match_goals_.empty())
+            adt_match_goals_.erase(adt_match_goals_.begin());
+        if (metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(metrics_);
+            m->adt_goal_cap_drop_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    AdtMatchGoal g;
+    g.match_node = match_node;
+    g.adt_type_id = adt_type_id;
+    g.covered_variants_hash = covered_variants_hash;
+    g.epoch = current_epoch_;
+    adt_match_goals_.push_back(g);
+    if (metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(metrics_);
+        m->adt_goal_note_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+std::size_t ConstraintSystem::invalidate_adt_goals_for(std::uint32_t adt_type_id) noexcept {
+    if (adt_type_id == 0 || adt_match_goals_.empty())
+        return 0; // AC2: zero cost when no goals
+    std::size_t n = 0;
+    auto it = adt_match_goals_.begin();
+    while (it != adt_match_goals_.end()) {
+        if (it->adt_type_id == adt_type_id) {
+            adt_reverify_roots_.insert(it->match_node);
+            it = adt_match_goals_.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    // Metrics for invalidate/reverify-root are owned by the flat walk in
+    // invalidate_match_exhaust_for_adt_type (no double-count when both run).
+    return n;
+}
+
+std::vector<std::uint32_t> ConstraintSystem::drain_adt_reverify_roots() noexcept {
+    std::vector<std::uint32_t> out;
+    out.reserve(adt_reverify_roots_.size());
+    for (auto id : adt_reverify_roots_)
+        out.push_back(id);
+    adt_reverify_roots_.clear();
+    return out;
+}
+
+// Issue #2564: TLS pending match reverify roots filled by static ADT
+// invalidate path (no CS* required). Absorbed into CS on partial/delta.
+namespace {
+    thread_local std::vector<std::uint32_t> g_adt_reverify_pending_tls;
+} // namespace
+
+void ConstraintSystem::absorb_pending_adt_reverify_roots() noexcept {
+    for (auto id : g_adt_reverify_pending_tls)
+        adt_reverify_roots_.insert(id);
+    g_adt_reverify_pending_tls.clear();
+}
+
 std::size_t ConstraintSystem::prune_occurrence_goals(std::uint64_t min_epoch) noexcept {
     if (min_epoch == 0)
         return 0; // sentinel: don't touch untagged goals (preserves
@@ -5756,6 +5850,22 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
             auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
             m->adt_exhaustiveness_checked_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #2564: record ADT match goal for Soft delta reverify roots.
+        if (exh.checked && subject_type.valid()) {
+            std::uint64_t covered_hash = 0xcbf29ce484222325ull; // FNV offset
+            if (auto* mi = flat.get_match_info(node_id)) {
+                for (auto s : mi->used_constructors) {
+                    covered_hash ^= static_cast<std::uint64_t>(s);
+                    covered_hash *= 0x100000001b3ull;
+                }
+                if (mi->has_wildcard) {
+                    covered_hash ^= 0x5full;
+                    covered_hash *= 0x100000001b3ull;
+                }
+            }
+            cs_.note_adt_match_goal(static_cast<std::uint32_t>(node_id), subject_type.index,
+                                    covered_hash);
+        }
         if (!exh.exhaustive && !exh.missing_constructors.empty()) {
             if (cs_.metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
@@ -7591,36 +7701,31 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             renarrow_roots.push_back(id);
         (void)selective_adt_guardshape_renarrow(flat, pool, types, renarrow_roots, metrics_);
     }
-    // Issue #2288: selective ADT exhaustiveness on infer_flat_partial main
-    // path (earlier signal than Full audit). Inline implementation — can't
-    // call recheck_match_exhaustiveness_in_dirty_scope (function-local static
-    // inside post_mutation_invariant_check). Iterates match nodes in the
-    // partial-renarrow roots (affected + occurrence_targets) and bumps
-    // adt_partial_non_exhaustive_total for each non-exhaustive site, so
-    // Agents see ADT holes before audit sampling closes the window. Soft
-    // policy by default — bumps counter; Hard MutateTypeGate alignment
-    // (#2219) is upstream of this site. Zero cost when no match sites in
-    // dirty scope (flat.has_match_info(id) bails per node).
-    if (metrics_) {
-        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        for (auto nid : affected) {
+    // Issue #2288 / #2564: selective ADT exhaustiveness on infer_flat_partial
+    // main path. Iterates match nodes in affected + occurrence_targets +
+    // ADT goal reverify roots (from variant mutate invalidate). Soft bumps
+    // adt_partial_non_exhaustive_total; Full hard-gate still owns #2264.
+    // Zero cost when no match sites / no reverify roots (AC2).
+    engine.constraint_system().absorb_pending_adt_reverify_roots();
+    auto adt_reverify = engine.constraint_system().drain_adt_reverify_roots();
+    if (metrics_ || !adt_reverify.empty()) {
+        auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
+        auto recheck = [&](NodeId nid) {
             if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                continue;
+                return;
             if (!flat.has_match_info(nid))
-                continue;
+                return;
             auto exh = check_match_exhaustiveness(flat, pool, types, nid);
-            if (!exh.missing_constructors.empty())
+            if (m && !exh.missing_constructors.empty())
                 m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        for (auto nid : occurrence_targets) {
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                continue;
-            if (!flat.has_match_info(nid))
-                continue;
-            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
-            if (!exh.missing_constructors.empty())
-                m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
-        }
+        };
+        for (auto nid : affected)
+            recheck(nid);
+        for (auto nid : occurrence_targets)
+            recheck(nid);
+        // Issue #2564: priority roots from ADT goal invalidate (capped set).
+        for (auto raw : adt_reverify)
+            recheck(static_cast<NodeId>(raw));
     }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
@@ -8709,9 +8814,10 @@ namespace {
         return ctors;
     }
 
-    static void invalidate_match_exhaust_for_adt_type(FlatAST& flat, TypeId adt_tid,
-                                                      void* metrics) {
+    static void invalidate_match_exhaust_for_adt_type(FlatAST& flat, TypeId adt_tid, void* metrics,
+                                                      ConstraintSystem* cs = nullptr) {
         auto* m = static_cast<CompilerMetrics*>(metrics);
+        std::size_t invalidated = 0;
         for (NodeId id = 0; id < flat.size(); ++id) {
             if (!flat.has_match_info(id))
                 continue;
@@ -8730,7 +8836,18 @@ namespace {
             MatchClauseInfo updated = *mi;
             updated.exhaustiveness_checked = false;
             flat.set_match_info(id, std::move(updated));
+            // Issue #2564: push match site as Soft delta reverify root (TLS).
+            g_adt_reverify_pending_tls.push_back(static_cast<std::uint32_t>(id));
+            ++invalidated;
         }
+        if (invalidated > 0 && m) {
+            m->adt_goal_invalidate_total.fetch_add(invalidated, std::memory_order_relaxed);
+            m->adt_reverify_root_total.fetch_add(invalidated, std::memory_order_relaxed);
+        }
+        // Goal table path (when CS present): drop goals for this ADT and
+        // seed reverify roots from table (may overlap flat walk — set dedupes).
+        if (cs && adt_tid.valid())
+            (void)cs->invalidate_adt_goals_for(adt_tid.index);
     }
 
     // Issue #260: re-run ADT exhaustiveness on dirty __match_tmp lets

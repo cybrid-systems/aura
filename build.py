@@ -5087,6 +5087,25 @@ def cmd_linear_cross_closure_escape_coverage():
     return 0
 
 
+def cmd_adt_match_goal_table_coverage():
+    """Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
+
+    First-class ADT match goals seed Soft delta reverify when variants mutate;
+    table capped; existing hard-gate remains authoritative.
+    """
+    print(f"{B}=== ADT match goal table coverage (#2564) ==={N}")
+    script = ROOT / "scripts" / "check_adt_match_goal_table_2564.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ADT match goal table (#2564) coverage contract rows failed")
+        return 1
+    ok("ADT match goal table (#2564) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6301,6 +6320,7 @@ def cmd_gate():
         or cmd_blame_soft_recover_coverage()
         or cmd_coercion_dual_require_coverage()
         or cmd_linear_cross_closure_escape_coverage()
+        or cmd_adt_match_goal_table_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7117,6 +7137,7 @@ def main():
         "blame-soft-recover": cmd_blame_soft_recover_coverage,
         "coercion-dual-require": cmd_coercion_dual_require_coverage,
         "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
+        "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),
