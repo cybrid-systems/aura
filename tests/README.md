@@ -148,6 +148,14 @@ aura_add_issue_test_standalone(test_<feature>)             # 无 C++ modules
 | `aura_issue_test_link_llvm_jit` | ~70 MB | 真实 JIT 编译、AOT emit、SpecJIT、native deopt 表 |
 
 - 全量 LLVM 链 ~350×70MB ≈ **19GB** `build/test_*`；light 后中位可到 **~MB 级**。
+- **P2 shared libs**: `aura_test_objects` / `aura_jit_light_test_objects` /
+  `aura_jit_test_objects` / `aura-reflect` are **SHARED** (`.so` in
+  `build/`). Binaries keep `BUILD_RPATH=$BUILD_DIR` so `ninja`/`ctest`
+  resolve them without `LD_LIBRARY_PATH`. Full-JIT `.so` embeds LLVM once.
+- **P2 shared libs**: `aura_test_objects` / `aura_jit_light_test_objects` /
+  `aura_jit_test_objects` / `aura-reflect` are **SHARED** (`.so` in
+  `build/`). Binaries keep `BUILD_RPATH=$BUILD_DIR` so `ninja`/`ctest`
+  resolve them without `LD_LIBRARY_PATH`. Full-JIT `.so` embeds LLVM once.
 - full-LLVM allow-list: `cmake/issue_tests_need_full_llvm.txt`（新 JIT 测试加入此表）。
 - **禁止**新 standalone 默认挂 `link_llvm_jit`。新 AC 优先:
   1. 扩已有 `test_*_unit_batch` / domain batch
