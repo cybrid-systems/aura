@@ -4933,6 +4933,25 @@ def cmd_type_freshness_steal_densify_coverage():
     return 0
 
 
+def cmd_commit_readiness_score_coverage():
+    """Issue #2553: single Agent commit-readiness score.
+
+    Pure commit_readiness(solve × linear × blame × truncate) with
+    empty_cs priority; Soft observe vs production hard bands.
+    """
+    print(f"{B}=== commit-readiness score coverage (#2553) ==={N}")
+    script = ROOT / "scripts" / "check_commit_readiness_score_2553.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("commit-readiness score (#2553) coverage contract rows failed")
+        return 1
+    ok("commit-readiness score (#2553) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -5994,6 +6013,7 @@ def cmd_gate():
         or cmd_mailbox_hold_exit_drain_coverage()
         or cmd_mailbox_hold_starvation_hard_coverage()
         or cmd_type_freshness_steal_densify_coverage()
+        or cmd_commit_readiness_score_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()

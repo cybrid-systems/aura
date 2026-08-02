@@ -3878,6 +3878,11 @@ aura_add_issue_test(test_type_freshness_steal_densify_2552)
 aura_issue_test_link_light(test_type_freshness_steal_densify_2552)
 add_dependencies(all_test_issue_targets test_type_freshness_steal_densify_2552)
 
+# Issue #2553: single Agent commit-readiness score (solve × linear × blame × truncate).
+aura_add_issue_test(test_commit_readiness_score_2553)
+aura_issue_test_link_light(test_commit_readiness_score_2553)
+add_dependencies(all_test_issue_targets test_commit_readiness_score_2553)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
