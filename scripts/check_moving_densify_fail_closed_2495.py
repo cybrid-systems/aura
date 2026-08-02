@@ -86,7 +86,7 @@ def main() -> int:
         cmake,
     )
     must(
-        "aura_issue_test_link_llvm_jit(test_moving_densify_fail_closed_2495)",
+        "aura_issue_test_link_light(test_moving_densify_fail_closed_2495)",
         "AC5",
         cmake,
     )

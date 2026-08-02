@@ -93,7 +93,7 @@ def main() -> int:
     must("Issue #2490", "AC6", sec)
     must("test_require_effect_auto_isolation_2490", "AC6", cmake)
     must("aura_add_issue_test(test_require_effect_auto_isolation_2490)", "AC6", cmake)
-    must("aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation_2490)", "AC6", cmake)
+    must("aura_issue_test_link_light(test_require_effect_auto_isolation_2490)", "AC6", cmake)
     must("check_require_effect_auto_isolation_2490", "AC6", build)
     must("cmd_require_effect_auto_isolation_2490_coverage", "AC6", build)
 

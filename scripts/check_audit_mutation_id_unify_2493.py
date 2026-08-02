@@ -70,7 +70,7 @@ def main() -> int:
     must("Issue #2493", "AC6", test)
     must("test_audit_mutation_id_unify_2493", "AC6", cmake)
     must("aura_add_issue_test(test_audit_mutation_id_unify_2493)", "AC6", cmake)
-    must("aura_issue_test_link_llvm_jit(test_audit_mutation_id_unify_2493)", "AC6", cmake)
+    must("aura_issue_test_link_light(test_audit_mutation_id_unify_2493)", "AC6", cmake)
     must("check_audit_mutation_id_unify_2493", "AC6", build)
     must("cmd_audit_mutation_id_unify_2493_coverage", "AC6", build)
 

@@ -80,7 +80,7 @@ def main() -> int:
         cmake,
     )
     must(
-        "aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail_2494)",
+        "aura_issue_test_link_light(test_side_effect_security_gate_hardfail_2494)",
         "AC6",
         cmake,
     )

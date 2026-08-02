@@ -89,7 +89,7 @@ def main() -> int:
         cmake,
     )
     must(
-        "aura_issue_test_link_llvm_jit(test_security_audit_wal_force_restricted_2492)",
+        "aura_issue_test_link_light(test_security_audit_wal_force_restricted_2492)",
         "AC6",
         cmake,
     )
