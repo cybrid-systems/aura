@@ -440,8 +440,35 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             aura::compiler::coercion_provenance_completeness_bp(), /*production_active=*/true);
     }
     const bool slo_force = aura::compiler::consume_coercion_prov_slo_force_full();
-    const bool provenance_miss =
-        aura::compiler::consume_provenance_miss_for_boundary() || slo_force;
+    bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary() || slo_force;
+    // Issue #2561: Soft/Sampled cheap blame recovery before force-audit.
+    // When miss signal present under Sampled: re-walk fill for mid's dirty
+    // cone; on success clear force; on fail arm one-shot Full sample only if
+    // AURA_BLAME_SOFT_ESCALATE=1 or production_defaults. Soft default stays
+    // observe-only (AC3). Full strategy leaves #2221 hard-reject alone.
+    if (provenance_miss && success && workspace_flat_ && !nested_boundary &&
+        typed_audit::get_strategy() == typed_audit::AuditStrategy::Sampled) {
+        // Prefer last mutation log mid (dirty cone); fall back to counter.
+        std::uint64_t soft_mid = total_mutations_.load(std::memory_order_relaxed);
+        const auto& mlog = workspace_flat_->all_mutations();
+        if (!mlog.empty())
+            soft_mid = mlog.back().mutation_id;
+        if (aura::compiler::maybe_soft_recover_or_escalate_blame(*workspace_flat_, soft_mid,
+                                                                 /*had_miss_signal=*/true)) {
+            // Recovered dual fields — do not force audit solely for miss.
+            provenance_miss = false;
+        } else if (!aura::compiler::blame_soft_escalate_pending_for_boundary() &&
+                   !aura::compiler::blame_soft_escalate_enabled() &&
+                   !typed_audit::production_defaults_active()) {
+            // Soft observe-only: recover failed and escalate disabled → drop
+            // force so Soft remains pure observe (AC3); fail counter already
+            // bumped inside maybe_soft_recover_or_escalate_blame.
+            provenance_miss = false;
+        }
+    }
+    const bool soft_escalate = aura::compiler::consume_blame_soft_escalate_for_boundary();
+    if (soft_escalate)
+        provenance_miss = true; // one-shot Full/contextual sample (not hard reject)
     if (provenance_miss) {
         aura::compiler::g_coercion_provenance_miss_force_audit_total.fetch_add(
             1, std::memory_order_relaxed);
