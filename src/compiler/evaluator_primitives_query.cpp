@@ -6335,6 +6335,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2281", 2281);
                 insert_kv("issue-2281", 2281);
             }
+            // Issue #2553: single Agent commit-readiness score (solve × linear
+            // × blame × truncate). Exposes live hard-policy flags + the pure
+            // commit_readiness() result for a clean SOLVED face (vacuous
+            // healthy when no pending commit — AC5 zero cost). Agents recompute
+            // with custom CommitReadinessInput via the C++ helper. Additive
+            // schema-2553; no commit side effects.
+            {
+                using aura::compiler::typed_audit::commit_readiness;
+                using aura::compiler::typed_audit::commit_readiness_live_policy;
+                auto in = commit_readiness_live_policy();
+                // Clean face defaults: SOLVED + linear_ok + blame_ok + !trunc.
+                const auto cr = commit_readiness(in);
+                insert_kv("commit-readiness-bp", static_cast<std::int64_t>(cr.readiness_bp));
+                insert_kv("commit-readiness-would-allow", cr.would_allow_commit ? 1 : 0);
+                insert_kv("commit-readiness-force-reason", cr.force_reason_code);
+                insert_kv("commit-readiness-empty-cs-hard", in.empty_cs_hard ? 1 : 0);
+                insert_kv("commit-readiness-truncate-hard", in.truncate_hard ? 1 : 0);
+                insert_kv("commit-readiness-linear-hard", in.linear_hard ? 1 : 0);
+                insert_kv("commit-readiness-blame-hard", in.blame_hard ? 1 : 0);
+                // Sample hard cells for Agent matrix without mutate:
+                // empty_cs hard under live policy.
+                {
+                    auto e = in;
+                    e.expected_partial = true;
+                    e.cs_has_work = false;
+                    const auto er = commit_readiness(e);
+                    insert_kv("commit-readiness-sample-empty-cs-allow",
+                              er.would_allow_commit ? 1 : 0);
+                    insert_kv("commit-readiness-sample-empty-cs-reason", er.force_reason_code);
+                }
+                {
+                    auto t = in;
+                    t.truncated_reverify = true;
+                    const auto tr = commit_readiness(t);
+                    insert_kv("commit-readiness-sample-truncate-allow",
+                              tr.would_allow_commit ? 1 : 0);
+                    insert_kv("commit-readiness-sample-truncate-reason", tr.force_reason_code);
+                }
+                insert_kv("commit-readiness-wired", 1);
+                insert_kv("schema-2553", 2553);
+                insert_kv("issue-2553", 2553);
+            }
             // Issue #2220: long-lived TypeChecker on Evaluator mutate path.
             {
                 const std::int64_t tc_create =

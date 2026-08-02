@@ -532,6 +532,132 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
     return d;
 }
 
+// Issue #2553: single Agent commit-readiness score
+// (solve × linear × blame × truncate + empty-CS matrix).
+//
+// Pure aggregation of existing commit-face signals so orch can self-throttle
+// without joining composite / fidelity / audit keys. Does NOT change commit
+// barrier order or reject policy (#2105 / #2345 / #2458 / #2221 / #2108) —
+// only folds them into readiness_bp + force_reason + would_allow_commit.
+//
+// force_reason priority (highest first):
+//   empty_cs > truncate > linear > blame > solve > ok
+//
+// Inputs are pure flags (no atomics). Live callers may fill hard flags from
+// composite_empty_cs_hard_reject_enabled() / truncate_commit_hard_enabled() /
+// production_defaults_active(). Soft/Sampled: reason still reported; allow
+// stays true when the corresponding hard flag is false (AC4).
+//
+// readiness_bp bands (informative; allow is authoritative for gate):
+//   10000 ok | 7500 soft-empty_cs | 7000 soft-truncate | 5000 soft-blame
+//   0 hard-empty_cs | 1000 hard-truncate | 500 hard-linear | 1500 hard-blame
+//   2000 TIMEOUT solve | 2500 CONFLICT solve
+//
+// Schema-2553 on query:type-incremental-fidelity-stats (+ dedicated
+// query:typed-mutation-commit-readiness via register_stats_impl).
+struct CommitReadinessInput {
+    // 0=SOLVED, 1=CONFLICT, 2=TIMEOUT (SolverSnapshot / SolveResult).
+    std::uint8_t solve_status = 0;
+    bool linear_ok = true;
+    bool blame_ok = true; // last_blame_chain.is_complete() or vacuous
+    bool truncated_reverify = false;
+    // true when #2458 full-solve recovered after truncated_reverify.
+    bool truncated_full_solve_recovered = false;
+    bool expected_partial = false; // Agent / composite expected partial CS
+    bool cs_has_work = false;      // commit_cs_has_work / dirty CS
+    // Hard-policy flags (production / Full / env overrides). Soft=false.
+    bool empty_cs_hard = false;
+    bool truncate_hard = false;
+    bool linear_hard = false; // production linear escape hardblock
+    bool blame_hard = false;  // production blame-complete gate
+};
+
+struct CommitReadiness {
+    std::uint32_t readiness_bp = 10000;
+    bool would_allow_commit = true;
+    // empty_cs | truncate | linear | blame | solve | ok
+    std::string_view force_reason = "ok";
+    // Stable int: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs
+    std::int64_t force_reason_code = 0;
+};
+
+[[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
+    if (r == "empty_cs")
+        return 5;
+    if (r == "truncate")
+        return 4;
+    if (r == "linear")
+        return 3;
+    if (r == "blame")
+        return 2;
+    if (r == "solve")
+        return 1;
+    return 0; // ok
+}
+
+// Pure decision table (AC5: identical inputs → identical output; no atomics).
+[[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept {
+    CommitReadiness r;
+    auto set = [&](std::string_view reason, bool allow, std::uint32_t bp) {
+        r.force_reason = reason;
+        r.force_reason_code = commit_readiness_reason_code(reason);
+        r.would_allow_commit = allow;
+        r.readiness_bp = bp;
+    };
+
+    // 1) empty_cs — expected_partial + empty CS (#2345 / #2509 matrix).
+    if (in.expected_partial && !in.cs_has_work) {
+        if (in.empty_cs_hard)
+            return (set("empty_cs", false, 0), r);
+        return (set("empty_cs", true, 7500), r); // Soft observe
+    }
+
+    // 2) truncate — truncated reverify without full-solve recover (#2458).
+    if (in.truncated_reverify && !in.truncated_full_solve_recovered) {
+        if (in.truncate_hard)
+            return (set("truncate", false, 1000), r);
+        return (set("truncate", true, 7000), r); // Soft observe
+    }
+
+    // 3) linear — escape / invariant fail (#2108).
+    if (!in.linear_ok) {
+        if (in.linear_hard)
+            return (set("linear", false, 500), r);
+        return (set("linear", true, 5500), r); // Soft observe
+    }
+
+    // 4) blame — incomplete blame chain (#2221).
+    if (!in.blame_ok) {
+        if (in.blame_hard)
+            return (set("blame", false, 1500), r);
+        return (set("blame", true, 5000), r); // Soft observe
+    }
+
+    // 5) solve — CONFLICT / TIMEOUT (not SOLVED).
+    if (in.solve_status != 0) {
+        const auto bp = in.solve_status == 2 ? 2000u : 2500u;
+        return (set("solve", false, bp), r);
+    }
+
+    // 6) ok — clean SOLVED + linear + blame + !truncated.
+    return (set("ok", true, 10000), r);
+}
+
+// Fill hard flags from live audit process state (still pure w.r.t. inputs
+// once copied; callers that want hermetic tests pass CommitReadinessInput
+// directly without this helper).
+[[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept {
+    CommitReadinessInput in;
+    const bool prod = production_defaults_active();
+    const bool full = get_strategy() == AuditStrategy::Full;
+    in.empty_cs_hard = composite_empty_cs_hard_reject_enabled();
+    in.truncate_hard = truncate_commit_hard_enabled();
+    // Linear escape + blame-complete hard under production / Full (lineage).
+    in.linear_hard = prod || full;
+    in.blame_hard = prod || full;
+    return in;
+}
+
 // Issue #2145: Agent-stable deny reason (mirror #2076 format_deny_reason shape).
 // Shape: "invariant-denied: <kind> tenant=<id> op=<op>"
 [[nodiscard]] inline std::string
