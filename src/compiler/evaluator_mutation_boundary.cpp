@@ -1208,14 +1208,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         aura::gc_hooks::arm_mutation_hold_defer();
         // Issue #2184: publish fiber-local MutationSafetySnapshot mirrors
         // (held=true) so steal path never samples torn depth/held.
-        // Capture TLS once — double-load of g_current_fiber (check then call)
-        // can trip UBSAN null-pointer diagnostics on some toolchains when
-        // the second load is folded into the member call (ubsan-smoke CI).
-        if (auto* cur_fiber = aura::serve::g_current_fiber) {
-            const auto depth = Evaluator::active_mutation_stack_static().size();
-            cur_fiber->publish_mutation_safety_mirrors(depth, /*held=*/true,
-                                                       defuse_version_at_enter_);
-        }
+        // Use fiber.cpp helper — TLS null-check + member call co-located
+        // (ubsan-smoke x86_64: bare g_current_fiber load in this module
+        // was reported as "load of null pointer of type 'struct Fiber *'").
+        aura::serve::publish_current_fiber_mutation_safety(
+            Evaluator::active_mutation_stack_static().size(), /*held=*/true,
+            defuse_version_at_enter_);
         // Issue #1252: coverage counter — every outermost Guard wrap.
         // Issue #1364: mutation × safepoint telemetry (benign race).
         if (m) {
@@ -1860,16 +1858,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
         // Issue #2184: clear fiber-local held mirror after outermost exit.
-        // Capture TLS once (same pattern as enter + set_resume_layout_stamp
-        // below). Bare `if (g_current_fiber) g_current_fiber->...` double-loads
-        // the TLS slot; under -fsanitize=undefined that second load-as-this
-        // was reported as "load of null pointer of type 'struct Fiber *'"
-        // on x86_64 ubsan-smoke (test_ir / set-code Guard dtor).
-        if (auto* cur_fiber = aura::serve::g_current_fiber) {
-            const auto depth = Evaluator::active_mutation_stack_static().size();
-            cur_fiber->publish_mutation_safety_mirrors(depth, /*held=*/false,
-                                                       defuse_version_at_enter_);
-        }
+        // fiber.cpp helper keeps TLS null-check + member call co-located —
+        // required for ubsan-smoke (test_ir set-code Guard dtor on host
+        // thread where g_current_fiber is null).
+        aura::serve::publish_current_fiber_mutation_safety(
+            Evaluator::active_mutation_stack_static().size(), /*held=*/false,
+            defuse_version_at_enter_);
         // Issue #2121: unlock matching acquire mode.
         if (region_mode_) {
             if (region_lock_.owns_lock()) {

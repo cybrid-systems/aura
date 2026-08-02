@@ -118,6 +118,17 @@ thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;
 
+void publish_current_fiber_mutation_safety(std::size_t depth, bool held,
+                                           std::uint64_t defuse_version) noexcept {
+    // Single TLS load in the defining TU — see fiber.h. Keep noinline-ish
+    // via out-of-line definition so optimizers cannot re-load g_current_fiber
+    // as the `this` for publish_mutation_safety_mirrors under UBSAN.
+    Fiber* f = g_current_fiber;
+    if (f == nullptr)
+        return;
+    f->publish_mutation_safety_mirrors(depth, held, defuse_version);
+}
+
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup. See fiber.h for the rationale.
 void* (*g_fiber_setter_)(void*) = nullptr;

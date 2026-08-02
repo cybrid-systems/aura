@@ -1540,12 +1540,12 @@ extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save() {
 extern "C" void aura_evaluator_test_push_mutation_checkpoint() {
     Evaluator::active_mutation_stack_static().push_back({0, 0});
     // Issue #2184: publish fiber-local held/depth mirrors for steal snapshot.
-    if (aura::serve::g_current_fiber) {
+    {
         const auto depth = Evaluator::active_mutation_stack_static().size();
         std::uint64_t defuse = 0;
         if (auto* ev = Evaluator::yield_hook_evaluator())
             defuse = ev->defuse_version();
-        aura::serve::g_current_fiber->publish_mutation_safety_mirrors(depth, depth > 0, defuse);
+        aura::serve::publish_current_fiber_mutation_safety(depth, depth > 0, defuse);
     }
 }
 
@@ -1554,12 +1554,12 @@ extern "C" void aura_evaluator_test_pop_mutation_checkpoint() {
     if (!stack.empty())
         stack.pop_back();
     // Issue #2184: refresh fiber-local mirrors after pop.
-    if (aura::serve::g_current_fiber) {
+    {
         const auto depth = stack.size();
         std::uint64_t defuse = 0;
         if (auto* ev = Evaluator::yield_hook_evaluator())
             defuse = ev->defuse_version();
-        aura::serve::g_current_fiber->publish_mutation_safety_mirrors(depth, depth > 0, defuse);
+        aura::serve::publish_current_fiber_mutation_safety(depth, depth > 0, defuse);
     }
 }
 
