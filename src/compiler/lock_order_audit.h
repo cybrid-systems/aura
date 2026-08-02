@@ -1,4 +1,4 @@
-// lock_order_audit.h — Issue #1523 / #1388 / #2043 / #2316 / #2354
+// lock_order_audit.h — Issue #1523 / #1388 / #2043 / #2316 / #2354 / #2557
 // canonical lock-order verifier.
 //
 // Canonical acquire order (never reverse):
@@ -48,11 +48,29 @@
 //   - Acquiring lower rank while any higher rank is held
 //   - Scheduler: WaitMap while OwnedFibers held, etc.
 //
-// Runtime modes (lazy-init from env; Production default OFF = zero atomics):
-//   AURA_LOCK_ORDER_AUDIT=1  — soft: counters + inversion metrics (no abort)
-//   AURA_LOCK_ORDER_CANARY=1 — hard: soft + abort with rank diagnostics
-//   both unset               — TLS depth still tracked (nest safety for
-//                              OrderedUniqueLock::acquire_if_needed); no atomics
+// Runtime modes (lazy-init from env; production defaults via
+// apply_production_lock_order_default in apply_production_security_defaults):
+//
+//   Mode  value  atomics  abort  How enabled
+//   ────  ─────  ───────  ─────  ─────────────────────────────────────────
+//   unset 0      —        —      not yet resolved (first mode() call)
+//   off   1      no       no     AURA_SANDBOX=off default; AUDIT=0/off;
+//                                pre-#2557 lazy default when defaults
+//                                not applied
+//   soft  2      yes      no     production Restricted/Strict default
+//                                (#2557); AURA_LOCK_ORDER_AUDIT=1
+//   hard  3      yes      yes    AURA_LOCK_ORDER_CANARY=1 (always wins)
+//
+// Env precedence (highest first):
+//   1. AURA_LOCK_ORDER_CANARY=1  → hard (3)
+//   2. AURA_LOCK_ORDER_AUDIT=1|soft|on → soft (2)
+//   3. AURA_LOCK_ORDER_AUDIT=0|off|false → force off (1)
+//   4. apply_production_lock_order_default(!sandbox_off):
+//        sandbox != off → soft (2); sandbox=off → off (1)
+//   5. Lazy first-touch without production defaults → off (1)
+//
+// TLS depth is ALWAYS tracked (nest safety for
+// OrderedUniqueLock::acquire_if_needed) regardless of mode.
 //
 // Thread-local depth counters detect inversions (acquiring a lower
 // level while a higher level is held). Used by CompilerService
@@ -106,6 +124,9 @@ inline std::atomic<std::uint64_t> g_lock_order_violation_total{0}; // #2316 / #2
 inline std::atomic<int> g_lock_order_canary_enabled{0}; // #2316
 // Issue #2354: 0=uninit, 1=off, 2=soft (AUDIT), 3=hard (CANARY).
 inline std::atomic<int> g_lock_order_mode{0};
+// Issue #2557: 1 when production defaults applied soft audit (mode=2 via
+// apply_production_lock_order_default). Agents read this for dashboards.
+inline std::atomic<int> g_lock_order_production_soft_default{0};
 
 [[nodiscard]] inline const char* level_name(Level L) noexcept {
     switch (L) {
@@ -142,8 +163,9 @@ inline std::atomic<int> g_lock_order_mode{0};
     }
 }
 
-// Resolve mode once (process-lifetime). AC1: when off, on_acquire is a
-// single branch. Tests may force via force_audit_mode_for_test.
+// Resolve mode once (process-lifetime) unless already set by production
+// defaults / force_audit_mode_for_test / env. When off, on_acquire is a
+// single branch after depth update. Tests may force via force_audit_mode_for_test.
 [[nodiscard]] inline int lock_order_mode() noexcept {
     int m = g_lock_order_mode.load(std::memory_order_acquire);
     if (m != 0)
@@ -155,17 +177,42 @@ inline std::atomic<int> g_lock_order_mode{0};
         g_lock_order_canary_enabled.store(1, std::memory_order_release);
         return 3;
     }
-    // Issue #2354: AURA_LOCK_ORDER_AUDIT=1 soft mode.
+    // Issue #2354 / #2557: AURA_LOCK_ORDER_AUDIT soft / force-off.
     const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
-    if (a != nullptr && a[0] == '1') {
-        g_lock_order_mode.store(2, std::memory_order_release);
-        return 2;
+    if (a != nullptr && a[0] != '\0') {
+        // soft enable
+        if (a[0] == '1' || a[0] == 's' || a[0] == 'S' || a[0] == 't' || a[0] == 'T' ||
+            a[0] == 'y' || a[0] == 'Y' || a[0] == 'o' || a[0] == 'O') {
+            // Disambiguate "off" from "on": first char 'o' alone is ambiguous.
+            // Explicit: 1 / soft / true / yes / on → soft; 0 / off / false → off.
+            const bool force_off = (a[0] == '0') || (a[0] == 'f' || a[0] == 'F') ||
+                                   (a[0] == 'n' || a[0] == 'N') ||
+                                   ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' &&
+                                    (a[1] == 'f' || a[1] == 'F')); // "off"
+            if (force_off) {
+                g_lock_order_mode.store(1, std::memory_order_release);
+                return 1;
+            }
+            // "on" / soft / true / yes / 1
+            if (a[0] == '1' || a[0] == 's' || a[0] == 'S' || a[0] == 't' || a[0] == 'T' ||
+                a[0] == 'y' || a[0] == 'Y' ||
+                ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'n' || a[1] == 'N'))) {
+                g_lock_order_mode.store(2, std::memory_order_release);
+                return 2;
+            }
+        }
+        if (a[0] == '0' || a[0] == 'f' || a[0] == 'F' || a[0] == 'n' || a[0] == 'N') {
+            g_lock_order_mode.store(1, std::memory_order_release);
+            return 1;
+        }
     }
     // Legacy: if tests pre-set canary flag to 1, treat as hard.
     if (g_lock_order_canary_enabled.load(std::memory_order_acquire) == 1) {
         g_lock_order_mode.store(3, std::memory_order_release);
         return 3;
     }
+    // Lazy default without production defaults: OFF (zero atomics).
+    // Production binaries call apply_production_lock_order_default first.
     g_lock_order_mode.store(1, std::memory_order_release);
     return 1;
 }
@@ -178,6 +225,13 @@ inline std::atomic<int> g_lock_order_mode{0};
     return lock_order_mode() == 3;
 }
 
+// Issue #2557: true when soft audit is the production default (mode=2 via
+// apply_production_lock_order_default, not only env AUDIT=1).
+[[nodiscard]] inline bool lock_order_production_soft_active() noexcept {
+    return g_lock_order_production_soft_default.load(std::memory_order_acquire) != 0 &&
+           lock_order_mode() == 2;
+}
+
 // Test helpers: force soft (2) or hard (3) or off (1). Do not call while
 // locks held. Resets lazy-init so next mode() call is stable.
 inline void force_audit_mode_for_test(int mode) noexcept {
@@ -187,6 +241,62 @@ inline void force_audit_mode_for_test(int mode) noexcept {
         mode = 3;
     g_lock_order_mode.store(mode, std::memory_order_release);
     g_lock_order_canary_enabled.store(mode == 3 ? 1 : 0, std::memory_order_release);
+    // Test force is not the production soft default flag.
+    if (mode != 2)
+        g_lock_order_production_soft_default.store(0, std::memory_order_release);
+}
+
+// Issue #2557: wire production soft lock-order audit.
+// Called from apply_production_security_defaults.
+//   sandbox_off=true  (AURA_SANDBOX=off): force OFF unless env overrides
+//   sandbox_off=false (Restricted/Strict): soft unless env overrides
+// Env precedence: CANARY=1 → hard; AUDIT=0/off → off; AUDIT=1 → soft.
+inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
+    // 1) Hard canary always wins.
+    const char* c = std::getenv("AURA_LOCK_ORDER_CANARY");
+    if (c != nullptr && c[0] == '1') {
+        g_lock_order_mode.store(3, std::memory_order_release);
+        g_lock_order_canary_enabled.store(1, std::memory_order_release);
+        g_lock_order_production_soft_default.store(0, std::memory_order_release);
+        return;
+    }
+    // 2) Explicit AUDIT env.
+    const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
+    if (a != nullptr && a[0] != '\0') {
+        const bool force_off =
+            (a[0] == '0') || (a[0] == 'f' || a[0] == 'F') || (a[0] == 'n' || a[0] == 'N') ||
+            ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'f' || a[1] == 'F'));
+        const bool want_soft =
+            (a[0] == '1') || (a[0] == 's' || a[0] == 'S') || (a[0] == 't' || a[0] == 'T') ||
+            (a[0] == 'y' || a[0] == 'Y') ||
+            ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'n' || a[1] == 'N'));
+        if (force_off) {
+            g_lock_order_mode.store(1, std::memory_order_release);
+            g_lock_order_canary_enabled.store(0, std::memory_order_release);
+            g_lock_order_production_soft_default.store(0, std::memory_order_release);
+            return;
+        }
+        if (want_soft) {
+            g_lock_order_mode.store(2, std::memory_order_release);
+            g_lock_order_canary_enabled.store(0, std::memory_order_release);
+            // Env-forced soft: still mark production soft when under prod profile.
+            g_lock_order_production_soft_default.store(sandbox_off ? 0 : 1,
+                                                       std::memory_order_release);
+            return;
+        }
+    }
+    // 3) Profile default.
+    if (sandbox_off) {
+        // Unit Soft path: OFF (zero atomics) unless tests force later.
+        g_lock_order_mode.store(1, std::memory_order_release);
+        g_lock_order_canary_enabled.store(0, std::memory_order_release);
+        g_lock_order_production_soft_default.store(0, std::memory_order_release);
+    } else {
+        // Production Restricted/Strict: soft metrics-only audit.
+        g_lock_order_mode.store(2, std::memory_order_release);
+        g_lock_order_canary_enabled.store(0, std::memory_order_release);
+        g_lock_order_production_soft_default.store(1, std::memory_order_release);
+    }
 }
 
 // Per-thread re-entry depth for each level.
@@ -225,19 +335,22 @@ inline void dump_held_ranks(FILE* out) noexcept {
 // depth so release pairing works — soft mode continues after metric).
 // Hard canary (mode==3): abort with file:line + rank dump.
 //
-// AC1 (#2354) refined: production default OFF skips atomics / inversion
+// Mode OFF (#2354 / #2557 unit Soft): skips atomics / inversion
 // diagnostics, BUT always updates TLS g_depth. Depth is correctness, not
 // mere observability — OrderedUniqueLock::acquire_if_needed / nested
 // MutationBoundary paths rely on is_held() to skip re-locking the same
 // non-recursive mutex. Skipping depth when audit is off caused
 // "Resource deadlock avoided" (EDEADLK) under default CI (#2354 regression).
+//
+// Mode soft (#2557 production default): atomics + inversion metrics, no abort.
+// Mode hard (CANARY): soft + abort.
 inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
                        int line = __builtin_LINE()) noexcept {
     // Depth always (nest / acquire_if_needed correctness).
     const bool inv = any_higher_held(L);
     ++g_depth[static_cast<std::uint8_t>(L)];
     if (!lock_order_audit_enabled())
-        return true; // AC1: zero atomics when OFF
+        return true; // zero atomics when OFF
     g_lock_order_acquire_total.fetch_add(1, std::memory_order_relaxed);
     if (inv) {
         g_lock_inversion_detected_total.fetch_add(1, std::memory_order_relaxed);

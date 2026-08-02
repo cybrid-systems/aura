@@ -10,6 +10,7 @@
 #include "typed_mutation_audit.h"
 #include "coercion_provenance_policy.hh"   // Issue #2185 reject-on-miss production default
 #include "compiler/hot_update_registry.hh" // Issue #2205 reemit boundary production default
+#include "compiler/lock_order_audit.h"     // Issue #2557 production soft lock-order audit
 #include "compiler/mutate_type_gate.hh"    // Issue #2219 post-mutate type gate
 #include "compiler/pipeline_policy.hh"     // Issue #2213 tree-walker fallback production gate
 #include "core/gc_hooks.h"                 // Issue #2338: gc_defer production lock wire-up
@@ -121,10 +122,15 @@ inline void grant_render_kernel_principal() noexcept {
 //        - production → Hard (match exhaustiveness / TypeError reject)
 //        - AURA_SANDBOX=off → Soft (unit Soft-path ergonomics)
 //        - AURA_MUTATE_TYPE_GATE=soft|hard always wins when set
+//  12. Lock-order audit (#2557 / refine #2354):
+//        - production Restricted/Strict → soft (metrics-only inversions)
+//        - AURA_SANDBOX=off → OFF (zero atomics; unit Soft path)
+//        - AURA_LOCK_ORDER_CANARY=1 → hard abort (always wins)
+//        - AURA_LOCK_ORDER_AUDIT=1|0|off overrides soft/off when set
 // Dev/test: AURA_SANDBOX=off restores Off + Sampled/4 audit + no WAL + soft
 // fiber + Soft linear process mode (boundary still forces effective Strict
 // when force-on-boundary is on, #2222) + soft coercion apply + observe-only
-// blame commit + tree-walker Allow + Soft mutate type gate.
+// blame commit + tree-walker Allow + Soft mutate type gate + lock-order OFF.
 inline void apply_production_security_defaults() noexcept {
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
@@ -466,6 +472,14 @@ inline void apply_production_security_defaults() noexcept {
                 aura_set_epoch_invariant_mode(1);
         }
     }
+
+    // 13) Issue #2557: production soft lock-order audit (metrics-only).
+    //     Rank inversions surface on g_lock_inversion_detected_total without
+    //     abort risk. Hard canary (AURA_LOCK_ORDER_CANARY=1) still aborts.
+    //     AURA_SANDBOX=off → OFF (zero atomics) for unit Soft path.
+    //     AURA_LOCK_ORDER_AUDIT=0|off forces off under production; =1 forces soft.
+    ::aura::compiler::lock_order::apply_production_lock_order_default(
+        /*sandbox_off=*/dev_off);
 }
 
 } // namespace aura::compiler::security

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 729 | Preferred destination suites |
-| **Total scanned** | **729** | |
+| `tests/core/test_*.cpp` | 730 | Preferred destination suites |
+| **Total scanned** | **730** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 46 | 46 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -513,6 +513,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_lock_order_audit_2316.cpp`
 - `tests/compiler/test_lock_order_audit_2354.cpp`
 - `tests/compiler/test_lock_order_closures_env.cpp`
+- `tests/compiler/test_lock_order_production_soft_2557.cpp`
 - `tests/compiler/test_longrunning_infra_primitives.cpp`
 - `tests/compiler/test_longrunning_recovery_latency.cpp`
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp`
@@ -1528,13 +1529,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (135)
+### `observability` — Observability / metrics / query:*-stats (136)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (135)
+#### domain/ (136)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1589,6 +1590,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_live_closure_walk.cpp` (—) [domain_suite, theme_compiler] — Issue #1557/#1568/#1596/#1659/#1895 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_walk_active_closures.cpp` (—) [domain_suite, theme_compiler] — Issue #1895/#1928 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_live_closure_full_restamp_2542.cpp` (#2542) [domain_suite, theme_compiler] — AC1: N named closures + reemit → epoch_restamp_total ≥ N
+- `tests/compiler/test_lock_order_production_soft_2557.cpp` (#2557) [domain_suite, theme_compiler] — AC1: apply_production_lock_order_default(false) → soft; inversion bumps metrics
 - `tests/compiler/test_longrunning_infra_primitives.cpp` (—) [domain_suite, theme_compiler] — test_longrunning_infra_primitives.cpp — Issue #753:
 - `tests/compiler/test_longrunning_recovery_latency.cpp` (—) [domain_suite, theme_compiler] — AC1: panic-restore path instruments recovery latency
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1671 (#1978 renamed): issue# moved from filename to header.

@@ -101,8 +101,9 @@ def main() -> int:
         ),
         (
             ROOT / "src/compiler/lock_order_audit.h",
-            "Production default OFF",
-            "lock_order_audit.h: production default OFF documented",
+            # Issue #2557: production default is soft; unit Soft path remains OFF.
+            "apply_production_lock_order_default",
+            "lock_order_audit.h: production soft default (#2557) documented",
         ),
         # Counter g_lock_order_violation_total
         (
