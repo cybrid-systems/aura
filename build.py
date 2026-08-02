@@ -2187,6 +2187,96 @@ def cmd_fiber_reclaim_orphan_release_2498_coverage():
     return 0
 
 
+def cmd_check_2529_coverage():
+    """Issue #2529: Restricted grant_epoch_retain K=16."""
+    print(f"{B}=== grant epoch retain Restricted coverage (#2529) ==={N}")
+    script = ROOT / "scripts" / "check_2529.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("grant epoch retain Restricted (#2529) coverage failed")
+        return 1
+    ok("grant epoch retain Restricted (#2529) coverage clean")
+    return 0
+
+
+def cmd_check_2530_coverage():
+    """Issue #2530: audit ring 1024 + Isolation publish_seq."""
+    print(f"{B}=== audit ring publish coverage (#2530) ==={N}")
+    script = ROOT / "scripts" / "check_2530.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("audit ring publish (#2530) coverage failed")
+        return 1
+    ok("audit ring publish (#2530) coverage clean")
+    return 0
+
+
+def cmd_check_2531_coverage():
+    """Issue #2531: force non-zero bound_mutation_id."""
+    print(f"{B}=== grant bound mid force coverage (#2531) ==={N}")
+    script = ROOT / "scripts" / "check_2531.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("grant bound mid force (#2531) coverage failed")
+        return 1
+    ok("grant bound mid force (#2531) coverage clean")
+    return 0
+
+
+def cmd_check_2532_coverage():
+    """Issue #2532: write caps into Effect matrix."""
+    print(f"{B}=== cap write effect matrix coverage (#2532) ==={N}")
+    script = ROOT / "scripts" / "check_2532.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cap write effect matrix (#2532) coverage failed")
+        return 1
+    ok("cap write effect matrix (#2532) coverage clean")
+    return 0
+
+
+def cmd_check_2533_coverage():
+    """Issue #2533: residual force safepoint."""
+    print(f"{B}=== residual force safepoint coverage (#2533) ==={N}")
+    script = ROOT / "scripts" / "check_2533.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual force safepoint (#2533) coverage failed")
+        return 1
+    ok("residual force safepoint (#2533) coverage clean")
+    return 0
+
+
+def cmd_check_2534_coverage():
+    """Issue #2534: security-posture + correlated-trail."""
+    print(f"{B}=== security posture trail coverage (#2534) ==={N}")
+    script = ROOT / "scripts" / "check_2534.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("security posture trail (#2534) coverage failed")
+        return 1
+    ok("security posture trail (#2534) coverage clean")
+    return 0
+
+
 def cmd_root_remap_pin_contract_unified_2499_coverage():
     """Issue #2499: unify RootRemapPass fail with pin_contract_held (single Moving
     success gate).

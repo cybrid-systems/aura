@@ -612,6 +612,18 @@ public:
     [[nodiscard]] bool is_cancel_requested() const noexcept {
         return cancel_requested_.load(std::memory_order_acquire);
     }
+    // Issue #2533: force cooperative safepoint after hard-reclaim so non-yield
+    // bodies still hit a bound edge (check_gc_safepoint / yield) and retire
+    // still_running. Ok join / cooperative yield pays zero extra (flag unset).
+    void request_force_safepoint() noexcept {
+        force_safepoint_requested_.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] bool is_force_safepoint_requested() const noexcept {
+        return force_safepoint_requested_.load(std::memory_order_acquire);
+    }
+    // Process-wide metrics (#2533).
+    [[nodiscard]] static std::uint64_t residual_force_safepoint_total() noexcept;
+    [[nodiscard]] static std::uint64_t residual_cpu_budget_exceeded_total() noexcept;
     // Issue #2227: owner Scheduler back-pointer accessor. Returns
     // nullptr for fibers created outside a Scheduler (test / host
     // thread / static Fibers); the orch join path skips the
@@ -623,9 +635,9 @@ public:
     // set, is_done() still returns the body-truth state, but the
     // scheduler treats the fiber as "logically done" (removed from
     // wait_map_ / joiner_map_ / owned_fibers_). Bodies that yield
-    // post-reclaim are NOT re-dispatched; bodies that never yield
-    // keep their stack until they return (best-effort, same
-    // limitation as the cooperative cancel protocol #2153).
+    // post-reclaim are NOT re-dispatched; #2533 request_force_safepoint
+    // + cancel nudge residual bodies to cooperative edges so still_running
+    // converges (true preemption remains out of scope).
     [[nodiscard]] bool is_reclaimed() const noexcept {
         return reclaimed_.load(std::memory_order_acquire);
     }
@@ -649,6 +661,7 @@ public:
     // Issue #2397: reclaimed-but-body-not-returned gauge + retired counter.
     [[nodiscard]] static std::uint64_t join_drain_residual_still_running() noexcept;
     [[nodiscard]] static std::uint64_t join_drain_residual_body_retired_total() noexcept;
+    // Issue #2533 accessors declared with request_force_safepoint above.
     [[nodiscard]] static std::uint64_t join_wait_us_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_max() noexcept;
     // Issue #1595: times join Ok path invoked linear/StableNodeRef enforcement.
@@ -942,6 +955,8 @@ private:
     // documented limitation, same as #2153 cooperative cancel
     // protocol.
     std::atomic<bool> reclaimed_{false};
+    // Issue #2533: cooperative force-safepoint after hard-reclaim.
+    std::atomic<bool> force_safepoint_requested_{false};
     // Issue #2491: fiber-local assigned tenant id. Stamped at
     // spawn time by the orch / agent path; Fiber::resume re-applies
     // TenantScope from this value (not from ambient Evaluator state)
@@ -989,6 +1004,9 @@ private:
     // Issue #2498: process-wide orphan-root drops + HWM.
     static std::atomic<std::uint64_t> orphan_roots_dropped_on_reclaim_total_;
     static std::atomic<std::uint64_t> orphan_roots_hwm_;
+    // Issue #2533: force-safepoint / residual CPU budget metrics.
+    static std::atomic<std::uint64_t> residual_force_safepoint_total_;
+    static std::atomic<std::uint64_t> residual_cpu_budget_exceeded_total_;
     // Issue #1597 join latency histogram (process-wide).
     static std::atomic<std::uint64_t> join_latency_hist_[kJoinLatencyHistBuckets];
 };

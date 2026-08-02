@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -52,7 +53,17 @@ struct IsolationAuditEntry {
     bool denied = false;
     bool provenance_deny = false;
     bool capability_deny = false;
+    // Issue #2530 / #2534: Mutation epoch mid for correlated-trail join.
+    std::uint64_t mutation_id = 0;
     char op[40]{};
+};
+
+// Issue #2530: published isolation slot (mirrors Capability PublishedAuditSlot
+// / #2425). Writer: exclusive lock → data → release store publish_seq.
+// Reader: shared lock + acquire double-check. 0 = never published / cleared.
+struct PublishedIsolationSlot {
+    std::atomic<std::uint64_t> publish_seq{0};
+    IsolationAuditEntry data{};
 };
 
 struct TenantIsolationMetrics {
@@ -95,8 +106,13 @@ struct WorkspaceIsolationPolicy {
     std::uint64_t denials = 0;
     bool isolation_enabled = false; // false = permissive (tenant id 0 / unset)
     bool strict_sandbox_linked = false;
-    static constexpr std::size_t kAuditRing = 128;
-    IsolationAuditEntry audit_ring[kAuditRing]{};
+    // Issue #2530: 1024 slots — aligned with Capability / SecurityEvent rings.
+    // Soft / Off paths pay nothing when record_audit is never called.
+    // Earlier-than-window events rely on WAL (AC3).
+    static constexpr std::size_t kAuditRing = 1024;
+    // Issue #2530: shared_mutex + published slots (was bare array — torn reads).
+    mutable std::shared_mutex audit_ring_mtx_;
+    PublishedIsolationSlot audit_ring[kAuditRing]{};
     std::atomic<std::uint64_t> audit_seq{0};
 
     void set_current_tenant(TenantId id, std::string_view name = {},
@@ -151,38 +167,48 @@ struct WorkspaceIsolationPolicy {
         return it->second;
     }
 
-    // Issue #2388: private 128-slot ring + dual-write IsolationDeny into
-    // SecurityEvent/WAL when denied (single SE per deny — callers must not
-    // also append IsolationDeny). Allows stay private-ring only.
+    // Issue #2388 / #2530: private kAuditRing (1024) + dual-write IsolationDeny
+    // into SecurityEvent/WAL when denied. Publish_seq + shared_mutex double-check
+    // mirrors Capability ring (#2425). Allows stay private-ring only.
+    // Soft/Off: zero extra cost when this is never called.
     void record_audit(TenantId target, TenantId ref_tenant, bool denied, bool prov_deny,
                       bool cap_deny, std::string_view op,
                       std::uint16_t required_effects = 0) noexcept {
-        const auto seq = audit_seq.fetch_add(1, std::memory_order_relaxed);
-        auto& slot = audit_ring[seq % kAuditRing];
-        slot.seq = seq;
-        slot.current = current.id;
-        slot.target = target;
-        slot.ref_tenant = ref_tenant;
-        slot.denied = denied;
-        slot.provenance_deny = prov_deny;
-        slot.capability_deny = cap_deny;
-        const auto n = std::min(op.size(), sizeof(slot.op) - 1);
-        std::memcpy(slot.op, op.data(), n);
-        slot.op[n] = '\0';
+        using ::aura::core::current_mutation_epoch;
+        const auto epoch = current_mutation_epoch();
+        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+
+        const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
+        IsolationAuditEntry entry{};
+        entry.seq = seq;
+        entry.current = current.id;
+        entry.target = target;
+        entry.ref_tenant = ref_tenant;
+        entry.denied = denied;
+        entry.provenance_deny = prov_deny;
+        entry.capability_deny = cap_deny;
+        entry.mutation_id = mid;
+        const auto n = std::min(op.size(), sizeof(entry.op) - 1);
+        std::memcpy(entry.op, op.data(), n);
+        entry.op[n] = '\0';
+        {
+            // Issue #2530: exclusive → data → release publish_seq.
+            std::unique_lock<std::shared_mutex> wlock(audit_ring_mtx_);
+            auto& slot = audit_ring[seq % kAuditRing];
+            slot.data = entry;
+            slot.publish_seq.store(seq + 1, std::memory_order_release);
+        }
         g_tenant_isolation_metrics().isolation_audit_total.fetch_add(1, std::memory_order_relaxed);
 
         if (!denied)
             return; // AC2: one SE only on deny (not on allow)
 
-        using ::aura::core::current_mutation_epoch;
         using ::aura::core::security_event::kIsolationAuditMidIssue;
         using ::aura::core::security_event::kSecurityAuditFoldIssue;
         using ::aura::core::security_event::SecurityEventKind;
         using ::aura::core::security_event_wal::emit_security_event_durable;
         (void)kIsolationAuditMidIssue;
         (void)kSecurityAuditFoldIssue;
-        const auto epoch = current_mutation_epoch();
-        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
         char reason_buf[64];
         const char* reason = "isolation-deny";
         // Issue #2385: unset principal under Restricted/Strict side-effect path.
@@ -198,6 +224,33 @@ struct WorkspaceIsolationPolicy {
         emit_security_event_durable(SecurityEventKind::IsolationDeny, target, mid, mid,
                                     required_effects, op, reason, /*denied=*/true,
                                     /*fiber_id=*/0);
+    }
+
+    // Issue #2530: TSAN-clean load of slot for `seq` (seq % kAuditRing).
+    [[nodiscard]] bool try_load_audit_seq(std::uint64_t seq,
+                                          IsolationAuditEntry& out) const noexcept {
+        const auto idx = seq % kAuditRing;
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            std::shared_lock<std::shared_mutex> rlock(audit_ring_mtx_);
+            const auto& slot = audit_ring[idx];
+            const auto pub = slot.publish_seq.load(std::memory_order_acquire);
+            if (pub == 0)
+                return false;
+            if (pub != seq + 1) {
+                if (attempt + 1 < 8)
+                    continue;
+                return false;
+            }
+            out = slot.data;
+            const auto pub2 = slot.publish_seq.load(std::memory_order_acquire);
+            if (pub2 == pub && out.seq == seq)
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::uint64_t load_audit_seq() const noexcept {
+        return audit_seq.load(std::memory_order_acquire);
     }
 
     // AC1 legacy: simple ID boundary check.

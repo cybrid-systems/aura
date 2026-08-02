@@ -29,6 +29,12 @@ inline constexpr int kGrantEpochFiberBindIssue = 2055;
 inline constexpr int kGrantEpochRetainWindowIssue = 2154;
 // Production multi-tenant / Strict default retain window (last K epochs).
 inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowMultiTenant = 64;
+// Issue #2529: Restricted single-tenant production default (smaller than
+// multi-tenant K=64) so privilege-sticky grants still slide off under long
+// Mutation epoch advance. AURA_GRANT_EPOCH_RETAIN always overrides.
+inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowRestricted = 16;
+// Issue #2529 stamp.
+inline constexpr int kGrantEpochRetainRestrictedIssue = 2529;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -280,7 +286,10 @@ struct CapabilityRegistry {
     // Issue #2426 / #2427: atomic (was plain enum / TenantId — policy flip race).
     AtomicEffectSandboxMode sandbox_mode{};
     AtomicTenantId default_tenant{};
-    static constexpr std::size_t kAuditRing = 128;
+    // Issue #2530: 1024 slots — aligned with SecurityEvent ring (#2225)
+    // so deny-storm Agent in-memory query retains a full SE-scale window
+    // (earlier events remain on WAL). Was 128.
+    static constexpr std::size_t kAuditRing = 1024;
     // Issue #2425: published slots (data + atomic publish_seq).
     // audit_ring_mtx_: exclusive for slot write / clear; shared for
     // try_load_* so concurrent readers are TSAN-clean with writers.
@@ -390,6 +399,13 @@ struct CapabilityRegistry {
             g.bound_node_id = prov.node_id;
             g.grant_epoch = prov.epoch;
             g.grant_fiber_id = prov.fiber_id;
+            // Issue #2531: under Restricted/Strict, never leave bound_mid=0 so
+            // provenance_ok mid join cannot silently skip (anti mid-join hole).
+            // Soft/Off (sandbox_mode==Off) keeps legacy optional mid.
+            if (sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off &&
+                g.bound_mutation_id == 0) {
+                g.bound_mutation_id = g.grant_epoch != 0 ? g.grant_epoch : 1;
+            }
             g.revoke_epoch = 0;
             auto& met = g_capability_effect_metrics();
             met.capability_grant_total.fetch_add(1, std::memory_order_relaxed);
@@ -510,8 +526,9 @@ struct CapabilityRegistry {
         return false;
     }
 
-    // Issue #2388: private 128-slot ring + dual-write SecurityEvent/WAL so
-    // wrap under deny storms remains forensically recoverable (ring 1024 + WAL).
+    // Issue #2388 / #2530: private kAuditRing (1024) + dual-write SecurityEvent/WAL
+    // so wrap under deny storms remains forensically recoverable (ring + WAL).
+    // Earlier than ring-window events rely on WAL (documented: AC3).
     // reason_hint: optional Agent-stable reason (e.g. fiber-grant-mismatch).
     //
     // Issue #2425: build a full EffectAuditEntry locally, then under
@@ -644,6 +661,11 @@ struct CapabilityRegistry {
             g.bound_node_id = prov.node_id;
             g.grant_epoch = prov.epoch;
             g.grant_fiber_id = prov.fiber_id;
+            // Issue #2531: same non-zero mid force as grant().
+            if (sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off &&
+                g.bound_mutation_id == 0) {
+                g.bound_mutation_id = g.grant_epoch != 0 ? g.grant_epoch : 1;
+            }
             g.revoke_epoch = 0;
             auto& met = g_capability_effect_metrics();
             met.capability_grant_total.fetch_add(1, std::memory_order_relaxed);
@@ -818,9 +840,12 @@ make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutat
     // Non-zero WorkspaceEpoch Mutation stamp (0 is "unset / legacy").
     prov.epoch = me != 0 ? me : 1;
     if (force_mutation_bind) {
+        // Issue #2531: production (sandbox != Off) grant mid join must be
+        // non-zero so provenance_ok mid compare cannot silently skip.
+        // Fallback chain: caller mid → Mutation epoch → epoch stamp → 1.
         prov.mutation_id = provenance_mutation_id != 0 ? provenance_mutation_id : me;
         if (prov.mutation_id == 0)
-            prov.mutation_id = prov.epoch;
+            prov.mutation_id = prov.epoch != 0 ? prov.epoch : 1;
     } else {
         prov.mutation_id = provenance_mutation_id;
     }
@@ -1066,10 +1091,16 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
 //   - agent → TenantAdmin (cross-tenant agent spawn adjacency)
 //   - capability → TenantAdmin (meta-privilege: cap:grant / cap:revoke)
 //
-// SECURITY_EXEMPT (staged, effect_for_cap_name == None) — non-security
-// display / low-risk paths intentionally left on the string list:
-//   compile, compile-stats, compile-dirty, compile-deopt, fiber, workspace,
-//   exception-control, macro, query, sandbox.
+// Issue #2532: write / policy-control caps join the matrix (epoch / fiber /
+// retain-window via provenance_ok). SECURITY_EXEMPT read-only observability
+// (effect_for_cap_name == None) remains string-list only:
+//   compile, compile-stats, compile-dirty, compile-deopt, exception-control,
+//   macro, query, sandbox
+//   — comment token: SECURITY_EXEMPT: read-only observability
+//
+// Mapping table (write/control promoted):
+//   workspace  → Mutate | TenantAdmin  (structural / policy write)
+//   fiber      → TenantAdmin           (spawn / control plane)
 //
 // has_capability(needed) consults this map first; effect-mapped names hit
 // g_capability_registry().effects_for(tenant) + provenance_ok (epoch fence /
@@ -1107,10 +1138,16 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         return Effect::TenantAdmin;
     if (name == "capability")
         return Effect::TenantAdmin;
+    // Issue #2532: write / control plane (not pure query).
+    if (name == "workspace")
+        return Effect::Mutate | Effect::TenantAdmin;
+    if (name == "fiber")
+        return Effect::TenantAdmin;
     if (name == "*")
         return Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate | Effect::Network |
                Effect::Ffi | Effect::Render | Effect::MacroSelfEvo | Effect::TenantAdmin |
                Effect::Syscall;
+    // SECURITY_EXEMPT: read-only observability (compile/query/sandbox/macro/…).
     return Effect::None;
 }
 

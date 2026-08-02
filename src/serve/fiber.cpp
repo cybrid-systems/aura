@@ -59,6 +59,9 @@ std::atomic<std::uint64_t> Fiber::join_reclaim_total_{0};
 // Mirrored into OrchModuleStats via weak C hooks when orch is linked.
 std::atomic<std::uint64_t> Fiber::join_drain_residual_still_running_{0};
 std::atomic<std::uint64_t> Fiber::join_drain_residual_body_retired_total_{0};
+// Issue #2533: residual force-safepoint / CPU budget metrics.
+std::atomic<std::uint64_t> Fiber::residual_force_safepoint_total_{0};
+std::atomic<std::uint64_t> Fiber::residual_cpu_budget_exceeded_total_{0};
 // Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
 std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
 // Issue #2491: process-wide TenantScope install mismatch counter
@@ -322,6 +325,23 @@ Scheduler* g_scheduler = nullptr;
 // ── GC safepoint check ────────────────────────────────
 
 void Fiber::check_gc_safepoint() {
+    // Issue #2533: residual hard-reclaim poll at cooperative edges.
+    // mark_reclaimed already set cancel + force_safepoint. Do NOT call
+    // yield() from here (yield → check_gc_safepoint would recurse). Yield
+    // path and GC wait continue; reclaimed bodies are not re-dispatched
+    // by the scheduler. Pure C++ tight loops without edges remain
+    // quarantine-visible via join_drain_residual_still_running.
+    if (auto* cur = g_current_fiber) {
+        if (cur->is_force_safepoint_requested()) {
+            cur->force_safepoint_requested_.store(false, std::memory_order_release);
+            // Under MutationBoundary hold, residual body cannot yield yet —
+            // count budget exceeded (join still Reclaimed).
+            if (aura_evaluator_mutation_boundary_held() != 0 ||
+                aura_evaluator_mutation_boundary_depth() > 0) {
+                residual_cpu_budget_exceeded_total_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
     auto* wctx = g_worker_ctx;
     if (!wctx)
         return;
@@ -462,6 +482,11 @@ void Fiber::mark_reclaimed() noexcept {
     const bool was = reclaimed_.exchange(true, std::memory_order_acq_rel);
     if (was)
         return;
+    // Issue #2533: nudge residual body to cooperative edges (cancel +
+    // force-safepoint). Ok/done path above returns early — zero cost.
+    request_cancel();
+    request_force_safepoint();
+    residual_force_safepoint_total_.fetch_add(1, std::memory_order_relaxed);
     // Body already returned — logical reclaim of a finished fiber
     // is a no-op for the still-running gauge (zero extra cost beyond
     // the exchange already paid by the reclaim path).
@@ -471,6 +496,13 @@ void Fiber::mark_reclaimed() noexcept {
     join_drain_residual_still_running_.fetch_add(1, std::memory_order_relaxed);
     if (aura_orch_note_join_drain_reclaim_still_running)
         aura_orch_note_join_drain_reclaim_still_running();
+}
+
+std::uint64_t Fiber::residual_force_safepoint_total() noexcept {
+    return residual_force_safepoint_total_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::residual_cpu_budget_exceeded_total() noexcept {
+    return residual_cpu_budget_exceeded_total_.load(std::memory_order_relaxed);
 }
 
 void Fiber::note_body_exit_if_reclaimed() noexcept {

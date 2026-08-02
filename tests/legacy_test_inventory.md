@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 701 | Preferred destination suites |
-| **Total scanned** | **701** | |
+| `tests/core/test_*.cpp` | 707 | Preferred destination suites |
+| **Total scanned** | **707** | |
 
 ### Related artifacts
 
@@ -32,14 +32,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 200 | 200 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 75 | 75 | P1 — domain suite already collapses many obs gates |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 203 | 203 | P0 — high volume; strong domain suite foothold |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 76 | 76 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 70 | 70 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 131 | 131 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 45 | 45 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -204,6 +204,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_atomic_mark_bitvector_2117.cpp`
 - `tests/stdlib/test_atomic_swap_stdlib.cpp`
 - `tests/compiler/test_audit_mutation_id_unify_2493.cpp`
+- `tests/compiler/test_audit_ring_publish_2530.cpp`
 - `tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp`
 - `tests/compiler/test_aura_jit_unused_fn_lock_2475.cpp`
 - `tests/compiler/test_aura_result_error_policy.cpp`
@@ -227,6 +228,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/reflect/test_cache_header_magic_a2.cpp`
 - `tests/compiler/test_cache_stamp_restamp_contract_2183.cpp`
 - `tests/renderer/test_camera_rays.cpp`
+- `tests/compiler/test_cap_write_effect_matrix_2532.cpp`
 - `tests/core/test_capability_audit_publish_2425.cpp`
 - `tests/compiler/test_capability_effect_force_2072.cpp`
 - `tests/core/test_capability_effect_stats_snapshot_2430.cpp`
@@ -385,8 +387,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_general_object_pin_adopt_2363.cpp`
 - `tests/core/test_general_object_pin_coverage_gate_2496.cpp`
 - `tests/core/test_get_nodeview_snapshot_2453.cpp`
+- `tests/compiler/test_grant_bound_mid_force_2531.cpp`
 - `tests/compiler/test_grant_epoch_fiber_bind_2055.cpp`
 - `tests/compiler/test_grant_epoch_invalidation_2074.cpp`
+- `tests/compiler/test_grant_epoch_retain_restricted_2529.cpp`
 - `tests/compiler/test_grant_epoch_retain_window_2154.cpp`
 - `tests/compiler/test_grant_macro_self_evo_stamp_2386.cpp`
 - `tests/core/test_guard_dtor_batch_metrics.cpp`
@@ -688,6 +692,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_require_effect_auto_isolation_2490.cpp`
 - `tests/compiler/test_require_effect_live_mid_2384.cpp`
 - `tests/core/test_reset_slot_parent_edges_2412.cpp`
+- `tests/serve/test_residual_force_safepoint_2533.cpp`
 - `tests/compiler/test_residual_gc_defer_assert_2211.cpp`
 - `tests/core/test_resource_quota_batch.cpp`
 - `tests/compiler/test_rest_param_hygiene_2169.cpp`
@@ -719,6 +724,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_security_audit_wal_force_restricted_2492.cpp`
 - `tests/compiler/test_security_event_wal_replay_2225.cpp`
 - `tests/compiler/test_security_health_2389.cpp`
+- `tests/compiler/test_security_posture_trail_2534.cpp`
 - `tests/compiler/test_self_evo_stats.cpp`
 - `tests/serve/test_self_evolution_chaos_stable.cpp`
 - `tests/compiler/test_self_evolution_loop_stats.cpp`
@@ -888,13 +894,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (79)
+### `arena_compaction` — Arena / compaction / GC (80)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (79)
+#### domain/ (80)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -939,6 +945,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_gc_mark_size_inject_2084.cpp` (#2084) [domain_suite, theme_serve] — AC1: mark_from_roots with injected sizes → MarkBitVector size == heap size
 - `tests/core/test_general_object_pin_2298.cpp` (#2298) [domain_suite, theme_core] — AC1: Non-render buffer pin-or-remap; validate succeeds after densify.
 - `tests/core/test_general_object_pin_adopt_2363.cpp` (#2363) [domain_suite, theme_core] — AC1: wire_general_object_create_pair pins both buffers + bumps wire
+- `tests/compiler/test_grant_epoch_retain_restricted_2529.cpp` (#2529) [domain_suite, theme_compiler] — AC1: Restricted + no multi-tenant → K==16
 - `tests/compiler/test_grant_epoch_retain_window_2154.cpp` (#2154) [domain_suite, theme_compiler] — AC1: K=0 → no auto advance (identical to #2074 manual-only)
 - `tests/compiler/test_grant_macro_self_evo_stamp_2386.cpp` (#2386) [domain_suite, theme_compiler] — AC1: After grant_macro_self_evo, grant_epoch non-zero (= Mutation epoch)
 - `tests/core/test_has_on_compact_hook_lock_2383.cpp` (#2383) [domain_suite, theme_core] — AC1: All three has_* methods take their respective mutexes (source)
@@ -976,13 +983,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (200)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (203)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (200)
+#### domain/ (203)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -992,6 +999,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_atomic_batch_rollback_fiber_task1.cpp —
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
 - `tests/compiler/test_audit_mutation_id_unify_2493.cpp` (#2493) [domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
+- `tests/compiler/test_audit_ring_publish_2530.cpp` (#2530) [domain_suite, theme_compiler] — AC1: both kAuditRing == 1024
 - `tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp` (#2150) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env_2076.cpp` (#2076) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp` (#2522) [batch_driver, domain_suite, theme_compiler] — AC1: Batch API exists; one generation bump per call regardless of N
@@ -999,6 +1007,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_blame_complete_commit_gate_2221.cpp` (#2221) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/compiler/test_boundary_solve_hard_gate_2260.cpp` (#2260) [domain_suite, theme_compiler] — AC1: truncated_reverify under Full hard-gate → full resync or force fail
+- `tests/compiler/test_cap_write_effect_matrix_2532.cpp` (#2532) [small, domain_suite, theme_compiler] — AC1: workspace/fiber map to non-None effects
 - `tests/core/test_capability_audit_publish_2425.cpp` (#2425) [domain_suite, theme_core] — AC1: reader sees fully-written entry or prior complete entry (never torn)
 - `tests/core/test_capability_effect_stats_snapshot_2430.cpp` (#2430) [domain_suite, theme_core] — AC1: snapshot consistent under concurrent metric writers
 - `tests/core/test_capability_registry_snapshot_2426.cpp` (#2426) [domain_suite, theme_core] — AC1: snapshot consistent under concurrent policy writers
@@ -1047,6 +1056,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_followups.cpp` (—) [followup, domain_suite, theme_compiler] — (mutation-log:diff / dirty:summary /
 - `tests/compiler/test_full_strategy_partial_recovery.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2029; partial_recovery_* counters + boundary path
 - `tests/core/test_gc_defer_mutation_hold_2204.cpp` (#2204) [domain_suite, theme_core] — AC1: During outermost Guard body, should_defer_destructive_gc()==true
+- `tests/compiler/test_grant_bound_mid_force_2531.cpp` (#2531) [small, domain_suite, theme_compiler] — AC1: Restricted grant → bound_mutation_id != 0
 - `tests/compiler/test_grant_epoch_fiber_bind_2055.cpp` (#2055) [domain_suite, theme_compiler] — AC1: Grant always carries non-zero grant_epoch matching mutation epoch
 - `tests/compiler/test_grant_epoch_invalidation_2074.cpp` (#2074) [domain_suite, theme_compiler] — Issue #2074 — mutation-bound CapabilityGrant + epoch invalidation
 - `tests/core/test_guard_dtor_batch_metrics.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #1747 (#1978 renamed): issue# moved from filename to header.
@@ -1185,13 +1195,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (75)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (76)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (75)
+#### domain/ (76)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy_2229.cpp` (#2229) [domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1248,6 +1258,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:
 - `tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_full_memory_safety_fuzz_stress.cpp — Issue #602:
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1679/#1682/#1782 (#1978 renamed): issue# moved from filename to header.
+- `tests/serve/test_residual_force_safepoint_2533.cpp` (#2533) [small, domain_suite, theme_serve] — AC1: mark_reclaimed requests force_safepoint + cancel
 - `tests/core/test_restore_children_structural_lock_2455.cpp` (#2455) [domain_suite, theme_core] — AC1: restore_children without external guard restores correctly (self-locks)
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp` (—) [domain_suite, theme_compiler] — test_runtime_concurrent_full_cycle_chaos.cpp — Issue #755:
 - `tests/serve/test_runtime_mutation_boundary_steal_safety.cpp` (—) [domain_suite, theme_serve] — test_runtime_mutation_boundary_steal_safety.cpp — Issue #588:
@@ -1476,13 +1487,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (131)
+### `observability` — Observability / metrics / query:*-stats (132)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (131)
+#### domain/ (132)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1587,6 +1598,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_runtime_observability_correlated_stats.cpp` (—) [obs_named, domain_suite, theme_compiler] — test_runtime_observability_correlated_stats_673.cpp — Issue #673:
 - `tests/compiler/test_safe_snapshot_umbrella.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1856 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_scan_skip_freed_closures.cpp` (—) [domain_suite, theme_compiler] — Issue #1665 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_security_posture_trail_2534.cpp` (#2534) [small, domain_suite, theme_compiler] — AC1: posture returns schema-2534
 - `tests/compiler/test_self_evo_stats.cpp` (—) [domain_suite, theme_compiler] — Issue #1909 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_self_evolution_chaos_stable.cpp` (—) [domain_suite, theme_serve] — test_self_evolution_chaos_stable_674.cpp — Issue #674:
 - `tests/compiler/test_self_evolution_loop_stats.cpp` (—) [domain_suite, theme_compiler] — Issue #1883 (#1978 renamed): issue# moved from filename to header.
