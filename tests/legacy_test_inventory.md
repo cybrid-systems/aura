@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 709 | Preferred destination suites |
-| **Total scanned** | **709** | |
+| `tests/core/test_*.cpp` | 710 | Preferred destination suites |
+| **Total scanned** | **710** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 203 | 203 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 78 | 78 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 79 | 79 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 70 | 70 | P2 — link-profile heavy; migrate AC smoke first |
@@ -167,6 +167,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_agent_failure_policy_2229.cpp`
 - `tests/orch/test_agent_name_table_isolation_2078.cpp`
 - `tests/orch/test_agent_scope_2083.cpp`
+- `tests/orch/test_agent_scope_hierarchy_2537.cpp`
 - `tests/renderer/test_ai_closedloop_readiness.cpp`
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp`
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp`
@@ -1197,16 +1198,17 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (78)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (79)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (78)
+#### domain/ (79)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy_2229.cpp` (#2229) [domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
+- `tests/orch/test_agent_scope_hierarchy_2537.cpp` (#2537) [domain_suite, theme_orch] — AC1: parent / children links via spawn_child (unique_ptr, not static table)
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/serve/test_boundary_yield_steal_metrics_2119.cpp` (#2119) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
 - `tests/compiler/test_capability_high_risk_promote_2489.cpp` (#2489) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying

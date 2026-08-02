@@ -123,7 +123,7 @@ auto jr = scope.join_all(/*timeout_ms=*/5000); // mirror #2082 cancel+drain (def
 // ~AgentScope: cancel + best-effort drain + reservation release.
 ```
 
-Rules (per Issue #2083 AC4 / #2161 AC5 / #2226):
+Rules (per Issue #2083 AC4 / #2161 AC5 / #2226 / #2537):
 1. **No** process-global registry (linter still forbids `AgentRegistry` /
    `global_agent_registry` / `conduct_parallel`). AgentScope is bound to
    an explicit `serve::Scheduler&` owner passed at construction — no static
@@ -138,9 +138,34 @@ Rules (per Issue #2083 AC4 / #2161 AC5 / #2226):
    - `parallel_intend`: short-lived batch thunks (no long-lived names).
    - `AgentScope`: long-lived named agents, parent-cancel + `join_all`
      + `watch_all` (#2161) semantics, bound to an explicit owner
-     (Scheduler reference).
+     (Scheduler reference). Hierarchy (#2537) is an explicit tree of
+     scopes (`parent_` / `children_` / `spawn_child`), still no global map.
 
-Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6 + #2161 watch_all).
+### Hierarchical AgentScope (Issue #2537)
+
+Parent/child supervision tree without a global registry. Parent owns
+children via `std::unique_ptr`; `parent_` is a non-owning back-pointer.
+
+```cpp
+aura::orch::AgentScope root(sched);
+auto& worker_scope = root.spawn_child();   // parent owns child
+worker_scope.spawn({.name = "w", .body = [] { /* ... */ }});
+root.spawn({.name = "supervisor", .body = [] { /* ... */ }});
+
+root.cancel_all();  // top-down: children first, then local handles
+// ~AgentScope: cancel tree → destroy children (bottom-up drain) → join self
+```
+
+Cancel / destroy order:
+1. **`cancel_all`**: recurse into children, then `request_cancel` on local handles.
+2. **`~AgentScope`**: `cancel_all`, then `children_.clear()` (each child dtor
+   drains its own handles), then join local handles.
+
+Single-owner serial model (#2399) still applies per scope. `watch_all` /
+RestartN remain scope-local (no cross-scope restart map).
+
+Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6 + #2161 watch_all);
+`tests/orch/test_agent_scope_hierarchy_2537` (hierarchy AC1-AC6).
 
 ### `AgentFailurePolicy` (Issue #2229, supervision surface)
 

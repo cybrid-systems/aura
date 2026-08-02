@@ -4080,6 +4080,11 @@ aura_add_issue_test(test_hard_fiber_restricted_2536)
 aura_issue_test_link_light(test_hard_fiber_restricted_2536)
 add_dependencies(all_test_issue_targets test_hard_fiber_restricted_2536)
 
+# Issue #2537: hierarchical AgentScope (parent/children cancel tree).
+aura_add_issue_test(test_agent_scope_hierarchy_2537)
+aura_issue_test_link_light(test_agent_scope_hierarchy_2537)
+add_dependencies(all_test_issue_targets test_agent_scope_hierarchy_2537)
+
 # Issue #2465: decay window on mailbox_bp_recent_total so the #2228 admission
 # gate doesn't permanently deny every spawn_agent_with_mailbox after the first
 # BP event. Default 30s (matches kJoinDrainResidualHardMsDefault); env override
