@@ -5182,6 +5182,25 @@ def cmd_setcode_rebind_coverage():
     return 0
 
 
+def cmd_module_load_tail_coverage():
+    """Issue #2570: module load fail-closed; trailing defines export.
+
+    Mid-body eval failure must not cache half-loaded modules; nested
+    require errors fail the outer load; tail defines always export.
+    """
+    print(f"{B}=== module load tail export coverage (#2570) ==={N}")
+    script = ROOT / "scripts" / "check_module_load_tail_2570.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module load tail (#2570) coverage contract rows failed")
+        return 1
+    ok("module load tail (#2570) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6401,6 +6420,7 @@ def cmd_gate():
         or cmd_try_catch_bind_coverage()
         or cmd_symbol_eq_coverage()
         or cmd_setcode_rebind_coverage()
+        or cmd_module_load_tail_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7222,6 +7242,7 @@ def main():
         "try-catch-bind": cmd_try_catch_bind_coverage,
         "symbol-eq": cmd_symbol_eq_coverage,
         "setcode-rebind": cmd_setcode_rebind_coverage,
+        "module-load-tail": cmd_module_load_tail_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

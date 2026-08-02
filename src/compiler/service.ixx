@@ -10000,19 +10000,46 @@ private:
         // Top-level standalone require: execute, no body left.
         // The caller should detect NULL_NODE and skip the rest
         // of the evaluation (or treat it as a no-op).
+        // Issue #2570: do not swallow module-load failures — leave the
+        // require Call in the AST so normal eval returns the error value
+        // (and fail-closed load is observable to scripts / try-catch).
         if (is_require_call(flat, pool, root)) {
-            (void)evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
+            auto rr = evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
+            if (!rr)
+                return root; // leave for normal eval to surface unexpected
+            if (rr && types::is_error(*rr) && !types::is_string(*rr))
+                return root; // leave Call so eval returns the error value
             return aura::ast::NULL_NODE;
         }
 
         // (begin ...) — scan children, execute requires, rebuild begin
         // with only non-require children. If all children were requires,
         // the stripped begin is empty; we return NULL_NODE.
+        // Issue #2570: on module-load error, keep failed require in the
+        // begin so subsequent forms are not evaluated as if load succeeded.
         if (v.tag == aura::ast::NodeTag::Begin) {
             std::vector<aura::ast::NodeId> non_require_children;
             for (auto c : v.children) {
                 if (is_require_call(flat, pool, c)) {
-                    (void)evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
+                    auto rr = evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
+                    if (!rr || (rr && types::is_error(*rr) && !types::is_string(*rr))) {
+                        // Keep this require + remaining siblings for normal eval
+                        // (begin abort-on-error will stop after the failed require).
+                        non_require_children.push_back(c);
+                        // Append rest of forms without pre-executing them.
+                        bool after = false;
+                        for (auto c2 : v.children) {
+                            if (c2 == c) {
+                                after = true;
+                                continue;
+                            }
+                            if (after)
+                                non_require_children.push_back(c2);
+                        }
+                        if (non_require_children.size() == v.children.size())
+                            return root;
+                        return flat.add_begin(non_require_children);
+                    }
                 } else {
                     non_require_children.push_back(c);
                 }

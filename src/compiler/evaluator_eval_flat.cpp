@@ -4775,6 +4775,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             auto r = eval_flat(*f, *p, cid, eval_env);
                             if (!r)
                                 return r;
+                            // Issue #2570: abort begin on first-class error
+                            // (e.g. nested (require …) module-load-failed) so
+                            // outer module load does not continue past a
+                            // silent half-import.
+                            if (r && is_error(*r) && !is_string(*r))
+                                return r;
                         }
                         // TCO: last expression
                         current_id = last_expr;
@@ -4788,6 +4794,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             continue;
                         auto r = eval_flat(*f, *p, cid, eval_env);
                         if (!r)
+                            return r;
+                        // Issue #2570: abort begin on first-class error (parity
+                        // with multi-define phase 3).
+                        if (r && is_error(*r) && !is_string(*r))
                             return r;
                     }
                     // Find last non-NULL child

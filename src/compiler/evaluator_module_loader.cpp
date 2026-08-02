@@ -23,6 +23,7 @@ using types::EvalValue;
 using types::as_bool;
 using types::as_cell_id;
 using types::as_closure_id;
+using types::as_error_idx;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
@@ -282,8 +283,70 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
     auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
 
+    // Issue #2570: fail-closed module load — do NOT cache a half-evaluated
+    // module. Mid-body unbound/error (e.g. letrec define phase) used to
+    // return unexpected while load_module_file ignored it, published export
+    // filtering over partial bindings, and cached the module. Then
+    // (require …) returned #t, early:fn worked, and late:fn stayed void/
+    // uncallable. All-or-nothing: abort load, free arena, surface error.
+    auto fail_load = [&](const std::string& why) -> types::EvalValue {
+        std::println(std::cerr, "load_module_file: eval failed for {}: {}", resolved, why);
+        if (current_export_set_)
+            current_export_set_->clear();
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            loading_stack_.erase(resolved);
+        }
+        arena_group_->reset_module(resolved);
+        // First-class error so (require)/(import) can signal failure
+        // (void was indistinguishable from empty success in some paths).
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::string("module-load-failed: ") + resolved + ": " + why);
+        auto eidx = error_values_.size();
+        error_values_.push_back(types::make_string(sid));
+        return types::make_error(eidx);
+    };
+    if (!result) {
+        return fail_load(result.error().format());
+    }
+    if (types::is_error(*result) && !types::is_string(*result)) {
+        std::string why = "error value from module body";
+        auto eidx = as_error_idx(*result);
+        if (eidx < error_values_.size()) {
+            auto& cause = error_values_[eidx];
+            if (is_string(cause)) {
+                auto si = as_string_idx(cause);
+                if (si < string_heap_.size())
+                    why = string_heap_[si];
+            }
+        }
+        return fail_load(why);
+    }
+
     // 9. Apply export filtering: if (export ...) was declared, remove unexported bindings
     if (current_export_set_ && !current_export_set_->empty()) {
+        // Issue #2570: exports that are bound to void cells are the
+        // partial-letrec failure mode (define pre-allocated, body never
+        // filled after mid-body abort). Fail the load rather than publish
+        // those names. Missing export names (declared but never defined)
+        // are filtered out below — some std modules historically export
+        // names that live as primitives only; do not hard-fail those.
+        for (const auto& exp : *current_export_set_) {
+            auto bound = mod_env->lookup_binding(exp);
+            if (!bound)
+                continue;
+            types::EvalValue actual = *bound;
+            if (types::is_cell(actual)) {
+                auto ci = types::as_cell_id(actual);
+                if (ci >= cells_.size())
+                    return fail_load("export '" + exp + "' has invalid cell");
+                actual = cells_[ci];
+            }
+            if (types::is_void(actual)) {
+                return fail_load("export '" + exp +
+                                 "' is unbound (void); define may have failed or been skipped");
+            }
+        }
         auto& bindings = mod_env->bindings();
         for (auto it = bindings.begin(); it != bindings.end();) {
             if (!current_export_set_->count(it->first)) {
