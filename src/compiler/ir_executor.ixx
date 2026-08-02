@@ -318,8 +318,16 @@ private:
     std::uint64_t next_linear_id_ = 1;
     std::vector<LinearEntry> linear_heap_;
 
-    // Runtime string heap (for Int\xE2\x86\x92String coercion)
+    // Runtime string heap (for Int→String coercion)
     std::vector<std::string> string_heap_;
+
+    // Issue #2573: intern ConstString by IRModule string_pool index.
+    // Without this, each execution of ConstString push_back'd a fresh
+    // copy into primitives.string_heap() + string_heap_ — hot loops
+    // with body literals grew O(iterations). Same pool index always
+    // has the same content for the bound module_; cache the EvalValue
+    // (prim_heap index) and reuse. Miss materializes once.
+    std::unordered_map<std::uint32_t, EvalValue> const_string_cache_;
 
     // Explicit call stack: replaces C++ recursion for closure calls
     std::vector<ExecFrame> call_stack_;

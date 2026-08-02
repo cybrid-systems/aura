@@ -3968,6 +3968,11 @@ aura_add_issue_test(test_module_export_display_2572)
 aura_issue_test_link_light(test_module_export_display_2572)
 add_dependencies(all_test_issue_targets test_module_export_display_2572)
 
+# Issue #2573: IR interpreter ConstString intern (no O(N) string_heap growth)
+aura_add_issue_test(test_ir_const_string_intern_2573)
+aura_issue_test_link_light(test_ir_const_string_intern_2573)
+add_dependencies(all_test_issue_targets test_ir_const_string_intern_2573)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
