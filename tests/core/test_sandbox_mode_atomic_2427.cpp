@@ -37,7 +37,7 @@ void reset_reg() {
 
 } // namespace
 
-int main() {
+int run_test_sandbox_mode_atomic_2427() {
     std::println("=== Issue #2427: sandbox_mode atomic (F3+F4 with default_tenant) ===");
 
     // ── AC1 / AC3 atomic + signature preservation ──────────────────
@@ -179,3 +179,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_sandbox_mode_atomic_2427();
+}
+#endif

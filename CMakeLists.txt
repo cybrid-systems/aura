@@ -764,6 +764,49 @@ if(LLVM_FOUND)
     target_link_libraries(aura_jit_test_objects PUBLIC ${llvm_libs} ${CMAKE_DL_LIBS})
 endif()
 
+# Light JIT/ABI objects for issue tests that do NOT need real LLVM OrcJIT.
+# ~99% of aura_issue_test targets only pull CompilerService / AOT bridge
+# symbols via aura_test_objects; linking full aura_jit_test_objects (PUBLIC
+# llvm_libs) balloons each binary to ~70MB and drives ~19GB of build/
+# test_* disk. Light profile reuses the same sources as tests/bundles light
+# extras: aura_jit.cpp without AURA_HAVE_LLVM + bridge stub + runtime +
+# HotUpdateRegistry — no PUBLIC LLVM, median binary drops to ~MB scale.
+#
+# Prefer aura_issue_test_link_light() (default for non-JIT issue tests).
+# Keep aura_issue_test_link_llvm_jit() only for targets that exercise real
+# OrcJIT / emit_native_object / SpecJIT paths (see /tmp/jit_need.txt audit
+# or tests/README.md · link profiles).
+add_library(aura_jit_light_test_objects STATIC
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge_stub.cpp
+    src/compiler/hot_update_registry.cpp
+    src/compiler/aura_jit_prim_dispatch_stub.cpp
+    src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
+)
+set_property(TARGET aura_jit_light_test_objects PROPERTY CXX_MODULE_STD ON)
+target_include_directories(aura_jit_light_test_objects PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/compiler
+)
+# Explicitly no AURA_HAVE_LLVM — aura_jit.cpp uses the #else stubs.
+target_compile_features(aura_jit_light_test_objects PUBLIC cxx_std_26)
+aura_test_compile_options(aura_jit_light_test_objects)
+target_compile_options(aura_jit_light_test_objects PRIVATE -fcontracts)
+set_source_files_properties(
+    src/core/contract_handler.cpp
+    src/core/contract_stub.cpp
+    PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
+# -fno-rtti only on aura_jit TUs that match the full JIT archive dialect
+# when LLVM headers are present; light path has no LLVM headers, but keep
+# the flag for consistent ABI with light bundle objects.
+set_source_files_properties(
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    PROPERTIES COMPILE_FLAGS "-fno-rtti -fcontracts")
+target_link_libraries(aura_jit_light_test_objects PUBLIC ${CMAKE_DL_LIBS})
+
 # Phase 2 dedup helper (definition placed early so it precedes all
 # test_issue_* and pilot calls in this file). See also the pilots section
 # comment for history.
@@ -1477,86 +1520,86 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # field_offset rollbacks, structural counter, multi-round monotonic
 # + regression. Non-duplicative with #266/#369/#553/#213.
 aura_add_issue_test(test_mutation_rollback_coverage)
-aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage)
+aura_issue_test_link_light(test_mutation_rollback_coverage)
 # Issue #2315: production chaos soak for steal × mutate × GC × mailbox.
 # Runtime-gated by AURA_CHAOS_STEAL_GC=1; production binaries / default test
 # runs unaffected when unset. CI opt-in: set AURA_CHAOS_DURATION_S=60+
 # to satisfy AC1 ≥ 60s CI soak spec.
 aura_add_issue_test(test_chaos_steal_mutation_gc)
-aura_issue_test_link_llvm_jit(test_chaos_steal_mutation_gc)
+aura_issue_test_link_light(test_chaos_steal_mutation_gc)
 # EXCLUDE_FROM_ALL: opt-in chaos soak (AURA_CHAOS_STEAL_GC); still wired to
 # all_test_issue_targets below after that aggregate target is created (#2315).
 set_target_properties(test_chaos_steal_mutation_gc PROPERTIES EXCLUDE_FROM_ALL TRUE)
 # Issue #1987: wait_for_safepoint actually blocks until signaled (B-001).
 aura_add_issue_test(test_safepoint_mutation)
-aura_issue_test_link_llvm_jit(test_safepoint_mutation)
+aura_issue_test_link_light(test_safepoint_mutation)
 # Issue #1988: ArenaGroup::arenas_ protected by shared_mutex (A-001).
 aura_add_issue_test(test_arena_concurrent_mutex)
-aura_issue_test_link_llvm_jit(test_arena_concurrent_mutex)
+aura_issue_test_link_light(test_arena_concurrent_mutex)
 # Issue #1989: ASTArena::on_compact_hook_ protected by mutex (A-003).
 aura_add_issue_test(test_arena_compact_hook_concurrent)
-aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
+aura_issue_test_link_light(test_arena_compact_hook_concurrent)
 
 # Issue #2381: concurrent compact_hook shape_inval counter is atomic (TSAN + exact count).
 aura_add_issue_test(test_arena_compact_hook_stats_2381)
-aura_issue_test_link_llvm_jit(test_arena_compact_hook_stats_2381)
+aura_issue_test_link_light(test_arena_compact_hook_stats_2381)
 # Issue #2382: ASTArena dtor clears hooks under mutex before teardown (no dangling invoke).
 aura_add_issue_test(test_arena_dtor_clears_hooks_2382)
-aura_issue_test_link_llvm_jit(test_arena_dtor_clears_hooks_2382)
+aura_issue_test_link_light(test_arena_dtor_clears_hooks_2382)
 # Issue #2383: has_on_compact_hook locks hook_mtx_ (parity with layout/root_remap has_*).
 aura_add_issue_test(test_has_on_compact_hook_lock_2383)
-aura_issue_test_link_llvm_jit(test_has_on_compact_hook_lock_2383)
+aura_issue_test_link_light(test_has_on_compact_hook_lock_2383)
 # Issue #2463: summary_flags_ converted to std::atomic<uint32_t> + clear()
 # acquires flatast_mutex_. Concurrent reader (summary_flags() / summary_has())
 # + writer (clear() / summary_add_flags() / summary_recompute()) must not
 # observe a torn mid-write. Pattern family #1 (SoA column race); sibling
 # of #2444/#2445/#2446/#2447/#2449/#2450/#2451/#2452/#2453.
 aura_add_issue_test(test_ast_concurrency)
-aura_issue_test_link_llvm_jit(test_ast_concurrency)
+aura_issue_test_link_light(test_ast_concurrency)
 # Issue #2089: live_compact non-moving contract + LiveCompactResult.moved_live_objects
 # + optional on_layout_change callback (fires only on gen bumps). Schema bump on
 # (arena:live-compact) hash: 2004 → 2009 + new moved-live-objects field. AC1..AC4
 # (primitive layer) + AC5..AC6 (direct C++ ASTArena address-stability + callback
 # firing). Lives in tests/core/ per #81934/#81967.
 aura_add_issue_test(test_arena_auto_compact_intelligent)
-aura_issue_test_link_llvm_jit(test_arena_auto_compact_intelligent)
+aura_issue_test_link_light(test_arena_auto_compact_intelligent)
 
 # Issue #2157: Force live_compact hard-mutex with LifetimePin + EnvFrameLifetimeGuard.
 aura_add_issue_test(test_force_compact_hard_mutex_2157)
-aura_issue_test_link_llvm_jit(test_force_compact_hard_mutex_2157)
+aura_issue_test_link_light(test_force_compact_hard_mutex_2157)
 
 # Issue #2160: GcDeferReason::RenderPin end-to-end (arm/release + should_defer + stats).
 aura_add_issue_test(test_gc_defer_render_pin_2160)
-aura_issue_test_link_llvm_jit(test_gc_defer_render_pin_2160)
+aura_issue_test_link_light(test_gc_defer_render_pin_2160)
 
 # Issue #2166: opt-in LiveCompactMode::Moving densify + object_remap_.
 aura_add_issue_test(test_moving_compact_2166)
-aura_issue_test_link_llvm_jit(test_moving_compact_2166)
+aura_issue_test_link_light(test_moving_compact_2166)
 # Issue #2298: non-render general object pin-or-remap (GeneralObjectPin / pin_or_fail).
 aura_add_issue_test(test_general_object_pin_2298)
-aura_issue_test_link_llvm_jit(test_general_object_pin_2298)
+aura_issue_test_link_light(test_general_object_pin_2298)
 # Issue #2294 / #2267: RootRemapPass real Stable-object + Closure capture rewrite.
 aura_add_issue_test(test_root_remap_pass_2267)
-aura_issue_test_link_llvm_jit(test_root_remap_pass_2267)
+aura_issue_test_link_light(test_root_remap_pass_2267)
 # Issue #1990: (gc-temp)/(gc-stats) closures_ iteration protected by closures_mtx_ (B-009).
 aura_add_issue_test(test_issue_1990)
-aura_issue_test_link_llvm_jit(test_issue_1990)
+aura_issue_test_link_light(test_issue_1990)
 # Issue #1991: (gc) primitive clear path protected by module_mtx_ (B-010).
 aura_add_issue_test(test_issue_1991)
-aura_issue_test_link_llvm_jit(test_issue_1991)
+aura_issue_test_link_light(test_issue_1991)
 # Issue #1993: (gc-heap) direct-clear holds heap_mutex_ + module_mtx_ +
 # workspace_mtx_ atomically (std::lock); (gc) also adds workspace_mtx_
 # for the workspace_flat_ / workspace_pool_ nulls (D-001, sibling of
 # B-010 / F-004).
 aura_add_issue_test(test_issue_1993)
-aura_issue_test_link_llvm_jit(test_issue_1993)
+aura_issue_test_link_light(test_issue_1993)
 # Issue #1994: (workspace-state) and (workspace-tree-*) primitives take
 # workspace_mtx_ lock (shared_lock for read-only, unique_lock for
 # read+write) to gate against concurrent set_workspace_flat (#1729)
 # mid-construction rollback — racy NULL-check-then-dereference
 # pattern (F-004, sibling of B-010 / D-001).
 aura_add_issue_test(test_workspace_state_lock)
-aura_issue_test_link_llvm_jit(test_workspace_state_lock)
+aura_issue_test_link_light(test_workspace_state_lock)
 # Wave1 B-03/B-09: eval-current short pin + WorkspaceFlatPin adopt under Guard
 aura_add_issue_test(test_workspace_lock_reentrancy)
 aura_issue_test_link_llvm_jit(test_workspace_lock_reentrancy)
@@ -1588,11 +1631,11 @@ aura_issue_test_link_llvm_jit(test_pair_slot_lock)
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
 # exactly ONE allocation; losers release to pool.
 aura_add_issue_test(test_issue_1992)
-aura_issue_test_link_llvm_jit(test_issue_1992)
+aura_issue_test_link_light(test_issue_1992)
 # Issue #415: DirtyReason verification categories +
 # mark_dirty_upward propagation metrics synthesis.
 aura_add_issue_test(test_dirty_reason_verification_propagation)
-aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation)
+aura_issue_test_link_light(test_dirty_reason_verification_propagation)
 # Issue #508 slice: dead-coercion-zerooverhead-stats hash observability.
 # Issue #510 slice: eda-verification-stats hash observability.
 # Issue #511 slice: workspace-snapshot-stats hash observability.
@@ -1638,10 +1681,10 @@ aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation)
 # / test_issue_226 (jit_tests bundle).
 # Issue #611: CoercionMap deferred + DCE + CastOp type_tag zero-overhead flow
 aura_add_issue_test(test_coercion_dead_elim_castop_flow_zerooverhead)
-aura_issue_test_link_llvm_jit(test_coercion_dead_elim_castop_flow_zerooverhead)
+aura_issue_test_link_light(test_coercion_dead_elim_castop_flow_zerooverhead)
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_refinement_closed_loop)
-aura_issue_test_link_llvm_jit(test_refinement_closed_loop)
+aura_issue_test_link_light(test_refinement_closed_loop)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a
@@ -1734,19 +1777,19 @@ aura_issue_test_link_llvm_jit(test_refinement_closed_loop)
 # 100-iter cycle + 8-thread concurrent + (gc-heap) integration
 # + regression for #556 + #555 + #549.
 aura_add_issue_test(test_hardware_resource_linear_ownership)
-aura_issue_test_link_llvm_jit(test_hardware_resource_linear_ownership)
+aura_issue_test_link_light(test_hardware_resource_linear_ownership)
 # Issue #599: Compiler root epoch/version + GC synergy post-invalidate_function.
 # 7 ACs: compiler-root-stats (schema 599), root-refresh on invalidate,
 # stale/env-mismatch/dangling counters, multi-round monotonic + regression.
 # Non-duplicative with #531 (closure-env-safety), #598 (linear-runtime).
 aura_add_issue_test(test_root_epoch_gc_safety_post_invalidate)
-aura_issue_test_link_llvm_jit(test_root_epoch_gc_safety_post_invalidate)
+aura_issue_test_link_light(test_root_epoch_gc_safety_post_invalidate)
 # Issue #600: Per-block dirty + impact scope + closure bridge synergy for
 # minimal re-lower in AI self-mod. 7 ACs: incremental-closure-stats
 # (schema 600), blocks-relowered/bridge-hits/min-scope-win/jit-sync,
 # multi-round monotonic + regression. Non-duplicative with #530/#429/#531.
 aura_add_issue_test(test_incremental_perblock_closure_bridge_safety)
-aura_issue_test_link_llvm_jit(test_incremental_perblock_closure_bridge_safety)
+aura_issue_test_link_light(test_incremental_perblock_closure_bridge_safety)
 # Issue #305: Propagate rich TypeId/TypeScheme from TypeChecker
 # to IR for hardware optimization & synthesis (P0 EDA track).
 # Issue #304: Aura -> Agentic EDA Roadmap (roadmap/vision,
@@ -1778,14 +1821,14 @@ aura_issue_test_link_llvm_jit(test_incremental_perblock_closure_bridge_safety)
 # coverage + consistency check. Non-duplicative with
 # #558-#564.
 aura_add_issue_test(test_stdlib_infrastructure)
-aura_issue_test_link_llvm_jit(test_stdlib_infrastructure)
+aura_issue_test_link_light(test_stdlib_infrastructure)
 # Issue #564: Core Builtins Selective Review (P3, long-term).
 # 5 scenarios validating: lib/std/core.aura (new, 10 stdlib
 # wrappers) + decision doc with STAY+DEMOTE tables + reusable
 # review process + regression on engine core primitives.
 # Non-duplicative with #558-#563.
 aura_add_issue_test(test_core_builtins_review)
-aura_issue_test_link_llvm_jit(test_core_builtins_review)
+aura_issue_test_link_light(test_core_builtins_review)
 # Issue #563: New/enhanced std/ast + std/workspace high-level
 # modules (P2). 5 scenarios validating: lib/std/ast.aura
 # (new, 6 stdlib functions) + lib/std/workspace.aura enhanced
@@ -1793,7 +1836,7 @@ aura_issue_test_link_llvm_jit(test_core_builtins_review)
 # decision doc + regression. Non-duplicative with
 # #558-#562.
 aura_add_issue_test(test_ast_workspace_modules)
-aura_issue_test_link_llvm_jit(test_ast_workspace_modules)
+aura_issue_test_link_light(test_ast_workspace_modules)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
@@ -1801,7 +1844,7 @@ aura_issue_test_link_llvm_jit(test_ast_workspace_modules)
 # stdlib wrapper safety + regression for core primitives.
 # Non-duplicative with #558 + #559 + #560 + #561.
 aura_add_issue_test(test_query_namespace_audit)
-aura_issue_test_link_llvm_jit(test_query_namespace_audit)
+aura_issue_test_link_light(test_query_namespace_audit)
 # Issue #561: Review and demote synthesize: namespace
 # primitives (P1). 9 scenarios validating: (query:templates)
 # engine-level accessor (replaces demoted primitive) +
@@ -1810,7 +1853,7 @@ aura_issue_test_link_llvm_jit(test_query_namespace_audit)
 # regression. Non-duplicative with #558 (decision framework)
 # + #559 (classification) + #560 (stats unification).
 aura_add_issue_test(test_synthesize_namespace_demotion)
-aura_issue_test_link_llvm_jit(test_synthesize_namespace_demotion)
+aura_issue_test_link_light(test_synthesize_namespace_demotion)
 # Issue #560: Unify *-stats primitives via std/stats.aura +
 # (stats:list) + (stats:count) meta-primitives (P1). 10
 # scenarios validating: (stats:list) returns 39+ entries,
@@ -1820,7 +1863,7 @@ aura_issue_test_link_llvm_jit(test_synthesize_namespace_demotion)
 # covers #543-#531 + define/eval. Non-duplicative with
 # #543-#556 + #531.
 aura_add_issue_test(test_stats_module_unification)
-aura_issue_test_link_llvm_jit(test_stats_module_unification)
+aura_issue_test_link_light(test_stats_module_unification)
 # Issue #531: Live IRClosure/EnvFrame/bridge_epoch +
 # linear_ownership_state safety post-invalidate_function +
 # GC synergy (Memory-Safety Core, Prompt6 review). 10
@@ -1831,7 +1874,7 @@ aura_issue_test_link_llvm_jit(test_stats_module_unification)
 # (gc-heap) integration + regression. Non-duplicative
 # production memory-safety surface.
 aura_add_issue_test(test_compiler_closure_env_safety_post_invalidate)
-aura_issue_test_link_llvm_jit(test_compiler_closure_env_safety_post_invalidate)
+aura_issue_test_link_light(test_compiler_closure_env_safety_post_invalidate)
 # Issue #556: Concurrency Safety of workspace_mtx_ +
 # Fiber Yield + Per-Fiber MutationBoundaryGuard Stack
 # in Multi-Agent EDSL Orchestration (P0). 9 scenarios
@@ -1844,7 +1887,7 @@ aura_issue_test_link_llvm_jit(test_compiler_closure_env_safety_post_invalidate)
 # #546/#332 focused on Task1 EDSL locking + Guard/fiber
 # paths.
 aura_add_issue_test(test_edsl_concurrent_fiber_boundary_task1)
-aura_issue_test_link_llvm_jit(test_edsl_concurrent_fiber_boundary_task1)
+aura_issue_test_link_light(test_edsl_concurrent_fiber_boundary_task1)
 # Issue #555: MutationBoundaryGuard + mark_dirty_upward +
 # defuse_version_ + Incremental Type/Occurrence Narrowing
 # Post-Mutate for Reliable Typed AI Self-Mod (P0). 9
@@ -1856,7 +1899,7 @@ aura_issue_test_link_llvm_jit(test_edsl_concurrent_fiber_boundary_task1)
 # refinement of #550 (Task6 review) focused on Task1
 # EDSL mutate + Guard + dirty propagation paths.
 aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
-aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
+aura_issue_test_link_light(test_incremental_typed_selfmod_dirty_narrowing)
 # Issue #554: query:pattern + tag_arity_index Incremental
 # Issue #553: End-to-End Atomic Batch Mutate + Full
 # mutation_log_ Rollback + MutationBoundaryGuard + Fiber
@@ -1867,10 +1910,10 @@ aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
 # regression. Non-duplicative refinement of #529 focused
 # on Task1 EDSL primitives + Guard/fiber paths.
 aura_add_issue_test(test_atomic_batch_rollback_fiber_task1)
-aura_issue_test_link_llvm_jit(test_atomic_batch_rollback_fiber_task1)
+aura_issue_test_link_light(test_atomic_batch_rollback_fiber_task1)
 # Issue #529: Atomic batch + Guard rollback closed-loop observability.
 aura_add_issue_test(test_atomic_batch_rollback_closed_loop)
-aura_issue_test_link_llvm_jit(test_atomic_batch_rollback_closed_loop)
+aura_issue_test_link_light(test_atomic_batch_rollback_closed_loop)
 # Issue #552: StableNodeRef + generation_ + COW/Fiber/
 # Provenance Safety for Reliable Long-Running AI
 # Multi-Round Query → Mutate → Eval Loops (P0). 9
@@ -1882,7 +1925,7 @@ aura_issue_test_link_llvm_jit(test_atomic_batch_rollback_closed_loop)
 # refinement of #549 (Task6 review) focused on Task1 EDSL
 # primitives (mutate:* + query:*-stable).
 aura_add_issue_test(test_stable_ref_provenance_fiber_cow)
-aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
+aura_issue_test_link_light(test_stable_ref_provenance_fiber_cow)
 # Issue #551: Post-Mutation Reflection/auto_validate +
 # Guard Impact Snapshot + Schema Validation Hook for
 # Code-as-Data Closed Loop (P0). 9 scenarios validating:
@@ -1896,7 +1939,7 @@ aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
 
 # Issue #594: Static reflection self-mod validation hook (Task6).
 aura_add_issue_test(test_static_reflect_selfmod_validation_task6)
-aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6)
+aura_issue_test_link_light(test_static_reflect_selfmod_validation_task6)
 # Issue #550: Dirty/Epoch Propagation + Incremental
 # solve_delta + Occurrence Re-Narrowing + Pass Short-Circuit
 # for reliable typed self-mod (P0). 9 scenarios validating:
@@ -1939,7 +1982,7 @@ add_dependencies(all_test_issue_targets test_issues_light_late)
 # compiler_core terminal + EnvFrame/bridge_epoch batches (merged from
 # standalone drivers that shared harness/deps).
 aura_add_issue_test(test_terminal_domain_batch)
-aura_issue_test_link_llvm_jit(test_terminal_domain_batch)
+aura_issue_test_link_light(test_terminal_domain_batch)
 add_dependencies(all_test_issue_targets test_terminal_domain_batch)
 
 aura_add_issue_test(test_envframe_epoch_batch)
@@ -1952,21 +1995,21 @@ add_dependencies(all_test_issue_targets test_envframe_truncate_epoch)
 # tests/reflect/ hygiene consolidation (R3 renamed edsl → reflect).
 # Prefer extending these over new test_edsl_* / test_reflect_* singles.
 aura_add_issue_test(test_reflect_pattern_hygiene_batch)
-aura_issue_test_link_llvm_jit(test_reflect_pattern_hygiene_batch)
+aura_issue_test_link_light(test_reflect_pattern_hygiene_batch)
 add_dependencies(all_test_issue_targets test_reflect_pattern_hygiene_batch)
 
 aura_add_issue_test(test_reflect_macro_hygiene_batch)
-aura_issue_test_link_llvm_jit(test_reflect_macro_hygiene_batch)
+aura_issue_test_link_light(test_reflect_macro_hygiene_batch)
 add_dependencies(all_test_issue_targets test_reflect_macro_hygiene_batch)
 
 # Issue #2018: rest-param hygiene in clone_macro_body + hygienic rest expand.
 aura_add_issue_test(test_rest_param_hygiene_self_evo)
-aura_issue_test_link_llvm_jit(test_rest_param_hygiene_self_evo)
+aura_issue_test_link_light(test_rest_param_hygiene_self_evo)
 add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
 
 # Issue #2169: complete rest-param hygienic renaming (unique gensyms + shadow).
 aura_add_issue_test(test_rest_param_hygiene_2169)
-aura_issue_test_link_llvm_jit(test_rest_param_hygiene_2169)
+aura_issue_test_link_light(test_rest_param_hygiene_2169)
 add_dependencies(all_test_issue_targets test_rest_param_hygiene_2169)
 
 # Issue #2239: complete rest-param + nested quasiquote hygiene + schema_cache
@@ -1982,18 +2025,18 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_2169)
 
 # Issue #2019: MacroIntroduced restamp after expand → FlatAST.
 aura_add_issue_test(test_macro_restamp_after_flat)
-aura_issue_test_link_llvm_jit(test_macro_restamp_after_flat)
+aura_issue_test_link_light(test_macro_restamp_after_flat)
 add_dependencies(all_test_issue_targets test_macro_restamp_after_flat)
 # Issue #2235: production-grade cross-FlatAST clone_macro_body
 # hygiene gate (always-on validate + sandbox-strict forced restamp;
 # replaces #2171 `#ifndef NDEBUG` + abort).
 aura_add_issue_test(test_macro_cross_flat_hygiene_2235)
-aura_issue_test_link_llvm_jit(test_macro_cross_flat_hygiene_2235)
+aura_issue_test_link_light(test_macro_cross_flat_hygiene_2235)
 add_dependencies(all_test_issue_targets test_macro_cross_flat_hygiene_2235)
 # Issue #2096: per-cloned-subtree MacroIntroduced restamp stability
 # after expand in mutate paths (NodeId-rooted helper + counter + query surface).
 aura_add_issue_test(test_macro_intro_restamp)
-aura_issue_test_link_llvm_jit(test_macro_intro_restamp)
+aura_issue_test_link_light(test_macro_intro_restamp)
 add_dependencies(all_test_issue_targets test_macro_intro_restamp)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
@@ -2025,12 +2068,12 @@ aura_add_issue_test(test_aot_anonymous_closure_policy_2238)
 aura_issue_test_link_llvm_jit(test_aot_anonymous_closure_policy_2238)
 add_dependencies(all_test_issue_targets test_aot_anonymous_closure_policy_2238)
 aura_add_issue_test(test_query_by_marker_provenance_2242)
-aura_issue_test_link_llvm_jit(test_query_by_marker_provenance_2242)
+aura_issue_test_link_light(test_query_by_marker_provenance_2242)
 add_dependencies(all_test_issue_targets test_query_by_marker_provenance_2242)
 # Issue #2098: clone_macro_body schema_cache + dirty/provenance
 # propagation for rest-param + nested paths (metrics layer + tests).
 aura_add_issue_test(test_macro_schema_dirty_propagate)
-aura_issue_test_link_llvm_jit(test_macro_schema_dirty_propagate)
+aura_issue_test_link_light(test_macro_schema_dirty_propagate)
 add_dependencies(all_test_issue_targets test_macro_schema_dirty_propagate)
 # Issue #2097: per-fiber hygiene metrics for Agent query under
 # concurrent self-evo / fiber-steal (refine Macro Hygiene review §7.2).
@@ -2040,17 +2083,17 @@ add_dependencies(all_test_issue_targets test_macro_fiber_hygiene)
 
 # Issue #2020: Agent-visible reflect:hygiene-stats + provenance-blame.
 aura_add_issue_test(test_reflect_hygiene_agent_diagnostics)
-aura_issue_test_link_llvm_jit(test_reflect_hygiene_agent_diagnostics)
+aura_issue_test_link_light(test_reflect_hygiene_agent_diagnostics)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_agent_diagnostics)
 
 # Issue #2167: Agent-visible hygiene-diagnostic + macro-provenance-chain.
 aura_add_issue_test(test_hygiene_diagnostic_2167)
-aura_issue_test_link_llvm_jit(test_hygiene_diagnostic_2167)
+aura_issue_test_link_light(test_hygiene_diagnostic_2167)
 add_dependencies(all_test_issue_targets test_hygiene_diagnostic_2167)
 
 # Issue #2021: macro hygiene depth + concurrent peak observability.
 aura_add_issue_test(test_macro_hygiene_depth_concurrent_obs)
-aura_issue_test_link_llvm_jit(test_macro_hygiene_depth_concurrent_obs)
+aura_issue_test_link_light(test_macro_hygiene_depth_concurrent_obs)
 add_dependencies(all_test_issue_targets test_macro_hygiene_depth_concurrent_obs)
 
 # Issue #2022: MacroIntroduced preserved across JIT/AOT native metadata.
@@ -2060,76 +2103,76 @@ add_dependencies(all_test_issue_targets test_jit_macro_introduced_preserve)
 
 # Issue #2023: MacroSelfEvo capability boundary for agent macro expansion.
 aura_add_issue_test(test_macro_self_evo_capability)
-aura_issue_test_link_llvm_jit(test_macro_self_evo_capability)
+aura_issue_test_link_light(test_macro_self_evo_capability)
 add_dependencies(all_test_issue_targets test_macro_self_evo_capability)
 # Issue #2386: grant_macro_self_evo stamps grant_epoch + grant_fiber_id (#2055 parity).
 aura_add_issue_test(test_grant_macro_self_evo_stamp_2386)
-aura_issue_test_link_llvm_jit(test_grant_macro_self_evo_stamp_2386)
+aura_issue_test_link_light(test_grant_macro_self_evo_stamp_2386)
 add_dependencies(all_test_issue_targets test_grant_macro_self_evo_stamp_2386)
 
 # Issue #2024: occurrence narrowing provenance chain completeness.
 aura_add_issue_test(test_occurrence_provenance_chain_completeness)
-aura_issue_test_link_llvm_jit(test_occurrence_provenance_chain_completeness)
+aura_issue_test_link_light(test_occurrence_provenance_chain_completeness)
 add_dependencies(all_test_issue_targets test_occurrence_provenance_chain_completeness)
 
 # Issue #2025: DeadCoercionEliminationPass default pipeline + AST/IR synergy.
 aura_add_issue_test(test_dead_coercion_pipeline_wire)
-aura_issue_test_link_llvm_jit(test_dead_coercion_pipeline_wire)
+aura_issue_test_link_light(test_dead_coercion_pipeline_wire)
 add_dependencies(all_test_issue_targets test_dead_coercion_pipeline_wire)
 
 # Issue #2026: linear ownership + provenance consistency post-steal / GC.
 aura_add_issue_test(test_linear_provenance_steal_gc_closed_loop)
-aura_issue_test_link_llvm_jit(test_linear_provenance_steal_gc_closed_loop)
+aura_issue_test_link_light(test_linear_provenance_steal_gc_closed_loop)
 add_dependencies(all_test_issue_targets test_linear_provenance_steal_gc_closed_loop)
 
 # Issue #2027: composite / nested txn typed + linear invariant audit.
 aura_add_issue_test(test_composite_nested_txn_invariant_audit)
-aura_issue_test_link_llvm_jit(test_composite_nested_txn_invariant_audit)
+aura_issue_test_link_light(test_composite_nested_txn_invariant_audit)
 add_dependencies(all_test_issue_targets test_composite_nested_txn_invariant_audit)
 
 # Issue #2028: constraint solver surface + cross-delta occurrence/Let-Poly/ADT.
 aura_add_issue_test(test_constraint_solver_surface_cross_delta)
-aura_issue_test_link_llvm_jit(test_constraint_solver_surface_cross_delta)
+aura_issue_test_link_light(test_constraint_solver_surface_cross_delta)
 add_dependencies(all_test_issue_targets test_constraint_solver_surface_cross_delta)
 
 # Issue #2029: Full-strategy per-category partial recovery before structural rollback.
 aura_add_issue_test(test_full_strategy_partial_recovery)
-aura_issue_test_link_llvm_jit(test_full_strategy_partial_recovery)
+aura_issue_test_link_light(test_full_strategy_partial_recovery)
 add_dependencies(all_test_issue_targets test_full_strategy_partial_recovery)
 
 # Issue #2030: blame completeness + occurrence hit-rate agent query surface.
 aura_add_issue_test(test_blame_occurrence_agent_ratios)
-aura_issue_test_link_llvm_jit(test_blame_occurrence_agent_ratios)
+aura_issue_test_link_light(test_blame_occurrence_agent_ratios)
 add_dependencies(all_test_issue_targets test_blame_occurrence_agent_ratios)
 
 # Issue #2031: instruction-level impact scope + selective dirty.
 aura_add_issue_test(test_instr_level_impact_scope)
-aura_issue_test_link_llvm_jit(test_instr_level_impact_scope)
+aura_issue_test_link_light(test_instr_level_impact_scope)
 add_dependencies(all_test_issue_targets test_instr_level_impact_scope)
 
 # Issue #2032: dep_graph stale-edge reject + configurable partial-relower threshold.
 aura_add_issue_test(test_dep_graph_partial_relower_threshold)
-aura_issue_test_link_llvm_jit(test_dep_graph_partial_relower_threshold)
+aura_issue_test_link_light(test_dep_graph_partial_relower_threshold)
 add_dependencies(all_test_issue_targets test_dep_graph_partial_relower_threshold)
 
 # Issue #2033: CacheEntryVersionStamp + bridge_epoch in should_relower.
 aura_add_issue_test(test_cache_entry_version_stamp)
-aura_issue_test_link_llvm_jit(test_cache_entry_version_stamp)
+aura_issue_test_link_light(test_cache_entry_version_stamp)
 add_dependencies(all_test_issue_targets test_cache_entry_version_stamp)
 
 # Issue #2183: unified CacheEntryVersionStamp restamp contract.
 aura_add_issue_test(test_cache_stamp_restamp_contract_2183)
-aura_issue_test_link_llvm_jit(test_cache_stamp_restamp_contract_2183)
+aura_issue_test_link_light(test_cache_stamp_restamp_contract_2183)
 add_dependencies(all_test_issue_targets test_cache_stamp_restamp_contract_2183)
 
 # Issue #2034: force instruction_dirty_ sync after cascade block dirty marks.
 aura_add_issue_test(test_soa_cascade_instr_dirty_sync)
-aura_issue_test_link_llvm_jit(test_soa_cascade_instr_dirty_sync)
+aura_issue_test_link_light(test_soa_cascade_instr_dirty_sync)
 add_dependencies(all_test_issue_targets test_soa_cascade_instr_dirty_sync)
 
 # Issue #2181: hard gate SoA desync on partial relower entry → force full.
 aura_add_issue_test(test_soa_partial_desync_gate_2181)
-aura_issue_test_link_llvm_jit(test_soa_partial_desync_gate_2181)
+aura_issue_test_link_light(test_soa_partial_desync_gate_2181)
 add_dependencies(all_test_issue_targets test_soa_partial_desync_gate_2181)
 
 # Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit from cascade.
@@ -2139,42 +2182,42 @@ add_dependencies(all_test_issue_targets test_hot_update_cascade_dirty_reemit)
 
 # Issue #2036: PCV children_ migration complete + SafePCVSpan default APIs.
 aura_add_issue_test(test_pcv_children_safe_default_migration)
-aura_issue_test_link_llvm_jit(test_pcv_children_safe_default_migration)
+aura_issue_test_link_light(test_pcv_children_safe_default_migration)
 add_dependencies(all_test_issue_targets test_pcv_children_safe_default_migration)
 
 # Issue #2037: MacroIntroduced FailOnStale + stamp on mutate hotpaths.
 aura_add_issue_test(test_hygiene_mutate_closed_loop)
-aura_issue_test_link_llvm_jit(test_hygiene_mutate_closed_loop)
+aura_issue_test_link_light(test_hygiene_mutate_closed_loop)
 add_dependencies(all_test_issue_targets test_hygiene_mutate_closed_loop)
 
 # Issue #2038: push-automatic post-mutate DefUse/IR/JIT cascade + latency.
 aura_add_issue_test(test_post_mutate_push_cascade)
-aura_issue_test_link_llvm_jit(test_post_mutate_push_cascade)
+aura_issue_test_link_light(test_post_mutate_push_cascade)
 add_dependencies(all_test_issue_targets test_post_mutate_push_cascade)
 
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
-aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
+aura_issue_test_link_light(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)
 
 # tests/fiber/ consolidation — strategy/evolve, synthesize, orch, concurrent units.
 # Keep test_concurrent + test_jit_concurrent_compile (custom targets) and
 # test_per_fiber_stack_pool_high_concurrency (jit_late1 bundle member).
 aura_add_issue_test(test_fiber_strategy_evolve_batch)
-aura_issue_test_link_llvm_jit(test_fiber_strategy_evolve_batch)
+aura_issue_test_link_light(test_fiber_strategy_evolve_batch)
 add_dependencies(all_test_issue_targets test_fiber_strategy_evolve_batch)
 
 aura_add_issue_test(test_fiber_synthesize_batch)
-aura_issue_test_link_llvm_jit(test_fiber_synthesize_batch)
+aura_issue_test_link_light(test_fiber_synthesize_batch)
 add_dependencies(all_test_issue_targets test_fiber_synthesize_batch)
 
 # Orch batches: EXCLUDE_FROM_ALL — Scheduler/fiber stress can SIGSEGV under
 # co-linked load; on-demand via ninja test_fiber_orch_*_batch.
 aura_add_issue_test(test_fiber_orch_core_batch)
-aura_issue_test_link_llvm_jit(test_fiber_orch_core_batch)
+aura_issue_test_link_light(test_fiber_orch_core_batch)
 set_target_properties(test_fiber_orch_core_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 aura_add_issue_test(test_fiber_orch_parallel_quota_batch)
-aura_issue_test_link_llvm_jit(test_fiber_orch_parallel_quota_batch)
+aura_issue_test_link_light(test_fiber_orch_parallel_quota_batch)
 set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 # Issue #2078: per-Evaluator orch agent name table (replaces the
@@ -2186,16 +2229,16 @@ set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FR
 # Evaluator::cleanup_orch_agents(). Single-agent MVP surface
 # preserved (scripts/check_orch_mvp_scope.py --strict still guards).
 aura_add_issue_test(test_agent_name_table_isolation_2078)
-aura_issue_test_link_llvm_jit(test_agent_name_table_isolation_2078)
+aura_issue_test_link_light(test_agent_name_table_isolation_2078)
 
 # Issue #2158: per-Evaluator agent apply mutex (replace process-static orch_eval_mu).
 aura_add_issue_test(test_agent_apply_mutex_2158)
-aura_issue_test_link_llvm_jit(test_agent_apply_mutex_2158)
+aura_issue_test_link_light(test_agent_apply_mutex_2158)
 add_dependencies(all_test_issue_targets test_agent_apply_mutex_2158)
 
 # Issue #2163: parallel-intend :pure #t path (skip eval_mu for pure thunks).
 aura_add_issue_test(test_parallel_intend_pure_2163)
-aura_issue_test_link_llvm_jit(test_parallel_intend_pure_2163)
+aura_issue_test_link_light(test_parallel_intend_pure_2163)
 add_dependencies(all_test_issue_targets test_parallel_intend_pure_2163)
 
 # Issue #1665 / #2164: scan_skip_freed + EnvFrameLifetimeGuard hold-pin.
@@ -2206,16 +2249,16 @@ add_dependencies(all_test_issue_targets test_scan_skip_freed_closures)
 
 # Issue #2159: fiber-native keepalive helper (replace detached std::thread).
 aura_add_issue_test(test_fiber_native_keepalive_2159)
-aura_issue_test_link_llvm_jit(test_fiber_native_keepalive_2159)
+aura_issue_test_link_light(test_fiber_native_keepalive_2159)
 add_dependencies(all_test_issue_targets test_fiber_native_keepalive_2159)
 
 # Issue #2083: opt-in AgentScope (feature-flagged via AURA_ENABLE_AGENT_SCOPE).
 # The test file #defines the flag so the AgentScope class body is visible.
 aura_add_issue_test(test_agent_scope_2083)
-aura_issue_test_link_llvm_jit(test_agent_scope_2083)
+aura_issue_test_link_light(test_agent_scope_2083)
 
 aura_add_issue_test(test_fiber_concurrent_unit_batch)
-aura_issue_test_link_llvm_jit(test_fiber_concurrent_unit_batch)
+aura_issue_test_link_light(test_fiber_concurrent_unit_batch)
 add_dependencies(all_test_issue_targets test_fiber_concurrent_unit_batch)
 
 # tests/compiler/jit/ AOT hot-update consolidation (#1640/#544/#1370/#1480/#1641).
@@ -2253,7 +2296,7 @@ add_dependencies(all_test_issue_targets test_reload_recovery_query_2367)
 
 # Issue #2368: force densify remap-context pairing on Moving success paths.
 aura_add_issue_test(test_densify_remap_pairing_2368)
-aura_issue_test_link_llvm_jit(test_densify_remap_pairing_2368)
+aura_issue_test_link_light(test_densify_remap_pairing_2368)
 add_dependencies(all_test_issue_targets test_densify_remap_pairing_2368)
 
 # Issue #2499: unify RootRemapPass fail with pin_contract_held (single Moving
@@ -2262,7 +2305,7 @@ add_dependencies(all_test_issue_targets test_densify_remap_pairing_2368)
 # aggregates per-call fail totals; Phase 5 ANDs them into pin_contract_held
 # (same fail-closed shape as #2266 pin + #2497 scan_fail_delta).
 aura_add_issue_test(test_root_remap_pin_contract_unified_2499)
-aura_issue_test_link_llvm_jit(test_root_remap_pin_contract_unified_2499)
+aura_issue_test_link_light(test_root_remap_pin_contract_unified_2499)
 add_dependencies(all_test_issue_targets test_root_remap_pin_contract_unified_2499)
 
 # Issue #2369: live-closure remap stable_func_id sole primary (name-fallback legacy).
@@ -2296,11 +2339,11 @@ add_dependencies(all_test_issue_targets test_aot_mangle_top)
 # tests/mutation/ unit consolidations (unregistered standalones → theme batches).
 # Existing large family batches (mutate/linear/boundary/…) stay separate.
 aura_add_issue_test(test_mutation_guard_unit_batch)
-aura_issue_test_link_llvm_jit(test_mutation_guard_unit_batch)
+aura_issue_test_link_light(test_mutation_guard_unit_batch)
 add_dependencies(all_test_issue_targets test_mutation_guard_unit_batch)
 
 aura_add_issue_test(test_mutation_occurrence_dirty_batch)
-aura_issue_test_link_llvm_jit(test_mutation_occurrence_dirty_batch)
+aura_issue_test_link_light(test_mutation_occurrence_dirty_batch)
 add_dependencies(all_test_issue_targets test_mutation_occurrence_dirty_batch)
 
 aura_add_issue_test(test_mutation_aot_unit_batch)
@@ -2310,14 +2353,14 @@ add_dependencies(all_test_issue_targets test_mutation_aot_unit_batch)
 
 # Wave 36 (#1957): shape_soa unit batch (Env version / SoA walk smokes)
 aura_add_issue_test(test_shape_soa_unit_batch)
-aura_issue_test_link_llvm_jit(test_shape_soa_unit_batch)
+aura_issue_test_link_light(test_shape_soa_unit_batch)
 add_dependencies(all_test_issue_targets test_shape_soa_unit_batch)
 
 aura_add_issue_test(test_mutation_typed_audit_batch)
 
 # Wave 20 (#1957): linear ownership family batch (tests/observability/)
 aura_add_issue_test(test_linear_ownership_batch)
-aura_issue_test_link_llvm_jit(test_linear_ownership_batch)
+aura_issue_test_link_light(test_linear_ownership_batch)
 set_target_properties(test_linear_ownership_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 add_dependencies(all_test_issue_targets test_linear_ownership_batch)
 
@@ -2328,130 +2371,130 @@ add_dependencies(all_test_issue_targets test_obs_metrics_smoke_batch)
 
 # Issue #2047: batch_terminal Phase 2 dirty-region differential present
 aura_add_issue_test(test_batch_terminal_dirty_phase2_2047)
-aura_issue_test_link_llvm_jit(test_batch_terminal_dirty_phase2_2047)
+aura_issue_test_link_light(test_batch_terminal_dirty_phase2_2047)
 add_dependencies(all_test_issue_targets test_batch_terminal_dirty_phase2_2047)
 
 # Issue #2048: LifetimePin + zero-copy batch FFI present under soft-gate
 aura_add_issue_test(test_lifetime_pin_batch_ffi_present_2048)
-aura_issue_test_link_llvm_jit(test_lifetime_pin_batch_ffi_present_2048)
+aura_issue_test_link_light(test_lifetime_pin_batch_ffi_present_2048)
 add_dependencies(all_test_issue_targets test_lifetime_pin_batch_ffi_present_2048)
 
 # Issue #2049: dedicated render frame arena + linear cell grids
 aura_add_issue_test(test_render_frame_arena_2049)
-aura_issue_test_link_llvm_jit(test_render_frame_arena_2049)
+aura_issue_test_link_light(test_render_frame_arena_2049)
 add_dependencies(all_test_issue_targets test_render_frame_arena_2049)
 
 # Issue #2050: protect render-critical closures from deopt storms / hot-swap
 aura_add_issue_test(test_render_critical_hotswap_2050)
-aura_issue_test_link_llvm_jit(test_render_critical_hotswap_2050)
+aura_issue_test_link_light(test_render_critical_hotswap_2050)
 add_dependencies(all_test_issue_targets test_render_critical_hotswap_2050)
 
 # Issue #2051: Agent-visible render stats + closed-loop mutate-optimize
 aura_add_issue_test(test_render_agent_closedloop_2051)
-aura_issue_test_link_llvm_jit(test_render_agent_closedloop_2051)
+aura_issue_test_link_light(test_render_agent_closedloop_2051)
 add_dependencies(all_test_issue_targets test_render_agent_closedloop_2051)
 
 # Issue #2052: force capability + isolation on every mutate:* entry
 aura_add_issue_test(test_mutate_capability_force_2052)
-aura_issue_test_link_llvm_jit(test_mutate_capability_force_2052)
+aura_issue_test_link_light(test_mutate_capability_force_2052)
 add_dependencies(all_test_issue_targets test_mutate_capability_force_2052)
 
 # Issue #2053: production security defaults (Restricted + Full audit + WAL)
 aura_add_issue_test(test_production_security_defaults_2053)
-aura_issue_test_link_llvm_jit(test_production_security_defaults_2053)
+aura_issue_test_link_light(test_production_security_defaults_2053)
 add_dependencies(all_test_issue_targets test_production_security_defaults_2053)
 
 # Issue #2054: unify capability / mutation / TypedMutationAudit into
 # single Agent-queryable security audit surface (query:security-audit).
 aura_add_issue_test(test_security_audit_unify_2054)
-aura_issue_test_link_llvm_jit(test_security_audit_unify_2054)
+aura_issue_test_link_light(test_security_audit_unify_2054)
 add_dependencies(all_test_issue_targets test_security_audit_unify_2054)
 
 # Issue #2055: grant/revoke bound to WorkspaceEpoch Mutation + fiber.
 aura_add_issue_test(test_grant_epoch_fiber_bind_2055)
-aura_issue_test_link_llvm_jit(test_grant_epoch_fiber_bind_2055)
+aura_issue_test_link_light(test_grant_epoch_fiber_bind_2055)
 add_dependencies(all_test_issue_targets test_grant_epoch_fiber_bind_2055)
 
 # Issue #2056: mandate tenant_id + provenance stamp on StableNodeRef create/rebind.
 aura_add_issue_test(test_stable_ref_tenant_mandate_2056)
-aura_issue_test_link_llvm_jit(test_stable_ref_tenant_mandate_2056)
+aura_issue_test_link_light(test_stable_ref_tenant_mandate_2056)
 add_dependencies(all_test_issue_targets test_stable_ref_tenant_mandate_2056)
 
 # Issue #2189: Agent-visible StableNodeRef pin lifecycle RAII.
 aura_add_issue_test(test_stable_ref_pin_lifecycle_2189)
-aura_issue_test_link_llvm_jit(test_stable_ref_pin_lifecycle_2189)
+aura_issue_test_link_light(test_stable_ref_pin_lifecycle_2189)
 add_dependencies(all_test_issue_targets test_stable_ref_pin_lifecycle_2189)
 
 # Issue #2057: side-effect prims inherit capability enforcement by construction.
 aura_add_issue_test(test_side_effect_inherit_2057)
-aura_issue_test_link_llvm_jit(test_side_effect_inherit_2057)
+aura_issue_test_link_light(test_side_effect_inherit_2057)
 add_dependencies(all_test_issue_targets test_side_effect_inherit_2057)
 
 # Issue #2058: PCV unique-ownership hot path (AI structural mutate).
 aura_add_issue_test(test_pcv_unique_hotpath_2058)
 # Header-only PCV + FlatAST module link via standard issue test helper.
-aura_issue_test_link_llvm_jit(test_pcv_unique_hotpath_2058)
+aura_issue_test_link_light(test_pcv_unique_hotpath_2058)
 add_dependencies(all_test_issue_targets test_pcv_unique_hotpath_2058)
 
 # Issue #2140: PCV exclusive (refcount==1) in-place with_set path.
 aura_add_issue_test(test_pcv_exclusive_with_set_2140)
-aura_issue_test_link_llvm_jit(test_pcv_exclusive_with_set_2140)
+aura_issue_test_link_light(test_pcv_exclusive_with_set_2140)
 add_dependencies(all_test_issue_targets test_pcv_exclusive_with_set_2140)
 
 # Issue #2406: optional TLS freelist for exclusive PCV unique-inplace.
 aura_add_issue_test(test_pcv_tls_scratch_2406)
-aura_issue_test_link_llvm_jit(test_pcv_tls_scratch_2406)
+aura_issue_test_link_light(test_pcv_tls_scratch_2406)
 add_dependencies(all_test_issue_targets test_pcv_tls_scratch_2406)
 
 # Issue #2521: PCV TLS freelist production default ON.
 aura_add_issue_test(test_pcv_tls_default_on_2521)
-aura_issue_test_link_llvm_jit(test_pcv_tls_default_on_2521)
+aura_issue_test_link_light(test_pcv_tls_default_on_2521)
 add_dependencies(all_test_issue_targets test_pcv_tls_default_on_2521)
 
 # Issue #2522: batch dirty cascade API (mark_blocks_dirty + single gen bump).
 aura_add_issue_test(test_batch_dirty_cascade_2522)
-aura_issue_test_link_llvm_jit(test_batch_dirty_cascade_2522)
+aura_issue_test_link_light(test_batch_dirty_cascade_2522)
 add_dependencies(all_test_issue_targets test_batch_dirty_cascade_2522)
 
 # Issue #2523: residual workspace_mtx contention stats + soft region path.
 aura_add_issue_test(test_workspace_mtx_contention_2523)
-aura_issue_test_link_llvm_jit(test_workspace_mtx_contention_2523)
+aura_issue_test_link_light(test_workspace_mtx_contention_2523)
 add_dependencies(all_test_issue_targets test_workspace_mtx_contention_2523)
 
 # Issue #2524: giant module partition map + pass_manager Phase C split.
 aura_add_issue_test(test_module_partition_map_2524)
-aura_issue_test_link_llvm_jit(test_module_partition_map_2524)
+aura_issue_test_link_light(test_module_partition_map_2524)
 add_dependencies(all_test_issue_targets test_module_partition_map_2524)
 
 # Issue #2525: unconstrained query hygiene residual — default MacroIntroduced skip.
 aura_add_issue_test(test_query_hygiene_default_2525)
-aura_issue_test_link_llvm_jit(test_query_hygiene_default_2525)
+aura_issue_test_link_light(test_query_hygiene_default_2525)
 add_dependencies(all_test_issue_targets test_query_hygiene_default_2525)
 
 # Issue #2526: adaptive deopt-storm threshold closed-loop with LayoutStamp.
 aura_add_issue_test(test_shape_storm_adaptive_2526)
-aura_issue_test_link_llvm_jit(test_shape_storm_adaptive_2526)
+aura_issue_test_link_light(test_shape_storm_adaptive_2526)
 add_dependencies(all_test_issue_targets test_shape_storm_adaptive_2526)
 
 # Issue #2059: adaptive arena compact policy + ShapeProfiler deopt coordination.
 aura_add_issue_test(test_arena_adaptive_compact_2059)
-aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)
+aura_issue_test_link_light(test_arena_adaptive_compact_2059)
 add_dependencies(all_test_issue_targets test_arena_adaptive_compact_2059)
 
 # Issue #2060: HotPassDodCompliant dirty short-circuit + SoA-direct dirty entry.
 aura_add_issue_test(test_hot_pass_dirty_soa_2060)
-aura_issue_test_link_llvm_jit(test_hot_pass_dirty_soa_2060)
+aura_issue_test_link_light(test_hot_pass_dirty_soa_2060)
 add_dependencies(all_test_issue_targets test_hot_pass_dirty_soa_2060)
 
 # Issue #2084: inject real heap sizes into mark_from_roots (stop size=0,0,0).
 aura_add_issue_test(test_gc_mark_size_inject_2084)
-aura_issue_test_link_llvm_jit(test_gc_mark_size_inject_2084)
+aura_issue_test_link_light(test_gc_mark_size_inject_2084)
 add_dependencies(all_test_issue_targets test_gc_mark_size_inject_2084)
 
 # Issue #2088: unified GcDeferReason bitmask (panic + FFI pin + reserved render).
 # Extends #1581/#2002/#2005 scheduler GC defer suite with AC9–AC14.
 aura_add_issue_test(test_scheduler_gc_defer_pending_panic_steal)
-aura_issue_test_link_llvm_jit(test_scheduler_gc_defer_pending_panic_steal)
+aura_issue_test_link_light(test_scheduler_gc_defer_pending_panic_steal)
 add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_steal)
 
 # Issue #2100: MacroIntroduced IR attrs + deopt AST restore (refine #2022).
@@ -2461,62 +2504,62 @@ add_dependencies(all_test_issue_targets test_jit_macro_deopt_hygiene_2100)
 
 # Issue #2101: runtime-configurable hygiene depth/pass caps + query surface.
 aura_add_issue_test(test_macro_hygiene_limits_2101)
-aura_issue_test_link_llvm_jit(test_macro_hygiene_limits_2101)
+aura_issue_test_link_light(test_macro_hygiene_limits_2101)
 add_dependencies(all_test_issue_targets test_macro_hygiene_limits_2101)
 
 # Issue #2102: coercion provenance miss → Full TypedMutationAudit / reject apply.
 aura_add_issue_test(test_coercion_provenance_miss_force_audit_2102)
-aura_issue_test_link_llvm_jit(test_coercion_provenance_miss_force_audit_2102)
+aura_issue_test_link_light(test_coercion_provenance_miss_force_audit_2102)
 add_dependencies(all_test_issue_targets test_coercion_provenance_miss_force_audit_2102)
 
 # Issue #2185: production default reject_apply_on_provenance_miss.
 aura_add_issue_test(test_coercion_reject_production_defaults_2185)
-aura_issue_test_link_llvm_jit(test_coercion_reject_production_defaults_2185)
+aura_issue_test_link_light(test_coercion_reject_production_defaults_2185)
 add_dependencies(all_test_issue_targets test_coercion_reject_production_defaults_2185)
 
 # Issue #2186: EDSL force StableNodeRef consumption via validate_or_refresh.
 aura_add_issue_test(test_edsl_validate_or_refresh_2186)
-aura_issue_test_link_llvm_jit(test_edsl_validate_or_refresh_2186)
+aura_issue_test_link_light(test_edsl_validate_or_refresh_2186)
 add_dependencies(all_test_issue_targets test_edsl_validate_or_refresh_2186)
 
 # Issue #2103: LinearEnforceMode Soft/Strict for validate_linear_provenance.
 aura_add_issue_test(test_linear_enforce_strict_2103)
-aura_issue_test_link_llvm_jit(test_linear_enforce_strict_2103)
+aura_issue_test_link_light(test_linear_enforce_strict_2103)
 add_dependencies(all_test_issue_targets test_linear_enforce_strict_2103)
 
 # Issue #2182: production defaults force LinearEnforceMode::Strict.
 aura_add_issue_test(test_linear_enforce_production_defaults_2182)
-aura_issue_test_link_llvm_jit(test_linear_enforce_production_defaults_2182)
+aura_issue_test_link_light(test_linear_enforce_production_defaults_2182)
 add_dependencies(all_test_issue_targets test_linear_enforce_production_defaults_2182)
 
 # Issue #2104: predicate-memo selective invalidate wire (#2068 Phase 2).
 aura_add_issue_test(test_predicate_memo_boundary_selective_2104)
-aura_issue_test_link_llvm_jit(test_predicate_memo_boundary_selective_2104)
+aura_issue_test_link_light(test_predicate_memo_boundary_selective_2104)
 add_dependencies(all_test_issue_targets test_predicate_memo_boundary_selective_2104)
 
 # Issue #2105: composite/nested txn ordered commit barrier.
 aura_add_issue_test(test_composite_txn_commit_2105)
-aura_issue_test_link_llvm_jit(test_composite_txn_commit_2105)
+aura_issue_test_link_light(test_composite_txn_commit_2105)
 add_dependencies(all_test_issue_targets test_composite_txn_commit_2105)
 
 # Issue #2180: composite_txn_commit reuses stashed partial CS + occurrence vars.
 aura_add_issue_test(test_composite_commit_cs_reuse_2180)
-aura_issue_test_link_llvm_jit(test_composite_commit_cs_reuse_2180)
+aura_issue_test_link_light(test_composite_commit_cs_reuse_2180)
 add_dependencies(all_test_issue_targets test_composite_commit_cs_reuse_2180)
 
 # Issue #2106: cascade_skip_subtree → CompilerMetrics + DeadCoercion synergy.
 aura_add_issue_test(test_cascade_skip_metrics_2106)
-aura_issue_test_link_llvm_jit(test_cascade_skip_metrics_2106)
+aura_issue_test_link_light(test_cascade_skip_metrics_2106)
 add_dependencies(all_test_issue_targets test_cascade_skip_metrics_2106)
 
 # Issue #2107: structured TIMEOUT / unresolved export on solve_delta_occurrence.
 aura_add_issue_test(test_solve_delta_unresolved_export_2107)
-aura_issue_test_link_llvm_jit(test_solve_delta_unresolved_export_2107)
+aura_issue_test_link_light(test_solve_delta_unresolved_export_2107)
 add_dependencies(all_test_issue_targets test_solve_delta_unresolved_export_2107)
 
 # Issue #2108: hard-block composite cross-batch linear escape on commit.
 aura_add_issue_test(test_linear_escape_commit_hardblock_2108)
-aura_issue_test_link_llvm_jit(test_linear_escape_commit_hardblock_2108)
+aura_issue_test_link_light(test_linear_escape_commit_hardblock_2108)
 add_dependencies(all_test_issue_targets test_linear_escape_commit_hardblock_2108)
 
 # Issue #2280: epoch-scoped linear pin contract (linear alloc pins;
@@ -2542,42 +2585,42 @@ add_dependencies(all_test_issue_targets test_root_remap_pass_2267)
 
 # Issue #2191: type affected_subtree cone ↔ dirty::DepGraph cascade unify.
 aura_add_issue_test(test_type_dirty_cone_dep_graph_2191)
-aura_issue_test_link_llvm_jit(test_type_dirty_cone_dep_graph_2191)
+aura_issue_test_link_light(test_type_dirty_cone_dep_graph_2191)
 add_dependencies(all_test_issue_targets test_type_dirty_cone_dep_graph_2191)
 
 # Issue #2192: QueryEpoch snapshot contract (concurrent mutate/query).
 aura_add_issue_test(test_query_epoch_contract_2192)
-aura_issue_test_link_llvm_jit(test_query_epoch_contract_2192)
+aura_issue_test_link_light(test_query_epoch_contract_2192)
 add_dependencies(all_test_issue_targets test_query_epoch_contract_2192)
 
 # Issue #2193: per-reason invalidate cascade full-fallback.
 aura_add_issue_test(test_relower_fallback_reason_2193)
-aura_issue_test_link_llvm_jit(test_relower_fallback_reason_2193)
+aura_issue_test_link_light(test_relower_fallback_reason_2193)
 add_dependencies(all_test_issue_targets test_relower_fallback_reason_2193)
 
 # Issue #2194: steal/resume unified refresh_after_fiber_migration.
 aura_add_issue_test(test_fiber_migration_refresh_2194)
-aura_issue_test_link_llvm_jit(test_fiber_migration_refresh_2194)
+aura_issue_test_link_light(test_fiber_migration_refresh_2194)
 add_dependencies(all_test_issue_targets test_fiber_migration_refresh_2194)
 
 # Issue #2195: Constraint Kind SUBTYPE + stronger meet/join (G1/R5).
 aura_add_issue_test(test_subtype_constraint_meet_2195)
-aura_issue_test_link_llvm_jit(test_subtype_constraint_meet_2195)
+aura_issue_test_link_light(test_subtype_constraint_meet_2195)
 add_dependencies(all_test_issue_targets test_subtype_constraint_meet_2195)
 
 # Issue #2196: unified query:mutation-memory / blame surface for Agent self-repair.
 aura_add_issue_test(test_mutation_memory_blame_2196)
-aura_issue_test_link_llvm_jit(test_mutation_memory_blame_2196)
+aura_issue_test_link_light(test_mutation_memory_blame_2196)
 add_dependencies(all_test_issue_targets test_mutation_memory_blame_2196)
 
 # Issue #2197: post-steal / GC-window linear×type provenance revalidate (R6).
 aura_add_issue_test(test_post_steal_linear_revalidate_2197)
-aura_issue_test_link_llvm_jit(test_post_steal_linear_revalidate_2197)
+aura_issue_test_link_light(test_post_steal_linear_revalidate_2197)
 add_dependencies(all_test_issue_targets test_post_steal_linear_revalidate_2197)
 
 # Issue #2198: StableNodeRef wire format v2 (tenant/fiber/pin/cow/wrap).
 aura_add_issue_test(test_stable_ref_wire_v2_2198)
-aura_issue_test_link_llvm_jit(test_stable_ref_wire_v2_2198)
+aura_issue_test_link_light(test_stable_ref_wire_v2_2198)
 add_dependencies(all_test_issue_targets test_stable_ref_wire_v2_2198)
 
 # Issue #2199: hard timeout force-fail for long outermost MutationBoundary holds.
@@ -2591,13 +2634,13 @@ add_dependencies(all_test_issue_targets test_mutation_hold_hard_timeout_2199)
 # triggers; counter bump + env-var-gated hard abort retained for
 # production forensics):
 aura_add_issue_test(test_yield_while_mutation_held_2200)
-aura_issue_test_link_llvm_jit(test_yield_while_mutation_held_2200)
+aura_issue_test_link_light(test_yield_while_mutation_held_2200)
 add_dependencies(all_test_issue_targets test_yield_while_mutation_held_2200)
 
 
 # Issue #2201: Agent-visible mutation-log pressure + forced compact.
 aura_add_issue_test(test_mutation_log_pressure_2201)
-aura_issue_test_link_llvm_jit(test_mutation_log_pressure_2201)
+aura_issue_test_link_light(test_mutation_log_pressure_2201)
 add_dependencies(all_test_issue_targets test_mutation_log_pressure_2201)
 
 # Issue #2202: chaos multi-worker mutate × steal × GC × mailbox × panic.
@@ -2611,17 +2654,17 @@ add_dependencies(all_test_issue_targets test_mutation_log_pressure_2201)
 
 # Issue #2203: steal-complete single entry (clear orphan GC defer + metric).
 aura_add_issue_test(test_steal_complete_gc_defer_2203)
-aura_issue_test_link_llvm_jit(test_steal_complete_gc_defer_2203)
+aura_issue_test_link_light(test_steal_complete_gc_defer_2203)
 add_dependencies(all_test_issue_targets test_steal_complete_gc_defer_2203)
 
 # Issue #2377: force single steal-complete entry (no weak legacy under production).
 aura_add_issue_test(test_steal_complete_strong_entry_2377)
-aura_issue_test_link_llvm_jit(test_steal_complete_strong_entry_2377)
+aura_issue_test_link_light(test_steal_complete_strong_entry_2377)
 add_dependencies(all_test_issue_targets test_steal_complete_strong_entry_2377)
 
 # Issue #2204: GcDeferReason::MutationHold on outermost MutationBoundaryGuard.
 aura_add_issue_test(test_gc_defer_mutation_hold_2204)
-aura_issue_test_link_llvm_jit(test_gc_defer_mutation_hold_2204)
+aura_issue_test_link_light(test_gc_defer_mutation_hold_2204)
 add_dependencies(all_test_issue_targets test_gc_defer_mutation_hold_2204)
 
 # Issue #2205: production default reemit policy Defer (disable SoftEnter multi-fiber).
@@ -2631,12 +2674,12 @@ add_dependencies(all_test_issue_targets test_reemit_production_default_defer_220
 
 # Issue #2206: aggressive source_to_ir_map desync recovery (no silent full-relower).
 aura_add_issue_test(test_source_to_ir_desync_recovery_2206)
-aura_issue_test_link_llvm_jit(test_source_to_ir_desync_recovery_2206)
+aura_issue_test_link_light(test_source_to_ir_desync_recovery_2206)
 add_dependencies(all_test_issue_targets test_source_to_ir_desync_recovery_2206)
 
 # Issue #2207: LinearEnforceMode Strict production process default + hard-fail.
 aura_add_issue_test(test_linear_enforce_strict_default_2207)
-aura_issue_test_link_llvm_jit(test_linear_enforce_strict_default_2207)
+aura_issue_test_link_light(test_linear_enforce_strict_default_2207)
 add_dependencies(all_test_issue_targets test_linear_enforce_strict_default_2207)
 
 # Issue #2208: production default reemit Defer (no SoftEnter outside boundary; refine #2205).
@@ -2646,72 +2689,72 @@ add_dependencies(all_test_issue_targets test_reemit_production_default_defer_220
 
 # Issue #2209: cascade depth + dirty_rate into adaptive partial-relower threshold.
 aura_add_issue_test(test_adaptive_cascade_depth_partial_thr_2209)
-aura_issue_test_link_llvm_jit(test_adaptive_cascade_depth_partial_thr_2209)
+aura_issue_test_link_light(test_adaptive_cascade_depth_partial_thr_2209)
 add_dependencies(all_test_issue_targets test_adaptive_cascade_depth_partial_thr_2209)
 
 # Issue #2210: JIT/Interpreter PrimCall + apply_closure equivalence oracle.
 aura_add_issue_test(test_jit_interpreter_equivalence_oracle_2210)
-aura_issue_test_link_llvm_jit(test_jit_interpreter_equivalence_oracle_2210)
+aura_issue_test_link_light(test_jit_interpreter_equivalence_oracle_2210)
 add_dependencies(all_test_issue_targets test_jit_interpreter_equivalence_oracle_2210)
 
 # Issue #2211: residual GcDeferReason assert at outermost Guard exit.
 aura_add_issue_test(test_residual_gc_defer_assert_2211)
-aura_issue_test_link_llvm_jit(test_residual_gc_defer_assert_2211)
+aura_issue_test_link_light(test_residual_gc_defer_assert_2211)
 add_dependencies(all_test_issue_targets test_residual_gc_defer_assert_2211)
 
 # Issue #2212: Shape-storm prefers partial relower (wider dirty window).
 aura_add_issue_test(test_shape_storm_partial_relower_2212)
-aura_issue_test_link_llvm_jit(test_shape_storm_partial_relower_2212)
+aura_issue_test_link_light(test_shape_storm_partial_relower_2212)
 add_dependencies(all_test_issue_targets test_shape_storm_partial_relower_2212)
 
 # Issue #2213: production hard-fail / ForceSoa on tree-walker fallback.
 aura_add_issue_test(test_tree_walker_fallback_strict_2213)
-aura_issue_test_link_llvm_jit(test_tree_walker_fallback_strict_2213)
+aura_issue_test_link_light(test_tree_walker_fallback_strict_2213)
 add_dependencies(all_test_issue_targets test_tree_walker_fallback_strict_2213)
 
 # Issue #2214: tui:present-dirty differential zero-copy present.
 aura_add_issue_test(test_tui_present_dirty_2214)
-aura_issue_test_link_llvm_jit(test_tui_present_dirty_2214)
+aura_issue_test_link_light(test_tui_present_dirty_2214)
 add_dependencies(all_test_issue_targets test_tui_present_dirty_2214)
 
 # Issue #2215: RenderFastExit for outermost MutationBoundary under render hotpath.
 aura_add_issue_test(test_render_fast_exit_2215)
-aura_issue_test_link_llvm_jit(test_render_fast_exit_2215)
+aura_issue_test_link_light(test_render_fast_exit_2215)
 add_dependencies(all_test_issue_targets test_render_fast_exit_2215)
 
 # Issue #2216: FFI CellGrid ABI (TermCell* + DirtyRegion* handoff).
 aura_add_issue_test(test_ffi_cellgrid_abi_2216)
-aura_issue_test_link_llvm_jit(test_ffi_cellgrid_abi_2216)
+aura_issue_test_link_light(test_ffi_cellgrid_abi_2216)
 add_dependencies(all_test_issue_targets test_ffi_cellgrid_abi_2216)
 
 # Issue #2217: register_render_hot_prim unified helper + Agent meta.
 aura_add_issue_test(test_register_render_hot_prim_2217)
-aura_issue_test_link_llvm_jit(test_register_render_hot_prim_2217)
+aura_issue_test_link_light(test_register_render_hot_prim_2217)
 add_dependencies(all_test_issue_targets test_register_render_hot_prim_2217)
 
 # Issue #2218: frame-budget guardian + automatic degrade on present path.
 aura_add_issue_test(test_frame_budget_guardian_2218)
-aura_issue_test_link_llvm_jit(test_frame_budget_guardian_2218)
+aura_issue_test_link_light(test_frame_budget_guardian_2218)
 add_dependencies(all_test_issue_targets test_frame_budget_guardian_2218)
 
 # Issue #2219: post-mutate Soft/Hard type gate (match exhaustiveness).
 aura_add_issue_test(test_mutate_type_gate_2219)
-aura_issue_test_link_llvm_jit(test_mutate_type_gate_2219)
+aura_issue_test_link_light(test_mutate_type_gate_2219)
 add_dependencies(all_test_issue_targets test_mutate_type_gate_2219)
 
 # Issue #2220: long-lived TypeChecker on Evaluator mutate path.
 aura_add_issue_test(test_persistent_typechecker_2220)
-aura_issue_test_link_llvm_jit(test_persistent_typechecker_2220)
+aura_issue_test_link_light(test_persistent_typechecker_2220)
 add_dependencies(all_test_issue_targets test_persistent_typechecker_2220)
 
 # Issue #2221: blame-complete optional hard gate on apply + composite commit.
 aura_add_issue_test(test_blame_complete_commit_gate_2221)
-aura_issue_test_link_llvm_jit(test_blame_complete_commit_gate_2221)
+aura_issue_test_link_light(test_blame_complete_commit_gate_2221)
 add_dependencies(all_test_issue_targets test_blame_complete_commit_gate_2221)
 
 # Issue #2222: LinearEnforceMode Soft/Strict boundary + production align.
 aura_add_issue_test(test_linear_enforce_boundary_align_2222)
-aura_issue_test_link_llvm_jit(test_linear_enforce_boundary_align_2222)
+aura_issue_test_link_light(test_linear_enforce_boundary_align_2222)
 add_dependencies(all_test_issue_targets test_linear_enforce_boundary_align_2222)
 
 # Issue #2223: ADT match exhaustiveness in TypedMutationAudit (adt_ok).
@@ -2725,37 +2768,37 @@ add_dependencies(all_test_issue_targets test_linear_enforce_boundary_align_2222)
 
 # Issue #2264: ADT exhaustiveness hard-gate suite (refine #2223 / #2145).
 aura_add_issue_test(test_adt_hard_gate_exhaustiveness_2264)
-aura_issue_test_link_llvm_jit(test_adt_hard_gate_exhaustiveness_2264)
+aura_issue_test_link_light(test_adt_hard_gate_exhaustiveness_2264)
 add_dependencies(all_test_issue_targets test_adt_hard_gate_exhaustiveness_2264)
 
 # Issue #2258: HotPassDodCompliant + pure Wrap for incremental/dirty passes.
 aura_add_issue_test(test_hot_pass_pure_wrap_2258)
-aura_issue_test_link_llvm_jit(test_hot_pass_pure_wrap_2258)
+aura_issue_test_link_light(test_hot_pass_pure_wrap_2258)
 add_dependencies(all_test_issue_targets test_hot_pass_pure_wrap_2258)
 
 # Issue #2259: 64-bit tagged Value hot-path contracts + zero-overhead dispatch.
 aura_add_issue_test(test_value_tag_hot_path_2259)
-aura_issue_test_link_llvm_jit(test_value_tag_hot_path_2259)
+aura_issue_test_link_light(test_value_tag_hot_path_2259)
 add_dependencies(all_test_issue_targets test_value_tag_hot_path_2259)
 
 # Issue #2260: MutationBoundary type-proof hard-gate (SOLVED / full resync).
 aura_add_issue_test(test_boundary_solve_hard_gate_2260)
-aura_issue_test_link_llvm_jit(test_boundary_solve_hard_gate_2260)
+aura_issue_test_link_light(test_boundary_solve_hard_gate_2260)
 add_dependencies(all_test_issue_targets test_boundary_solve_hard_gate_2260)
 
 # Issue #2261: ban weak mutation-id provenance under Sampled; never stamp into IR.
 aura_add_issue_test(test_coercion_ban_weak_ir_2261)
-aura_issue_test_link_llvm_jit(test_coercion_ban_weak_ir_2261)
+aura_issue_test_link_light(test_coercion_ban_weak_ir_2261)
 add_dependencies(all_test_issue_targets test_coercion_ban_weak_ir_2261)
 
 # Issue #2262: partial ConstraintSystem single source of truth (all typed_mutate).
 aura_add_issue_test(test_partial_cs_single_source_2262)
-aura_issue_test_link_llvm_jit(test_partial_cs_single_source_2262)
+aura_issue_test_link_light(test_partial_cs_single_source_2262)
 add_dependencies(all_test_issue_targets test_partial_cs_single_source_2262)
 
 # Issue #2263: OwnershipEscapeSummary → MoveOp elision gate at lowering.
 aura_add_issue_test(test_escape_move_elision_gate_2263)
-aura_issue_test_link_llvm_jit(test_escape_move_elision_gate_2263)
+aura_issue_test_link_light(test_escape_move_elision_gate_2263)
 add_dependencies(all_test_issue_targets test_escape_move_elision_gate_2263)
 
 # DISABLED (runtime crash/missing features) for CI green:
@@ -2764,17 +2807,17 @@ add_dependencies(all_test_issue_targets test_escape_move_elision_gate_2263)
 
 # Issue #2111: SoA generation fence (silent-stale under self-evo).
 aura_add_issue_test(test_soa_generation_fence_2111)
-aura_issue_test_link_llvm_jit(test_soa_generation_fence_2111)
+aura_issue_test_link_light(test_soa_generation_fence_2111)
 add_dependencies(all_test_issue_targets test_soa_generation_fence_2111)
 
 # Issue #2112: adaptive partial/full relower threshold.
 aura_add_issue_test(test_adaptive_partial_relower_threshold_2112)
-aura_issue_test_link_llvm_jit(test_adaptive_partial_relower_threshold_2112)
+aura_issue_test_link_light(test_adaptive_partial_relower_threshold_2112)
 add_dependencies(all_test_issue_targets test_adaptive_partial_relower_threshold_2112)
 
 # Issue #2113: incremental soundness oracle (debug partial ≡ full).
 aura_add_issue_test(test_incremental_soundness_oracle_2113)
-aura_issue_test_link_llvm_jit(test_incremental_soundness_oracle_2113)
+aura_issue_test_link_light(test_incremental_soundness_oracle_2113)
 add_dependencies(all_test_issue_targets test_incremental_soundness_oracle_2113)
 
 # Issue #2114: HotUpdate reemit ↔ MutationBoundary handshake.
@@ -2802,17 +2845,17 @@ add_dependencies(all_test_issue_targets test_reemit_mutation_boundary_handshake_
 # Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed canary).
 # Focused suite (no #2184 concurrent stress) so CI stays green.
 aura_add_issue_test(test_steal_snapshot_hard_invariant_2346)
-aura_issue_test_link_llvm_jit(test_steal_snapshot_hard_invariant_2346)
+aura_issue_test_link_light(test_steal_snapshot_hard_invariant_2346)
 add_dependencies(all_test_issue_targets test_steal_snapshot_hard_invariant_2346)
 
 # Issue #2518: MutationSafetySnapshot sequence ticket (sample→resume window).
 aura_add_issue_test(test_steal_safety_ticket_2518)
-aura_issue_test_link_llvm_jit(test_steal_safety_ticket_2518)
+aura_issue_test_link_light(test_steal_safety_ticket_2518)
 add_dependencies(all_test_issue_targets test_steal_safety_ticket_2518)
 
 # Issue #2372: production hard-forbid Soft steal-snapshot + require force-deopt ABI.
 aura_add_issue_test(test_steal_snapshot_soft_production_lock_2372)
-aura_issue_test_link_llvm_jit(test_steal_snapshot_soft_production_lock_2372)
+aura_issue_test_link_light(test_steal_snapshot_soft_production_lock_2372)
 add_dependencies(all_test_issue_targets test_steal_snapshot_soft_production_lock_2372)
 
 # Issue #2373: try_render_deopt_throttle CAS race (header-only concurrency fix).
@@ -2821,153 +2864,153 @@ add_dependencies(all_test_issue_targets test_render_deopt_throttle_race_2373)
 
 # Issue #2348: bidirectional check-mode for ADT match + GuardShape.
 aura_add_issue_test(test_bidirectional_match_check_2348)
-aura_issue_test_link_llvm_jit(test_bidirectional_match_check_2348)
+aura_issue_test_link_light(test_bidirectional_match_check_2348)
 add_dependencies(all_test_issue_targets test_bidirectional_match_check_2348)
 
 # Issue #2349: outermost hold SLO circuit-breaker (production default fail).
 aura_add_issue_test(test_mutation_hold_slo_2349)
-aura_issue_test_link_llvm_jit(test_mutation_hold_slo_2349)
+aura_issue_test_link_light(test_mutation_hold_slo_2349)
 add_dependencies(all_test_issue_targets test_mutation_hold_slo_2349)
 
 # Issue #2405: query:mutation-hold-estimate Agent batch planning.
 aura_add_issue_test(test_mutation_hold_estimate_2405)
-aura_issue_test_link_llvm_jit(test_mutation_hold_estimate_2405)
+aura_issue_test_link_light(test_mutation_hold_estimate_2405)
 add_dependencies(all_test_issue_targets test_mutation_hold_estimate_2405)
 
 # Issue #2517: real-time longest outermost MutationBoundary hold probe.
 aura_add_issue_test(test_mutation_hold_live_2517)
-aura_issue_test_link_llvm_jit(test_mutation_hold_live_2517)
+aura_issue_test_link_light(test_mutation_hold_live_2517)
 add_dependencies(all_test_issue_targets test_mutation_hold_live_2517)
 
 # Issue #2350: query:type-system-health single Agent score.
 aura_add_issue_test(test_type_system_health_2350)
-aura_issue_test_link_llvm_jit(test_type_system_health_2350)
+aura_issue_test_link_light(test_type_system_health_2350)
 add_dependencies(all_test_issue_targets test_type_system_health_2350)
 
 # Issue #2379: query:mutation-concurrency-health single Agent score.
 aura_add_issue_test(test_mutation_concurrency_health_2379)
-aura_issue_test_link_llvm_jit(test_mutation_concurrency_health_2379)
+aura_issue_test_link_light(test_mutation_concurrency_health_2379)
 add_dependencies(all_test_issue_targets test_mutation_concurrency_health_2379)
 
 # Issue #2351: steal-complete LayoutStamp dual-check before resume.
 aura_add_issue_test(test_steal_layout_stamp_2351)
-aura_issue_test_link_llvm_jit(test_steal_layout_stamp_2351)
+aura_issue_test_link_light(test_steal_layout_stamp_2351)
 add_dependencies(all_test_issue_targets test_steal_layout_stamp_2351)
 
 # Issue #2510: transactional LayoutStamp + provenance restamp on steal-complete.
 aura_add_issue_test(test_steal_complete_restamp_txn_2510)
-aura_issue_test_link_llvm_jit(test_steal_complete_restamp_txn_2510)
+aura_issue_test_link_light(test_steal_complete_restamp_txn_2510)
 add_dependencies(all_test_issue_targets test_steal_complete_restamp_txn_2510)
 
 # Issue #2352: chaos mutate × steal × GC × mailbox production gate.
 # Smoke always (short); full 30s soak via AURA_CHAOS_FULL=1 (nightly).
 aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox_2352)
-aura_issue_test_link_llvm_jit(test_chaos_mutate_steal_gc_mailbox_2352)
+aura_issue_test_link_light(test_chaos_mutate_steal_gc_mailbox_2352)
 add_dependencies(all_test_issue_targets test_chaos_mutate_steal_gc_mailbox_2352)
 
 # Issue #2353: post-densify / post-steal unified Linear+Type revalidate.
 aura_add_issue_test(test_post_densify_linear_type_revalidate_2353)
-aura_issue_test_link_llvm_jit(test_post_densify_linear_type_revalidate_2353)
+aura_issue_test_link_light(test_post_densify_linear_type_revalidate_2353)
 add_dependencies(all_test_issue_targets test_post_densify_linear_type_revalidate_2353)
 
 # Issue #2354: debug lock-order audit (scheduler / workspace / closures / module).
 aura_add_issue_test(test_lock_order_audit_2354)
 # Header-only audit + no service eval — still link like other issue unit tests.
-aura_issue_test_link_llvm_jit(test_lock_order_audit_2354)
+aura_issue_test_link_light(test_lock_order_audit_2354)
 add_dependencies(all_test_issue_targets test_lock_order_audit_2354)
 
 # Issue #2355: type_dep_graph_ epoch prune + NodeId invalidation.
 aura_add_issue_test(test_type_dep_epoch_prune_2355)
-aura_issue_test_link_llvm_jit(test_type_dep_epoch_prune_2355)
+aura_issue_test_link_light(test_type_dep_epoch_prune_2355)
 add_dependencies(all_test_issue_targets test_type_dep_epoch_prune_2355)
 
 # Issue #2356: truncated reverify one-shot expand (occurrence/let-poly).
 aura_add_issue_test(test_reverify_expand_2356)
-aura_issue_test_link_llvm_jit(test_reverify_expand_2356)
+aura_issue_test_link_light(test_reverify_expand_2356)
 add_dependencies(all_test_issue_targets test_reverify_expand_2356)
 
 # Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.
 aura_add_issue_test(test_linear_synth_violation_2357)
-aura_issue_test_link_llvm_jit(test_linear_synth_violation_2357)
+aura_issue_test_link_light(test_linear_synth_violation_2357)
 add_dependencies(all_test_issue_targets test_linear_synth_violation_2357)
 
 # Issue #2516: type_dep invalidate → re-infer → cascade mirror single txn.
 aura_add_issue_test(test_type_dirty_txn_order_2516)
-aura_issue_test_link_llvm_jit(test_type_dirty_txn_order_2516)
+aura_issue_test_link_light(test_type_dirty_txn_order_2516)
 add_dependencies(all_test_issue_targets test_type_dirty_txn_order_2516)
 
 # Issue #2514: unify linear_synth_hard_fail with MutationBoundary audit exit.
 aura_add_issue_test(test_linear_synth_boundary_authority_2514)
-aura_issue_test_link_llvm_jit(test_linear_synth_boundary_authority_2514)
+aura_issue_test_link_light(test_linear_synth_boundary_authority_2514)
 add_dependencies(all_test_issue_targets test_linear_synth_boundary_authority_2514)
 
 # Issue #2358: CastOp density HARD force-JIT policy (codegen, not type gate).
 aura_add_issue_test(test_castop_density_hard_2358)
-aura_issue_test_link_llvm_jit(test_castop_density_hard_2358)
+aura_issue_test_link_light(test_castop_density_hard_2358)
 add_dependencies(all_test_issue_targets test_castop_density_hard_2358)
 
 # Issue #2359: unify occurrence_goals + predicate_memo epoch health query.
 aura_add_issue_test(test_memo_goal_epoch_health_2359)
-aura_issue_test_link_llvm_jit(test_memo_goal_epoch_health_2359)
+aura_issue_test_link_light(test_memo_goal_epoch_health_2359)
 add_dependencies(all_test_issue_targets test_memo_goal_epoch_health_2359)
 
 # Issue #2361: densify envframe_ok real per-call check (stop force-true).
 aura_add_issue_test(test_densify_envframe_ok_2361)
-aura_issue_test_link_llvm_jit(test_densify_envframe_ok_2361)
+aura_issue_test_link_light(test_densify_envframe_ok_2361)
 add_dependencies(all_test_issue_targets test_densify_envframe_ok_2361)
 
 # Issue #2376: densify last-call envframe + closure axes (seal #2361/#2365).
 aura_add_issue_test(test_densify_last_call_axes_2376)
-aura_issue_test_link_llvm_jit(test_densify_last_call_axes_2376)
+aura_issue_test_link_light(test_densify_last_call_axes_2376)
 add_dependencies(all_test_issue_targets test_densify_last_call_axes_2376)
 
 # Issue #2497: densify ownership-scan fail delta hard-binds envframe_ok
 # suppression (no path where scan fail is metrics-only — same fail-closed
 # shape as pin_contract_held gating at #2266).
 aura_add_issue_test(test_densify_ownership_scan_fail_gate_2497)
-aura_issue_test_link_llvm_jit(test_densify_ownership_scan_fail_gate_2497)
+aura_issue_test_link_light(test_densify_ownership_scan_fail_gate_2497)
 add_dependencies(all_test_issue_targets test_densify_ownership_scan_fail_gate_2497)
 
 # Issue #2362: EnvFrameRef ownership protocol under fiber steal + densify
 # (depends on #2360 live set tracking).
 aura_add_issue_test(test_envframe_ownership_steal_densify_2362)
-aura_issue_test_link_llvm_jit(test_envframe_ownership_steal_densify_2362)
+aura_issue_test_link_light(test_envframe_ownership_steal_densify_2362)
 add_dependencies(all_test_issue_targets test_envframe_ownership_steal_densify_2362)
 
 # Issue #2363: complete GeneralObjectPin adoption for mutate/agent/scratch.
 aura_add_issue_test(test_general_object_pin_adopt_2363)
-aura_issue_test_link_llvm_jit(test_general_object_pin_adopt_2363)
+aura_issue_test_link_light(test_general_object_pin_adopt_2363)
 add_dependencies(all_test_issue_targets test_general_object_pin_adopt_2363)
 
 # Issue #2364: PanicCheckpoint residual × densify / fiber closed loop.
 aura_add_issue_test(test_panic_defer_after_densify_2364)
-aura_issue_test_link_llvm_jit(test_panic_defer_after_densify_2364)
+aura_issue_test_link_light(test_panic_defer_after_densify_2364)
 add_dependencies(all_test_issue_targets test_panic_defer_after_densify_2364)
 
 # Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.
 aura_add_issue_test(test_densify_root_closure_closed_loop_2365)
-aura_issue_test_link_llvm_jit(test_densify_root_closure_closed_loop_2365)
+aura_issue_test_link_light(test_densify_root_closure_closed_loop_2365)
 add_dependencies(all_test_issue_targets test_densify_root_closure_closed_loop_2365)
 
 # Issue #2316 lineage (rank table / canary) — keep registered with #2354.
 aura_add_issue_test(test_lock_order_audit_2316)
-aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)
+aura_issue_test_link_light(test_lock_order_audit_2316)
 add_dependencies(all_test_issue_targets test_lock_order_audit_2316)
 
 
 # Issue #2116: hard-fail dual-path desync in materialize_call_env + GCEnvWalkFn.
 aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
-aura_issue_test_link_llvm_jit(test_dual_path_desync_hard_fail_2116)
+aura_issue_test_link_light(test_dual_path_desync_hard_fail_2116)
 add_dependencies(all_test_issue_targets test_dual_path_desync_hard_fail_2116)
 
 # Issue #2117: atomic MarkBitVector for concurrent multi-fiber mark.
 aura_add_issue_test(test_atomic_mark_bitvector_2117)
-aura_issue_test_link_llvm_jit(test_atomic_mark_bitvector_2117)
+aura_issue_test_link_light(test_atomic_mark_bitvector_2117)
 add_dependencies(all_test_issue_targets test_atomic_mark_bitvector_2117)
 
 # Issue #2118: orch agent MutationBoundary soft depth for steal/GC visibility.
 aura_add_issue_test(test_orch_agent_mutation_boundary_2118)
-aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary_2118)
+aura_issue_test_link_light(test_orch_agent_mutation_boundary_2118)
 add_dependencies(all_test_issue_targets test_orch_agent_mutation_boundary_2118)
 
 # Issue #2515: Soft orch-agent boundary 提升为轻量 Guard 子集, 统一 depth/held
@@ -2976,17 +3019,17 @@ add_dependencies(all_test_issue_targets test_orch_agent_mutation_boundary_2118)
 # see the soft window consistently. Closes long-term depth-drift risk vs
 # the full Guard path (#2115 / #2118 / #2184 lineage).
 aura_add_issue_test(test_orch_soft_boundary_unified_2515)
-aura_issue_test_link_llvm_jit(test_orch_soft_boundary_unified_2515)
+aura_issue_test_link_light(test_orch_soft_boundary_unified_2515)
 add_dependencies(all_test_issue_targets test_orch_soft_boundary_unified_2515)
 
 # Issue #2153: configurable secondary drain timeout on non-Ok join.
 aura_add_issue_test(test_join_drain_timeout_2153)
-aura_issue_test_link_llvm_jit(test_join_drain_timeout_2153)
+aura_issue_test_link_light(test_join_drain_timeout_2153)
 add_dependencies(all_test_issue_targets test_join_drain_timeout_2153)
 
 # Issue #2155: quota-reject spawn path — no name-table put + arena no-leak.
 aura_add_issue_test(test_spawn_quota_no_leak_2155)
-aura_issue_test_link_llvm_jit(test_spawn_quota_no_leak_2155)
+aura_issue_test_link_light(test_spawn_quota_no_leak_2155)
 add_dependencies(all_test_issue_targets test_spawn_quota_no_leak_2155)
 
 # Issue #2119: MutationBoundary yield hold + steal starvation metrics + adaptive.
@@ -3000,22 +3043,22 @@ add_dependencies(all_test_issue_targets test_spawn_quota_no_leak_2155)
 
 # Issue #2120: outermost MutationBoundaryGuard exit order (probes → GC → reemit → unlock).
 aura_add_issue_test(test_outermost_exit_order_2120)
-aura_issue_test_link_llvm_jit(test_outermost_exit_order_2120)
+aura_issue_test_link_light(test_outermost_exit_order_2120)
 add_dependencies(all_test_issue_targets test_outermost_exit_order_2120)
 
 # Issue #2121: region-based / optimistic workspace write concurrency (multi-Agent).
 aura_add_issue_test(test_workspace_region_concurrency_2121)
-aura_issue_test_link_llvm_jit(test_workspace_region_concurrency_2121)
+aura_issue_test_link_light(test_workspace_region_concurrency_2121)
 add_dependencies(all_test_issue_targets test_workspace_region_concurrency_2121)
 
 # Issue #2123: default MacroIntroduced hygiene filter for query:pattern.
 aura_add_issue_test(test_query_pattern_default_hygiene_2123)
-aura_issue_test_link_llvm_jit(test_query_pattern_default_hygiene_2123)
+aura_issue_test_link_light(test_query_pattern_default_hygiene_2123)
 add_dependencies(all_test_issue_targets test_query_pattern_default_hygiene_2123)
 
 # Issue #2124: all mutate:* via MutationBoundaryGuard::try_acquire.
 aura_add_issue_test(test_mutation_guard_try_acquire_2124)
-aura_issue_test_link_llvm_jit(test_mutation_guard_try_acquire_2124)
+aura_issue_test_link_light(test_mutation_guard_try_acquire_2124)
 add_dependencies(all_test_issue_targets test_mutation_guard_try_acquire_2124)
 
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
@@ -3043,9 +3086,9 @@ add_dependencies(all_test_issue_targets test_voxel_shade)
 
 # Issue #1986 / Epic #1979: render3d:* Aura primitive surface.
 aura_add_issue_test(test_render3d_primitives)
-aura_issue_test_link_llvm_jit(test_render3d_primitives)
+aura_issue_test_link_light(test_render3d_primitives)
 add_dependencies(all_test_issue_targets test_render3d_primitives)
-aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
+aura_issue_test_link_light(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
 # ── tests/domain/ suites (restored after AuraDomainTests.cmake removal) ──
@@ -3053,7 +3096,7 @@ add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 # On-demand (EXCLUDE_FROM_ALL): arena family batches.
 
 aura_add_issue_test(test_obs_schema_matrix)
-aura_issue_test_link_llvm_jit(test_obs_schema_matrix)
+aura_issue_test_link_light(test_obs_schema_matrix)
 add_dependencies(all_test_issue_targets test_obs_schema_matrix)
 
 # DISABLED (runtime crash/hang) for CI green:
@@ -3068,114 +3111,154 @@ aura_add_issue_test(test_arena_defrag)
 aura_issue_test_link_llvm_jit_minimal(test_arena_defrag)
 add_dependencies(all_test_issue_targets test_arena_defrag)
 
+
+# Domain batch: FlatAST / SoA atomic+lock ACs (P1 sample — 20 members,
+# one light-linked binary). Members remain standalone light targets.
+add_executable(test_flatast_atomic_lock_batch
+    tests/core/test_flatast_atomic_lock_batch.cpp
+    tests/core/test_soa_column_atomic_2440.cpp
+    tests/core/test_macro_dirty_bits_lock_2441.cpp
+    tests/core/test_verification_dirty_bits_lock_2439.cpp
+    tests/core/test_region_dense_atomic_2443.cpp
+    tests/core/test_flatast_add_node_lock_2413.cpp
+    tests/core/test_structural_metadata_lock_order_2418.cpp
+    tests/core/test_incoming_parent_dirty_atomic_2416.cpp
+    tests/core/test_last_validated_generation_atomic_2394.cpp
+    tests/core/test_restamp_lazy_align_atomic_2421.cpp
+    tests/core/test_binding_gens_atomic_2417.cpp
+    tests/core/test_subtree_gen_atomic_2422.cpp
+    tests/core/test_dirty_column_lock_2423.cpp
+    tests/core/test_stringpool_bytes_total_lock_2408.cpp
+    tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp
+    tests/core/test_tag_arity_index_lock_2419.cpp
+    tests/core/test_sandbox_mode_atomic_2427.cpp
+    tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp
+    tests/core/test_gc_defer_arm_fetch_or_2428.cpp
+    tests/core/test_gc_defer_reconcile_cas_2437.cpp
+    tests/core/test_clear_macro_dirty_concurrent_2442.cpp
+)
+set_property(TARGET test_flatast_atomic_lock_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_flatast_atomic_lock_batch PRIVATE src tests)
+target_compile_definitions(test_flatast_atomic_lock_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_flatast_atomic_lock_batch)
+target_link_libraries(test_flatast_atomic_lock_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_flatast_atomic_lock_batch)
+add_test(NAME test_flatast_atomic_lock_batch_verification
+         COMMAND ./test_flatast_atomic_lock_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_flatast_atomic_lock_batch)
+endif()
 aura_add_issue_test(test_arena_batch)
 aura_issue_test_link_llvm_jit(test_arena_batch)
 set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 # Issue #2067: Linear Ownership runtime enforcement + post-mutate revalidate.
 aura_add_issue_test(test_linear_runtime_violation)
-aura_issue_test_link_llvm_jit(test_linear_runtime_violation)
+aura_issue_test_link_light(test_linear_runtime_violation)
 
 # Issue #2066: DeadCoercionElimination IR-layer CastOp elision (CastOp after narrow).
 aura_add_issue_test(test_dead_coercion_elim)
-aura_issue_test_link_llvm_jit(test_dead_coercion_elim)
+aura_issue_test_link_light(test_dead_coercion_elim)
 
 # Issue #2065: solve_delta epoch filter — skip already-processed roots in current epoch.
 aura_add_issue_test(test_solve_delta_epoch_filter)
-aura_issue_test_link_llvm_jit(test_solve_delta_epoch_filter)
+aura_issue_test_link_light(test_solve_delta_epoch_filter)
 
 # Issue #2278: epoch-scoped OccurrenceGoal table — durable replay across
 # clear_blame_context (AC1), epoch-advance prune (AC2), zero extra work
 # when empty (AC3), multi-round mutate durability (AC4), query schema
 # additive (AC5).
 aura_add_issue_test(test_occurrence_goal_epoch_table_2278)
-aura_issue_test_link_llvm_jit(test_occurrence_goal_epoch_table_2278)
+aura_issue_test_link_light(test_occurrence_goal_epoch_table_2278)
 
 # Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback paths.
 aura_add_issue_test(test_blame_stamp_on_degrade)
-aura_issue_test_link_llvm_jit(test_blame_stamp_on_degrade)
+aura_issue_test_link_light(test_blame_stamp_on_degrade)
 
 # Issue #2063: Dirty cascade subtree-skip (summary-dirty early-exit) optimization.
 aura_add_issue_test(test_dirty_cascade_optimize)
-aura_issue_test_link_llvm_jit(test_dirty_cascade_optimize)
+aura_issue_test_link_light(test_dirty_cascade_optimize)
 
 # Issue #2062: StringPool thread-safe intern + ASTArena integration (concurrent fibers).
 aura_add_issue_test(test_stringpool_concurrent_intern)
-aura_issue_test_link_llvm_jit(test_stringpool_concurrent_intern)
+aura_issue_test_link_light(test_stringpool_concurrent_intern)
 
 # Issue #2408: string_bytes_total single shared_lock (UAF + lock churn).
 aura_add_issue_test(test_stringpool_bytes_total_lock_2408)
-aura_issue_test_link_llvm_jit(test_stringpool_bytes_total_lock_2408)
+aura_issue_test_link_light(test_stringpool_bytes_total_lock_2408)
 add_dependencies(all_test_issue_targets test_stringpool_bytes_total_lock_2408)
 
 # Issue #2409: buf_fragmentation single shared_lock snapshot.
 aura_add_issue_test(test_stringpool_buf_fragmentation_lock_2409)
-aura_issue_test_link_llvm_jit(test_stringpool_buf_fragmentation_lock_2409)
+aura_issue_test_link_light(test_stringpool_buf_fragmentation_lock_2409)
 add_dependencies(all_test_issue_targets test_stringpool_buf_fragmentation_lock_2409)
 
 # Issue #2410: meta(NodeTag) bounds-checked OOB sentinel.
 aura_add_issue_test(test_node_meta_bounds_2410)
-aura_issue_test_link_llvm_jit(test_node_meta_bounds_2410)
+aura_issue_test_link_light(test_node_meta_bounds_2410)
 add_dependencies(all_test_issue_targets test_node_meta_bounds_2410)
 
 # Issue #2411: kNodeMeta gap is_gap + full tag/name consistency.
 aura_add_issue_test(test_node_meta_gap_2411)
-aura_issue_test_link_llvm_jit(test_node_meta_gap_2411)
+aura_issue_test_link_light(test_node_meta_gap_2411)
 add_dependencies(all_test_issue_targets test_node_meta_gap_2411)
 
 # Issue #2412: reset_node_slot always clears incoming_parent_edges_.
 aura_add_issue_test(test_reset_slot_parent_edges_2412)
-aura_issue_test_link_llvm_jit(test_reset_slot_parent_edges_2412)
+aura_issue_test_link_light(test_reset_slot_parent_edges_2412)
 add_dependencies(all_test_issue_targets test_reset_slot_parent_edges_2412)
 
 # Issue #2413: FlatAST add_node multi-column SoA lock + reader contract.
 aura_add_issue_test(test_flatast_add_node_lock_2413)
-aura_issue_test_link_llvm_jit(test_flatast_add_node_lock_2413)
+aura_issue_test_link_light(test_flatast_add_node_lock_2413)
 add_dependencies(all_test_issue_targets test_flatast_add_node_lock_2413)
 
 # Issue #2488: FlatAST SoAReadGuard / get_soa_safe (shared_mutex SoA domain).
 aura_add_issue_test(test_flatast_soa_read_guard_2488)
-aura_issue_test_link_llvm_jit(test_flatast_soa_read_guard_2488)
+aura_issue_test_link_light(test_flatast_soa_read_guard_2488)
 add_dependencies(all_test_issue_targets test_flatast_soa_read_guard_2488)
 
 # Issue #2414: summary_recompute(pool) restores HasKeywordVar / query-mutate bits.
 aura_add_issue_test(test_summary_recompute_sym_2414)
-aura_issue_test_link_llvm_jit(test_summary_recompute_sym_2414)
+aura_issue_test_link_light(test_summary_recompute_sym_2414)
 add_dependencies(all_test_issue_targets test_summary_recompute_sym_2414)
 
 # Issue #2415: summary_flags_ thread-safety annotation (atomic) + free_list audit.
 aura_add_issue_test(test_summary_flags_guard_2415)
-aura_issue_test_link_llvm_jit(test_summary_flags_guard_2415)
+aura_issue_test_link_light(test_summary_flags_guard_2415)
 add_dependencies(all_test_issue_targets test_summary_flags_guard_2415)
 
 # Issue #2416: incoming_parent_index_dirty_ is std::atomic<bool>.
 aura_add_issue_test(test_incoming_parent_dirty_atomic_2416)
-aura_issue_test_link_llvm_jit(test_incoming_parent_dirty_atomic_2416)
+aura_issue_test_link_light(test_incoming_parent_dirty_atomic_2416)
 add_dependencies(all_test_issue_targets test_incoming_parent_dirty_atomic_2416)
 
 # Issue #2417: binding_gens_ atomic shared_ptr + COW bump.
 aura_add_issue_test(test_binding_gens_atomic_2417)
-aura_issue_test_link_llvm_jit(test_binding_gens_atomic_2417)
+aura_issue_test_link_light(test_binding_gens_atomic_2417)
 add_dependencies(all_test_issue_targets test_binding_gens_atomic_2417)
 
 # Issue #2418: structural_mtx_ → metadata_mtx_ lock order.
 aura_add_issue_test(test_structural_metadata_lock_order_2418)
-aura_issue_test_link_llvm_jit(test_structural_metadata_lock_order_2418)
+aura_issue_test_link_light(test_structural_metadata_lock_order_2418)
 add_dependencies(all_test_issue_targets test_structural_metadata_lock_order_2418)
 
 # Issue #2419: tag_arity_index_ map lock vs concurrent rebuild.
 aura_add_issue_test(test_tag_arity_index_lock_2419)
-aura_issue_test_link_llvm_jit(test_tag_arity_index_lock_2419)
+aura_issue_test_link_light(test_tag_arity_index_lock_2419)
 add_dependencies(all_test_issue_targets test_tag_arity_index_lock_2419)
 
 # Issue #2420: TagArityKeyHash pack + splitmix finalizer.
 aura_add_issue_test(test_tag_arity_key_hash_2420)
-aura_issue_test_link_llvm_jit(test_tag_arity_key_hash_2420)
+aura_issue_test_link_light(test_tag_arity_key_hash_2420)
 add_dependencies(all_test_issue_targets test_tag_arity_key_hash_2420)
 
 # Issue #2421: restamp_lazy_align_enabled_ is std::atomic<bool>.
 aura_add_issue_test(test_restamp_lazy_align_atomic_2421)
-aura_issue_test_link_llvm_jit(test_restamp_lazy_align_atomic_2421)
+aura_issue_test_link_light(test_restamp_lazy_align_atomic_2421)
 add_dependencies(all_test_issue_targets test_restamp_lazy_align_atomic_2421)
 
 # Issue #2528: long-session SLA surface for generation-wrap restamp.
@@ -3184,72 +3267,72 @@ add_dependencies(all_test_issue_targets test_restamp_lazy_align_atomic_2421)
 # AURA_REStamp_SLO_US env-resolved budget via query:stable-ref-sv-scale-stats.
 # Zero cost when no restamp runs (counters live INSIDE the wrap path only).
 aura_add_issue_test(test_restamp_sla_observability_2528)
-aura_issue_test_link_llvm_jit(test_restamp_sla_observability_2528)
+aura_issue_test_link_light(test_restamp_sla_observability_2528)
 add_dependencies(all_test_issue_targets test_restamp_sla_observability_2528)
 
 # Issue #2422: subtree_gen_ 32-bit cells + atomic_ref (+ resize mutex).
 aura_add_issue_test(test_subtree_gen_atomic_2422)
-aura_issue_test_link_llvm_jit(test_subtree_gen_atomic_2422)
+aura_issue_test_link_light(test_subtree_gen_atomic_2422)
 add_dependencies(all_test_issue_targets test_subtree_gen_atomic_2422)
 
 # Issue #2423: dirty_ column shared/exclusive lock (short-circuit APIs).
 aura_add_issue_test(test_dirty_column_lock_2423)
-aura_issue_test_link_llvm_jit(test_dirty_column_lock_2423)
+aura_issue_test_link_light(test_dirty_column_lock_2423)
 add_dependencies(all_test_issue_targets test_dirty_column_lock_2423)
 
 # Issue #2424: is_subtree_dirty_node bounds via dirty_.size() (not size()).
 aura_add_issue_test(test_subtree_dirty_bounds_2424)
-aura_issue_test_link_llvm_jit(test_subtree_dirty_bounds_2424)
+aura_issue_test_link_light(test_subtree_dirty_bounds_2424)
 add_dependencies(all_test_issue_targets test_subtree_dirty_bounds_2424)
 
 # Issue #2425: capability audit_ring published slots (no torn EffectAuditEntry).
 aura_add_issue_test(test_capability_audit_publish_2425)
-aura_issue_test_link_llvm_jit(test_capability_audit_publish_2425)
+aura_issue_test_link_light(test_capability_audit_publish_2425)
 add_dependencies(all_test_issue_targets test_capability_audit_publish_2425)
 
 # Issue #2426: CapabilityRegistry::snapshot_registry_state (#1840 pattern).
 aura_add_issue_test(test_capability_registry_snapshot_2426)
-aura_issue_test_link_llvm_jit(test_capability_registry_snapshot_2426)
+aura_issue_test_link_light(test_capability_registry_snapshot_2426)
 add_dependencies(all_test_issue_targets test_capability_registry_snapshot_2426)
 
 # Issue #2427: sandbox_mode / default_tenant atomic (policy flip race).
 aura_add_issue_test(test_sandbox_mode_atomic_2427)
-aura_issue_test_link_llvm_jit(test_sandbox_mode_atomic_2427)
+aura_issue_test_link_light(test_sandbox_mode_atomic_2427)
 add_dependencies(all_test_issue_targets test_sandbox_mode_atomic_2427)
 
 # Issue #2428: arm_defer fetch_or first-arm metrics (no load+or double-count).
 aura_add_issue_test(test_gc_defer_arm_fetch_or_2428)
-aura_issue_test_link_llvm_jit(test_gc_defer_arm_fetch_or_2428)
+aura_issue_test_link_light(test_gc_defer_arm_fetch_or_2428)
 add_dependencies(all_test_issue_targets test_gc_defer_arm_fetch_or_2428)
 
 # Issue #2429: overflow policy check+arm atomic under g_gc_defer_armed_mtx.
 aura_add_issue_test(test_gc_defer_overflow_policy_atomic_2429)
-aura_issue_test_link_llvm_jit(test_gc_defer_overflow_policy_atomic_2429)
+aura_issue_test_link_light(test_gc_defer_overflow_policy_atomic_2429)
 add_dependencies(all_test_issue_targets test_gc_defer_overflow_policy_atomic_2429)
 
 # Issue #2430: snapshot_capability_effect_stats double-check (#1840 pattern).
 aura_add_issue_test(test_capability_effect_stats_snapshot_2430)
-aura_issue_test_link_llvm_jit(test_capability_effect_stats_snapshot_2430)
+aura_issue_test_link_light(test_capability_effect_stats_snapshot_2430)
 add_dependencies(all_test_issue_targets test_capability_effect_stats_snapshot_2430)
 
 # Issue #2431: pure columnar DeadCoercionElimination on IRModuleV2.
 aura_add_issue_test(test_dead_coercion_columnar_2431)
-aura_issue_test_link_llvm_jit(test_dead_coercion_columnar_2431)
+aura_issue_test_link_light(test_dead_coercion_columnar_2431)
 add_dependencies(all_test_issue_targets test_dead_coercion_columnar_2431)
 
 # Issue #2432: IR SoA generation fence on LayoutStamp (fiber resume).
 aura_add_issue_test(test_ir_soa_layout_stamp_2432)
-aura_issue_test_link_llvm_jit(test_ir_soa_layout_stamp_2432)
+aura_issue_test_link_light(test_ir_soa_layout_stamp_2432)
 add_dependencies(all_test_issue_targets test_ir_soa_layout_stamp_2432)
 
 # Issue #2520: production ban residual to_aos_view under SoA-only.
 aura_add_issue_test(test_soa_ban_residual_aos_bridge_2520)
-aura_issue_test_link_llvm_jit(test_soa_ban_residual_aos_bridge_2520)
+aura_issue_test_link_light(test_soa_ban_residual_aos_bridge_2520)
 add_dependencies(all_test_issue_targets test_soa_ban_residual_aos_bridge_2520)
 
 # Issue #2519: LayoutStamp operator== full 8-field equality.
 aura_add_issue_test(test_layout_stamp_equality_8field_2519)
-aura_issue_test_link_llvm_jit(test_layout_stamp_equality_8field_2519)
+aura_issue_test_link_light(test_layout_stamp_equality_8field_2519)
 add_dependencies(all_test_issue_targets test_layout_stamp_equality_8field_2519)
 
 # Issue #2433: HighMutation default-on + deopt-storm × LayoutStamp.shape_version
@@ -3259,132 +3342,132 @@ add_dependencies(all_test_issue_targets test_shape_high_mutation_storm_2433)
 
 # Issue #2434: hard HotPassDodCompliant for all production pipeline stages
 aura_add_issue_test(test_hot_pass_hard_dod_2434)
-aura_issue_test_link_llvm_jit(test_hot_pass_hard_dod_2434)
+aura_issue_test_link_light(test_hot_pass_hard_dod_2434)
 add_dependencies(all_test_issue_targets test_hot_pass_hard_dod_2434)
 
 # Issue #2435: hot vs cold contract placement (production hot OFF)
 aura_add_issue_test(test_hot_contract_placement_2435)
-aura_issue_test_link_llvm_jit(test_hot_contract_placement_2435)
+aura_issue_test_link_light(test_hot_contract_placement_2435)
 add_dependencies(all_test_issue_targets test_hot_contract_placement_2435)
 
 # Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle
 aura_add_issue_test(test_post_compact_lifecycle_2436)
-aura_issue_test_link_llvm_jit(test_post_compact_lifecycle_2436)
+aura_issue_test_link_light(test_post_compact_lifecycle_2436)
 add_dependencies(all_test_issue_targets test_post_compact_lifecycle_2436)
 
 # Issue #2437: reconcile_gc_defer_bits_after_clear CAS fence + repair
 aura_add_issue_test(test_gc_defer_reconcile_cas_2437)
-aura_issue_test_link_llvm_jit(test_gc_defer_reconcile_cas_2437)
+aura_issue_test_link_light(test_gc_defer_reconcile_cas_2437)
 add_dependencies(all_test_issue_targets test_gc_defer_reconcile_cas_2437)
 
 # Issue #2438: arena compact notify_* lifecycle drain (no UAF on teardown)
 aura_add_issue_test(test_arena_compact_notify_lifecycle_2438)
-aura_issue_test_link_llvm_jit(test_arena_compact_notify_lifecycle_2438)
+aura_issue_test_link_light(test_arena_compact_notify_lifecycle_2438)
 add_dependencies(all_test_issue_targets test_arena_compact_notify_lifecycle_2438)
 
 # Issue #2439: verification/verify dirty bits lock (no metric double-count)
 aura_add_issue_test(test_verification_dirty_bits_lock_2439)
-aura_issue_test_link_llvm_jit(test_verification_dirty_bits_lock_2439)
+aura_issue_test_link_light(test_verification_dirty_bits_lock_2439)
 add_dependencies(all_test_issue_targets test_verification_dirty_bits_lock_2439)
 
 # Issue #2440: 4 SoA side-table columns atomic_ref + dirty_column_mtx_
 aura_add_issue_test(test_soa_column_atomic_2440)
-aura_issue_test_link_llvm_jit(test_soa_column_atomic_2440)
+aura_issue_test_link_light(test_soa_column_atomic_2440)
 add_dependencies(all_test_issue_targets test_soa_column_atomic_2440)
 
 # Issue #2441: apply_macro_dirty_bits metric double-count (fetch_or + lock)
 aura_add_issue_test(test_macro_dirty_bits_lock_2441)
-aura_issue_test_link_llvm_jit(test_macro_dirty_bits_lock_2441)
+aura_issue_test_link_light(test_macro_dirty_bits_lock_2441)
 add_dependencies(all_test_issue_targets test_macro_dirty_bits_lock_2441)
 
 # Issue #2442: clear_macro_dirty_all concurrent with macro_dirty readers
 aura_add_issue_test(test_clear_macro_dirty_concurrent_2442)
-aura_issue_test_link_llvm_jit(test_clear_macro_dirty_concurrent_2442)
+aura_issue_test_link_light(test_clear_macro_dirty_concurrent_2442)
 add_dependencies(all_test_issue_targets test_clear_macro_dirty_concurrent_2442)
 
 # Issue #2443: region dense SoA atomic_ref + region_table_mtx_
 aura_add_issue_test(test_region_dense_atomic_2443)
-aura_issue_test_link_llvm_jit(test_region_dense_atomic_2443)
+aura_issue_test_link_light(test_region_dense_atomic_2443)
 add_dependencies(all_test_issue_targets test_region_dense_atomic_2443)
 
 # Issue #2445: add_node + add_* builder single-threaded mutation contract
 aura_add_issue_test(test_add_node_builder_contract_2445)
-aura_issue_test_link_llvm_jit(test_add_node_builder_contract_2445)
+aura_issue_test_link_light(test_add_node_builder_contract_2445)
 add_dependencies(all_test_issue_targets test_add_node_builder_contract_2445)
 
 # Issue #2448: defines_referencing_sym exclude mutated Define by NodeId
 aura_add_issue_test(test_defines_referencing_sym_2448)
-aura_issue_test_link_llvm_jit(test_defines_referencing_sym_2448)
+aura_issue_test_link_light(test_defines_referencing_sym_2448)
 add_dependencies(all_test_issue_targets test_defines_referencing_sym_2448)
 
 # Issue #2449: param_data_ single-threaded mutation contract
 aura_add_issue_test(test_param_data_mutation_contract_2449)
-aura_issue_test_link_llvm_jit(test_param_data_mutation_contract_2449)
+aura_issue_test_link_light(test_param_data_mutation_contract_2449)
 add_dependencies(all_test_issue_targets test_param_data_mutation_contract_2449)
 
 # Issue #2450: param_annot_data_ single-threaded mutation contract
 aura_add_issue_test(test_param_annot_mutation_contract_2450)
-aura_issue_test_link_llvm_jit(test_param_annot_mutation_contract_2450)
+aura_issue_test_link_light(test_param_annot_mutation_contract_2450)
 add_dependencies(all_test_issue_targets test_param_annot_mutation_contract_2450)
 
 # Issue #2451: param_begin_ + param_count_ publish order (TOCTOU)
 aura_add_issue_test(test_param_begin_count_publish_2451)
-aura_issue_test_link_llvm_jit(test_param_begin_count_publish_2451)
+aura_issue_test_link_light(test_param_begin_count_publish_2451)
 add_dependencies(all_test_issue_targets test_param_begin_count_publish_2451)
 
 # Issue #2453: get(NodeId) NodeView multi-column snapshot contract
 aura_add_issue_test(test_get_nodeview_snapshot_2453)
-aura_issue_test_link_llvm_jit(test_get_nodeview_snapshot_2453)
+aura_issue_test_link_light(test_get_nodeview_snapshot_2453)
 add_dependencies(all_test_issue_targets test_get_nodeview_snapshot_2453)
 
 # Issue #2454: RAII guard FlatAST-move lifetime contract
 aura_add_issue_test(test_raii_guard_flatast_lifetime_2454)
-aura_issue_test_link_llvm_jit(test_raii_guard_flatast_lifetime_2454)
+aura_issue_test_link_light(test_raii_guard_flatast_lifetime_2454)
 add_dependencies(all_test_issue_targets test_raii_guard_flatast_lifetime_2454)
 
 # Issue #2455: restore_children acquires structural exclusive lock
 aura_add_issue_test(test_restore_children_structural_lock_2455)
-aura_issue_test_link_llvm_jit(test_restore_children_structural_lock_2455)
+aura_issue_test_link_light(test_restore_children_structural_lock_2455)
 add_dependencies(all_test_issue_targets test_restore_children_structural_lock_2455)
 
 # Issue #2456: hoist subtree_uses_sym find_first_node_with to single TU
 aura_add_issue_test(test_subtree_uses_sym_template_bloat_2456)
-aura_issue_test_link_llvm_jit(test_subtree_uses_sym_template_bloat_2456)
+aura_issue_test_link_light(test_subtree_uses_sym_template_bloat_2456)
 add_dependencies(all_test_issue_targets test_subtree_uses_sym_template_bloat_2456)
 
 # Issue #2457: FlatAST copy shares mutation_log_ / narrowing_log_ via COW
 aura_add_issue_test(test_mutation_log_cow_copy_2457)
-aura_issue_test_link_llvm_jit(test_mutation_log_cow_copy_2457)
+aura_issue_test_link_light(test_mutation_log_cow_copy_2457)
 add_dependencies(all_test_issue_targets test_mutation_log_cow_copy_2457)
 
 # Issue #2458: truncate-commit Soft observe / Hard full-solve-or-reject
 aura_add_issue_test(test_truncate_commit_gate_2458)
-aura_issue_test_link_llvm_jit(test_truncate_commit_gate_2458)
+aura_issue_test_link_light(test_truncate_commit_gate_2458)
 add_dependencies(all_test_issue_targets test_truncate_commit_gate_2458)
 
 # Issue #2459: production CastOp density closed-loop (streak + gate reject)
 aura_add_issue_test(test_castop_density_closed_loop_2459)
-aura_issue_test_link_llvm_jit(test_castop_density_closed_loop_2459)
+aura_issue_test_link_light(test_castop_density_closed_loop_2459)
 add_dependencies(all_test_issue_targets test_castop_density_closed_loop_2459)
 
 # Issue #2460: Phase-2 dirty OwnershipEnv re-sim during infer_flat_partial
 aura_add_issue_test(test_linear_partial_revalidate_2460)
-aura_issue_test_link_llvm_jit(test_linear_partial_revalidate_2460)
+aura_issue_test_link_light(test_linear_partial_revalidate_2460)
 add_dependencies(all_test_issue_targets test_linear_partial_revalidate_2460)
 
 # Issue #2461: per-If stable narrowing cache key (shape × epoch × refined)
 aura_add_issue_test(test_occurrence_cache_key_2461)
-aura_issue_test_link_llvm_jit(test_occurrence_cache_key_2461)
+aura_issue_test_link_light(test_occurrence_cache_key_2461)
 add_dependencies(all_test_issue_targets test_occurrence_cache_key_2461)
 
 # Issue #2462: type-system-health next-action + repair_nodes closed-loop
 aura_add_issue_test(test_type_system_health_next_action_2462)
-aura_issue_test_link_llvm_jit(test_type_system_health_next_action_2462)
+aura_issue_test_link_light(test_type_system_health_next_action_2462)
 add_dependencies(all_test_issue_targets test_type_system_health_next_action_2462)
 
 # Issue #2471: optimize_type_info chain-walk terminates on MAX not 0
 aura_add_issue_test(test_ir_optimize_type_info_chain_2471)
-aura_issue_test_link_llvm_jit(test_ir_optimize_type_info_chain_2471)
+aura_issue_test_link_light(test_ir_optimize_type_info_chain_2471)
 add_dependencies(all_test_issue_targets test_ir_optimize_type_info_chain_2471)
 
 # Issue #2472: close TOCTOU in aura_closure_call MustDeopt lock-downgrade
@@ -3396,13 +3479,13 @@ add_dependencies(all_test_issue_targets test_closure_call_must_deopt_toctou_2472
 # Issue #2473: flush_gc_roots / compact_sweep take closures_mtx_ when
 # iterating / erasing closures_ (heap_mutex_ alone races register rehash).
 aura_add_issue_test(test_gc_closures_mtx_flush_sweep_2473)
-aura_issue_test_link_llvm_jit(test_gc_closures_mtx_flush_sweep_2473)
+aura_issue_test_link_light(test_gc_closures_mtx_flush_sweep_2473)
 add_dependencies(all_test_issue_targets test_gc_closures_mtx_flush_sweep_2473)
 
 # Issue #2474: FFI hot-path cache torn update — publish sig_hash last;
 # invalidate-first + reader double-check (no new-hash + old-fn invoke).
 aura_add_issue_test(test_ffi_hot_path_cache_toctou_2474)
-aura_issue_test_link_llvm_jit(test_ffi_hot_path_cache_toctou_2474)
+aura_issue_test_link_light(test_ffi_hot_path_cache_toctou_2474)
 add_dependencies(all_test_issue_targets test_ffi_hot_path_cache_toctou_2474)
 
 # Issue #2475: remove unused default-constructed fn_lock in
@@ -3424,57 +3507,57 @@ add_dependencies(all_test_issue_targets test_emit_object_deprecated_2477)
 
 # Issue #2478: command-line requires kCapIoRead (capability bypass closed).
 aura_add_issue_test(test_command_line_cap_io_read_2478)
-aura_issue_test_link_llvm_jit(test_command_line_cap_io_read_2478)
+aura_issue_test_link_light(test_command_line_cap_io_read_2478)
 add_dependencies(all_test_issue_targets test_command_line_cap_io_read_2478)
 
 # Issue #2479: regex-* ReDoS wall-clock timeout (AURA_REGEX_TIMEOUT_MS).
 aura_add_issue_test(test_regex_redos_timeout_2479)
-aura_issue_test_link_llvm_jit(test_regex_redos_timeout_2479)
+aura_issue_test_link_light(test_regex_redos_timeout_2479)
 add_dependencies(all_test_issue_targets test_regex_redos_timeout_2479)
 
 # Issue #2480: json-parse parse_number catches stod/stoll exceptions.
 aura_add_issue_test(test_json_parse_number_exception_2480)
-aura_issue_test_link_llvm_jit(test_json_parse_number_exception_2480)
+aura_issue_test_link_light(test_json_parse_number_exception_2480)
 add_dependencies(all_test_issue_targets test_json_parse_number_exception_2480)
 
 # Issue #2481: json-parse parse_object grows FlatHashTable (no silent key drop).
 aura_add_issue_test(test_json_parse_object_grow_2481)
-aura_issue_test_link_llvm_jit(test_json_parse_object_grow_2481)
+aura_issue_test_link_light(test_json_parse_object_grow_2481)
 add_dependencies(all_test_issue_targets test_json_parse_object_grow_2481)
 
 # Issue #2482: is_end_of_list / null? treat only void as empty list (not int 0).
 aura_add_issue_test(test_list_end_of_list_void_2482)
-aura_issue_test_link_llvm_jit(test_list_end_of_list_void_2482)
+aura_issue_test_link_light(test_list_end_of_list_void_2482)
 add_dependencies(all_test_issue_targets test_list_end_of_list_void_2482)
 
 # Issue #2483: channel:send rendezvous (buffer_size=0) blocks until recv.
 aura_add_issue_test(test_channel_rendezvous_2483)
-aura_issue_test_link_llvm_jit(test_channel_rendezvous_2483)
+aura_issue_test_link_light(test_channel_rendezvous_2483)
 add_dependencies(all_test_issue_targets test_channel_rendezvous_2483)
 
 # Issue #2484: eval-current must not auto-invoke workspace Defines (side effects).
 aura_add_issue_test(test_eval_current_no_auto_fix_2484)
-aura_issue_test_link_llvm_jit(test_eval_current_no_auto_fix_2484)
+aura_issue_test_link_light(test_eval_current_no_auto_fix_2484)
 add_dependencies(all_test_issue_targets test_eval_current_no_auto_fix_2484)
 
 # Issue #2485: load requires kCapIoRead (capability bypass closed).
 aura_add_issue_test(test_load_cap_io_read_2485)
-aura_issue_test_link_llvm_jit(test_load_cap_io_read_2485)
+aura_issue_test_link_light(test_load_cap_io_read_2485)
 add_dependencies(all_test_issue_targets test_load_cap_io_read_2485)
 
 # Issue #2486: gc-heap fallback clears cells_ (stale cell data).
 aura_add_issue_test(test_gc_heap_cells_clear_2486)
-aura_issue_test_link_llvm_jit(test_gc_heap_cells_clear_2486)
+aura_issue_test_link_light(test_gc_heap_cells_clear_2486)
 add_dependencies(all_test_issue_targets test_gc_heap_cells_clear_2486)
 
 # Issue #2487: sys-open O_NOFOLLOW + path_is_denied (TOCTOU / mem disclosure).
 aura_add_issue_test(test_sys_open_path_harden_2487)
-aura_issue_test_link_llvm_jit(test_sys_open_path_harden_2487)
+aura_issue_test_link_light(test_sys_open_path_harden_2487)
 add_dependencies(all_test_issue_targets test_sys_open_path_harden_2487)
 
 # Issue #2500: Agent compact policy (health + frag + defer + hold → mode).
 aura_add_issue_test(test_compact_policy_2500)
-aura_issue_test_link_llvm_jit(test_compact_policy_2500)
+aura_issue_test_link_light(test_compact_policy_2500)
 add_dependencies(all_test_issue_targets test_compact_policy_2500)
 
 # Issue #2501: complete post-bump epoch invariant (slot clear + MustDeopt).
@@ -3509,61 +3592,61 @@ add_dependencies(all_test_issue_targets test_aot_hot_update_health_2506)
 
 # Issue #2507: clear escape MoveOp elision gate on steal-complete + densify.
 aura_add_issue_test(test_escape_gate_steal_densify_clear_2507)
-aura_issue_test_link_llvm_jit(test_escape_gate_steal_densify_clear_2507)
+aura_issue_test_link_light(test_escape_gate_steal_densify_clear_2507)
 add_dependencies(all_test_issue_targets test_escape_gate_steal_densify_clear_2507)
 
 # Issue #2508: OccurrenceGoal reverify before anti-starve full solve on truncate.
 aura_add_issue_test(test_delta_truncate_goal_priority_2508)
-aura_issue_test_link_llvm_jit(test_delta_truncate_goal_priority_2508)
+aura_issue_test_link_light(test_delta_truncate_goal_priority_2508)
 add_dependencies(all_test_issue_targets test_delta_truncate_goal_priority_2508)
 
 # Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix at commit.
 aura_add_issue_test(test_composite_cs_signature_matrix_2509)
-aura_issue_test_link_llvm_jit(test_composite_cs_signature_matrix_2509)
+aura_issue_test_link_light(test_composite_cs_signature_matrix_2509)
 add_dependencies(all_test_issue_targets test_composite_cs_signature_matrix_2509)
 
 # Issue #2061: incremental restamp observability for generation wrap
 # (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
 aura_add_issue_test(test_incremental_restamp_2061)
-aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
+aura_issue_test_link_light(test_incremental_restamp_2061)
 
 # Issue #2403: composite query index (tag+arity±marker) + shared_lock SLO.
 aura_add_issue_test(test_query_index_composite_2403)
-aura_issue_test_link_llvm_jit(test_query_index_composite_2403)
+aura_issue_test_link_light(test_query_index_composite_2403)
 add_dependencies(all_test_issue_targets test_query_index_composite_2403)
 
 # Issue #2404: Agent StableNodeRef export validate_or_refresh contract.
 aura_add_issue_test(test_stable_ref_export_validate_2404)
-aura_issue_test_link_llvm_jit(test_stable_ref_export_validate_2404)
+aura_issue_test_link_light(test_stable_ref_export_validate_2404)
 add_dependencies(all_test_issue_targets test_stable_ref_export_validate_2404)
 
 # Issue #2073: wire check_workspace_isolation + stamp_ref_tenant on
 # mutate / StableNodeRef hot paths (stamp_ref_tenant at
 # pin_node_for_atomic_batch). Extends #1566 / #81967 coverage.
 aura_add_issue_test(test_workspace_isolation_wire_2073)
-aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
+aura_issue_test_link_light(test_workspace_isolation_wire_2073)
 # Issue #2385: Restricted sandbox denies side-effects when tenant principal unset.
 aura_add_issue_test(test_restricted_unset_principal_2385)
-aura_issue_test_link_llvm_jit(test_restricted_unset_principal_2385)
+aura_issue_test_link_light(test_restricted_unset_principal_2385)
 
 # Issue #2125: stamp isolation principal on all StableNodeRef capture
 # paths (make_ref / children_stable / non-batch) — extends #2073 / #2056.
 aura_add_issue_test(test_stable_ref_tenant_capture_2125)
-aura_issue_test_link_llvm_jit(test_stable_ref_tenant_capture_2125)
+aura_issue_test_link_light(test_stable_ref_tenant_capture_2125)
 
 # Issue #2126: prefer instr/block impact dirty over nested/quote-lambda
 # mark_all_blocks_dirty full-relower fallback (#2031 / #2109 consumer).
 aura_add_issue_test(test_instr_impact_minimal_dirty_2126)
-aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty_2126)
+aura_issue_test_link_light(test_instr_impact_minimal_dirty_2126)
 
 # Issue #2127: workload/deopt/density adaptive partial-relower threshold
 # (extends #2112 cost adaptive + #2032 base=8).
 aura_add_issue_test(test_workload_adaptive_relower_2127)
-aura_issue_test_link_llvm_jit(test_workload_adaptive_relower_2127)
+aura_issue_test_link_light(test_workload_adaptive_relower_2127)
 
 # Issue #2190: StormLevel Global gate on partial relower (Shape-only does not).
 aura_add_issue_test(test_partial_relower_storm_gate_2190)
-aura_issue_test_link_llvm_jit(test_partial_relower_storm_gate_2190)
+aura_issue_test_link_light(test_partial_relower_storm_gate_2190)
 add_dependencies(all_test_issue_targets test_partial_relower_storm_gate_2190)
 
 # Issue #2128: MustDeoptBeforeNextCall after reemit when live remap misses.
@@ -3572,17 +3655,17 @@ aura_issue_test_link_llvm_jit(test_must_deopt_before_next_call_2128)
 
 # Issue #2129: stamp + validate linear_state on Closure/IRClosure/AOT/apply.
 aura_add_issue_test(test_linear_state_stamp_apply_2129)
-aura_issue_test_link_llvm_jit(test_linear_state_stamp_apply_2129)
+aura_issue_test_link_light(test_linear_state_stamp_apply_2129)
 
 # Issue #2130: ShapeAwareFold + LinearOwnership truly dirty-aware
 # (per-block peel / clean-function skip; metrics schema-2130).
 aura_add_issue_test(test_dirty_aware_shape_linear_passes_2130)
-aura_issue_test_link_llvm_jit(test_dirty_aware_shape_linear_passes_2130)
+aura_issue_test_link_light(test_dirty_aware_shape_linear_passes_2130)
 
 # Issue #2131: unify GC-root pin → cascade → audit GcCoordScope state
 # machine across invalidate / boundary / hot-swap / compact.
 aura_add_issue_test(test_gc_coord_scope_2131)
-aura_issue_test_link_llvm_jit(test_gc_coord_scope_2131)
+aura_issue_test_link_light(test_gc_coord_scope_2131)
 
 # Issue #2132: region/priority-aware deopt-storm reemit throttle
 # (critical mask soft-bypass; hard ceiling; reason metrics).
@@ -3592,111 +3675,111 @@ aura_issue_test_link_llvm_jit(test_region_priority_deopt_throttle_2132)
 # Issue #2133: consume ImpactScope affected_instrs in relower +
 # DirtyAware pass peel (instr precision under partial thr).
 aura_add_issue_test(test_instr_level_relower_pass_2133)
-aura_issue_test_link_llvm_jit(test_instr_level_relower_pass_2133)
+aura_issue_test_link_light(test_instr_level_relower_pass_2133)
 
 # Issue #2134: tui:draw-batch / fill-rect / present-batch over TermBuf
 # DirtyRegion (Agent batch draw + dirty AABB present).
 aura_add_issue_test(test_tui_batch_draw_present_2134)
-aura_issue_test_link_llvm_jit(test_tui_batch_draw_present_2134)
+aura_issue_test_link_light(test_tui_batch_draw_present_2134)
 
 # Issue #2135: default zero-copy present (direct arena ANSI; residual memcpy).
 aura_add_issue_test(test_zero_copy_present_default_2135)
-aura_issue_test_link_llvm_jit(test_zero_copy_present_default_2135)
+aura_issue_test_link_light(test_zero_copy_present_default_2135)
 
 # Issue #2136: Render effect gate on batch draw/present + FFI hot-path hand-off.
 aura_add_issue_test(test_render_effect_gate_2136)
-aura_issue_test_link_llvm_jit(test_render_effect_gate_2136)
+aura_issue_test_link_light(test_render_effect_gate_2136)
 
 # Issue #2137: frame-budget cascade isolation (protect present from dirty work).
 aura_add_issue_test(test_frame_budget_cascade_isolation_2137)
-aura_issue_test_link_llvm_jit(test_frame_budget_cascade_isolation_2137)
+aura_issue_test_link_light(test_frame_budget_cascade_isolation_2137)
 
 # Issue #2138: evolvable RenderStrategy layer vs fixed native kernel.
 aura_add_issue_test(test_render_strategy_layer_2138)
-aura_issue_test_link_llvm_jit(test_render_strategy_layer_2138)
+aura_issue_test_link_light(test_render_strategy_layer_2138)
 
 # Issue #2139: single-entry SoA dirty sync after every cascade (block→instr).
 aura_add_issue_test(test_soa_single_entry_dirty_sync_2139)
-aura_issue_test_link_llvm_jit(test_soa_single_entry_dirty_sync_2139)
+aura_issue_test_link_light(test_soa_single_entry_dirty_sync_2139)
 
 # Issue #2142: unify hot-path AURA_HOT_CONTRACT + invariant hit metrics.
 aura_add_issue_test(test_hot_contract_unify_2142)
-aura_issue_test_link_llvm_jit(test_hot_contract_unify_2142)
+aura_issue_test_link_light(test_hot_contract_unify_2142)
 
 # Issue #2143: SoaDirtyAwarePass + run_dirty_pipeline fold on IRModuleV2.
 aura_add_issue_test(test_soa_dirty_aware_pipeline_2143)
-aura_issue_test_link_llvm_jit(test_soa_dirty_aware_pipeline_2143)
+aura_issue_test_link_light(test_soa_dirty_aware_pipeline_2143)
 
 # Issue #2144: Guard-exit selective predicate-memo + occurrence reanalyze.
 aura_add_issue_test(test_guard_exit_occurrence_refresh_2144)
-aura_issue_test_link_llvm_jit(test_guard_exit_occurrence_refresh_2144)
+aura_issue_test_link_light(test_guard_exit_occurrence_refresh_2144)
 
 # Issue #2145: Full/Strict MutationBoundary hard-gate for invariant + linear.
 aura_add_issue_test(test_hard_gate_full_strict_2145)
-aura_issue_test_link_llvm_jit(test_hard_gate_full_strict_2145)
+aura_issue_test_link_light(test_hard_gate_full_strict_2145)
 
 # Issue #2281: Agent-visible TypedMutationAudit decision query (Sampled
 # vs hard-gate matrix) — pure decide() + query schema sentinels.
 aura_add_issue_test(test_typed_mutation_audit_decision_2281)
-aura_issue_test_link_llvm_jit(test_typed_mutation_audit_decision_2281)
+aura_issue_test_link_light(test_typed_mutation_audit_decision_2281)
 add_dependencies(all_test_issue_targets test_typed_mutation_audit_decision_2281)
 # Issue #2300: query:lifetime-contract-snapshot pure Agent surface.
 aura_add_issue_test(test_lifetime_contract_snapshot_2300)
-aura_issue_test_link_llvm_jit(test_lifetime_contract_snapshot_2300)
+aura_issue_test_link_light(test_lifetime_contract_snapshot_2300)
 add_dependencies(all_test_issue_targets test_lifetime_contract_snapshot_2300)
 
 # Issue #2282: unified dead-coercion layered counter (AST elide + IR DCE + dirty-cone skip).
 # Single Agent-facing key (dead-coercion-layered-total) + 5 individually queryable components.
 aura_add_issue_test(test_dead_coercion_layered_2282)
-aura_issue_test_link_llvm_jit(test_dead_coercion_layered_2282)
+aura_issue_test_link_light(test_dead_coercion_layered_2282)
 add_dependencies(all_test_issue_targets test_dead_coercion_layered_2282)
 
 # Issue #2283: wire type_dep_graph_ into infer_flat_partial primary affected set
 # via touched_type_ids (CS touched_roots + occurrence vars + rebinding type change).
 # Systematic merge + live_and_still_typed filter + 2 new metrics + 1 additive query primitive.
 aura_add_issue_test(test_type_dep_partial_merge_2283)
-aura_issue_test_link_llvm_jit(test_type_dep_partial_merge_2283)
+aura_issue_test_link_light(test_type_dep_partial_merge_2283)
 add_dependencies(all_test_issue_targets test_type_dep_partial_merge_2283)
 
 # Issue #2284: Agent-first-class TIMEOUT repair surface (structured unresolved_affected_nodes).
 # Publish site on every TIMEOUT / hard-reject (#2277 parity) + 8 new atomics + 1 additive
 # query primitive (hash with 7 fixed fields + 16 capped NodeId slots).
 aura_add_issue_test(test_type_timeout_repair_2284)
-aura_issue_test_link_llvm_jit(test_type_timeout_repair_2284)
+aura_issue_test_link_light(test_type_timeout_repair_2284)
 add_dependencies(all_test_issue_targets test_type_timeout_repair_2284)
 
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
-aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)
+aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
 
 # Issue #2147: CoercionMap provenance fast path + Strict reject weak mutation id.
 aura_add_issue_test(test_coercion_provenance_fast_strict_2147)
-aura_issue_test_link_llvm_jit(test_coercion_provenance_fast_strict_2147)
+aura_issue_test_link_light(test_coercion_provenance_fast_strict_2147)
 
 # Issue #2512: stamp active mid/pred into CoercionEntry at deferred-add.
 aura_add_issue_test(test_coercion_stamp_at_add_2512)
-aura_issue_test_link_llvm_jit(test_coercion_stamp_at_add_2512)
+aura_issue_test_link_light(test_coercion_stamp_at_add_2512)
 add_dependencies(all_test_issue_targets test_coercion_stamp_at_add_2512)
 
 # Issue #2148: Precision meet/join for predicate lattice (number/string/bool + ADT).
 aura_add_issue_test(test_predicate_meet_join_lattice_2148)
-aura_issue_test_link_llvm_jit(test_predicate_meet_join_lattice_2148)
+aura_issue_test_link_light(test_predicate_meet_join_lattice_2148)
 
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
 aura_add_issue_test(test_capability_effect_force_2072)
-aura_issue_test_link_llvm_jit(test_capability_effect_force_2072)
+aura_issue_test_link_light(test_capability_effect_force_2072)
 # Issue #2384: require_effect stamps live mutation_id (not hardcode 0).
 aura_add_issue_test(test_require_effect_live_mid_2384)
-aura_issue_test_link_llvm_jit(test_require_effect_live_mid_2384)
+aura_issue_test_link_light(test_require_effect_live_mid_2384)
 
 # Issue #2490: require_effect auto-enforces workspace isolation when
 # req_bits != 0 (single side-effect entry). Pure / zero-bits callers
 # unchanged; isolation deny short-circuits before effect check; single SE
 # IsolationDeny count preserved via #2388.
 aura_add_issue_test(test_require_effect_auto_isolation_2490)
-aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation_2490)
+aura_issue_test_link_light(test_require_effect_auto_isolation_2490)
 
 # Issue #2491: mandate TenantScope at fiber spawn/resume entry (no residual
 # principal). assigned_tenant_id_ on Fiber + bridge hooks
@@ -3704,28 +3787,28 @@ aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation_2490)
 # on Fiber::resume / yield boundary. Single authority with #2385 / #2055 /
 # #2388 + #2490 require_effect auto-isolation.
 aura_add_issue_test(test_tenant_scope_fiber_mandate_2491)
-aura_issue_test_link_llvm_jit(test_tenant_scope_fiber_mandate_2491)
+aura_issue_test_link_light(test_tenant_scope_fiber_mandate_2491)
 
 # Issue #2492: force SecurityEvent WAL under Restricted (not only
 # multi-tenant/Strict). Single-tenant Restricted commercial deploys were
 # silent under deny storms because force_wal only fired for multi-tenant
 # or Strict — closed by adding `restricted` to the force_wal predicate.
 aura_add_issue_test(test_security_audit_wal_force_restricted_2492)
-aura_issue_test_link_llvm_jit(test_security_audit_wal_force_restricted_2492)
+aura_issue_test_link_light(test_security_audit_wal_force_restricted_2492)
 
 # Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation over
 # independent audit gens. resolve_audit_mutation_id() preference order
 # (caller mid → current_mutation_epoch → ResourceQuota → gen) joins SE ↔
 # TypedMutationAudit ↔ grant epoch into one mid vocabulary.
 aura_add_issue_test(test_audit_mutation_id_unify_2493)
-aura_issue_test_link_llvm_jit(test_audit_mutation_id_unify_2493)
+aura_issue_test_link_light(test_audit_mutation_id_unify_2493)
 
 # Issue #2494: hard-fail check_side_effect_security.py for new prims without
 # require_effect / PrimMeta. The script already has --strict mode + allowlist
 # reason enforcement; this test confirms it's wired as PR CI hard-fail and
 # that a fixture prim (side-effect name, no coverage marker) trips the gate.
 aura_add_issue_test(test_side_effect_security_gate_hardfail_2494)
-aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail_2494)
+aura_issue_test_link_light(test_side_effect_security_gate_hardfail_2494)
 
 # Issue #2495: Moving densify fail-closed on untracked external roots.
 # ASTArena::live_compact(Moving) only densifies small-pool tracked create
@@ -3734,7 +3817,7 @@ aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail_2494)
 # via moving_incomplete_remap + pin_contract_held=false when objects_moved > 0
 # && untracked_kept_count > 0 (production Moving default).
 aura_add_issue_test(test_moving_densify_fail_closed_2495)
-aura_issue_test_link_llvm_jit(test_moving_densify_fail_closed_2495)
+aura_issue_test_link_light(test_moving_densify_fail_closed_2495)
 
 # Issue #2496: GeneralObjectPin adoption coverage gate (inventory vs
 # wire_total). kGeneralObjectPinAdoptSiteCount tracks the documented
@@ -3743,51 +3826,51 @@ aura_issue_test_link_llvm_jit(test_moving_densify_fail_closed_2495)
 # #2298 + #2337 + #2363 (the GeneralObjectPin + mutate-path adoption
 # lineage).
 aura_add_issue_test(test_general_object_pin_coverage_gate_2496)
-aura_issue_test_link_llvm_jit(test_general_object_pin_coverage_gate_2496)
+aura_issue_test_link_light(test_general_object_pin_coverage_gate_2496)
 
 # Issue #2074: anti privilege-sticky — grant_epoch binding to
 # current_mutation_epoch() + min_valid_epoch invalidation in
 # CapabilityRegistry::provenance_ok.
 aura_add_issue_test(test_grant_epoch_invalidation_2074)
-aura_issue_test_link_llvm_jit(test_grant_epoch_invalidation_2074)
+aura_issue_test_link_light(test_grant_epoch_invalidation_2074)
 
 # Issue #2075: unified SecurityEvent schema + query:security-audit-trail
 # primitive. Shared effect/isolation/invariant audit surface
 # (src/core/security_event.hh) wired at both effect + isolation deny
 # paths in evaluator_security.cpp.
 aura_add_issue_test(test_security_audit_trail_2075)
-aura_issue_test_link_llvm_jit(test_security_audit_trail_2075)
+aura_issue_test_link_light(test_security_audit_trail_2075)
 
 # Issue #2076: production default Restricted sandbox + AURA_SANDBOX
 # env override + Agent-readable deny reason format
 # (effect-denied: <EffectName> not granted tenant=<id> op=<op>).
 # apply_aura_sandbox_env() called from main.cpp at startup.
 aura_add_issue_test(test_aura_sandbox_env_2076)
-aura_issue_test_link_llvm_jit(test_aura_sandbox_env_2076)
+aura_issue_test_link_light(test_aura_sandbox_env_2076)
 
 # Issue #2149: effect-check stamps Mutation epoch (not Bridge) for capability fence.
 aura_add_issue_test(test_effect_epoch_mutation_unify_2149)
-aura_issue_test_link_llvm_jit(test_effect_epoch_mutation_unify_2149)
+aura_issue_test_link_light(test_effect_epoch_mutation_unify_2149)
 
 # Issue #2150: force mutation-audit WAL under multi-tenant / Strict production.
 aura_add_issue_test(test_audit_wal_force_multi_tenant_2150)
-aura_issue_test_link_llvm_jit(test_audit_wal_force_multi_tenant_2150)
+aura_issue_test_link_light(test_audit_wal_force_multi_tenant_2150)
 
 # Issue #2151: optional hard-deny on grant_fiber_id mismatch (TenantScope isolation).
 aura_add_issue_test(test_hard_fiber_isolation_2151)
-aura_issue_test_link_llvm_jit(test_hard_fiber_isolation_2151)
+aura_issue_test_link_light(test_hard_fiber_isolation_2151)
 
 # Issue #2152: dispatch-level non-bypassable required_effects for side-effect prims.
 aura_add_issue_test(test_dispatch_required_effects_2152)
-aura_issue_test_link_llvm_jit(test_dispatch_required_effects_2152)
+aura_issue_test_link_light(test_dispatch_required_effects_2152)
 
 # Issue #2154: sliding grant_min_valid_epoch window on Mutation epoch bump.
 aura_add_issue_test(test_grant_epoch_retain_window_2154)
-aura_issue_test_link_llvm_jit(test_grant_epoch_retain_window_2154)
+aura_issue_test_link_light(test_grant_epoch_retain_window_2154)
 
 # Issue #2156: isolation-deny SecurityEvent.mutation_id is epoch, never tenant.
 aura_add_issue_test(test_isolation_audit_mid_2156)
-aura_issue_test_link_llvm_jit(test_isolation_audit_mid_2156)
+aura_issue_test_link_light(test_isolation_audit_mid_2156)
 
 # Issue #2077: unify has_capability string path with Effect matrix
 # (single source of truth). Effect-mapped caps (mutate, ffi, network,
@@ -3796,66 +3879,66 @@ aura_issue_test_link_llvm_jit(test_isolation_audit_mid_2156)
 # mapping keep the legacy string-list path. Wildcard keeps the
 # explicit-string-grant path so existing "*" grants stay meaningful.
 aura_add_issue_test(test_capability_unified_2077)
-aura_issue_test_link_llvm_jit(test_capability_unified_2077)
+aura_issue_test_link_light(test_capability_unified_2077)
 # Issue #2387: tenant-admin / syscall join Effect matrix (has_capability single source).
 aura_add_issue_test(test_capability_string_matrix_unify_2387)
-aura_issue_test_link_llvm_jit(test_capability_string_matrix_unify_2387)
+aura_issue_test_link_light(test_capability_string_matrix_unify_2387)
 
 # Issue #2489: promote remaining high-risk string-only caps into the Effect
 # matrix (self-evo / synthesize / strategy → MacroSelfEvo; sys-open / sys-write /
 # sys-read → Syscall|Read/Write; agent / capability → TenantAdmin). Closes the
 # residual multi-tenant self-mod / syscall / meta-privilege dual-track surface.
 aura_add_issue_test(test_capability_high_risk_promote_2489)
-aura_issue_test_link_llvm_jit(test_capability_high_risk_promote_2489)
+aura_issue_test_link_light(test_capability_high_risk_promote_2489)
 
 # Issue #2388: fold Capability + Isolation private audit rings into SecurityEvent WAL.
 aura_add_issue_test(test_security_audit_fold_2388)
-aura_issue_test_link_llvm_jit(test_security_audit_fold_2388)
+aura_issue_test_link_light(test_security_audit_fold_2388)
 add_dependencies(all_test_issue_targets test_security_audit_fold_2388)
 
 # Issue #2389: query:security-health single Agent score (deny + fence + WAL + wrap).
 aura_add_issue_test(test_security_health_2389)
-aura_issue_test_link_llvm_jit(test_security_health_2389)
+aura_issue_test_link_light(test_security_health_2389)
 add_dependencies(all_test_issue_targets test_security_health_2389)
 
 # Issue #2390: validate_node must not hard-abort on !is_valid (report/throw).
 aura_add_issue_test(test_validate_node_no_abort_2390)
-aura_issue_test_link_llvm_jit(test_validate_node_no_abort_2390)
+aura_issue_test_link_light(test_validate_node_no_abort_2390)
 add_dependencies(all_test_issue_targets test_validate_node_no_abort_2390)
 
 # Issue #2391: validate_post_restore SoA column size cross-check.
 aura_add_issue_test(test_validate_post_restore_soa_2391)
-aura_issue_test_link_llvm_jit(test_validate_post_restore_soa_2391)
+aura_issue_test_link_light(test_validate_post_restore_soa_2391)
 add_dependencies(all_test_issue_targets test_validate_post_restore_soa_2391)
 
 # Issue #2392: fixup_deltas safe rebase (bounds + overflow → NULL_NODE).
 aura_add_issue_test(test_fixup_deltas_2392)
-aura_issue_test_link_llvm_jit(test_fixup_deltas_2392)
+aura_issue_test_link_light(test_fixup_deltas_2392)
 add_dependencies(all_test_issue_targets test_fixup_deltas_2392)
 
 # Issue #2393: refresh_if_stale COW epoch mismatch fail-closed (vs wrap_epoch).
 aura_add_issue_test(test_stable_ref_cow_refresh_failclosed_2393)
-aura_issue_test_link_llvm_jit(test_stable_ref_cow_refresh_failclosed_2393)
+aura_issue_test_link_light(test_stable_ref_cow_refresh_failclosed_2393)
 add_dependencies(all_test_issue_targets test_stable_ref_cow_refresh_failclosed_2393)
 
 # Issue #2394: last_validated_generation concurrent-safe (CopyableAtomicU16).
 aura_add_issue_test(test_last_validated_generation_atomic_2394)
-aura_issue_test_link_llvm_jit(test_last_validated_generation_atomic_2394)
+aura_issue_test_link_light(test_last_validated_generation_atomic_2394)
 add_dependencies(all_test_issue_targets test_last_validated_generation_atomic_2394)
 
 # Issue #2395: StableNodeRef wire multi-byte fields little-endian (portable).
 aura_add_issue_test(test_stable_ref_wire_endian_2395)
-aura_issue_test_link_llvm_jit(test_stable_ref_wire_endian_2395)
+aura_issue_test_link_light(test_stable_ref_wire_endian_2395)
 add_dependencies(all_test_issue_targets test_stable_ref_wire_endian_2395)
 
 # Issue #2040: Guard hold p99 + workspace_mtx_ contention observability
 aura_add_issue_test(test_mutation_contention_2040)
-aura_issue_test_link_llvm_jit(test_mutation_contention_2040)
+aura_issue_test_link_light(test_mutation_contention_2040)
 add_dependencies(all_test_issue_targets test_mutation_contention_2040)
 
 # Issue #2041: partial re-lower + JIT hot-swap on invalidate cascade
 aura_add_issue_test(test_partial_relower_cascade_2041)
-aura_issue_test_link_llvm_jit(test_partial_relower_cascade_2041)
+aura_issue_test_link_light(test_partial_relower_cascade_2041)
 add_dependencies(all_test_issue_targets test_partial_relower_cascade_2041)
 
 # Issue #2042: comprehensive live IRClosure / tree-walker / PrimCall expire
@@ -3865,17 +3948,17 @@ add_dependencies(all_test_issue_targets test_comprehensive_live_closure_expire_2
 
 # Issue #2043: linear ownership + GC atomic invalidation window
 aura_add_issue_test(test_linear_gc_window_2043)
-aura_issue_test_link_llvm_jit(test_linear_gc_window_2043)
+aura_issue_test_link_light(test_linear_gc_window_2043)
 add_dependencies(all_test_issue_targets test_linear_gc_window_2043)
 
 # Issue #2044: cascade re-lower full incremental dirty pass suite
 aura_add_issue_test(test_cascade_incremental_pass_suite_2044)
-aura_issue_test_link_llvm_jit(test_cascade_incremental_pass_suite_2044)
+aura_issue_test_link_light(test_cascade_incremental_pass_suite_2044)
 add_dependencies(all_test_issue_targets test_cascade_incremental_pass_suite_2044)
 
 # Issue #2045: source_to_ir_map consistency after re-lower
 aura_add_issue_test(test_source_to_ir_map_consistency_2045)
-aura_issue_test_link_llvm_jit(test_source_to_ir_map_consistency_2045)
+aura_issue_test_link_light(test_source_to_ir_map_consistency_2045)
 add_dependencies(all_test_issue_targets test_source_to_ir_map_consistency_2045)
 
 # Issue #2046: AOT region versioning aligned with JIT hot-swap / bridge_epoch
@@ -3885,20 +3968,20 @@ aura_issue_test_link_llvm_jit(test_aot_jit_joint_versioning_2046)
 # Issue #2099: HygieneCheckpoint + restore API for violation rollback
 # (Agent what-if / self-evo safety). P1 — paired with #2023 (MacroSelfEvo).
 aura_add_issue_test(test_hygiene_checkpoint_2099)
-aura_issue_test_link_llvm_jit(test_hygiene_checkpoint_2099)
+aura_issue_test_link_light(test_hygiene_checkpoint_2099)
 
 # Issue #2170: Unified LayoutStamp / generation truth-source API for
 # cross-subsystem epoch coherence (P1 MemorySafety-Review / Epoch).
 # Single source-of-truth that boundary + compact + AOT emit + FFI
 # validate all read from instead of each picking a different "current".
 aura_add_issue_test(test_layout_stamp_2170)
-aura_issue_test_link_llvm_jit(test_layout_stamp_2170)
+aura_issue_test_link_light(test_layout_stamp_2170)
 
 # Issue #2224: mandate StableNodeRef tenant stamp on export (Phase A
 # export_ref / export_ref_safe) + resolve-time isolation gate (Phase B
 # resolve_stamped) + tenant-isolation-stats primitive (Phase C surface).
 aura_add_issue_test(test_isolation_stamp_resolve_2224)
-aura_issue_test_link_llvm_jit(test_isolation_stamp_resolve_2224)
+aura_issue_test_link_light(test_isolation_stamp_resolve_2224)
 add_dependencies(all_test_issue_targets test_isolation_stamp_resolve_2224)
 
 # Issue #2225: durable side-car SecurityEvent WAL + expand ring to
@@ -3906,7 +3989,7 @@ add_dependencies(all_test_issue_targets test_isolation_stamp_resolve_2224)
 # Phase A ring capacity + Phase B side-car WAL + Phase C replay +
 # Phase D query:security-posture primitive.
 aura_add_issue_test(test_security_event_wal_replay_2225)
-aura_issue_test_link_llvm_jit(test_security_event_wal_replay_2225)
+aura_issue_test_link_light(test_security_event_wal_replay_2225)
 add_dependencies(all_test_issue_targets test_security_event_wal_replay_2225)
 
 # Issue #2227: hard reclaim path for join drain residual fibers
@@ -3914,7 +3997,7 @@ add_dependencies(all_test_issue_targets test_security_event_wal_replay_2225)
 # back-pointer + Scheduler orphan tracking + orch/parallel wire-up +
 # query:orch-module-stats join-drain-residual-reclaim-total key.
 aura_add_issue_test(test_join_drain_reclaim_2227)
-aura_issue_test_link_llvm_jit(test_join_drain_reclaim_2227)
+aura_issue_test_link_light(test_join_drain_reclaim_2227)
 add_dependencies(all_test_issue_targets test_join_drain_reclaim_2227)
 
 # Issue #2228: backpressure-driven spawn admission control
@@ -3922,7 +4005,7 @@ add_dependencies(all_test_issue_targets test_join_drain_reclaim_2227)
 # configured threshold). closes the producer/consumer feedback loop
 # for commercial agent message storms.
 aura_add_issue_test(test_mailbox_bp_admit_2228)
-aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_2228)
+aura_issue_test_link_light(test_mailbox_bp_admit_2228)
 add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 
 # Issue #2465: decay window on mailbox_bp_recent_total so the #2228 admission
@@ -3930,17 +4013,17 @@ add_dependencies(all_test_issue_targets test_mailbox_bp_admit_2228)
 # BP event. Default 30s (matches kJoinDrainResidualHardMsDefault); env override
 # AURA_ORCH_BP_DECAY_MS (0 disables decay; counter then truly monotonic).
 aura_add_issue_test(test_orch_admission_decay)
-aura_issue_test_link_llvm_jit(test_orch_admission_decay)
+aura_issue_test_link_light(test_orch_admission_decay)
 add_dependencies(all_test_issue_targets test_orch_admission_decay)
 
 # Issue #2188: forbid blocking mailbox recv under live MutationBoundary.
 aura_add_issue_test(test_mailbox_recv_mutation_boundary_2188)
-aura_issue_test_link_llvm_jit(test_mailbox_recv_mutation_boundary_2188)
+aura_issue_test_link_light(test_mailbox_recv_mutation_boundary_2188)
 add_dependencies(all_test_issue_targets test_mailbox_recv_mutation_boundary_2188)
 
 # Issue #2511: outermost Guard exit forced mailbox deferred drain under budget.
 aura_add_issue_test(test_mailbox_hold_exit_drain_2511)
-aura_issue_test_link_llvm_jit(test_mailbox_hold_exit_drain_2511)
+aura_issue_test_link_light(test_mailbox_hold_exit_drain_2511)
 add_dependencies(all_test_issue_targets test_mailbox_hold_exit_drain_2511)
 
 # Issue #2229: lift FailurePolicy / RestartPolicy onto AgentScope
@@ -3949,7 +4032,7 @@ add_dependencies(all_test_issue_targets test_mailbox_hold_exit_drain_2511)
 # (re-spawn under same AgentSpec + max_restarts cap +
 # consecutive_stall_limit circuit-like cap).
 aura_add_issue_test(test_agent_failure_policy_2229)
-aura_issue_test_link_llvm_jit(test_agent_failure_policy_2229)
+aura_issue_test_link_light(test_agent_failure_policy_2229)
 add_dependencies(all_test_issue_targets test_agent_failure_policy_2229)
 
 # Issue #2230: harden pure-parallel contract tests + document
@@ -3960,14 +4043,14 @@ add_dependencies(all_test_issue_targets test_agent_failure_policy_2229)
 # "Pitfalls" sub-section to the README pure contract warning
 # Agents that pure is best-effort, NOT isolation.
 aura_add_issue_test(test_parallel_intend_pure_contract_2230)
-aura_issue_test_link_llvm_jit(test_parallel_intend_pure_contract_2230)
+aura_issue_test_link_light(test_parallel_intend_pure_contract_2230)
 add_dependencies(all_test_issue_targets test_parallel_intend_pure_contract_2230)
 
 # Issue #2231 / #2401: agent-ask + agent-reply (standard response path).
 # Re-enabled after #2401 pending-ask table + agent_reply closed the
 # "target cannot find reply mailbox" gap that caused prior hangs.
 aura_add_issue_test(test_agent_ask_2231)
-aura_issue_test_link_llvm_jit(test_agent_ask_2231)
+aura_issue_test_link_light(test_agent_ask_2231)
 add_dependencies(all_test_issue_targets test_agent_ask_2231)
 
 add_dependencies(all_test_issue_targets test_aot_jit_joint_versioning_2046)
@@ -3977,18 +4060,18 @@ aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 aura_add_issue_test(test_gc_compact_sweep_batch)
-aura_issue_test_link_llvm_jit(test_gc_compact_sweep_batch)
+aura_issue_test_link_light(test_gc_compact_sweep_batch)
 set_target_properties(test_gc_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 aura_add_issue_test(test_gc_batch)
-aura_issue_test_link_llvm_jit(test_gc_batch)
+aura_issue_test_link_light(test_gc_batch)
 set_target_properties(test_gc_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 # ── Wave 8 (#1957): tests/domain/test_fiber_integration_batch (Issue #226) ──
 # Closure-bridge Cycle-4 integration tests (raw Scheduler + std::thread +
 # many fibers). On-demand build; default-build skips.
 aura_add_issue_test(test_fiber_integration_batch)
-aura_issue_test_link_llvm_jit(test_fiber_integration_batch)
+aura_issue_test_link_light(test_fiber_integration_batch)
 set_target_properties(test_fiber_integration_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 add_dependencies(all_test_issue_targets test_fiber_integration_batch)
 
@@ -3997,7 +4080,7 @@ add_dependencies(all_test_issue_targets test_fiber_integration_batch)
 # was still executing = UAF). JoinStatus::Readded for the
 # reclaimed-but-body-still-running path (joiner defers cleanup).
 aura_add_issue_test(test_fiber_reclaim_safety)
-aura_issue_test_link_llvm_jit(test_fiber_reclaim_safety)
+aura_issue_test_link_light(test_fiber_reclaim_safety)
 add_dependencies(all_test_issue_targets test_fiber_reclaim_safety)
 
 # Issue #2498: epoch-scoped off-stack orphan-root table. Non-yielding
@@ -4007,14 +4090,14 @@ add_dependencies(all_test_issue_targets test_fiber_reclaim_safety)
 # Fiber::join Reclaimed path + ~Fiber safety net + register on
 # Evaluator::register_live_env_frame_ref under g_current_fiber.
 aura_add_issue_test(test_fiber_reclaim_orphan_release_2498)
-aura_issue_test_link_llvm_jit(test_fiber_reclaim_orphan_release_2498)
+aura_issue_test_link_light(test_fiber_reclaim_orphan_release_2498)
 add_dependencies(all_test_issue_targets test_fiber_reclaim_orphan_release_2498)
 
 # Issue #2468: Fiber::resume() pre-check for state_==Done + reclaimed_
 # (was: no pre-check, swapcontext on freed stack = UB). Early-return
 # with stderr message so misuse is visible in logs but doesn't crash.
 aura_add_issue_test(test_fiber_resume_state)
-aura_issue_test_link_llvm_jit(test_fiber_resume_state)
+aura_issue_test_link_light(test_fiber_resume_state)
 add_dependencies(all_test_issue_targets test_fiber_resume_state)
 
 # Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
@@ -4022,5 +4105,5 @@ add_dependencies(all_test_issue_targets test_fiber_resume_state)
 # joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes
 # lock-held window under cancel storms (N=100 parallel timeouts).
 aura_add_issue_test(test_orphan_reap_stress)
-aura_issue_test_link_llvm_jit(test_orphan_reap_stress)
+aura_issue_test_link_light(test_orphan_reap_stress)
 add_dependencies(all_test_issue_targets test_orphan_reap_stress)

@@ -62,7 +62,7 @@ bool bit_depth_invariant_holds() {
 
 } // namespace
 
-int main() {
+int run_test_gc_defer_reconcile_cas_2437() {
     std::println("=== Issue #2437: reconcile_gc_defer CAS + repair ===");
 
     // ── AC4: orphan bit cleared when depth stays 0 ─────────────────
@@ -217,3 +217,9 @@ int main() {
     std::println("\n=== #2437 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_defer_reconcile_cas_2437();
+}
+#endif

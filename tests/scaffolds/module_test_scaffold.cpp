@@ -21,7 +21,8 @@
 //  [ ] Replace THEME / NNNN / query names / ACs below
 //  [ ] CMakeLists.txt:
 //        aura_add_issue_test(test_<module>_<feature>[_<issue>])
-//        aura_issue_test_link_llvm_jit(test_<module>_<feature>[_<issue>])  # if needed
+//        aura_issue_test_link_light(test_<module>_<feature>[_<issue>])     # default (no LLVM)
+//        # aura_issue_test_link_llvm_jit(...)  ONLY if real OrcJIT / emit_native needed
 //        add_dependencies(all_test_issue_targets test_<module>_<feature>[_<issue>])
 //  [ ] ninja -C build test_<module>_<feature>[_<issue>] &&
 //  ./build/test_<module>_<feature>[_<issue>]

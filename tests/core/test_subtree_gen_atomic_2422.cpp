@@ -28,7 +28,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_subtree_gen_atomic_2422() {
     std::println("=== Issue #2422: subtree_gen_ atomic cells ===");
 
     // ── AC4 is_always_lock_free ────────────────────────────────────
@@ -147,3 +147,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_subtree_gen_atomic_2422();
+}
+#endif

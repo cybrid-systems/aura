@@ -4165,6 +4165,14 @@ bool AuraJIT::is_deopt_pending(const char*) const noexcept {
 std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
     return 0;
 }
+// Issue #2050: no-LLVM stub — CompilerService soft-dirty path calls this;
+// without a real tracker table there is nothing to clear.
+std::size_t AuraJIT::clear_deopt_pending_keep_native(const char* name,
+                                                     std::uint64_t current_epoch) noexcept {
+    (void)name;
+    (void)current_epoch;
+    return 0;
+}
 void AuraJIT::capture_fn_epoch(const char*, std::uint64_t) {}
 bool AuraJIT::is_fn_epoch_stale(const char*, std::uint64_t) const {
     return false;

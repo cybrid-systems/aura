@@ -27,7 +27,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_flatast_add_node_lock_2413() {
     std::println("=== Issue #2413: FlatAST add_node SoA lock contract ===");
 
     // ── AC1 source-cite: contract strings live in ast.ixx (linter) ─
@@ -108,3 +108,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_flatast_add_node_lock_2413();
+}
+#endif

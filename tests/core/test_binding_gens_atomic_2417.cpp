@@ -28,7 +28,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_binding_gens_atomic_2417() {
     std::println("=== Issue #2417: binding_gens_ atomic shared_ptr ===");
 
     // ── AC1 sequential bump + read (atomic snapshot path) ─────────
@@ -132,3 +132,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_binding_gens_atomic_2417();
+}
+#endif

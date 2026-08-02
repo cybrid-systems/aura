@@ -4,7 +4,6 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_stable_ref_cross_cow_provenance_enforcement_run();
 extern int aura_issue_primitives_hotpath_registry_slo_run();
 extern int aura_issue_aura_result_error_policy_run();
 extern int aura_issue_open_issues_phase1_batch_run();
@@ -27,8 +26,6 @@ extern int aura_issue_runtime_concurrent_full_cycle_chaos_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_stable_ref_cross_cow_provenance_enforcement",
-         aura_issue_stable_ref_cross_cow_provenance_enforcement_run},
         {"test_primitives_hotpath_registry_slo", aura_issue_primitives_hotpath_registry_slo_run},
         {"test_aura_result_error_policy", aura_issue_aura_result_error_policy_run},
         {"test_open_issues_phase1_batch", aura_issue_open_issues_phase1_batch_run},

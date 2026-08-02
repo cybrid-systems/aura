@@ -45,7 +45,7 @@ std::vector<void*> fill_table(std::size_t cap) {
 
 } // namespace
 
-int main() {
+int run_test_gc_defer_overflow_policy_atomic_2429() {
     std::println("=== Issue #2429: overflow policy check+arm atomic ===");
 
     // ── AC4 HardFail single-thread baseline ────────────────────────
@@ -202,3 +202,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_defer_overflow_policy_atomic_2429();
+}
+#endif

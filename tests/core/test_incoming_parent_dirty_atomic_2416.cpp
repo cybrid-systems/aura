@@ -28,7 +28,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_incoming_parent_dirty_atomic_2416() {
     std::println("=== Issue #2416: incoming_parent_index_dirty_ atomic ===");
 
     // ── AC1 atomic dirty flag basic load/store ─────────────────────
@@ -142,3 +142,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_incoming_parent_dirty_atomic_2416();
+}
+#endif

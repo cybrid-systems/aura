@@ -344,7 +344,12 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         "    target_compile_definitions(${_target} PRIVATE AURA_ISSUE_BUNDLE_MEMBER=1)",
         "",
         '    if(PROFILE STREQUAL "light")',
-        "        aura_issue_test_observability(${_target})",
+        "        # Shared light archive (no LLVM) — same as aura_issue_test_link_light().",
+        "        aura_issue_test_link_light(${_target})",
+        "        target_include_directories(${_target} PRIVATE tests)",
+        "        target_sources(${_target} PRIVATE",
+        "            src/compiler/aot_mangle.h",
+        "            src/compiler/type_concepts_impl.cpp)",
         '    elseif(PROFILE STREQUAL "jit_late1")',
         "        aura_issue_test_link_llvm_jit(${_target})",
         '    elseif(PROFILE STREQUAL "jit_late2")',
@@ -352,66 +357,23 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         '    elseif(PROFILE STREQUAL "jit_late3")',
         "        aura_issue_test_link_llvm_jit(${_target})",
         '    elseif(PROFILE STREQUAL "light_late")',
-        "        aura_issue_test_observability(${_target})",
+        "        aura_issue_test_link_light(${_target})",
+        "        target_include_directories(${_target} PRIVATE tests)",
+        "        target_sources(${_target} PRIVATE tests/reflect/test_issue_178_reflect.cpp)",
+        '        set_source_files_properties(tests/reflect/test_issue_178_reflect.cpp PROPERTIES COMPILE_OPTIONS "-freflection")',
         "    else()",
         '        message(FATAL_ERROR "aura_add_issue_bundle: unsupported profile ${PROFILE}")',
         "    endif()",
         "",
-        "    _aura_issue_bundle_apply_extras(${_target} ${PROFILE})",
-        "",
         "    add_test(NAME ${_target}_verification COMMAND ./${_target})",
         "endfunction()",
         "",
-        "function(_aura_issue_bundle_apply_extras TARGET PROFILE)",
-        '    if(PROFILE STREQUAL "light")',
     ]
 
-    static_extras = load_static_bundle_extras()
-    parsed_extras = parse_issue_test_extras(CMAKE_LISTS.read_text(encoding="utf-8")) if CMAKE_LISTS.is_file() else {}
-
-    def profile_extras(profile: str) -> dict:
-        base = static_extras.get(profile, {})
-        merged = union_bundle_extras(profiles.get(profile, []), parsed_extras)
-        return {
-            "includes": sorted(set(base.get("includes", [])) | set(merged["includes"])),
-            "sources": sorted(set(base.get("sources", [])) | set(merged["sources"])),
-            "compile_options": sorted(set(base.get("compile_options", [])) | set(merged["compile_options"])),
-            "source_flags": {**merged["source_flags"], **base.get("source_flags", {})},
-            "per_source_compile_options": {
-                **merged.get("per_source_compile_options", {}),
-                **base.get("per_source_compile_options", {}),
-            },
-            "observability": base.get("observability", False) or merged["observability"],
-        }
-
-    light_extras = profile_extras("light")
-    chunks.extend(_render_profile_extras_body("light", light_extras, indent=8))
-
-    for profile in BUNDLE_PROFILES:
-        if profile == "light":
-            continue
-        extras = profile_extras(profile)
-        if not any(
-            [
-                extras["includes"],
-                extras["sources"],
-                extras["compile_options"],
-                extras["source_flags"],
-                extras["observability"],
-            ]
-        ):
-            continue
-        pad = " " * 4
-        chunks.append(f'{pad}elseif(PROFILE STREQUAL "{profile}")')
-        chunks.extend(_render_profile_extras_body(profile, extras, indent=8))
-
-    chunks.extend(
-        [
-            "    endif()",
-            "endfunction()",
-            "",
-        ]
-    )
+    # light / light_late link via aura_issue_test_link_light() above — no
+    # per-source aura_jit.cpp extras (those lived in _aura_issue_bundle_apply_extras
+    # historically and ballooned link graphs). Remaining profiles do not need
+    # apply_extras after the shared-archive migration.
 
     for profile in BUNDLE_PROFILES:
         members = profiles.get(profile, [])

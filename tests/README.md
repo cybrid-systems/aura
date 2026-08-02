@@ -133,10 +133,26 @@ tests/
 注册宏:
 ```cmake
 aura_add_issue_test(test_<feature>)                        # 默认 C++20 模块
-aura_issue_test_link_llvm_jit(test_<feature>)              # 加 LLVM JIT 链接
+aura_issue_test_link_light(test_<feature>)                 # 默认: 无 LLVM 的 ABI/stub (~MB)
+aura_issue_test_link_llvm_jit(test_<feature>)              # 仅当需要真实 OrcJIT / emit_native
 aura_add_issue_test_reflect_standalone(test_<feature>)     # 仅反射 (无完整链接)
 aura_add_issue_test_standalone(test_<feature>)             # 无 C++ modules
 ```
+
+
+### Link profiles (磁盘 / 链接成本)
+
+| Helper | 体积 (约) | 何时用 |
+|--------|-----------|--------|
+| `aura_issue_test_link_light` | ~0.2–15 MB | **默认**。CompilerService / FlatAST / source-cite / 非 OrcJIT |
+| `aura_issue_test_link_llvm_jit` | ~70 MB | 真实 JIT 编译、AOT emit、SpecJIT、native deopt 表 |
+
+- 全量 LLVM 链 ~350×70MB ≈ **19GB** `build/test_*`；light 后中位可到 **~MB 级**。
+- full-LLVM allow-list: `cmake/issue_tests_need_full_llvm.txt`（新 JIT 测试加入此表）。
+- **禁止**新 standalone 默认挂 `link_llvm_jit`。新 AC 优先:
+  1. 扩已有 `test_*_unit_batch` / domain batch
+  2. 否则 `link_light` standalone
+  3. 仅当断言真实 native/JIT 时才 `link_llvm_jit`
 
 ## 运行
 

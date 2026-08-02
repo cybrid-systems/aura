@@ -28,7 +28,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_tag_arity_index_lock_2419() {
     std::println("=== Issue #2419: tag_arity_index_ lock protection ===");
 
     // ── AC1 find_by_tag_arity results ──────────────────────────────
@@ -143,3 +143,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_tag_arity_index_lock_2419();
+}
+#endif

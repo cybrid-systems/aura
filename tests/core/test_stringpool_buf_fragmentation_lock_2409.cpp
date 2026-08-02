@@ -29,7 +29,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_stringpool_buf_fragmentation_lock_2409() {
     std::println("=== Issue #2409: buf_fragmentation single shared_lock ===");
 
     // ── AC4 sequential / empty ─────────────────────────────────────
@@ -120,3 +120,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stringpool_buf_fragmentation_lock_2409();
+}
+#endif

@@ -42,7 +42,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_macro_dirty_bits_lock_2441() {
     std::println("=== Issue #2441: macro_dirty bits lock (no metric double-count) ===");
 
     // ── AC4: single-thread baseline ────────────────────────────────
@@ -196,3 +196,9 @@ int main() {
     std::println("\n=== #2441 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_macro_dirty_bits_lock_2441();
+}
+#endif
