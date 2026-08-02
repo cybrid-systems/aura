@@ -293,21 +293,32 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                     }
                 }
             }
+            // Issue #2566: when the SoA walk reaches the root frame (0), also
+            // consult live top_ bindings. Frame 0 is a snapshot taken at
+            // module-load start; nested (require) injects into live top_
+            // after that snapshot. Without this, free-vars introduced by
+            // require are invisible to materialize_call_env SoA walks that
+            // start from a module capture frame (parent chain ends at 0).
+            if (cur == 0 && owner_) {
+                for (auto it =
+                         const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();
+                     it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend();
+                     ++it) {
+                    if (it->first == n) {
+                        if (is_cell(it->second)) {
+                            auto ci = as_cell_id(it->second);
+                            if (ci < owner_->cells().size())
+                                return owner_->cells()[ci];
+                        }
+                        return it->second;
+                    }
+                }
+            }
             cur = pfr.parent_id;
         }
-        // Final fallback: the frame at parent_id_ has the snapshot
-        // of the env at capture time. If that env is still live
-        // (e.g., it's a heap-allocated module env or the top_
-        // env), check its live bindings too. The frame is a snapshot
-        // and may be stale if bindings were added after the frame
-        // was created (e.g., via require in a nested module load).
-        // We use the owner_ pointer to find the live env: for index 0
-        // it's top_, for higher indices we walk the env_frames_
-        // pool to find a matching live env. The simplest case
-        // (index 0 = top_) is the most common and we handle that
-        // directly via owner_->top().
-        // Note: still under env_rlock for frame stability; top_env
-        // live bindings are a separate structure (not env_frames_).
+        // Final fallback: starting parent_id_ was 0 (capture was top-level).
+        // Issue #2566: also covered above when walk reaches cur==0; keep this
+        // for the parent_id_==0 start path (no hops into non-zero frames).
         if (parent_id_ == 0 && owner_) {
             // Check live top_ env's bindings
             for (auto it = const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();

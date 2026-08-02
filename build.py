@@ -5106,6 +5106,25 @@ def cmd_adt_match_goal_table_coverage():
     return 0
 
 
+def cmd_module_require_freevar_coverage():
+    """Issue #2566: non-std module free-var resolve of required std bindings.
+
+    Nested (require)/(import) injects into the loading module env so closures
+    capture free vars (e.g. mutate:*) with top-level parity.
+    """
+    print(f"{B}=== module require free-var coverage (#2566) ==={N}")
+    script = ROOT / "scripts" / "check_module_require_freevar_2566.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module require free-var (#2566) coverage contract rows failed")
+        return 1
+    ok("module require free-var (#2566) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6321,6 +6340,7 @@ def cmd_gate():
         or cmd_coercion_dual_require_coverage()
         or cmd_linear_cross_closure_escape_coverage()
         or cmd_adt_match_goal_table_coverage()
+        or cmd_module_require_freevar_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7138,6 +7158,7 @@ def main():
         "coercion-dual-require": cmd_coercion_dual_require_coverage,
         "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
         "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
+        "module-require-freevar": cmd_module_require_freevar_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

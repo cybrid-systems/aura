@@ -155,24 +155,39 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         if (mod_idx >= ev.modules_.size())
             return make_void();
 
-        // Inject all bindings into top_ env
-        auto* mod_env = ev.modules_[mod_idx];
+        // Issue #2566: inject into active require target (module env under
+        // nested load) so free-vars resolve inside that module's closures.
+        // Fall back to top_ for top-level (import)/(require). Always also
+        // inject into top_ when the target is a nested module so top-level
+        // scripts that later call exported helpers still see the same names
+        // (parity with historical top_-only injection for std requires).
+        auto* loaded_env = ev.modules_[mod_idx];
+        Env* inject = ev.require_inject_env_ ? ev.require_inject_env_ : &ev.top_;
+        auto inject_one = [&](const std::string& name, const EvalValue& val) {
+            inject->bind(name, val);
+            // Nested module load: also publish on top_ so top-level after
+            // (require "m" all:) can still resolve shared std names if the
+            // nested require was the first introduction (e.g. only m required
+            // std/mutate). Skip double-bind when inject is already top_.
+            if (inject != &ev.top_)
+                ev.top_.bind(name, val);
+        };
         if (prefix.empty()) {
             // No prefix: inject as-is (backward compat)
-            for (auto& [name, val] : mod_env->bindings()) {
-                ev.top_.bind(name, val);
+            for (auto& [name, val] : loaded_env->bindings()) {
+                inject_one(name, val);
             }
         } else {
             // Prefix injection: bind both prefix:name and bare name for each export
-            for (auto& [name, val] : mod_env->bindings()) {
+            for (auto& [name, val] : loaded_env->bindings()) {
                 auto prefixed = prefix + name;
                 // Env::bind copies key strings — do not intern prefixed
                 // names into the workspace string heap (no psid capture).
                 // Issue #1488 / #1693: dead intern leftover polluted the heap;
                 // bind uses the stack std::string directly.
-                ev.top_.bind(prefixed, val);
+                inject_one(prefixed, val);
                 // Also bind bare name (no prefix) so tree-walker can find it
-                ev.top_.bind(name, val);
+                inject_one(name, val);
             }
         }
         return make_bool(true);
