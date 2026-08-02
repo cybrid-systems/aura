@@ -3218,16 +3218,40 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         // the underlying value. Without this, simple
                         // `(define x 10) (display x)` shows
                         // `<cell[0]>` instead of `10`.
+                        //
+                        // Issue #2570 follow-up / std/math: multi-define
+                        // (letrec) pre-allocates void cells before RHS
+                        // eval. `(define ceil ceil)` would re-bind the
+                        // local void cell to itself. If the cell is still
+                        // void, prefer a same-named first-class primitive
+                        // (prim re-export); otherwise return void (bound
+                        // but uninitialized — do not report unbound).
                         if (is_cell(*val)) {
                             auto ci = as_cell_id(*val);
-                            if (ci < cells_.size())
+                            if (ci < cells_.size() && !is_void(cells_[ci]))
                                 return cells_[ci];
+                            std::string var_name(name);
+                            auto slot = primitives_.slot_for_name(var_name);
+                            if (slot != std::numeric_limits<std::size_t>::max())
+                                return make_primitive(slot);
+                            if (auto ctor = adt_runtime_.find_ctor(var_name))
+                                return make_primitive(*ctor);
+                            return make_void();
                         }
                         return *val;
                     }
                     std::string var_name(name);
                     if (var_name.empty()) {
                         var_name = std::format("<sym:{}>", v.sym_id);
+                    }
+                    // First-class primitive / ADT ctor when name is unbound
+                    // (Env::lookup steps 3–4; call-position also has prim path).
+                    {
+                        auto slot = primitives_.slot_for_name(var_name);
+                        if (slot != std::numeric_limits<std::size_t>::max())
+                            return make_primitive(slot);
+                        if (auto ctor = adt_runtime_.find_ctor(var_name))
+                            return make_primitive(*ctor);
                     }
                     std::vector<std::string> candidates;
                     {

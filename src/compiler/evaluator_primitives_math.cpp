@@ -406,6 +406,12 @@ void register_math_regex_and_arithmetic_primitives(
             return make_float(0.0);
         return make_float(std::round(to_double(a[0])));
     });
+    // std/math re-exports (define trunc trunc); was missing while floor/ceil/round existed.
+    add("trunc", [to_double](const auto& a) {
+        if (a.empty())
+            return make_float(0.0);
+        return make_float(std::trunc(to_double(a[0])));
+    });
 
     // Issue #1153/#1158/#1174 family: saturate float→int out of range.
     add("inexact->exact", [](const auto& a) -> EvalValue {
