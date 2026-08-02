@@ -472,11 +472,13 @@ struct CapabilityRegistry {
     // Issue #2074: anti privilege-sticky — if grant has grant_epoch != 0
     // AND the registry's min_valid_epoch is set AND grant_epoch < min_valid_epoch,
     // the grant is expired (issued at a stale mutation epoch) → deny.
-    // Issue #2055 / #2151: grant_fiber_id mismatch:
-    //   hard_fiber_isolation=false (default) → metric only, allow (same-tenant
-    //     multi-fiber share grants; TenantScope remains principal boundary).
+    // Issue #2055 / #2151 / #2536: grant_fiber_id mismatch policy:
+    //   hard_fiber_isolation=false (Restricted default, #2536) → metric only,
+    //     allow same-tenant multi-fiber share; TenantScope (#2491) is the
+    //     principal boundary — fiber-level grant isolation is optional.
     //   hard_fiber_isolation=true → deny + capability_fiber_hard_deny_total
-    //     (commercial multi-tenant Strict / AURA_HARD_FIBER_ISOLATION=1).
+    //     (multi-tenant+Strict default, or AURA_HARD_FIBER_ISOLATION=1 even
+    //     under pure Restricted — env never blocked by default branch).
     [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())

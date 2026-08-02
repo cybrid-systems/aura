@@ -276,17 +276,31 @@ inline void apply_production_security_defaults() noexcept {
     if (!dev_off)
         ::aura_set_remap_name_fallback_enabled(0);
 
-    // 6) Issue #2151: hard fiber isolation policy.
-    //    Soft default preserves #2055 (same-tenant multi-fiber share grants;
-    //    TenantScope remains the principal boundary). Commercial multi-tenant
-    //    + Strict enables hard-deny so fiber B cannot exercise fiber A's grant.
-    //    AURA_HARD_FIBER_ISOLATION=0|1|true|false|on|off always wins when set.
+    // 6) Issue #2151 / #2536: hard fiber isolation policy.
+    //
+    //    Contract (Issue #2536):
+    //      - TenantScope (#2491 assigned_tenant_id) is the principal boundary.
+    //      - Same-tenant multi-fiber grant share is intentional SOFT by default
+    //        under Restricted (#2076 production): fiber B may use fiber A's
+    //        grant; mismatch only bumps capability_fiber_mismatch_total.
+    //      - hard_fiber_isolation=true deny path is commercial *optional*
+    //        reinforcement (fiber-level grant isolation), NOT the default
+    //        under pure Restricted (would break legitimate multi-fiber agents).
+    //
+    //    Defaults when AURA_HARD_FIBER_ISOLATION unset:
+    //      multi_tenant && Strict → hard=true  (#2151 commercial)
+    //      Restricted alone       → hard=false (#2536 soft share)
+    //    Env always wins when set (including Restricted + env=1 → hard):
+    //      AURA_HARD_FIBER_ISOLATION=1|true|yes|on  → hard
+    //      AURA_HARD_FIBER_ISOLATION=0|false|off|… → soft
     //    AURA_SANDBOX=off forces soft (unit tests must not inherit hard deny).
     if (dev_off) {
         g_capability_registry().set_hard_fiber_isolation(false);
     } else {
         const char* hfi = std::getenv("AURA_HARD_FIBER_ISOLATION");
         if (hfi && *hfi) {
+            // Issue #2536: env applies under Restricted as well as Strict —
+            // not overwritten by the multi_tenant&&strict default branch.
             std::string_view hv(hfi);
             const bool on = (hv == "1" || hv == "true" || hv == "yes" || hv == "on");
             g_capability_registry().set_hard_fiber_isolation(on);
@@ -294,6 +308,7 @@ inline void apply_production_security_defaults() noexcept {
             const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
                                 g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
             // Multi-tenant Strict: hard-deny on fiber mismatch (commercial default).
+            // Pure Restricted (or Strict without multi-tenant): soft (#2536).
             g_capability_registry().set_hard_fiber_isolation(multi_tenant && strict);
         }
     }
