@@ -200,6 +200,10 @@ static void ac5_source_gate() {
     const auto jit_rt = read_file("src/compiler/aura_jit_runtime.cpp");
     CHECK(jit_rt.find("aura_display_value") != std::string::npos,
           "AC5: JIT tagged display runtime");
+    // --emit-binary only links lib/runtime.c; keep AOT symbol in lockstep with JIT.
+    const auto aot_rt = read_file("lib/runtime.c");
+    CHECK(aot_rt.find("aura_display_value") != std::string::npos,
+          "AC5: AOT runtime.c provides aura_display_value");
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_module_export_display_2572") != std::string::npos, "AC5: cmake");
     const auto build = read_file("build.py");
