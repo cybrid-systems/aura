@@ -4125,6 +4125,11 @@ aura_add_issue_test(test_failure_policy_bridge_2539)
 aura_issue_test_link_light(test_failure_policy_bridge_2539)
 add_dependencies(all_test_issue_targets test_failure_policy_bridge_2539)
 
+# Issue #2540: AgentSpec.max_no_yield_ms cooperative yield contract.
+aura_add_issue_test(test_agent_max_no_yield_2540)
+aura_issue_test_link_light(test_agent_max_no_yield_2540)
+add_dependencies(all_test_issue_targets test_agent_max_no_yield_2540)
+
 # Issue #2230: harden pure-parallel contract tests + document
 # isolation boundaries. Locks the three metric paths
 # (pure_unlocked_applies / pure_fallback_locked /

@@ -307,6 +307,10 @@ struct OrchModuleStats {
     // AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts. Not a lock —
     // ownership model stays single-owner serialize (no internal mutex).
     std::atomic<std::uint64_t> agent_scope_concurrent_misuse_total{0};
+    // Issue #2540: cooperative yield contract (AgentSpec.max_no_yield_ms).
+    // Bumped when agent_poll forces Fiber::yield after the no-yield window.
+    // Zero cost when max_no_yield_ms==0 (no coop state, poll is no-op).
+    std::atomic<std::uint64_t> agent_forced_yield_total{0};
 };
 
 // Issue #2008: conventional mailbox keepalive payload prefix.
@@ -331,10 +335,51 @@ struct AgentLiveness {
     std::uint32_t interval_ms = 0;
 };
 
+// Issue #2540: per-agent cooperative yield budget (long-running body contract).
+// Shared body ↔ poll sites. null / max_no_yield_ms==0 ⇒ zero cost.
+struct AgentCoopYield {
+    std::uint32_t max_no_yield_ms = 0; // 0 = off
+    std::atomic<std::uint64_t> last_coop_us{0};
+};
+
+inline constexpr int kAgentMaxNoYieldIssue = 2540;
+
 [[nodiscard]] inline std::uint64_t orch_now_us() noexcept {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
                                           std::chrono::steady_clock::now().time_since_epoch())
                                           .count());
+}
+
+// Fiber-id → coop state for agent_poll() without an AgentHandle (body loops).
+// Registered for the body lifetime only when max_no_yield_ms > 0.
+// agent_poll implementations live after AgentHandle + g_orch_module_stats.
+inline std::mutex g_agent_coop_mu;
+inline std::unordered_map<std::uint64_t, std::shared_ptr<AgentCoopYield>> g_agent_coop_by_fiber;
+
+inline void register_agent_coop(std::uint64_t fiber_id,
+                                std::shared_ptr<AgentCoopYield> coop) noexcept {
+    if (!coop || fiber_id == 0 || coop->max_no_yield_ms == 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_agent_coop_mu);
+    g_agent_coop_by_fiber[fiber_id] = std::move(coop);
+}
+
+inline void unregister_agent_coop(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_agent_coop_mu);
+    g_agent_coop_by_fiber.erase(fiber_id);
+}
+
+[[nodiscard]] inline std::shared_ptr<AgentCoopYield>
+lookup_agent_coop(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return nullptr;
+    std::lock_guard<std::mutex> lock(g_agent_coop_mu);
+    auto it = g_agent_coop_by_fiber.find(fiber_id);
+    if (it == g_agent_coop_by_fiber.end())
+        return nullptr;
+    return it->second;
 }
 
 // Cooperative sleep for keepalive cadence (steal-friendly yield loop).
@@ -473,6 +518,9 @@ struct AgentHandle {
     // Issue #2159: fiber-native helper (null when disabled / spawn failed).
     // Joined by join_agent after body; cancelled on stop / dtor (no host thread).
     serve::Fiber* keepalive_helper = nullptr;
+    // Issue #2540: cooperative yield contract (0 / null = off, zero cost).
+    std::uint32_t max_no_yield_ms = 0;
+    std::shared_ptr<AgentCoopYield> coop;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -494,7 +542,9 @@ struct AgentHandle {
         , keepalive_interval_ms(o.keepalive_interval_ms)
         , liveness(std::move(o.liveness))
         , keepalive_active(o.keepalive_active)
-        , keepalive_helper(o.keepalive_helper) {
+        , keepalive_helper(o.keepalive_helper)
+        , max_no_yield_ms(o.max_no_yield_ms)
+        , coop(std::move(o.coop)) {
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -507,6 +557,7 @@ struct AgentHandle {
         o.keepalive_interval_ms = 0;
         o.keepalive_active = false;
         o.keepalive_helper = nullptr;
+        o.max_no_yield_ms = 0;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -531,6 +582,8 @@ struct AgentHandle {
             liveness = std::move(o.liveness);
             keepalive_active = o.keepalive_active;
             keepalive_helper = o.keepalive_helper;
+            max_no_yield_ms = o.max_no_yield_ms;
+            coop = std::move(o.coop);
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -543,6 +596,7 @@ struct AgentHandle {
             o.keepalive_interval_ms = 0;
             o.keepalive_active = false;
             o.keepalive_helper = nullptr;
+            o.max_no_yield_ms = 0;
         }
         return *this;
     }
@@ -583,7 +637,49 @@ struct AgentSpec {
     // GC see the mutation window. Set false for pure-reasoning agents
     // that never mutate (AC2 zero-cost path — quota check only).
     bool mutation_boundary = true;
+    // Issue #2540: max wall-clock ms without a cooperative yield edge.
+    // 0 = off (default, zero cost). When > 0, body should call agent_poll()
+    // (or orch:agent-poll / note_agent_progress) so cancel/steal/GC can
+    // cooperate before residual hard-reclaim (#2227 / #2533).
+    std::uint32_t max_no_yield_ms = 0;
 };
+
+// Issue #2540: force Fiber::yield when elapsed since last coop edge ≥
+// max_no_yield_ms. Returns true when a forced yield ran.
+// max_no_yield_ms==0 → always false (AC1 zero cost).
+[[nodiscard]] inline bool agent_poll(AgentCoopYield& coop) noexcept {
+    if (coop.max_no_yield_ms == 0)
+        return false;
+    auto* f = serve::g_current_fiber;
+    if (!f)
+        return false;
+    const auto now = orch_now_us();
+    const auto last = coop.last_coop_us.load(std::memory_order_relaxed);
+    const auto window_us = static_cast<std::uint64_t>(coop.max_no_yield_ms) * 1000ULL;
+    if (last != 0 && now >= last && (now - last) < window_us)
+        return false;
+    serve::Fiber::yield(serve::YieldReason::Explicit);
+    coop.last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
+    g_orch_module_stats.agent_forced_yield_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+[[nodiscard]] inline bool agent_poll(AgentHandle& h) noexcept {
+    if (!h.coop || h.max_no_yield_ms == 0)
+        return false;
+    return agent_poll(*h.coop);
+}
+
+// Current-fiber path: registry installed by spawn body when max_no_yield_ms > 0.
+[[nodiscard]] inline bool agent_poll() noexcept {
+    auto* f = serve::g_current_fiber;
+    if (!f)
+        return false;
+    auto coop = lookup_agent_coop(f->id());
+    if (!coop)
+        return false;
+    return agent_poll(*coop);
+}
 
 // Spawn a fiber agent on `sched`, optionally with a private MultiFiberMailbox
 // attached to the running fiber (attach happens inside the fiber so g_current_fiber
@@ -776,10 +872,31 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         live = std::make_shared<AgentLiveness>();
         live->interval_ms = ka_interval;
     }
+    // Issue #2540: coop yield state only when max_no_yield_ms > 0 (AC1 zero cost).
+    std::shared_ptr<AgentCoopYield> coop;
+    const auto max_no_yield_ms = spec.max_no_yield_ms;
+    if (max_no_yield_ms > 0) {
+        coop = std::make_shared<AgentCoopYield>();
+        coop->max_no_yield_ms = max_no_yield_ms;
+        coop->last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
+    }
 
     const bool register_soft = spec.mutation_boundary;
-    serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach, live,
+    serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach, live, coop,
                                    progress_clock = want_progress_clock, register_soft]() mutable {
+        // Issue #2540: register fiber-local coop state for agent_poll().
+        struct CoopReg {
+            std::uint64_t fid = 0;
+            explicit CoopReg(const std::shared_ptr<AgentCoopYield>& c) {
+                if (!c || !serve::g_current_fiber)
+                    return;
+                fid = serve::g_current_fiber->id();
+                register_agent_coop(fid, c);
+                c->last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
+            }
+            ~CoopReg() { unregister_agent_coop(fid); }
+        } coop_reg(coop);
+
         if (attach && mb && serve::g_current_fiber)
             mb->attach(serve::g_current_fiber);
         // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
@@ -849,6 +966,8 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     h.ok = true;
     h.keepalive_interval_ms = ka_interval;
     h.liveness = live;
+    h.max_no_yield_ms = max_no_yield_ms;
+    h.coop = std::move(coop);
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
     g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
 
@@ -1735,12 +1854,15 @@ to_agent_policy(const serve::parallel_orch::ParallelPolicy& pp) noexcept {
 // from the body to update the shared last_keepalive_us clock so
 // watch_agent_liveness can distinguish Alive vs Stalled. MailboxKeepalive
 // mode is unchanged — the fiber-native helper owns the clock (#2159).
+// Issue #2540: also a recommended cooperative poll edge when max_no_yield_ms > 0.
 inline void note_agent_progress(AgentHandle& h) noexcept {
     if (h.liveness && h.mailbox == nullptr && h.keepalive_interval_ms > 0) {
         const auto t = orch_now_us();
         h.liveness->last_keepalive_us.store(t, std::memory_order_release);
         g_orch_module_stats.last_keepalive_us.store(t, std::memory_order_relaxed);
     }
+    // Issue #2540: recommended yield point for long-running bodies.
+    (void)agent_poll(h);
 }
 
 // Note (Issue #1966): no multi-agent public API here.
