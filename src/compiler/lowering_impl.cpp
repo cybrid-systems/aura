@@ -1455,6 +1455,17 @@ static std::uint32_t lower_flat_expr(
                 if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
                     return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
                 }
+                // Issue #2568: quoted symbols are data (string-heap names), not
+                // variable lookups. Falling through to lower_flat_expr on a
+                // Variable emitted a free-var load that returned 0 for unbound
+                // names — so `(define d 'commit)` bound fixnum 0 under IR.
+                if (cv.tag == NodeTag::Variable) {
+                    auto s = pool.resolve(cv.sym_id);
+                    auto si = state.module.add_string(std::string(s));
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::ConstString, slot, si, 0);
+                    return slot;
+                }
             }
             // Non-trivial quoted data: lower as (cons car cdr) chain
             // Issue #2482: empty quote / missing cons → ConstVoid (not fixnum 0).
@@ -1492,6 +1503,14 @@ static std::uint32_t lower_flat_expr(
                 }
                 if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {
                     return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
+                }
+                // Issue #2568: symbol atoms inside quoted lists are strings.
+                if (nv.tag == NodeTag::Variable) {
+                    auto s = pool.resolve(nv.sym_id);
+                    auto si = state.module.add_string(std::string(s));
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::ConstString, slot, si, 0);
+                    return slot;
                 }
                 // Lists: Pair or Call as data
                 if (nv.tag == NodeTag::Pair) {

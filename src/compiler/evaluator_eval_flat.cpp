@@ -714,15 +714,14 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Variable: {
             auto name = std::string(pool.resolve(v.sym_id));
-            // Issue #231: dedup by content so two quote literals
-            // of the same symbol produce the same string heap
-            // index. Without this, `(eq? 'foo:bar 'foo:bar)`
-            // returns #f because each quote creates a fresh
-            // string heap entry. Use short_str_cache_ for short
-            // symbols (the common case for symbols with colon
-            // prefixes like foo:bar), and a heap scan for
-            // longer ones. Symbols are usually < 32 chars so the
-            // linear scan is bounded.
+            // Issue #231 / #2568: dedup by content so two quote literals
+            // of the same symbol produce the same string heap index.
+            // Without this, `(eq? 'commit 'commit)` / `(eq? d 'skip)` fail
+            // because each quote creates a fresh heap entry.
+            // Issue #2568 root cause: short_str_cache_ was keyed with
+            // name *after* std::move into string_heap_ (empty key "") —
+            // every short symbol missed the cache. Key/insert before move.
+            // Short path (≤6): O(1) cache. Longer: linear heap scan.
             if (name.size() <= 6) {
                 auto it = short_str_cache_.find(name);
                 if (it != short_str_cache_.end())
@@ -734,11 +733,12 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                 }
             }
             auto idx = string_heap_.size();
-            string_heap_.push_back(std::move(name));
-            auto val = make_string(static_cast<std::int64_t>(idx));
+            // Cache key must use name before move (empty-key bug #2568).
+            // Index is consumed after push so dead-heap audit (#1668) sees it.
             if (name.size() <= 6)
-                short_str_cache_[name] = val;
-            return val;
+                short_str_cache_[name] = make_string(static_cast<std::int64_t>(idx));
+            string_heap_.push_back(std::move(name));
+            return make_string(static_cast<std::int64_t>(idx));
         }
         case ast::NodeTag::Call: {
             // Issue #1397: size() read + push_back() in the per-iter

@@ -5144,6 +5144,25 @@ def cmd_try_catch_bind_coverage():
     return 0
 
 
+def cmd_symbol_eq_coverage():
+    """Issue #2568: symbol eq?/equal? for quoted symbols (agent decision tags).
+
+    short_str_cache intern + Quote value-define tree-walk before IR + IR
+    Quote Variable→ConstString so (define d 'commit)(eq? d 'commit) is #t.
+    """
+    print(f"{B}=== symbol eq? coverage (#2568) ==={N}")
+    script = ROOT / "scripts" / "check_symbol_eq_2568.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("symbol eq? (#2568) coverage contract rows failed")
+        return 1
+    ok("symbol eq? (#2568) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6361,6 +6380,7 @@ def cmd_gate():
         or cmd_adt_match_goal_table_coverage()
         or cmd_module_require_freevar_coverage()
         or cmd_try_catch_bind_coverage()
+        or cmd_symbol_eq_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7180,6 +7200,7 @@ def main():
         "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
         "module-require-freevar": cmd_module_require_freevar_coverage,
         "try-catch-bind": cmd_try_catch_bind_coverage,
+        "symbol-eq": cmd_symbol_eq_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

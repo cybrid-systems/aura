@@ -3943,6 +3943,11 @@ aura_add_issue_test(test_try_catch_bind_2567)
 aura_issue_test_link_light(test_try_catch_bind_2567)
 add_dependencies(all_test_issue_targets test_try_catch_bind_2567)
 
+# Issue #2568: symbol eq?/equal? for quoted symbols (agent decision tags)
+aura_add_issue_test(test_symbol_eq_2568)
+aura_issue_test_link_light(test_symbol_eq_2568)
+add_dependencies(all_test_issue_targets test_symbol_eq_2568)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
