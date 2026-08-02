@@ -14465,6 +14465,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"remount-or-force-deopt-wired", make_int(1)},
                 {"schema-2503", make_int(2503)},
                 {"issue-2503", make_int(2503)},
+                // Issue #2542: full live-closure epoch restamp on reemit success
+                // (backfill sid=0 named + anonymous MustDeopt; no silent skip).
+                {"live-closure-full-restamp-wired", make_int(1)},
+                {"schema-2542", make_int(2542)},
+                {"issue-2542", make_int(2542)},
             };
             return build_hash(kv);
         });

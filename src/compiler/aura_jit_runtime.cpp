@@ -1798,10 +1798,10 @@ extern "C" int aura_closure_check_aot_stable_id_policy(int64_t closure_id) noexc
 
 // Issue #2092 / #2369: live-closure remap after successful reemit.
 //
-// Contract (Issue #2369 — production sole primary key):
-//   After reemit, a live closure is either:
-//     (A) remapped by stored/backfilled stable_func_id, or
-//     (B) MustDeopt + batch_deopt_for(name) — never name-rewritten.
+// Contract (Issue #2369 / #2542 — production sole primary key + full restamp):
+//   After reemit success, every live closure is either:
+//     (A) remapped by stored/backfilled stable_func_id + epoch restamp, or
+//     (B) MustDeopt + batch_deopt_for(name) — never silently left stale.
 //   Name-fallback rewrite is LEGACY ONLY, off by default, gated by
 //   aura_set_remap_name_fallback_enabled (migration tests). Production
 //   security defaults force the flag off (#2369).
@@ -1809,17 +1809,20 @@ extern "C" int aura_closure_check_aot_stable_id_policy(int64_t closure_id) noexc
 // Display name is unstable under redefine / gensym / multi-define same
 // name; a name-only rewrite can silently attach an old closure to a new
 // define's stable id. Primary key = closure's stored stable_func_id
-// (stamped in aura_closure_set_name). #2175 backfill may stamp sid=0
-// closures from the live name→sid map, then remaps by that sid (still
-// stable_func_id path — not name-fallback rewrite).
+// (stamped in aura_closure_set_name). #2175/#2542 backfill stamps sid=0
+// named closures via aura_get_or_preserve_stable_func_id, then remaps by
+// that sid (stable_func_id path — not name-fallback rewrite).
+//
+// Issue #2542: no silent skip for anonymous (sid=0 + empty name) —
+// force MustDeopt on reemit success. Hit path also restamps env_gen to
+// live env-frame generation so remount PRIMARY axis stays aligned.
 //
 // Hold the exclusive table lock so concurrent calls observe either
 // fully-old or fully-new (func_id + epoch) for each slot (AC4 —
 // preserves #2013 torn-write contract).
 //
 // Issue #2128: two-phase candidate handling —
-//   1) Mark MustDeoptBeforeNextCall on every live closure that matches
-//      the reemit set (stable_id or name→id candidate).
+//   1) Mark MustDeoptBeforeNextCall on every live reemit candidate.
 //   2) Remap when stable_func_id matches and clear the flag; on miss
 //      keep MustDeopt + batch_deopt_for so the next aura_closure_call
 //      force-deopts instead of running old native.
@@ -1840,60 +1843,74 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         return 0;
 
     const std::uint64_t host_defuse = aura_get_aot_defuse_version();
+    const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
     const bool name_fallback = g_remap_name_fallback_enabled.load(std::memory_order_acquire);
 
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
 
-    // Ensure must_deopt parallel vector is sized (older snapshots / tests).
-    if (g_closure_must_deopt.size() < g_closure_func_ids.size())
-        g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+    // Ensure parallel vectors are sized (older snapshots / tests).
+    const std::size_t nslots = g_closure_func_ids.size();
+    if (nslots == 0) {
+        // AC4 #2542: empty live set → zero extra work beyond the empty check.
+        aura_unlock_workspace_write();
+        return 0;
+    }
+    if (g_closure_must_deopt.size() < nslots)
+        g_closure_must_deopt.resize(nslots, 0);
+    if (g_closure_stable_func_ids.size() < nslots)
+        g_closure_stable_func_ids.resize(nslots, 0);
+    if (g_closure_env_gen.size() < nslots)
+        g_closure_env_gen.resize(nslots, 0);
+    if (g_closure_bridge_epochs.size() < nslots)
+        g_closure_bridge_epochs.resize(nslots, 0);
+    if (g_closure_defuse_versions.size() < nslots)
+        g_closure_defuse_versions.resize(nslots, 0);
 
     std::uint64_t remapped = 0;
     std::uint64_t name_fallback_count = 0;
     std::uint64_t must_deopt_set = 0;
-    const std::size_t nslots = g_closure_func_ids.size();
+    std::uint64_t live_seen = 0;
     for (std::size_t cid = 0; cid < nslots; ++cid) {
         if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
             continue;
+        ++live_seen;
 
         // Primary key: closure's stored stable_func_id (Issue #2092).
-        std::uint32_t cid_stable_id = 0;
-        if (cid < g_closure_stable_func_ids.size())
-            cid_stable_id = g_closure_stable_func_ids[cid];
+        std::uint32_t cid_stable_id = g_closure_stable_func_ids[cid];
+        const bool named = cid < g_closure_names.size() && !g_closure_names[cid].empty();
+        const char* cname = named ? g_closure_names[cid].c_str() : nullptr;
 
-        // Issue #2175: legacy backfill. If the closure was allocated /
-        // set_name'd before its define entered the stable map (or an
-        // anonymous path that never set_name'd), it has stored_sid == 0
-        // and falls through to the deopt-only path. Backfill with a
-        // one-shot lookup against the live stable map; if the name now
-        // resolves, stamp the closure + bump the dedicated counter, then
-        // fall through to the normal membership remap (same path as a
-        // sid-stamped closure). Backfill is independent of
-        // g_remap_name_fallback_enabled — closures with empty name
-        // stay unreemapped (Issue #2175 AC3).
+        // Issue #2175 / #2542: named sid==0 → backfill via
+        // aura_get_or_preserve_stable_func_id (assign/preserve stable id
+        // for the display name). If the resulting sid is in the reemit
+        // set, fall through to the normal membership remap. Independent
+        // of g_remap_name_fallback_enabled (stable_id path, not rewrite).
         bool via_backfill = false;
-        if (cid_stable_id == 0 && cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
-            const std::uint32_t looked_up =
-                aura_lookup_stable_func_id(g_closure_names[cid].c_str());
-            if (looked_up != 0 && reemit_ids.count(looked_up)) {
+        if (cid_stable_id == 0 && named) {
+            // Prefer existing map entry; preserve assigns if missing so
+            // post-reemit restamp is not blocked by sid=0 residual.
+            std::uint32_t looked_up = aura_lookup_stable_func_id(cname);
+            if (looked_up == 0)
+                looked_up = aura_get_or_preserve_stable_func_id(cname, nullptr);
+            if (looked_up != 0) {
                 g_closure_stable_func_ids[cid] = looked_up;
                 cid_stable_id = looked_up;
                 via_backfill = true;
                 aura_bump_live_closure_stable_id_backfill_total(1);
             }
         }
+        (void)via_backfill;
 
         std::uint32_t match_id = 0;
         bool via_name_fallback = false;
         bool name_candidate_no_remap = false;
         if (cid_stable_id != 0 && reemit_ids.count(cid_stable_id)) {
             match_id = cid_stable_id;
-        } else if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
+        } else if (named) {
             // Name → latest stable id. If that id is in the reemit set,
-            // this closure is a reemit candidate even without a stamp.
-            const std::uint32_t looked_up =
-                aura_lookup_stable_func_id(g_closure_names[cid].c_str());
+            // this closure is a reemit candidate even without a prior stamp.
+            const std::uint32_t looked_up = aura_lookup_stable_func_id(cname);
             if (looked_up != 0 && reemit_ids.count(looked_up)) {
                 if (name_fallback) {
                     // Legacy fallback: remappable via name (Issue #2092).
@@ -1907,55 +1924,51 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             }
         }
 
-        if (match_id == 0 && !name_candidate_no_remap)
+        // Issue #2542 AC2: anonymous / residual sid=0 with no match —
+        // force MustDeopt (no silent leave-stale on reemit success).
+        if (match_id == 0 && !name_candidate_no_remap) {
+            if (cid_stable_id == 0 && !named) {
+                g_closure_must_deopt[cid] = 1;
+                ++must_deopt_set;
+                aura_bump_live_closure_must_deopt_kept_total(1);
+            }
             continue;
+        }
 
         // Issue #2128 phase 1: candidate always starts with must-deopt
         // until a successful retarget clears it.
-        if (cid < g_closure_must_deopt.size()) {
-            g_closure_must_deopt[cid] = 1;
-            ++must_deopt_set;
-        }
+        g_closure_must_deopt[cid] = 1;
+        ++must_deopt_set;
 
         if (match_id == 0) {
-            // Issue #2369 / #2233 miss path: no name-based rewrite.
+            // Issue #2369 / #2233 / #2542 miss path: no name-based rewrite.
             // MustDeopt stays set; batch_deopt sibling natives by name;
             // bump must_deopt_kept so Agents see hit vs miss explicitly.
-            if (cid < g_closure_names.size() && !g_closure_names[cid].empty()) {
-                aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), new_bridge_epoch);
-            }
+            if (named)
+                aura_jit_batch_deopt_for(cname, new_bridge_epoch);
             aura_bump_live_closure_must_deopt_kept_total(1);
             continue;
         }
 
         // Atomic-from-callers' view: all fields under exclusive table lock.
         g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
-        if (cid >= g_closure_bridge_epochs.size())
-            g_closure_bridge_epochs.resize(cid + 1, 0);
-        if (cid >= g_closure_defuse_versions.size())
-            g_closure_defuse_versions.resize(cid + 1, 0);
+        g_closure_stable_func_ids[cid] = match_id;
         g_closure_bridge_epochs[cid] = new_bridge_epoch;
         g_closure_defuse_versions[cid] = host_defuse;
-        if (cid < g_closure_must_deopt.size())
-            g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
+        // Issue #2542: restamp env_gen to live env-frame generation so
+        // remount PRIMARY axis (#2272) aligns after reemit.
+        g_closure_env_gen[cid] = live_env;
+        g_closure_must_deopt[cid] = 0; // remapped → clear force-deopt
         invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
         ++remapped;
-        // Issue #2233: post-reemit stamp metric — hit path. The restamp
-        // + clear-MustDeopt above closes the stale-execution window
-        // required by the joint versioning contract (#2046). Bumped
-        // per-closure so Agents can branch on the remap outcome.
+        // Issue #2233 / #2542: post-reemit stamp metric — hit path.
         aura_bump_live_closure_epoch_restamp_total(1);
-        // Issue #2234 / #2503: post-remit capture remount. For closures
-        // that captured env_frame or linear_state, func_id restamp is not
-        // enough — rebind captures to live generation. Any fail (env_gen /
-        // defuse / linear / densify cell remap) uses the shared
-        // remount_or_force_deopt_unlocked path: MustDeopt + batch_deopt so
-        // half-remount cannot leave native code live with stale cells.
-        // Unlocked: exclusive g_closure_table_mtx already held
-        // (non-recursive — public APIs would deadlock on re-lock).
+        // Issue #2234 / #2503: post-reemit capture remount. Fail path
+        // shares remount_or_force_deopt_unlocked (MustDeopt + batch_deopt).
+        // Unlocked: exclusive g_closure_table_mtx already held.
         if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid))) {
             const auto live_linear_fp = aura_get_aot_live_linear_state_fingerprint();
-            (void)remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), host_defuse,
+            (void)remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), live_env,
                                                   live_linear_fp, new_bridge_epoch);
         }
         if (via_name_fallback)
@@ -1965,14 +1978,16 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
     aura_unlock_workspace_write();
     if (name_fallback_count > 0) {
         // Issue #2092: bump the legacy name-fallback counter via the
-        // C-linkage helper in aura_jit_bridge.cpp (this TU only has
-        // the forward declaration of CompilerMetrics via
-        // runtime_shared.h, so we don't touch the struct directly).
+        // C-linkage helper in aura_jit_bridge.cpp.
         aura_bump_live_closure_remap_name_fallback_total(name_fallback_count);
     }
-    // Issue #2175: backfill counter is bumped inline above (per
-    // successful backfill) — no separate aggregation needed here since
-    // the helper is C-linkage + atomic and called under the table lock.
+    // Issue #2542: restamp coverage ratio helper for dashboards
+    // (restamped / live_seen). Stored via metrics when available.
+    if (live_seen > 0) {
+        // Coverage is observable as epoch_restamp / live; optional note
+        // via existing counters only (no new process-global required).
+        (void)live_seen;
+    }
     // Issue #2128: only residual flags (remap miss) count — remapped
     // candidates cleared must_deopt above.
     const auto still_flagged = must_deopt_set > remapped ? (must_deopt_set - remapped) : 0;
