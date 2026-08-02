@@ -38,6 +38,10 @@ class ArchitecturalSimplification1964(unittest.TestCase):
         self.assertIn("Final ownership model", we)
         self.assertIn("TransactionGuard", tg)
         self.assertIn("cycle 3", tg)
+        # Issue #2555: real host path (scaffold simulation removed).
+        self.assertIn("2555", tg)
+        self.assertIn("TransactionGuardHost", tg)
+        self.assertNotIn("simulate boundary acquisition", tg)
         self.assertIn("mutate_dispatch", md)
         self.assertIn("MutateKind", md)
         self.assertIn("cycle 4", md)

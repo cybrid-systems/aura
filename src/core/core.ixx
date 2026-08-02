@@ -8,3 +8,5 @@ export import aura.core.error;
 export import aura.core.envframe_lifetime;
 export import aura.core.mutators;
 export import aura.core.panic_checkpoint_raii;
+// Issue #2555: unified TransactionGuard (MutationBoundary + PanicCheckpoint).
+export import aura.core.transaction_guard;

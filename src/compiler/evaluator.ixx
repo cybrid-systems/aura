@@ -2838,6 +2838,24 @@ public:
         return aura::core::panic_cp::PanicCheckpointGuard(panic_checkpoint_host(*this));
     }
 
+    // Issue #2555: type-erased host for aura::core::TransactionGuard.
+    // try_acquire → MutationBoundaryGuard (panic armed inside MBG outermost);
+    // release deletes the guard. Core never imports Evaluator.
+    // Impl: evaluator_mutation_boundary.cpp
+    [[nodiscard]] static aura::core::TransactionGuardHost
+    transaction_guard_host(Evaluator& ev) noexcept;
+
+    // Issue #2555: region-scoped host (orch agent body soft multi-Agent path).
+    // Impl: evaluator_mutation_boundary.cpp
+    [[nodiscard]] static aura::core::TransactionGuardHost
+    transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region_key) noexcept;
+
+    // Issue #2555: convenience — acquire unified transaction (MBG + panic).
+    [[nodiscard]] aura::core::TransactionGuard
+    make_transaction_guard(std::uint64_t pending_count = 1) noexcept {
+        return aura::core::TransactionGuard(transaction_guard_host(*this), pending_count);
+    }
+
     // Issue #1727: drop panic checkpoint fields without restore.
     // Used when cross-evaluator discriminator skips restore, and as
     // the shared body of commit_panic_checkpoint's field wipe.

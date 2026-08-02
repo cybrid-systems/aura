@@ -31,12 +31,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ADD_RE = re.compile(r'(?:add|add_mutate)\("(compile|mutate):([a-z0-9\-_?!+]+)"')
 
 # Production-approved Guard entry (Issue #2124: try_acquire family only).
+# Issue #2555: TransactionGuard host path is an approved entry (delegates to
+# MutationBoundaryGuard::try_acquire / soft orch boundary).
 TRY_ACQUIRE_PATTERNS = [
     re.compile(r"run_under_mutation_guard\("),
     re.compile(r"run_compile_dirty_under_guard\("),
     re.compile(r"with_compiler_service_pin\("),
     re.compile(r"MutationBoundaryGuard::try_acquire\("),
     re.compile(r"aura_orch_agent_body_try_acquire\("),
+    re.compile(r"transaction_guard_host\("),
+    re.compile(r"make_transaction_guard\("),
+    re.compile(r"TransactionGuard\s+\w+\s*\("),
 ]
 
 # Legacy ctor — residual; fails --strict under #2124 AC1.
