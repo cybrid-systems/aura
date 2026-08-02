@@ -2,6 +2,10 @@
 // Issue #2226: promoted from opt-in feature flag to default multi-agent
 // supervision root. AgentScope is now always available under aura::orch
 // (the class body no longer lives inside a feature-flag ifdef; always on).
+// Issue #2537: hierarchical parent/children tree — explicit owner pointers
+// (parent_ raw non-owning + children_ unique_ptr vector). No process-global
+// registry. cancel_all / ~AgentScope propagate cancel top-down; drain is
+// bottom-up (children unique_ptrs destroyed before this scope joins).
 //
 // STATUS: Default / Documented multi-agent supervision surface.
 // MVP linter (scripts/check_orch_mvp_scope.py --strict) still forbids
@@ -18,13 +22,18 @@
 //   - parallel_intend:    short-lived batch thunks (no long-lived names).
 //   - AgentScope:         long-lived named agents, parent-cancel + join_all
 //                         semantics, bound to an explicit owner (Scheduler
-//                         reference). NOT a global registry.
+//                         reference). NOT a global registry. Hierarchy
+//                         (#2537) is a tree of scopes, still no static map.
 //
-// Rules (per Issue #2083 AC4 / #2226):
+// Rules (per Issue #2083 AC4 / #2226 / #2537):
 //   - No process-global registry (the orch MVP scope linter still forbids
 //     the multi-agent process-static identifiers removed in #1966).
 //   - Scope destructor is the supervision root (cancel + best-effort drain
 //     + reservation release, mirroring join_agents #2082 contract).
+//   - Hierarchy (#2537): parent owns children via unique_ptr; cancel
+//     propagates to descendants first, then local handles; dtor drains
+//     children then self. Single-owner serial model (#2399) still applies
+//     to each scope; child ops are same-thread (or explicitly serialized).
 //   - Default-on (no #define required). Documented in src/orch/README.md
 //     as the supported multi-agent supervision root.
 
@@ -38,12 +47,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace aura::orch {
+
+// Issue #2537: hierarchical AgentScope (parent/children cancel tree).
+inline constexpr int kAgentScopeHierarchyIssue = 2537;
 
 // Issue #2399: optional hard abort on concurrent AgentScope enter.
 // Default OFF (metric-only). Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 enables.
@@ -73,9 +87,21 @@ struct ScopeWatchResult {
 // (no global registry). Destructor cancels + best-effort drains + releases
 // reservations (#2082 cancel-before-release contract).
 //
-// Thread-safety: spawn / join_all / cancel_all / watch_all / handles are NOT
-// safe to call concurrently from multiple threads. The owner must serialize
-// access (matches the underlying Scheduler single-owner model).
+// Hierarchy (Issue #2537): a scope may own child scopes via unique_ptr.
+// parent_ is a non-owning back-pointer. No static/global agent table —
+// the tree is built only through spawn_child() on an explicit owner.
+//
+// Cancel / destroy order (AC2, documented):
+//   1. cancel_all: recurse into children first, then request_cancel on
+//      this scope's local handles (top-down cancel propagation).
+//   2. ~AgentScope: cancel_all, then destroy children_ (each child dtor
+//      drains its own handles — bottom-up drain), then join this scope.
+// RestartN / watch_all remain scope-local (no cross-scope restart map).
+//
+// Thread-safety: spawn / spawn_child / join_all / cancel_all / watch_all /
+// handles are NOT safe to call concurrently from multiple threads. The
+// owner must serialize access (matches the underlying Scheduler
+// single-owner model). Child scopes inherit the same serial model (#2399).
 //
 // Issue #2399: concurrent enter is *detected* (metric + optional hard abort)
 // but not locked — no internal mutex, no global registry. Same-thread
@@ -112,6 +138,26 @@ public:
         return handles_.back();
     }
 
+    // Issue #2537: create a child AgentScope owned by this scope.
+    // Shares the parent Scheduler. Child's parent() returns this.
+    // Cancel/destroy on the parent propagates to all descendants.
+    // Caller must serialize access (same single-owner model as spawn).
+    AgentScope& spawn_child() {
+        ScopeEnterGuard g(this, "spawn_child");
+        auto child = std::make_unique<AgentScope>(sched_);
+        child->parent_ = this;
+        children_.push_back(std::move(child));
+        return *children_.back();
+    }
+
+    [[nodiscard]] AgentScope* parent() const noexcept { return parent_; }
+    [[nodiscard]] bool is_root() const noexcept { return parent_ == nullptr; }
+    [[nodiscard]] std::size_t child_count() const noexcept { return children_.size(); }
+
+    // Indexed child access (throws std::out_of_range if i >= child_count()).
+    [[nodiscard]] AgentScope& child_at(std::size_t i) { return *children_.at(i); }
+    [[nodiscard]] const AgentScope& child_at(std::size_t i) const { return *children_.at(i); }
+
     // Join all live handles. Mirrors join_agents (#2082/#2153): on non-Ok,
     // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
     // per-handle reservation release. Release is idempotent (#2009).
@@ -139,8 +185,15 @@ public:
     // Best-effort cancel request on all live fibers. Bounded cost; does
     // NOT wait. Use join_all afterwards to drain. Safe to call multiple
     // times (request_cancel is idempotent).
+    //
+    // Issue #2537: cancels child scopes first (top-down), then local
+    // handles. Does not join/drain — callers (or ~AgentScope) drain.
     void cancel_all() noexcept {
         ScopeEnterGuard g(this, "cancel_all");
+        for (auto& c : children_) {
+            if (c)
+                c->cancel_all();
+        }
         for (auto& h : handles_) {
             if (h.fiber && !h.fiber->is_done())
                 h.fiber->request_cancel();
@@ -298,11 +351,18 @@ public:
     // Issue #2399: same-thread re-entry of cancel_all/join_all under the
     // enter guard is allowed (depth); concurrent ~AgentScope from another
     // thread is detected as misuse.
+    //
+    // Issue #2537 destroy order (documented AC2):
+    //   1. cancel_all — top-down (children, then local handles)
+    //   2. children_.clear() — each child dtor drains its tree bottom-up
+    //   3. join local handles (default drain_ms, #2153)
     ~AgentScope() {
         ScopeEnterGuard g(this, "~AgentScope");
+        cancel_all();
+        // Drain descendants before this scope's handles (bottom-up).
+        children_.clear();
         if (handles_.empty())
             return;
-        cancel_all();
         // Issue #2153: destructor uses default drain_ms (kDefaultJoinDrainMs).
         (void)join_agents(
             std::span<AgentHandle>(handles_),
@@ -380,6 +440,11 @@ private:
     std::vector<AgentSpec> specs_;
     std::vector<std::uint32_t> restart_counts_;
     std::vector<std::uint32_t> consecutive_stall_counts_;
+    // Issue #2537: explicit tree links — no process-global registry.
+    // parent_ is non-owning (set only by parent's spawn_child).
+    // children_ owns descendants; cleared in ~AgentScope after cancel.
+    AgentScope* parent_ = nullptr;
+    std::vector<std::unique_ptr<AgentScope>> children_;
     // Issue #2399: single-owner detection (not a mutex).
     // owner_tid_ empty = free; depth tracks same-thread re-entry.
     mutable std::atomic<std::thread::id> owner_tid_{};
