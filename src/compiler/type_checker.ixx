@@ -967,6 +967,23 @@ export bool analyze_linear_escape_for_dirty(const aura::ast::FlatAST& flat,
                                             std::vector<OwnershipNote>& notes_out,
                                             LinearEscapeAnalysisResult& out);
 
+// Issue #2563: cross-closure / one-level free-capture linear escape discovery.
+// Scans Lambda sites (cone-capped) for free uses of dirty linear bindings that
+// are not lambda params. Does not recurse into nested lambdas (one-level AC).
+// Returns true when no escape sites found. cone_cap=0 → scan full size.
+export struct CrossClosureEscapeResult {
+    std::size_t sites_scanned = 0;   // Lambda nodes visited
+    std::size_t escape_sites = 0;    // free dirty linear captures
+    std::size_t nodes_scanned = 0;   // AST nodes walked (≤ cone_cap)
+    std::size_t cap_truncations = 0; // 1 if cone_cap truncated workspace
+};
+
+export bool
+discover_cross_closure_linear_escapes(const aura::ast::FlatAST& flat,
+                                      const aura::ast::StringPool& pool,
+                                      const std::unordered_set<std::string>& dirty_bindings,
+                                      std::size_t cone_cap, CrossClosureEscapeResult& out);
+
 // Issue #1458: discover linear-related bindings under a subtree
 // for post-mutate rebind/set-body ownership validation.
 export void discover_linear_bindings_in_subtree(const aura::ast::FlatAST& flat,

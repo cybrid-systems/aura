@@ -564,11 +564,25 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     }
 }
 
+// Issue #2563: reuse #2560 soft cone default for cross-closure discovery cap.
+// Env AURA_PARTIAL_CONE_SOFT when set; else 256. Zero-cost empty dirty path.
+static std::size_t partial_cone_soft_cap_for_linear() noexcept {
+    const char* e = std::getenv("AURA_PARTIAL_CONE_SOFT");
+    if (e && *e) {
+        char* end = nullptr;
+        const auto n = std::strtoull(e, &end, 10);
+        if (end != e && n > 0 && n <= 1'000'000ull)
+            return static_cast<std::size_t>(n);
+    }
+    return 256;
+}
+
 // Issue #2108: hard-block composite commit when linear escapes across
 // batch boundaries (live Moved roots + AST escape re-analysis).
 // Always runs on composite commit / composite_mode audit — Sampled must
 // not skip this path when linear ops are present (see boundary force).
 // Returns true if escape was detected (caller must set linear_ok=false).
+// Issue #2563: also runs cone-capped cross-closure free-capture discovery.
 bool Evaluator::hard_block_cross_batch_linear_escape(
     typed_audit::InvariantAuditResult& r) noexcept {
     bool escape = false;
@@ -634,6 +648,32 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
                         m->linear_escape_after_move_total.fetch_add(esc.escape_after_move,
                                                                     std::memory_order_relaxed);
                 }
+                // Issue #2563: cone-capped one-level cross-closure free-capture.
+                // Soft: observe only; production/Full/env hard → sticky force
+                // (distinct authority; does not re-label as CrossBatchEscape).
+                CrossClosureEscapeResult cce{};
+                const std::size_t cone_cap = partial_cone_soft_cap_for_linear();
+                (void)discover_cross_closure_linear_escapes(*flat, *pool, dirty, cone_cap, cce);
+                if (cce.cap_truncations)
+                    typed_audit::g_typed_mutation_audit_counters
+                        .linear_cross_closure_cap_trunc_total.fetch_add(cce.cap_truncations,
+                                                                        std::memory_order_relaxed);
+                if (cce.escape_sites > 0) {
+                    typed_audit::g_typed_mutation_audit_counters.linear_cross_closure_escape_total
+                        .fetch_add(cce.escape_sites, std::memory_order_relaxed);
+                    if (typed_audit::linear_cross_closure_hard_enabled()) {
+                        typed_audit::g_typed_mutation_audit_counters
+                            .linear_cross_closure_force_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        r.cross_closure_linear_escape = true;
+                        r.linear_ok = false;
+                        note_cross_closure_escape_fail();
+                    } else {
+                        typed_audit::g_typed_mutation_audit_counters
+                            .linear_cross_closure_observe_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                }
             }
         } catch (...) {
             // [SILENCE-PRIM] escape analysis failure → treat as escape (safe).
@@ -644,7 +684,9 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
         r.cross_batch_linear_escape = true;
         r.linear_ok = false;
     }
-    return escape;
+    // Cross-closure hard alone still hard-blocks composite commit (return true)
+    // without forcing CrossBatchEscape counter path.
+    return escape || r.cross_closure_linear_escape;
 }
 
 // Issue #2264: force non-exhaustive ADT result on next invariant audit.
@@ -1242,13 +1284,34 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     // Issue #2027 / #2108: composite / nested / atomic_batch — no dangling
     // Moved live root and no AST escape may survive a batch commit.
     // hard_block_cross_batch_linear_escape runs Moved scan + AST
-    // analyze_linear_escape_for_dirty (always, not Sampled-gated).
+    // analyze_linear_escape_for_dirty + #2563 cross-closure discovery
+    // (always, not Sampled-gated). Non-composite still needs #2563
+    // discovery when workspace is present — hard_block covers both when
+    // composite; for non-composite we run discovery-only via the same entry
+    // so Agents always get escape/observe counters after mutate.
     if (composite_mode) {
         (void)hard_block_cross_batch_linear_escape(r);
+    } else if (workspace_flat_ && workspace_pool_ && workspace_flat_->size() > 0) {
+        // Soft/Sampled non-composite: cross-closure observe (or force when hard).
+        // Avoid full Moved cross-batch hard-block on non-composite soft paths.
+        typed_audit::InvariantAuditResult tmp{};
+        (void)hard_block_cross_batch_linear_escape(tmp);
+        if (tmp.cross_closure_linear_escape) {
+            r.cross_closure_linear_escape = true;
+            r.linear_ok = false;
+        }
+        // Soft observe-only discoveries already bumped counters inside hard_block;
+        // do not copy cross_batch_linear_escape onto non-composite Soft paths.
+        if (tmp.cross_batch_linear_escape &&
+            (typed_audit::production_defaults_active() ||
+             typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+            r.cross_batch_linear_escape = true;
+            r.linear_ok = false;
+        }
     }
 
-    // Issue #2545: sticky axes for unified force_linear_rollback classify
-    // (pure peek on hard-gate / boundary without re-running walks).
+    // Issue #2545 / #2563: sticky axes for unified force_linear_rollback
+    // classify (pure peek on hard-gate / boundary without re-running walks).
     // Clear on clean so a later force path cannot false-green on stale sticky.
     if (!r.linear_ok)
         note_post_mutate_linear_fail();
@@ -1258,6 +1321,10 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
         note_cross_batch_escape_fail();
     else
         clear_cross_batch_escape_fail();
+    if (r.cross_closure_linear_escape)
+        note_cross_closure_escape_fail();
+    else
+        clear_cross_closure_escape_fail();
 
     // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
     r.provenance_ok = post_mutation_reflect_validate();
@@ -1599,6 +1666,18 @@ void Evaluator::clear_cross_batch_escape_fail() noexcept {
     last_cross_batch_escape_fail_.store(0, std::memory_order_relaxed);
 }
 
+bool Evaluator::last_cross_closure_escape_fail() const noexcept {
+    return last_cross_closure_escape_fail_.load(std::memory_order_relaxed) != 0;
+}
+
+void Evaluator::note_cross_closure_escape_fail() noexcept {
+    last_cross_closure_escape_fail_.store(1, std::memory_order_relaxed);
+}
+
+void Evaluator::clear_cross_closure_escape_fail() noexcept {
+    last_cross_closure_escape_fail_.store(0, std::memory_order_relaxed);
+}
+
 Evaluator::LinearForceAuthority
 Evaluator::classify_linear_force(const void* precomputed_invariant_result) const noexcept {
     // Synth sticky wins (highest authority — TypeError already published).
@@ -1609,12 +1688,16 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
     if (precomputed_invariant_result) {
         const auto* r =
             static_cast<const typed_audit::InvariantAuditResult*>(precomputed_invariant_result);
+        if (r->cross_closure_linear_escape)
+            return LinearForceAuthority::CrossClosureEscape;
         if (r->cross_batch_linear_escape)
             return LinearForceAuthority::CrossBatchEscape;
         if (!r->linear_ok)
             return LinearForceAuthority::PostMutateLinear;
     }
     // Sticky post-mutate / escape axes (set by audit; pure peek).
+    if (last_cross_closure_escape_fail())
+        return LinearForceAuthority::CrossClosureEscape;
     if (last_cross_batch_escape_fail())
         return LinearForceAuthority::CrossBatchEscape;
     if (last_post_mutate_linear_fail())
@@ -1654,6 +1737,12 @@ bool Evaluator::force_linear_rollback(std::string_view op,
             clear_post_mutate_linear_fail();
             // escape counters owned by hard_block_cross_batch_linear_escape
             deny_kind = "linear-cross-batch-escape";
+            break;
+        case LinearForceAuthority::CrossClosureEscape:
+            clear_cross_closure_escape_fail();
+            clear_post_mutate_linear_fail();
+            // #2563 counters owned by discovery path (no re-bump escape_total)
+            deny_kind = "linear-cross-closure-escape";
             break;
         case LinearForceAuthority::None:
             return false;

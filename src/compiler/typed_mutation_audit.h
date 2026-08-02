@@ -240,12 +240,15 @@ struct TypedMutationAuditCounters {
     // When synth already hard-failed under production/strict, boundary forces
     // rollback and skips soft partial recovery (cannot clear synth TypeError).
     //
-    // Authority table (#2545 — single source of truth for Agents):
+    // Authority table (#2545 / #2563 — single source of truth for Agents):
     //   SynthHardFail     → force + skip soft recovery; deny=linear-synth-hard-fail
     //   PostMutateLinear  → force under hard-gate/Full; deny=linear-post-mutate-fail
     //   CrossBatchEscape  → force; deny=linear-cross-batch-escape (#2108)
+    //   CrossClosureEscape→ force under hard; deny=linear-cross-closure-escape (#2563)
     //   None              → zero extra force counters (type/prov may still deny)
     // Soft Warning synth never appears as SynthHardFail (#2514 AC retained).
+    // Soft cross-closure: observe counters only unless AURA_LINEAR_CROSS_CLOSURE_HARD=1
+    // or production/Full (#2563 AC1).
     //
     // Counter ownership table (no double-count of same logical violation):
     //   linear_synth_violation_total / linear_synth_hard_fail_total (#2357)
@@ -256,6 +259,8 @@ struct TypedMutationAuditCounters {
     //     → force_linear_rollback when authority == SynthHardFail only
     //   hard_gate_force_rollback_total
     //     → all force_linear_rollback authorities + non-linear hard-gate deny
+    //   linear_cross_closure_escape_total / force_total / observe_total (#2563)
+    //     → discovery path only; force_linear_rollback does not re-bump escape_total
     //   When synth early-exits, invariant audit is NOT re-run for that mid
     //   (so linear_invariant_fail does not also bump for the same violation).
     // All hard-gate / outermost boundary exit / composite reject sites must
@@ -265,6 +270,12 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint32_t> linear_synth_authority_unified{1};
     // Issue #2545: force_linear_rollback is the single hard-fail decision entry.
     std::atomic<std::uint32_t> linear_force_unified_2545{1};
+    // Issue #2563: cross-closure / free-capture linear escape discovery.
+    std::atomic<std::uint64_t> linear_cross_closure_escape_total{0};
+    std::atomic<std::uint64_t> linear_cross_closure_force_total{0};
+    std::atomic<std::uint64_t> linear_cross_closure_observe_total{0};
+    std::atomic<std::uint64_t> linear_cross_closure_cap_trunc_total{0};
+    std::atomic<std::uint32_t> linear_cross_closure_wired{1};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -885,15 +896,35 @@ struct InvariantAuditResult {
     bool adt_ok = true; // Issue #2223: non-exhaustive match fails under Full
     bool composite_mode = false;
     bool cross_batch_linear_escape = false;
+    // Issue #2563: free-capture of dirty linear into Lambda (one-level).
+    bool cross_closure_linear_escape = false;
     // Issue #2223: true when ≥1 match site was exhaustiveness-checked.
     bool adt_match_sites_present = false;
     std::uint32_t notes_count = 0;
     std::uint32_t adt_sites_checked = 0;
     std::uint32_t adt_non_exhaustive = 0;
     [[nodiscard]] bool all_ok() const noexcept {
-        return type_ok && linear_ok && provenance_ok && adt_ok && !cross_batch_linear_escape;
+        return type_ok && linear_ok && provenance_ok && adt_ok && !cross_batch_linear_escape &&
+               !cross_closure_linear_escape;
     }
 };
+
+// Issue #2563: hard-gate for cross-closure free-capture escape.
+// Soft default: observe-only. AURA_LINEAR_CROSS_CLOSURE_HARD=1|on forces;
+// 0|off forces soft observe. Unset → production_defaults || Full.
+[[nodiscard]] inline bool linear_cross_closure_hard_enabled() noexcept {
+    const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    if (e && *e) {
+        if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+            return false;
+        if ((e[0] == 'o' || e[0] == 'O') && e[1] != '\0' && (e[1] == 'f' || e[1] == 'F'))
+            return false;
+        if (e[0] == 's' || e[0] == 'S') // soft
+            return false;
+        return true;
+    }
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
 
 // Issue #2027: stamp composite audit outcome (nested and/or atomic_batch).
 inline void record_composite_invariant_audit(bool nested, bool batch_active,
@@ -1302,6 +1333,16 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.linear_synth_authority_unified.store(1,
                                                                          std::memory_order_relaxed);
     g_typed_mutation_audit_counters.linear_force_unified_2545.store(1, std::memory_order_relaxed);
+    // Issue #2563
+    g_typed_mutation_audit_counters.linear_cross_closure_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_force_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_observe_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_cap_trunc_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_wired.store(1, std::memory_order_relaxed);
     apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)

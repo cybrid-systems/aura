@@ -8129,6 +8129,67 @@ bool analyze_linear_escape_for_dirty(const FlatAST& flat, const StringPool& pool
     return all_pass;
 }
 
+// Issue #2563: cone-capped one-level cross-closure linear escape discovery.
+// Free use of a dirty linear binding inside a Lambda body (not a param) is an
+// escape site. Nested Lambdas are scanned as separate top-level sites (no
+// recursive enter). cone_cap limits nodes scanned (respects #2560 soft/hard).
+bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool& pool,
+                                           const std::unordered_set<std::string>& dirty_bindings,
+                                           std::size_t cone_cap, CrossClosureEscapeResult& out) {
+    out = {};
+    if (dirty_bindings.empty() || flat.size() == 0)
+        return true;
+    const std::size_t limit = cone_cap == 0 ? flat.size() : std::min(flat.size(), cone_cap);
+    if (cone_cap != 0 && flat.size() > cone_cap)
+        out.cap_truncations = 1;
+
+    auto walk_body_one_level = [&](NodeId body, const std::unordered_set<std::string>& params) {
+        // Iterative DFS; skip nested Lambda bodies (one-level AC).
+        std::vector<NodeId> stack;
+        if (body != NULL_NODE && body < flat.size())
+            stack.push_back(body);
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            ++out.nodes_scanned;
+            // Soft cone: stop body walk when nodes_scanned hits hard-ish bound.
+            if (cone_cap != 0 && out.nodes_scanned > cone_cap * 4)
+                break;
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Lambda)
+                continue; // nested lambda: separate outer scan
+            if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
+                auto name = std::string(pool.resolve(v.sym_id));
+                if (dirty_bindings.count(name) && params.count(name) == 0)
+                    ++out.escape_sites;
+                continue;
+            }
+            for (auto cid : v.children) {
+                if (cid != NULL_NODE && cid < flat.size())
+                    stack.push_back(cid);
+            }
+        }
+    };
+
+    for (NodeId id = 0; id < limit; ++id) {
+        auto v = flat.get(id);
+        if (v.tag != NodeTag::Lambda)
+            continue;
+        ++out.sites_scanned;
+        std::unordered_set<std::string> params;
+        for (auto ps : v.params) {
+            if (ps == INVALID_SYM)
+                continue;
+            params.insert(std::string(pool.resolve(ps)));
+        }
+        if (!v.children.empty() && v.child(0) != NULL_NODE)
+            walk_body_one_level(v.child(0), params);
+    }
+    return out.escape_sites == 0;
+}
+
 // Issue #117: full re-simulation mode. Walks the AST to
 // discover ALL linear-typed bindings (not just dirty ones)
 // and validates them as a single pass. Catches cross-function

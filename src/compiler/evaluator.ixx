@@ -3376,21 +3376,27 @@ public:
     [[nodiscard]] bool last_cross_batch_escape_fail() const noexcept;
     void note_cross_batch_escape_fail() noexcept;
     void clear_cross_batch_escape_fail() noexcept;
-    // Issue #2545: unified linear hard-fail authority (synth + post-mutate +
-    // cross-batch escape). Pure classify — zero side effects; zero cost when
-    // all axes clean (a few relaxed atomic loads).
+    // Issue #2563: sticky cross-closure free-capture escape.
+    [[nodiscard]] bool last_cross_closure_escape_fail() const noexcept;
+    void note_cross_closure_escape_fail() noexcept;
+    void clear_cross_closure_escape_fail() noexcept;
+    // Issue #2545 / #2563: unified linear hard-fail authority (synth +
+    // post-mutate + cross-batch + cross-closure). Pure classify — zero side
+    // effects; zero cost when all axes clean (a few relaxed atomic loads).
     // Decision table (single source of truth for Agents):
-    //   SynthHardFail     → force + skip soft recovery; no linear_invariant_fail
-    //   PostMutateLinear  → force under hard-gate/Full (linear_invariant_fail
-    //                       already owned by audit walk)
-    //   CrossBatchEscape  → force; escape counters owned by hard_block path
-    //   None              → continue (type/provenance may still deny)
+    //   SynthHardFail      → force + skip soft recovery; no linear_invariant_fail
+    //   PostMutateLinear   → force under hard-gate/Full (linear_invariant_fail
+    //                        already owned by audit walk)
+    //   CrossBatchEscape   → force; escape counters owned by hard_block path
+    //   CrossClosureEscape → force under hard; counters owned by discovery path
+    //   None               → continue (type/provenance may still deny)
     // Soft Warning synth never appears as SynthHardFail (#2514 AC retained).
     enum class LinearForceAuthority : std::uint8_t {
         None = 0,
         SynthHardFail = 1,
         PostMutateLinear = 2,
         CrossBatchEscape = 3,
+        CrossClosureEscape = 4, // Issue #2563
     };
     // Pure classify from sticky flags + optional precomputed audit result.
     // When precomputed is non-null, linear_ok / cross_batch_linear_escape
@@ -5141,6 +5147,7 @@ private:
     // force consume or successful commit.
     std::atomic<std::uint32_t> last_post_mutate_linear_fail_{0};
     std::atomic<std::uint32_t> last_cross_batch_escape_fail_{0};
+    std::atomic<std::uint32_t> last_cross_closure_escape_fail_{0}; // Issue #2563
     // Issue #2145: Strict sandbox — deny further mutate after hard-gate fail.
     std::atomic<std::uint32_t> strict_mutate_hold_{0};
     // Issue #2264: test inject — next run_typed_mutation_invariant_audit fails adt_ok.
