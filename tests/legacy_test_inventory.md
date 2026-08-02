@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 733 | Preferred destination suites |
-| **Total scanned** | **733** | |
+| `tests/core/test_*.cpp` | 734 | Preferred destination suites |
+| **Total scanned** | **734** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 209 | 209 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 210 | 210 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 86 | 86 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 18 | 18 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
@@ -222,6 +222,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_binding_gens_atomic_2417.cpp`
 - `tests/compiler/test_blame_complete_commit_gate_2221.cpp`
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp`
+- `tests/compiler/test_blame_soft_recover_2561.cpp`
 - `tests/compiler/test_blame_stamp_on_degrade.cpp`
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp`
 - `tests/compiler/test_boundary_solve_hard_gate_2260.cpp`
@@ -1011,13 +1012,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (209)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (210)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (209)
+#### domain/ (210)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1034,6 +1035,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_batch_terminal_dirty_phase2_2047.cpp` (#2047) [phase_slice, batch_driver, domain_suite, theme_renderer] — AC1: kBatchTerminalPhase == 2; source cites #2047; DirtyRegion + dirty build
 - `tests/compiler/test_blame_complete_commit_gate_2221.cpp` (#2221) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
+- `tests/compiler/test_blame_soft_recover_2561.cpp` (#2561) [domain_suite, theme_compiler] — AC1: Sampled incomplete → recover restores dual fields OR escalate
 - `tests/compiler/test_boundary_solve_hard_gate_2260.cpp` (#2260) [domain_suite, theme_compiler] — AC1: truncated_reverify under Full hard-gate → full resync or force fail
 - `tests/compiler/test_cap_write_effect_matrix_2532.cpp` (#2532) [small, domain_suite, theme_compiler] — AC1: workspace/fiber map to non-None effects
 - `tests/core/test_capability_audit_publish_2425.cpp` (#2425) [domain_suite, theme_core] — AC1: reader sees fully-written entry or prior complete entry (never torn)
