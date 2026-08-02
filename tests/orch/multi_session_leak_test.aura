@@ -1,22 +1,70 @@
 ;; === multi_session_leak_test.aura ===
-;; Issue #67 acceptance test: 1000+ module loads in serve-like pattern,
-;; assert no arena growth.
+;; Issue #67 acceptance test: repeated module loads in serve-like pattern,
+;; assert no unbounded residual and (under ASAN) no AddressSanitizer leaks.
 ;;
 ;; Run (prefer --load; stdin Repl is line-oriented and breaks multi-line forms):
 ;;   ./build/aura --load tests/orch/multi_session_leak_test.aura
 ;;   ASAN_OPTIONS=detect_leaks=1 ./build_asan/aura --load tests/orch/multi_session_leak_test.aura
+;;
+;; Notes for CI asan-verify:
+;; - (stats:get "gc-stats") returns a formatted String
+;;   "string:N/pairs:N/cells:N/err:N/hash:N/vec:N/opq:N/cls:N/root:N"
+;;   not a pair — never (cdr stats).
+;; - std/string string-split is O(n) recursive and overflows the ASAN stack
+;;   on ~64-char inputs; parse digits with a top-level while/set! loop instead.
+;; - Real leak oracle under CI is ASAN detect_leaks=1 (exitcode=42); this file
+;;   must also print ✅ PASS so the workflow grep succeeds.
 
-(require std/json all:)
+(require "std/json" all:)
 
 (display "=== Multi-Session Module Load Test ===\n")
+
+;; ── Iterative digit sum over gc-stats (top-level cells; ASAN-safe) ──
+(define *gs-s* "")
+(define *gs-n* 0)
+(define *gs-i* 0)
+(define *gs-total* 0)
+(define *gs-val* 0)
+(define *gs-in-num* #f)
+(define *gs-c* 0)
+
+(define (gc-stats-total s)
+  (set! *gs-s* s)
+  (set! *gs-n* (string-length s))
+  (set! *gs-i* 0)
+  (set! *gs-total* 0)
+  (set! *gs-val* 0)
+  (set! *gs-in-num* #f)
+  (while (lambda () (< *gs-i* *gs-n*))
+    (lambda ()
+      (set! *gs-c* (string-ref *gs-s* *gs-i*))
+      (if (= *gs-c* 58)  ;; ':'
+          (begin
+            (set! *gs-in-num* #t)
+            (set! *gs-val* 0)
+            (set! *gs-i* (+ *gs-i* 1)))
+          (if (and *gs-in-num* (and (>= *gs-c* 48) (<= *gs-c* 57)))
+              (begin
+                (set! *gs-val* (+ (* *gs-val* 10) (- *gs-c* 48)))
+                (set! *gs-i* (+ *gs-i* 1)))
+              (begin
+                (if *gs-in-num* (set! *gs-total* (+ *gs-total* *gs-val*)) 0)
+                (set! *gs-in-num* #f)
+                (set! *gs-i* (+ *gs-i* 1)))))))
+  (if *gs-in-num* (+ *gs-total* *gs-val*) *gs-total*))
 
 (define initial-stats (stats:get "gc-stats"))
 (display "Initial: ")
 (display initial-stats)
 (newline)
+(define initial-total (gc-stats-total initial-stats))
+(display "Initial total: ")
+(display initial-total)
+(newline)
 
-;; Simulate 50 module loads with gc between each
-;; (1000 is too slow for a smoke test, but the leak rate should be similar)
+;; Simulate 50 module loads with gc between each.
+;; (1000 is too slow for a smoke test; leak rate should be similar.)
+;; Tail-recursive form keeps stack flat under ASAN.
 (define (load-iter n)
   (if (= n 0)
       'done
@@ -24,7 +72,6 @@
         (require "std/json" all:)
         (eval '(json-parse "{\"x\":1}"))
         (eval '(json-parse "{\"y\":2}"))
-        ;; Force GC to free module state
         (gc-module "std/json.aura")
         (load-iter (- n 1)))))
 
@@ -34,13 +81,18 @@
 (display "Final:   ")
 (display final-stats)
 (newline)
+(define final-total (gc-stats-total final-stats))
+(display "Final total: ")
+(display final-total)
+(newline)
 
-;; Check that we didn't grow unboundedly
-(define growth (- (cdr final-stats) (cdr initial-stats)))
+;; Object-count growth (gc-stats is counts, not bytes). Bound residual after
+;; 50 require/gc cycles — unbounded cache growth fails this.
+(define growth (- final-total initial-total))
 (display "Growth:  ")
 (display growth)
 (newline)
 
-(if (< growth 1048576)  ;; 1 MB threshold for 50 iterations
+(if (and (number? growth) (< growth 100000))
     (display "✅ PASS: memory growth under threshold\n")
-    (display "❌ FAIL: memory growth exceeded 1MB threshold\n"))
+    (display "❌ FAIL: memory growth exceeded threshold (or unparsable stats)\n"))
