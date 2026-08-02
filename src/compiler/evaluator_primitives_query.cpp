@@ -7259,8 +7259,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_void();
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
             // Capacity must cover #2284 fixed keys + 16 aff-node slots +
-            // #2343 graph keys (edge sample 16×5 + 8 roots + meta).
-            auto* ht = FlatHashTable::create(256);
+            // #2343 graph keys (edge sample 16×5 + 8 roots + meta) +
+            // #2548 reason/degree tags + reason enum sentinels.
+            auto* ht = FlatHashTable::create(512);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7344,7 +7345,49 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     m ? m->type_repair_suggested_roots[i].load(std::memory_order_relaxed) : 0;
                 std::snprintf(field_buf, sizeof(field_buf), "type-repair-suggested-root-%zu", i);
                 insert_kv(field_buf, static_cast<std::int64_t>(root));
+                // Issue #2548: structured reason + degree per root.
+                const std::uint64_t why =
+                    m ? m->type_repair_suggested_root_reasons[i].load(std::memory_order_relaxed)
+                      : 0;
+                const std::uint64_t deg =
+                    m ? m->type_repair_suggested_root_degrees[i].load(std::memory_order_relaxed)
+                      : 0;
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-suggested-root-%zu-reason",
+                              i);
+                insert_kv(field_buf, static_cast<std::int64_t>(why));
+                std::snprintf(field_buf, sizeof(field_buf), "type-repair-suggested-root-%zu-degree",
+                              i);
+                insert_kv(field_buf, static_cast<std::int64_t>(deg));
             }
+            // Issue #2548: aggregate reason tags + caps / sentinels.
+            insert_kv(
+                "type-repair-occurrence-replay-miss-count",
+                m ? static_cast<std::int64_t>(
+                        m->type_repair_occurrence_replay_miss_count.load(std::memory_order_relaxed))
+                  : 0);
+            insert_kv("type-repair-let-poly-suggested-count",
+                      m ? static_cast<std::int64_t>(m->type_repair_let_poly_suggested_count.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("type-repair-occurrence-suggested-count",
+                      m ? static_cast<std::int64_t>(m->type_repair_occurrence_suggested_count.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("type-repair-rich-roots-export-total",
+                      m ? static_cast<std::int64_t>(m->type_repair_rich_roots_export_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("type-repair-rich-roots-wired", 1);
+            insert_kv("type-repair-root-reason-touched", 0);
+            insert_kv("type-repair-root-reason-unresolved-endpoint", 1);
+            insert_kv("type-repair-root-reason-pending-full", 2);
+            insert_kv("type-repair-root-reason-let-poly", 3);
+            insert_kv("type-repair-root-reason-occurrence", 4);
+            insert_kv("type-repair-root-reason-occurrence-replay-miss", 5);
+            insert_kv("type-repair-edge-cap", 64);
+            insert_kv("type-repair-root-cap", 8);
+            insert_kv("schema-2548", 2548);
+            insert_kv("issue-2548", 2548);
             for (std::size_t i = 0; i < 16; ++i) {
                 const std::uint64_t var =
                     m ? m->type_repair_edge_var[i].load(std::memory_order_relaxed) : 0;

@@ -8604,6 +8604,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_repair_unresolved_edge_count{0};
     std::atomic<std::uint64_t> type_repair_suggested_root_count{0};
     std::array<std::atomic<std::uint64_t>, 8> type_repair_suggested_roots{};
+    // Issue #2548: parallel SuggestedRootReason + degree per root (N=0..7).
+    // reason: 0=touched 1=unresolved-endpoint 2=pending-full 3=let-poly
+    //         4=occurrence 5=occurrence-replay-miss
+    std::array<std::atomic<std::uint64_t>, 8> type_repair_suggested_root_reasons{};
+    std::array<std::atomic<std::uint64_t>, 8> type_repair_suggested_root_degrees{};
+    std::atomic<std::uint64_t> type_repair_occurrence_replay_miss_count{0};
+    std::atomic<std::uint64_t> type_repair_let_poly_suggested_count{0};
+    std::atomic<std::uint64_t> type_repair_occurrence_suggested_count{0};
+    std::atomic<std::uint64_t> type_repair_rich_roots_export_total{0}; // #2548
     std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_var{};
     std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_cix{};
     std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_kind{};
@@ -8611,6 +8620,7 @@ struct CompilerMetrics {
     std::array<std::atomic<std::uint64_t>, 16> type_repair_edge_rhs{};
     std::atomic<std::uint64_t> type_repair_graph_export_total{0};
     std::atomic<std::uint64_t> type_repair_graph_wired{1};
+    std::atomic<std::uint64_t> type_repair_rich_roots_wired{1}; // #2548
 
     std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
     std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};

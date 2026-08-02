@@ -3853,6 +3853,11 @@ aura_add_issue_test(test_type_timeout_repair_2284)
 aura_issue_test_link_light(test_type_timeout_repair_2284)
 add_dependencies(all_test_issue_targets test_type_timeout_repair_2284)
 
+# Issue #2548: richer TIMEOUT repair (degree-ranked roots + reason tags).
+aura_add_issue_test(test_timeout_repair_rich_roots_2548)
+aura_issue_test_link_light(test_timeout_repair_rich_roots_2548)
+add_dependencies(all_test_issue_targets test_timeout_repair_rich_roots_2548)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

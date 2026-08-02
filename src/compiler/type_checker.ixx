@@ -128,6 +128,26 @@ export inline constexpr std::size_t kUnresolvedGraphSuggestedRootsCap = 8;
 // query:type-timeout-repair-stats); full vector may hold up to edge cap.
 export inline constexpr std::size_t kUnresolvedGraphEdgeQueryCap = 16;
 
+// Issue #2548: structured reason per suggested root (Agent self-repair
+// without free-form diagnostic parsing). Higher numeric value wins when
+// a rep appears in multiple seed sets (prefer occurrence / let-poly).
+export enum class SuggestedRootReason : std::uint8_t {
+    Touched = 0,             // plain touched_roots_
+    UnresolvedEndpoint = 1,  // only from unresolved constraint endpoints
+    PendingFull = 2,         // pending_full_solve_roots_
+    LetPoly = 3,             // let_poly_dirty_roots_ ∩ unresolved subgraph
+    Occurrence = 4,          // occurrence_priority_roots_ / live goals
+    OccurrenceReplayMiss = 5 // live goal refined no longer UF-consistent
+};
+
+// Issue #2548: degree-ranked suggested root with structured reason.
+// Parallel to suggested_roots (var_rep only) for #2343 back-compat.
+export struct SuggestedRoot {
+    std::uint32_t var_rep = 0;
+    std::uint8_t reason = 0; // SuggestedRootReason
+    std::uint32_t degree = 0;
+};
+
 // Issue #1877: DeltaBlameFrame.kind for MacroIntroduced hygiene frames
 // (Constraint::Kind values are small; 0xFF is reserved for hygiene).
 export inline constexpr std::uint8_t kHygieneBlameKind = 0xFF;
@@ -436,16 +456,22 @@ public:
     void force_next_delta_timeout_for_test(bool v = true) noexcept {
         force_next_delta_timeout_ = v;
     }
-    // Issue #2343: export a bounded var↔constraint dependency subgraph
-    // for Agent self-repair. Seeds from touched / occurrence / let-poly /
-    // pending roots union unresolved constraint endpoints, then walks
-    // var_to_constraints_ (capped). Zero allocation when both outs stay
-    // empty (caller only invokes on TIMEOUT / non-empty CONFLICT).
+    // Issue #2343 / #2548: export a bounded var↔constraint dependency
+    // subgraph for Agent self-repair. Seeds from touched / occurrence /
+    // let-poly / pending roots union unresolved endpoints + occurrence
+    // goal replay misses, then walks var_to_constraints_ (capped).
+    // suggested_roots ranked by degree DESC then reason DESC (prefer
+    // occurrence / let-poly over plain touched). Parallel
+    // suggested_root_reasons_out carries SuggestedRootReason tags.
+    // Zero allocation when outs stay empty (caller only invokes on
+    // TIMEOUT / non-empty CONFLICT). Caps unchanged (#2548 AC4).
     void export_unresolved_var_constraint_graph(
         const std::vector<Constraint>& unresolved, std::vector<UnresolvedGraphEdge>& edges_out,
         std::vector<std::uint32_t>& suggested_roots_out,
         std::size_t edge_cap = kUnresolvedGraphEdgeCap,
-        std::size_t root_cap = kUnresolvedGraphSuggestedRootsCap);
+        std::size_t root_cap = kUnresolvedGraphSuggestedRootsCap,
+        std::vector<std::uint8_t>* suggested_root_reasons_out = nullptr,
+        std::vector<std::uint32_t>* suggested_root_degrees_out = nullptr);
     // Issue #2146: pin clean-reverify scan limit for truncation tests
     // (0 = use adaptive effective_reverify_limit). Production leaves 0.
     void force_reverify_limit_for_test(std::size_t lim = 0) noexcept {
@@ -2738,6 +2764,16 @@ export struct SolveDeltaOccurrenceResult {
     // suggested_roots: top-k TypeId reps by degree in the subgraph (k≤8).
     std::vector<UnresolvedGraphEdge> unresolved_graph_edges;
     std::vector<std::uint32_t> suggested_roots;
+    // Issue #2548: parallel structured reason + degree per suggested root
+    // (same length as suggested_roots; empty on SOLVED).
+    std::vector<std::uint8_t> suggested_root_reasons;
+    std::vector<std::uint32_t> suggested_root_degrees;
+    // Issue #2548: count of occurrence goals whose refined failed
+    // consistent_unify vs live UF (replay miss) during this export.
+    std::size_t occurrence_replay_miss_count = 0;
+    // How many suggested roots carry LetPoly / Occurrence* reasons.
+    std::size_t let_poly_suggested_count = 0;
+    std::size_t occurrence_suggested_count = 0;
 };
 
 // Issue #2028: mark occurrence vars, restore retained blame anchors if
