@@ -1575,6 +1575,61 @@ namespace agent_scope_compat {
     }
 } // namespace agent_scope_compat
 
+// Issue #2539: unidirectional FailurePolicy (#2007 batch) →
+// AgentFailurePolicy (#2229 long-lived) mapping bridge.
+//
+// Semantic boundary (documented; do not invert without a new API):
+//   - FailurePolicy: body-error admit/retry under parallel_intend.
+//   - AgentFailurePolicy: stall response under AgentScope::watch_all.
+//   - RestartN is only meaningful for long-lived agents with keepalive;
+//     max_restarts=0 leaves RestartN capped at zero (no re-spawn).
+//   - Calling this bridge does not change default AgentFailurePolicy
+//     or ParallelPolicy behaviour for callers that never use it (AC3).
+//
+// Mapping table (AC2):
+//   FailFast        → on_stall=Cancel
+//   CollectAll      → on_stall=ReportOnly
+//   RetryN          → on_stall=RestartN, max_restarts from arg
+//   CircuitBreaker  → on_stall=Cancel, consecutive_stall_limit aligned
+//
+// Optional language sugar (orch:supervise-batch / apply after
+// parallel_intend) is deferred — this issue ships the mapping API only.
+inline constexpr int kFailurePolicyBridgeIssue = 2539;
+
+[[nodiscard]] inline AgentFailurePolicy
+to_agent_policy(serve::parallel_orch::FailurePolicy p, std::uint32_t max_restarts = 0,
+                std::uint32_t consecutive_stall_limit = 3,
+                std::uint32_t restart_backoff_ms = 0) noexcept {
+    AgentFailurePolicy out; // defaults match #2229 (Cancel / limit=3 / restarts=0)
+    using FP = serve::parallel_orch::FailurePolicy;
+    switch (p) {
+        case FP::FailFast:
+            out.on_stall = AgentFailureAction::Cancel;
+            break;
+        case FP::CollectAll:
+            out.on_stall = AgentFailureAction::ReportOnly;
+            break;
+        case FP::RetryN:
+            out.on_stall = AgentFailureAction::RestartN;
+            out.max_restarts = max_restarts;
+            out.restart_backoff_ms = restart_backoff_ms;
+            break;
+        case FP::CircuitBreaker:
+            out.on_stall = AgentFailureAction::Cancel;
+            out.consecutive_stall_limit = consecutive_stall_limit;
+            break;
+    }
+    return out;
+}
+
+// Overload: pull RetryN max_retries / CircuitBreaker consecutive_fail_limit
+// / retry_backoff_ms from ParallelPolicy (via resolved_failure_policy).
+[[nodiscard]] inline AgentFailurePolicy
+to_agent_policy(const serve::parallel_orch::ParallelPolicy& pp) noexcept {
+    const auto fp = serve::parallel_orch::resolved_failure_policy(pp);
+    return to_agent_policy(fp, pp.max_retries, pp.consecutive_fail_limit, pp.retry_backoff_ms);
+}
+
 // Wait up to stall_timeout_ms (default 2× keepalive_interval_ms) for a
 // keepalive. Prefers the shared last_keepalive clock (set by the helper
 // fiber) and only does non-blocking mailbox peeks — safe from host threads
