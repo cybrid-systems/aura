@@ -5277,6 +5277,26 @@ def cmd_write_string_escape_coverage():
     return 0
 
 
+def cmd_jit_dual_string_heap_coverage():
+    """Issue #2575: dual string heaps — PrimCall re-intern.
+
+    Evaluator prims allocate on string_heap_; JIT display uses
+    g_string_pool. PrimCall converts args JIT→eval and results
+    eval→JIT (aura_alloc_string).
+    """
+    print(f"{B}=== dual string heap PrimCall coverage (#2575) ==={N}")
+    script = ROOT / "scripts" / "check_jit_dual_string_heap_2575.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dual string heap (#2575) coverage contract rows failed")
+        return 1
+    ok("dual string heap (#2575) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6515,6 +6535,7 @@ def cmd_gate():
         or cmd_module_export_display_coverage()
         or cmd_ir_const_string_intern_coverage()
         or cmd_write_string_escape_coverage()
+        or cmd_jit_dual_string_heap_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7341,6 +7362,7 @@ def main():
         "module-export-display": cmd_module_export_display_coverage,
         "ir-const-string-intern": cmd_ir_const_string_intern_coverage,
         "write-string-escape": cmd_write_string_escape_coverage,
+        "jit-dual-string-heap": cmd_jit_dual_string_heap_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

@@ -2454,7 +2454,7 @@ uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
 void aura_display_int(int64_t);
 void aura_display_char(char);
-void aura_display_value(int64_t, int); // Issue #2572
+void aura_display_value(int64_t, int64_t); // Issue #2572 / #2575 ABI i64
 void aura_newline();
 void aura_jit_epoch_acquire_fence(void);
 void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint32_t opcode);

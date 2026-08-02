@@ -3978,6 +3978,11 @@ aura_add_issue_test(test_write_string_escape_2574)
 aura_issue_test_link_light(test_write_string_escape_2574)
 add_dependencies(all_test_issue_targets test_write_string_escape_2574)
 
+# Issue #2575: dual string heap — PrimCall re-intern eval→JIT for display
+aura_add_issue_test(test_jit_dual_string_heap_2575)
+aura_issue_test_link_light(test_jit_dual_string_heap_2575)
+add_dependencies(all_test_issue_targets test_jit_dual_string_heap_2575)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

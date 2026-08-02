@@ -111,25 +111,74 @@ static constexpr const char* kPrimNameTable[] = {
 
 static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
 
+// ── Dual string heaps (Issue #2575 / #181) ───────────────────
+// JIT ConstString → g_string_pool via aura_alloc_string.
+// Evaluator prims → Primitives::string_heap / Evaluator::string_heap_.
+// Same v2 encoding; PrimCall must re-intern at the boundary.
+
+// Issue #181 Cycle 2: STRING_BIAS_VAL_2 is the v2 string range upper bound.
+static constexpr std::int64_t STRING_BIAS_VAL_LOCAL = aura::compiler::types::STRING_BIAS_VAL_2;
+
+static bool is_str_val(std::int64_t val) {
+    return aura::compiler::types::is_string_raw_v2(val) && val <= STRING_BIAS_VAL_LOCAL;
+}
+
+// JIT string pool access (defined in aura_jit_runtime.cpp)
+extern "C" std::size_t aura_jit_pool_size();
+extern "C" const char* aura_jit_pool_string(std::size_t idx);
+extern "C" std::int64_t aura_alloc_string(const char* s);
+extern "C" void aura_set_hash_str_eq_callback(std::int64_t (*fn)(std::int64_t, std::int64_t));
+extern "C" std::int64_t aura_hash_string_cmp_fn(std::int64_t, std::int64_t);
+extern "C" void aura_set_hash_str_convert_callback(std::int64_t (*fn)(std::int64_t));
+extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t);
+
+// Issue #2100: MacroIntroduced deopt → AST restore hook (aura_jit_runtime.cpp).
+extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept);
+extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
+extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
+
+// JIT-pool string → evaluator heap (PrimCall args).
+// OOB of JIT pool → pass through (already evaluator-indexed).
+static std::int64_t convert_str_for_eval(std::int64_t val,
+                                         const aura::compiler::Primitives* prims) {
+    if (!is_str_val(val) || !prims)
+        return val;
+    std::uint64_t idx = aura::compiler::types::string_idx_raw_v2(val);
+    const char* content = aura_jit_pool_string(static_cast<std::size_t>(idx));
+    if (!content)
+        return val;
+    auto& eval_heap = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
+    auto new_idx = eval_heap.size();
+    eval_heap.push_back(content);
+    return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(new_idx));
+}
+
+// Evaluator-heap string → JIT g_string_pool (PrimCall results).
+static std::int64_t convert_str_for_jit(std::int64_t val, const aura::compiler::Primitives* prims) {
+    if (!is_str_val(val) || !prims)
+        return val;
+    std::uint64_t idx = aura::compiler::types::string_idx_raw_v2(val);
+    auto& eval_heap = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
+    if (idx >= eval_heap.size())
+        return aura_alloc_string("");
+    return aura_alloc_string(eval_heap[static_cast<std::size_t>(idx)].c_str());
+}
+
 // Key equality callback for JIT hash scan loop (Phase 4b)
 // Compares two string-encoded values, handling both JIT and evaluator string encoding.
 extern "C" std::int64_t aura_hash_callback_key_eq(std::int64_t stored_key,
                                                   std::int64_t search_key) {
-    using aura::compiler::types::is_string_raw_v2;
-    using aura::compiler::types::STRING_BIAS_VAL_2;
     using aura::compiler::types::string_idx_raw_v2;
     auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
     // Fast path: raw value equality
     if (stored_key == search_key)
         return 1;
     // String comparison (Issue #181 Cycle 2: v2 encoding)
-    auto is_str_val = [](std::int64_t v) { return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2; };
     if (is_str_val(stored_key) && is_str_val(search_key) && prims) {
         auto& sh = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
         std::uint64_t eval_idx = string_idx_raw_v2(stored_key);
         if (static_cast<std::size_t>(eval_idx) >= sh.size())
             return 0;
-        const std::string* search_str = nullptr;
         std::uint64_t s_idx = string_idx_raw_v2(search_key);
         if (static_cast<std::size_t>(s_idx) < sh.size()) {
             const char* jit_s = aura_jit_pool_string(static_cast<std::size_t>(s_idx));
@@ -160,19 +209,20 @@ extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_
     if (!pfn)
         return 0;
 
-    // Convert int64_t args to EvalValue vector.
-    // After JIT encoding unification: args are pointer-tagged (fixnum=val<<1,
-    // bool=7/3, void=11). EvalValue uses identical encoding, so pass through directly.
+    // Issue #2575: convert string args JIT→eval; re-intern results eval→JIT.
     std::vector<aura::compiler::types::EvalValue> eval_args;
     eval_args.reserve(static_cast<std::size_t>(argc));
-    for (std::int32_t i = 0; i < argc; ++i)
-        eval_args.emplace_back(args[i]);
+    for (std::int32_t i = 0; i < argc; ++i) {
+        std::int64_t a = args[i];
+        if (is_str_val(a))
+            a = convert_str_for_eval(a, prims);
+        eval_args.emplace_back(a);
+    }
 
-    // Call the primitive function
     auto result = (*pfn)(eval_args);
 
-    // Convert result back to int64_t.
-    // EvalValue uses same pointer tagging, return the raw tagged value.
+    if (is_str_val(result.val))
+        return convert_str_for_jit(result.val, prims);
     return result.val;
 }
 
@@ -180,63 +230,6 @@ extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_
 // Bridges OpHashRef/OpHashSet/OpHashRemove from JIT code to evaluator's hash primitives.
 // These are separate from kPrimNameTable (which covers PrimCall-level primitives)
 // because hash ops have dedicated IROpcodes for inline dispatch.
-
-// ── Helpers: convert JIT strings to evaluator string heap indices ──
-// JIT-compiled code allocates strings in its own g_string_pool, but the
-// evaluator's hash primitives use the evaluator's string_heap_ for equality
-// and hashing.  We must migrate JIT strings to the evaluator heap on the fly.
-
-// Issue #181 Cycle 2: STRING_BIAS_VAL is now STRING_BIAS_VAL_2
-// (the v2 bias, with low 2 bits = 2 = dedicated string tag). The
-// old literal -9000000000000000000LL is no longer the upper
-// bound of the string range — v2 strings can be at
-// STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2.
-static constexpr std::int64_t STRING_BIAS_VAL_LOCAL = aura::compiler::types::STRING_BIAS_VAL_2;
-
-// Returns true when val is a JIT/evaluator string-encoded value.
-// Issue #181 Cycle 2: v2 encoding. Pure tag check (v & 3) == 2
-// is the string signature, plus range check via STRING_BIAS_VAL_2
-// to reject fixnums in the right range with the string tag bit
-// set (defense-in-depth).
-static bool is_str_val(std::int64_t val) {
-    return aura::compiler::types::is_string_raw_v2(val) && val <= STRING_BIAS_VAL_LOCAL;
-}
-
-// JIT string pool access (declared in aura_jit_runtime.cpp)
-extern "C" std::size_t aura_jit_pool_size();
-extern "C" const char* aura_jit_pool_string(std::size_t idx);
-extern "C" void aura_set_hash_str_eq_callback(std::int64_t (*fn)(std::int64_t, std::int64_t));
-extern "C" std::int64_t aura_hash_string_cmp_fn(std::int64_t, std::int64_t);
-extern "C" void aura_set_hash_str_convert_callback(std::int64_t (*fn)(std::int64_t));
-extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t);
-
-// Issue #2100: MacroIntroduced deopt → AST restore hook (aura_jit_runtime.cpp).
-// Must live at file/module scope — nested extern "C" inside methods is ill-formed.
-extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept);
-extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
-extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
-
-// Convert one JIT-string argument to an evaluator-string argument by
-// copying the content from the JIT pool to the evaluator string heap.
-// Non-string values pass through unchanged.
-static std::int64_t convert_str_for_eval(std::int64_t val,
-                                         const aura::compiler::Primitives* prims) {
-    if (!is_str_val(val))
-        return val; // not a string, pass through
-    // JIT string encoding (v2): STRING_BIAS_VAL_2 - (idx << 2)
-    // idx = (STRING_BIAS_VAL_2 - val) >> 2
-    std::uint64_t idx = aura::compiler::types::string_idx_raw_v2(val);
-    // Get the string content from the JIT string pool
-    const char* content = aura_jit_pool_string(static_cast<std::size_t>(idx));
-    if (!content)
-        return val;
-    // Push into evaluator string heap and return v2 encoding
-    auto& eval_heap = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
-    auto new_idx = eval_heap.size();
-    eval_heap.push_back(content);
-    return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(new_idx));
-}
-
 
 namespace aura::compiler {
 
