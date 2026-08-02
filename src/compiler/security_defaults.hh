@@ -298,11 +298,12 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
-    // 7) Issue #2154: sliding grant_min_valid_epoch retain window.
-    //    K=0 (default for single-tenant / Restricted) preserves #2074 manual
-    //    fence only. Multi-tenant or Strict production enables K=64 so
-    //    ancient grants expire as Mutation epoch advances. Env
-    //    AURA_GRANT_EPOCH_RETAIN always wins when set. sandbox=off → K=0.
+    // 7) Issue #2154 / #2529: sliding grant_min_valid_epoch retain window.
+    //    Multi-tenant or Strict → K=64 (#2154). Restricted single-tenant
+    //    production (#2076 default) → K=16 (#2529) so privilege-sticky grants
+    //    still slide under long Mutation epoch advance. Off/other → K=0
+    //    (manual fence only). Env AURA_GRANT_EPOCH_RETAIN always wins when
+    //    set. sandbox=off → K=0 + min_valid=0 (unit Soft path).
     if (dev_off) {
         g_capability_registry().set_grant_epoch_retain_window(0);
         g_capability_registry().set_grant_min_valid_epoch(0);
@@ -317,9 +318,16 @@ inline void apply_production_security_defaults() noexcept {
         } else {
             const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
                                 g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+            const bool restricted =
+                g_sandbox_state().mode == SandboxMode::Restricted ||
+                g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
             if (multi_tenant || strict) {
                 g_capability_registry().set_grant_epoch_retain_window(
                     kDefaultGrantEpochRetainWindowMultiTenant);
+            } else if (restricted) {
+                // Issue #2529: anti privilege-sticky under pure Restricted.
+                g_capability_registry().set_grant_epoch_retain_window(
+                    kDefaultGrantEpochRetainWindowRestricted);
             } else {
                 g_capability_registry().set_grant_epoch_retain_window(0);
             }

@@ -4290,6 +4290,185 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #2534: query:security-posture — single Agent posture snapshot
+    // (mode / wal / ring fill / retain window / hard fiber / mismatch rates).
+    // Pure/read-only; additive to query:security-health and *-stats.
+    ObservabilityPrims::register_stats_impl(
+        "query:security-posture", [&ev](const auto&) -> EvalValue {
+            using ::aura::core::audit_wal::g_mutation_audit_wal;
+            using ::aura::core::capability::CapabilityRegistry;
+            using ::aura::core::capability::g_capability_registry;
+            using ::aura::core::capability::snapshot_capability_effect_stats;
+            using ::aura::core::security_event::g_security_event_ring;
+            using ::aura::core::security_event_wal::g_security_event_wal;
+            using ::aura::core::workspace_isolation::g_workspace_isolation;
+            using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+
+            const auto cap = snapshot_capability_effect_stats();
+            const auto iso = snapshot_tenant_isolation_stats();
+            const auto reg = g_capability_registry().snapshot_registry_state();
+            const auto& se_ring = g_security_event_ring();
+
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            insert_kv("sandbox-mode", static_cast<std::int64_t>(cap.sandbox_mode));
+            insert_kv("security-event-wal-on", g_security_event_wal().is_enabled() ? 1 : 0);
+            insert_kv("mutation-wal-on", g_mutation_audit_wal().is_enabled() ? 1 : 0);
+            // Ring fill %: min(100, total % capacity * 100 / capacity) approx.
+            const auto se_total = se_ring.total.load(std::memory_order_relaxed);
+            const auto se_cap = static_cast<std::uint64_t>(1024);
+            const auto se_fill =
+                se_cap == 0 ? 0 : (se_total >= se_cap ? 100 : (se_total * 100) / se_cap);
+            insert_kv("se-ring-fill-pct", static_cast<std::int64_t>(se_fill));
+            insert_kv("cap-audit-ring-size",
+                      static_cast<std::int64_t>(CapabilityRegistry::kAuditRing));
+            insert_kv("iso-audit-ring-size",
+                      static_cast<std::int64_t>(
+                          ::aura::core::workspace_isolation::WorkspaceIsolationPolicy::kAuditRing));
+            (void)iso; // isolation snapshot reserved for future fill%
+            insert_kv("grant-min-valid-epoch",
+                      static_cast<std::int64_t>(reg.grant_min_valid_epoch));
+            insert_kv("grant-epoch-retain-window",
+                      static_cast<std::int64_t>(reg.grant_epoch_retain_window));
+            insert_kv("hard-fiber-isolation", reg.hard_fiber_isolation ? 1 : 0);
+            const auto checks = cap.checks == 0 ? 1 : cap.checks;
+            insert_kv("effect-deny-rate-bp",
+                      static_cast<std::int64_t>((cap.denied * 10000) / checks));
+            insert_kv("provenance-mismatch-total",
+                      static_cast<std::int64_t>(cap.provenance_mismatch));
+            insert_kv("epoch-fence-hits", static_cast<std::int64_t>(cap.epoch_fence_hits));
+            insert_kv("schema-2534", 2534);
+            insert_kv("issue-2534", 2534);
+            insert_kv("security-posture-wired", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2534: query:security-correlated-trail — join SE + TypedMutation +
+    // capability audit by mutation_id (isolation mid when present).
+    ObservabilityPrims::register_stats_impl(
+        "query:security-correlated-trail", [&ev](const auto& args) -> EvalValue {
+            using ::aura::compiler::typed_audit::trail_find_by_mutation_id;
+            using ::aura::core::capability::EffectAuditEntry;
+            using ::aura::core::capability::g_capability_registry;
+            using ::aura::core::security_event::g_security_event_ring;
+            using ::aura::core::workspace_isolation::IsolationAuditEntry;
+            using ::aura::core::workspace_isolation::g_workspace_isolation;
+
+            std::uint64_t mid = 0;
+            if (!args.empty() && is_int(args[0]))
+                mid = static_cast<std::uint64_t>(as_int(args[0]));
+
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            std::int64_t se_hits = 0;
+            std::int64_t typed_hits = 0;
+            std::int64_t cap_hits = 0;
+            std::int64_t iso_hits = 0;
+
+            if (mid != 0) {
+                using ::aura::compiler::typed_audit::TypedMutationAuditEvent;
+                using ::aura::core::security_event::kSecurityEventRingSize;
+                // SE ring scan by mutation_id (ring may wrap; best-effort window).
+                const auto& ring = g_security_event_ring();
+                const auto total = ring.total.load(std::memory_order_relaxed);
+                const auto cap_n = static_cast<std::uint64_t>(kSecurityEventRingSize);
+                const auto start = total > cap_n ? total - cap_n : 0;
+                for (std::uint64_t s = start; s < total; ++s) {
+                    if (ring.ring[s % cap_n].mutation_id == mid)
+                        ++se_hits;
+                }
+                // TypedMutation trail.
+                TypedMutationAuditEvent te{};
+                if (trail_find_by_mutation_id(mid, te))
+                    typed_hits = 1;
+                // Capability audit: scan recent window via try_load_audit_seq.
+                const auto cseq = g_capability_registry().load_audit_seq();
+                const auto cstart = cseq > 1024 ? cseq - 1024 : 0;
+                for (std::uint64_t s = cstart; s < cseq; ++s) {
+                    EffectAuditEntry e{};
+                    if (g_capability_registry().try_load_audit_seq(s, e) &&
+                        e.prov.mutation_id == mid)
+                        ++cap_hits;
+                }
+                // Isolation audit (publish_seq path).
+                auto& iso = g_workspace_isolation();
+                const auto iseq = iso.load_audit_seq();
+                const auto istart = iseq > 1024 ? iseq - 1024 : 0;
+                for (std::uint64_t s = istart; s < iseq; ++s) {
+                    IsolationAuditEntry e{};
+                    if (iso.try_load_audit_seq(s, e) && e.mutation_id == mid)
+                        ++iso_hits;
+                }
+            }
+
+            insert_kv("mid", static_cast<std::int64_t>(mid));
+            insert_kv("se-hits", se_hits);
+            insert_kv("typed-hits", typed_hits);
+            insert_kv("capability-hits", cap_hits);
+            insert_kv("isolation-hits", iso_hits);
+            insert_kv("match-count", se_hits + typed_hits + cap_hits + iso_hits);
+            insert_kv("schema-2534", 2534);
+            insert_kv("issue-2534", 2534);
+            insert_kv("security-correlated-trail-wired", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #668: query:primitives-regex-error-stats — math regex
     // primitive error observability (P1 stdlib-impl error
     // consistency).

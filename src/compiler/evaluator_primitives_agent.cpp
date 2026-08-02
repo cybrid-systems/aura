@@ -3643,6 +3643,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2397", aura::orch::kJoinDrainReclaimStillRunningIssue);
             insert_kv("issue-2397", aura::orch::kJoinDrainReclaimStillRunningIssue);
             insert_kv("join-drain-reclaim-still-running-wired", 1);
+            // Issue #2533: residual force-safepoint / CPU budget (additive).
+            insert_kv(
+                "residual-force-safepoint-total",
+                static_cast<std::int64_t>(aura::serve::Fiber::residual_force_safepoint_total()));
+            insert_kv("residual-cpu-budget-exceeded-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::residual_cpu_budget_exceeded_total()));
+            insert_kv("schema-2533", 2533);
+            insert_kv("issue-2533", 2533);
+            insert_kv("residual-force-safepoint-wired", 1);
             insert_kv("join-drain-us-total", static_cast<std::int64_t>(os.join_drain_us_total.load(
                                                  std::memory_order_relaxed)));
             insert_kv("join-drain-default-ms",
