@@ -3918,6 +3918,11 @@ aura_add_issue_test(test_blame_soft_recover_2561)
 aura_issue_test_link_light(test_blame_soft_recover_2561)
 add_dependencies(all_test_issue_targets test_blame_soft_recover_2561)
 
+# Issue #2562: dual-field (pred+mid) require-or-drop under production
+aura_add_issue_test(test_coercion_dual_require_2562)
+aura_issue_test_link_light(test_coercion_dual_require_2562)
+add_dependencies(all_test_issue_targets test_coercion_dual_require_2562)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

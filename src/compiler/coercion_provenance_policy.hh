@@ -58,6 +58,8 @@ inline constexpr int kBlameCommitRequireIssue = 2221;
 inline constexpr int kCoercionProvSloIssue = 2558;
 // Issue #2561 stamp for Soft blame recovery / escalate.
 inline constexpr int kBlameSoftRecoverIssue = 2561;
+// Issue #2562 stamp for dual-field (pred+mid) require-or-drop.
+inline constexpr int kCoercionDualRequireIssue = 2562;
 // Completeness SLO in basis points (0–10000). Default 9500 = 95%.
 // Override via AURA_COERCION_PROV_SLO_BP when set (numeric).
 inline constexpr std::uint64_t kCoercionProvSloBpDefault = 9500;
@@ -86,6 +88,15 @@ inline std::atomic<std::uint64_t> g_blame_soft_recover_fail_total{0};
 inline std::atomic<std::uint64_t> g_blame_soft_escalate_total{0};
 // 1 when Soft recovery failed and one-shot Full audit is armed for this exit.
 inline thread_local bool s_blame_soft_escalate_this_boundary = false;
+
+// Issue #2562: dual-field (predicate_cond_node + source_mutation_id) require-
+// or-drop. When enabled, incomplete dual after fill → skip CoercionNode insert
+// (prefer drop over weak/sentinel stamp). Soft/Sampled default off so #2317
+// insert-with-force-audit remains; production / process flag / env=1 enable.
+// Full strategy ORed at call site (coercion_map) to avoid typed_audit include.
+inline std::atomic<std::uint32_t> g_coercion_dual_require{0};
+inline std::atomic<std::uint64_t> g_coercion_dual_require_drop_total{0};
+inline std::atomic<std::uint32_t> g_coercion_dual_require_wired{1};
 
 inline void set_force_audit_on_provenance_miss(bool on) noexcept {
     g_force_audit_on_provenance_miss.store(on ? 1u : 0u, std::memory_order_relaxed);
@@ -180,8 +191,8 @@ inline void evaluate_coercion_provenance_slo(std::uint64_t completeness_bp,
 }
 
 // Soft defaults (#2102 / #2185 AC3 / #2221 observe-only): force-audit on,
-// reject off, commit require off. Also clears #2558 SLO pending/state
-// and #2561 Soft escalate TLS.
+// reject off, commit require off. Also clears #2558 SLO pending/state,
+// #2561 Soft escalate TLS, and #2562 dual-require flag.
 inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
     g_force_audit_on_provenance_miss.store(1, std::memory_order_relaxed);
     g_reject_apply_on_provenance_miss.store(0, std::memory_order_relaxed);
@@ -194,6 +205,8 @@ inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
     g_coercion_prov_slo_bp_resolved.store(1, std::memory_order_relaxed);
     // Issue #2561
     s_blame_soft_escalate_this_boundary = false;
+    // Issue #2562: Soft default dual-require off (#2317 insert path).
+    g_coercion_dual_require.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2561: Soft observe-by-default (AC3). AURA_BLAME_SOFT_ESCALATE=1|on
@@ -222,18 +235,57 @@ inline void note_blame_soft_escalate_for_boundary() noexcept {
     return v;
 }
 
+// Issue #2562: process flag for dual-field require-or-drop (also env/Full).
+inline void set_coercion_dual_require(bool on) noexcept {
+    g_coercion_dual_require.store(on ? 1u : 0u, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool coercion_dual_require_flag() noexcept {
+    return g_coercion_dual_require.load(std::memory_order_relaxed) != 0;
+}
+
+// Issue #2562: AURA_COERCION_DUAL_REQUIRE=1|on → force dual-require on;
+// 0|off|false|soft → force off (Soft canary). Unset → process flag only here;
+// call sites OR production_defaults + Full strategy.
+// Returns: -1 unset, 0 forced off, 1 forced on.
+[[nodiscard]] inline int coercion_dual_require_env() noexcept {
+    const char* e = std::getenv("AURA_COERCION_DUAL_REQUIRE");
+    if (!e || !*e)
+        return -1;
+    if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+        return 0;
+    if ((e[0] == 'o' || e[0] == 'O') && e[1] != '\0' && (e[1] == 'f' || e[1] == 'F'))
+        return 0;
+    if (e[0] == 's' || e[0] == 'S') // soft
+        return 0;
+    return 1; // 1 / on / yes / true / require
+}
+
+// Policy-level dual-require (env + process flag). Call sites may OR Full /
+// production_defaults_active for Goal-1 production/Full enablement.
+[[nodiscard]] inline bool coercion_dual_require_enabled() noexcept {
+    const int env = coercion_dual_require_env();
+    if (env == 0)
+        return false;
+    if (env == 1)
+        return true;
+    return coercion_dual_require_flag();
+}
+
 // Issue #2185: production defaults force reject-on-miss (forensic refuse).
 // Dev path (sandbox off) keeps soft apply for iterative typecheck.
 // Issue #2221: also require complete blame on composite commit under
 // production (observe-only when sandbox=off).
+// Issue #2562: dual-field require-or-drop under production.
 inline void apply_production_coercion_provenance_defaults(bool dev_sandbox_off) noexcept {
     set_force_audit_on_provenance_miss(true); // defense in depth (#2102)
     if (dev_sandbox_off) {
         set_reject_apply_on_provenance_miss(false);
         set_require_blame_complete_on_commit(false);
+        set_coercion_dual_require(false);
     } else {
         set_reject_apply_on_provenance_miss(true);
         set_require_blame_complete_on_commit(true);
+        set_coercion_dual_require(true);
     }
 }
 

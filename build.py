@@ -5049,6 +5049,25 @@ def cmd_blame_soft_recover_coverage():
     return 0
 
 
+def cmd_coercion_dual_require_coverage():
+    """Issue #2562: dual-field (pred+mid) require-or-drop under production.
+
+    Incomplete dual after fill drops CoercionNode insert when dual-require
+    is active (production/Full/env); Soft keeps #2317 insert path.
+    """
+    print(f"{B}=== dual-field require-or-drop coverage (#2562) ==={N}")
+    script = ROOT / "scripts" / "check_coercion_dual_require_2562.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dual-field require-or-drop (#2562) coverage contract rows failed")
+        return 1
+    ok("dual-field require-or-drop (#2562) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6261,6 +6280,7 @@ def cmd_gate():
         or cmd_lock_order_production_soft_coverage()
         or cmd_coercion_prov_slo_coverage()
         or cmd_blame_soft_recover_coverage()
+        or cmd_coercion_dual_require_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7075,6 +7095,7 @@ def main():
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,
+        "coercion-dual-require": cmd_coercion_dual_require_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

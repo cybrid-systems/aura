@@ -96,6 +96,15 @@ export using ::aura::compiler::blame_soft_escalate_enabled;
 export using ::aura::compiler::note_blame_soft_escalate_for_boundary;
 export using ::aura::compiler::blame_soft_escalate_pending_for_boundary;
 export using ::aura::compiler::consume_blame_soft_escalate_for_boundary;
+// Issue #2562: dual-field require-or-drop.
+export using ::aura::compiler::kCoercionDualRequireIssue;
+export using ::aura::compiler::g_coercion_dual_require;
+export using ::aura::compiler::g_coercion_dual_require_drop_total;
+export using ::aura::compiler::g_coercion_dual_require_wired;
+export using ::aura::compiler::set_coercion_dual_require;
+export using ::aura::compiler::coercion_dual_require_flag;
+export using ::aura::compiler::coercion_dual_require_env;
+export using ::aura::compiler::coercion_dual_require_enabled;
 
 // Issue #2024: forensic sentinel base for incomplete occurrence-narrowing
 // provenance (high nibble C0E5 = "coercion"). Low 16 bits carry original_child
@@ -136,6 +145,8 @@ export inline std::atomic<std::uint32_t> g_coercion_provenance_ban_weak_ir_wired
 // the authority for apply-time quality.
 export inline std::atomic<std::uint64_t> g_coercion_stamp_at_add_total{0};
 export inline std::atomic<std::uint32_t> g_coercion_stamp_at_add_wired{1};
+// Issue #2562: dual-require drop counter is process-wide in policy.hh
+// (g_coercion_dual_require_drop_total); re-exported above.
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
 // layered zero-overhead synergy with IR DeadCoercionEliminationPass.
 // Issue #2282: combined on query:dead-coercion-layered-stats as the
@@ -241,6 +252,30 @@ export [[nodiscard]] inline bool is_weak_coercion_mutation_id(const CoercionEntr
     if (e.original_child == 0 && e.source_mutation_id == 1ull)
         return true;
     return false;
+}
+
+// Issue #2562: dual-field completeness predicate (pred + non-weak mid).
+// Agents pre-check after stamp-at-add / before mutate; apply uses the same
+// gate under dual-require. Zero cost when both fields already set.
+export [[nodiscard]] inline bool coercion_entry_dual_complete(const CoercionEntry& e) noexcept {
+    return e.predicate_cond_node != 0 && e.source_mutation_id != 0 &&
+           !is_weak_coercion_mutation_id(e);
+}
+
+// Issue #2562: dual-require active? Env / process flag + production defaults
+// + Full strategy (Goal 1). Soft Sampled default remains off (#2317 insert).
+export [[nodiscard]] inline bool coercion_dual_require_active() noexcept {
+    const int env = coercion_dual_require_env();
+    if (env == 0)
+        return false; // Soft canary force-off
+    if (env == 1)
+        return true;
+    if (coercion_dual_require_flag())
+        return true;
+    if (aura::compiler::typed_audit::production_defaults_active())
+        return true;
+    return aura::compiler::typed_audit::get_strategy() ==
+           aura::compiler::typed_audit::AuditStrategy::Full;
 }
 
 // Issue #2147: Strict sandbox OR Full TypedMutationAudit → honest provenance
@@ -669,19 +704,29 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         }
 
         // Issue #1873 / #2024 / #2102 / #2261: full provenance chain recovery.
-        // Issue #2317: Sampled + incomplete provenance + NOT production reject
-        // → INSERT (with force-audit via fill_coercion_provenance_chain's
-        // note_provenance_miss_for_boundary call + bump new counter
-        // coercion_sampled_insert_incomplete_total). Reject-on-miss
-        // (production default) + Full + Strict still skip per existing
-        // #2147 / #2261 rules (no regression).
+        // Issue #2562: dual-require (production / Full / env) → drop incomplete
+        // dual (both pred+mid non-weak) before insert; prefer drop over weak/
+        // sentinel stamp. Completeness_bp / miss totals remain authority.
+        // Issue #2317: Sampled + incomplete + NOT dual-require + !reject
+        // → INSERT (with force-audit). Reject-on-miss + Full + Strict still
+        // skip per existing #2147 / #2261 rules.
         const bool prov_complete = fill_coercion_provenance_chain(flat, e);
         if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::get_strategy;
             // Do not shadow outer stats ref `s` (DeadCoercionAstStats).
             const auto strat = get_strategy();
-            // Issue #2317: Sampled + !reject → INSERT (not skip).
+            // Issue #2562: dual-field require-or-drop (before #2317 soft insert).
+            if (coercion_dual_require_active()) {
+                g_coercion_dual_require_drop_total.fetch_add(1, std::memory_order_relaxed);
+                g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
+                if (strat == AuditStrategy::Sampled)
+                    g_coercion_provenance_sampled_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                ++s.skipped_stale;
+                continue; // never insert incomplete dual under dual-require
+            }
+            // Issue #2317: Sampled + !reject → INSERT (not skip). Soft default.
             if (strat == AuditStrategy::Sampled && !reject_apply_on_provenance_miss()) {
                 g_coercion_sampled_insert_incomplete_total.fetch_add(1, std::memory_order_relaxed);
                 // Fall through to insert (CoercionNode exists for
