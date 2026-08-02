@@ -3057,11 +3057,26 @@ ClosureView make_closure_view(const Closure& cl) {
 EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cells) const {
     if (!cells)
         return nullptr;
-    // 1. Local bindings (no walk needed)
-    for (auto& b : bindings_) {
-        if (b.first == n) {
-            if (is_cell(b.second)) {
-                auto ci = as_cell_id(b.second);
+    // 1. Local bindings (no walk needed).
+    // Issue #2571: prefer binding_index_ / last append — multi-define
+    // (begin with ≥2 defines) and loop re-entry may stack same-name
+    // cells via bind(); set!/lookup must hit the newest cell so
+    // `(define x 0)` + `(set! x …)` inside `(while …)` stay coherent.
+    if (auto it = binding_index_.find(n); it != binding_index_.end()) {
+        const auto idx = it->second;
+        if (idx < bindings_.size() && bindings_[idx].first == n) {
+            if (is_cell(bindings_[idx].second)) {
+                auto ci = as_cell_id(bindings_[idx].second);
+                if (ci < cells->size())
+                    return &(*cells)[ci];
+            }
+            return nullptr;
+        }
+    }
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
+        if (it->first == n) {
+            if (is_cell(it->second)) {
+                auto ci = as_cell_id(it->second);
                 if (ci < cells->size())
                     return &(*cells)[ci];
             }
@@ -3166,11 +3181,23 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
 // lookup_cell_ptr. SoA walk via env_frames_ when registered,
 // legacy pointer walk otherwise.
 std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
-    // 1. Local bindings (string path)
-    for (auto& b : bindings_) {
-        if (b.first == n) {
-            if (is_cell(b.second))
-                return as_cell_id(b.second);
+    // 1. Local bindings (string path) — newest wins (#2571).
+    // Forward scan used to return the first (oldest) cell when
+    // multi-define re-bound the same name in a while body; set!
+    // then mutated the stale cell while Variable read the new one
+    // (inner loop counters freeze or spin forever).
+    if (auto it = binding_index_.find(n); it != binding_index_.end()) {
+        const auto idx = it->second;
+        if (idx < bindings_.size() && bindings_[idx].first == n) {
+            if (is_cell(bindings_[idx].second))
+                return as_cell_id(bindings_[idx].second);
+            return std::nullopt;
+        }
+    }
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
+        if (it->first == n) {
+            if (is_cell(it->second))
+                return as_cell_id(it->second);
             return std::nullopt;
         }
     }
