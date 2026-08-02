@@ -114,9 +114,14 @@
     (list "persist"
       (list "Save/load workspace + AOT meta + mutation log (AURASOUL binary)"
             "(require \"std/persist\" all:)"))
+    ; ── Hot strategy / hot-update ──
+    ; Issue #2582: pure-Aura strategy rebind (denseness) vs AOT .so reload.
+    (list "hot-strategy"
+      (list "Pure-Aura hot strategy swap + snapshot heal (mutate:rebind; not AOT)"
+            "(require \"std/hot-strategy\" all:)(hot-strategy:swap! \"strat\" \"(lambda (x) x)\" \"v2\")"))
     ; ── AOT hot-update (Issue #1370) ──
     (list "hot-update"
-      (list "AOT hot-reload + region + health (high-level Agent API)"
+      (list "AOT .so hot-reload + region + health (not pure-Aura strategy rebind)"
             "(require \"std/hot-update\" all:)"))
     (list "hot-update-reload"
       (list "AOT reload strategies (manual, threshold, composite)"

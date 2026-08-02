@@ -1,0 +1,107 @@
+; lib/std/hot-strategy.aura — Issue #2582 (Aether denseness H7)
+;
+; Pure-Aura **hot strategy** surface for agent closed-loops.
+; This is intentionally NOT AOT / .so reload — use std/hot-update for that.
+;
+; Pattern (Aether example 04 / denseness Axis D):
+;   1. Seed workspace with a named strategy define (set-code + eval-current)
+;   2. (hot-strategy:snapshot! "tag") before risky swaps
+;   3. (hot-strategy:swap! name body summary) via mutate:rebind
+;   4. On failure: (hot-strategy:heal!) restores last-good snapshot + body
+;
+; Version counter is process-local (not persisted). Last-good body is a
+; code string; last-good snapshot is an ast:snapshot id (-1 = none).
+
+(require "std/mutate" all:)
+
+(export hot-strategy:version
+        hot-strategy:last-good-body
+        hot-strategy:last-good-snap
+        hot-strategy:active-name
+        hot-strategy:snapshot!
+        hot-strategy:register!
+        hot-strategy:swap!
+        hot-strategy:heal!
+        hot-strategy:call
+        hot-strategy:aot?
+        hot-strategy:help)
+
+; ── Process-local strategy registry (single active name for denseness) ──
+(define *hs-version* 0)
+(define *hs-name* "")
+(define *hs-last-good-body* "")
+(define *hs-last-good-snap* -1)
+
+(define (hot-strategy:version) *hs-version*)
+(define (hot-strategy:last-good-body) *hs-last-good-body*)
+(define (hot-strategy:last-good-snap) *hs-last-good-snap*)
+(define (hot-strategy:active-name) *hs-name*)
+
+; AOT hot-update is a different surface (std/hot-update + aot:reload).
+(define (hot-strategy:aot?) #f)
+
+(define (hot-strategy:help)
+  "Pure-Aura hot strategy: register! / swap! / heal! / snapshot!. For AOT .so reload use std/hot-update.")
+
+; (hot-strategy:snapshot! tag) → snapshot-id (int)
+(define (hot-strategy:snapshot! tag)
+  (ast:snapshot (if (string? tag) tag "hot-strategy")))
+
+; Record last-good without rebinding (after a known-good eval).
+; (hot-strategy:register! name body-string [tag])
+(define (hot-strategy:register! name body)
+  (set! *hs-name* name)
+  (set! *hs-last-good-body* body)
+  (set! *hs-version* (+ *hs-version* 1))
+  (set! *hs-last-good-snap* (hot-strategy:snapshot! (string-append "hs-reg-" name)))
+  (list #t *hs-version* *hs-last-good-snap*))
+
+; Atomic-ish swap: snapshot → mutate:rebind → eval-current.
+; Returns (ok version snap-id) where ok is #t/#f.
+; Does NOT auto-heal; caller may (hot-strategy:heal!) on failure.
+(define (hot-strategy:swap! name body summary)
+  (let ((pre (hot-strategy:snapshot! (string-append "hs-pre-" name)))
+        (sum (if (string? summary) summary "hot-strategy:swap")))
+    (let ((ok (try
+                (begin
+                  (mutate:rebind name body sum)
+                  (try (eval-current) (catch (e) #t))
+                  #t)
+                (catch (e) #f))))
+      (if ok
+          (begin
+            (set! *hs-name* name)
+            (set! *hs-last-good-body* body)
+            (set! *hs-version* (+ *hs-version* 1))
+            (set! *hs-last-good-snap* pre)
+            (list #t *hs-version* pre))
+          (list #f *hs-version* pre)))))
+
+; Restore last-good: prefer ast:restore when snap valid; else rebind body string.
+; Returns #t on best-effort restore.
+(define (hot-strategy:heal!)
+  (let ((restored
+         (if (>= *hs-last-good-snap* 0)
+             (try (ast:restore *hs-last-good-snap*) (catch (e) #f))
+             #f)))
+    (if restored
+        (begin
+          (try (eval-current) (catch (e) #f))
+          #t)
+        (if (and (string? *hs-name*)
+                 (not (string=? *hs-name* ""))
+                 (string? *hs-last-good-body*)
+                 (not (string=? *hs-last-good-body* "")))
+            (let ((ok (try
+                        (begin
+                          (mutate:rebind *hs-name* *hs-last-good-body* "hot-strategy:heal")
+                          (try (eval-current) (catch (e) #t))
+                          #t)
+                        (catch (e) #f))))
+              ok)
+            #f))))
+
+; Optional call helper if strategy is already bound as a procedure name.
+; Agents usually call the strategy symbol directly after swap.
+(define (hot-strategy:call fn arg)
+  (fn arg))

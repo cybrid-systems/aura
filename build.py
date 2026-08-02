@@ -5220,6 +5220,25 @@ def cmd_module_rebind_residual_coverage():
     return 0
 
 
+def cmd_hot_strategy_coverage():
+    """Issue #2582: pure-Aura hot strategy vs AOT hot-update.
+
+    std/hot-strategy (rebind+snapshot) documented as denseness path;
+    std/hot-update remains AOT .so oriented.
+    """
+    print(f"{B}=== pure-Aura hot strategy coverage (#2582) ==={N}")
+    script = ROOT / "scripts" / "check_hot_strategy_2582.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hot strategy (#2582) coverage contract rows failed")
+        return 1
+    ok("hot strategy (#2582) coverage clean")
+    return 0
+
+
 def cmd_module_load_tail_coverage():
     """Issue #2570: module load fail-closed; trailing defines export.
 
@@ -6608,6 +6627,7 @@ def cmd_gate():
         or cmd_setcode_rebind_coverage()
         or cmd_aether_denseness_coverage()
         or cmd_module_rebind_residual_coverage()
+        or cmd_hot_strategy_coverage()
         or cmd_module_load_tail_coverage()
         or cmd_while_define_oneshot_coverage()
         or cmd_module_export_display_coverage()
@@ -7439,6 +7459,7 @@ def main():
         "setcode-rebind": cmd_setcode_rebind_coverage,
         "aether-denseness": cmd_aether_denseness_coverage,
         "module-rebind-residual": cmd_module_rebind_residual_coverage,
+        "hot-strategy": cmd_hot_strategy_coverage,
         "module-load-tail": cmd_module_load_tail_coverage,
         "while-define-oneshot": cmd_while_define_oneshot_coverage,
         "module-export-display": cmd_module_export_display_coverage,

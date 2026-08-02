@@ -1,0 +1,11 @@
+hot-strategy:version:  -> Int
+hot-strategy:last-good-body:  -> String
+hot-strategy:last-good-snap:  -> Int
+hot-strategy:active-name:  -> String
+hot-strategy:snapshot!: Any -> Int
+hot-strategy:register!: Any Any -> Any
+hot-strategy:swap!: Any Any Any -> Any
+hot-strategy:heal!:  -> Bool
+hot-strategy:call: Any Any -> Any
+hot-strategy:aot?:  -> Bool
+hot-strategy:help:  -> String

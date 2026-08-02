@@ -1,5 +1,11 @@
 ; lib/std/hot-update.aura — Issue #1370
-; High-level AOT hot-reload + region management for AI agents.
+; High-level **AOT** hot-reload + region management for AI agents.
+;
+; ⚠ Issue #2582 (Aether denseness H7): this module is intentionally
+; AOT / `.so` plugin oriented (`aot:reload`). For pure-Aura agent
+; strategy swap + last-good heal (workspace rebind denseness), use
+;   (require "std/hot-strategy" all:)
+; instead — versioned mutate:rebind + ast:snapshot/restore.
 ;
 ; Builds on C/Aura primitives from #1366–#1368:
 ;   (aot:reload path [version])
