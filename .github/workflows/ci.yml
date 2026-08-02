@@ -152,6 +152,14 @@ jobs:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py ci
 
+    # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
+    # Static coverage runs in the gate job; binary requires cmake tree so
+    # the short profile runs here after ./build.py ci (not in static gate).
+    - name: Chaos PR hard-fail gate (#2554)
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+      run: python3 build.py chaos-pr-hard-fail
+
     # Was a separate s0-smoke job that rebuilt the entire tree (~10–15m).
     # Folded here: reuse the same build/ (seconds, not a second full link).
     - name: Suite s0 surface smoke
