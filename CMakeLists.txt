@@ -3923,6 +3923,11 @@ aura_add_issue_test(test_coercion_dual_require_2562)
 aura_issue_test_link_light(test_coercion_dual_require_2562)
 add_dependencies(all_test_issue_targets test_coercion_dual_require_2562)
 
+# Issue #2563: cross-closure linear escape discovery + force authority
+aura_add_issue_test(test_linear_cross_closure_escape_2563)
+aura_issue_test_link_light(test_linear_cross_closure_escape_2563)
+add_dependencies(all_test_issue_targets test_linear_cross_closure_escape_2563)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

@@ -5068,6 +5068,25 @@ def cmd_coercion_dual_require_coverage():
     return 0
 
 
+def cmd_linear_cross_closure_escape_coverage():
+    """Issue #2563: cross-closure linear escape discovery + force authority.
+
+    One-level free-capture of dirty linears into Lambda; Soft observe-only;
+    production/Full/env hard forces via force_linear_rollback CrossClosureEscape.
+    """
+    print(f"{B}=== cross-closure linear escape coverage (#2563) ==={N}")
+    script = ROOT / "scripts" / "check_linear_cross_closure_escape_2563.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross-closure linear escape (#2563) coverage contract rows failed")
+        return 1
+    ok("cross-closure linear escape (#2563) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6281,6 +6300,7 @@ def cmd_gate():
         or cmd_coercion_prov_slo_coverage()
         or cmd_blame_soft_recover_coverage()
         or cmd_coercion_dual_require_coverage()
+        or cmd_linear_cross_closure_escape_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7096,6 +7116,7 @@ def main():
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,
         "coercion-dual-require": cmd_coercion_dual_require_coverage,
+        "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

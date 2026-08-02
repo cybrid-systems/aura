@@ -3246,8 +3246,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:linear-ownership-typed-mutate-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // Capacity 32: #688 base + #2357 synth + #2460 partial keys.
-                auto* ht = FlatHashTable::create(32);
+                // Capacity 64: #688 base + #2357/#2460/#2514/#2545/#2563 keys.
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -3359,6 +3359,32 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"linear-force-rollback-wired", make_int(1)},
                 {"schema-2545", make_int(2545)},
                 {"issue-2545", make_int(2545)},
+                // Issue #2563: cross-closure free-capture discovery + force authority.
+                {"linear-cross-closure-escape-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_escape_total.load(std::memory_order_relaxed)))},
+                {"linear-cross-closure-force-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_force_total.load(std::memory_order_relaxed)))},
+                {"linear-cross-closure-observe-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_observe_total.load(std::memory_order_relaxed)))},
+                {"linear-cross-closure-cap-trunc-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_cap_trunc_total.load(std::memory_order_relaxed)))},
+                {"linear-cross-closure-hard-enabled",
+                 make_int(aura::compiler::typed_audit::linear_cross_closure_hard_enabled() ? 1
+                                                                                           : 0)},
+                {"linear-cross-closure-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_wired.load(std::memory_order_relaxed)))},
+                {"schema-2563", make_int(2563)},
+                {"issue-2563", make_int(2563)},
             };
             return build_hash(kv);
         });
