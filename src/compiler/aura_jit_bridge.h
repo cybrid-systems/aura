@@ -84,10 +84,11 @@ void* aura_get_aot_metrics(void);
 // Production impl in aura_jit_bridge.cpp; weak stub in
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
-// Issue #2175: legacy sid=0 closures (allocated / set_name'd before
-// their define entered the stable map, or anonymous paths that never
-// set_name) get a one-shot backfill via aura_lookup_stable_func_id
-// during aura_remap_live_closures_after_reemit. Bumped inline by the
+// Issue #2175 / #2550: residual sid=0 named closures (pre-#2550 or
+// force-injected) get a one-shot backfill via get_or_preserve during
+// aura_remap_live_closures_after_reemit. Named set_name now stamps
+// non-zero sid at create (#2550) so steady-state backfill growth ≈ 0.
+// Anonymous paths never set_name and stay sid=0. Bumped inline by the
 // remap walk under the closure-table lock — no aggregator needed.
 void aura_bump_live_closure_stable_id_backfill_total(std::uint64_t n);
 // Issue #2128: MustDeoptBeforeNextCall metric bumps (runtime → bridge).
@@ -235,6 +236,11 @@ extern "C" void aura_set_live_workspace_cow_gen(std::uint64_t gen) noexcept;
 extern "C" std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept;
 // Issue #2547: per-closure cow_gen_at_capture (0 = unstamped / freed).
 extern "C" std::uint64_t aura_get_closure_cow_gen(std::int64_t closure_id);
+// Issue #2550: per-closure stable_func_id (0 = anonymous / unstamped / freed).
+// Named set_name stamps non-zero via get_or_preserve before callable.
+extern "C" std::uint32_t aura_get_closure_stable_func_id(std::int64_t closure_id);
+// Issue #2550: test-only residual injector (simulate pre-#2550 sid=0).
+extern "C" void aura_test_force_closure_stable_func_id(std::int64_t closure_id, std::uint32_t sid);
 
 // Issue #2240: C-linkage readers for the last cross-workspace reject
 // reason (file-scope atomic in aura_jit_bridge.cpp; thread-safe
@@ -469,8 +475,10 @@ void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata)
 typedef bool (*aura_aot_emit_fn_t)(const char* name, std::uint64_t region, void* userdata);
 void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata);
 
-// Issue #1930: process-stable Define-name → func_id map (single workspace).
-// get_or_preserve assigns on first sighting; subsequent re-emits reuse id.
+// Issue #1930 / #2550: process-stable Define-name → func_id map (single
+// workspace). get_or_preserve assigns on first sighting; subsequent
+// re-emits / named set_name reuse id. Named aura_closure_set_name always
+// calls get_or_preserve so stable_func_id != 0 before callable (#2550).
 // out_preserved may be null; when non-null set to 1 if reused, 0 if assigned.
 std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
 std::uint32_t aura_lookup_stable_func_id(const char* name); // 0 if missing

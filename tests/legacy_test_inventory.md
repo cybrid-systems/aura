@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 723 | Preferred destination suites |
-| **Total scanned** | **723** | |
+| `tests/core/test_*.cpp` | 724 | Preferred destination suites |
+| **Total scanned** | **724** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 46 | 46 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -570,6 +570,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_mutation_systemic_guard.cpp`
 - `tests/compiler/test_mutation_typed_audit_batch.cpp`
 - `tests/compiler/test_mutator_dispatch_stats_lock.cpp`
+- `tests/compiler/test_named_closure_stable_id_at_create_2550.cpp`
 - `tests/core/test_node_meta_bounds_2410.cpp`
 - `tests/core/test_node_meta_gap_2411.cpp`
 - `tests/reflect/test_node_tag_align_b1.cpp`
@@ -1517,13 +1518,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (134)
+### `observability` — Observability / metrics / query:*-stats (135)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (134)
+#### domain/ (135)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1587,6 +1588,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_aot_unit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutation_contention_2040.cpp` (#2040) [domain_suite, theme_compiler] — Issue #2040 — high-concurrency observability for Guard hold +
 - `tests/serve/test_mutation_hold_time.cpp` (—) [domain_suite, theme_serve] — test_mutation_hold_time.cpp — Issue #1375:
+- `tests/compiler/test_named_closure_stable_id_at_create_2550.cpp` (#2550) [domain_suite, theme_compiler] — AC1: Every named closure after create/set_name has stable_func_id != 0
 - `tests/reflect/test_obs_json_to_json_a1.cpp` (—) [small, domain_suite, theme_reflect] — Wave A1: snapshot_to_json / fn_metrics_to_json via reflect to_json.
 - `tests/compiler/test_obs_metrics_smoke_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_obs_metrics_smoke_batch.cpp — consolidated observability schema smokes
 - `tests/compiler/test_obs_schema_matrix.cpp` (—) [domain_suite, theme_compiler] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas

@@ -4877,6 +4877,24 @@ def cmd_is_stealable_snapshot_gate_coverage():
     return 0
 
 
+def cmd_named_closure_stable_id_at_create_coverage():
+    """Issue #2550: named closure create forces stable_func_id != 0.
+
+    set_name uses get_or_preserve; anonymous stays 0; backfill residual only.
+    """
+    print(f"{B}=== named closure stable_id at create coverage (#2550) ==={N}")
+    script = ROOT / "scripts" / "check_named_closure_stable_id_at_create_2550.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("named closure stable_id at create (#2550) coverage contract rows failed")
+        return 1
+    ok("named closure stable_id at create (#2550) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6024,6 +6042,7 @@ def cmd_gate():
         or cmd_steal_complete_restamp_txn_coverage()
         or cmd_residual_defer_steal_hard_and_coverage()
         or cmd_is_stealable_snapshot_gate_coverage()
+        or cmd_named_closure_stable_id_at_create_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
