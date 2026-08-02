@@ -254,6 +254,16 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_exhausted_min_dirty_queue(AotReloadFail reason) noexcept {
+    // Issue #2544: minimal dirty set from last fail reason — same bit
+    // encoding as force_jit_regions_mask_ (bit N = AotReloadFail N).
+    // Cascade trigger marks "reemit wanted" for agents + cascade path
+    // without a full-module dirty fan-out.
+    const auto mask = static_cast<std::uint64_t>(1) << static_cast<std::uint8_t>(reason);
+    on_region_mask_from_dirty(mask);
+    on_cascade_reemit_trigger(/*candidates_hint=*/1);
+}
+
 void HotUpdateRegistry::on_live_closure_remap(std::uint64_t count) noexcept {
     if (count == 0)
         return;

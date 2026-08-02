@@ -14108,6 +14108,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t slot_invalidate_calls_total = 0;    // #2271
         std::uint64_t slot_invalidate_last_eval = 0;      // #2299
         std::uint64_t slot_invalidate_per_eval_calls = 0; // #2299
+        std::uint64_t min_dirty_attempt = 0;              // #2544
+        std::uint64_t min_dirty_success = 0;              // #2544
+        std::uint64_t min_dirty_fail = 0;                 // #2544
+        std::uint64_t min_dirty_storm_skip = 0;           // #2544
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
@@ -14152,6 +14156,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             slot_invalidate_per_eval_calls =
                 m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.load(
                     std::memory_order_relaxed);
+            // Issue #2544: exhausted min-dirty reemit recovery.
+            min_dirty_attempt = m->aot_reload_exhausted_min_dirty_reemit_attempt_total.load(
+                std::memory_order_relaxed);
+            min_dirty_success = m->aot_reload_exhausted_min_dirty_reemit_success_total.load(
+                std::memory_order_relaxed);
+            min_dirty_fail =
+                m->aot_reload_exhausted_min_dirty_reemit_fail_total.load(std::memory_order_relaxed);
+            min_dirty_storm_skip = m->aot_reload_exhausted_min_dirty_reemit_storm_skip_total.load(
+                std::memory_order_relaxed);
         }
         // Issue #2094: read the unified StormLevel facade OUTSIDE the
         // metrics if-block since aura_hot_update_current_storm_level() is
@@ -14295,6 +14308,19 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-fall-back-slot-invalidate-per-eval-wired", make_int(1)},
             {"schema-2299", make_int(2299)},
             {"issue-2299", make_int(2299)},
+            // Issue #2544: exhausted fall_back_jit_only → minimal-dirty
+            // reemit (feeds #2502 re-promote without external dirty).
+            {"aot-reload-exhausted-min-dirty-reemit-attempt-total",
+             make_int(static_cast<std::int64_t>(min_dirty_attempt))},
+            {"aot-reload-exhausted-min-dirty-reemit-success-total",
+             make_int(static_cast<std::int64_t>(min_dirty_success))},
+            {"aot-reload-exhausted-min-dirty-reemit-fail-total",
+             make_int(static_cast<std::int64_t>(min_dirty_fail))},
+            {"aot-reload-exhausted-min-dirty-reemit-storm-skip-total",
+             make_int(static_cast<std::int64_t>(min_dirty_storm_skip))},
+            {"aot-reload-exhausted-min-dirty-reemit-wired", make_int(1)},
+            {"schema-2544", make_int(2544)},
+            {"issue-2544", make_int(2544)},
             // Issue #2304 / #2366: post-bump epoch invariant walk
             // (per-entry AOT/IR/closure MustDeopt). Soft metric-only;
             // hard aborts. Mode + counters process-level.

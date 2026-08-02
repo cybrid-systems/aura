@@ -7422,6 +7422,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("issue-2367", 2367);
                 insert_kv("schema-2502", rs.schema_2502);
                 insert_kv("issue-2502", 2502);
+                // Issue #2544: min-dirty reemit lineage on hot-update surface
+                // (counters live on query:aot-stats; schema cross-link here).
+                insert_kv("schema-2544", 2544);
+                insert_kv("issue-2544", 2544);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -7474,6 +7478,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("issue-2302", 2302);
             insert_kv("schema-2502", rs.schema_2502);
             insert_kv("issue-2502", 2502);
+            // Issue #2544: exhausted min-dirty reemit lineage (additive).
+            insert_kv("schema-2544", 2544);
+            insert_kv("issue-2544", 2544);
             // ReloadRecoveryState 5-field core
             insert_kv("attempts-left", rs.attempts_left);
             insert_kv("force-jit-regions-mask", rs.force_jit_regions_mask);

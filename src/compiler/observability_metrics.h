@@ -6903,6 +6903,20 @@ struct CompilerMetrics {
     // slots" (sustained re-mod load) on dashboards.
     std::atomic<std::uint64_t> aot_reload_fall_back_slot_invalidate_total{0};       // #2271
     std::atomic<std::uint64_t> aot_reload_fall_back_slot_invalidate_calls_total{0}; // #2271
+    // Issue #2544: after fall_back_jit_only exhaust, one minimal-dirty
+    // reemit pass so #2502 re-promote can advance without waiting for
+    // external dirty notification (closes force-JIT-only dead-end).
+    //   - attempt_total: queue + reemit invoked (or would-have under
+    //     non-storm path). Soft zero-cost when policy has no fall_back.
+    //   - success_total: reemit returned >0 (feeds #2502 streak).
+    //   - fail_total: reemit returned 0 and was not merely deferred
+    //     for a mutation boundary (true empty/reject failure).
+    //   - storm_skip_total: Region/Staging under Global/hard storm —
+    //     aggressive min-dirty suppressed (#2249 storm-skip preserved).
+    std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_attempt_total{0};    // #2544
+    std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_success_total{0};    // #2544
+    std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_fail_total{0};       // #2544
+    std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_storm_skip_total{0}; // #2544
     // Issue #2299: per-eval physical invalidate observability.
     //   - last_eval: last eval_ptr (as u64) passed to invalidate (0 = null/process-default).
     //   - per_eval_calls_total: invalidate invocations with non-null eval_ptr.

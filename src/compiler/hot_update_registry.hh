@@ -146,6 +146,12 @@ public:
     // AOT invalidation is a future follow-up; this is the visible
     // registry callback + counter contract for #2232.
     void on_force_jit_for_reason(AotReloadFail reason) noexcept;
+    // Issue #2544: seed a minimal dirty recovery signal after force-JIT
+    // exhaust (region-mask bit for the fail reason + cascade reemit
+    // trigger). Does not drive the reemit body — aura_jit_bridge owns
+    // the single aura_reemit_aot_for_dirty pass + metrics. Soft zero-
+    // cost for agents that only observe last_region_mask_from_dirty.
+    void on_exhausted_min_dirty_queue(AotReloadFail reason) noexcept;
     // Issue #2013: live closures remapped after reemit (count of slots).
     void on_live_closure_remap(std::uint64_t count) noexcept;
     // Issue #2016: adaptive region-mask bit clear/restore.

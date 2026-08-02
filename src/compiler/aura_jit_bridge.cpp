@@ -2554,6 +2554,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     // Suppress auto-retry into a storming region mask / staging
     // handshake — the next reemit / boundary tick won't help if the
     // whole region is contended.
+    // Issue #2544: also suppress aggressive min-dirty reemit under the
+    // same storm-skip gate (Region/Staging + Global/hard storm).
     if (aot_reload_storm_skip_retry_for_2249(reason)) {
         if (aot_metrics()) {
             aot_metrics()->aot_reload_region_staging_exhausted_total.fetch_add(
@@ -2561,6 +2563,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             if (policy.fall_back_jit_only)
                 aot_metrics()->aot_reload_fall_back_jit_only_total.fetch_add(
                     1, std::memory_order_relaxed);
+            aot_metrics()->aot_reload_exhausted_min_dirty_reemit_storm_skip_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
         return false;
     }
@@ -2618,6 +2622,38 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         // (nullptr = process-default AotState).
         (void)aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr);
         aura_aot_bump_func_table_epoch();
+
+        // Issue #2544: queue a minimal dirty set from the fail reason
+        // and drive one internal reemit so #2502 re-promote can start
+        // without waiting for external dirty notification. Storm-skip
+        // for Region/Staging under Global/hard storm (same helper as
+        // #2249) — do not queue aggressive recovery into a storm.
+        // Soft: when reemit defers for mutation boundary, that is not
+        // a hard fail (pending drain will run later).
+        if (aot_reload_storm_skip_retry_for_2249(reason)) {
+            if (aot_metrics())
+                aot_metrics()->aot_reload_exhausted_min_dirty_reemit_storm_skip_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        } else {
+            auto& hur_md = aura::compiler::hot_update_registry();
+            hur_md.on_exhausted_min_dirty_queue(reason);
+            if (aot_metrics())
+                aot_metrics()->aot_reload_exhausted_min_dirty_reemit_attempt_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            const auto n_md = aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+            if (n_md > 0) {
+                if (aot_metrics())
+                    aot_metrics()->aot_reload_exhausted_min_dirty_reemit_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            } else if (!hur_md.has_deferred_reemit()) {
+                // True empty/reject — keep force-JIT; distinct fail metric.
+                if (aot_metrics())
+                    aot_metrics()->aot_reload_exhausted_min_dirty_reemit_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+            // Deferred boundary: leave pending; agents drain under Guard.
+            // Not counted as fail (recovery is in-flight, not abandoned).
+        }
     }
     // Issue #2249: Region/Staging exhausted counter (AC4).
     if (aot_metrics() && (reason == AotReloadFail::Region || reason == AotReloadFail::Staging))
