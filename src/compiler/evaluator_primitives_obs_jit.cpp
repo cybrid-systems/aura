@@ -11030,6 +11030,16 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("residual-defer-steal-interlock-wired", 1);
             insert_kv("schema-2314", 2314);
             insert_kv("issue-2314", 2314);
+            // Issue #2546: hard-AND residual == 0 on steal-complete success.
+            insert_kv(
+                "residual-defer-steal-hard-fail-total",
+                static_cast<std::int64_t>(aura::gc_hooks::residual_defer_steal_hard_fail_total()));
+            insert_kv("residual-defer-steal-soft-leftover-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::residual_defer_steal_soft_leftover_total()));
+            insert_kv("residual-defer-steal-hard-and-wired", 1);
+            insert_kv("schema-2546", 2546);
+            insert_kv("issue-2546", 2546);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

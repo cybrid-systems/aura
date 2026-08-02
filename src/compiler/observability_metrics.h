@@ -7876,6 +7876,10 @@ struct CompilerMetrics {
     // Idempotent (force_clear_residual_defer_for_evaluator is atomic +
     // CAS-based — calling twice does not double-bump counters).
     std::atomic<std::uint64_t> residual_defer_cleared_on_steal_total{0}; // #2314
+    // Issue #2546: steal-complete hard-AND residual != 0 after force_clear
+    // under Hard/production → Cancel+Done (mirrors process-wide
+    // g_residual_defer_steal_hard_fail_total). Soft leftover is process-wide only.
+    std::atomic<std::uint64_t> residual_defer_steal_hard_fail_total{0}; // #2546
     // Issue #2364: PanicCheckpoint residual × densify closed-loop audit.
     // Bumped when audit_panic_defer_after_densify runs a non-free path
     // (densify attempted); cleared/rearmed/hard_fail are outcome counters.

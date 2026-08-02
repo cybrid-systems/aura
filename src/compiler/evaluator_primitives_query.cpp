@@ -7963,7 +7963,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (m)
                 snap.residual_hard_fail_total =
                     m->mutation_boundary_residual_defer_hard_fail_total.load(
-                        std::memory_order_relaxed);
+                        std::memory_order_relaxed) +
+                    m->residual_defer_steal_hard_fail_total.load(std::memory_order_relaxed);
             // Densify consistency last-call + cumulative fail.
             snap.densify_consistency_fail_total =
                 aura::core::densify_consistency::densify_consistency_fail_total();
@@ -8277,7 +8278,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (m)
                     hsnap.residual_hard_fail_total =
                         m->mutation_boundary_residual_defer_hard_fail_total.load(
-                            std::memory_order_relaxed);
+                            std::memory_order_relaxed) +
+                        m->residual_defer_steal_hard_fail_total.load(std::memory_order_relaxed);
                 hsnap.densify_consistency_fail_total =
                     aura::core::densify_consistency::densify_consistency_fail_total();
                 hsnap.last_densify_envframe_ok =

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 719 | Preferred destination suites |
-| **Total scanned** | **719** | |
+| `tests/core/test_*.cpp` | 720 | Preferred destination suites |
+| **Total scanned** | **720** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 206 | 206 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 81 | 81 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 82 | 82 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 16 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 71 | 71 | P2 — link-profile heavy; migrate AC smoke first |
@@ -705,6 +705,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_require_effect_auto_isolation_2490.cpp`
 - `tests/compiler/test_require_effect_live_mid_2384.cpp`
 - `tests/core/test_reset_slot_parent_edges_2412.cpp`
+- `tests/serve/test_residual_defer_steal_hard_and_2546.cpp`
 - `tests/serve/test_residual_force_safepoint_2533.cpp`
 - `tests/compiler/test_residual_gc_defer_assert_2211.cpp`
 - `tests/core/test_resource_quota_batch.cpp`
@@ -1212,13 +1213,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (81)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (82)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (81)
+#### domain/ (82)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr_2538.cpp` (#2538) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1280,6 +1281,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:
 - `tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_full_memory_safety_fuzz_stress.cpp — Issue #602:
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1679/#1682/#1782 (#1978 renamed): issue# moved from filename to header.
+- `tests/serve/test_residual_defer_steal_hard_and_2546.cpp` (#2546) [domain_suite, theme_serve] — AC1: Hard + residual non-zero after clear → fiber Cancel+Done; hard-fail +1
 - `tests/serve/test_residual_force_safepoint_2533.cpp` (#2533) [small, domain_suite, theme_serve] — AC1: mark_reclaimed requests force_safepoint + cancel
 - `tests/core/test_restore_children_structural_lock_2455.cpp` (#2455) [domain_suite, theme_core] — AC1: restore_children without external guard restores correctly (self-locks)
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp` (—) [domain_suite, theme_compiler] — test_runtime_concurrent_full_cycle_chaos.cpp — Issue #755:

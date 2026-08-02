@@ -4838,6 +4838,26 @@ def cmd_steal_complete_restamp_txn_coverage():
     return 0
 
 
+def cmd_residual_defer_steal_hard_and_coverage():
+    """Issue #2546: hard-AND residual GcDeferReason == 0 on steal-complete success.
+
+    After LayoutStamp dual-check + restamp + linear probe, residual must be
+    clear under Hard/production (Cancel+Done). Soft: leftover metric only.
+    Zero cost when residual already zero.
+    """
+    print(f"{B}=== residual defer steal hard-AND coverage (#2546) ==={N}")
+    script = ROOT / "scripts" / "check_residual_defer_steal_hard_and_2546.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual defer steal hard-AND (#2546) coverage contract rows failed")
+        return 1
+    ok("residual defer steal hard-AND (#2546) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -5983,6 +6003,7 @@ def cmd_gate():
         or cmd_mutation_concurrency_health_coverage()
         or cmd_steal_layout_stamp_coverage()
         or cmd_steal_complete_restamp_txn_coverage()
+        or cmd_residual_defer_steal_hard_and_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
