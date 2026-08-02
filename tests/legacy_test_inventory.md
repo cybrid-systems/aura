@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 731 | Preferred destination suites |
-| **Total scanned** | **731** | |
+| `tests/core/test_*.cpp` | 732 | Preferred destination suites |
+| **Total scanned** | **732** | |
 
 ### Related artifacts
 
@@ -35,7 +35,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 208 | 208 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 86 | 86 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 17 | 17 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 18 | 18 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 72 | 72 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
@@ -504,6 +504,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_state_stamp_apply_2129.cpp`
 - `tests/compiler/test_linear_synth_boundary_authority_2514.cpp`
 - `tests/compiler/test_linear_synth_violation_2357.cpp`
+- `tests/compiler/test_linear_three_layer_wire_2559.cpp`
 - `tests/compiler/test_linear_walk_active_closures.cpp`
 - `tests/compiler/test_list_end_of_list_void_2482.cpp`
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp`
@@ -1321,13 +1322,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held_2200.cpp` (#2200) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (17)
+### `linear_ownership` — Linear ownership / borrow / consume (18)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (17)
+#### domain/ (18)
 
 - `tests/compiler/test_commit_readiness_score_2553.cpp` (#2553) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
@@ -1343,6 +1344,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_runtime_violation.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2067 — Linear Ownership runtime enforcement test.
 - `tests/compiler/test_linear_state_stamp_apply_2129.cpp` (#2129) [domain_suite, theme_compiler] — AC1: mangle_aot_name stamps _lN when linear_state != 0 (host tracks)
 - `tests/compiler/test_linear_synth_violation_2357.cpp` (#2357) [domain_suite, theme_compiler] — AC1: Double-move / can_move fail path is first-class (note_linear_synth
+- `tests/compiler/test_linear_three_layer_wire_2559.cpp` (#2559) [domain_suite, theme_compiler] — AC1: Boundary exit cites force_linear_rollback (unified linear deny)
 - `tests/core/test_pcv_unique_hotpath_2058.cpp` (#2058) [domain_suite, theme_core] — AC1: cow_set unique → in-place (no new storage, use_count stays 1)
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.

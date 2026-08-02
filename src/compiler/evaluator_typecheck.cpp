@@ -1001,6 +1001,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     }
 
     // 2) Linear ownership revalidate (dirty/full sweep + boundary consistency).
+    // Issue #2559: type-layer inventory site — three-layer linear wire gate.
     {
         const auto sweep = linear_post_mutate_enforce_all();
         cr.linear_ok = sweep.all_safe || sweep.frames_checked == 0;

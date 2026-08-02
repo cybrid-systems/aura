@@ -5029,6 +5029,26 @@ def cmd_coercion_prov_slo_coverage():
     return 0
 
 
+def cmd_linear_three_layer_wire_coverage():
+    """Issue #2559: three-layer linear invariant wire inventory gate.
+
+    Type (force_linear_rollback / post-mutate enforce) + IR (try_lower /
+    escape elision / executor state) + memory densify (pin ∧ RootRemap ∧
+    scan_fail). Soft densify remains zero-cost shape.
+    """
+    print(f"{B}=== three-layer linear wire inventory coverage (#2559) ==={N}")
+    script = ROOT / "scripts" / "check_linear_three_layer_wire_2559.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("three-layer linear wire inventory (#2559) coverage contract rows failed")
+        return 1
+    ok("three-layer linear wire inventory (#2559) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -6201,6 +6221,7 @@ def cmd_gate():
         or cmd_dead_coercion_dirty_cone_coverage()
         or cmd_lock_order_production_soft_coverage()
         or cmd_coercion_prov_slo_coverage()
+        or cmd_linear_three_layer_wire_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
@@ -7012,6 +7033,7 @@ def main():
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
+        "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

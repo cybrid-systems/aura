@@ -4482,6 +4482,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_->rollback_atomic_batch();
                 ev.sync_atomic_batch_metadata_metrics(); // #1893
                 ev.workspace_flat_->rebuild_parent_links_from_children();
+                // Issue #2559: type-layer inventory — post-mutate linear enforce
+                // on typed_mutate / atomic-batch paths (three-layer wire gate).
                 (void)ev.linear_post_mutate_enforce_all();
                 ev.atomic_batch_domain_.rollbacks++;
                 ev.bump_edsl_nested_atomic_rollback();
