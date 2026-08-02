@@ -6749,6 +6749,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2558", 2558);
                 insert_kv("issue-2558", 2558);
             }
+            // Issue #2561: Soft/Sampled blame-chain recover + one-shot Full escalate.
+            {
+                const std::int64_t recover = static_cast<std::int64_t>(
+                    aura::compiler::g_blame_soft_recover_total.load(std::memory_order_relaxed));
+                const std::int64_t recover_fail =
+                    static_cast<std::int64_t>(aura::compiler::g_blame_soft_recover_fail_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t escalate = static_cast<std::int64_t>(
+                    aura::compiler::g_blame_soft_escalate_total.load(std::memory_order_relaxed));
+                insert_kv("blame-soft-recover-total", recover);
+                insert_kv("blame_soft_recover_total", recover);
+                insert_kv("blame-soft-recover-fail-total", recover_fail);
+                insert_kv("blame_soft_recover_fail_total", recover_fail);
+                insert_kv("blame-soft-escalate-total", escalate);
+                insert_kv("blame_soft_escalate_total", escalate);
+                insert_kv("blame-soft-recover-wired", 1);
+                insert_kv("schema-2561", 2561);
+                insert_kv("issue-2561", 2561);
+            }
             // Issue #2261: Sampled ban weak mid / no CoercionNode pretend stamps
             {
                 const std::int64_t sampled_rej = static_cast<std::int64_t>(
@@ -7745,13 +7764,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #2558: query:coercion-provenance-health — completeness SLO + force
-    // Full pending for Agents under long Sampled production sessions.
+    // Issue #2558 / #2561: query:coercion-provenance-health — completeness SLO
+    // + Soft blame recover/escalate counters for Agents under Sampled sessions.
     ObservabilityPrims::register_stats_impl(
         "query:coercion-provenance-health",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7810,6 +7829,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stamp-at-add-total",
                       static_cast<std::int64_t>(aura::compiler::g_coercion_stamp_at_add_total.load(
                           std::memory_order_relaxed)));
+            // Issue #2561: Soft/Sampled blame recover + escalate (additive).
+            insert_kv("blame-soft-recover-total",
+                      static_cast<std::int64_t>(aura::compiler::g_blame_soft_recover_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "blame-soft-recover-fail-total",
+                static_cast<std::int64_t>(aura::compiler::g_blame_soft_recover_fail_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("blame-soft-escalate-total",
+                      static_cast<std::int64_t>(aura::compiler::g_blame_soft_escalate_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-2561", 2561);
+            insert_kv("issue-2561", 2561);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

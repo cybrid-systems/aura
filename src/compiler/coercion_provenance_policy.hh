@@ -56,6 +56,8 @@ inline constexpr int kCoercionProvenanceRejectProductionIssue = 2185;
 inline constexpr int kBlameCommitRequireIssue = 2221;
 // Issue #2558 stamp for query surfaces / Agent discovery.
 inline constexpr int kCoercionProvSloIssue = 2558;
+// Issue #2561 stamp for Soft blame recovery / escalate.
+inline constexpr int kBlameSoftRecoverIssue = 2561;
 // Completeness SLO in basis points (0–10000). Default 9500 = 95%.
 // Override via AURA_COERCION_PROV_SLO_BP when set (numeric).
 inline constexpr std::uint64_t kCoercionProvSloBpDefault = 9500;
@@ -73,6 +75,17 @@ inline std::atomic<std::uint32_t> g_coercion_prov_slo_force_full_pending{0};
 // Cached SLO budget (bp); env override applied lazily once.
 inline std::atomic<std::uint64_t> g_coercion_prov_slo_bp{kCoercionProvSloBpDefault};
 inline std::atomic<std::uint32_t> g_coercion_prov_slo_bp_resolved{0};
+
+// Issue #2561: Soft/Sampled blame-chain recovery + one-shot Full sample escalate.
+// Recover: cheap re-fill of dual provenance fields for mid's dirty cone.
+// Escalate: force one Full/contextual audit sample for that mid (not global
+// strategy flip; not #2221 hard reject). Soft default is observe-only (AC3);
+// AURA_BLAME_SOFT_ESCALATE=1 or production_defaults arms escalate-on-fail.
+inline std::atomic<std::uint64_t> g_blame_soft_recover_total{0};
+inline std::atomic<std::uint64_t> g_blame_soft_recover_fail_total{0};
+inline std::atomic<std::uint64_t> g_blame_soft_escalate_total{0};
+// 1 when Soft recovery failed and one-shot Full audit is armed for this exit.
+inline thread_local bool s_blame_soft_escalate_this_boundary = false;
 
 inline void set_force_audit_on_provenance_miss(bool on) noexcept {
     g_force_audit_on_provenance_miss.store(on ? 1u : 0u, std::memory_order_relaxed);
@@ -167,7 +180,8 @@ inline void evaluate_coercion_provenance_slo(std::uint64_t completeness_bp,
 }
 
 // Soft defaults (#2102 / #2185 AC3 / #2221 observe-only): force-audit on,
-// reject off, commit require off. Also clears #2558 SLO pending/state.
+// reject off, commit require off. Also clears #2558 SLO pending/state
+// and #2561 Soft escalate TLS.
 inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
     g_force_audit_on_provenance_miss.store(1, std::memory_order_relaxed);
     g_reject_apply_on_provenance_miss.store(0, std::memory_order_relaxed);
@@ -178,6 +192,34 @@ inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
     g_coercion_prov_slo_force_full_pending.store(0, std::memory_order_relaxed);
     g_coercion_prov_slo_bp.store(kCoercionProvSloBpDefault, std::memory_order_relaxed);
     g_coercion_prov_slo_bp_resolved.store(1, std::memory_order_relaxed);
+    // Issue #2561
+    s_blame_soft_escalate_this_boundary = false;
+}
+
+// Issue #2561: Soft observe-by-default (AC3). AURA_BLAME_SOFT_ESCALATE=1|on
+// arms one-shot Full sample escalate on recover fail. Unset / 0 / off →
+// recover-only observe. production_defaults also escalate (caller-side OR).
+[[nodiscard]] inline bool blame_soft_escalate_enabled() noexcept {
+    const char* e = std::getenv("AURA_BLAME_SOFT_ESCALATE");
+    if (!e || !*e)
+        return false; // Soft default: observe (recover only)
+    if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+        return false;
+    if ((e[0] == 'o' || e[0] == 'O') && e[1] != '\0' && (e[1] == 'f' || e[1] == 'F'))
+        return false;
+    return true; // 1 / on / yes / true
+}
+
+inline void note_blame_soft_escalate_for_boundary() noexcept {
+    s_blame_soft_escalate_this_boundary = true;
+}
+[[nodiscard]] inline bool blame_soft_escalate_pending_for_boundary() noexcept {
+    return s_blame_soft_escalate_this_boundary;
+}
+[[nodiscard]] inline bool consume_blame_soft_escalate_for_boundary() noexcept {
+    const bool v = s_blame_soft_escalate_this_boundary;
+    s_blame_soft_escalate_this_boundary = false;
+    return v;
 }
 
 // Issue #2185: production defaults force reject-on-miss (forensic refuse).

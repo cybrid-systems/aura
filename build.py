@@ -5029,6 +5029,26 @@ def cmd_coercion_prov_slo_coverage():
     return 0
 
 
+def cmd_blame_soft_recover_coverage():
+    """Issue #2561: Soft/Sampled blame chain recover + miss escalate.
+
+    Recover re-fills dual provenance for mid dirty cone; escalate one Full
+    sample under AURA_BLAME_SOFT_ESCALATE=1 or production_defaults; Soft
+    default remains observe-only.
+    """
+    print(f"{B}=== Soft blame recover/escalate coverage (#2561) ==={N}")
+    script = ROOT / "scripts" / "check_blame_soft_recover_2561.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Soft blame recover/escalate (#2561) coverage contract rows failed")
+        return 1
+    ok("Soft blame recover/escalate (#2561) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6240,6 +6260,7 @@ def cmd_gate():
         or cmd_dead_coercion_dirty_cone_coverage()
         or cmd_lock_order_production_soft_coverage()
         or cmd_coercion_prov_slo_coverage()
+        or cmd_blame_soft_recover_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7053,6 +7074,7 @@ def main():
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
+        "blame-soft-recover": cmd_blame_soft_recover_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

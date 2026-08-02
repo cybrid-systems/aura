@@ -3913,6 +3913,11 @@ aura_add_issue_test(test_partial_cone_cap_2560)
 aura_issue_test_link_light(test_partial_cone_cap_2560)
 add_dependencies(all_test_issue_targets test_partial_cone_cap_2560)
 
+# Issue #2561: Soft/Sampled blame chain recover + miss escalate
+aura_add_issue_test(test_blame_soft_recover_2561)
+aura_issue_test_link_light(test_blame_soft_recover_2561)
+add_dependencies(all_test_issue_targets test_blame_soft_recover_2561)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

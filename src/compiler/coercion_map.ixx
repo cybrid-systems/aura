@@ -87,6 +87,15 @@ export using ::aura::compiler::set_coercion_prov_slo_bp_for_test;
 export using ::aura::compiler::evaluate_coercion_provenance_slo;
 export using ::aura::compiler::coercion_prov_slo_force_full_pending;
 export using ::aura::compiler::consume_coercion_prov_slo_force_full;
+// Issue #2561: Soft blame recovery / escalate.
+export using ::aura::compiler::kBlameSoftRecoverIssue;
+export using ::aura::compiler::g_blame_soft_recover_total;
+export using ::aura::compiler::g_blame_soft_recover_fail_total;
+export using ::aura::compiler::g_blame_soft_escalate_total;
+export using ::aura::compiler::blame_soft_escalate_enabled;
+export using ::aura::compiler::note_blame_soft_escalate_for_boundary;
+export using ::aura::compiler::blame_soft_escalate_pending_for_boundary;
+export using ::aura::compiler::consume_blame_soft_escalate_for_boundary;
 
 // Issue #2024: forensic sentinel base for incomplete occurrence-narrowing
 // provenance (high nibble C0E5 = "coercion"). Low 16 bits carry original_child
@@ -250,14 +259,16 @@ export [[nodiscard]] inline bool is_weak_coercion_mutation_id(const CoercionEntr
     return kCoercionParentWalkCapSampled;
 }
 
-// Issue #2024 / #2102 / #2147: walk provenance chain to fill missing
+// Issue #2024 / #2102 / #2147 / #2561: walk provenance chain to fill missing
 // CoercionEntry fields. Fast path (#2147 AC1): both fields already set and
 // not weak → no walk, chain_walk_total unchanged.
 // Order (slow path): child column → parent walk (capped) → TLS active
 // mutation context → mutation log → hygiene → sentinel/weak (soft only).
+// recovery_mode (#2561): re-walk without bumping miss/SLO force (Soft recover).
 // Returns true when *truly* complete (non-zero pred + non-weak mutation id).
-export [[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatAST& flat,
-                                                                CoercionEntry& e) noexcept {
+export [[nodiscard]] inline bool
+fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e,
+                               bool recovery_mode = false) noexcept {
     using aura::ast::NULL_NODE;
     const bool strict = coercion_provenance_strict_honest();
 
@@ -371,15 +382,17 @@ export [[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatA
         return true;
     }
 
-    g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #2102: escalate to Full/contextual audit on next boundary exit
-    // when force_audit policy is on (default).
-    if (force_audit_on_provenance_miss())
-        note_provenance_miss_for_boundary();
-    // Issue #2558: completeness SLO backstop — production Sampled hosts
-    // that accumulate miss pressure arm force Full for next boundary.
-    evaluate_coercion_provenance_slo(coercion_provenance_completeness_bp(),
-                                     aura::compiler::typed_audit::production_defaults_active());
+    if (!recovery_mode) {
+        g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2102: escalate to Full/contextual audit on next boundary exit
+        // when force_audit policy is on (default).
+        if (force_audit_on_provenance_miss())
+            note_provenance_miss_for_boundary();
+        // Issue #2558: completeness SLO backstop — production Sampled hosts
+        // that accumulate miss pressure arm force Full for next boundary.
+        evaluate_coercion_provenance_slo(coercion_provenance_completeness_bp(),
+                                         aura::compiler::typed_audit::production_defaults_active());
+    }
     // Reject-on-miss: leave fields incomplete so apply can skip insert;
     // do not stamp sentinel (Agent re-infers with active_mutation_id).
     if (reject_apply_on_provenance_miss())
@@ -426,6 +439,93 @@ export [[nodiscard]] inline bool fill_coercion_provenance_chain(aura::ast::FlatA
     using aura::compiler::typed_audit::AuditStrategy;
     using aura::compiler::typed_audit::get_strategy;
     return get_strategy() != AuditStrategy::Off;
+}
+
+// Issue #2561: cheap Soft/Sampled recovery for incomplete blame/provenance
+// on a mutation mid's dirty cone (recent log entries only). Re-walks
+// fill_coercion_provenance_chain in recovery_mode and re-stamps dual fields
+// onto the node provenance column when complete. Returns true if at least
+// one site recovered both fields. Zero work when mid==0 or log empty.
+// Caps scan to kBlameSoftRecoverMaxSites (dirty-cone only; not full workspace).
+inline constexpr std::size_t kBlameSoftRecoverMaxSites = 32;
+
+export [[nodiscard]] inline bool try_recover_blame_chain_soft(aura::ast::FlatAST& flat,
+                                                              std::uint64_t mid) noexcept {
+    if (mid == 0)
+        return false;
+    const auto& log = flat.all_mutations();
+    if (log.empty())
+        return false;
+    bool any_ok = false;
+    std::size_t scanned = 0;
+    for (auto it = log.rbegin(); it != log.rend() && scanned < kBlameSoftRecoverMaxSites; ++it) {
+        if (it->mutation_id != mid && it->parent_mutation_id != mid)
+            continue;
+        ++scanned;
+        if (it->target_node == 0 || it->target_node >= flat.size())
+            continue;
+        // Prefer existing provenance column; else soft-attribute to target
+        // (same as fill log step 3) so dual fields can complete from TLS mid.
+        std::uint32_t pred = flat.provenance(it->target_node);
+        if (pred == 0)
+            pred = static_cast<std::uint32_t>(it->target_node);
+        set_coercion_active_mutation_context(mid, pred);
+        CoercionEntry e{};
+        e.parent_id = static_cast<std::uint32_t>(it->parent_id);
+        e.original_child = static_cast<std::uint32_t>(it->target_node);
+        e.source_mutation_id = 0;
+        e.predicate_cond_node = 0;
+        // recovery_mode: no miss/SLO force bumps (AC2 complete path still
+        // uses normal fill; this is Soft re-walk only).
+        bool ok = fill_coercion_provenance_chain(flat, e, /*recovery_mode=*/true);
+        if (!ok && mid != 0 && pred != 0) {
+            // Log-sourced MutationRecord mid is authoritative. #2261 weak-id
+            // detection treats mid==original_child as forensic placeholder;
+            // Soft recover must not drop real log mids on that collision.
+            e.source_mutation_id = mid;
+            e.predicate_cond_node = pred;
+            ok = true;
+        }
+        if (ok) {
+            if (e.predicate_cond_node != 0)
+                flat.set_provenance(it->target_node, e.predicate_cond_node);
+            any_ok = true;
+        }
+    }
+    clear_coercion_active_mutation_context();
+    return any_ok;
+}
+
+// Issue #2561: Soft/Sampled boundary helper — try recover; on fail optionally
+// arm one-shot Full sample escalate (AURA_BLAME_SOFT_ESCALATE=1 or
+// production_defaults). Soft default remains observe-only (AC3). Returns true
+// if recovered (caller may clear force). Does not flip global strategy and
+// does not hard-reject (#2221 is Full/production commit path).
+export [[nodiscard]] inline bool
+maybe_soft_recover_or_escalate_blame(aura::ast::FlatAST& flat, std::uint64_t mid,
+                                     bool had_miss_signal) noexcept {
+    if (!had_miss_signal || mid == 0)
+        return false; // AC2: complete / no miss → zero recover/escalate
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    const auto strat = get_strategy();
+    // Soft/Sampled only — Full/Off leave existing hard-gate / observe paths.
+    if (strat == AuditStrategy::Full || strat == AuditStrategy::Off)
+        return false;
+    if (try_recover_blame_chain_soft(flat, mid)) {
+        g_blame_soft_recover_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    g_blame_soft_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+    // Escalate one Full/contextual sample when env or production defaults.
+    // Soft unset env → recover-only observe (AC3); no silent miss counters:
+    // fail_total already bumped.
+    if (blame_soft_escalate_enabled() ||
+        aura::compiler::typed_audit::production_defaults_active()) {
+        g_blame_soft_escalate_total.fetch_add(1, std::memory_order_relaxed);
+        note_blame_soft_escalate_for_boundary();
+    }
+    return false;
 }
 
 // ── CoercionMap — accumulated coercion intent ────────────
