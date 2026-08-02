@@ -5125,6 +5125,25 @@ def cmd_module_require_freevar_coverage():
     return 0
 
 
+def cmd_try_catch_bind_coverage():
+    """Issue #2567: try/catch binds catch parameter for handler use.
+
+    Diagnostic unexpected and (error …) failures bind a first-class payload
+    so (catch (e) e) / string? / list work (stdlib agent/mutate pattern).
+    """
+    print(f"{B}=== try/catch bind coverage (#2567) ==={N}")
+    script = ROOT / "scripts" / "check_try_catch_bind_2567.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("try/catch bind (#2567) coverage contract rows failed")
+        return 1
+    ok("try/catch bind (#2567) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6341,6 +6360,7 @@ def cmd_gate():
         or cmd_linear_cross_closure_escape_coverage()
         or cmd_adt_match_goal_table_coverage()
         or cmd_module_require_freevar_coverage()
+        or cmd_try_catch_bind_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7159,6 +7179,7 @@ def main():
         "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
         "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
         "module-require-freevar": cmd_module_require_freevar_coverage,
+        "try-catch-bind": cmd_try_catch_bind_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

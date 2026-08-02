@@ -3703,9 +3703,30 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Body succeeded — return result as-is
                                 return result;
                             }
-                            // Body errored — find catch clause (child[2] or later)
+                            // Body failed: either error value (is_error) or unexpected
+                            // Diagnostic (unbound / arity / …). Issue #2567: bind a
+                            // *first-class* payload so (catch (e) … e …) works.
+                            // RefError values short-circuit as Call args (is_error
+                            // propagation), so bind the cause string / Diagnostic
+                            // message — usable with display, string?, list, cons.
                             if (v.children.size() < 3)
-                                return make_void();
+                                return result; // no catch — propagate as-is
+                            EvalValue err_val;
+                            if (result && is_error(*result) && !is_string(*result)) {
+                                // Prefer the stored cause (often a string from (error …)).
+                                const auto eidx = as_error_idx(*result);
+                                if (eidx < error_values_.size())
+                                    err_val = error_values_[eidx];
+                                else
+                                    err_val = *result;
+                            } else if (result) {
+                                err_val = *result; // non-error truthy failure edge
+                            } else {
+                                // unexpected Diagnostic → string message (first-class)
+                                auto sidx = string_heap_.size();
+                                string_heap_.push_back(result.error().format());
+                                err_val = make_string(sidx);
+                            }
                             for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
                                 auto catch_id = v.child(ci);
                                 auto cv = f->get(catch_id);
@@ -3715,31 +3736,37 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                         std::string(p->resolve(catch_fn.sym_id)) == "catch") {
                                         // (catch (var) handler) — child[0]=catch, child[1]=(var),
                                         // child[2]=handler
+                                        // Also accept (catch var handler) bare Variable binding.
                                         if (cv.children.size() < 3)
                                             continue;
                                         auto var_form = f->get(cv.child(1));
-                                        // var_form is (var) — a Call where child[0]=Variable "var"
                                         std::string var_name;
                                         if (var_form.tag == aura::ast::NodeTag::Call &&
                                             var_form.children.size() >= 1) {
+                                            // (var) form — Call with Variable callee
                                             auto var_node = f->get(var_form.child(0));
                                             if (var_node.tag == aura::ast::NodeTag::Variable)
                                                 var_name = std::string(p->resolve(var_node.sym_id));
+                                        } else if (var_form.tag == aura::ast::NodeTag::Variable) {
+                                            // bare var form: (catch e handler)
+                                            var_name = std::string(p->resolve(var_form.sym_id));
                                         }
                                         auto handler_id = cv.child(2);
                                         // Bind error value to var and evaluate handler
                                         Env catch_env(&eval_env);
                                         catch_env.set_primitives(&primitives_);
-                                        // P0: no cells_ on Env; deref uses central cells_ or owner
-                                        // walk
-                                        if (!var_name.empty() && result) {
-                                            catch_env.bind(var_name, *result);
-                                        }
+                                        catch_env.set_owner(this);
+                                        if (p)
+                                            catch_env.set_pool(p);
+                                        // Issue #2567: always bind when we have a name
+                                        // (Diagnostic failures previously skipped bind).
+                                        if (!var_name.empty())
+                                            catch_env.bind(var_name, err_val);
                                         return eval_flat(*f, *p, handler_id, catch_env);
                                     }
                                 }
                             }
-                            // No matching catch — propagate error
+                            // No matching catch — propagate original failure
                             return result;
                         }
                     }

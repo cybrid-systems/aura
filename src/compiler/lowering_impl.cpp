@@ -625,7 +625,8 @@ static std::uint32_t lower_flat_expr(
                             if (catch_callee.tag == NodeTag::Variable) {
                                 auto catch_name = pool.resolve(catch_callee.sym_id);
                                 if (std::string(catch_name) == "catch") {
-                                    // (catch (var) handler-body)
+                                    // (catch (var) handler-body) or (catch var handler)
+                                    // Issue #2567: bare Variable binding also accepted.
                                     if (catch_v.children.size() >= 3) {
                                         auto var_form = flat.get(catch_v.child(1));
                                         std::string var_name;
@@ -635,6 +636,8 @@ static std::uint32_t lower_flat_expr(
                                             if (var_node.tag == NodeTag::Variable)
                                                 var_name =
                                                     std::string(pool.resolve(var_node.sym_id));
+                                        } else if (var_form.tag == NodeTag::Variable) {
+                                            var_name = std::string(pool.resolve(var_form.sym_id));
                                         }
                                         // Allocate slot and bind error value
                                         auto err_slot = state.alloc_local();
