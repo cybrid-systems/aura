@@ -2105,6 +2105,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (had_moving_densify) {
                 if (void* m = ev_->compiler_metrics())
                     aura::compiler::note_escape_gate_clear_on_densify(m);
+                // Issue #2552 AC3: pair densify escape-clear with type
+                // OccurrenceGoal + type_dep epoch fence. Soft densify /
+                // no Moving: skip (zero cost).
+                ev_->note_type_freshness_after_steal_or_densify();
             }
             // Issue #2360: the post-densify ownership-exit scan at the
             // Moving densify success site (Phase 5) is wired by #2361

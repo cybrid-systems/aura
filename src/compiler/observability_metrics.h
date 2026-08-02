@@ -1218,6 +1218,14 @@ struct CompilerMetrics {
     // under multi-round mutate). Distinct from
     // occurrence_goal_stale_drop_total (epoch-prune, #2278 lineage).
     std::atomic<std::uint64_t> occurrence_goal_refined_drift_total{0}; // #2321
+    // Issue #2552: joint steal/densify epoch fence (type narrowing freshness).
+    // Fence call totals (advance actually applied) + entries dropped.
+    // Distinct from generic occurrence_goal_stale_drop / type_dep stale drop
+    // so Agents can attribute prune to steal/densify vs set_cache_epoch alone.
+    std::atomic<std::uint64_t> occurrence_goal_steal_prune_total{0};         // #2552
+    std::atomic<std::uint64_t> occurrence_goal_steal_prune_entries_total{0}; // #2552
+    std::atomic<std::uint64_t> type_dep_steal_prune_total{0};                // #2552
+    std::atomic<std::uint64_t> type_dep_steal_prune_entries_total{0};        // #2552
     // Issue #1873: derived completeness rate (0–100) =
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.

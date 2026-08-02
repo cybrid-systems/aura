@@ -6236,6 +6236,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence_goal_stale_drop_total", occurrence_goal_stale_drop);
             insert_kv("schema-2278", 2278);
             insert_kv("issue-2278", 2278);
+            // Issue #2552: joint steal/densify OccurrenceGoal + type_dep fence.
+            const std::int64_t steal_goal_prune =
+                m ? static_cast<std::int64_t>(
+                        m->occurrence_goal_steal_prune_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t steal_goal_entries =
+                m ? static_cast<std::int64_t>(m->occurrence_goal_steal_prune_entries_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            insert_kv("occurrence-goal-steal-prune-total", steal_goal_prune);
+            insert_kv("occurrence_goal_steal_prune_total", steal_goal_prune);
+            insert_kv("occurrence-goal-steal-prune-entries-total", steal_goal_entries);
+            insert_kv("occurrence-goal-steal-densify-fence-wired", 1);
+            insert_kv("schema-2552", 2552);
+            insert_kv("issue-2552", 2552);
             // Issue #2307: sole-authority sentinel. solve_delta_occurrence
             // now seeds occurrence priority only from live occurrence_goals_
             // (epoch == 0 untagged OR epoch == current_epoch); retained_*
@@ -7189,6 +7204,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("type-dep-epoch-wired", 1);
             insert_kv("schema-2355", 2355);
             insert_kv("issue-2355", 2355);
+            // Issue #2552: type_dep side of steal/densify joint fence.
+            const std::int64_t steal_td_prune =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_steal_prune_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t steal_td_entries =
+                m ? static_cast<std::int64_t>(
+                        m->type_dep_steal_prune_entries_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("type-dep-steal-prune-total", steal_td_prune);
+            insert_kv("type_dep_steal_prune_total", steal_td_prune);
+            insert_kv("type-dep-steal-prune-entries-total", steal_td_entries);
+            insert_kv("type-dep-steal-densify-fence-wired", 1);
+            insert_kv("schema-2552", 2552);
+            insert_kv("issue-2552", 2552);
             // Issue #2516: dirty txn order (invalidate → re-infer → mirror).
             const std::int64_t txn_wired =
                 m ? static_cast<std::int64_t>(

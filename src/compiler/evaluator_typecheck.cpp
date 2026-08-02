@@ -1871,6 +1871,31 @@ void Evaluator::destroy_guard_infer_engine() noexcept {
     guard_infer_registry_gen_ = 0;
 }
 
+// Issue #2552: joint OccurrenceGoal + type_dep epoch fence after successful
+// steal restamp or Moving densify. Soft free when no live TypeChecker
+// (single null checks). Advances past current cache_epoch so post-steal
+// solve_delta cannot seed from pre-steal goals stamped at the old epoch.
+void Evaluator::note_type_freshness_after_steal_or_densify() noexcept {
+    auto fence_one = [this](void* opaque) noexcept {
+        if (!opaque)
+            return;
+        auto* tc = static_cast<TypeChecker*>(opaque);
+        if (compiler_metrics_)
+            tc->set_metrics(compiler_metrics_);
+        auto target = defuse_version_.load(std::memory_order_relaxed);
+        if (target == 0)
+            target = 1;
+        const auto cur = tc->cache_epoch();
+        if (target <= cur)
+            target = cur + 1;
+        (void)tc->note_steal_or_densify_epoch_fence(target);
+    };
+    fence_one(commit_type_checker_opaque_);
+    if (persistent_typechecker_opaque_ &&
+        persistent_typechecker_opaque_ != commit_type_checker_opaque_)
+        fence_one(persistent_typechecker_opaque_);
+}
+
 // Issue #2180: long-lived TypeChecker for composite commit CS reuse.
 void Evaluator::destroy_commit_type_checker() noexcept {
     // If commit TC is an alias of the #2220 persistent TC, only null the

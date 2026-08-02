@@ -4914,6 +4914,25 @@ def cmd_mailbox_hold_starvation_hard_coverage():
     return 0
 
 
+def cmd_type_freshness_steal_densify_coverage():
+    """Issue #2552: steal/densify joint OccurrenceGoal + type_dep freshness.
+
+    On successful steal restamp / Moving densify, advance type cache_epoch
+    and prune occurrence goals + type_dep edges. Hard-fail steal skips.
+    """
+    print(f"{B}=== type freshness steal/densify coverage (#2552) ==={N}")
+    script = ROOT / "scripts" / "check_type_freshness_steal_densify_2552.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type freshness steal/densify (#2552) coverage contract rows failed")
+        return 1
+    ok("type freshness steal/densify (#2552) coverage clean")
+    return 0
+
+
 def cmd_post_densify_linear_type_revalidate_coverage():
     """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
 
@@ -5974,6 +5993,7 @@ def cmd_gate():
         or cmd_mailbox_defer_drain_sla_coverage()
         or cmd_mailbox_hold_exit_drain_coverage()
         or cmd_mailbox_hold_starvation_hard_coverage()
+        or cmd_type_freshness_steal_densify_coverage()
         or cmd_bidirectional_match_coverage()
         or cmd_mutation_hold_slo_coverage()
         or cmd_mutation_hold_estimate_coverage()
