@@ -3650,6 +3650,11 @@ aura_add_issue_test(test_remount_force_deopt_2503)
 aura_issue_test_link_llvm_jit(test_remount_force_deopt_2503)
 add_dependencies(all_test_issue_targets test_remount_force_deopt_2503)
 
+# Issue #2542: reemit success full live-closure epoch restamp (no silent skip).
+aura_add_issue_test(test_live_closure_full_restamp_2542)
+aura_issue_test_link_llvm_jit(test_live_closure_full_restamp_2542)
+add_dependencies(all_test_issue_targets test_live_closure_full_restamp_2542)
+
 # Issue #2504: e2e PerEval dual-eval SpecJIT storm isolation (no cross-clear).
 aura_add_issue_test(test_specjit_pereval_storm_e2e_2504)
 aura_issue_test_link_llvm_jit(test_specjit_pereval_storm_e2e_2504)
