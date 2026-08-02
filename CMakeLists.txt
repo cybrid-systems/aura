@@ -3680,6 +3680,11 @@ aura_add_issue_test(test_exhausted_min_dirty_reemit_2544)
 aura_issue_test_link_llvm_jit(test_exhausted_min_dirty_reemit_2544)
 add_dependencies(all_test_issue_targets test_exhausted_min_dirty_reemit_2544)
 
+# Issue #2545: unify linear hard-fail decision entry (force_linear_rollback).
+aura_add_issue_test(test_linear_force_unified_2545)
+aura_issue_test_link_light(test_linear_force_unified_2545)
+add_dependencies(all_test_issue_targets test_linear_force_unified_2545)
+
 # Issue #2507: clear escape MoveOp elision gate on steal-complete + densify.
 aura_add_issue_test(test_escape_gate_steal_densify_clear_2507)
 aura_issue_test_link_light(test_escape_gate_steal_densify_clear_2507)

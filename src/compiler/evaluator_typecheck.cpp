@@ -682,6 +682,18 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     auto& c = g_typed_mutation_audit_counters;
     c.composite_commit_revalidate_total.fetch_add(1, std::memory_order_relaxed);
 
+    // Issue #2545: unified linear force entry before composite audit /
+    // partial recovery. Synth sticky early-exits without re-running
+    // invariant linear walk (no double-count with linear_invariant_fail).
+    if (force_linear_rollback(op_name.empty() ? "composite-linear-force" : op_name)) {
+        cr.linear_ok = false;
+        cr.audit.linear_ok = false;
+        cr.committed = false;
+        if (out_commit)
+            *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+        return false;
+    }
+
     // 1) solve_delta_occurrence (stable constraint surface #2028 / #2180).
     // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
     // rely on a greenfield empty TypeChecker for production composite commit.
@@ -1217,6 +1229,18 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
         (void)hard_block_cross_batch_linear_escape(r);
     }
 
+    // Issue #2545: sticky axes for unified force_linear_rollback classify
+    // (pure peek on hard-gate / boundary without re-running walks).
+    // Clear on clean so a later force path cannot false-green on stale sticky.
+    if (!r.linear_ok)
+        note_post_mutate_linear_fail();
+    else
+        clear_post_mutate_linear_fail();
+    if (r.cross_batch_linear_escape)
+        note_cross_batch_escape_fail();
+    else
+        clear_cross_batch_escape_fail();
+
     // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
     r.provenance_ok = post_mutation_reflect_validate();
 
@@ -1466,19 +1490,31 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
     return false;
 }
 
-// ── Issue #2514: linear_synth_hard_fail ↔ MutationBoundary authority ──
+// ── Issue #2514 / #2545: unified linear hard-fail ↔ MutationBoundary ──
 //
-// Exit decision table (single source of truth for Agents):
+// Exit decision table (single source of truth for Agents) — Issue #2545:
 //   | synth hard-fail (prod/strict) | Soft Warning only | synth clean      |
 //   | force rollback; skip soft     | no force from     | post-mutate      |
 //   | partial recovery; deny kind   | synth flag; audit | ownership+escape |
 //   | = linear-synth-hard-fail;     | may still run     | defense-in-depth |
-//   | no Success audit for mid      |                   | (#2263/#2108)    |
+//   | no Success audit for mid;     |                   | (#2263/#2108)    |
+//   | NO linear_invariant_fail      |                   |                  |
+//   | re-bump for same mid          |                   |                  |
+//   |-------------------------------|-------------------|------------------|
+//   | PostMutateLinear (#1614)      | CrossBatchEscape  | None (all clean) |
+//   | force under hard-gate/Full    | (#2108) force;    | zero extra force |
+//   | linear_invariant_fail via     | escape counters   | counters         |
+//   | audit walk only               | via hard_block    |                  |
 //
 // Counter ownership (no double-count of same logical violation):
 //   linear_synth_violation_total / linear_synth_hard_fail_total — synthesize
 //   linear_invariant_fail — post-mutate invariant linear walk only
-//   linear_synth_boundary_force_rollback_total — this early-exit path only
+//   linear_synth_boundary_force_rollback_total — synth early-exit path only
+//   hard_gate_force_rollback_total — all force_linear_rollback authorities
+//
+// All hard-gate / outermost boundary exit / composite reject call sites
+// must use force_linear_rollback (Issue #2545 AC6). deny_if_linear_synth
+// is a thin back-compat alias.
 
 bool Evaluator::linear_synth_hard_fail_pending() const noexcept {
     if (linear_synth_hard_fail_pending_.load(std::memory_order_relaxed) != 0)
@@ -1521,23 +1557,94 @@ void Evaluator::clear_linear_synth_hard_fail_pending() noexcept {
     }
 }
 
-bool Evaluator::deny_if_linear_synth_hard_fail(std::string_view op) noexcept {
+bool Evaluator::last_post_mutate_linear_fail() const noexcept {
+    return last_post_mutate_linear_fail_.load(std::memory_order_relaxed) != 0;
+}
+
+void Evaluator::note_post_mutate_linear_fail() noexcept {
+    last_post_mutate_linear_fail_.store(1, std::memory_order_relaxed);
+}
+
+void Evaluator::clear_post_mutate_linear_fail() noexcept {
+    last_post_mutate_linear_fail_.store(0, std::memory_order_relaxed);
+}
+
+bool Evaluator::last_cross_batch_escape_fail() const noexcept {
+    return last_cross_batch_escape_fail_.load(std::memory_order_relaxed) != 0;
+}
+
+void Evaluator::note_cross_batch_escape_fail() noexcept {
+    last_cross_batch_escape_fail_.store(1, std::memory_order_relaxed);
+}
+
+void Evaluator::clear_cross_batch_escape_fail() noexcept {
+    last_cross_batch_escape_fail_.store(0, std::memory_order_relaxed);
+}
+
+Evaluator::LinearForceAuthority
+Evaluator::classify_linear_force(const void* precomputed_invariant_result) const noexcept {
+    // Synth sticky wins (highest authority — TypeError already published).
+    // Soft Warning never sets the sticky flag (#2514 / #2357).
+    if (linear_synth_hard_fail_pending())
+        return LinearForceAuthority::SynthHardFail;
+    // Optional precomputed audit result (avoids re-running linear walk).
+    if (precomputed_invariant_result) {
+        const auto* r =
+            static_cast<const typed_audit::InvariantAuditResult*>(precomputed_invariant_result);
+        if (r->cross_batch_linear_escape)
+            return LinearForceAuthority::CrossBatchEscape;
+        if (!r->linear_ok)
+            return LinearForceAuthority::PostMutateLinear;
+    }
+    // Sticky post-mutate / escape axes (set by audit; pure peek).
+    if (last_cross_batch_escape_fail())
+        return LinearForceAuthority::CrossBatchEscape;
+    if (last_post_mutate_linear_fail())
+        return LinearForceAuthority::PostMutateLinear;
+    return LinearForceAuthority::None;
+}
+
+bool Evaluator::force_linear_rollback(std::string_view op,
+                                      const void* precomputed_invariant_result) noexcept {
     using namespace aura::compiler::typed_audit;
-    if (!linear_synth_hard_fail_pending())
-        return false;
-    // Soft Warning never sets the sticky flag (note_linear_synth_violation
-    // only sets linear_synth_hard_fail_ under production_defaults || strict_).
-    clear_linear_synth_hard_fail_pending();
+    const auto auth = classify_linear_force(precomputed_invariant_result);
+    if (auth == LinearForceAuthority::None)
+        return false; // zero-cost clean path
+
     auto& ac = g_typed_mutation_audit_counters;
-    ac.linear_synth_boundary_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
-    ac.linear_synth_boundary_skip_recovery_total.fetch_add(1, std::memory_order_relaxed);
+    const char* deny_kind = "linear-force-rollback";
+    switch (auth) {
+        case LinearForceAuthority::SynthHardFail:
+            // Soft Warning never sets sticky (note_linear_synth_violation
+            // only sets linear_synth_hard_fail_ under production || strict).
+            clear_linear_synth_hard_fail_pending();
+            ac.linear_synth_boundary_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            ac.linear_synth_boundary_skip_recovery_total.fetch_add(1, std::memory_order_relaxed);
+            // Do NOT bump linear_invariant_fail — synthesize phase already owns
+            // this logical violation via linear_synth_hard_fail_total (#2357).
+            // Early-exit: callers must NOT re-run invariant linear walk for mid.
+            deny_kind = "linear-synth-hard-fail";
+            break;
+        case LinearForceAuthority::PostMutateLinear:
+            clear_post_mutate_linear_fail();
+            // linear_invariant_fail already bumped by audit walk (#1614) —
+            // do not re-bump here (no double-count).
+            deny_kind = "linear-post-mutate-fail";
+            break;
+        case LinearForceAuthority::CrossBatchEscape:
+            clear_cross_batch_escape_fail();
+            clear_post_mutate_linear_fail();
+            // escape counters owned by hard_block_cross_batch_linear_escape
+            deny_kind = "linear-cross-batch-escape";
+            break;
+        case LinearForceAuthority::None:
+            return false;
+    }
+
     ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
     ac.full_strategy_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
     ac.typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
-    // Do NOT bump linear_invariant_fail — synthesize phase already owns
-    // this logical violation via linear_synth_hard_fail_total (#2357).
-    last_mutate_error_ =
-        format_invariant_deny_reason("linear-synth-hard-fail", capability_tenant_id(), op);
+    last_mutate_error_ = format_invariant_deny_reason(deny_kind, capability_tenant_id(), op);
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         m->typed_mutation_full_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
         m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
@@ -1556,6 +1663,11 @@ bool Evaluator::deny_if_linear_synth_hard_fail(std::string_view op) noexcept {
     return true;
 }
 
+bool Evaluator::deny_if_linear_synth_hard_fail(std::string_view op) noexcept {
+    // Issue #2514 back-compat → Issue #2545 unified entry (synth sticky only).
+    return force_linear_rollback(op, /*precomputed=*/nullptr);
+}
+
 // ── Issue #2145: Full/Strict hard-gate before mutate commit ───────────
 
 bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear_ops_present,
@@ -1569,9 +1681,10 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    // Issue #2514: synth hard-fail is single rollback authority — before
-    // Sampled skip or soft partial recovery that cannot clear TypeError.
-    if (deny_if_linear_synth_hard_fail(op))
+    // Issue #2514 / #2545: unified linear force entry — before Sampled
+    // skip or soft partial recovery that cannot clear TypeError.
+    // All hard-gate linear deny paths route through force_linear_rollback.
+    if (force_linear_rollback(op))
         return false;
     const bool strict = aura::core::sandbox::is_strict();
     // Issue #2223: force hard-gate when workspace has match sites (Sampled
@@ -1682,13 +1795,17 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     if (ok)
         return true;
 
-    // Deny: Agent-visible error + metrics.
+    // Issue #2545: linear axes force through unified entry (single counter
+    // ownership; no double-count with linear_invariant_fail already bumped).
+    // Prefer post-recovery sticky/result (classify peeks sticky first).
+    if (esc.cross_batch_linear_escape || r.cross_batch_linear_escape)
+        r.cross_batch_linear_escape = true;
+    if (force_linear_rollback(op, &r) || force_linear_rollback(op))
+        return false;
+
+    // Deny: non-linear axes (type / provenance / adt) — not force_linear.
     std::string_view kind = "invariant";
-    if (r.cross_batch_linear_escape || esc.cross_batch_linear_escape)
-        kind = "linear-escape";
-    else if (!r.linear_ok)
-        kind = "linear";
-    else if (!r.adt_ok)
+    if (!r.adt_ok)
         kind = "adt";
     else if (!r.type_ok)
         kind = "type";
