@@ -3898,6 +3898,11 @@ aura_add_issue_test(test_lock_order_production_soft_2557)
 aura_issue_test_link_light(test_lock_order_production_soft_2557)
 add_dependencies(all_test_issue_targets test_lock_order_production_soft_2557)
 
+# Issue #2558: coercion provenance completeness SLO → force Full audit
+aura_add_issue_test(test_coercion_prov_slo_2558)
+aura_issue_test_link_light(test_coercion_prov_slo_2558)
+add_dependencies(all_test_issue_targets test_coercion_prov_slo_2558)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)

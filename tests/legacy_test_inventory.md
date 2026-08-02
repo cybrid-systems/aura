@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 730 | Preferred destination suites |
-| **Total scanned** | **730** | |
+| `tests/core/test_*.cpp` | 731 | Preferred destination suites |
+| **Total scanned** | **731** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 207 | 207 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 208 | 208 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 86 | 86 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 17 | 17 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 40 | 40 | P1 — domain hygiene suite exists |
@@ -259,6 +259,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_closure_view_batch.cpp`
 - `tests/compiler/test_coercion_ban_weak_ir_2261.cpp`
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp`
+- `tests/compiler/test_coercion_prov_slo_2558.cpp`
 - `tests/compiler/test_coercion_provenance_fast_strict_2147.cpp`
 - `tests/compiler/test_coercion_provenance_miss_force_audit_2102.cpp`
 - `tests/compiler/test_coercion_reject_production_defaults_2185.cpp`
@@ -1008,13 +1009,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (207)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (208)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (207)
+#### domain/ (208)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1045,6 +1046,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_closure_bridge_lifetime.cpp` (—) [domain_suite, theme_compiler] — Issue #1888/#1895/#1926/#1928/#1929/#1947 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_coercion_ban_weak_ir_2261.cpp` (#2261) [domain_suite, theme_compiler] — AC1: Sampled + no active_mutation_id / no log → no CoercionNode; miss reject;
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp` (—) [domain_suite, theme_compiler] — test_coercion_dead_elim_castop_flow_zerooverhead.cpp
+- `tests/compiler/test_coercion_prov_slo_2558.cpp` (#2558) [domain_suite, theme_compiler] — AC1: production + miss storm → bp < SLO → force pending; consume forces audit
 - `tests/compiler/test_coercion_provenance_fast_strict_2147.cpp` (#2147) [domain_suite, theme_compiler] — AC1: both fields set at add → chain_walk_total does not increase (fast path)
 - `tests/compiler/test_coercion_provenance_miss_force_audit_2102.cpp` (#2102) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit
 - `tests/compiler/test_coercion_reject_production_defaults_2185.cpp` (#2185) [domain_suite, theme_compiler] — AC1: Production defaults + incomplete chain → no CoercionNode;

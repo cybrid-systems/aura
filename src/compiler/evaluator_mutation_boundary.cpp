@@ -431,7 +431,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // (even without workspace) so TLS does not stick across tests/fibers.
     // Count force-audit metric here; Full-path invariant suite still needs
     // workspace_flat_ (below).
-    const bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary();
+    // Issue #2558: re-evaluate completeness SLO under production so long
+    // Sampled sessions that accumulated miss pressure force Full on this
+    // outermost exit (one-shot pending flag). Soft/non-production only
+    // observes. Vacuous 10000 bp → no breach.
+    if (typed_audit::production_defaults_active()) {
+        aura::compiler::evaluate_coercion_provenance_slo(
+            aura::compiler::coercion_provenance_completeness_bp(), /*production_active=*/true);
+    }
+    const bool slo_force = aura::compiler::consume_coercion_prov_slo_force_full();
+    const bool provenance_miss =
+        aura::compiler::consume_provenance_miss_for_boundary() || slo_force;
     if (provenance_miss) {
         aura::compiler::g_coercion_provenance_miss_force_audit_total.fetch_add(
             1, std::memory_order_relaxed);
