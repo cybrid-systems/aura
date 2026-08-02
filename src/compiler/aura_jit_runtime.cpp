@@ -875,8 +875,8 @@ static std::vector<std::string> g_closure_names;
 // defuse_version ↔ aura_get_aot_defuse_version() (mutate / EnvFrame proxy)
 static std::vector<std::uint64_t> g_closure_bridge_epochs;
 static std::vector<std::uint64_t> g_closure_defuse_versions;
-// Issue #2092: per-closure stable_func_id stamp (parallel to func_ids).
-// Set in aura_closure_set_name() via aura_lookup_stable_func_id() so the
+// Issue #2092 / #2550: per-closure stable_func_id stamp (parallel to func_ids).
+// Named set_name stamps via aura_get_or_preserve_stable_func_id() so the
 // remap after reemit matches by stable id (not display name) — the
 // display name is unstable under redefine / gensym / multi-define. 0
 // means legacy / never stamped; remap falls back to name match (off by
@@ -1363,6 +1363,34 @@ extern "C" std::uint64_t aura_get_closure_cow_gen(std::int64_t closure_id) {
     return g_closure_cow_gens[cid];
 }
 
+// Issue #2550: per-closure stable_func_id getter (Agent / tests).
+// Named set_name stamps non-zero; anonymous remains 0.
+extern "C" std::uint32_t aura_get_closure_stable_func_id(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_stable_func_ids.size())
+        return 0;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    return g_closure_stable_func_ids[cid];
+}
+
+// Issue #2550: test-only residual injector — simulate pre-#2550 sid=0
+// named closures so #2175 backfill safety-net stays exercisable.
+extern "C" void aura_test_force_closure_stable_func_id(std::int64_t closure_id, std::uint32_t sid) {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (cid >= g_closure_stable_func_ids.size())
+        g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
+    g_closure_stable_func_ids[cid] = sid;
+}
+
 extern "C" std::uint64_t aura_closure_get_env_gen(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;
@@ -1427,11 +1455,11 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
             g_arena_closure_env_sizes[cid] = 0;
         if (cid < g_closure_names.size())
             g_closure_names[cid].clear();
-        // Issue #2092: clear the legacy stable_func_id stamp on reuse
+        // Issue #2092 / #2550: clear the legacy stable_func_id stamp on reuse
         // (the previous closure's stamp is no longer meaningful — the
         // new alloc starts fresh; aura_closure_set_name will re-stamp
-        // it via aura_lookup_stable_func_id when the host wires the
-        // define-time stable map).
+        // it via aura_get_or_preserve_stable_func_id when the host wires
+        // the define-time stable map).
         if (cid < g_closure_stable_func_ids.size())
             g_closure_stable_func_ids[cid] = 0;
         if (cid < g_closure_must_deopt.size())
@@ -1454,8 +1482,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_closure_bridge_epochs.push_back(aura_aot_func_table_epoch());
     g_closure_defuse_versions.push_back(aura_get_aot_defuse_version());
     g_closure_stable_func_ids.push_back(
-        0); // Issue #2092: legacy default; stamped in aura_closure_set_name
-    g_closure_must_deopt.push_back(0);                                              // Issue #2128
+        0);                            // Issue #2092/#2550: default 0 until named set_name stamps
+    g_closure_must_deopt.push_back(0); // Issue #2128
     g_closure_linear_state.push_back(aura_get_aot_live_linear_state_fingerprint()); // Issue #2129
     g_closure_cow_gens.push_back(aura_get_live_workspace_cow_gen());                // Issue #2547
     return id;
@@ -1778,10 +1806,14 @@ extern "C" int aura_remount_or_force_deopt(std::int64_t closure_id, std::uint64_
                                            aura_aot_func_table_epoch());
 }
 
-// Issue #660 Option 1: set the closure's name after allocation. Used by
-// MakeClosure runtime to record the function's stable name (assigned by
-// cache_define). When aura_closure_call's func_id lookup fails, the
-// runtime falls back to looking up by name.
+// Issue #660 / #2092 / #2550: set the closure's name after allocation.
+// Used by MakeClosure runtime to record the function's stable name
+// (assigned by cache_define). Named create / first set_name always
+// stamps a non-zero stable_func_id via aura_get_or_preserve_stable_func_id
+// BEFORE the closure is callable — eliminates steady-state sid=0 for
+// named closures (Issue #2550). Anonymous (null/empty name) stay sid=0
+// by design and must take MustDeopt on reemit if not later named (#2542).
+// #2175 backfill remains as a residual safety net only.
 void aura_closure_set_name(int64_t closure_id, const char* name) {
     if (closure_id < 0)
         return;
@@ -1792,18 +1824,21 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
     if (cid < g_closure_func_ids.size() && cid < g_closure_names.size()) {
         g_closure_names[cid] = name ? std::string(name) : std::string();
     }
-    // Issue #2092: stamp the stable_func_id for this closure (if the
-    // name is already in the stable map). Use lookup-only (NOT
-    // get_or_preserve) — closures that arrive before the define is
-    // processed get stable_id = 0 and fall through to the (off by
-    // default) name fallback path during remap. The stored id
-    // reflects the define id at allocation time, so a later redefine
-    // of the same display name does NOT silently attach this closure
-    // to the new define's stable id (AC1 — same-name redefine safety).
+    // Issue #2550: named → get_or_preserve (never leave sid=0). Empty /
+    // null name → anonymous sid=0. Same-name redefine preserves the map
+    // entry (get_or_preserve returns existing id) so stored sid stays
+    // process-stable for that name until clear_stable_func_id_map.
     if (cid < g_closure_func_ids.size()) {
         if (cid >= g_closure_stable_func_ids.size())
             g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
-        g_closure_stable_func_ids[cid] = name ? aura_lookup_stable_func_id(name) : 0;
+        if (name && name[0] != '\0') {
+            int preserved = 0;
+            const auto sid = aura_get_or_preserve_stable_func_id(name, &preserved);
+            g_closure_stable_func_ids[cid] = sid; // never leave 0 for named
+            (void)preserved;
+        } else {
+            g_closure_stable_func_ids[cid] = 0; // anonymous by design
+        }
     }
     // Issue #2238: alloc-time / set_name-time policy. If policy is on
     // AND the caller passed an empty name (nullptr or ""), the closure
@@ -1816,8 +1851,8 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
     // no native ptr install happens — the AOT bind path simply
     // sees MustDeopt and refuses to install (AC1 "force MustDeopt +
     // never install native ptr" branch). Already-stamped sids (non-
-    // zero) never enter this branch, so the named backfill path
-    // (#2175) stays untouched (AC3).
+    // zero) never enter this branch, so the residual backfill path
+    // (#2175 / #2550 safety net) stays untouched for empty names.
     if (g_require_stable_id_for_aot.load(std::memory_order_relaxed) != 0 &&
         (name == nullptr || name[0] == '\0') && cid < g_closure_must_deopt.size() &&
         cid < g_closure_func_ids.size() &&
@@ -1870,8 +1905,8 @@ extern "C" int aura_closure_check_aot_stable_id_policy(int64_t closure_id) noexc
 // Display name is unstable under redefine / gensym / multi-define same
 // name; a name-only rewrite can silently attach an old closure to a new
 // define's stable id. Primary key = closure's stored stable_func_id
-// (stamped in aura_closure_set_name). #2175/#2542 backfill stamps sid=0
-// named closures via aura_get_or_preserve_stable_func_id, then remaps by
+// (stamped in aura_closure_set_name via get_or_preserve — #2550). Residual
+// #2175/#2542 backfill stamps sid=0 named closures (pre-#2550 only), then remaps by
 // that sid (stable_func_id path — not name-fallback rewrite).
 //
 // Issue #2542: no silent skip for anonymous (sid=0 + empty name) —
@@ -1944,9 +1979,10 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         const bool named = cid < g_closure_names.size() && !g_closure_names[cid].empty();
         const char* cname = named ? g_closure_names[cid].c_str() : nullptr;
 
-        // Issue #2175 / #2542: named sid==0 → backfill via
-        // aura_get_or_preserve_stable_func_id (assign/preserve stable id
-        // for the display name). If the resulting sid is in the reemit
+        // Issue #2175 / #2542 / #2550: residual named sid==0 → backfill via
+        // aura_get_or_preserve_stable_func_id. Steady-state named create
+        // already stamps non-zero (#2550), so this is rare (upgrade /
+        // test-forced residual only). If the resulting sid is in the reemit
         // set, fall through to the normal membership remap. Independent
         // of g_remap_name_fallback_enabled (stable_id path, not rewrite).
         bool via_backfill = false;

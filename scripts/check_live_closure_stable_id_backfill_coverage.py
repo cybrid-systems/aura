@@ -68,14 +68,20 @@ def check_contract() -> tuple[int, list[str]]:
             [
                 # Cite #2175.
                 "Issue #2175",
-                # Backfill branch reads stored_sid == 0 + name lookup.
+                # Backfill branch reads stored_sid == 0 + name lookup
+                # (cname from g_closure_names[cid], or inline c_str form).
                 "via_backfill",
-                "aura_lookup_stable_func_id(g_closure_names[cid].c_str())",
                 "g_closure_stable_func_ids[cid] = looked_up",
                 # Calls the dedicated counter helper inline.
                 "aura_bump_live_closure_stable_id_backfill_total(1)",
             ],
         )
+        # Accept either inline c_str form or cname local (post-#2542/#2550).
+        if (
+            "aura_lookup_stable_func_id(cname)" not in runtime
+            and "aura_lookup_stable_func_id(g_closure_names[cid].c_str())" not in runtime
+        ):
+            missing.append("aura_lookup_stable_func_id(cname|g_closure_names)")
         if missing:
             failures.append(f"src/compiler/aura_jit_runtime.cpp missing #2175 backfill pieces: {missing}")
 

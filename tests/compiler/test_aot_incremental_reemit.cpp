@@ -599,15 +599,19 @@ static void ac9d_legacy_sid_backfill_2175() {
     aura_set_aot_emit_region_mask(0);
     aura_set_aot_defuse_version(1);
 
-    // PART 1: legacy scenario — allocate closure + set_name BEFORE the
-    // define enters the map → stored stable_func_id = 0. Then process
-    // the define (post-closure). Reemit should backfill + remap the
-    // closure via the new Issue #2175 path (NOT the name-fallback path).
+    // PART 1: residual sid=0 scenario (pre-#2550 simulation). Named
+    // set_name now stamps non-zero (#2550); force sid=0 after set_name
+    // so the #2175 backfill safety net remains exercisable. Reemit
+    // should backfill + remap via stable-id path (NOT name-fallback).
     const auto c_legacy = aura_alloc_closure(300);
     CHECK(c_legacy >= 0, "alloc c_legacy");
     aura_closure_set_name(c_legacy, "legacy_backfill");
-    const auto sid_legacy = aura_get_or_preserve_stable_func_id("legacy_backfill", nullptr);
-    CHECK(sid_legacy != 0, "legacy stable id assigned (post-closure)");
+    CHECK(aura_get_closure_stable_func_id(c_legacy) != 0,
+          "AC9d PART1: #2550 set_name stamps non-zero sid");
+    aura_test_force_closure_stable_func_id(c_legacy, 0); // residual inject
+    CHECK(aura_get_closure_stable_func_id(c_legacy) == 0, "AC9d PART1: forced residual sid=0");
+    const auto sid_legacy = aura_lookup_stable_func_id("legacy_backfill");
+    CHECK(sid_legacy != 0, "legacy stable id already in map from set_name");
 
     ReemitFixture rf;
     rf.candidates = {{"legacy_backfill", 1, false}};

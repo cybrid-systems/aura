@@ -14514,6 +14514,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-full-restamp-wired", make_int(1)},
                 {"schema-2542", make_int(2542)},
                 {"issue-2542", make_int(2542)},
+                // Issue #2550: named set_name forces stable_func_id != 0 at create.
+                {"named-closure-stable-id-at-create-wired", make_int(1)},
+                {"schema-2550", make_int(2550)},
+                {"issue-2550", make_int(2550)},
             };
             return build_hash(kv);
         });

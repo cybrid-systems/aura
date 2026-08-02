@@ -3863,6 +3863,11 @@ aura_add_issue_test(test_is_stealable_snapshot_gate_2549)
 aura_issue_test_link_light(test_is_stealable_snapshot_gate_2549)
 add_dependencies(all_test_issue_targets test_is_stealable_snapshot_gate_2549)
 
+# Issue #2550: named closure create forces stable_func_id != 0.
+aura_add_issue_test(test_named_closure_stable_id_at_create_2550)
+aura_issue_test_link_llvm_jit(test_named_closure_stable_id_at_create_2550)
+add_dependencies(all_test_issue_targets test_named_closure_stable_id_at_create_2550)
+
 # Issue #2146: adaptive solve_delta clean-reverify limit + truncation Agent surface.
 aura_add_issue_test(test_adaptive_reverify_limit_2146)
 aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
