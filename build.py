@@ -5258,6 +5258,25 @@ def cmd_ir_const_string_intern_coverage():
     return 0
 
 
+def cmd_write_string_escape_coverage():
+    """Issue #2574: Scheme write string escape (JIT + TW).
+
+    write must escape quotes/backslash/controls; display stays raw;
+    TW io_print_val and JIT aura_display_value agree.
+    """
+    print(f"{B}=== write string escape coverage (#2574) ==={N}")
+    script = ROOT / "scripts" / "check_write_string_escape_2574.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("write string escape (#2574) coverage contract rows failed")
+        return 1
+    ok("write string escape (#2574) coverage clean")
+    return 0
+
+
 def cmd_linear_three_layer_wire_coverage():
     """Issue #2559: three-layer linear invariant wire inventory gate.
 
@@ -6495,6 +6514,7 @@ def cmd_gate():
         or cmd_while_define_oneshot_coverage()
         or cmd_module_export_display_coverage()
         or cmd_ir_const_string_intern_coverage()
+        or cmd_write_string_escape_coverage()
         or cmd_linear_three_layer_wire_coverage()
         or cmd_partial_cone_cap_coverage()
         or cmd_bidirectional_match_coverage()
@@ -7320,6 +7340,7 @@ def main():
         "while-define-oneshot": cmd_while_define_oneshot_coverage,
         "module-export-display": cmd_module_export_display_coverage,
         "ir-const-string-intern": cmd_ir_const_string_intern_coverage,
+        "write-string-escape": cmd_write_string_escape_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["all"]),

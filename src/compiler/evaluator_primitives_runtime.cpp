@@ -144,10 +144,41 @@ namespace {
         if (is_string(v) && !heap.empty()) {
             auto idx = as_string_idx(v);
             if (idx < heap.size()) {
-                if (quote)
-                    std::fprintf(stdout, "\"%s\"", heap[idx].c_str());
-                else
+                if (quote) {
+                    // Issue #2574: Scheme write external rep — escape ", \,
+                    // and common controls so the form is re-readable.
+                    // Matches JIT aura_display_value write_mode path.
+                    const auto& s = heap[idx];
+                    std::fputc('"', stdout);
+                    for (unsigned char c : s) {
+                        switch (c) {
+                            case '"':
+                                std::fputs("\\\"", stdout);
+                                break;
+                            case '\\':
+                                std::fputs("\\\\", stdout);
+                                break;
+                            case '\n':
+                                std::fputs("\\n", stdout);
+                                break;
+                            case '\r':
+                                std::fputs("\\r", stdout);
+                                break;
+                            case '\t':
+                                std::fputs("\\t", stdout);
+                                break;
+                            default:
+                                if (c < 0x20 || c == 0x7f)
+                                    std::fprintf(stdout, "\\x%02X;", static_cast<unsigned>(c));
+                                else
+                                    std::fputc(static_cast<int>(c), stdout);
+                                break;
+                        }
+                    }
+                    std::fputc('"', stdout);
+                } else {
                     std::fprintf(stdout, "%s", heap[idx].c_str());
+                }
                 return;
             }
         }
