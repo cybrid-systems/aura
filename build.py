@@ -5837,6 +5837,12 @@ def cmd_chaos_pr_hard_fail_gate():
 
     AC1: inject hard-fail (AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL=1) must fail.
     AC2: clean short profile must pass.
+
+    CI note: the GitHub Actions `gate` job is static-only (no cmake tree).
+    When the binary is absent and build/ is unconfigured, run static
+    coverage only and skip the runtime profile — `build-test` runs the
+    full hard-fail gate after `./build.py ci` produces the binary.
+    Local pre-push / configured trees still run the full runtime path.
     """
     print(f"{B}=== chaos PR hard-fail gate (#2554) ==={N}")
     rc = cmd_chaos_pr_hard_fail_coverage()
@@ -5844,7 +5850,15 @@ def cmd_chaos_pr_hard_fail_gate():
         return rc
 
     bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox_2352"
+    cmake_cache = BUILD / "CMakeCache.txt"
     if not bin_path.exists():
+        if not cmake_cache.exists():
+            # Static-only gate (CI gate job / fresh clone without build/).
+            ok(
+                "chaos PR hard-fail runtime skipped (no CMakeCache; static coverage only) "
+                "— run after ./build.py build or via build-test CI"
+            )
+            return 0
         info("building test_chaos_mutate_steal_gc_mailbox_2352…")
         nproc = os.cpu_count() or 4
         r = run(
