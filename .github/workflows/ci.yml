@@ -296,6 +296,10 @@ jobs:
     - name: Run unit tests under UBSAN
       env:
         UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+        # Match asan-verify: production residual Clear + hard paths are
+        # covered by dedicated issue tests; unit smoke under UBSAN uses
+        # sandbox-off so Guard dtor residual policy stays Soft (legacy).
+        AURA_SANDBOX: "off"
       run: |
         python3 build.py --sanitizer=ubsan test unit
         echo "✓ unit tests clean under UBSAN"
