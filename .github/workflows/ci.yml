@@ -43,8 +43,11 @@ env:
   # Cross-run ccache caused stale-object flakes; compile fresh every job.
   CCACHE_DISABLE: 1
   # Issue #873/#874 Phase 1
+  # Prefer mold for wall time, but keep link pool ≤2: concurrent mold
+  # of 400+ × ~70MB LLVM test binaries thrashs runner RAM/disk and
+  # dies with "mold: failed to write… Disk full? / SIGBUS".
   AURA_USE_MOLD: "1"
-  AURA_LINK_JOBS: "4"
+  AURA_LINK_JOBS: "2"
   NINJA_STATUS: "[%f/%t %es] "
   # Issue #1569: hard benchmark SLO gate (regression → job fail)
   AURA_CI_STRICT_BENCH: "1"

@@ -93,10 +93,11 @@ set(CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_SOURCE_DIR}/cmake/aura_module_launcher.
 
 # Issue #873/#874: limit concurrent links. Each test binary links
 # aura_test_objects + (often) aura_jit_test_objects + LLVM — parallel
-# links thrash RAM on 2-core CI runners more than they save wall time.
-# Compiles remain unbounded via ninja -j. Override: -DAURA_LINK_JOBS=N.
+# mold/lld of many ~70MB LLVM test bins thrashs RAM and can SIGBUS /
+# "Disk full?" on GitHub Actions. Compiles stay unbounded via ninja -j.
+# Override: -DAURA_LINK_JOBS=N (CI sets 2).
 if(NOT DEFINED AURA_LINK_JOBS)
-    set(AURA_LINK_JOBS 4)
+    set(AURA_LINK_JOBS 2)
 endif()
 if(AURA_LINK_JOBS GREATER 0)
     set_property(GLOBAL PROPERTY JOB_POOLS "link_pool=${AURA_LINK_JOBS}")

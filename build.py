@@ -536,6 +536,63 @@ def cmd_build():
         issue_mode = "none"
         info(f"issue tests: skipped under --sanitizer={san_name} (set AURA_ISSUE_BUILD=all to force full matrix)")
     t0 = time.time()
+
+    def _issue_ninja(targets: list[str] | None, *, jobs: int, label: str) -> int:
+        """Build issue targets; return ninja rc. Caps peak link thrash."""
+        cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{jobs}"]
+        if targets:
+            cmd.extend(targets)
+        else:
+            cmd.append("all_test_issue_targets")
+        info(label)
+        return run(cmd, cwd=ROOT)
+
+    def _retry_issue_build(first_cmd_jobs: int, targets: list[str] | None, label: str) -> int:
+        """Retry failed issue links at lower -j after mold/disk SIGBUS flakes.
+
+        mold can exit with SIGBUS / 'Disk full?' when several ~70MB LLVM
+        test binaries link concurrently even with free disk (mmap pressure).
+        Drop incomplete outputs and re-link with -j2 then -j1.
+        """
+        r = _issue_ninja(targets, jobs=first_cmd_jobs, label=label)
+        if r == 0:
+            return 0
+        # Drop zero-length / truncated binaries so ninja re-links cleanly.
+        for p in BUILD.glob("test_*"):
+            try:
+                if p.is_file() and p.stat().st_size < 1024:
+                    p.unlink(missing_ok=True)
+                    warn(f"removed truncated link output {p.name}")
+            except OSError:
+                pass
+        try:
+            import shutil as _shutil
+
+            usage = _shutil.disk_usage(BUILD)
+            warn(
+                f"issue-test build failed (rc={r}); free disk "
+                f"{usage.free // (1024**3)} GiB of {usage.total // (1024**3)} GiB — retrying colder"
+            )
+        except OSError:
+            warn(f"issue-test build failed (rc={r}) — retrying colder")
+        r = _issue_ninja(
+            targets,
+            jobs=min(2, first_cmd_jobs),
+            label="issue tests: retry -j2 (mold/disk flake)",
+        )
+        if r == 0:
+            return 0
+        return _issue_ninja(
+            targets,
+            jobs=1,
+            label="issue tests: retry -j1 (serial link)",
+        )
+
+    # Cap ninja graph width for full issue matrix: link_pool already
+    # limits concurrent ld, but huge -j still schedules hundreds of
+    # ready links and spikes mold RSS → SIGBUS on 7–14 GiB runners.
+    issue_jobs = max(1, min(nproc, 4))
+
     if issue_mode in ("none", "skip", "off", "0"):
         info("issue tests: skipped (AURA_ISSUE_BUILD=none)")
         r = 0
@@ -543,37 +600,26 @@ def cmd_build():
         from issue_tier import BUNDLE_PROFILES
 
         targets = [f"test_issues_{p}" for p in BUNDLE_PROFILES]
-        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]
-        info(f"issue tests: tier=full mode=bundles ({len(targets)} bundle targets)")
-        r = run(issue_cmd, cwd=ROOT)
-        if r != 0:
-            warn("issue-test build failed — retrying once (module dyndep flake workaround)")
-            r = run(issue_cmd, cwd=ROOT)
+        r = _retry_issue_build(
+            issue_jobs,
+            targets,
+            f"issue tests: tier=full mode=bundles ({len(targets)} bundle targets, -j{issue_jobs})",
+        )
     elif tier == "full":
-        issue_cmd = [
-            "ninja",
-            "-C",
-            str(BUILD),
-            "-k",
-            "0",
-            f"-j{nproc}",
-            "all_test_issue_targets",
-        ]
-        info("issue tests: tier=full (bundles + standalones; duals excluded)")
-        r = run(issue_cmd, cwd=ROOT)
-        if r != 0:
-            warn("issue-test build failed — retrying once (module dyndep flake workaround)")
-            r = run(issue_cmd, cwd=ROOT)
+        r = _retry_issue_build(
+            issue_jobs,
+            None,
+            f"issue tests: tier=full (bundles + standalones; duals excluded, -j{issue_jobs})",
+        )
     else:
         targets = resolve_issue_targets("fast")
-        issue_cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{nproc}", *targets]
         changed = [t for t in targets if t not in set(load_fast_targets())]
         extra = f", +{len(changed)} git-changed" if changed else ""
-        info(f"issue tests: tier=fast ({len(targets)} targets{extra})")
-        r = run(issue_cmd, cwd=ROOT)
-        if r != 0:
-            warn("issue-test build failed — retrying once (module dyndep flake workaround)")
-            r = run(issue_cmd, cwd=ROOT)
+        r = _retry_issue_build(
+            issue_jobs,
+            targets,
+            f"issue tests: tier=fast ({len(targets)} targets{extra}, -j{issue_jobs})",
+        )
     _phase("build issue tests", t0)
     if r != 0:
         # Don't fail cmd_build on partial-build errors —
