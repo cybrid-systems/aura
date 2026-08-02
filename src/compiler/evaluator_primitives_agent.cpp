@@ -3482,6 +3482,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                       static_cast<std::int64_t>(aura::orch::resolve_mailbox_bp_window_ms()));
             insert_kv("mailbox-bp-admit-threshold",
                       static_cast<std::int64_t>(aura::orch::resolve_mailbox_bp_admit_threshold()));
+            // Issue #2535: production default threshold (compile-time constant)
+            // so Agents can distinguish env override vs default-on mild gate.
+            insert_kv("mailbox-bp-admit-threshold-default",
+                      static_cast<std::int64_t>(aura::orch::kMailboxBpAdmitThresholdDefault));
+            insert_kv("schema-2535", aura::orch::kMailboxBpAdmitDefaultOnIssue);
+            insert_kv("issue-2535", aura::orch::kMailboxBpAdmitDefaultOnIssue);
+            insert_kv("mailbox-bp-admit-default-on-wired", 1);
             insert_kv("schema-2398", aura::orch::kMailboxBpRecentWindowIssue);
             insert_kv("issue-2398", aura::orch::kMailboxBpRecentWindowIssue);
             insert_kv("mailbox-bp-decay-wired", 1);

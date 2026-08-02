@@ -2262,6 +2262,21 @@ def cmd_check_2533_coverage():
     return 0
 
 
+def cmd_check_2535_coverage():
+    """Issue #2535: production default mild mailbox BP admit (threshold=32)."""
+    print(f"{B}=== mailbox BP admit default-on coverage (#2535) ==={N}")
+    script = ROOT / "scripts" / "check_2535.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox BP admit default-on (#2535) coverage failed")
+        return 1
+    ok("mailbox BP admit default-on (#2535) coverage clean")
+    return 0
+
+
 def cmd_check_2534_coverage():
     """Issue #2534: security-posture + correlated-trail."""
     print(f"{B}=== security posture trail coverage (#2534) ==={N}")
@@ -5965,6 +5980,13 @@ def cmd_gate():
         or cmd_shape_storm_isolation_coverage()
         or cmd_incremental_soundness_prod_coverage()
         or cmd_register_render_hot_prim_coverage()
+        or cmd_check_2529_coverage()
+        or cmd_check_2530_coverage()
+        or cmd_check_2531_coverage()
+        or cmd_check_2532_coverage()
+        or cmd_check_2533_coverage()
+        or cmd_check_2534_coverage()
+        or cmd_check_2535_coverage()
     )
 
 

@@ -78,22 +78,28 @@ inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
 // reaping prematurely, short enough that production cancel
 // storms converge within a minute.
 inline constexpr std::uint64_t kJoinDrainResidualHardMsDefault = 30000;
-// Issue #2228: mailbox-backpressure admit threshold default.
+// Issue #2228 / #2535: mailbox-backpressure admit threshold default.
 // spawn_agent_with_mailbox soft-rejects new agents (with attach_mailbox)
 // when the process-wide mailbox_bp_recent_total is >= this threshold.
-// Default = 0 disables the admit gate (legacy callers unchanged unless
-// env set). Env: AURA_ORCH_BP_ADMIT_THRESHOLD=N (N>0 enables gate).
-inline constexpr std::uint64_t kMailboxBpAdmitThresholdDefault = 0;
+// Issue #2535: production default is a mild gate (32) so producer BP storms
+// cannot unbounded-spawn consumers without env opt-in. Opt-out:
+//   AURA_ORCH_BP_ADMIT_THRESHOLD=0  — disable gate (legacy / diagnostic,
+//   zero cost: no decay work, no BP reject). N>0 enables/overrides.
+// Invalid env falls back to kMailboxBpAdmitThresholdDefault.
+inline constexpr std::uint64_t kMailboxBpAdmitThresholdDefault = 32;
 // Issue #2398 / #2228 lineage sentinel for query:orch-module-stats.
 inline constexpr int kMailboxBpAdmitIssue = 2228;
 inline constexpr int kMailboxBpRecentWindowIssue = 2398;
+// Issue #2535: production-default mild BP admit (threshold default non-zero).
+inline constexpr int kMailboxBpAdmitDefaultOnIssue = 2535;
 // Issue #2399: AgentScope concurrent access detection (metric + optional abort).
 inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
 
-// Issue #2228: env resolution for the BP admit threshold. Returns
-// the configured threshold (0 = admit control off). Parses
-// AURA_ORCH_BP_ADMIT_THRESHOLD as a uint64; invalid input falls
-// back to kMailboxBpAdmitThresholdDefault.
+// Issue #2228 / #2535: env resolution for the BP admit threshold.
+// Returns the configured threshold (0 = admit control off). Parses
+// AURA_ORCH_BP_ADMIT_THRESHOLD as a uint64; missing/empty/invalid
+// falls back to kMailboxBpAdmitThresholdDefault (32, #2535).
+// Explicit env=0 remains the production opt-out.
 inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
     const char* env = std::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
     if (!env || !*env)
@@ -710,9 +716,10 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // (quota_dimension = "fibers" / "memory"); BP is a separate
     // admission dimension so Agent frameworks can branch on it.
     if (spec.attach_mailbox) {
-        // Issue #2228 / #2398: mailbox-BP admit gate.
-        // threshold==0 → admit control off (legacy); zero cost beyond
-        // the single threshold load (no decay work, no BP reject).
+        // Issue #2228 / #2398 / #2535: mailbox-BP admit gate.
+        // Production default threshold=32 (#2535). threshold==0 (env
+        // opt-out) → admit control off; zero cost beyond the single
+        // threshold load (no decay work, no BP reject).
         const auto threshold = resolve_mailbox_bp_admit_threshold();
         if (threshold > 0) {
             // Issue #2398: quiet-period decay — if no BP events for
