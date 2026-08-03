@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 759 | Preferred destination suites |
-| **Total scanned** | **759** | |
+| `tests/core/test_*.cpp` | 760 | Preferred destination suites |
+| **Total scanned** | **760** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 218 | 218 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 89 | 89 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 90 | 90 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 20 | 20 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 75 | 75 | P2 — link-profile heavy; migrate AC smoke first |
@@ -546,6 +546,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_mailbox_hold_exit_drain_2511.cpp`
 - `tests/serve/test_mailbox_hold_starvation_hard_2551.cpp`
 - `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp`
+- `tests/serve/test_mailbox_tenant_principal_2592.cpp`
 - `tests/core/test_marker_metadata_lock.cpp`
 - `tests/compiler/test_matcher_stable_captures.cpp`
 - `tests/compiler/test_memo_goal_epoch_health_2359.cpp`
@@ -1264,13 +1265,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (89)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (90)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (89)
+#### domain/ (90)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr_2538.cpp` (#2538) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1318,6 +1319,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_mailbox_hold_exit_drain_2511.cpp` (#2511) [domain_suite, theme_serve] — AC1: outermost Guard exit calls drain_deferred_under_budget (source-cite)
 - `tests/serve/test_mailbox_hold_starvation_hard_2551.cpp` (#2551) [domain_suite, theme_serve] — AC1: Production/Strict + residual after budget → hard counter + flag
 - `tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp` (#2188) [large, domain_suite, theme_serve] — Issue #2347 — Strict/hard audit + optional Guard-window threshold
+- `tests/serve/test_mailbox_tenant_principal_2592.cpp` (#2592) [domain_suite, theme_serve] — tests/serve/test_mailbox_tenant_principal_2592.cpp
 - `tests/serve/test_mutation_safety_snapshot_steal_2184.cpp` (#2184) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
 - `tests/orch/test_orch_admission_decay.cpp` (—) [domain_suite, theme_orch] — AC1: decay window — BP event → counter > 0 → spawn denied
 - `tests/serve/test_orch_agent_mutation_boundary_2118.cpp` (#2118) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false

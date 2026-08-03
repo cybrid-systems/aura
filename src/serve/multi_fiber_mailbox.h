@@ -709,7 +709,23 @@ public:
 
     [[nodiscard]] bool try_pop(MailMessage& out) {
         std::lock_guard lock(mu_);
-        return try_pop_unlocked(out, /*for_fiber=*/0);
+        if (!try_pop_unlocked(out, /*for_fiber=*/0))
+            return false;
+        // Issue #2592: deliver-side principal verify (TenantScope install
+        // + mismatch bump). Re-call aura_fiber_install_tenant_scope_for_resume
+        // from the receiving fiber; the hook is idempotent (no-op when
+        // ambient already matches assigned_tenant_id) and bumps
+        // Fiber::tenant_scope_mismatch_total when forged ambient is
+        // detected (e.g., via cross-fiber closure apply that changed
+        // capability_tenant_id_ without proper scope). Mailbox already
+        // enqueued is NOT killed (additive over #2188 mutation-boundary
+        // gate). Soft / sandbox=off path is permissive (hook no-op when
+        // production sandbox inactive — see fiber.cpp #2491). AC1 / AC2
+        // / AC4 verified by tests/orch/test_mailbox_tenant_principal_2592.
+        if (g_current_fiber != nullptr && g_current_fiber->assigned_tenant_id() != 0) {
+            aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
+        }
+        return true;
     }
 
     // Blocking recv for the current fiber (or host poll if no fiber).
@@ -738,8 +754,17 @@ public:
             {
                 std::lock_guard lock(mu_);
                 MailMessage out;
-                if (try_pop_unlocked(out, for_fiber))
+                if (try_pop_unlocked(out, for_fiber)) {
+                    // Issue #2592: deliver-side principal verify (see try_pop
+                    // above). Recv path covers try_recv (which delegates here
+                    // with wait=false, timeout_ms=0). Hook is idempotent;
+                    // ambient != assigned → bump tenant_scope_mismatch_total
+                    // + reinstall correct TenantScope (#2491 machinery).
+                    if (g_current_fiber != nullptr && g_current_fiber->assigned_tenant_id() != 0) {
+                        aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
+                    }
                     return out;
+                }
                 if (closed_.load(std::memory_order_relaxed))
                     return std::nullopt;
             }
