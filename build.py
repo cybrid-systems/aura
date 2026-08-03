@@ -6574,6 +6574,33 @@ def cmd_layout_stamp_fence_coverage():
     return 0
 
 
+def cmd_closure_sync_remount_2602_coverage():
+    """Issue #2602: synchronous remount_or_force_deopt walk for named
+    live closures (stable_func_id != 0) on reemit success. Refines
+    #2542 (restamp) + #2503 (remount shared path) + #2550 (named
+    stable_func_id at create). Closes the MustDeopt window between
+    reemit and first call.
+
+    Validates the 2 new sync counters (live_closure_sync_remount_ok
+    / _fail_total, distinct from call-time closure_capture_remount_*),
+    sync walk function + declaration + stub, named-only skip
+    (anonymous sid=0 stay on call-time path), zero-cost stub,
+    query surface keys + schema cross-links (#2542 / #2503 / #2550
+    preserved), and ac2602_* test sections.
+    """
+    print(f"{B}=== closure sync remount coverage (#2602) ==={N}")
+    script = ROOT / "scripts" / "check_closure_sync_remount_2602.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("closure sync remount coverage contract rows failed")
+        return 1
+    ok("closure sync remount coverage clean")
+    return 0
+
+
 def cmd_aot_reload_policy_coverage():
     """Issue #2249: Region | Staging auto-retry conservative path (extend #2232).
 
@@ -6813,6 +6840,7 @@ def cmd_gate():
         or cmd_capture_cell_remap_coverage()
         or cmd_general_object_pin_coverage()
         or cmd_aot_per_eval_slot_invalidate_coverage()
+        or cmd_closure_sync_remount_2602_coverage()
         or cmd_aot_exhausted_min_dirty_retry_2601_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
@@ -7648,6 +7676,7 @@ def main():
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
         "adaptive-thr": cmd_adaptive_thr_coverage,
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
+        "closure-sync-remount-2602": cmd_closure_sync_remount_2602_coverage,
         "aot-exhausted-min-dirty-retry-2601": cmd_aot_exhausted_min_dirty_retry_2601_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,

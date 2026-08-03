@@ -3211,6 +3211,19 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 aura::compiler::hot_update_registry().on_live_closure_remap(remapped);
             }
         }
+        // Issue #2602: synchronous remount walk for named live closures
+        // (stable_func_id != 0). Closes the MustDeopt window between
+        // reemit and first call — reemit success already restamped
+        // epoch + env_gen (#2542), this completes the loop by calling
+        // aura_remount_or_force_deopt on each named closure so the
+        // first call after reemit continues native without MustDeopt.
+        // Anonymous (sid=0) stay on the existing call-time path (#2550).
+        // Soft zero-cost when no live named closures (decide path
+        // short-circuits before the inner loop — AC4). Function bumps
+        // live_closure_sync_remount_ok_total / _fail_total internally.
+        std::uint64_t sync_ok = 0;
+        std::uint64_t sync_fail = 0;
+        aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
     }
 
     // Issue #2016: adaptive region mask based on this call's dirty density

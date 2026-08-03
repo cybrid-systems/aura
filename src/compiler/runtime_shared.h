@@ -129,6 +129,15 @@ extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t*
 extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch);
+// Issue #2602: synchronous remount walk for named live closures
+// (stable_func_id != 0) on reemit success. Closes the MustDeopt
+// window between reemit and first call. Bumps
+// live_closure_sync_remount_ok_total / _fail_total (distinct from
+// call-time closure_capture_remount_*). Anonymous (sid=0) stay on
+// the existing call-time path. Zero extra work when no live named
+// closures. out params may be null.
+extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
+                                                      std::uint64_t* fail_count);
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
