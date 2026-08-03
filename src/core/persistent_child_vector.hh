@@ -795,6 +795,21 @@ static_assert(detail::safe_pcv_soa_full_shape<SafePCVSpan<std::uint32_t>>(),
               "Issue #1624: SafePCVSpan must satisfy SoAColumnarFull shape");
 static_assert(detail::safe_pcv_soa_full_shape<PersistentChildVector<std::uint32_t>>(),
               "Issue #1624: PersistentChildVector must satisfy SoAColumnarFull shape");
+// Issue #2614: ChildColumnar shape (size/empty/data + begin/end) for hot walks.
+namespace detail {
+    template <typename C> constexpr bool safe_pcv_child_columnar_shape() {
+        return safe_pcv_soa_shape<C>() &&
+            requires(const C& c)
+        {
+            {c.begin()};
+            {c.end()};
+        };
+    }
+} // namespace detail
+static_assert(detail::safe_pcv_child_columnar_shape<SafePCVSpan<std::uint32_t>>(),
+              "Issue #2614: SafePCVSpan must satisfy ChildColumnar shape (begin/end)");
+static_assert(detail::safe_pcv_child_columnar_shape<PersistentChildVector<std::uint32_t>>(),
+              "Issue #2614: PersistentChildVector must satisfy ChildColumnar shape");
 
 } // namespace aura::ast
 

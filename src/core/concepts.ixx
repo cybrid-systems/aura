@@ -469,4 +469,30 @@ export template <typename C> consteval void assert_child_columnar() {
     static_assert(ChildColumnar<C>, "type must satisfy ChildColumnar (#1520/#1624)");
 }
 
+// ── Issue #2614: ChildrenColumnarProvider ───────────────────────
+//
+// AST containers used on the AI mutation + query hot path must expose
+// children_columnar(id) returning a ChildColumnar view (SafePCVSpan).
+// This is the compile-time gate that prevents non-contiguous children
+// views from re-entering walk/query/PCV templates without a failure.
+export template <typename C, typename Id = std::uint32_t>
+concept ChildrenColumnarProvider = requires(const C& c, Id id) {
+    // children_columnar must yield a ChildColumnar-compatible view.
+    requires ChildColumnar<std::remove_cvref_t<decltype(c.children_columnar(id))>>;
+};
+
+// Issue #2614: production hot walk over a children *column* (not the AST).
+// Constrains the column type with ChildColumnar so non-contiguous /
+// non-SoA stubs fail to instantiate. Zero runtime cost (-DNDEBUG).
+export template <typename Col, typename Fn>
+    requires ChildColumnar<Col>
+constexpr std::size_t walk_children_column(const Col& cols, Fn&& fn) {
+    std::size_t count = 0;
+    for (auto&& child : cols) {
+        fn(child);
+        ++count;
+    }
+    return count;
+}
+
 } // namespace aura::core

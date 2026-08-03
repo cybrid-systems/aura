@@ -895,6 +895,12 @@ export struct PostRestoreReport {
 // (constrained via ASTContainer<C, Id>), and Visitor is the
 // per-child callable. The visitor receives each child Id by value.
 //
+// Issue #2614: production path prefers ChildrenColumnarProvider —
+// children_columnar(id) must yield ChildColumnar (SafePCVSpan). When
+// the AST provides children_columnar, the view is forced through
+// walk_children_column (requires ChildColumnar). Non-columnar views
+// fail at compile time on the hot template.
+//
 // Why a free template instead of a method on ASTIndex?
 //   - Demonstrates that the ASTContainer concept actually compiles
 //     against a real query-layer consumer.
@@ -905,21 +911,40 @@ export template <typename Id, typename C, typename Visitor>
     requires aura::core::ASTContainer<C, Id> && std::invocable<Visitor&, Id>
 constexpr std::size_t walk_children(C& ast, Id root, Visitor&& vis) {
     std::size_t count = 0;
-    // Issue #1520: prefer children_columnar / children_safe when available
-    // so hot walks pin PCV storage and bump columnar metrics.
+    // Issue #1520 / #2614: prefer children_columnar when available so hot
+    // walks pin PCV storage, bump columnar metrics, and enforce ChildColumnar.
     if constexpr (requires { ast.children_columnar(root); }) {
         auto safe = ast.children_columnar(root);
-        for (auto child : safe) {
-            vis(static_cast<Id>(child));
-            ++count;
-        }
+        using Col = std::remove_cvref_t<decltype(safe)>;
+        // Issue #2614: compile-time gate — non-columnar return types fail here.
+        static_assert(aura::core::ChildColumnar<Col>,
+                      "Issue #2614: children_columnar must yield ChildColumnar");
+        count = aura::core::walk_children_column(safe,
+                                                 [&](auto child) { vis(static_cast<Id>(child)); });
     } else {
+        // Cold / test-only AST stubs without children_columnar — not production.
         for (auto child : ast.children(root)) {
             vis(static_cast<Id>(child));
             ++count;
         }
     }
     return count;
+}
+
+// Issue #2614: production hot walk entry that *requires* ChildrenColumnarProvider.
+// Intentionally stricter than walk_children — non-columnar ASTs fail to compile.
+export template <typename Id, typename C, typename Visitor>
+    requires aura::core::ASTContainer<C, Id> && aura::core::ChildrenColumnarProvider<C, Id> &&
+             std::invocable<Visitor&, Id>
+constexpr std::size_t walk_children_hot(C& ast, Id root, Visitor&& vis) {
+    auto safe = ast.children_columnar(root);
+    using Col = std::remove_cvref_t<decltype(safe)>;
+    // Issue #2614: both ChildColumnar (range+data) and SoAColumnarFull (PCV shape).
+    static_assert(aura::core::ChildColumnar<Col>,
+                  "Issue #2614: walk_children_hot requires ChildColumnar view");
+    static_assert(aura::core::SoAColumnarFull<Col>,
+                  "Issue #2614: walk_children_hot requires SoAColumnarFull children column");
+    return aura::core::walk_children_column(safe, [&](auto child) { vis(static_cast<Id>(child)); });
 }
 
 // ── count_nodes_with_predicate — recursive DFS counter ────────────
@@ -949,9 +974,9 @@ export template <typename Id, typename C, typename P>
     std::size_t count = 0;
     if (static_cast<bool>(pred(root)))
         ++count;
-    for (auto child : ast.children(root)) {
-        count += count_nodes_with_predicate(ast, static_cast<Id>(child), pred);
-    }
+    // Issue #2614: recurse via walk_children (columnar-forced when available).
+    walk_children<Id>(ast, root,
+                      [&](Id child) { count += count_nodes_with_predicate(ast, child, pred); });
     return count;
 }
 
@@ -974,12 +999,15 @@ export template <typename Id, typename C, typename P>
 [[nodiscard]] constexpr std::optional<Id> find_first_node_with(C& ast, Id root, P&& pred) {
     if (static_cast<bool>(pred(root)))
         return root;
-    for (auto child : ast.children(root)) {
-        if (auto found = find_first_node_with(ast, static_cast<Id>(child), pred)) {
-            return found;
-        }
-    }
-    return std::nullopt;
+    // Issue #2614: child walk via columnar-forced walk_children.
+    std::optional<Id> found;
+    walk_children<Id>(ast, root, [&](Id child) {
+        if (found)
+            return;
+        if (auto f = find_first_node_with(ast, child, pred))
+            found = f;
+    });
+    return found;
 }
 
 // ── walk_ancestors — parent-chain upward walk ──────────────
@@ -4669,21 +4697,23 @@ public:
         return children_safe_view(id);
     }
 
-    // Issue #1520 / #1624: preferred columnar children accessor (alias of
+    // Issue #1520 / #1624 / #2614: preferred columnar children accessor (alias of
     // children_safe with explicit SoA-path metrics). Hot paths
-    // (query:pattern, mark_dirty_upward children walk, walk_children)
-    // should use this instead of raw children() spans.
+    // (query:pattern, mark_dirty_upward children walk, walk_children / walk_children_hot)
+    // must use this instead of raw children() spans. Return type is forced
+    // ChildColumnar + SoAColumnarFull at compile time (see static_assert below).
     [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
         return children_safe_view(id);
     }
 
-    // Issue #1624: contract-guarded single-child read via columnar path
+    // Issue #1624 / #2614: contract-guarded single-child read via columnar path
     // (SafePCVSpan / PCV data). Prefer over raw children()[i] on hot paths.
     [[nodiscard]] NodeId get_child(NodeId id, std::uint32_t idx) const
         pre(id == NULL_NODE || id < children_.size()) {
         if (id == NULL_NODE || id >= children_.size())
             return NULL_NODE;
         auto col = children_columnar(id);
+        // Issue #2614: col is ChildColumnar (SafePCVSpan); walk via hot helper.
         if (idx >= col.size())
             return NULL_NODE;
         return col[idx];
@@ -9614,14 +9644,17 @@ public:
     // each non-NULL child is delivered as a StableNodeRef. Prefer
     // children_stable() when storing refs across mutation boundaries.
     template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
-        auto safe = children_safe_view(id); // Issue #2036 pin
+        // Issue #2036 / #2614: pin via SafePCVSpan; force ChildColumnar walk.
+        auto safe = children_columnar(id);
+        using Col = decltype(safe);
+        static_assert(aura::core::ChildColumnar<Col>,
+                      "Issue #2614: for_each_stable_child requires ChildColumnar");
         children_stable_safe_default_total_.fetch_add(1, std::memory_order_relaxed);
-        for (std::size_t i = 0; i < safe.size(); ++i) {
-            auto cid = safe[i];
+        aura::core::walk_children_column(safe, [&](NodeId cid) {
             if (cid == NULL_NODE)
-                continue;
+                return;
             fn(make_ref(cid));
-        }
+        });
     }
 
     // Issue #398: count of non-NULL stable children. O(N)
@@ -9800,5 +9833,15 @@ export void fixup_deltas(FlatAST& ast);
 
 // ── Bridge from pointer tree to FlatAST ────────────────────────
 
+// Issue #2614: FlatAST production children surface is ChildColumnar + SoAColumnarFull.
+// Compile-time gate — non-columnar PCV regressions fail the build.
+static_assert(aura::core::ChildColumnar<SafePCVSpan<NodeId>>,
+              "Issue #2614: SafePCVSpan must satisfy ChildColumnar");
+static_assert(aura::core::SoAColumnarFull<SafePCVSpan<NodeId>>,
+              "Issue #2614: SafePCVSpan must satisfy SoAColumnarFull");
+static_assert(aura::core::SoAColumnarFull<PersistentChildVector<NodeId>>,
+              "Issue #2614: PersistentChildVector must satisfy SoAColumnarFull");
+static_assert(aura::core::ChildrenColumnarProvider<FlatAST, NodeId>,
+              "Issue #2614: FlatAST must provide children_columnar → ChildColumnar");
 
 } // namespace aura::ast
