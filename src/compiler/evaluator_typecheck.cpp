@@ -20,6 +20,7 @@ import aura.core.ast;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
+import aura.compiler.dirty_propagation; // Issue #2610: type_ir_union_cone_nonempty
 import aura.compiler.value;
 import aura.diag;
 
@@ -747,6 +748,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     //   true|true         | must run SDO; no vacuous SOLVED without SDO
     //   false|false       | structural OK
     //   false|true        | observe + still solve; never silent skip under Full
+    //
+    // Issue #2610: auto-detect expected_partial from dirty cone / CS work
+    // when Agents under-mark. Agent API (txn_dirty) unchanged; effective
+    // expected drives hard-miss + force-SDO under production/Full.
     cr.solve_ok = true;
     cr.blame_ok = true;
     bool sdo_provenance_continuity = true;
@@ -754,7 +759,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     bool sdo_blame_nonvacuous = false;
     bool partial_cs_hard_empty = false; // Issue #2262 / #2345
     bool sdo_entered = false;           // Issue #2509: SDO actually ran
-    const bool expected_partial = txn_dirty();
+    const bool agent_expected_partial = txn_dirty();
     bool has_work = false;
     if (commit_type_checker_opaque_) {
         auto* ctc0 = static_cast<TypeChecker*>(commit_type_checker_opaque_);
@@ -762,23 +767,64 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     } else {
         has_work = commit_cs_live_;
     }
-    // Matrix cell counters (#2509).
+    // Issue #2610: type∪IR dirty cone (public helper) — under-marked Agents
+    // may leave txn_dirty false while cascade still non-empty.
+    const bool cone_dirty = aura::compiler::dirty::type_ir_union_cone_nonempty();
+    const bool under_marked = !agent_expected_partial && (cone_dirty || has_work);
+    bool auto_partial_from_cone = false;
+    bool expected_partial = agent_expected_partial;
+    if (under_marked) {
+        // Treat as unexpected work (has_work already counted below; cone-only
+        // also bumps unexpected so Agents see under-mark signal).
+        if (!has_work && cone_dirty) {
+            c.composite_commit_unexpected_cs_work_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_unexpected_cs_work_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
+        const bool hard_auto =
+            composite_empty_cs_hard_reject_enabled() || production_defaults_active() ||
+            get_strategy() == AuditStrategy::Full || aura::core::sandbox::is_strict();
+        if (hard_auto) {
+            // Force effective expected_partial so empty-CS hard-miss / SDO
+            // requirements apply (anti false-green vacuous commit).
+            expected_partial = true;
+            auto_partial_from_cone = true;
+            c.composite_commit_auto_partial_from_cone_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_auto_partial_from_cone_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        } else {
+            // Soft: observe only — do not change effective expected_partial.
+            c.composite_commit_auto_partial_from_cone_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_auto_partial_from_cone_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+        (void)agent_expected_partial;
+    }
+    // Matrix cell counters (#2509) — use effective expected after auto.
     if (expected_partial && has_work) {
         c.composite_commit_expected_has_work_total.fetch_add(1, std::memory_order_relaxed);
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->composite_commit_expected_has_work_total.fetch_add(1, std::memory_order_relaxed);
     }
-    if (!expected_partial && has_work) {
+    if (!agent_expected_partial && has_work) {
         // AC4: observe unexpected CS work; under Full/production still solve
         // (never silent drop of dirty CS). Soft Sampled: observe only for the
         // matrix cell (solve still runs when reuse path is available).
+        // (Cone-only under_marked already bumped above when !has_work.)
         c.composite_commit_unexpected_cs_work_total.fetch_add(1, std::memory_order_relaxed);
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->composite_commit_unexpected_cs_work_total.fetch_add(1, std::memory_order_relaxed);
     }
     // When has_work, force live-CS path even if commit_cs_live_ lagged.
-    const bool require_sdo = has_work; // AC2/AC4: dirty CS must enter SDO
-    if (type_registry_ || commit_type_checker_opaque_) {
+    // Issue #2610: also force SDO when auto-partial under production and
+    // cone dirty (even if CS empty — greenfield SDO then hard-miss).
+    const bool require_sdo =
+        has_work || (auto_partial_from_cone && (cone_dirty || expected_partial));
+    if (type_registry_ || commit_type_checker_opaque_ || require_sdo) {
         try {
             ConstraintSystem* cs_ptr = nullptr;
             std::span<const aura::core::TypeId> occ_span{};

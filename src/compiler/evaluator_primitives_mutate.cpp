@@ -6584,6 +6584,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                               std::memory_order_relaxed)));
                 insert_kv("schema-2509", 2509);
                 insert_kv("issue-2509", 2509);
+                // Issue #2610: auto-detect expected_partial from dirty cone.
+                insert_kv(
+                    "composite-commit-auto-partial-from-cone-total",
+                    static_cast<std::int64_t>(c.composite_commit_auto_partial_from_cone_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("composite-commit-auto-partial-from-cone-observe-total",
+                          static_cast<std::int64_t>(
+                              c.composite_commit_auto_partial_from_cone_observe_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("composite-auto-partial-from-cone-wired", 1);
+                insert_kv("commit-readiness-force-reason-auto-partial", 6);
+                insert_kv("schema-2610", 2610);
+                insert_kv("issue-2610", 2610);
                 insert_kv("commit-cs-live", ev.commit_cs_live() ? 1 : 0);
                 insert_kv("composite-commit-cs-reuse-wired", 1);
                 insert_kv("schema-2180", 2180);

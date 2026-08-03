@@ -8564,6 +8564,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> composite_commit_unexpected_cs_work_total{0};
     std::atomic<std::uint64_t> composite_commit_expected_has_work_total{0};
     std::atomic<std::uint64_t> composite_commit_sdo_entered_total{0};
+    // Issue #2610: auto-detect expected_partial from dirty cone (mirrors audit).
+    std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_total{0};
+    std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_observe_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
     // Issue #1528: O(delta) re-inference observability.
