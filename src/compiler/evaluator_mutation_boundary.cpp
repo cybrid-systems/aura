@@ -904,6 +904,23 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 auto v = reg.take_deferred_reemit_version();
                 if (v == 0)
                     v = aura_get_aot_defuse_version();
+                // Issue #2606: current-eval ownership for multi-AotState reemit.
+                struct ReemitEvalOwnerGuard {
+                    void* prev_reemit;
+                    void* prev_reg;
+                    explicit ReemitEvalOwnerGuard(void* e) noexcept
+                        : prev_reemit(aura_aot_get_reemit_owner_eval())
+                        , prev_reg(aura_aot_get_register_owner_eval()) {
+                        aura_aot_set_reemit_owner_eval(e);
+                        aura_aot_set_register_owner_eval(e);
+                    }
+                    ~ReemitEvalOwnerGuard() noexcept {
+                        aura_aot_set_reemit_owner_eval(prev_reemit);
+                        aura_aot_set_register_owner_eval(prev_reg);
+                    }
+                    ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
+                    ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+                } owner_guard(static_cast<void*>(this));
                 const auto n = aura_reemit_aot_for_dirty(v);
                 if (n > 0)
                     aura_bump_reemit_auto_drain_success_total();
@@ -2574,6 +2591,23 @@ void Evaluator::run_hot_update_recovery_if_needed(bool success,
         hot_update_recovery_done_defuse_ = cur_defuse;
         return;
     }
+    // Issue #2606: stamp reemit/register owner for multi-AotState filter.
+    struct ReemitEvalOwnerGuard {
+        void* prev_reemit;
+        void* prev_reg;
+        explicit ReemitEvalOwnerGuard(void* e) noexcept
+            : prev_reemit(aura_aot_get_reemit_owner_eval())
+            , prev_reg(aura_aot_get_register_owner_eval()) {
+            aura_aot_set_reemit_owner_eval(e);
+            aura_aot_set_register_owner_eval(e);
+        }
+        ~ReemitEvalOwnerGuard() noexcept {
+            aura_aot_set_reemit_owner_eval(prev_reemit);
+            aura_aot_set_register_owner_eval(prev_reg);
+        }
+        ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
+        ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+    } owner_guard(static_cast<void*>(this));
     const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),

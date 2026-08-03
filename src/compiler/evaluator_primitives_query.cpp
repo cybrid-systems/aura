@@ -14932,6 +14932,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("residual-sid0-policy-wired", 1);
             insert_kv("schema-2605", 2605);
             insert_kv("issue-2605", 2605);
+            // Issue #2606: multi-AotState reemit ownership filter —
+            // candidates dropped when stable_func_id maps to a slot
+            // owned by a foreign eval. Soft single-eval keeps counter 0.
+            {
+                auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());
+                const std::uint64_t cross =
+                    m ? m->reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed)
+                      : 0;
+                insert_kv("reemit_cross_eval_candidate_skipped_total",
+                          static_cast<std::int64_t>(cross));
+                insert_kv("reemit-cross-eval-candidate-skipped-total",
+                          static_cast<std::int64_t>(cross));
+            }
+            insert_kv("reemit-cross-eval-filter-wired", 1);
+            insert_kv("schema-2606", 2606);
+            insert_kv("issue-2606", 2606);
             insert_kv("schema-2175", 2175);
             insert_kv("issue-2175", 2175);
             // Issue #2016 metrics (may be 0 if CompilerMetrics not wired).

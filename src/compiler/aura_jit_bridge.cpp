@@ -958,6 +958,11 @@ std::atomic<std::uint64_t> g_aot_register_dropped{0};
 // Issue #2299: TLS owner for aura_register_fn_tracked (and staging apply).
 // Reloads install via RegisterOwnerGuard; tests may set directly.
 thread_local void* g_aot_register_owner_eval = nullptr;
+// Issue #2606: TLS owner for aura_reemit_aot_for_dirty candidate filter.
+// Hosts set to current Evaluator* around cascade/boundary reemit so
+// multi-AotState reemit only considers slots owned by that eval.
+// nullptr = process-default (no ownership filter — soft single-eval).
+thread_local void* g_aot_reemit_owner_eval = nullptr;
 // Last eval_ptr observed by aura_aot_invalidate_all_stale_slots_for_eval.
 std::atomic<std::uintptr_t> g_aot_last_slot_invalidate_eval{0};
 
@@ -1311,6 +1316,15 @@ extern "C" void aura_aot_set_register_owner_eval(void* eval_ptr) {
 
 extern "C" void* aura_aot_get_register_owner_eval(void) {
     return g_aot_register_owner_eval;
+}
+
+// Issue #2606: reemit candidate ownership filter TLS.
+extern "C" void aura_aot_set_reemit_owner_eval(void* eval_ptr) {
+    g_aot_reemit_owner_eval = eval_ptr;
+}
+
+extern "C" void* aura_aot_get_reemit_owner_eval(void) {
+    return g_aot_reemit_owner_eval;
 }
 
 extern "C" std::uintptr_t aura_aot_last_slot_invalidate_eval(void) {
@@ -3080,13 +3094,37 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         }
     }
 
-    const std::uint64_t region_mask = g_aot_emit_region_mask;
+    // Issue #2606: multi-AotState reemit ownership filter.
+    // Prefer explicit reemit-owner TLS; fall back to register-owner
+    // (reload_for_eval RegisterOwnerGuard) so nested reemit during
+    // auto-retry also filters. nullptr → process-default: no filter
+    // (soft single-eval path identical to pre-#2606).
+    // Invariant: joint bridge/AOT table epoch remains process-global
+    // (commit_func_table_swap still bumps one shared generation domain);
+    // isolation is ownership + region mask + PerEval storm — not
+    // per-eval epoch domains.
+    void* const filter_eval =
+        g_aot_reemit_owner_eval != nullptr ? g_aot_reemit_owner_eval : g_aot_register_owner_eval;
+    const bool filter_by_eval = (filter_eval != nullptr);
+    const auto want_owner = reinterpret_cast<std::uintptr_t>(filter_eval);
+
+    // Region mask: process emit mask is the cascade default. When a
+    // filter eval is set and its AotState region_mask is non-zero,
+    // prefer the per-eval mask so multi-agent region bits do not
+    // bleed across AotState entries (#2606 region independence).
+    std::uint64_t region_mask = g_aot_emit_region_mask;
+    if (filter_by_eval) {
+        const auto pe = aot_state_for(filter_eval).region_mask.load(std::memory_order_acquire);
+        if (pe != 0)
+            region_mask = pe;
+    }
     const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
 
     std::uint64_t total_candidates = 0;
     std::uint64_t to_re_emit = 0;
     std::uint64_t success_count = 0;
     std::uint64_t region_skips = 0;
+    std::uint64_t cross_eval_skips = 0;
     std::uint64_t closure_dep_count = 0;
     std::uint64_t dirty_by_region[3] = {0, 0, 0};
     bool any_re_emit = false;
@@ -3120,6 +3158,31 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         if (from_closure_capture)
             ++closure_dep_count;
 
+        // Issue #2606: dual-eval ownership filter — mirror
+        // aura_aot_invalidate_all_stale_slots_for_eval. When the host
+        // stamped a reemit/register owner, drop candidates whose
+        // stable_func_id maps to a live slot owned by a foreign eval.
+        // Unowned (owner==0) or unmapped names pass through (new emits
+        // will stamp under the current owner; soft single-eval slots
+        // remain unowned).
+        if (filter_by_eval) {
+            const std::uint32_t sid = aura_lookup_stable_func_id(name);
+            if (sid != 0 && sid < kMaxAotFuncs) {
+                auto& slot = g_aot_func_slots[sid];
+                const auto prev_fn = slot.fn_ptr.load(std::memory_order_acquire);
+                if (prev_fn != 0) {
+                    const auto owner = slot.owner_eval.load(std::memory_order_acquire);
+                    if (owner != 0 && owner != want_owner) {
+                        ++cross_eval_skips;
+                        if (aot_metrics())
+                            aot_metrics()->reemit_cross_eval_candidate_skipped_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        continue;
+                    }
+                }
+            }
+        }
+
         // Issue #2016: Evolution (region=2) is permanently excluded from AOT.
         if (region == kAotRegionEvolution) {
             ++region_skips;
@@ -3136,6 +3199,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         // mask, the candidate's region must have its bit set in the
         // mask. Region 0 means "no region preference" → always emit
         // (unless Evolution, already handled).
+        // Issue #2606: region_mask may be the per-eval AotState mask
+        // when filter_eval is set (see setup above).
         if (region_mask != 0 && region != 0) {
             const std::uint64_t bit = 1ULL << (region & 63);
             if ((region_mask & bit) == 0) {
@@ -3262,6 +3327,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     g_last_reemit_region_skips.store(region_skips, std::memory_order_relaxed);
     g_last_reemit_closure_dep_count.store(closure_dep_count, std::memory_order_relaxed);
     g_last_reemit_success_count.store(success_count, std::memory_order_relaxed);
+    (void)cross_eval_skips; // counted via reemit_cross_eval_candidate_skipped_total
 
     // Issue #1956: registry aggregates re-emit pipeline traffic.
     aura::compiler::hot_update_registry().on_reemit_pipeline_call(to_re_emit, success_count);
