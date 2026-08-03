@@ -649,9 +649,11 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
                         m->linear_escape_after_move_total.fetch_add(esc.escape_after_move,
                                                                     std::memory_order_relaxed);
                 }
-                // Issue #2563: cone-capped one-level cross-closure free-capture.
+                // Issue #2563 / #2612: cone-capped cross-closure free-capture
+                // (default depth 1; opt-in depth 2 via AURA_LINEAR_CROSS_CLOSURE_DEPTH).
                 // Soft: observe only; production/Full/env hard → sticky force
                 // (distinct authority; does not re-label as CrossBatchEscape).
+                // Depth alone never forces — hard path still linear_cross_closure_hard_enabled().
                 CrossClosureEscapeResult cce{};
                 const std::size_t cone_cap = partial_cone_soft_cap_for_linear();
                 (void)discover_cross_closure_linear_escapes(*flat, *pool, dirty, cone_cap, cce);
@@ -659,6 +661,15 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
                     typed_audit::g_typed_mutation_audit_counters
                         .linear_cross_closure_cap_trunc_total.fetch_add(cce.cap_truncations,
                                                                         std::memory_order_relaxed);
+                // Issue #2612: depth-2 nested entry / escape observability.
+                if (cce.depth2_entries)
+                    typed_audit::g_typed_mutation_audit_counters
+                        .linear_cross_closure_depth2_entries_total.fetch_add(
+                            cce.depth2_entries, std::memory_order_relaxed);
+                if (cce.depth2_escape_sites)
+                    typed_audit::g_typed_mutation_audit_counters
+                        .linear_cross_closure_depth2_escape_total.fetch_add(
+                            cce.depth2_escape_sites, std::memory_order_relaxed);
                 if (cce.escape_sites > 0) {
                     typed_audit::g_typed_mutation_audit_counters.linear_cross_closure_escape_total
                         .fetch_add(cce.escape_sites, std::memory_order_relaxed);

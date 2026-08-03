@@ -3802,6 +3802,11 @@ aura_add_issue_test(test_linear_cross_closure_escape_2563)
 aura_issue_test_link_light(test_linear_cross_closure_escape_2563)
 add_dependencies(all_test_issue_targets test_linear_cross_closure_escape_2563)
 
+# Issue #2612: optional depth-2 cross-closure free-capture (still cone-capped).
+aura_add_issue_test(test_linear_cross_closure_depth2_2612)
+aura_issue_test_link_light(test_linear_cross_closure_depth2_2612)
+add_dependencies(all_test_issue_targets test_linear_cross_closure_depth2_2612)
+
 # Issue #2564: ADT match exhaustiveness goal table + delta reverify roots
 aura_add_issue_test(test_adt_match_goal_table_2564)
 aura_issue_test_link_light(test_adt_match_goal_table_2564)

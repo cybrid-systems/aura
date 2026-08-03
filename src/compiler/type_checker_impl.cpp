@@ -8459,38 +8459,79 @@ bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool
                                            const std::unordered_set<std::string>& dirty_bindings,
                                            std::size_t cone_cap, CrossClosureEscapeResult& out) {
     out = {};
+    // Issue #2612: depth 1 default; opt-in depth 2 via AURA_LINEAR_CROSS_CLOSURE_DEPTH.
+    out.depth_cap = static_cast<std::size_t>(
+        std::max(1, std::min(2, aura::compiler::typed_audit::linear_cross_closure_depth_cap())));
     if (dirty_bindings.empty() || flat.size() == 0)
         return true;
     const std::size_t limit = cone_cap == 0 ? flat.size() : std::min(flat.size(), cone_cap);
     if (cone_cap != 0 && flat.size() > cone_cap)
         out.cap_truncations = 1;
 
-    auto walk_body_one_level = [&](NodeId body, const std::unordered_set<std::string>& params) {
-        // Iterative DFS; skip nested Lambda bodies (one-level AC).
-        std::vector<NodeId> stack;
+    // Frame: body root + param set + remaining depth budget for nested entry.
+    // depth=1 → skip nested Lambda (legacy #2563 one-level).
+    // depth>=2 → enter one nested Lambda body (still cone-bounded via nodes_scanned).
+    struct WalkFrame {
+        NodeId id;
+        std::unordered_set<std::string> params;
+        int depth_remaining = 1;
+        bool is_nested_entry = false; // true when entered via depth-2 nest
+    };
+
+    auto walk_body = [&](NodeId body, std::unordered_set<std::string> params, int depth_remaining) {
+        std::vector<WalkFrame> stack;
         if (body != NULL_NODE && body < flat.size())
-            stack.push_back(body);
+            stack.push_back(WalkFrame{body, std::move(params), depth_remaining, false});
         while (!stack.empty()) {
-            const auto id = stack.back();
+            auto fr = std::move(stack.back());
             stack.pop_back();
+            const auto id = fr.id;
             if (id == NULL_NODE || id >= flat.size())
                 continue;
             ++out.nodes_scanned;
             // Soft cone: stop body walk when nodes_scanned hits hard-ish bound.
-            if (cone_cap != 0 && out.nodes_scanned > cone_cap * 4)
+            // Issue #2612 / #2563: never O(workspace) — same 4× cone_cap budget.
+            if (cone_cap != 0 && out.nodes_scanned > cone_cap * 4) {
+                // Truncation under depth-2 nested walk still counts as cap trunc.
+                if (out.cap_truncations == 0)
+                    out.cap_truncations = 1;
                 break;
+            }
             auto v = flat.get(id);
-            if (v.tag == NodeTag::Lambda)
-                continue; // nested lambda: separate outer scan
+            if (v.tag == NodeTag::Lambda) {
+                // Issue #2612: optional one nested Lambda level under depth_cap>=2.
+                // Free-capture for the nested site uses *nested* params only (outer
+                // bindings remain free if not nested params — classic free capture).
+                if (fr.depth_remaining >= 2) {
+                    std::unordered_set<std::string> nested_params;
+                    for (auto ps : v.params) {
+                        if (ps == INVALID_SYM)
+                            continue;
+                        nested_params.insert(std::string(pool.resolve(ps)));
+                    }
+                    ++out.depth2_entries;
+                    ++out.sites_scanned;
+                    if (!v.children.empty() && v.child(0) != NULL_NODE) {
+                        stack.push_back(WalkFrame{v.child(0), std::move(nested_params),
+                                                  fr.depth_remaining - 1, /*nested=*/true});
+                    }
+                }
+                // depth 1 (or after nesting): do not walk Lambda node children as plain tree
+                continue;
+            }
             if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
                 auto name = std::string(pool.resolve(v.sym_id));
-                if (dirty_bindings.count(name) && params.count(name) == 0)
+                if (dirty_bindings.count(name) && fr.params.count(name) == 0) {
                     ++out.escape_sites;
+                    if (fr.is_nested_entry)
+                        ++out.depth2_escape_sites;
+                }
                 continue;
             }
             for (auto cid : v.children) {
                 if (cid != NULL_NODE && cid < flat.size())
-                    stack.push_back(cid);
+                    stack.push_back(
+                        WalkFrame{cid, fr.params, fr.depth_remaining, fr.is_nested_entry});
             }
         }
     };
@@ -8507,7 +8548,7 @@ bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool
             params.insert(std::string(pool.resolve(ps)));
         }
         if (!v.children.empty() && v.child(0) != NULL_NODE)
-            walk_body_one_level(v.child(0), params);
+            walk_body(v.child(0), std::move(params), static_cast<int>(out.depth_cap));
     }
     return out.escape_sites == 0;
 }
