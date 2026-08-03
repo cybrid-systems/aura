@@ -217,6 +217,11 @@ AURA_COMPILER_METRICS_FIELD(occurrence_goal_replay_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_stale_drop_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_steal_prune_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_steal_prune_entries_total)
+// Issue #2622: single dirty-key authority (memo + goals).
+AURA_COMPILER_METRICS_FIELD(occurrence_memo_goal_diverge_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_sync_after_dirty_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_memo_goal_fence_joint_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_dirty_key_authority_wired)
 // Issue #2608: optional OccurrenceGoal persist / rehydrate.
 AURA_COMPILER_METRICS_FIELD(occurrence_persist_write_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_rehydrate_total)

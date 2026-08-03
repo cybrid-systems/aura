@@ -505,6 +505,34 @@ std::size_t ConstraintSystem::prune_occurrence_goals(std::uint64_t min_epoch) no
     return dropped;
 }
 
+// Issue #2622: drop goals keyed by dirty predicate_cond_node (memo joint).
+std::size_t ConstraintSystem::drop_occurrence_goals_for_conds(
+    std::span<const std::uint32_t> cond_nodes) noexcept {
+    if (cond_nodes.empty() || occurrence_goals_.empty())
+        return 0; // AC4: zero cost when empty
+    std::unordered_set<std::uint32_t> set;
+    set.reserve(cond_nodes.size() * 2 + 4);
+    for (auto c : cond_nodes) {
+        if (c != 0)
+            set.insert(c);
+    }
+    if (set.empty())
+        return 0;
+    const auto before = occurrence_goals_.size();
+    occurrence_goals_.erase(std::remove_if(occurrence_goals_.begin(), occurrence_goals_.end(),
+                                           [&set](const OccurrenceGoal& g) {
+                                               return g.predicate_cond_node != 0 &&
+                                                      set.count(g.predicate_cond_node) != 0;
+                                           }),
+                            occurrence_goals_.end());
+    const auto dropped = before - occurrence_goals_.size();
+    if (dropped > 0 && metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->occurrence_goal_stale_drop_total.fetch_add(dropped, std::memory_order_relaxed);
+    }
+    return dropped;
+}
+
 // Issue #2608: soft default OFF. Production defaults OR explicit env=1.
 // AURA_OCCURRENCE_PERSIST=0 forces off even under production.
 bool ConstraintSystem::occurrence_persist_enabled() noexcept {
@@ -5165,6 +5193,73 @@ void InferenceEngine::invalidate_predicate_memo_for_nodes(std::span<const aura::
     }
 }
 
+// Issue #2622: single dirty-key authority — memo invalidate + goal drop.
+std::size_t
+InferenceEngine::sync_occurrence_after_dirty(std::span<const aura::ast::NodeId> affected,
+                                             const aura::ast::FlatAST* flat,
+                                             ConstraintSystem* long_lived_cs) noexcept {
+    if (affected.empty())
+        return 0; // AC4: zero cost when empty
+    ++occurrence_sync_after_dirty_total_;
+    // Collect cond node ids (direct + If cond children).
+    std::vector<std::uint32_t> conds;
+    conds.reserve(affected.size() * 2);
+    std::unordered_set<std::uint32_t> cond_set;
+    auto push_cond = [&](aura::ast::NodeId id) {
+        if (id == aura::ast::NULL_NODE)
+            return;
+        const auto c = static_cast<std::uint32_t>(id);
+        if (cond_set.insert(c).second)
+            conds.push_back(c);
+    };
+    for (auto id : affected) {
+        if (id == aura::ast::NULL_NODE)
+            continue;
+        push_cond(id);
+        if (flat && id < flat->size()) {
+            auto v = flat->get(id);
+            if (v.tag == aura::ast::NodeTag::IfExpr) {
+                auto kids = flat->children(id);
+                if (!kids.empty())
+                    push_cond(kids[0]);
+            }
+        }
+    }
+    // Pre-sync diverge: memo refined ≠ live goal refined for same cond.
+    if (!conds.empty() && !predicate_memo_.empty()) {
+        for (const auto& g : cs_.occurrence_goals_for_test()) {
+            if (g.predicate_cond_node == 0 || cond_set.count(g.predicate_cond_node) == 0)
+                continue;
+            auto it = predicate_memo_.find(static_cast<aura::ast::NodeId>(g.predicate_cond_node));
+            if (it == predicate_memo_.end())
+                continue;
+            if (it->second.epoch == cache_epoch_ && it->second.refined != g.refined) {
+                ++occurrence_memo_goal_diverge_total_;
+                if (metrics_) {
+                    static_cast<struct CompilerMetrics*>(metrics_)
+                        ->occurrence_memo_goal_diverge_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+    // Invalidate memo for affected (includes If → cond child).
+    invalidate_predicate_memo_for_nodes(affected, flat);
+    // Drop goals for dirty conds (engine CS + optional long-lived CS).
+    std::size_t goals_dropped = 0;
+    if (!conds.empty()) {
+        goals_dropped += cs_.drop_occurrence_goals_for_conds(conds);
+        if (long_lived_cs && long_lived_cs != &cs_)
+            goals_dropped += long_lived_cs->drop_occurrence_goals_for_conds(conds);
+    }
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->occurrence_sync_after_dirty_total.fetch_add(1, std::memory_order_relaxed);
+        m->occurrence_dirty_key_authority_wired.store(1, std::memory_order_relaxed);
+    }
+    return goals_dropped;
+}
+
 // Issue #2068: selective predicate-memo invalidation by affected var_names.
 // Walks the memo table and drops entries whose captured_var_names intersect
 // the affected set (cheap O(N) walk + per-entry var_name intersection check).
@@ -7847,14 +7942,19 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // current cache epoch (generation advanced across mutate).
         const auto selective_gen =
             engine.invalidate_predicate_memo_for_min_gen(cache_epoch_ > 0 ? cache_epoch_ : 0);
-        // #1923: still invalidate by affected / occurrence node ids.
+        // #1923 / #2622: unified dirty-key authority — memo + OccurrenceGoal
+        // drop for affected / occurrence node ids (single pipeline).
         std::vector<NodeId> memo_targets;
         memo_targets.reserve(affected.size() + occurrence_targets.size());
         for (auto id : affected)
             memo_targets.push_back(id);
         for (auto id : occurrence_targets)
             memo_targets.push_back(id);
-        engine.invalidate_predicate_memo_for_nodes(memo_targets, &flat);
+        // Issue #2622: sync_occurrence_after_dirty invalidates memo AND drops
+        // goals on engine CS + long-lived solve_delta_cs_ (no goal/memo diverge).
+        (void)engine.sync_occurrence_after_dirty(
+            std::span<const NodeId>(memo_targets.data(), memo_targets.size()), &flat,
+            &solve_delta_cs_);
         if (metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(metrics_);
             // Path always wired on infer_flat_partial (zero cost when empty).
