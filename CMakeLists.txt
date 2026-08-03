@@ -2758,6 +2758,11 @@ aura_add_issue_test(test_soa_residual_production_smoke_2618)
 aura_issue_test_link_light(test_soa_residual_production_smoke_2618)
 add_dependencies(all_test_issue_targets test_soa_residual_production_smoke_2618)
 
+# Issue #2619: Agent-visible Moving densify health (pairs #2596).
+aura_add_issue_test(test_arena_moving_densify_health_2619)
+aura_issue_test_link_light(test_arena_moving_densify_health_2619)
+add_dependencies(all_test_issue_targets test_arena_moving_densify_health_2619)
+
 # Issue #2260: MutationBoundary type-proof hard-gate (SOLVED / full resync).
 aura_add_issue_test(test_boundary_solve_hard_gate_2260)
 aura_issue_test_link_light(test_boundary_solve_hard_gate_2260)

@@ -666,10 +666,16 @@ export struct AdaptiveCompactResult {
     // root_remap fail cumulative" mixed-signal gap.
     std::size_t root_remap_stable_ref_fail_total = 0;
     std::size_t root_remap_closure_capture_fail_total = 0;
+    // Issue #2619: last densify window aggregate for Agent health surface.
+    std::size_t objects_moved_total = 0;
+    std::size_t untracked_kept_total = 0;
+    bool moving_incomplete_remap_any = false;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects &&
-               root_remap_stable_ref_fail_total == 0 && root_remap_closure_capture_fail_total == 0;
+               root_remap_stable_ref_fail_total == 0 &&
+               root_remap_closure_capture_fail_total == 0 && !moving_incomplete_remap_any &&
+               untracked_kept_total == 0;
     }
 };
 
@@ -2689,6 +2695,11 @@ public:
             // populates fail totals without the fold.
             out.root_remap_stable_ref_fail_total += r.root_remap_stable_ref_fail_total;
             out.root_remap_closure_capture_fail_total += r.root_remap_closure_capture_fail_total;
+            // Issue #2619: Agent densify-health window aggregates.
+            out.objects_moved_total += r.objects_moved;
+            out.untracked_kept_total += r.untracked_kept_count;
+            out.moving_incomplete_remap_any =
+                out.moving_incomplete_remap_any || r.moving_incomplete_remap;
         }
         if (out.root_remap_stable_ref_fail_total + out.root_remap_closure_capture_fail_total > 0)
             out.pin_contract_held = false;

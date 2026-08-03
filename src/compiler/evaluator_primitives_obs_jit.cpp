@@ -36,6 +36,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/lifetime_contract.h"          // Issue #2300
 #include "core/densify_consistency_report.h" // Issue #2341
+#include "core/moving_densify_health.hh"     // Issue #2619
 #include "core/post_compact_lifecycle.hh"    // Issue #2436
 #include "core/resource_quota.hh"
 #include "compiler/pipeline_policy.hh" // Issue #2213 tree-walker fallback policy
@@ -11316,6 +11317,80 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pin-registry-shard-wired", 1);
             insert_kv("schema-2342", 2342);
             insert_kv("issue-2342", 2342);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2619: query:arena-moving-densify-health — Agent surface for
+    // "is Moving densify safe for the next mutate batch?" Pairs with #2596
+    // production hard path. Soft/sandbox observe-only unless hard active.
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-moving-densify-health", [&ev](const auto&) -> EvalValue {
+            (void)ev;
+            namespace mdh = aura::core::moving_densify_health;
+            mdh::ProcessTotals totals;
+            totals.untracked_external_roots_total =
+                aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
+            totals.objects_moved_total =
+                aura::ast::g_objects_moved_total.load(std::memory_order_relaxed);
+            totals.moving_blocked_precondition_total =
+                aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
+            const auto s = mdh::snapshot(totals);
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("production-hard-active", s.production_hard_active ? 1 : 0);
+            insert_kv("moving-compact-enabled", s.moving_compact_enabled ? 1 : 0);
+            insert_kv("had-moving-densify", s.had_moving_densify ? 1 : 0);
+            insert_kv("pin-contract-held", s.pin_contract_held ? 1 : 0);
+            insert_kv("moving-incomplete-remap", s.moving_incomplete_remap ? 1 : 0);
+            insert_kv("objects-moved", static_cast<std::int64_t>(s.objects_moved));
+            insert_kv("untracked-kept", static_cast<std::int64_t>(s.untracked_kept));
+            insert_kv("root-remap-fail-total", static_cast<std::int64_t>(s.root_remap_fail_total));
+            insert_kv("untracked-external-roots-total",
+                      static_cast<std::int64_t>(s.untracked_external_roots_total));
+            insert_kv("objects-moved-total", static_cast<std::int64_t>(s.objects_moved_total));
+            insert_kv("moving-blocked-precondition-total",
+                      static_cast<std::int64_t>(s.moving_blocked_precondition_total));
+            insert_kv("window-seq", static_cast<std::int64_t>(s.window_seq));
+            insert_kv("would-allow-mutate", s.would_allow_mutate ? 1 : 0);
+            insert_kv("force-reason-code", s.force_reason_code);
+            insert_kv("agent-throttle", s.agent_throttle ? 1 : 0);
+            insert_kv("agent-throttle-set-total",
+                      static_cast<std::int64_t>(mdh::g_agent_throttle_moving_densify_set_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("moving-densify-health-wired",
+                      static_cast<std::int64_t>(mdh::moving_densify_health_wired()));
+            insert_kv("schema-2619", 2619);
+            insert_kv("issue-2619", 2619);
+            insert_kv("schema-2596", 2596);
+            insert_kv("issue-2596", 2596);
+            insert_kv("schema-2495", 2495);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
