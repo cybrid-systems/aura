@@ -505,6 +505,114 @@ std::size_t ConstraintSystem::prune_occurrence_goals(std::uint64_t min_epoch) no
     return dropped;
 }
 
+// Issue #2608: soft default OFF. Production defaults OR explicit env=1.
+// AURA_OCCURRENCE_PERSIST=0 forces off even under production.
+bool ConstraintSystem::occurrence_persist_enabled() noexcept {
+    const char* e = std::getenv("AURA_OCCURRENCE_PERSIST");
+    if (e && *e) {
+        if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+            return false;
+        if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+            return true;
+    }
+    return aura::compiler::typed_audit::production_defaults_active();
+}
+
+std::size_t ConstraintSystem::occurrence_persist_cap() noexcept {
+    static const std::size_t v = []() noexcept -> std::size_t {
+        const char* e = std::getenv("AURA_OCCURRENCE_PERSIST_CAP");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto n = std::strtoull(e, &end, 10);
+            if (end != e && n > 0 && n <= 1'000'000ull)
+                return static_cast<std::size_t>(n);
+        }
+        return 256; // #2560 soft-cone discipline
+    }();
+    return v;
+}
+
+std::size_t ConstraintSystem::append_occurrence_snapshot(std::uint64_t mutation_id) noexcept {
+    if (!occurrence_persist_enabled())
+        return 0; // AC2: soft zero cost
+    if (occurrence_goals_.empty())
+        return 0;
+    const auto mid = mutation_id != 0
+                         ? mutation_id
+                         : (active_mutation_id_ != 0 ? active_mutation_id_
+                                                     : occurrence_goals_.back().source_mutation_id);
+    const auto cap = occurrence_persist_cap();
+    std::size_t written = 0;
+    std::size_t truncated = 0;
+    for (const auto& g : occurrence_goals_) {
+        if (!g.var.valid())
+            continue;
+        if (occurrence_persist_log_.size() >= cap) {
+            // Drop oldest (front) to make room — bounded side buffer.
+            occurrence_persist_log_.erase(occurrence_persist_log_.begin());
+            ++truncated;
+        }
+        OccurrencePersistEntry e;
+        e.source_mutation_id = (g.source_mutation_id != 0) ? g.source_mutation_id : mid;
+        e.var = g.var;
+        e.refined = g.refined;
+        e.predicate_cond_node = g.predicate_cond_node;
+        e.stamp_epoch = g.epoch != 0 ? g.epoch : current_epoch_;
+        occurrence_persist_log_.push_back(e);
+        ++written;
+    }
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        if (written > 0)
+            m->occurrence_persist_write_total.fetch_add(written, std::memory_order_relaxed);
+        if (truncated > 0)
+            m->occurrence_persist_trunc_total.fetch_add(truncated, std::memory_order_relaxed);
+    }
+    return written;
+}
+
+std::size_t
+ConstraintSystem::rehydrate_occurrence_from_persist(std::uint64_t preferred_mid) noexcept {
+    if (!occurrence_persist_enabled())
+        return 0; // AC2
+    if (!occurrence_goals_.empty())
+        return 0; // live table still authoritative
+    if (occurrence_persist_log_.empty())
+        return 0;
+    // Resolve which mid to rehydrate: preferred, else most-recent entry's mid.
+    std::uint64_t mid = preferred_mid;
+    if (mid == 0)
+        mid = occurrence_persist_log_.back().source_mutation_id;
+    std::size_t n = 0;
+    const auto cap = occurrence_persist_cap();
+    for (const auto& e : occurrence_persist_log_) {
+        if (mid != 0 && e.source_mutation_id != mid && preferred_mid != 0)
+            continue;
+        // When preferred_mid==0 we rehydrate only the latest mid's entries
+        // (first pass resolves mid from back; filter rest).
+        if (preferred_mid == 0 && e.source_mutation_id != mid)
+            continue;
+        if (!e.var.valid())
+            continue;
+        if (occurrence_goals_.size() >= cap) {
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->occurrence_persist_trunc_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            break;
+        }
+        // epoch=0 sentinel: never immediately pruned by current epoch fence.
+        note_occurrence_goal(e.var, e.refined, e.predicate_cond_node, e.source_mutation_id,
+                             /*epoch=*/0);
+        ++n;
+    }
+    if (n > 0 && metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->occurrence_rehydrate_total.fetch_add(n, std::memory_order_relaxed);
+    }
+    return n;
+}
+
 void ConstraintSystem::mark_let_poly_dirty(TypeId var) {
     // Issue #1617: Let-Poly free / instantiation vars need
     // re-generalization priority in solve_delta + reverify.
@@ -10012,6 +10120,11 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
                                                   std::vector<Constraint>* unresolved_out,
                                                   void* metrics) {
     auto* m = static_cast<CompilerMetrics*>(metrics ? metrics : cs.metrics_);
+    // Issue #2608: if live goal table empty but production/env snapshot
+    // exists, rehydrate before priority replay (cross-delta after
+    // steal/densify prune). Soft disabled path is zero-cost.
+    if (cs.occurrence_goals_size() == 0)
+        (void)cs.rehydrate_occurrence_from_persist(/*preferred_mid=*/0);
     // Issue #2307: occurrence_goals_ is the sole authority for occurrence
     // priority on solve_delta_occurrence. retained_mutation_id_ /
     // retained_predicate_cond_node_ are forensic-only (read by Agents via

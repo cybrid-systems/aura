@@ -63,6 +63,7 @@ import aura.core.lifetime_pin;
 import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
 import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
 import aura.compiler.ir_soa;          // Issue #2432: current_ir_soa_generation_fence
+import aura.compiler.type_checker;    // Issue #2608: maybe_persist_occurrence_snapshot
 
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
@@ -2410,6 +2411,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         ev_->bump_linear_post_mutate_enforcement();
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #2608: optional OccurrenceGoal persist for cross-delta
+        // / multi-session replay after steal/densify prune. Soft default
+        // OFF (zero cost); production or AURA_OCCURRENCE_PERSIST=1 writes.
+        if (auto* tc =
+                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
+            const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
+            (void)tc->maybe_persist_occurrence_snapshot(mid);
         }
     } else if (outermost && !success) {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {

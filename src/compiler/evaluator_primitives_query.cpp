@@ -6289,6 +6289,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence-goal-steal-densify-fence-wired", 1);
             insert_kv("schema-2552", 2552);
             insert_kv("issue-2552", 2552);
+            // Issue #2608: optional OccurrenceGoal persist / rehydrate.
+            {
+                const std::int64_t persist_w =
+                    m ? static_cast<std::int64_t>(
+                            m->occurrence_persist_write_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t rehydrate =
+                    m ? static_cast<std::int64_t>(
+                            m->occurrence_rehydrate_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t trunc =
+                    m ? static_cast<std::int64_t>(
+                            m->occurrence_persist_trunc_total.load(std::memory_order_relaxed))
+                      : 0;
+                insert_kv("occurrence-persist-write-total", persist_w);
+                insert_kv("occurrence_persist_write_total", persist_w);
+                insert_kv("occurrence-rehydrate-total", rehydrate);
+                insert_kv("occurrence_rehydrate_total", rehydrate);
+                insert_kv("occurrence-persist-trunc-total", trunc);
+                insert_kv("occurrence_persist_trunc_total", trunc);
+                insert_kv("occurrence-persist-wired", 1);
+                insert_kv("schema-2608", 2608);
+                insert_kv("issue-2608", 2608);
+            }
             // Issue #2307: sole-authority sentinel. solve_delta_occurrence
             // now seeds occurrence priority only from live occurrence_goals_
             // (epoch == 0 untagged OR epoch == current_epoch); retained_*

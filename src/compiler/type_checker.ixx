@@ -248,6 +248,17 @@ export struct OccurrenceGoal {
     std::uint64_t epoch = 0;
 };
 
+// Issue #2608: compact occurrence snapshot for cross-delta / multi-session
+// replay after steal/densify epoch prune. Side table (not MutationRecord
+// columns) so soft default stays zero-cost. Cap matches soft-cone (#2560).
+export struct OccurrencePersistEntry {
+    std::uint64_t source_mutation_id = 0;
+    aura::core::TypeId var{};
+    aura::core::TypeId refined{};
+    std::uint32_t predicate_cond_node = 0;
+    std::uint64_t stamp_epoch = 0; // epoch at write (forensic)
+};
+
 // Issue #2564: ADT match exhaustiveness goal — first-class priority root
 // for Soft delta reverify when ADT variants / match arms mutate.
 // Keyed by match_node + adt TypeId index; covered_variants_hash fingerprints
@@ -317,6 +328,9 @@ export class ConstraintSystem {
     // which is delta-time only). `note_occurrence_goal` appends on
     // narrowing apply; `prune_occurrence_goals` drops `epoch < min`.
     std::vector<OccurrenceGoal> occurrence_goals_;
+    // Issue #2608: optional persist side buffer (production / env opt-in).
+    // Survives prune_occurrence_goals so steal/densify can rehydrate.
+    std::vector<OccurrencePersistEntry> occurrence_persist_log_;
     // Issue #2564: ADT match exhaustiveness goals + pending reverify roots
     // (match NodeIds). Survives clear_blame_context; invalidate on ADT
     // variant mutate pushes match sites into adt_reverify_roots_.
@@ -719,6 +733,27 @@ public:
     }
     [[nodiscard]] const std::vector<OccurrenceGoal>& occurrence_goals_for_test() const noexcept {
         return occurrence_goals_;
+    }
+    // Issue #2608: optional OccurrenceGoal persist / rehydrate.
+    // Soft default OFF (zero writes). Production defaults OR
+    // AURA_OCCURRENCE_PERSIST=1 enables; AURA_OCCURRENCE_PERSIST=0 forces off.
+    // Cap via AURA_OCCURRENCE_PERSIST_CAP (default 256, soft-cone discipline).
+    //   append: copy live goals into side buffer (truncate excess).
+    //   rehydrate: if live table empty, restore from buffer (epoch=0
+    //   sentinel so prune does not immediately drop them).
+    [[nodiscard]] static bool occurrence_persist_enabled() noexcept;
+    [[nodiscard]] static std::size_t occurrence_persist_cap() noexcept;
+    // Returns number of entries written (0 when disabled / empty goals).
+    std::size_t append_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept;
+    // Returns number of goals rehydrated (0 when disabled / live non-empty /
+    // buffer empty). preferred_mid=0 → latest mid present in buffer.
+    std::size_t rehydrate_occurrence_from_persist(std::uint64_t preferred_mid = 0) noexcept;
+    [[nodiscard]] std::size_t occurrence_persist_log_size() const noexcept {
+        return occurrence_persist_log_.size();
+    }
+    [[nodiscard]] const std::vector<OccurrencePersistEntry>&
+    occurrence_persist_log_for_test() const noexcept {
+        return occurrence_persist_log_;
     }
     // Issue #2359: pure epoch-health helpers for query surface.
     // max_epoch: highest goal.epoch in the table (0 when empty).
@@ -2010,6 +2045,12 @@ export struct TypeChecker {
             solve_delta_cs_.set_metrics(metrics_);
         solve_delta_cs_.set_current_epoch(new_epoch);
         const auto goals_dropped = solve_delta_cs_.prune_occurrence_goals(new_epoch);
+        // Issue #2608: after steal/densify prune, try rehydrate from
+        // persist side buffer so priority roots stay non-empty when
+        // production/env snapshot was written on prior boundary exit.
+        // Soft: disabled path returns 0 (zero cost).
+        if (goals_dropped > 0 && solve_delta_cs_.occurrence_goals_size() == 0)
+            (void)solve_delta_cs_.rehydrate_occurrence_from_persist(/*preferred_mid=*/0);
         if (metrics_) {
             auto* m = static_cast<CompilerMetrics*>(metrics_);
             m->occurrence_goal_steal_prune_total.fetch_add(1, std::memory_order_relaxed);
@@ -2022,6 +2063,13 @@ export struct TypeChecker {
                                                                 std::memory_order_relaxed);
         }
         return goals_dropped;
+    }
+    // Issue #2608: outermost success boundary hook — persist live goals
+    // into the long-lived solve_delta_cs_ side buffer when enabled.
+    std::size_t maybe_persist_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept {
+        if (metrics_)
+            solve_delta_cs_.set_metrics(metrics_);
+        return solve_delta_cs_.append_occurrence_snapshot(mutation_id);
     }
     // Issue #258: plumb the CompilerMetrics pointer through
     // to ConstraintSystem::solve_delta() for timing. Today

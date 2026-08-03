@@ -1232,6 +1232,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> occurrence_goal_steal_prune_entries_total{0}; // #2552
     std::atomic<std::uint64_t> type_dep_steal_prune_total{0};                // #2552
     std::atomic<std::uint64_t> type_dep_steal_prune_entries_total{0};        // #2552
+    // Issue #2608: optional OccurrenceGoal persist / rehydrate side buffer.
+    // Soft default OFF (zero writes). Production or AURA_OCCURRENCE_PERSIST=1.
+    //   occurrence_persist_write_total: entries written to side buffer
+    //   occurrence_rehydrate_total: goals restored into live table
+    //   occurrence_persist_trunc_total: cap-induced drops (write or rehydrate)
+    std::atomic<std::uint64_t> occurrence_persist_write_total{0}; // #2608
+    std::atomic<std::uint64_t> occurrence_rehydrate_total{0};     // #2608
+    std::atomic<std::uint64_t> occurrence_persist_trunc_total{0}; // #2608
     // Issue #1873: derived completeness rate (0–100) =
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.

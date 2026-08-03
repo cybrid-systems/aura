@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 721 | Preferred destination suites |
-| **Total scanned** | **721** | |
+| `tests/core/test_*.cpp` | 722 | Preferred destination suites |
+| **Total scanned** | **722** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 74 | 74 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 127 | 127 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 42 | 42 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -592,6 +592,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_occurrence_cache_key_2461.cpp`
 - `tests/compiler/test_occurrence_dirty_blame_post_mutate.cpp`
 - `tests/compiler/test_occurrence_goal_epoch_table_2278.cpp`
+- `tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp`
 - `tests/compiler/test_occurrence_mutate_narrowing.cpp`
 - `tests/compiler/test_occurrence_provenance_chain_completeness.cpp`
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_recovery.cpp`
@@ -1519,13 +1520,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (127)
+### `observability` — Observability / metrics / query:*-stats (128)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (127)
+#### domain/ (128)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1595,6 +1596,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_obs_schema_matrix.cpp` (—) [domain_suite, theme_compiler] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 - `tests/compiler/test_observability_tier_table.cpp` (—) [obs_named, domain_suite, theme_compiler] — Issue #1670 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_occ_cache_stats_wired.cpp` (—) [domain_suite, theme_compiler] — Issue #1781 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp` (#2608) [domain_suite, theme_compiler] — AC1: persist + prune + rehydrate → goals non-empty; priority replay works
 - `tests/core/test_open_issues_meta_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #514/#515/#516/#517/#520 (#1978 renamed): issue# moved from filename to header.
 - `tests/orch/test_orch_obs_facade_2589.cpp` (#2589) [domain_suite, theme_orch] — tests/orch/test_orch_obs_facade_2589.cpp
 - `tests/compiler/test_panic_defer_after_densify_2364.cpp` (#2364) [domain_suite, theme_compiler] — AC1: Soft / no densify / no panic → free path (zero clear/rearm)

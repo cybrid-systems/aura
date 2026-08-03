@@ -3722,6 +3722,11 @@ aura_add_issue_test(test_instance_constraint_depth_cap_2607)
 aura_issue_test_link_llvm_jit(test_instance_constraint_depth_cap_2607)
 add_dependencies(all_test_issue_targets test_instance_constraint_depth_cap_2607)
 
+# Issue #2608: optional OccurrenceGoal persist / rehydrate after steal/densify.
+aura_add_issue_test(test_occurrence_goal_persist_rehydrate_2608)
+aura_issue_test_link_llvm_jit(test_occurrence_goal_persist_rehydrate_2608)
+add_dependencies(all_test_issue_targets test_occurrence_goal_persist_rehydrate_2608)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)
