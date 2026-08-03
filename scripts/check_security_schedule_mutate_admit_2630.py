@@ -100,10 +100,7 @@ def main() -> int:
                 rf"Evaluator::MutationBoundaryGuard::{re.escape(fn)}[^)]*\)\s*noexcept\s*\{{",
             )
             if not body:
-                failures.append(
-                    f"AC1: MutationBoundaryGuard::{fn} not found in "
-                    f"evaluator_mutation_boundary.cpp"
-                )
+                failures.append(f"AC1: MutationBoundaryGuard::{fn} not found in evaluator_mutation_boundary.cpp")
                 continue
             if "evaluate_security_schedule" not in body:
                 failures.append(
@@ -112,8 +109,7 @@ def main() -> int:
                 )
             if "SecurityScheduleInput" not in body:
                 failures.append(
-                    f"AC1: MutationBoundaryGuard::{fn} does not build "
-                    f"SecurityScheduleInput from live signals"
+                    f"AC1: MutationBoundaryGuard::{fn} does not build SecurityScheduleInput from live signals"
                 )
             # AC2: deny path must include "security-schedule:" + force_reason
             # for the structured error string.
@@ -129,8 +125,7 @@ def main() -> int:
                 )
             if "ssd.force_reason" not in body and "force_reason" not in body:
                 failures.append(
-                    f"AC2: MutationBoundaryGuard::{fn} deny path must use "
-                    f"the gate's force_reason for the error string"
+                    f"AC2: MutationBoundaryGuard::{fn} deny path must use the gate's force_reason for the error string"
                 )
             # AC3: soft / sandbox=off must fall through (production
             # check gates the reject).
@@ -161,8 +156,7 @@ def main() -> int:
         ):
             if key not in sec:
                 failures.append(
-                    f"AC5: evaluator_primitives_security.cpp does not expose "
-                    f"{key} on query:security-schedule-gate"
+                    f"AC5: evaluator_primitives_security.cpp does not expose {key} on query:security-schedule-gate"
                 )
         # Compatibility: prior #2590 keys preserved.
         for key in ("security-schedule-gate-wired", "schema-2590", "issue-2590"):
@@ -195,10 +189,7 @@ def main() -> int:
                 any_ac2630 = True
                 break
         if not any_ac2630:
-            failures.append(
-                "AC6: no test file has ac2630_* sections "
-                "(#2630 call-site wiring test coverage missing)"
-            )
+            failures.append("AC6: no test file has ac2630_* sections (#2630 call-site wiring test coverage missing)")
 
     # AC7: #2543 AOT throttle / #2587 mailbox-starvation gates unchanged.
     if eval_cpp:
@@ -213,12 +204,15 @@ def main() -> int:
             starvation_idx = body.find("aura_orch_mailbox_starvation_throttled")
             schedule_idx = body.find("evaluate_security_schedule")
             quota_idx = body.find("check_mutation_quota")
-            if starvation_idx != -1 and schedule_idx != -1 and quota_idx != -1:
-                if not (starvation_idx < schedule_idx < quota_idx):
-                    failures.append(
-                        "AC7: ordering violation — new gate must be "
-                        "AFTER #2587 mailbox-starvation and BEFORE quota check"
-                    )
+            if (
+                starvation_idx != -1
+                and schedule_idx != -1
+                and quota_idx != -1
+                and not (starvation_idx < schedule_idx < quota_idx)
+            ):
+                failures.append(
+                    "AC7: ordering violation — new gate must be AFTER #2587 mailbox-starvation and BEFORE quota check"
+                )
         # Also verify #2587 mailbox-starvation throttle is still present
         # (unchanged).
         body2 = _find_function_body(
@@ -226,15 +220,11 @@ def main() -> int:
             r"Evaluator::MutationBoundaryGuard::try_acquire\(",
         )
         if body2 and "aura_orch_mailbox_starvation_throttled" not in body2:
-            failures.append(
-                "AC7: #2587 mailbox-starvation throttle missing from try_acquire "
-                "(should remain unchanged)"
-            )
+            failures.append("AC7: #2587 mailbox-starvation throttle missing from try_acquire (should remain unchanged)")
         # And the #2587 sibling reject pattern.
         if body2 and "mailbox-hold-starvation" not in body2:
             failures.append(
-                "AC7: #2587 mailbox-hold-starvation reject string missing "
-                "from try_acquire (should remain unchanged)"
+                "AC7: #2587 mailbox-hold-starvation reject string missing from try_acquire (should remain unchanged)"
             )
 
     if failures:
@@ -279,7 +269,7 @@ def self_test() -> int:
             "        if (typed_audit::production_defaults_active()) {\n"
             "            return std::unexpected(\n"
             "                aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,\n"
-            "                                      std::string(\"AdmissionRejected: mailbox-hold-starvation\")));\n"
+            '                                      std::string("AdmissionRejected: mailbox-hold-starvation")));\n'
             "        }\n"
             "    }\n"
             "    // Issue #2630: security-schedule-gate\n"
@@ -293,7 +283,7 @@ def self_test() -> int:
             "        if (!ssd.would_allow_new_mutate && in.production_mode) {\n"
             "            return std::unexpected(aura::core::AuraError(\n"
             "                aura::core::AuraErrorKind::ResourceQuotaExceeded,\n"
-            "                std::string(\"AdmissionRejected: security-schedule:\") +\n"
+            '                std::string("AdmissionRejected: security-schedule:") +\n'
             "                    std::string(aura::orch::security_schedule_force_reason_name(ssd.force_reason))));\n"
             "        }\n"
             "    }\n"
@@ -312,7 +302,7 @@ def self_test() -> int:
             "        if (!ssd.would_allow_new_mutate && in.production_mode) {\n"
             "            return std::unexpected(aura::core::AuraError(\n"
             "                aura::core::AuraErrorKind::ResourceQuotaExceeded,\n"
-            "                std::string(\"AdmissionRejected: security-schedule:\") +\n"
+            '                std::string("AdmissionRejected: security-schedule:") +\n'
             "                    std::string(aura::orch::security_schedule_force_reason_name(ssd.force_reason))));\n"
             "        }\n"
             "    }\n"
@@ -371,7 +361,7 @@ def self_test() -> int:
             "        if (typed_audit::production_defaults_active()) {\n"
             "            return std::unexpected(\n"
             "                aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,\n"
-            "                                      std::string(\"AdmissionRejected: mailbox-hold-starvation\")));\n"
+            '                                      std::string("AdmissionRejected: mailbox-hold-starvation")));\n'
             "        }\n"
             "    }\n"
             "    // missing security-schedule-gate wiring\n"
