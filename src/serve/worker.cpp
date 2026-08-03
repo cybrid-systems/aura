@@ -131,13 +131,36 @@ void WorkerThread::start() {
 // ── stop — request graceful stop ──────────────────────
 
 void WorkerThread::stop() {
-    running_.store(false, std::memory_order_release);
-    // Wake the worker so it can exit
+    // Issue #2573 (ubsan-smoke): ubsan-smoke `test_concurrent`
+    // SIGSEGV'd at test_concurrent.cpp:1932
+    // (test_metrics_json_format) in ~Scheduler(): the worker jthread
+    // never exited run() so w->join() blocked forever. Root cause:
+    // wake_cv_.notify_all() was called WITHOUT holding wake_mutex_,
+    // racing with the wait_for(predicate) entry check. The standard
+    // wait_for+predicate re-check is safe in principle, but the
+    // observed hang is the worker stuck in resume() while the IO
+    // thread (Scheduler::run()) also raced shutdown — the worker
+    // was in mid-callback into a fiber when stop() landed, and the
+    // notification never reached it because the cv wasn't paired
+    // with the mutex acquire that the wait_for is keyed on.
+    //
+    // Fix: hold wake_mutex_ across running_ store AND notify_all.
+    // This pairs the wait/lock acquire on the waiter side with the
+    // store/lock release on the notifier side, closing the lost-
+    // wakeup window. The wake_evfd_ write happens outside the lock
+    // (it's not what cv waits on, it's the WakingFibers path).
+    {
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        running_.store(false, std::memory_order_release);
+    }
     if (wake_evfd_ >= 0) {
         uint64_t val = 1;
         ::write(wake_evfd_, &val, sizeof(val));
     }
-    wake_cv_.notify_all();
+    {
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        wake_cv_.notify_all();
+    }
 }
 
 // ── join — wait for thread to finish ──────────────────
