@@ -88,8 +88,11 @@ namespace root_remap_detail {
     // cumulative g_rewrite_fail_total remains the rate counter.
     inline std::atomic<std::uint8_t> g_last_root_remap_any_fail{0};
 
-    // Thread-local CompilerMetrics for test/direct-invoke paths (mirrors #2267).
-    inline thread_local CompilerMetrics* g_metrics_for_test = nullptr;
+    // Process-wide CompilerMetrics for test/direct-invoke paths (mirrors #2267).
+    // Not thread_local: module import into non-PIC issue-test executables +
+    // SHARED aura_test_objects triggers aarch64 TLSLE link failures
+    // (R_AARCH64_TLSLE_* against symbol defined in the .so).
+    inline CompilerMetrics* g_metrics_for_test = nullptr;
 
     [[nodiscard]] inline bool hard_contract_enabled() noexcept {
         const char* e = std::getenv("AURA_ROOT_REMAP_CONTRACT");

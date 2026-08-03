@@ -56,7 +56,6 @@ namespace {
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
 using aura::orch::note_mailbox_bp_recent_event;
-using aura::orch::reset_orch_module_stats_for_test;
 using aura::serve::Scheduler;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -109,10 +108,12 @@ int main() {
     };
 
     auto reset_all = []() {
-        reset_orch_module_stats_for_test();
-        // Also force-quiet any active recent gauge so per-test preflight
-        // observes a stable baseline.
+        // No public reset_orch_module_stats_for_test yet — zero the gauges
+        // this suite reads so each AC starts from a stable baseline.
         g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_bp_admit_reject_total.store(0, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_bp_admit_reject_override_total.store(0,
+                                                                       std::memory_order_relaxed);
     };
 
     // ── AC3: Default path (no override) — process default (kMailboxBpAdmitThresholdDefault=32) ──
@@ -166,8 +167,6 @@ int main() {
         bump_bp_recent(50);
         const auto override_before = g_orch_module_stats.spawn_bp_admit_reject_override_total.load(
             std::memory_order_relaxed);
-        const auto reserved_before =
-            g_orch_module_stats.reserved_memory_bytes.load(std::memory_order_relaxed);
 
         auto spec = make_spec("override-strict");
         spec.bp_admit_threshold = std::optional<std::uint64_t>{32};
@@ -250,7 +249,9 @@ int main() {
               "AC5: spawn_bp_admit_reject_override_total NOT bumped on default reject");
     }
 
-    reset_orch_module_stats_for_test();
+    g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+    g_orch_module_stats.spawn_bp_admit_reject_total.store(0, std::memory_order_relaxed);
+    g_orch_module_stats.spawn_bp_admit_reject_override_total.store(0, std::memory_order_relaxed);
     std::println("\n=== #2591: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

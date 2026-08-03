@@ -42,8 +42,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <format>
 #include <print>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -56,11 +58,22 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 using aura::serve::GCCollector;
 using aura::serve::GCSweepBuffers;
 using aura::serve::Scheduler;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Issue #2338: schema/keys live on query:gc-defer-reason-stats.
+static std::int64_t href(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:gc-defer-reason-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
 
 static void seed(CompilerService& cs) {
     CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (define y (f 40))\")").has_value(),

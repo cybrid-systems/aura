@@ -30,11 +30,11 @@
 #include <string_view>
 
 import std;
-import aura.core.arena;
+import aura.core.ast;
 
 namespace {
 
-using aura::ast::ASTRena;
+using aura::ast::FlatAST;
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -85,11 +85,11 @@ static void ac2_soft_no_wrap_zero_overhead() {
     CHECK(astx.find("restamp_us_p99_.compare_exchange_weak") != std::string::npos,
           "AC2: p99 CAS only inside restamp_all_node_generations");
 
-    // New Arena → no wrap → all SLA counters stay 0.
-    ASTRena arena(64 * 1024);
-    CHECK(arena.restamp_slo_breach_total() == 0, "AC2: fresh arena — no restamp, no breach");
-    CHECK(arena.restamp_us_p99() == 0, "AC2: fresh arena — p99 stays 0");
-    CHECK(arena.restamp_slo_us_budget() == 500,
+    // Fresh FlatAST → no wrap → all SLA counters stay 0.
+    FlatAST flat;
+    CHECK(flat.restamp_slo_breach_total() == 0, "AC2: fresh FlatAST — no restamp, no breach");
+    CHECK(flat.restamp_us_p99() == 0, "AC2: fresh FlatAST — p99 stays 0");
+    CHECK(flat.restamp_slo_us_budget() == 500,
           "AC2: default SLO budget 500 µs (matches issue default)");
 }
 

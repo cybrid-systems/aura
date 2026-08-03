@@ -25,6 +25,10 @@
 #include <print>
 #include <string>
 
+// C ABI setters (hot_update_registry.cpp) — not yet in a public header.
+extern "C" void aura_set_exhausted_min_dirty_retry_cap(std::uint32_t n) noexcept;
+extern "C" void aura_set_exhausted_min_dirty_retry_backoff_ms(std::uint64_t ms) noexcept;
+
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -439,7 +443,7 @@ static void ac2601_storm_clear_auto_retry() {
     feed.served = false;
     aura_set_reemit_candidate_fn(&reemit_one_candidate, &feed);
     aura_set_aot_emit_fn(&emit_ok, nullptr);
-    aura_set_exhausted_min_dirty_retry_cap(3);
+    aura_set_exhausted_min_dirty_retry_cap(3);        // C ABI in hot_update_registry.cpp
     aura_set_exhausted_min_dirty_retry_backoff_ms(0); // no backoff for AC
 
     auto bad = build_defuse_so("ac2601_ac1", 1);

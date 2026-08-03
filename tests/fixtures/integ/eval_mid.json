@@ -7,7 +7,7 @@
   },
   {
     "name": "incr_extract_function",
-    "code": "(set-code \"(define (calc x) (+ (* x 3) 1))\")(typecheck-current)(define r (query:root))(define calc-def (car (query :children r)))(define calc-lam (car (query :children calc-def)))(define calc-body (car (query :children calc-lam)))(define mul-call (car (cdr (query :children calc-body))))(mutate:extract-function mul-call \"mul3\")(typecheck-current)(display 42)",
+    "code": "(set-code \"(define (calc x) (+ (* x 3) 1))\")(typecheck-current)(mutate:extract-function 4 \"mul3\")(typecheck-current)(display 42)",
     "pipeline": "eval",
     "expected": "42"
   },

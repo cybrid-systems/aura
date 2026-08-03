@@ -62,6 +62,9 @@
 
 #include <cstdint>
 #include <fstream>
+#include "serve/fiber.h"
+#include "serve/multi_fiber_mailbox.h"
+
 #include <print>
 #include <string>
 #include <string_view>
@@ -71,9 +74,9 @@ import std;
 namespace {
 
 using aura::serve::Fiber;
-using aura::serve::MailMessage;
-using aura::serve::MultiFiberMailbox;
-using aura::serve::PushStatus;
+using aura::serve::mf_mailbox::MailMessage;
+using aura::serve::mf_mailbox::MultiFiberMailbox;
+using aura::serve::mf_mailbox::PushStatus;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -165,7 +168,7 @@ int main() {
               "AC2: Fiber::bump_tenant_scope_mismatch increments global counter");
 
         // Verify assigned_tenant_id round-trips on a Fiber instance.
-        Fiber f;
+        Fiber f([] {});
         CHECK(f.assigned_tenant_id() == 0,
               "AC1: Fiber::assigned_tenant_id() default = 0 (unscoped)");
         f.set_assigned_tenant_id(42);
@@ -180,7 +183,7 @@ int main() {
     // inactive), so try_pop must return cleanly without hard-failing.
     {
         std::println("\n--- AC4: mailbox deliver no crash under soft / sandbox=off ---");
-        MultiFiberMailbox<MailMessage> mbx(/*high_water=*/64);
+        MultiFiberMailbox mbx(/*high_water=*/64);
         MailMessage msg;
         msg.to_fiber = 0; // broadcast (no specific fiber)
         msg.payload = "test-payload-2592";

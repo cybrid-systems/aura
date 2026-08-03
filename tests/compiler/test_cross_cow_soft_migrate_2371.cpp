@@ -243,7 +243,14 @@ static void ac2603_cross_gen_no_soft_bump() {
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto try_block = rt.find("try_cross_cow_soft_migrate_");
     CHECK(try_block != std::string::npos, "AC2: try_cross_cow_soft_migrate_ exists");
-    const auto bumper_count = rt.count("aura_bump_cross_cow_soft_migrate_same_gen_total");
+    // std::string has no count(substring); count non-overlapping occurrences.
+    std::size_t bumper_count = 0;
+    {
+        const std::string_view needle = "aura_bump_cross_cow_soft_migrate_same_gen_total";
+        for (std::size_t pos = 0; (pos = rt.find(needle, pos)) != std::string::npos;
+             pos += needle.size())
+            ++bumper_count;
+    }
     CHECK(bumper_count == 1, "AC2: same-gen bumper called exactly once (success path only)");
     CHECK(hard_cow0 == 0, "AC2: CowGenMismatch hard counter starts at 0");
     CHECK(same0 == 0, "AC2: same-gen counter unchanged (no call)");

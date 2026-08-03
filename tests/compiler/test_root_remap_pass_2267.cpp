@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -42,26 +43,44 @@
 import std;
 import aura.core.arena;
 import aura.compiler.root_remap_pass;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
 using aura::ast::ASTArena;
 using aura::ast::LiveCompactMode;
 using aura::compiler::clear_root_remap_densify_candidates;
+using aura::compiler::CompilerService;
 using aura::compiler::get_root_remap_pass_test_callback;
 using aura::compiler::make_root_remap_arena_callback;
 using aura::compiler::mark_root_remap_densify_candidates;
 using aura::compiler::register_root_remap_closure_capture_slot;
 using aura::compiler::register_root_remap_stable_slot;
 using aura::compiler::reset_root_remap_registries_for_test;
+using aura::compiler::root_remap_auto_register_total;
+using aura::compiler::root_remap_auto_register_unregister_total;
 using aura::compiler::root_remap_pass_calls_total;
 using aura::compiler::root_remap_rewrite_fail_total;
 using aura::compiler::root_remap_rewrite_ok_total;
+using aura::compiler::RootRemapAutoRegisterClosureCapture;
+using aura::compiler::RootRemapAutoRegisterStable;
 using aura::compiler::run_root_remap_pass;
 using aura::compiler::unregister_root_remap_closure_capture_slot;
 using aura::compiler::unregister_root_remap_stable_slot;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Issue #2339: schema/keys live on query:arena-live-compact-stats.
+static std::int64_t href(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:arena-live-compact-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
 
 struct Pod16 {
     std::uint64_t a = 0;
