@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 718 | Preferred destination suites |
-| **Total scanned** | **718** | |
+| `tests/core/test_*.cpp` | 719 | Preferred destination suites |
+| **Total scanned** | **719** | |
 
 ### Related artifacts
 
@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 75 | 75 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 207 | 207 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 208 | 208 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 90 | 90 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 19 | 19 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 74 | 74 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 73 | 73 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 125 | 125 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 126 | 126 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 42 | 42 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -168,6 +168,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_agent_name_table_isolation_2078.cpp`
 - `tests/orch/test_agent_scope_2083.cpp`
 - `tests/orch/test_agent_scope_hierarchy_2537.cpp`
+- `tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp`
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp`
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp`
 - `tests/compiler/test_aot_hot_update_health_2506.cpp`
@@ -985,13 +986,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp` (#2409) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_type_dep_epoch_prune_2355.cpp` (#2355) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (207)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (208)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (207)
+#### domain/ (208)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1151,6 +1152,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_and_replace_batch_2527.cpp` (#2527) [batch_driver, domain_suite, theme_compiler] — Issue #2527: mutate:query-and-replace-batch — first-class sugar
 - `tests/compiler/test_query_by_marker_provenance_2242.cpp` (#2242) [domain_suite, theme_compiler] — AC1: all 3 individual primitives are registered and return schema=2242
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
+- `tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp` (#2114) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):
 - `tests/compiler/test_require_effect_auto_isolation_2490.cpp` (#2490) [domain_suite, theme_compiler] — AC1: Restricted + tenant principal unset + require_effect(Mutate) →
 - `tests/compiler/test_require_effect_live_mid_2384.cpp` (#2384) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges_2412.cpp` (#2412) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
@@ -1378,13 +1380,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_symbol_eq_2568.cpp` (#2568) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 
-### `jit_incremental` — JIT / AOT / incremental relower (74)
+### `jit_incremental` — JIT / AOT / incremental relower (73)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (74)
+#### domain/ (73)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1444,7 +1446,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_partial_relower_cascade_2041.cpp` (#2041) [domain_suite, theme_compiler] — Issue #2041 — Partial re-lower + JIT hot-swap end-to-end on
 - `tests/compiler/test_partial_relower_storm_gate_2190.cpp` (#2190) [domain_suite, theme_compiler] — AC1: Global storm + small dirty → full + forced_full metric
 - `tests/compiler/test_primcall_narg_2576.cpp` (#2576) [domain_suite, theme_compiler] — AC1: string-append 3 strings → ABC under default JIT
-- `tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp` (#2114) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):
 - `tests/compiler/test_reemit_production_default_defer_2205.cpp` (#2205) [domain_suite, theme_compiler] — AC1: Production default (reset / process init) → policy Defer;
 - `tests/compiler/test_reemit_production_default_defer_2208.cpp` (#2208) [domain_suite, theme_compiler] — AC1: Default policy is Defer; SoftEnter requires explicit set.
 - `tests/compiler/test_region_priority_deopt_throttle_2132.cpp` (#2132) [domain_suite, theme_compiler] — AC1: should_throttle_reemit(region) vs no-arg global decision
@@ -1515,17 +1516,18 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (125)
+### `observability` — Observability / metrics / query:*-stats (126)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (125)
+#### domain/ (126)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
+- `tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp` (#2605) [domain_suite, theme_compiler] — AC1: Named create → sid≠0; reemit soak → residual_backfill does not grow
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_ops_stats_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1729/#1851/#1852 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_atomic_mark_bitvector_2117.cpp` (#2117) [domain_suite, theme_serve] — AC1: multi-thread concurrent set same/adjacent bits → all set (no lost update)
