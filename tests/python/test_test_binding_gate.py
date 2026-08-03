@@ -31,7 +31,7 @@ class TestBindingClassify(unittest.TestCase):
         self.assertTrue(self.m.is_prod("src/compiler/service.ixx"))
         self.assertFalse(self.m.is_prod("src/core/ast.ixx"))
         # #1454 TUI protected
-        self.assertTrue(self.m.is_prod("src/compiler/evaluator_primitives_tui.cpp"))
+        # Issue #2626: evaluator_primitives_tui.cpp removed
         self.assertTrue(self.m.is_prod("lib/std/tui/canvas.aura"))
         self.assertTrue(
             self.m.is_prod("examples/cyber_cat.aura")

@@ -106,29 +106,11 @@ Evaluator::Evaluator() {
 
     build_primitive_slots();
 
-    // Issue #2136: stamp Effect::Render on FFI render batch hand-off prims so
-    // invoke_prim_with_telemetry enforces require_effect before any C backend call.
-    // Must run after build_primitive_slots() so slot_for_name resolves.
-    {
-        const char* render_ffi_names[] = {"c-render-call", "c-render-draw", "c-present-batch",
-                                          "c-ansi-emit", "c-render-bind"};
-        for (const char* n : render_ffi_names) {
-            PrimMeta m = RENDER_PRIMITIVE_META(
-                255, "Render FFI batch / bind entry (#2136 Effect::Render gate).",
-                "([string|int] ...) -> int|bool");
-            primitives_.set_meta_for_name(n, std::move(m));
-        }
-    }
+    // Issue #2626: render FFI effect stamp block removed with c-render-*.
 
     primitives_detail::register_network_primitives(prim_registrar(), *this);
 
-    // Issues #1331–#1343 Phase 1: TUI pixel/cell rendering surface.
-    // Issue #1967: gated by AURA_ENABLE_TUI (commercial UI vertical;
-    // deferred from SlimSurface core). When OFF, register is a no-op.
-    primitives_detail::register_tui_primitives(prim_registrar(), *this);
-
-    // Issue #1986 / Epic #1979: render3d:* (gated with TUI commercial flag).
-    primitives_detail::register_render3d_primitives(prim_registrar(), *this);
+    // Issue #2625/#2626: render3d:* and tui:* surfaces removed from core.
 
     primitives_detail::register_type_primitives(prim_registrar(), *this);
 

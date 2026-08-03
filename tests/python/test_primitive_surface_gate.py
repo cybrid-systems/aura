@@ -93,12 +93,11 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 500)
 
     # ── Issue #1965 / #1967–#1970 domain status + commercial budgets ──
-    def test_tui_domain_deferred_and_budgeted(self):
-        self.assertEqual(self.m.DOMAIN_STATUS.get("tui:"), "deferred")
-        self.assertEqual(self.m.domain_status("tui:init"), "deferred")
-        self.assertEqual(self.m.domain_status("tui:present"), "deferred")
-        self.assertIn("tui:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["tui:"], 25)  # #2134 batch + #2214 present-dirty
+    def test_tui_domain_removed_2626(self):
+        # Issue #2626: tui:* commercial surface deleted (no budget / status).
+        self.assertNotIn("tui:", self.m.DOMAIN_STATUS)
+        self.assertNotIn("tui:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertNotEqual(self.m.domain_status("tui:present"), "deferred")
 
     def test_eda_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("eda:"), "deferred")
@@ -120,14 +119,10 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("git-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 7)
 
-    def test_terminal_domain_deferred_and_budgeted(self):
-        self.assertEqual(self.m.DOMAIN_STATUS.get("terminal:"), "deferred")
-        self.assertEqual(self.m.domain_status("terminal:clear"), "deferred")
-        self.assertEqual(self.m.domain_status("terminal:present"), "deferred")
-        self.assertIn("terminal:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["terminal:"], 9
-        )  # bumped 7→9 in 4.4 (actual count is 9, was pre-existing overrun)
+    def test_terminal_domain_removed_2626(self):
+        # Issue #2626: terminal:* commercial surface deleted.
+        self.assertNotIn("terminal:", self.m.DOMAIN_STATUS)
+        self.assertNotIn("terminal:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_seva_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("seva:"), "deferred")
@@ -166,16 +161,11 @@ class TestBlockedPatterns(unittest.TestCase):
 
     def test_commercial_domain_counts_prefixes(self):
         names = [
-            "tui:init",
-            "tui:present",
             "query:root",
-            "tui:cell",
             "auto-evolve-once",
             "auto-evolve-tick",
             "git-status",
             "git-diff",
-            "terminal:clear",
-            "terminal:diff",
             "seva:achieve-coverage",
             "seva:approve-mutation",
             "synthesize:fill",
@@ -188,11 +178,11 @@ class TestBlockedPatterns(unittest.TestCase):
             "m4-borrow",
         ]
         counts = self.m.commercial_domain_counts(names)
-        self.assertEqual(counts.get("tui:"), 3)
+        self.assertEqual(counts.get("tui:"), None)  # #2626 removed
+        self.assertEqual(counts.get("terminal:"), None)  # #2626 removed
         self.assertEqual(counts.get("eda:"), 0)
         self.assertEqual(counts.get("auto-evolve-"), 2)
         self.assertEqual(counts.get("git-"), 2)
-        self.assertEqual(counts.get("terminal:"), 2)
         self.assertEqual(counts.get("seva:"), 2)
         self.assertEqual(counts.get("synthesize:"), 2)
         self.assertEqual(counts.get("tcp-"), 2)
@@ -200,9 +190,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(counts.get("m4-"), 2)
 
     def test_commercial_budget_overrun_fails_strict(self):
-        # Synthetic list with one extra tui: name past the frozen budget.
-        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["tui:"]
-        fake = [f"tui:synthetic-{i}" for i in range(budget + 1)]
+        # Synthetic list with one extra git- name past the frozen budget.
+        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"]
+        fake = [f"git-synthetic-{i}" for i in range(budget + 1)]
         # run_strict_checks prints + returns 1 on overrun.
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
@@ -225,11 +215,11 @@ class TestBlockedPatterns(unittest.TestCase):
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
 
-    def test_terminal_commercial_budget_overrun_fails_strict(self):
-        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["terminal:"]
-        fake = [f"terminal:synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
-        self.assertEqual(rc, 1)
+    def test_removed_tui_terminal_prefixes_not_budgeted(self):
+        # #2626: no commercial budget keys for deleted surfaces.
+        self.assertNotIn("tui:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertNotIn("terminal:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertNotIn("render3d:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_seva_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["seva:"]

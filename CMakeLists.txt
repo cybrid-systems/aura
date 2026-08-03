@@ -53,8 +53,6 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/verify_tool.cpp
     src/compiler/evaluator_primitives_messaging.cpp
     src/compiler/evaluator_primitives_io.cpp
-    src/compiler/evaluator_primitives_tui.cpp
-    src/compiler/evaluator_primitives_render3d.cpp
     src/compiler/evaluator_primitives_agent.cpp
     src/compiler/evaluator_primitives_memory.cpp
     src/compiler/evaluator_primitives_policy.cpp
@@ -141,9 +139,7 @@ target_sources(aura PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     # Issue #1559: present_batch / draw_batch engine (header-based, non-module).
-    src/renderer/render_primitives.cpp
     # Issue #1980 / Epic #1979: half-block pixel framebuffer for 3D TUI base.
-    src/renderer/pixel_framebuffer.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     ${AURA_SERVICE_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
@@ -196,11 +192,7 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
  
 
 
-# Issue #1967: tui:* domain is a commercial UI vertical (deferred from
-# SlimSurface core budget per #1965). Default ON so existing tests +
-# lib/std/tui keep working; slim/core-only builds can set
-# -DAURA_ENABLE_TUI=OFF to skip registration (see docs/tui.md).
-option(AURA_ENABLE_TUI "Register tui:* domain primitives (UI vertical, #1967)" ON)
+# Issue #2626: AURA_ENABLE_TUI retired (tui:* surface removed).
 
 
 # Issue #1969: auto-evolve-* self-evolution AI vertical (deferred). Default ON
@@ -215,11 +207,7 @@ option(AURA_ENABLE_AUTO_EVOLVE
 # (see docs/git-integration.md). Independent of AURA_HAVE_LIBGIT2 (backend).
 option(AURA_ENABLE_GIT "Register git-* domain primitives (integration, #1970)" ON)
 
-# Issue #1971: terminal:* UI/integration vertical (deferred). Default ON so
-# deprecation tests (#1351) keep working; slim builds: -DAURA_ENABLE_TERMINAL=OFF
-# (see docs/terminal-domain.md). These 7 names are Phase-A deprecated no-ops.
-option(AURA_ENABLE_TERMINAL
-       "Register terminal:* domain primitives (UI vertical, #1971)" ON)
+# Issue #2626: AURA_ENABLE_TERMINAL retired (terminal:* surface removed).
 
 # Issue #1972: seva:* service-evaluation commercial vertical (deferred).
 # Default ON for OpenClaw / demo metrics tests; slim:
@@ -266,11 +254,6 @@ aura_test_compile_options(aura)
 
 # Issue #1967–#1976: per-source commercial/integration vertical flags
 # (avoids PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
-if(AURA_ENABLE_TUI)
-    set(_AURA_ENABLE_TUI_VAL 1)
-else()
-    set(_AURA_ENABLE_TUI_VAL 0)
-endif()
 if(AURA_ENABLE_AUTO_EVOLVE)
     set(_AURA_ENABLE_AUTO_EVOLVE_VAL 1)
 else()
@@ -280,11 +263,6 @@ if(AURA_ENABLE_GIT)
     set(_AURA_ENABLE_GIT_VAL 1)
 else()
     set(_AURA_ENABLE_GIT_VAL 0)
-endif()
-if(AURA_ENABLE_TERMINAL)
-    set(_AURA_ENABLE_TERMINAL_VAL 1)
-else()
-    set(_AURA_ENABLE_TERMINAL_VAL 0)
 endif()
 if(AURA_ENABLE_SEVA)
     set(_AURA_ENABLE_SEVA_VAL 1)
@@ -311,10 +289,6 @@ if(AURA_ENABLE_M4)
 else()
     set(_AURA_ENABLE_M4_VAL 0)
 endif()
-set_source_files_properties(
-    src/compiler/evaluator_primitives_tui.cpp
-    src/compiler/evaluator_primitives_render3d.cpp
-    PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
 # compile.cpp hosts both eda:* (p34/p35) and seva:* (p59–p62) — both flags.
 set_source_files_properties(
     src/compiler/evaluator_primitives_compile.cpp
@@ -327,26 +301,18 @@ set_source_files_properties(
     PROPERTIES
         COMPILE_DEFINITIONS
         "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL};AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL};AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL}")
-# io.cpp: git-* (#1970) + tcp-* (#1975). getenv/http/terminal-buffer stay on.
+# io.cpp: git-* (#1970) + tcp-* (#1975). getenv/http/sys stay on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_io.cpp
     PROPERTIES COMPILE_DEFINITIONS
                "AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL};AURA_ENABLE_TCP=${_AURA_ENABLE_TCP_VAL}")
-# terminal:* deprecated no-ops live in obs_jit register_jit_p59 + p113.
-set_source_files_properties(
-    src/compiler/evaluator_primitives_obs_jit.cpp
-    PROPERTIES COMPILE_DEFINITIONS
-               "AURA_ENABLE_TERMINAL=${_AURA_ENABLE_TERMINAL_VAL}")
 # m4-* linear stubs in evaluator_primitives_math.cpp (#1976); math/regex stay on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_math.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_M4=${_AURA_ENABLE_M4_VAL}")
-message(STATUS "tui:* domain: AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL} (#1967)")
 message(STATUS
         "auto-evolve-* domain: AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL} (#1969)")
 message(STATUS "git-* domain: AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL} (#1970)")
-message(STATUS
-        "terminal:* domain: AURA_ENABLE_TERMINAL=${_AURA_ENABLE_TERMINAL_VAL} (#1971)")
 message(STATUS "seva:* domain: AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL} (#1972)")
 message(STATUS
         "strategy:* domain: AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL} (#1973)")
@@ -524,15 +490,7 @@ target_sources(test_ir PRIVATE
     # (query:security-stats) primitive). Without this
     # the test_ir link fails with "undefined reference
     # to aura::serve::http::port_from_env".
-    src/serve/http_health.cpp
-    # Issue #1559 + #1674: present_batch / draw_batch engine (header-based,
-    # non-module). aura::renderer::draw_batch is referenced by the
-    # (term-render-draw-batch) primitive in evaluator_primitives_io.cpp:1318.
-    # Without this the test_ir link fails with
-    # "undefined reference to aura::renderer::draw_batch".
-    src/renderer/render_primitives.cpp
-    # Issue #1980 / Epic #1979: half-block pixel framebuffer.
-    src/renderer/pixel_framebuffer.cpp)
+    src/serve/http_health.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
@@ -687,9 +645,7 @@ add_library(aura_test_objects SHARED
     # (query:orchestration-metrics) primitive.
     src/compiler/fiber_bridge.cpp
     # Issue #1559: present_batch / draw_batch engine.
-    src/renderer/render_primitives.cpp
     # Issue #1980 / Epic #1979: half-block pixel framebuffer.
-    src/renderer/pixel_framebuffer.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     ${AURA_SERVICE_SOURCE_FILES}
     src/compiler/cache_impl.cpp
@@ -974,7 +930,7 @@ aura_test_compile_options(test_gc_evaluator_integration)
 # violation handler (`__tu_has_violation`) lives in contract_handler.cpp
 # and was missing from the test_gc_evaluator_integration sources. Same
 # pattern as test_shape / test_spec_jit / test_jit_metrics.
-target_sources(test_gc_evaluator_integration PRIVATE src/core/contract_handler.cpp src/core/contract_stub.cpp src/renderer/pixel_framebuffer.cpp src/renderer/render_primitives.cpp)
+target_sources(test_gc_evaluator_integration PRIVATE src/core/contract_handler.cpp src/core/contract_stub.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_link_libraries(test_gc_evaluator_integration PRIVATE pthread stdc++ stdc++exp aura-reflect)
@@ -1604,9 +1560,6 @@ aura_issue_test_link_light(test_arena_auto_compact_intelligent)
 aura_add_issue_test(test_force_compact_hard_mutex_2157)
 aura_issue_test_link_light(test_force_compact_hard_mutex_2157)
 
-# Issue #2160: GcDeferReason::RenderPin end-to-end (arm/release + should_defer + stats).
-aura_add_issue_test(test_gc_defer_render_pin_2160)
-aura_issue_test_link_light(test_gc_defer_render_pin_2160)
 
 # Issue #2166: opt-in LiveCompactMode::Moving densify + object_remap_.
 aura_add_issue_test(test_moving_compact_2166)
@@ -2015,11 +1968,6 @@ add_dependencies(all_test_issue_targets test_issues_jit_late1)
 # add_dependencies(all_test_issue_targets test_issues_jit_late3)
 add_dependencies(all_test_issue_targets test_issues_light_late)
 
-# compiler_core terminal + EnvFrame/bridge_epoch batches (merged from
-# standalone drivers that shared harness/deps).
-aura_add_issue_test(test_terminal_domain_batch)
-aura_issue_test_link_light(test_terminal_domain_batch)
-add_dependencies(all_test_issue_targets test_terminal_domain_batch)
 
 aura_add_issue_test(test_envframe_epoch_batch)
 aura_issue_test_link_llvm_jit(test_envframe_epoch_batch)
@@ -2439,30 +2387,10 @@ aura_add_issue_test(test_obs_metrics_smoke_batch)
 aura_issue_test_link_llvm_jit(test_obs_metrics_smoke_batch)
 add_dependencies(all_test_issue_targets test_obs_metrics_smoke_batch)
 
-# Issue #2047: batch_terminal Phase 2 dirty-region differential present
-aura_add_issue_test(test_batch_terminal_dirty_phase2_2047)
-aura_issue_test_link_light(test_batch_terminal_dirty_phase2_2047)
-add_dependencies(all_test_issue_targets test_batch_terminal_dirty_phase2_2047)
 
-# Issue #2048: LifetimePin + zero-copy batch FFI present under soft-gate
-aura_add_issue_test(test_lifetime_pin_batch_ffi_present_2048)
-aura_issue_test_link_light(test_lifetime_pin_batch_ffi_present_2048)
-add_dependencies(all_test_issue_targets test_lifetime_pin_batch_ffi_present_2048)
 
-# Issue #2049: dedicated render frame arena + linear cell grids
-aura_add_issue_test(test_render_frame_arena_2049)
-aura_issue_test_link_light(test_render_frame_arena_2049)
-add_dependencies(all_test_issue_targets test_render_frame_arena_2049)
 
-# Issue #2050: protect render-critical closures from deopt storms / hot-swap
-aura_add_issue_test(test_render_critical_hotswap_2050)
-aura_issue_test_link_light(test_render_critical_hotswap_2050)
-add_dependencies(all_test_issue_targets test_render_critical_hotswap_2050)
 
-# Issue #2051: Agent-visible render stats + closed-loop mutate-optimize
-aura_add_issue_test(test_render_agent_closedloop_2051)
-aura_issue_test_link_light(test_render_agent_closedloop_2051)
-add_dependencies(all_test_issue_targets test_render_agent_closedloop_2051)
 
 # Issue #2052: force capability + isolation on every mutate:* entry
 aura_add_issue_test(test_mutate_capability_force_2052)
@@ -2787,30 +2715,10 @@ aura_add_issue_test(test_tree_walker_fallback_strict_2213)
 aura_issue_test_link_light(test_tree_walker_fallback_strict_2213)
 add_dependencies(all_test_issue_targets test_tree_walker_fallback_strict_2213)
 
-# Issue #2214: tui:present-dirty differential zero-copy present.
-aura_add_issue_test(test_tui_present_dirty_2214)
-aura_issue_test_link_light(test_tui_present_dirty_2214)
-add_dependencies(all_test_issue_targets test_tui_present_dirty_2214)
 
-# Issue #2215: RenderFastExit for outermost MutationBoundary under render hotpath.
-aura_add_issue_test(test_render_fast_exit_2215)
-aura_issue_test_link_light(test_render_fast_exit_2215)
-add_dependencies(all_test_issue_targets test_render_fast_exit_2215)
 
-# Issue #2216: FFI CellGrid ABI (TermCell* + DirtyRegion* handoff).
-aura_add_issue_test(test_ffi_cellgrid_abi_2216)
-aura_issue_test_link_light(test_ffi_cellgrid_abi_2216)
-add_dependencies(all_test_issue_targets test_ffi_cellgrid_abi_2216)
 
-# Issue #2217: register_render_hot_prim unified helper + Agent meta.
-aura_add_issue_test(test_register_render_hot_prim_2217)
-aura_issue_test_link_light(test_register_render_hot_prim_2217)
-add_dependencies(all_test_issue_targets test_register_render_hot_prim_2217)
 
-# Issue #2218: frame-budget guardian + automatic degrade on present path.
-aura_add_issue_test(test_frame_budget_guardian_2218)
-aura_issue_test_link_light(test_frame_budget_guardian_2218)
-add_dependencies(all_test_issue_targets test_frame_budget_guardian_2218)
 
 # Issue #2219: post-mutate Soft/Hard type gate (match exhaustiveness).
 aura_add_issue_test(test_mutate_type_gate_2219)
@@ -2933,9 +2841,6 @@ aura_add_issue_test(test_steal_snapshot_soft_production_lock_2372)
 aura_issue_test_link_light(test_steal_snapshot_soft_production_lock_2372)
 add_dependencies(all_test_issue_targets test_steal_snapshot_soft_production_lock_2372)
 
-# Issue #2373: try_render_deopt_throttle CAS race (header-only concurrency fix).
-aura_add_issue_test(test_render_deopt_throttle_race_2373)
-add_dependencies(all_test_issue_targets test_render_deopt_throttle_race_2373)
 
 # Issue #2348: bidirectional check-mode for ADT match + GuardShape.
 aura_add_issue_test(test_bidirectional_match_check_2348)
@@ -3136,33 +3041,11 @@ aura_add_issue_test(test_mutation_guard_try_acquire_2124)
 aura_issue_test_link_light(test_mutation_guard_try_acquire_2124)
 add_dependencies(all_test_issue_targets test_mutation_guard_try_acquire_2124)
 
-# Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
-aura_add_issue_test(test_pixel_framebuffer)
-add_dependencies(all_test_issue_targets test_pixel_framebuffer)
 
-# Issue #1981 / Epic #1979: camera + primary rays (header-only, headless).
-aura_add_issue_test(test_camera_rays)
-add_dependencies(all_test_issue_targets test_camera_rays)
+# Issue #2625/#2626: render3d:* / tui:* / terminal:* / voxel / TUI stack removed (camera, volume, raycast,
+# shade, frame, demo_voxel_3d, test_render3d_primitives). Pixel framebuffer
+# and TUI terminal paths remain.
 
-# Issue #1982 / Epic #1979: dense voxel volume + chunk grid (header-only).
-aura_add_issue_test(test_voxel_volume)
-add_dependencies(all_test_issue_targets test_voxel_volume)
-
-# Issue #1983 / Epic #1979: Amanatides–Woo DDA voxel raycast (header-only).
-aura_add_issue_test(test_voxel_raycast)
-add_dependencies(all_test_issue_targets test_voxel_raycast)
-
-# Issue #1984 / Epic #1979: materials / face shade / fog / sky (header-only).
-aura_add_issue_test(test_voxel_shade)
-add_dependencies(all_test_issue_targets test_voxel_shade)
-
-
-# Demo is opt-in (not on all_test_issue_targets default stress path).
-
-# Issue #1986 / Epic #1979: render3d:* Aura primitive surface.
-aura_add_issue_test(test_render3d_primitives)
-aura_issue_test_link_light(test_render3d_primitives)
-add_dependencies(all_test_issue_targets test_render3d_primitives)
 aura_issue_test_link_light(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
@@ -3557,11 +3440,6 @@ aura_add_issue_test(test_gc_closures_mtx_flush_sweep_2473)
 aura_issue_test_link_light(test_gc_closures_mtx_flush_sweep_2473)
 add_dependencies(all_test_issue_targets test_gc_closures_mtx_flush_sweep_2473)
 
-# Issue #2474: FFI hot-path cache torn update — publish sig_hash last;
-# invalidate-first + reader double-check (no new-hash + old-fn invoke).
-aura_add_issue_test(test_ffi_hot_path_cache_toctou_2474)
-aura_issue_test_link_light(test_ffi_hot_path_cache_toctou_2474)
-add_dependencies(all_test_issue_targets test_ffi_hot_path_cache_toctou_2474)
 
 # Issue #2475: remove unused default-constructed fn_lock in
 # AuraJIT::Impl::compile(); document compile_mtx_ + fn_compile_mtx_ roles.
@@ -3782,26 +3660,13 @@ aura_issue_test_link_llvm_jit(test_region_priority_deopt_throttle_2132)
 aura_add_issue_test(test_instr_level_relower_pass_2133)
 aura_issue_test_link_light(test_instr_level_relower_pass_2133)
 
-# Issue #2134: tui:draw-batch / fill-rect / present-batch over TermBuf
-# DirtyRegion (Agent batch draw + dirty AABB present).
-aura_add_issue_test(test_tui_batch_draw_present_2134)
-aura_issue_test_link_light(test_tui_batch_draw_present_2134)
 
-# Issue #2135: default zero-copy present (direct arena ANSI; residual memcpy).
-aura_add_issue_test(test_zero_copy_present_default_2135)
-aura_issue_test_link_light(test_zero_copy_present_default_2135)
 
-# Issue #2136: Render effect gate on batch draw/present + FFI hot-path hand-off.
-aura_add_issue_test(test_render_effect_gate_2136)
-aura_issue_test_link_light(test_render_effect_gate_2136)
 
 # Issue #2137: frame-budget cascade isolation (protect present from dirty work).
 aura_add_issue_test(test_frame_budget_cascade_isolation_2137)
 aura_issue_test_link_light(test_frame_budget_cascade_isolation_2137)
 
-# Issue #2138: evolvable RenderStrategy layer vs fixed native kernel.
-aura_add_issue_test(test_render_strategy_layer_2138)
-aura_issue_test_link_light(test_render_strategy_layer_2138)
 
 # Issue #2139: single-entry SoA dirty sync after every cascade (block→instr).
 aura_add_issue_test(test_soa_single_entry_dirty_sync_2139)
@@ -4027,7 +3892,7 @@ aura_issue_test_link_light(test_predicate_meet_join_lattice_2148)
 
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
-# render3d:create-volume wired at primitive entry points.
+# render-gated prims wired at primitive entry points (#2625: render3d removed).
 aura_add_issue_test(test_capability_effect_force_2072)
 aura_issue_test_link_light(test_capability_effect_force_2072)
 # Issue #2384: require_effect stamps live mutation_id (not hardcode 0).

@@ -373,6 +373,7 @@ int main() {
                  "test file per #81967) ===");
     std::println("=== Issue #2599: EnvFrame densify ownership scan fail enters outermost commit "
                  "barrier (extends #2495 test file per #81967) ===");
+
     ac1_source_cite_live_compact_result();
     ac3_soft_zero_extra_work();
     ac4_query_stats_surface();
@@ -391,6 +392,11 @@ int main() {
     ac17_envframe_densify_ownership_deny_reason();
     ac18_source_cite_2599();
     ac19_build_gate_wiring_source_cite();
+
+    // clang-format off
+    (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
+    // clang-format on
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+// production default AURA_MOVING_UNTRACKED=hard (extends #2495 test file per #81967)

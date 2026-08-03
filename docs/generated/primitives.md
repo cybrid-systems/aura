@@ -2,20 +2,20 @@
 
 # Primitives (generated)
 
-**542** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**501** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 98 primitives (18%)
-- **core**: 387 primitives (71%)
-- **internal-observable**: 49 primitives (9%)
-- **convenience**: 8 primitives (1%)
+- **mutation-safety**: 93 primitives (19%)
+- **core**: 352 primitives (70%)
+- **internal-observable**: 48 primitives (10%)
+- **convenience**: 8 primitives (2%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
-## Query: (49)
+## Query: (48)
 
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:build-index` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -58,7 +58,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-valid?` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:render-ffi-count` *[internal-observable]* — `src/compiler/ffi_primitives_impl.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -165,25 +164,20 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 
-## C FFI (15)
+## C FFI (10)
 
 - `c-alloc` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
-- `c-ansi-emit` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-load` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque->int` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque?` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
-- `c-present-batch` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
-- `c-render-bind` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
-- `c-render-call` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
-- `c-render-draw` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-ref` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (265)
+## Core builtins (264)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -269,7 +263,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `floor` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `foldl` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `format` *[convenience]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `gap-buffer-structural-mutate-demo` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `gc` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -576,19 +569,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `reflect:validate-edsl` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-macro-body` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 
-## Render3D: (10)
-
-- `render3d:build-demo` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:create-volume` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:destroy-volume` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:frame` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:frame-ansi` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:get-block` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:resize-fb` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:set-block` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:set-camera` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:stats` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
-
 ## Resource: (2)
 
 - `resource:quota-check` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -647,39 +627,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
-## Terminal: (7)
-
-- `terminal:clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:create-buffer` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:diff` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:draw-batch` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:mark-dirty-region` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:present` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:present-delta` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-
 ## Thread_Pool: (1)
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
-
-## Tui: (17)
-
-- `tui:enable-mouse` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:get-cell` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:hide-cursor` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:init` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:inject-bytes` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:inject-key` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:is-raw-mode` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:mouse` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:pixel` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:raw-mode-off` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:raw-mode-on` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:read-event` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:set-title` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:show-cursor` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:shutdown` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:size` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:terminal-size` *[core]* — `src/compiler/evaluator_primitives_tui.cpp`
 
 ## Verify: (7)
 
@@ -697,7 +647,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (98)
+### Mutation safety (must remain primitive) (93)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -716,17 +666,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `c-alloc` — `src/compiler/ffi_primitives_impl.cpp`
-- `c-ansi-emit` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-load` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque->int` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque?` — `src/compiler/ffi_primitives_impl.cpp`
-- `c-present-batch` — `src/compiler/ffi_primitives_impl.cpp`
-- `c-render-bind` — `src/compiler/ffi_primitives_impl.cpp`
-- `c-render-call` — `src/compiler/ffi_primitives_impl.cpp`
-- `c-render-draw` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
@@ -798,7 +743,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (387)
+### Core builtins (must remain primitive) (352)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -910,7 +855,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `float?` — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` — `src/compiler/evaluator_primitives_math.cpp`
 - `foldl` — `src/compiler/evaluator_primitives_list.cpp`
-- `gap-buffer-structural-mutate-demo` — `src/compiler/evaluator_primitives_io.cpp`
 - `gc` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1041,16 +985,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `remainder` — `src/compiler/evaluator_primitives_math.cpp`
 - `render-hotpath-enter` — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-exit` — `src/compiler/evaluator_primitives_memory.cpp`
-- `render3d:build-demo` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:create-volume` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:destroy-volume` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:frame` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:frame-ansi` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:get-block` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:resize-fb` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:set-block` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:set-camera` — `src/compiler/evaluator_primitives_render3d.cpp`
-- `render3d:stats` — `src/compiler/evaluator_primitives_render3d.cpp`
 - `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `resource:quota-check` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `resource:quota-set` — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -1131,32 +1065,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
-- `terminal:clear` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:create-buffer` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:diff` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:draw-batch` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:mark-dirty-region` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:present` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `terminal:present-delta` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `trunc` — `src/compiler/evaluator_primitives_math.cpp`
-- `tui:enable-mouse` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:get-cell` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:hide-cursor` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:init` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:inject-bytes` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:inject-key` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:is-raw-mode` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:mouse` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:pixel` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:raw-mode-off` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:raw-mode-on` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:read-event` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:set-title` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:show-cursor` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:shutdown` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:size` — `src/compiler/evaluator_primitives_tui.cpp`
-- `tui:terminal-size` — `src/compiler/evaluator_primitives_tui.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
@@ -1188,7 +1098,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (49)
+### Internal observable (stats/counters) (48)
 
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -1231,7 +1141,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-valid?` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:render-ffi-count` — `src/compiler/ffi_primitives_impl.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`

@@ -59,7 +59,7 @@ tests/
 ├── serve/        ← src/serve/*   (fiber / scheduler / gc / mailbox / orch_prim / async / http / util)
 ├── orch/         ← src/orch/*    (#1588)
 ├── reflect/      ← src/reflect/*
-├── renderer/     ← src/renderer/* (engine / voxel / tui)
+├── (renderer/ removed — #2625/#2626)
 ├── repl/         ← src/repl/*
 ├── stdlib/       ← src/stdlib/*
 ├── tui/          ← src/tui/*

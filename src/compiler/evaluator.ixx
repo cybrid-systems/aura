@@ -1217,9 +1217,6 @@ namespace primitives_detail {
     void register_messaging_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_git_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_network_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    void register_tui_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
-    // Issue #1986 / Epic #1979: software 3D voxel render surface (render3d:*).
-    void register_render3d_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add,
                                          Evaluator& ev);
     void register_synthesize_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev,
@@ -1349,12 +1346,6 @@ export class Evaluator {
     friend void
     primitives_detail::register_network_primitives(std::function<void(std::string, PrimFn)> add,
                                                    Evaluator& ev);
-    friend void
-    primitives_detail::register_tui_primitives(std::function<void(std::string, PrimFn)> add,
-                                               Evaluator& ev);
-    friend void
-    primitives_detail::register_render3d_primitives(std::function<void(std::string, PrimFn)> add,
-                                                    Evaluator& ev);
     friend void
     primitives_detail::register_auto_evolve_primitives(std::function<void(std::string, PrimFn)> add,
                                                        Evaluator& ev);

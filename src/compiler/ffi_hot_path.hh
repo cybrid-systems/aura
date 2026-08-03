@@ -1,3 +1,4 @@
+// Issue #2626: CellGrid/TUI types removed; ABI kept with opaque pointers.
 // ffi_hot_path.hh — Issues #1177 / #1560 / #2216: FFI batch hot-path dispatch.
 // Keep in sync with ffi_hot_path.ixx for module consumers.
 //
@@ -7,8 +8,6 @@
 #ifndef AURA_COMPILER_FFI_HOT_PATH_HH
 #define AURA_COMPILER_FFI_HOT_PATH_HH
 
-#include "renderer/batch_terminal.hh" // TermCell
-#include "renderer/render_pass.hh"    // DirtyRegion
 
 #include <atomic>
 #include <cstdint>
@@ -30,9 +29,8 @@ using BatchRenderFn = std::int64_t (*)(const std::int64_t* args, std::size_t arg
 using NullaryFn = void (*)();
 // Issue #2216: typed cell-grid present (zero-copy from LinearCellGrid / TermBuf).
 // dirty_or_null: nullptr means full frame (backend may treat as all dirty).
-using CellGridPresentFn = std::int64_t (*)(const aura::renderer::TermCell* cells, std::int32_t w,
-                                           std::int32_t h,
-                                           const aura::renderer::DirtyRegion* dirty_or_null);
+using CellGridPresentFn = std::int64_t (*)(const void* cells, std::int32_t w, std::int32_t h,
+                                           const void* dirty_or_null);
 
 struct FFIBatchHotPathStats {
     std::atomic<std::uint64_t> hit_total{0};
@@ -185,9 +183,9 @@ struct FFIBatchHotPath {
     }
 
     // Issue #2216: invoke CellGridPresentFn with live grid pointers.
-    [[nodiscard]] static std::int64_t
-    invoke_cellgrid(void* fn, const aura::renderer::TermCell* cells, std::int32_t w, std::int32_t h,
-                    const aura::renderer::DirtyRegion* dirty_or_null) noexcept {
+    [[nodiscard]] static std::int64_t invoke_cellgrid(void* fn, const void* cells, std::int32_t w,
+                                                      std::int32_t h,
+                                                      const void* dirty_or_null) noexcept {
         if (!fn || !cells || w <= 0 || h <= 0) {
             g_ffi_hot_path_stats().invoke_skip_total.fetch_add(1, std::memory_order_relaxed);
             return -1;
@@ -243,9 +241,8 @@ struct FFIBatchHotPath {
     // Issue #2216: CellGrid dispatch (lock-free hit path; miss updates cache).
     // Prefer over ANSI build when a native CellGrid backend is registered.
     [[nodiscard]] std::int64_t dispatch_cellgrid(std::uint64_t sig_hash, void* resolved_fn,
-                                                 const aura::renderer::TermCell* cells,
-                                                 std::int32_t w, std::int32_t h,
-                                                 const aura::renderer::DirtyRegion* dirty_or_null,
+                                                 const void* cells, std::int32_t w, std::int32_t h,
+                                                 const void* dirty_or_null,
                                                  bool render_effect_ok = true) noexcept {
         g_ffi_hot_path_stats().batch_dispatch_total.fetch_add(1, std::memory_order_relaxed);
         g_ffi_hot_path_stats().cellgrid_dispatch_total.fetch_add(1, std::memory_order_relaxed);
@@ -329,10 +326,8 @@ inline constexpr std::string_view kCellGridSignature =
 
 // Try CellGrid backend: returns true + *out_ret when a backend was invoked.
 // Returns false when no backend is registered (caller should use ANSI path).
-[[nodiscard]] inline bool try_cellgrid_present(const aura::renderer::TermCell* cells,
-                                               std::int32_t w, std::int32_t h,
-                                               aura::renderer::DirtyRegion* dirty,
-                                               std::int64_t* out_ret,
+[[nodiscard]] inline bool try_cellgrid_present(const void* cells, std::int32_t w, std::int32_t h,
+                                               void* dirty, std::int64_t* out_ret,
                                                bool render_effect_ok = true) noexcept {
     auto* fn = cellgrid_present_backend();
     if (!fn)

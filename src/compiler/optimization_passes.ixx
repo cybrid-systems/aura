@@ -2,7 +2,6 @@
 // concrete passes/contracts + #1578 RenderPass dirty-aware incremental render.
 
 module;
-#include "renderer/render_pass.hh"
 
 export module aura.compiler.optimization_passes;
 
@@ -825,16 +824,7 @@ public:
         for (auto& func : m.functions)
             render_function_(func, /*count_metrics=*/true);
 
-        // Optional framebuffer dirty short-circuit (renderer layer).
-        if (framebuffer_present_) {
-            if (aura::renderer::present_batch_if_dirty()) {
-                render_framebuffer_present_ok.fetch_add(1, std::memory_order_relaxed);
-                // Present consumed dirty AABB — clear for next frame.
-                aura::renderer::g_framebuffer_dirty.clear();
-            } else {
-                render_framebuffer_present_skips.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
+        // Issue #2626: framebuffer present short-circuit removed with TUI.
 
         // Dirty-propagation cascade flush when roots were noted during render.
         (void)aura::compiler::dirty::flush_pipeline_cascade_roots();

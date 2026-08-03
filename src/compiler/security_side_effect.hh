@@ -54,12 +54,9 @@ infer_required_effects_from_name(std::string_view name) noexcept {
         return kEffectMutate;
     if (name.starts_with("ffi:") || name.starts_with("ffi-"))
         return kEffectFfi;
-    if (name.starts_with("render3d:") || name.starts_with("render:") ||
-        name.starts_with("render-") || name.starts_with("tui:") ||
-        name.starts_with("terminal-present") || name.starts_with("c-render-") ||
-        name == "c-present-batch" || name == "c-ansi-emit" ||
-        name.starts_with("make-terminal-buffer") || name.starts_with("terminal-set-cell") ||
-        name.starts_with("terminal-draw") || name.starts_with("terminal-mark"))
+    // Issue #2625/#2626: render3d/tui/terminal present surface removed.
+    // Residual render: / render- names (if any) still map to Render effect.
+    if (name.starts_with("render:") || name.starts_with("render-"))
         return kEffectRender;
     if (name.starts_with("tcp-") || name.starts_with("http:") || name.starts_with("http-") ||
         name.starts_with("net:") || name.starts_with("network:"))
