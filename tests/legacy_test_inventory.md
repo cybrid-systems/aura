@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 752 | Preferred destination suites |
-| **Total scanned** | **752** | |
+| `tests/core/test_*.cpp` | 753 | Preferred destination suites |
+| **Total scanned** | **753** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 216 | 216 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 217 | 217 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 86 | 86 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 19 | 19 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
@@ -269,6 +269,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_coercion_reject_production_defaults_2185.cpp`
 - `tests/compiler/test_coercion_stamp_at_add_2512.cpp`
 - `tests/compiler/test_command_line_cap_io_read_2478.cpp`
+- `tests/compiler/test_commercial_tenant_profile_2584.cpp`
 - `tests/compiler/test_commit_readiness_score_2553.cpp`
 - `tests/compiler/test_compact_policy_2500.cpp`
 - `tests/compiler/test_compile02_no_dup_imports.cpp`
@@ -1030,13 +1031,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 - `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (216)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (217)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (216)
+#### domain/ (217)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1076,6 +1077,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_provenance_miss_force_audit_2102.cpp` (#2102) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit
 - `tests/compiler/test_coercion_reject_production_defaults_2185.cpp` (#2185) [domain_suite, theme_compiler] — AC1: Production defaults + incomplete chain → no CoercionNode;
 - `tests/compiler/test_coercion_stamp_at_add_2512.cpp` (#2512) [domain_suite, theme_compiler] — AC1: active mid set → entry mid non-zero before apply; fast_path advances
+- `tests/compiler/test_commercial_tenant_profile_2584.cpp` (#2584) [domain_suite, theme_compiler] — AC1: No AURA_COMMERCIAL_TENANT — Restricted default soft (#2536 regression)
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_compiler_closure_env_safety_post_invalidate.cpp —
 - `tests/compiler/test_composite_nested_txn_invariant_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2027; composite counters + partial recover helpers
 - `tests/compiler/test_composite_txn_commit_2105.cpp` (#2105) [domain_suite, theme_compiler] — AC1: Nested/atomic_batch success path runs ordered revalidate before clean
