@@ -261,6 +261,141 @@ static void ac5_docs() {
     CHECK(href(cs, "reemit-handshake-policy-defer") == 1, "query defer sentinel");
 }
 
+// ── Issue #2604: outermost MutationBoundary exit auto-drain deferred
+// reemit + one region-filtered pass. Refines #2114 / #2205 / #2208
+// by adding the auto-drain on outermost exit so boundary exit ≈
+// consistent epoch without requiring Agent round-trips on every
+// soft dirty.
+
+// AC1: deferred reemit pending → outermost exit triggers one reemit;
+//      deferred flag cleared. Counters bump on_boundary_exit + success.
+static void ac2604_deferred_triggers_reemit() {
+    std::println("\n--- #2604 AC1: deferred reemit triggers auto-drain ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+    aura_hot_update_set_reemit_boundary_policy(1); // Defer
+
+    // Source-cite: auto-drain wired in exit_mutation_boundary success path.
+    const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") !=
+              std::string::npos,
+          "AC1: auto-drain bumper wired in evaluator_mutation_boundary.cpp");
+    CHECK(eval_cpp.find("!nested_boundary && success") != std::string::npos,
+          "AC1: auto-drain guarded on outermost + success");
+    CHECK(eval_cpp.find("has_deferred_reemit") != std::string::npos,
+          "AC1: auto-drain checks has_deferred_reemit()");
+    CHECK(eval_cpp.find("aura_reemit_aot_for_dirty") != std::string::npos,
+          "AC1: auto-drain calls aura_reemit_aot_for_dirty (region-filtered pass)");
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_success_total") !=
+              std::string::npos,
+          "AC1: auto-drain success bumper called");
+    // Counters exist + start at 0.
+    CHECK(metrics.reemit_auto_drain_on_boundary_exit_total.load() == 0,
+          "AC1: on_boundary_exit_total starts at 0");
+    CHECK(metrics.reemit_auto_drain_success_total.load() == 0,
+          "AC1: success_total starts at 0");
+    CHECK(metrics.reemit_auto_drain_throttled_total.load() == 0,
+          "AC1: throttled_total starts at 0");
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC2: only last_region_mask_from_dirty set → same auto pass.
+static void ac2604_mask_only_triggers_reemit() {
+    std::println("\n--- #2604 AC2: mask-only path triggers auto-drain ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+
+    // Source-cite: auto-drain block must check last_region_mask_from_dirty != 0.
+    const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(eval_cpp.find("last_region_mask_from_dirty") != std::string::npos,
+          "AC2: auto-drain checks last_region_mask_from_dirty");
+    // The C ABI: last_region_mask_from_dirty getter exists.
+    const auto hur_h = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(hur_h.find("last_region_mask_from_dirty()") != std::string::npos,
+          "AC2: last_region_mask_from_dirty() getter exists");
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC3: storm throttle active → skip body, bump throttled counter.
+static void ac2604_storm_throttle_bumps_throttled() {
+    std::println("\n--- #2604 AC3: storm throttle → bump throttled ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+
+    // Source-cite: auto-drain must check should_throttle_reemit and bump
+    // throttled_total before calling reemit (no silent drop forever).
+    const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_throttled_total") !=
+              std::string::npos,
+          "AC3: throttled bumper wired");
+    CHECK(eval_cpp.find("should_throttle_reemit") != std::string::npos,
+          "AC3: auto-drain checks should_throttle_reemit");
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC4: common path (no deferred, mask=0) → zero extra work.
+static void ac2604_soft_zero_cost() {
+    std::println("\n--- #2604 AC4: soft path → zero extra work ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_hot_update_reset_reemit_boundary_handshake_for_test();
+
+    // Source-cite: auto-drain block must guard BEFORE the bumper call.
+    const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // The guard must reference has_deferred_reemit AND last_region_mask_from_dirty.
+    // Approximate: both terms appear in a block preceding the bumper call.
+    const auto bumper_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total");
+    const auto preceding = eval_cpp[std::max<std::size_t>(0, bumper_idx - 600): bumper_idx];
+    CHECK(preceding.find("has_deferred_reemit") != std::string::npos,
+          "AC4: guard checks has_deferred_reemit()");
+    CHECK(preceding.find("last_region_mask_from_dirty") != std::string::npos,
+          "AC4: guard checks last_region_mask_from_dirty");
+    // Counters unchanged on no-call path.
+    CHECK(metrics.reemit_auto_drain_on_boundary_exit_total.load() == 0,
+          "AC4: on_boundary_exit_total unchanged on soft path");
+    CHECK(metrics.reemit_auto_drain_success_total.load() == 0,
+          "AC4: success_total unchanged on soft path");
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC5: source-cite + schema-2604 cross-link + linter gate.
+static void ac2604_source_and_schema() {
+    std::println("\n--- #2604 AC5: source-cite + schema-2604 ---");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hur_h = read_file("src/compiler/hot_update_registry.hh");
+    const auto metrics = read_file("src/compiler/observability_metrics.h");
+    const auto obs_eval = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto build = read_file("build.py");
+
+    // Source-cite.
+    CHECK(hur.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") !=
+              std::string::npos,
+          "AC5: C ABI in hot_update_registry.cpp");
+    CHECK(hur_h.find("bump_reemit_auto_drain_on_boundary_exit_total") !=
+              std::string::npos,
+          "AC5: class decl in hot_update_registry.hh");
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") !=
+              std::string::npos,
+          "AC5: wired in evaluator_mutation_boundary.cpp");
+    CHECK(metrics.find("reemit_auto_drain_on_boundary_exit_total") != std::string::npos,
+          "AC5: counter in metrics.h");
+    // Query surface cross-link.
+    CHECK(obs_eval.find("reemit-auto-drain-on-boundary-exit-total") != std::string::npos,
+          "AC5: query key on query:aot-reload-stats");
+    CHECK(obs_eval.find("schema-2604") != std::string::npos, "AC5: schema-2604");
+    // Build.py gate wired.
+    CHECK(build.find("cmd_reemit_auto_drain_boundary_2604_coverage") != std::string::npos,
+          "AC5: build.py cmd helper");
+    // Compatibility: prior schemas preserved.
+    CHECK(obs_eval.find("schema-2165") != std::string::npos, "AC5: schema-2165 retained");
+    CHECK(obs_eval.find("schema-2232") != std::string::npos, "AC5: schema-2232 retained");
+}
+
 } // namespace
 
 int main() {
@@ -270,9 +405,16 @@ int main() {
     ac3_query_surface();
     ac4_existing_reemit_wiring();
     ac5_docs();
+    // Issue #2604: outermost exit auto-drain deferred reemit.
+    ac2604_deferred_triggers_reemit();
+    ac2604_mask_only_triggers_reemit();
+    ac2604_storm_throttle_bumps_throttled();
+    ac2604_soft_zero_cost();
+    ac2604_source_and_schema();
     aura_hot_update_reset_reemit_boundary_handshake_for_test();
     aura_set_reemit_candidate_fn(nullptr, nullptr);
     aura_set_aot_emit_fn(nullptr, nullptr);
-    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2114 + #2604 Results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }

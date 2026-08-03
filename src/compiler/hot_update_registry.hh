@@ -292,6 +292,12 @@ public:
     // path). Caller passes the migrating fiber_id so dashboards can
     // correlate "pending" with "which fiber stole it".
     void on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) noexcept;
+    // Issue #2604: outermost MutationBoundary exit auto-drain
+    // deferred reemit + one region-filtered pass. Bumped from
+    // evaluator_mutation_boundary.cpp exit_mutation_boundary success path.
+    void bump_reemit_auto_drain_on_boundary_exit_total() noexcept;
+    void bump_reemit_auto_drain_success_total() noexcept;
+    void bump_reemit_auto_drain_throttled_total() noexcept;
     // Returns pending version and clears deferred flag. 0 if none.
     [[nodiscard]] std::uint64_t take_deferred_reemit_version() noexcept;
     void reset_reemit_boundary_handshake_for_test() noexcept;
@@ -882,6 +888,12 @@ void aura_hot_update_note_deopt(void);
 int aura_hot_update_should_throttle_reemit(void);
 // Issue #2273: steal-path observability C entry point.
 void aura_hot_update_on_deferred_reemit_seen_on_steal(std::int64_t fiber_id);
+// Issue #2604: outermost MutationBoundary exit auto-drain deferred
+// reemit + one region-filtered pass. C ABI bumpers in
+// hot_update_registry.cpp.
+void aura_bump_reemit_auto_drain_on_boundary_exit_total(void);
+void aura_bump_reemit_auto_drain_success_total(void);
+void aura_bump_reemit_auto_drain_throttled_total(void);
 // Issue #2132: region/priority-aware throttle (1 = skip reemit).
 int aura_hot_update_should_throttle_reemit_for_region(std::uint64_t region_or_priority);
 void aura_hot_update_set_critical_region_mask(std::uint64_t mask);

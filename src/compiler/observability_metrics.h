@@ -6894,6 +6894,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_auto_retry_total{0};
     std::atomic<std::uint64_t> aot_reload_auto_retry_success_total{0};
     std::atomic<std::uint64_t> aot_reload_auto_retry_exhausted_total{0};
+    // Issue #2604: outermost exit auto-drain (on_boundary_exit / success / throttled).
+    std::atomic<std::uint64_t> reemit_auto_drain_on_boundary_exit_total{0};   // #2604
+    std::atomic<std::uint64_t> reemit_auto_drain_success_total{0};            // #2604
+    std::atomic<std::uint64_t> reemit_auto_drain_throttled_total{0};          // #2604
     // Issue #2249: Region | Staging auto-retry conservative path
     // (extend #2232). Both bumped by aura_jit_bridge.cpp when
     // aot_reload_fail_is_auto_retryable returns true for
