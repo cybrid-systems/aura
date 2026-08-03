@@ -6937,6 +6937,38 @@ def cmd_closure_sync_remount_2602_coverage():
     return 0
 
 
+def cmd_security_schedule_mutate_admit_2630_coverage():
+    """Issue #2630: wire security-schedule-gate (#2590 contract) into
+    mutate admission entry points (MutationBoundaryGuard::try_acquire
+    + try_acquire_for_region). Closes the half-green / deny-storm
+    window where Agents keep mutating after security posture degraded.
+
+    Validates the 7-AC contract from issue body:
+      AC1: production + commit_not_ready hard → new mutate rejected
+           at try_acquire; deny-total / commit-not-ready counter bumps.
+      AC2: production + deny_storm / mid_fallback_slo / posture_degraded
+           → reject with matching force_reason.
+      AC3: Soft / AURA_SANDBOX=off → allow + observe-only (no reject).
+      AC4: Zero extra work when all-clear (single pure decide path).
+      AC5: query:security-schedule-gate last decision reflects live
+           admission outcome.
+      AC6: source-cite + src-aligned test coverage.
+      AC7: #2543 AOT throttle / #2587 mailbox-starvation gates unchanged
+           (ordering: starvation → schedule → quota).
+    """
+    print(f"{B}=== security-schedule mutate-admit coverage (#2630) ==={N}")
+    script = ROOT / "scripts" / "check_security_schedule_mutate_admit_2630.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("security-schedule mutate-admit coverage contract rows failed")
+        return 1
+    ok("security-schedule mutate-admit coverage clean")
+    return 0
+
+
 def cmd_reemit_auto_drain_boundary_2604_coverage():
     """Issue #2604: outermost MutationBoundary exit auto-drain deferred
     reemit + one region-filtered pass. Closes the "visible but
@@ -7239,6 +7271,7 @@ def cmd_gate():
         or cmd_closure_sync_remount_2602_coverage()
         or cmd_cross_cow_soft_migrate_obs_2603_coverage()
         or cmd_reemit_auto_drain_boundary_2604_coverage()
+        or cmd_security_schedule_mutate_admit_2630_coverage()
         or cmd_aot_exhausted_min_dirty_retry_2601_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
@@ -8095,6 +8128,7 @@ def main():
         "closure-sync-remount-2602": cmd_closure_sync_remount_2602_coverage,
         "cross-cow-soft-migrate-2603": cmd_cross_cow_soft_migrate_obs_2603_coverage,
         "reemit-auto-drain-2604": cmd_reemit_auto_drain_boundary_2604_coverage,
+        "security-schedule-mutate-admit-2630": cmd_security_schedule_mutate_admit_2630_coverage,
         "aot-exhausted-min-dirty-retry-2601": cmd_aot_exhausted_min_dirty_retry_2601_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,

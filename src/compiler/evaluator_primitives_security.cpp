@@ -327,6 +327,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"security-schedule-gate-wired", make_int(1)},
                 {"schema-2590", make_int(2590)},
                 {"issue-2590", make_int(2590)},
+                // Issue #2630: call-site wiring in MutationBoundaryGuard::
+                // try_acquire + try_acquire_for_region. Soft/sandbox=off
+                // stays observe-only (never denies — AC3 of #2590 preserved).
+                {"security-schedule-mutate-admit-wired", make_int(1)},
+                {"schema-2630", make_int(2630)},
+                {"issue-2630", make_int(2630)},
             };
             return build_hash(kv);
         });
