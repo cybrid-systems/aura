@@ -14501,9 +14501,17 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 return make_hash(hidx);
             };
             std::uint64_t name_fb = 0;
+            // Issue #2602: synchronous remount walk counters (distinct
+            // from call-time closure_capture_remount_ok / _fail).
+            std::uint64_t sync_remount_ok = 0;
+            std::uint64_t sync_remount_fail = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
+                sync_remount_ok =
+                    m->live_closure_sync_remount_ok_total.load(std::memory_order_relaxed);
+                sync_remount_fail =
+                    m->live_closure_sync_remount_fail_total.load(std::memory_order_relaxed);
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
@@ -14545,6 +14553,16 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"named-closure-stable-id-at-create-wired", make_int(1)},
                 {"schema-2550", make_int(2550)},
                 {"issue-2550", make_int(2550)},
+                // Issue #2602: synchronous remount walk on reemit success
+                // (named closures with stable_func_id != 0). Distinct
+                // from call-time closure_capture_remount_ok / _fail.
+                {"live-closure-sync-remount-ok-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_ok))},
+                {"live-closure-sync-remount-fail-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_fail))},
+                {"live-closure-sync-remount-wired", make_int(1)},
+                {"schema-2602", make_int(2602)},
+                {"issue-2602", make_int(2602)},
             };
             return build_hash(kv);
         });

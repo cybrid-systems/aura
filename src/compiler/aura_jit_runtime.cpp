@@ -1806,6 +1806,102 @@ extern "C" int aura_remount_or_force_deopt(std::int64_t closure_id, std::uint64_
                                            aura_aot_func_table_epoch());
 }
 
+// Issue #2602: same shape as remount_or_force_deopt_unlocked but does
+// NOT bump closure_capture_remount_ok_total / _fail_total (those are
+// reserved for the call-time / JIT-driven path). The sync walk tracks
+// ok/fail locally and bumps live_closure_sync_remount_* instead.
+// Caller must hold exclusive g_closure_table_mtx.
+static int remount_or_force_deopt_unlocked_no_call_time_counter(
+    std::int64_t closure_id, std::uint64_t live_env_gen, std::uint8_t linear_fp,
+    std::uint64_t batch_deopt_epoch) noexcept {
+    if (aura_remount_closure_captures_unlocked(closure_id, live_env_gen, linear_fp) != 0)
+        return 1;
+    if (closure_id < 0)
+        return 0;
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return 0;
+    if (g_closure_must_deopt.size() <= cid)
+        g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+    g_closure_must_deopt[cid] = 1;
+    if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
+        aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), batch_deopt_epoch);
+    // NOTE: NO call-time counter bumps here (sync path has its own).
+    return 0;
+}
+
+// Issue #2602: synchronous remount walk for named live closures
+// (stable_func_id != 0). Called from aura_reemit_aot_for_dirty after
+// aura_remap_live_closures_after_reemit to close the MustDeopt window
+// between reemit and first call. Walks all live closures with sid != 0
+// and calls remount_or_force_deopt_unlocked_no_call_time_counter for
+// each (MustDeopt + batch_deopt_for already applied on fail inside
+// #2503 shared path). Anonymous (sid=0) stay on the existing
+// call-time path — no sync walk contribution.
+// Bumps live_closure_sync_remount_ok_total / _fail_total (distinct
+// from call-time closure_capture_remount_ok_total / _fail_total).
+// Soft zero-cost when no live named closures (decide path
+// short-circuits before the inner loop).
+extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
+                                                      std::uint64_t* fail_count) {
+    std::uint64_t ok = 0;
+    std::uint64_t fail = 0;
+
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+
+        const std::size_t nslots = g_closure_func_ids.size();
+        if (nslots == 0) {
+            aura_unlock_workspace_write();
+            if (ok_count)
+                *ok_count = 0;
+            if (fail_count)
+                *fail_count = 0;
+            return;
+        }
+
+        // Ensure parallel vectors are sized (older snapshots / tests).
+        if (g_closure_stable_func_ids.size() < nslots)
+            g_closure_stable_func_ids.resize(nslots, 0);
+        if (g_closure_must_deopt.size() < nslots)
+            g_closure_must_deopt.resize(nslots, 0);
+
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+
+        for (std::size_t cid = 0; cid < nslots; ++cid) {
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            // Only named closures with non-zero sid — anonymous stay on
+            // the existing call-time MustDeopt-on-touch path (#2550).
+            const std::uint32_t sid = g_closure_stable_func_ids[cid];
+            if (sid == 0)
+                continue;
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                    static_cast<std::int64_t>(cid), live_env,
+                    /*linear_fp=*/0, table_epoch) != 0)
+                ++ok;
+            else
+                ++fail;
+        }
+
+        aura_unlock_workspace_write();
+    }
+
+    if (aot_metrics()) {
+        aot_metrics()->live_closure_sync_remount_ok_total.fetch_add(ok,
+                                                                     std::memory_order_relaxed);
+        aot_metrics()->live_closure_sync_remount_fail_total.fetch_add(fail,
+                                                                      std::memory_order_relaxed);
+    }
+
+    if (ok_count)
+        *ok_count = ok;
+    if (fail_count)
+        *fail_count = fail;
+}
+
 // Issue #660 / #2092 / #2550: set the closure's name after allocation.
 // Used by MakeClosure runtime to record the function's stable name
 // (assigned by cache_define). Named create / first set_name always

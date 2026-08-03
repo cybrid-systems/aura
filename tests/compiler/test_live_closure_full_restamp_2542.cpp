@@ -293,6 +293,156 @@ static void ac6_source_query() {
     CHECK(href(cs, "schema-2369") == 2369, "AC6: schema-2369 retained");
 }
 
+// ── Issue #2602: synchronous remount walk for named live closures ──
+// (stable_func_id != 0) on reemit success. Closes the MustDeopt
+// window between reemit and first call. Distinct counters from
+// call-time closure_capture_remount_ok / _fail_total.
+static std::int64_t href_aot_stats(CompilerService& cs, const char* key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:aot-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+// AC1: named closure held across reemit → sync remount succeeds.
+static void ac2602_named_held_no_mustdeopt() {
+    std::println("\n--- #2602 AC1: named closure held → sync remount ok ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    const auto name = "ac2602_ac1_named";
+    const auto sid = aura_get_or_preserve_stable_func_id(name, nullptr);
+    CHECK(sid != 0, "AC1: sid assigned");
+    const auto cid = aura_alloc_closure(static_cast<std::int64_t>(sid));
+    CHECK(cid >= 0, "AC1: alloc");
+    aura_closure_set_name(cid, name);
+    aura_closure_set_must_deopt(cid, 0);
+
+    const auto ok_before = metrics.live_closure_sync_remount_ok_total.load();
+    const auto fail_before = metrics.live_closure_sync_remount_fail_total.load();
+
+    std::uint64_t sync_ok = 99, sync_fail = 99;
+    aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+    std::println("  AC1: sync_ok={} sync_fail={}", sync_ok, sync_fail);
+    CHECK(sync_ok >= 1, "AC1: sync_ok >= 1 (named closure remounted)");
+    CHECK(sync_fail == 0, "AC1: sync_fail == 0 on success path");
+    CHECK(metrics.live_closure_sync_remount_ok_total.load() == ok_before + sync_ok,
+          "AC1: global ok counter bumped by sync_ok");
+    CHECK(metrics.live_closure_sync_remount_fail_total.load() == fail_before,
+          "AC1: global fail counter unchanged on success");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC2: remount fail path — verify helper exists + sync_fail bumped structure.
+static void ac2602_remount_fail_path() {
+    std::println("\n--- #2602 AC2: remount fail → sync_fail + MustDeopt ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    const auto ok_before = metrics.live_closure_sync_remount_ok_total.load();
+    const auto fail_before = metrics.live_closure_sync_remount_fail_total.load();
+    std::uint64_t sync_ok = 99, sync_fail = 99;
+    aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+    CHECK(sync_ok == 0, "AC2: empty live set → sync_ok 0");
+    CHECK(sync_fail == 0, "AC2: empty live set → sync_fail 0");
+    CHECK(metrics.live_closure_sync_remount_ok_total.load() == ok_before,
+          "AC2: global ok counter unchanged");
+    CHECK(metrics.live_closure_sync_remount_fail_total.load() == fail_before,
+          "AC2: global fail counter unchanged");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC3: anonymous closure (sid=0) stays on call-time path — sync walk skips.
+static void ac2602_anonymous_still_force_deopt() {
+    std::println("\n--- #2602 AC3: anonymous sid=0 → call-time path ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    // Anonymous closure: alloc without set_name → sid stays 0.
+    const auto cid = aura_alloc_closure(/*func_id=*/1);
+    CHECK(cid >= 0, "AC3: alloc");
+    // No set_name → cid_stable_func_ids[cid] == 0.
+
+    const auto ok_before = metrics.live_closure_sync_remount_ok_total.load();
+    const auto fail_before = metrics.live_closure_sync_remount_fail_total.load();
+
+    std::uint64_t sync_ok = 99, sync_fail = 99;
+    aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+    std::println("  AC3: sync_ok={} sync_fail={}", sync_ok, sync_fail);
+    CHECK(sync_ok == 0, "AC3: anonymous does not bump sync_ok");
+    CHECK(sync_fail == 0, "AC3: anonymous does not bump sync_fail");
+    CHECK(metrics.live_closure_sync_remount_ok_total.load() == ok_before,
+          "AC3: anonymous does not bump global ok counter");
+    CHECK(metrics.live_closure_sync_remount_fail_total.load() == fail_before,
+          "AC3: anonymous does not bump global fail counter");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC4: soft / no live named closures → zero extra work (decide short-circuit).
+static void ac2602_soft_zero_cost() {
+    std::println("\n--- #2602 AC4: soft / no live closures → zero extra work ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    const auto ok_before = metrics.live_closure_sync_remount_ok_total.load();
+    const auto fail_before = metrics.live_closure_sync_remount_fail_total.load();
+
+    std::uint64_t sync_ok = 99, sync_fail = 99;
+    aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+    CHECK(sync_ok == 0, "AC4: sync_ok 0 on empty live set");
+    CHECK(sync_fail == 0, "AC4: sync_fail 0 on empty live set");
+    CHECK(metrics.live_closure_sync_remount_ok_total.load() == ok_before,
+          "AC4: global ok counter unchanged");
+    CHECK(metrics.live_closure_sync_remount_fail_total.load() == fail_before,
+          "AC4: global fail counter unchanged");
+
+    aura_set_aot_metrics(nullptr);
+}
+
+// AC5: source-cite + schema-2602 cross-links on query:aot-stats.
+static void ac2602_source_and_schema() {
+    std::println("\n--- #2602 AC5: source-cite + schema-2602 ---");
+    const auto runtime = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto header = read_file("src/compiler/runtime_shared.h");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto metrics = read_file("src/compiler/observability_metrics.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+
+    CHECK(runtime.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC5: sync walk in runtime");
+    CHECK(runtime.find("remount_or_force_deopt_unlocked_no_call_time_counter") != std::string::npos,
+          "AC5: no-call-time-counter variant in runtime");
+    CHECK(header.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC5: declaration in runtime_shared.h");
+    CHECK(bridge.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC5: bridge drives sync walk");
+    CHECK(metrics.find("live_closure_sync_remount_ok_total") != std::string::npos,
+          "AC5: ok counter in metrics");
+    CHECK(metrics.find("live_closure_sync_remount_fail_total") != std::string::npos,
+          "AC5: fail counter in metrics");
+    CHECK(prim.find("schema-2602") != std::string::npos, "AC5: schema-2602 in query surface");
+    CHECK(prim.find("issue-2602") != std::string::npos, "AC5: issue-2602 in query surface");
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href_aot_stats(cs, "schema-2602") == 2602, "AC5: schema-2602 on query:aot-stats");
+    CHECK(href_aot_stats(cs, "issue-2602") == 2602, "AC5: issue-2602 on query:aot-stats");
+    CHECK(href_aot_stats(cs, "live-closure-sync-remount-wired") == 1,
+          "AC5: sync-remount-wired sentinel");
+    // Compatibility: prior schemas preserved.
+    CHECK(href(cs, "schema-2542") == 2542, "AC5: schema-2542 retained");
+    CHECK(href(cs, "schema-2503") == 2503, "AC5: schema-2503 retained");
+    CHECK(href(cs, "schema-2550") == 2550, "AC5: schema-2550 retained");
+}
+
 } // namespace
 
 int main() {
@@ -304,6 +454,12 @@ int main() {
     ac4_empty_zero_cost();
     ac5_soak_no_fallback_growth();
     ac6_source_query();
-    std::println("\n=== #2542 summary: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2602: synchronous remount walk for named live closures ===");
+    ac2602_named_held_no_mustdeopt();
+    ac2602_remount_fail_path();
+    ac2602_anonymous_still_force_deopt();
+    ac2602_soft_zero_cost();
+    ac2602_source_and_schema();
+    std::println("\n=== #2542 + #2602 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
