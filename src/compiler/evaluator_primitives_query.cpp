@@ -6686,6 +6686,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2562", 2562);
                 insert_kv("issue-2562", 2562);
             }
+            // Issue #2620: Soft/Sampled incomplete → skip insert + force-Full arm.
+            // Additive keys; #2317 canary counter retained for env=1 inserts.
+            {
+                const std::int64_t soft_skip = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_soft_incomplete_skip_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("coercion-soft-incomplete-skip-total", soft_skip);
+                insert_kv("coercion_soft_incomplete_skip_total", soft_skip);
+                insert_kv("coercion-unify-incomplete-skip-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_coercion_unify_incomplete_skip_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-2620", 2620);
+                insert_kv("issue-2620", 2620);
+            }
             // Issue #2318: anti-starvation streak gate. N consecutive
             // truncated delta solves → force one full ConstraintSystem::
             // solve() (mirror #2277 escalation body). Reads from the

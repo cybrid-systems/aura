@@ -1,28 +1,21 @@
 #!/usr/bin/env python3
 """
-Linter for #2317 — Sampled incomplete provenance must insert CoercionNode
-+ force next Full audit (not silent skip). Closes the soundness /
-debuggability hole where under Sampled strategy, `apply_coercion_map`
-skips CoercionNode insertion when provenance is incomplete. Runtime
-vs type evidence diverge: Agents see no Cast site, narrow_evidence
-never reaches IR, and blame recovery is impossible until an
-independent Full audit happens to run. After #2310-#2316 correctness
-fixes, Sampled-mode coercion evaporation is the missing piece.
+Linter for #2317 / #2620 — Sampled incomplete-insert canary retained.
 
-Verifies the implementation is wired correctly:
-  - coercion_map.ixx: new counter g_coercion_sampled_insert_incomplete_total
-  - coercion_map.ixx: apply path Sampled branch — Sampled + !reject →
-    INSERT (with force-audit via note_provenance_miss_for_boundary)
-  - coercion_map.ixx: production reject-on-miss unchanged
-  - coercion_map.ixx: Full / Strict honesty preserved (#2147 / #2261)
-  - evaluator_primitives_query.cpp: query:type-incremental-fidelity-stats
-    extended with coercion-sampled-insert-incomplete-total + alias +
-    policy-wired sentinel + schema-2317 / issue-2317
-  - tests/compiler/test_coercion_ban_weak_ir_2261.cpp cites Issue #2317
-    + has ac2317_* test functions
+#2620 unifies Soft/production: incomplete dual never inserts under
+strategy!=Off by default. #2317 insert is canary-only via
+AURA_COERCION_SAMPLED_INCOMPLETE_INSERT=1. Soft default skips insert
+and arms force-Full observe (no hard reject).
 
-Exit 0 on success, 1 on any failure. Run as part of the ship loop:
-    python3 scripts/check_coercion_sampled_insert_incomplete_coverage.py
+Verifies:
+  - g_coercion_sampled_insert_incomplete_total still present (canary)
+  - coercion_sampled_incomplete_insert_canary + env gate
+  - #2620 skip-insert + arm_soft_incomplete_force_full_observe
+  - production reject-on-miss unchanged
+  - query keys schema-2317 retained
+  - tests cite Issue #2317 + ac2317_*
+
+Exit 0 on success, 1 on any failure.
 """
 
 import sys
@@ -60,7 +53,7 @@ def main() -> int:
             "g_coercion_sampled_insert_incomplete_total{0};",
             "coercion_map.ixx: new counter atomic init",
         ),
-        # coercion_map.ixx: apply path Sampled branch
+        # coercion_map.ixx: canary + default skip (#2620)
         (
             ROOT / "src/compiler/coercion_map.ixx",
             "AuditStrategy::Sampled",
@@ -68,8 +61,18 @@ def main() -> int:
         ),
         (
             ROOT / "src/compiler/coercion_map.ixx",
-            "!reject_apply_on_provenance_miss()",
-            "coercion_map.ixx: reject check present",
+            "AURA_COERCION_SAMPLED_INCOMPLETE_INSERT",
+            "coercion_map.ixx: canary env present",
+        ),
+        (
+            ROOT / "src/compiler/coercion_map.ixx",
+            "coercion_sampled_incomplete_insert_canary",
+            "coercion_map.ixx: canary helper present",
+        ),
+        (
+            ROOT / "src/compiler/coercion_map.ixx",
+            "arm_soft_incomplete_force_full_observe",
+            "coercion_map.ixx: #2620 soft force-Full arm present",
         ),
         (
             ROOT / "src/compiler/coercion_map.ixx",
@@ -79,6 +82,7 @@ def main() -> int:
         # coercion_map.ixx: weak mid ban preserved (#2261)
         (ROOT / "src/compiler/coercion_map.ixx", "never weak mid", "coercion_map.ixx: weak mid ban preserved (#2261)"),
         (ROOT / "src/compiler/coercion_map.ixx", "Issue #2317", "coercion_map.ixx: cites Issue #2317"),
+        (ROOT / "src/compiler/coercion_map.ixx", "#2620", "coercion_map.ixx: cites #2620"),
         # production reject unchanged
         (
             ROOT / "src/compiler/coercion_map.ixx",

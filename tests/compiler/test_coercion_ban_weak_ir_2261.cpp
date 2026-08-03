@@ -263,27 +263,31 @@ static void ac5_schema_source_cite() {
           "weak ban comment");
 }
 
-// ── Issue #2317: Sampled incomplete provenance → INSERT (not skip) ──
-// AC1: Sampled + !prov_complete + !reject → INSERT + bump new counter
+// ── Issue #2317 / #2620: Sampled incomplete insert is CANARY-only ──
+// Default (#2620): never insert incomplete under Sampled.
+// Canary: AURA_COERCION_SAMPLED_INCOMPLETE_INSERT=1 restores #2317 insert.
+// AC1: counter + canary env + default skip-insert present
 // AC2: Production reject-on-miss unchanged (still skip)
 // AC3: Full / Strict honesty (no regression to #2147 / #2261 rules)
-// AC4: Observability — new counter + query keys + schema-2317 / issue-2317
+// AC4: Observability — counter + query keys + schema-2317 / issue-2317
 // AC5: source-cite rows
 
 static void ac2317_sampled_insert_policy() {
-    std::println("\n--- #2317 AC1: Sampled insert policy ---");
+    std::println("\n--- #2317 AC1: Sampled insert canary policy (#2620 default skip) ---");
     const auto cm = read_file("src/compiler/coercion_map.ixx");
-    // AC1: new counter g_coercion_sampled_insert_incomplete_total present
+    // AC1: counter g_coercion_sampled_insert_incomplete_total retained (canary)
     CHECK(cm.find("g_coercion_sampled_insert_incomplete_total") != std::string::npos,
-          "AC1: new counter g_coercion_sampled_insert_incomplete_total present");
+          "AC1: counter g_coercion_sampled_insert_incomplete_total present");
     CHECK(cm.find("g_coercion_sampled_insert_incomplete_total{0};") != std::string::npos,
-          "AC1: new counter atomic init");
-    // AC1: apply path Sampled branch — Sampled + !reject → INSERT (not skip)
-    CHECK(cm.find("Sampled") != std::string::npos &&
-              cm.find("!reject_apply_on_provenance_miss()") != std::string::npos,
-          "AC1: Sampled + !reject branch present");
-    // AC1: note_provenance_miss_for_boundary still called via
-    // fill_coercion_provenance_chain at line 328 (force-audit trigger)
+          "AC1: counter atomic init");
+    // AC1: canary env + Sampled branch
+    CHECK(cm.find("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT") != std::string::npos,
+          "AC1: canary env present");
+    CHECK(cm.find("coercion_sampled_incomplete_insert_canary") != std::string::npos,
+          "AC1: canary helper present");
+    CHECK(cm.find("!reject_apply_on_provenance_miss()") != std::string::npos,
+          "AC1: reject check present");
+    // AC1: note_provenance_miss_for_boundary still called
     CHECK(cm.find("note_provenance_miss_for_boundary()") != std::string::npos,
           "AC1: force-audit note_provenance_miss_for_boundary present");
     // AC1: weak mid NOT stamped (preserve #2261)
@@ -292,6 +296,8 @@ static void ac2317_sampled_insert_policy() {
               cm.find("never weak mid") != std::string::npos,
           "AC1: weak mid ban preserved (#2261)");
     CHECK(cm.find("Issue #2317") != std::string::npos, "AC1: coercion_map.ixx cites Issue #2317");
+    CHECK(cm.find("Issue #2620") != std::string::npos || cm.find("#2620") != std::string::npos,
+          "AC1: cites #2620 unify");
 }
 
 static void ac2317_reject_unchanged() {
@@ -355,7 +361,7 @@ static void ac2317_source_cite_rows() {
 
 int main() {
     std::println("=== Issue #2261: ban weak mid under Sampled; never stamp into IR ===");
-    std::println("=== Issue #2317: Sampled + incomplete provenance → INSERT (not skip) ===");
+    std::println("=== Issue #2317: Sampled incomplete insert canary (default skip #2620) ===");
     ac1_sampled_no_weak_insert();
     ac2_full_complete_fast_path();
     ac3_off_soft_no_weak_mid();

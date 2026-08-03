@@ -4233,6 +4233,24 @@ def cmd_arena_moving_densify_health_coverage():
     return 0
 
 
+def cmd_coercion_unify_incomplete_skip_coverage():
+    """Issue #2620: Soft never inserts incomplete CoercionNodes (unify surface).
+
+    Default skip + force-Full arm; dual-require drop retained; #2317 canary env.
+    """
+    print(f"{B}=== coercion unify incomplete skip coverage (#2620) ==={N}")
+    script = ROOT / "scripts" / "check_coercion_unify_incomplete_skip_2620.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("coercion unify incomplete skip (#2620) coverage contract rows failed")
+        return 1
+    ok("coercion unify incomplete skip (#2620) coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_equality_8field_coverage():
     """Issue #2519: LayoutStamp::operator== full 8-field equality.
 
@@ -7271,6 +7289,7 @@ def cmd_gate():
         or cmd_soa_ban_residual_aos_bridge_coverage()
         or cmd_soa_residual_production_smoke_coverage()
         or cmd_arena_moving_densify_health_coverage()
+        or cmd_coercion_unify_incomplete_skip_coverage()
         or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
@@ -8065,6 +8084,7 @@ def main():
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
+        "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,
