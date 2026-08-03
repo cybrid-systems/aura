@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 758 | Preferred destination suites |
-| **Total scanned** | **758** | |
+| `tests/core/test_*.cpp` | 759 | Preferred destination suites |
+| **Total scanned** | **759** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 218 | 218 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 88 | 88 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 89 | 89 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 20 | 20 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 75 | 75 | P2 — link-profile heavy; migrate AC smoke first |
@@ -645,6 +645,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_pcv_unique_hotpath_2058.cpp`
 - `tests/compiler/test_per_defuse_batch.cpp`
 - `tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp`
+- `tests/orch/test_per_scope_bp_admit_2591.cpp`
 - `tests/compiler/test_per_symbol_dirty_cycle_guard.cpp`
 - `tests/core/test_per_symbol_dirty_pool_lock.cpp`
 - `tests/core/test_persist_basic.cpp`
@@ -1263,13 +1264,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency_2121.cpp` (#2121) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (88)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (89)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (88)
+#### domain/ (89)
 
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr_2538.cpp` (#2538) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1330,6 +1331,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_pcv_tls_scratch_2406.cpp` (#2406) [domain_suite, theme_core] — AC1: Soft / default: behavior identical (TLS off → same cow_alloc path)
 - `tests/compiler/test_per_defuse_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_per_defuse_batch.cpp — batch driver for per_defuse_index family.
 - `tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp` (—) [domain_suite, theme_serve] — test_per_fiber_stack_pool_high_concurrency.cpp — Issue #652:
+- `tests/orch/test_per_scope_bp_admit_2591.cpp` (#2591) [domain_suite, theme_orch] — tests/orch/test_per_scope_bp_admit_2591.cpp
 - `tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp` (#2353) [domain_suite, theme_compiler] — AC1: Ordered phase helper runs after Moving densify (or stamp-mismatch
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:
 - `tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_full_memory_safety_fuzz_stress.cpp — Issue #602:
