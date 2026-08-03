@@ -434,3 +434,36 @@ Production default: `kMailboxBpAdmitThresholdDefault = 32` — spawn with
 
 Opt-out (legacy / diagnostic): `AURA_ORCH_BP_ADMIT_THRESHOLD=0`.
 Quiet-period recovery: `#2398` / `AURA_ORCH_BP_WINDOW_MS` (default 30s).
+
+## Observability facade (Issue #2589)
+
+Cancel-storm health for the **unified** hard-reclaim protocol
+(`#2227` shared by `orch` + `parallel_orch`) is exposed through a
+single `query:orch-module-stats` facade. No second primitive needed.
+
+Source-of-truth split:
+
+| Surface | Counters | Authoritative for |
+|---------|----------|-------------------|
+| `OrchModuleStats.join_drain_residual_total` / `_reclaim_total` / `_still_running` / `_body_retired_total` | `src/orch/agent_spawn.h` | `orch:agent-join` / `cancel_and_drain_*` paths (`#2397`) |
+| `ParallelOrchStats.join_drain_residual_total` / `_reclaim_total` / `_join_drain_us_total` | `src/serve/parallel_orch.h` | `parallel_orch::parallel_run` Timeout path |
+
+Facade keys (live read, **no double-bookkeeping**):
+
+```text
+query:orch-module-stats
+├─ parallel-join-drain-residual-total            ← g_parallel_orch_stats.join_drain_residual_total
+├─ parallel-join-drain-residual-reclaim-total    ← g_parallel_orch_stats.join_drain_residual_reclaim_total
+├─ parallel-join-drain-us-total                  ← g_parallel_orch_stats.join_drain_us_total
+├─ parallel-join-drain-source = 0                ← 0 = ParallelOrchStats (orch-side = 1; not wired to avoid mirror)
+├─ orch-obs-facade-unified-2589 = 1              ← sentinel
+├─ schema-2589 / issue-2589
+├─ (orch-side) join-drain-residual-total / -reclaim-total / -still-running / -body-retired-total
+│   ← OrchModuleStats (unchanged; orch paths bump directly)
+```
+
+**Dashboards / agents should query the facade**, not parallel_orch
+internally. The facade is additive — `ParallelOrchStats` remains the
+source of truth for parallel-only regression tests.
+
+Regression: `tests/orch/test_orch_obs_facade_2589`.

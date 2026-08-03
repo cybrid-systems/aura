@@ -3787,6 +3787,34 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           os.pure_fallback_locked_total.load(std::memory_order_relaxed)));
             insert_kv("schema-2163", 2163);
             insert_kv("issue-2163", 2163);
+            // Issue #2589: unify parallel_intend residual/reclaim into the
+            // orch-module-stats facade so agents/dashboards query one
+            // surface for cancel-storm health. Source of truth stays
+            // ParallelOrchStats (src/serve/parallel_orch.h) — facade is
+            // a live read, no double-bookkeeping. Issue #2227 hard-reclaim
+            // protocol shared by orch + parallel; facade mirrors the
+            // parallel-side residual/reclaim/drain-us atomics so a single
+            // query returns the unified cancel-storm signal.
+            insert_kv("parallel-join-drain-residual-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::parallel_orch::g_parallel_orch_stats
+                              .join_drain_residual_total.load(std::memory_order_relaxed)));
+            insert_kv("parallel-join-drain-residual-reclaim-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::parallel_orch::g_parallel_orch_stats
+                              .join_drain_residual_reclaim_total.load(std::memory_order_relaxed)));
+            insert_kv(
+                "parallel-join-drain-us-total",
+                static_cast<std::int64_t>(
+                    aura::serve::parallel_orch::g_parallel_orch_stats.join_drain_us_total.load(
+                        std::memory_order_relaxed)));
+            // Wired sentinel + source marker so dashboards can detect
+            // the facade and confirm source of truth is ParallelOrchStats
+            // (no mirror atomics on OrchModuleStats side).
+            insert_kv("parallel-join-drain-source", static_cast<std::int64_t>(0));
+            insert_kv("orch-obs-facade-unified-2589", 1);
+            insert_kv("schema-2589", 2589);
+            insert_kv("issue-2589", 2589);
             // Issue #1881: unified orch health (agent + mailbox + parallel mirrors).
             // New query:orch-*-stats names are frozen; fold into this hash instead.
             insert_kv("agents-active",

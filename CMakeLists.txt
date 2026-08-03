@@ -4451,3 +4451,10 @@ add_dependencies(all_test_issue_targets test_mutate_mailbox_starvation_throttle_
 aura_add_issue_test(test_orch_scope_2588)
 aura_issue_test_link_light(test_orch_scope_2588)
 add_dependencies(all_test_issue_targets test_orch_scope_2588)
+# Issue #2589 — observability facade: parallel_orch residual/reclaim
+# surfaced via query:orch-module-stats (live read; no double-bookkeeping).
+# Test in tests/orch/test_orch_obs_facade_2589.cpp (src-aligned per #81934).
+# No docs/design/ per #1655 #1485.
+aura_add_issue_test(test_orch_obs_facade_2589)
+aura_issue_test_link_light(test_orch_obs_facade_2589)
+add_dependencies(all_test_issue_targets test_orch_obs_facade_2589)
