@@ -8846,6 +8846,13 @@ struct CompilerMetrics {
     // can distinguish "legacy closures remapped cleanly" (backfill > 0)
     // from "legacy closures relying on name fallback" (fallback > 0).
     std::atomic<std::uint64_t> live_closure_stable_id_backfill_total{0}; // #2175
+    // Issue #2605: named name-fallback reject (fail-closed). Bumped when a
+    // *named* live closure would remount via the legacy name-fallback
+    // invent path (name resolves in reemit set but stored sid miss /
+    // mismatch). Policy: refuse invent, keep MustDeopt, optional hard
+    // abort under AURA_NAMED_NAME_FALLBACK_HARD=1. Steady-state named
+    // create (#2550) should keep this at 0.
+    std::atomic<std::uint64_t> live_closure_named_name_fallback_reject_total{0}; // #2605
     // Issue #2177: AOT-side MacroIntroduced marker observability (refine
     // #2100 which was JIT-only). Process-wide AOT stats for Agent dashboards:
     // propagated = AOT lowering successfully stamped IRFunction.marker from

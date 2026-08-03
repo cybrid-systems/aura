@@ -85,13 +85,15 @@ void* aura_get_aot_metrics(void);
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
 void aura_bump_live_closure_sync_remount_totals(std::uint64_t ok, std::uint64_t fail);
-// Issue #2175 / #2550: residual sid=0 named closures (pre-#2550 or
+// Issue #2175 / #2550 / #2605: residual sid=0 named closures (pre-#2550 or
 // force-injected) get a one-shot backfill via get_or_preserve during
 // aura_remap_live_closures_after_reemit. Named set_name now stamps
-// non-zero sid at create (#2550) so steady-state backfill growth ≈ 0.
+// non-zero sid at create (#2550) so steady-state residual_backfill growth ≈ 0.
 // Anonymous paths never set_name and stay sid=0. Bumped inline by the
 // remap walk under the closure-table lock — no aggregator needed.
 void aura_bump_live_closure_stable_id_backfill_total(std::uint64_t n);
+// Issue #2605: named name-fallback invent refused (fail-closed).
+void aura_bump_live_closure_named_name_fallback_reject_total(std::uint64_t n);
 // Issue #2128: MustDeoptBeforeNextCall metric bumps (runtime → bridge).
 void aura_bump_must_deopt_before_next_call_total(std::uint64_t n);
 // Issue #2233: post-reemit live-closure stamp metric bumpers
