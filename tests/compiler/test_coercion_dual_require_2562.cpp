@@ -156,10 +156,12 @@ static void ac1_production_dual_drop() {
     reset_2562();
 }
 
-// ── AC2: Soft #2317 insert, dual drop stays 0 ──
+// ── AC2: Soft incomplete → #2620 skip (no dual drop); canary restores #2317 ──
+// Renamed from soft_insert_no_drop: #2620 unifies Soft/prod — no incomplete insert.
 static void ac2_soft_insert_no_drop() {
-    std::println("\n--- #2562 AC2: Soft incomplete → #2317 insert; drop=0 ---");
+    std::println("\n--- #2562 AC2: Soft incomplete → #2620 skip; dual drop=0 ---");
     reset_2562();
+    ::unsetenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
     set_strategy(AuditStrategy::Sampled);
     set_reject_apply_on_provenance_miss(false);
     CHECK(!coercion_dual_require_active(), "AC2: Soft dual-require off");
@@ -175,11 +177,12 @@ static void ac2_soft_insert_no_drop() {
     const auto drop0 = g_coercion_dual_require_drop_total.load();
     const auto ins0 = g_coercion_sampled_insert_incomplete_total.load();
     const auto n = apply_coercion_map(flat, map);
-    CHECK(n >= 1, "AC2: Soft Sampled incomplete still inserts (#2317)");
-    CHECK(flat.get(call).child(1) != lit, "AC2: CoercionNode present");
+    // Issue #2620: Soft Sampled incomplete never inserts by default.
+    CHECK(n == 0, "AC2: Soft Sampled incomplete skips insert (#2620)");
+    CHECK(flat.get(call).child(1) == lit, "AC2: no CoercionNode (parent still points at lit)");
     CHECK(g_coercion_dual_require_drop_total.load() == drop0, "AC2: drop_total stays 0");
-    CHECK(g_coercion_sampled_insert_incomplete_total.load() > ins0,
-          "AC2: sampled_insert_incomplete bumped");
+    CHECK(g_coercion_sampled_insert_incomplete_total.load() == ins0,
+          "AC2: sampled_insert_incomplete not bumped without canary");
 }
 
 // ── AC3: complete dual + identity elision ──

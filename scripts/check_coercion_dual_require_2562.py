@@ -3,7 +3,7 @@
 
 Contract:
   AC1 dual-require drop after incomplete fill (production/Full/env)
-  AC2 Soft #2317 insert path preserved; dual drop not armed by default
+  AC2 Soft incomplete skips insert (#2620); dual drop not armed by default
   AC3 complete dual zero drop; identity elision still first; stamp gate
   AC4 schema-2562 + keys on fidelity / layered / health queries
   AC5 completeness_bp / miss counters remain authority; test + cmake + gate

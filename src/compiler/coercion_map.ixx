@@ -134,12 +134,16 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_strict_reject_wea
 // Issue #2261: Sampled skipped CoercionNode insert on incomplete provenance
 // (never stamp weak mid / sentinel pretend into IR under Sampled).
 export inline std::atomic<std::uint64_t> g_coercion_provenance_sampled_reject_total{0};
-// Issue #2317: Sampled insert counter — bumped when Sampled +
-// incomplete provenance + NOT production reject → still insert
-// CoercionNode (with force-audit via fill_coercion_provenance_chain's
-// note_provenance_miss_for_boundary call). Distinct from
-// coercion_provenance_sampled_reject_total which counts SKIPS.
+// Issue #2317 / #2620: Sampled incomplete-insert canary counter.
+// Default OFF (#2620): incomplete dual never inserts under strategy!=Off.
+// Restored only when AURA_COERCION_SAMPLED_INCOMPLETE_INSERT=1 (canary).
+// Distinct from coercion_provenance_sampled_reject_total which counts SKIPS.
 export inline std::atomic<std::uint64_t> g_coercion_sampled_insert_incomplete_total{0};
+// Issue #2620: Soft/Sampled skipped incomplete insert (observe + force-Full arm).
+// Additive; does not rename #2317 / #2562 counters.
+export inline std::atomic<std::uint64_t> g_coercion_soft_incomplete_skip_total{0};
+export inline std::atomic<std::uint32_t> g_coercion_unify_incomplete_skip_wired{1};
+export inline constexpr int kCoercionUnifyIncompleteSkipIssue = 2620;
 export inline std::atomic<std::uint32_t> g_coercion_provenance_ban_weak_ir_wired{1};
 // Issue #2512: times CoercionMap::add stamped TLS active mid/pred into a
 // zero-field entry (deferred-add completeness). Completeness_bp remains
@@ -477,6 +481,26 @@ fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e,
     return get_strategy() != AuditStrategy::Off;
 }
 
+// Issue #2620 / #2317 canary: AURA_COERCION_SAMPLED_INCOMPLETE_INSERT=1 restores
+// legacy Sampled incomplete-insert (default off — unify Soft/prod proof surface).
+[[nodiscard]] inline bool coercion_sampled_incomplete_insert_canary() noexcept {
+    const char* e = std::getenv("AURA_COERCION_SAMPLED_INCOMPLETE_INSERT");
+    return e != nullptr && e[0] == '1';
+}
+
+// Issue #2620: Soft/Sampled incomplete → observe + arm one-shot force Full
+// (no hard-reject; production dual-require / reject-on-miss remain separate).
+inline void arm_soft_incomplete_force_full_observe() noexcept {
+    g_coercion_soft_incomplete_skip_total.fetch_add(1, std::memory_order_relaxed);
+    g_coercion_prov_slo_observe_only_total.fetch_add(1, std::memory_order_relaxed);
+    const auto prev = g_coercion_prov_slo_force_full_pending.exchange(1, std::memory_order_acq_rel);
+    if (prev == 0)
+        g_coercion_prov_slo_force_armed_total.fetch_add(1, std::memory_order_relaxed);
+    // Boundary force-audit channel (fill_coercion may already have noted).
+    note_provenance_miss_for_boundary();
+    note_blame_soft_escalate_for_boundary();
+}
+
 // Issue #2561: cheap Soft/Sampled recovery for incomplete blame/provenance
 // on a mutation mid's dirty cone (recent log entries only). Re-walks
 // fill_coercion_provenance_chain in recovery_mode and re-stamps dual fields
@@ -721,20 +745,26 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             continue;
         }
 
-        // Issue #1873 / #2024 / #2102 / #2261: full provenance chain recovery.
-        // Issue #2562: dual-require (production / Full / env) → drop incomplete
-        // dual (both pred+mid non-weak) before insert; prefer drop over weak/
-        // sentinel stamp. Completeness_bp / miss totals remain authority.
-        // Issue #2317: Sampled + incomplete + NOT dual-require + !reject
-        // → INSERT (with force-audit). Reject-on-miss + Full + Strict still
-        // skip per existing #2147 / #2261 rules.
+        // Issue #1873 / #2024 / #2102 / #2261 / #2562 / #2620: provenance completeness
+        // gate before CoercionNode insert. Decision table (strategy × complete):
+        //
+        //   │ Off      │ incomplete → INSERT (weak mid cleared; #2261)
+        //   │ Sampled  │ incomplete → SKIP + observe + arm force-Full (#2620)
+        //   │          │   canary AURA_COERCION_SAMPLED_INCOMPLETE_INSERT=1 →
+        //   │          │   INSERT + g_coercion_sampled_insert_incomplete (#2317)
+        //   │ Full     │ incomplete → SKIP (honest; dual-require when active)
+        //   │ dual-req │ incomplete → DROP + dual_require_drop_total (#2562)
+        //   │ reject   │ incomplete → SKIP + miss_reject (#2185)
+        //
+        // Unified contract (#2620 Phase A): incomplete dual provenance never
+        // becomes executable IR under any non-Off strategy (default).
         const bool prov_complete = fill_coercion_provenance_chain(flat, e);
         if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::get_strategy;
             // Do not shadow outer stats ref `s` (DeadCoercionAstStats).
             const auto strat = get_strategy();
-            // Issue #2562: dual-field require-or-drop (before #2317 soft insert).
+            // Issue #2562: dual-field require-or-drop (production / Full / env).
             if (coercion_dual_require_active()) {
                 g_coercion_dual_require_drop_total.fetch_add(1, std::memory_order_relaxed);
                 g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
@@ -744,22 +774,29 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                 ++s.skipped_stale;
                 continue; // never insert incomplete dual under dual-require
             }
-            // Issue #2317: Sampled + !reject → INSERT (not skip). Soft default.
-            if (strat == AuditStrategy::Sampled && !reject_apply_on_provenance_miss()) {
+            // Issue #2620 / #2317 canary: only when env explicitly set, Sampled
+            // may still INSERT incomplete (legacy canary). Default OFF.
+            if (coercion_sampled_incomplete_insert_canary() && strat == AuditStrategy::Sampled &&
+                !reject_apply_on_provenance_miss()) {
                 g_coercion_sampled_insert_incomplete_total.fetch_add(1, std::memory_order_relaxed);
-                // Fall through to insert (CoercionNode exists for
-                // lowering; force-audit triggered by fill_coercion_provenance_chain).
+                // Fall through to insert (force-audit via fill_coercion).
             } else if (should_skip_coercion_insert_on_incomplete()) {
-                // existing skip path (reject-on-miss OR non-Off strategy)
+                // Issue #2620: Soft/Sampled/Full — never insert incomplete.
+                // Soft/Sampled: observe + arm force-Full (zero hard-reject default).
+                // reject-on-miss / Full: miss_reject path retained.
+                // Always count as insert-reject (not commit hard-reject).
                 g_coercion_provenance_miss_reject_total.fetch_add(1, std::memory_order_relaxed);
                 if (strat == AuditStrategy::Sampled)
                     g_coercion_provenance_sampled_reject_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+                // Soft/Sampled without reject-on-miss: observe + arm force-Full (#2620).
+                if (strat == AuditStrategy::Sampled && !reject_apply_on_provenance_miss())
+                    arm_soft_incomplete_force_full_observe();
                 ++s.skipped_stale;
-                continue;
+                continue; // Issue #2620: skip-insert branch (source-cite)
             }
-            // For Off soft path (with incomplete provenance): falls through
-            // to insert (existing behavior; weak mid cleared per #2261).
+            // Off soft path (incomplete): falls through to insert
+            // (existing behavior; weak mid cleared per #2261).
         }
 
         // Locate the parent and confirm it still points at the
