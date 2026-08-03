@@ -4477,3 +4477,14 @@ add_dependencies(all_test_issue_targets test_security_schedule_gate_2590)
 aura_add_issue_test(test_per_scope_bp_admit_2591)
 aura_issue_test_link_light(test_per_scope_bp_admit_2591)
 add_dependencies(all_test_issue_targets test_per_scope_bp_admit_2591)
+# Issue #2592 — mailbox deliver / cross-fiber principal verify at the
+# receive site (try_pop + recv). Re-calls
+# aura_fiber_install_tenant_scope_for_resume (idempotent; bumps
+# tenant_scope_mismatch_total on forged ambient). Closes the
+# #2491 residual: ambient principal must match target fiber's
+# assigned_tenant_id before handler runs. Test in
+# tests/serve/test_mailbox_tenant_principal_2592.cpp
+# (src-aligned per #81934). No docs/design/ per #1655 #1485.
+aura_add_issue_test(test_mailbox_tenant_principal_2592)
+aura_issue_test_link_light(test_mailbox_tenant_principal_2592)
+add_dependencies(all_test_issue_targets test_mailbox_tenant_principal_2592)
