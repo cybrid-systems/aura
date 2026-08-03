@@ -355,6 +355,27 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
            composite_empty_cs_hard_env();
 }
 
+// Issue #2621: process-wide last partial cone truncate (Agents + pure tests).
+// Stamped by TypeChecker::infer_flat_partial after #2560 soft/hard truncate.
+// Soft: observe only; production / AURA_PARTIAL_CONE_COMMIT_HARD → hard face.
+inline std::atomic<std::uint8_t> g_last_partial_cone_truncated{0};
+inline std::atomic<std::uint64_t> g_last_partial_cone_dropped{0};
+inline std::atomic<std::uint64_t> g_last_partial_cone_fanout_trunc{0};
+inline std::atomic<std::uint64_t> g_partial_cone_commit_observe_total{0};
+inline std::atomic<std::uint64_t> g_partial_cone_commit_reject_total{0};
+inline std::atomic<std::uint32_t> g_partial_cone_commit_gate_wired{1};
+inline constexpr int kPartialConeCommitGateIssue = 2621;
+
+[[nodiscard]] inline bool last_partial_cone_truncated() noexcept {
+    return g_last_partial_cone_truncated.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint64_t last_partial_cone_dropped() noexcept {
+    return g_last_partial_cone_dropped.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t last_partial_cone_fanout_trunc() noexcept {
+    return g_last_partial_cone_fanout_trunc.load(std::memory_order_relaxed);
+}
+
 // Issue #2458: env override AURA_TRUNCATE_COMMIT_HARD=1 forces full-solve /
 // reject policy on truncated reverify or incomplete blame even under Soft.
 [[nodiscard]] inline bool truncate_commit_hard_env() noexcept {
@@ -378,6 +399,37 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 [[nodiscard]] inline bool truncate_commit_hard_enabled() noexcept {
     return production_defaults_active() || get_strategy() == AuditStrategy::Full ||
            truncate_commit_hard_env();
+}
+
+// AURA_PARTIAL_CONE_COMMIT_HARD=1 forces hard cone-truncate commit gate even
+// under Soft. Unset → follow truncate_commit_hard_enabled() (prod/Full).
+[[nodiscard]] inline bool partial_cone_commit_hard_env() noexcept {
+    const char* e = std::getenv("AURA_PARTIAL_CONE_COMMIT_HARD");
+    return e != nullptr && e[0] == '1';
+}
+[[nodiscard]] inline bool partial_cone_commit_hard_enabled() noexcept {
+    return partial_cone_commit_hard_env() || truncate_commit_hard_enabled();
+}
+
+// Publish last cone truncate window (called from type_checker_impl #2560 block).
+inline void publish_partial_cone_truncate(bool truncated, std::uint64_t dropped,
+                                          std::uint64_t fanout_trunc = 0) noexcept {
+    g_last_partial_cone_truncated.store(truncated ? 1 : 0, std::memory_order_relaxed);
+    g_last_partial_cone_dropped.store(dropped, std::memory_order_relaxed);
+    if (fanout_trunc > 0)
+        g_last_partial_cone_fanout_trunc.fetch_add(fanout_trunc, std::memory_order_relaxed);
+    if (!truncated)
+        return;
+    if (partial_cone_commit_hard_enabled())
+        g_partial_cone_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_partial_cone_commit_observe_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void clear_partial_cone_truncate_for_test() noexcept {
+    g_last_partial_cone_truncated.store(0, std::memory_order_relaxed);
+    g_last_partial_cone_dropped.store(0, std::memory_order_relaxed);
+    g_last_partial_cone_fanout_trunc.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2053: production multi-tenant AI — capture every self-modify event.
@@ -565,7 +617,7 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
 // only folds them into readiness_bp + force_reason + would_allow_commit.
 //
 // force_reason priority (highest first):
-//   empty_cs > truncate > linear > blame > solve > ok
+//   empty_cs > truncate/cone_truncate > linear > blame > solve > ok
 //
 // Inputs are pure flags (no atomics). Live callers may fill hard flags from
 // composite_empty_cs_hard_reject_enabled() / truncate_commit_hard_enabled() /
@@ -579,6 +631,7 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
 //
 // Schema-2553 on query:type-incremental-fidelity-stats (+ dedicated
 // query:typed-mutation-commit-readiness via register_stats_impl).
+// Issue #2621: partial_cone_truncated is truncate-class (same hard policy).
 struct CommitReadinessInput {
     // 0=SOLVED, 1=CONFLICT, 2=TIMEOUT (SolverSnapshot / SolveResult).
     std::uint8_t solve_status = 0;
@@ -587,6 +640,9 @@ struct CommitReadinessInput {
     bool truncated_reverify = false;
     // true when #2458 full-solve recovered after truncated_reverify.
     bool truncated_full_solve_recovered = false;
+    // Issue #2621: last infer_flat_partial soft/hard cone truncate (stale
+    // residual outside truncated cone). Soft observe / production hard.
+    bool partial_cone_truncated = false;
     bool expected_partial = false; // Agent / composite expected partial CS
     bool cs_has_work = false;      // commit_cs_has_work / dirty CS
     // Issue #2610: true when effective expected_partial was auto-set from
@@ -602,13 +658,16 @@ struct CommitReadinessInput {
 struct CommitReadiness {
     std::uint32_t readiness_bp = 10000;
     bool would_allow_commit = true;
-    // empty_cs | auto_partial | truncate | linear | blame | solve | ok
+    // empty_cs | auto_partial | truncate | cone_truncate | linear | blame | solve | ok
     std::string_view force_reason = "ok";
-    // Stable int: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs 6=auto_partial
+    // Stable int: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs
+    // 6=auto_partial 9=cone_truncate (#2621; 7–8 reserved by #2613 advisory)
     std::int64_t force_reason_code = 0;
 };
 
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
+    if (r == "cone_truncate")
+        return 9; // #2621
     if (r == "auto_partial")
         return 6; // #2610
     if (r == "empty_cs")
@@ -650,11 +709,18 @@ struct CommitReadiness {
         return (set("empty_cs", true, 7500), r); // Soft observe
     }
 
-    // 2) truncate — truncated reverify without full-solve recover (#2458).
-    if (in.truncated_reverify && !in.truncated_full_solve_recovered) {
+    // 2) truncate — truncated reverify without full-solve recover (#2458)
+    //    OR partial cone truncate (#2621 / #2560 soft|hard overflow).
+    //    cone_truncate reason when only cone truncated (not reverify).
+    const bool trunc_face =
+        (in.truncated_reverify && !in.truncated_full_solve_recovered) || in.partial_cone_truncated;
+    if (trunc_face) {
+        const bool cone_only = in.partial_cone_truncated &&
+                               !(in.truncated_reverify && !in.truncated_full_solve_recovered);
+        const std::string_view reason = cone_only ? "cone_truncate" : "truncate";
         if (in.truncate_hard)
-            return (set("truncate", false, 1000), r);
-        return (set("truncate", true, 7000), r); // Soft observe
+            return (set(reason, false, 1000), r);
+        return (set(reason, true, 7000), r); // Soft observe
     }
 
     // 3) linear — escape / invariant fail (#2108).
@@ -689,10 +755,14 @@ struct CommitReadiness {
     const bool prod = production_defaults_active();
     const bool full = get_strategy() == AuditStrategy::Full;
     in.empty_cs_hard = composite_empty_cs_hard_reject_enabled();
-    in.truncate_hard = truncate_commit_hard_enabled();
+    // Issue #2621: cone truncate uses same hard family as #2458 truncate +
+    // AURA_PARTIAL_CONE_COMMIT_HARD.
+    in.truncate_hard = truncate_commit_hard_enabled() || partial_cone_commit_hard_enabled();
     // Linear escape + blame-complete hard under production / Full (lineage).
     in.linear_hard = prod || full;
     in.blame_hard = prod || full;
+    // Live last partial cone truncate stamp (#2621 / #2560).
+    in.partial_cone_truncated = last_partial_cone_truncated();
     return in;
 }
 

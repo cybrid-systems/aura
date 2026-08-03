@@ -4251,6 +4251,24 @@ def cmd_coercion_unify_incomplete_skip_coverage():
     return 0
 
 
+def cmd_partial_cone_commit_gate_coverage():
+    """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
+
+    Soft observe; production / AURA_PARTIAL_CONE_COMMIT_HARD deny cone_truncate.
+    """
+    print(f"{B}=== partial cone commit gate coverage (#2621) ==={N}")
+    script = ROOT / "scripts" / "check_partial_cone_commit_gate_2621.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("partial cone commit gate (#2621) coverage contract rows failed")
+        return 1
+    ok("partial cone commit gate (#2621) coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_equality_8field_coverage():
     """Issue #2519: LayoutStamp::operator== full 8-field equality.
 
@@ -7290,6 +7308,7 @@ def cmd_gate():
         or cmd_soa_residual_production_smoke_coverage()
         or cmd_arena_moving_densify_health_coverage()
         or cmd_coercion_unify_incomplete_skip_coverage()
+        or cmd_partial_cone_commit_gate_coverage()
         or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
@@ -8085,6 +8104,7 @@ def main():
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
+        "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

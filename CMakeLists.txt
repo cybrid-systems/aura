@@ -2768,6 +2768,11 @@ aura_add_issue_test(test_coercion_unify_incomplete_skip_2620)
 aura_issue_test_link_light(test_coercion_unify_incomplete_skip_2620)
 add_dependencies(all_test_issue_targets test_coercion_unify_incomplete_skip_2620)
 
+# Issue #2621: partial cone truncate must not silent-commit under production.
+aura_add_issue_test(test_partial_cone_commit_gate_2621)
+aura_issue_test_link_light(test_partial_cone_commit_gate_2621)
+add_dependencies(all_test_issue_targets test_partial_cone_commit_gate_2621)
+
 # Issue #2260: MutationBoundary type-proof hard-gate (SOLVED / full resync).
 aura_add_issue_test(test_boundary_solve_hard_gate_2260)
 aura_issue_test_link_light(test_boundary_solve_hard_gate_2260)

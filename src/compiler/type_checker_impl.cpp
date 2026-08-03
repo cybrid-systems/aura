@@ -7481,6 +7481,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // Issue #2262: no engine CS to import — skip metric.
         g_partial_cs_import_skip_total.fetch_add(1, std::memory_order_relaxed);
         last_partial_cs_live_ = commit_cs_has_work(); // retain prior live flag
+        // Issue #2621 AC4: empty dirty → vacuous healthy (clear truncate).
+        last_partial_cone_truncated_ = false;
+        last_partial_cone_dropped_ = 0;
+        aura::compiler::typed_audit::publish_partial_cone_truncate(false, 0, 0);
         return 0;
     }
 
@@ -7658,6 +7662,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     }
 
     // ── Issue #2560: partial cone soft/hard SLA (type layer) ──
+    // Issue #2621: stamp last_partial_cone_truncated for commit_readiness
+    // (Soft observe / production hard — never silent-commit under prod).
     // After full cone build (primary + type_dep + cascade + #2283 merge),
     // before #2516 invalidate/re-infer. Zero cost when size ≤ soft_cap (AC3).
     // Soft overflow: seed-preserving truncate to soft_cap + counter.
@@ -7693,20 +7699,30 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 m->partial_cone_soft_overflow_total.fetch_add(1, std::memory_order_relaxed);
         }
         const bool production = aura::compiler::typed_audit::production_defaults_active();
+        std::size_t dropped = 0;
+        bool truncated = false;
         if (production && orig_sz > hard) {
             // AC2: hard path under production — seed-preserving truncate to
             // hard_cap (deterministic; metric prevents silent O(n)).
+            // #2621 AC3: hard overflow is never silent success for commit.
             if (m)
                 m->partial_cone_hard_fallback_total.fetch_add(1, std::memory_order_relaxed);
-            (void)truncate_partial_cone_seed_preserving(affected, seeds, hard);
+            dropped = truncate_partial_cone_seed_preserving(affected, seeds, hard);
+            truncated = true; // over hard always fidelity signal even if drop==0
         } else if (orig_sz > soft) {
             // Soft overflow: prefer DefUse/per-symbol already selected above;
             // still truncate seed-preserving to soft_cap for latency SLA.
-            (void)truncate_partial_cone_seed_preserving(affected, seeds, soft);
+            dropped = truncate_partial_cone_seed_preserving(affected, seeds, soft);
+            truncated = dropped > 0 || orig_sz > soft;
         }
         if (m)
             m->partial_cone_last_size.store(static_cast<std::uint64_t>(affected.size()),
                                             std::memory_order_relaxed);
+        // Issue #2621: publish truncate fidelity for commit_readiness Agents.
+        aura::compiler::typed_audit::publish_partial_cone_truncate(
+            truncated, static_cast<std::uint64_t>(dropped), /*fanout*/ 0);
+        last_partial_cone_truncated_ = truncated;
+        last_partial_cone_dropped_ = static_cast<std::uint64_t>(dropped);
     }
 
     // ── Issue #2516 dirty txn (single ordered sequence; all partial paths) ──
