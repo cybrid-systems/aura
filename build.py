@@ -6601,6 +6601,37 @@ def cmd_closure_sync_remount_2602_coverage():
     return 0
 
 
+def cmd_cross_cow_soft_migrate_obs_2603_coverage():
+    """Issue #2603: tighten cross-COW soft-migrate observability
+    (same-gen success vs hard reason). Refines #2371 / #2505 / #2547
+    by splitting the soft counter by same-gen vs all-soft so Agents
+    can read soft / (soft + CowGenMismatch) for throttle without
+    log scraping.
+
+    Validates the 5-AC contract from issue body:
+      AC1: same-gen soft success → cross_cow_soft_migrate_same_gen_total
+           +1 (distinct from cross_cow_soft_migrate_total all-soft).
+      AC2: cross-gen → cross_cow_hard_reject_cow_gen_mismatch_total;
+           same-gen counter NOT bumped.
+      AC3: AURA_CROSS_COW_SOFT_MIGRATE=0 → always hard; counters
+           consistent.
+      AC4: additive schema only; #2505 / #2547 surfaces preserved.
+      AC5: source-cite + unit test in test_cross_cow_soft_migrate_2371.cpp
+           (extended per #81967 with ac2603_* sections).
+    """
+    print(f"{B}=== cross-COW soft-migrate observability coverage (#2603) ==={N}")
+    script = ROOT / "scripts" / "check_cross_cow_soft_migrate_obs_2603.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross-COW soft-migrate observability coverage contract rows failed")
+        return 1
+    ok("cross-COW soft-migrate observability coverage clean")
+    return 0
+
+
 def cmd_aot_reload_policy_coverage():
     """Issue #2249: Region | Staging auto-retry conservative path (extend #2232).
 
@@ -6841,6 +6872,7 @@ def cmd_gate():
         or cmd_general_object_pin_coverage()
         or cmd_aot_per_eval_slot_invalidate_coverage()
         or cmd_closure_sync_remount_2602_coverage()
+        or cmd_cross_cow_soft_migrate_obs_2603_coverage()
         or cmd_aot_exhausted_min_dirty_retry_2601_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
@@ -7677,6 +7709,7 @@ def main():
         "adaptive-thr": cmd_adaptive_thr_coverage,
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
         "closure-sync-remount-2602": cmd_closure_sync_remount_2602_coverage,
+        "cross-cow-soft-migrate-2603": cmd_cross_cow_soft_migrate_obs_2603_coverage,
         "aot-exhausted-min-dirty-retry-2601": cmd_aot_exhausted_min_dirty_retry_2601_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,

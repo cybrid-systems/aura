@@ -10757,6 +10757,27 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("cross-cow-soft-migrate-wired", 1);
             insert_kv("schema-2371", 2371);
             insert_kv("issue-2371", 2371);
+            // Issue #2603: same-gen soft restamp counter (distinct from
+            // cross_cow_soft_migrate_total). Agents split soft/hard for
+            // throttle under multi-COW pressure without log scraping.
+            // Cross-gen → CowGenMismatch hard does NOT bump this.
+            // Optional soft/(soft+hard) rate helper for Agent dashboards.
+            {
+                const std::int64_t soft_all = m ? L(&m->cross_cow_soft_migrate_total) : 0;
+                const std::int64_t soft_same = m ? L(&m->cross_cow_soft_migrate_same_gen_total) : 0;
+                const std::int64_t hard_cow = m ? L(&m->cross_cow_hard_reject_cow_gen_mismatch_total) : 0;
+                insert_kv("cross-cow-soft-migrate-same-gen-total", soft_same);
+                insert_kv("cross_cow_soft_migrate_same_gen_total", soft_same);
+                insert_kv("cross-cow-soft-migrate-same-gen-wired", 1);
+                // Soft rate (same-gen / (same-gen + hard)). Clamp [0, 10000] (×100 for 2dp).
+                const std::int64_t denom = soft_same + hard_cow;
+                const std::int64_t soft_rate_x10000 =
+                    denom > 0 ? (soft_same * 10000) / denom : 0;
+                insert_kv("cross-cow-soft-rate-x10000", soft_rate_x10000);
+                // Schema-2603 cross-link.
+                insert_kv("schema-2603", 2603);
+                insert_kv("issue-2603", 2603);
+            }
             // Issue #2505: reason breakdown + policy knobs (additive).
             insert_kv("cross-cow-hard-reject-disabled-total",
                       m ? L(&m->cross_cow_hard_reject_disabled_total) : 0);

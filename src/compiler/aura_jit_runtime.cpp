@@ -1332,6 +1332,12 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
     stamp_closure_provenance_locked(cid);
     invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
     aura_bump_cross_cow_soft_migrate_total();
+    // Issue #2603: same-gen soft restamp counter (distinct from
+    // cross_cow_soft_migrate_total which lumps all soft successes).
+    // Cross-gen → CowGenMismatch hard (#2547) does NOT bump this
+    // (only the all-soft counter above). Soft does NOT open
+    // cross-workspace write (#2178/#2275 still fail-closed).
+    aura_bump_cross_cow_soft_migrate_same_gen_total();
     aura_unlock_workspace_write();
     return 1;
 }

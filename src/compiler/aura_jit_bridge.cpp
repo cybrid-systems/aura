@@ -1387,6 +1387,14 @@ extern "C" void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
     if (aot_metrics())
         aot_metrics()->cross_cow_soft_migrate_total.fetch_add(1, std::memory_order_relaxed);
 }
+// Issue #2603: same-gen soft restamp counter (Agents split soft/hard
+// for throttle). Bumped in aura_jit_runtime.cpp try_cross_cow_soft_migrate_
+// success path; cross-gen → CowGenMismatch hard does NOT bump this.
+extern "C" void aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept {
+    if (aot_metrics())
+        aot_metrics()->cross_cow_soft_migrate_same_gen_total.fetch_add(
+            1, std::memory_order_relaxed);
+}
 extern "C" void aura_bump_cross_cow_hard_reject_total(void) noexcept {
     if (aot_metrics())
         aot_metrics()->cross_cow_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
