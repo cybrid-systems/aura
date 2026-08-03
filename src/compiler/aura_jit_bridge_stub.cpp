@@ -358,6 +358,9 @@ aura_bump_live_closure_sync_remount_totals(std::uint64_t /*ok*/, std::uint64_t /
 // undefined reference to aura_bump_live_closure_stable_id_backfill_total.
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_stable_id_backfill_total(std::uint64_t /*n*/) {}
+// Issue #2605: weak stub for named name-fallback reject bumper.
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_named_name_fallback_reject_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_must_deopt_before_next_call_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void

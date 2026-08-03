@@ -5107,6 +5107,25 @@ def cmd_named_closure_stable_id_at_create_coverage():
     return 0
 
 
+def cmd_anonymous_residual_stable_id_policy_coverage():
+    """Issue #2605: explicit anonymous / residual sid=0 policy.
+
+    Named create sid≠0; residual one-shot backfill; anonymous MustDeopt;
+    query assign/preserve/residual_backfill axes.
+    """
+    print(f"{B}=== anonymous residual stable_id policy coverage (#2605) ==={N}")
+    script = ROOT / "scripts" / "check_anonymous_residual_stable_id_policy_2605.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("anonymous residual stable_id policy (#2605) coverage contract rows failed")
+        return 1
+    ok("anonymous residual stable_id policy (#2605) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -7036,6 +7055,7 @@ def cmd_gate():
         or cmd_residual_defer_steal_hard_and_coverage()
         or cmd_is_stealable_snapshot_gate_coverage()
         or cmd_named_closure_stable_id_at_create_coverage()
+        or cmd_anonymous_residual_stable_id_policy_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()

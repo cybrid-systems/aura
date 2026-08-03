@@ -14909,6 +14909,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // stored_sid == 0 but the name resolves in the live stable map).
             insert_kv("live_closure_stable_id_backfill_total",
                       static_cast<std::int64_t>(live_backfill));
+            // Issue #2605: residual_backfill aliases (#2175 counter) +
+            // assign / preserve axes for Agent dashboards.
+            insert_kv("stable-id-residual-backfill-total",
+                      static_cast<std::int64_t>(live_backfill));
+            insert_kv("stable_id_residual_backfill_total",
+                      static_cast<std::int64_t>(live_backfill));
+            insert_kv("stable-id-assign-total", static_cast<std::int64_t>(assigned));
+            insert_kv("stable-id-preserve-total", static_cast<std::int64_t>(preserved));
+            {
+                auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());
+                const std::uint64_t named_reject =
+                    m ? m->live_closure_named_name_fallback_reject_total.load(
+                            std::memory_order_relaxed)
+                      : 0;
+                insert_kv("named-name-fallback-reject-total",
+                          static_cast<std::int64_t>(named_reject));
+                insert_kv("named_name_fallback_reject_total",
+                          static_cast<std::int64_t>(named_reject));
+            }
+            insert_kv("anonymous-must-deopt-policy-wired", 1);
+            insert_kv("residual-sid0-policy-wired", 1);
+            insert_kv("schema-2605", 2605);
+            insert_kv("issue-2605", 2605);
             insert_kv("schema-2175", 2175);
             insert_kv("issue-2175", 2175);
             // Issue #2016 metrics (may be 0 if CompilerMetrics not wired).

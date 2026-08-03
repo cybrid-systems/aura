@@ -2076,12 +2076,16 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         const bool named = cid < g_closure_names.size() && !g_closure_names[cid].empty();
         const char* cname = named ? g_closure_names[cid].c_str() : nullptr;
 
-        // Issue #2175 / #2542 / #2550: residual named sid==0 → backfill via
-        // aura_get_or_preserve_stable_func_id. Steady-state named create
-        // already stamps non-zero (#2550), so this is rare (upgrade /
-        // test-forced residual only). If the resulting sid is in the reemit
-        // set, fall through to the normal membership remap. Independent
-        // of g_remap_name_fallback_enabled (stable_id path, not rewrite).
+        // Issue #2175 / #2542 / #2550 / #2605: residual named sid==0 →
+        // one-shot residual_backfill via aura_get_or_preserve_stable_func_id.
+        // Steady-state named create already stamps non-zero (#2550), so this
+        // is rare (upgrade / aura_test_force_closure_stable_func_id residual
+        // only). If the resulting sid is in the reemit set, fall through to
+        // the normal membership remap. Independent of
+        // g_remap_name_fallback_enabled (stable_id path, not rewrite).
+        // Policy table (#2605): residual_backfill is a distinct dashboard
+        // axis from assign / preserve (map create) — same counter as #2175
+        // exposed under stable-id-residual-backfill-* query aliases.
         bool via_backfill = false;
         if (cid_stable_id == 0 && named) {
             // Prefer existing map entry; preserve assigns if missing so
@@ -2108,14 +2112,28 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             // this closure is a reemit candidate even without a prior stamp.
             const std::uint32_t looked_up = aura_lookup_stable_func_id(cname);
             if (looked_up != 0 && reemit_ids.count(looked_up)) {
-                if (name_fallback) {
-                    // Legacy fallback: remappable via name (Issue #2092).
+                // Issue #2605: named name invent is a policy-violation
+                // dashboard signal (steady-state should be 0 after #2550).
+                // Legacy migration (#2369 AC3) may still remount when
+                // name_fallback is explicitly enabled; production keeps
+                // the flag off. AURA_NAMED_NAME_FALLBACK_HARD=1 refuses
+                // invent entirely (Full strategy fail-closed).
+                static const bool hard = [] {
+                    const char* e = std::getenv("AURA_NAMED_NAME_FALLBACK_HARD");
+                    return e != nullptr && e[0] == '1' && e[1] == '\0';
+                }();
+                if (name_fallback && !hard) {
+                    // Legacy invent remount (migration tests only).
                     match_id = looked_up;
                     via_name_fallback = true;
+                    aura_bump_live_closure_named_name_fallback_reject_total(1);
                 } else {
+                    // Production / hard: force deopt, never invent for named.
+                    name_candidate_no_remap = true;
+                    if (name_fallback && hard)
+                        aura_bump_live_closure_named_name_fallback_reject_total(1);
                     // Issue #2128: cannot silently keep old native for a
                     // define that just reemitted — force deopt on next call.
-                    name_candidate_no_remap = true;
                 }
             }
         }

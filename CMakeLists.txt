@@ -3707,6 +3707,11 @@ aura_add_issue_test(test_named_closure_stable_id_at_create_2550)
 aura_issue_test_link_llvm_jit(test_named_closure_stable_id_at_create_2550)
 add_dependencies(all_test_issue_targets test_named_closure_stable_id_at_create_2550)
 
+# Issue #2605: explicit anonymous / residual sid=0 policy (MustDeopt, residual_backfill).
+aura_add_issue_test(test_anonymous_residual_stable_id_policy_2605)
+aura_issue_test_link_llvm_jit(test_anonymous_residual_stable_id_policy_2605)
+add_dependencies(all_test_issue_targets test_anonymous_residual_stable_id_policy_2605)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)

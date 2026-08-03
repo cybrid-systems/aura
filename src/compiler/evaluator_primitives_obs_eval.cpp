@@ -14548,6 +14548,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // from call-time closure_capture_remount_ok / _fail).
             std::uint64_t sync_remount_ok = 0;
             std::uint64_t sync_remount_fail = 0;
+            // Issue #2605: residual / assign / preserve / named-invent axes.
+            std::uint64_t residual_backfill = 0;
+            std::uint64_t sid_assign = 0;
+            std::uint64_t sid_preserve = 0;
+            std::uint64_t named_invent = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
@@ -14555,6 +14560,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     m->live_closure_sync_remount_ok_total.load(std::memory_order_relaxed);
                 sync_remount_fail =
                     m->live_closure_sync_remount_fail_total.load(std::memory_order_relaxed);
+                residual_backfill =
+                    m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+                sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
+                sid_preserve = m->stable_func_id_preserved_total.load(std::memory_order_relaxed);
+                named_invent = m->live_closure_named_name_fallback_reject_total.load(
+                    std::memory_order_relaxed);
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
@@ -14596,6 +14607,22 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"named-closure-stable-id-at-create-wired", make_int(1)},
                 {"schema-2550", make_int(2550)},
                 {"issue-2550", make_int(2550)},
+                // Issue #2605: explicit anonymous / residual sid=0 policy table.
+                // residual_backfill aliases #2175; assign/preserve are map axes.
+                {"stable-id-residual-backfill-total",
+                 make_int(static_cast<std::int64_t>(residual_backfill))},
+                {"stable_id_residual_backfill_total",
+                 make_int(static_cast<std::int64_t>(residual_backfill))},
+                {"stable-id-assign-total", make_int(static_cast<std::int64_t>(sid_assign))},
+                {"stable-id-preserve-total", make_int(static_cast<std::int64_t>(sid_preserve))},
+                {"named-name-fallback-reject-total",
+                 make_int(static_cast<std::int64_t>(named_invent))},
+                {"named_name_fallback_reject_total",
+                 make_int(static_cast<std::int64_t>(named_invent))},
+                {"anonymous-must-deopt-policy-wired", make_int(1)},
+                {"residual-sid0-policy-wired", make_int(1)},
+                {"schema-2605", make_int(2605)},
+                {"issue-2605", make_int(2605)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.
