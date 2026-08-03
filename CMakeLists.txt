@@ -3732,6 +3732,11 @@ aura_add_issue_test(test_steal_densify_linear_type_hard_and_2609)
 aura_issue_test_link_light(test_steal_densify_linear_type_hard_and_2609)
 add_dependencies(all_test_issue_targets test_steal_densify_linear_type_hard_and_2609)
 
+# Issue #2610: auto-detect expected_partial from dirty cone (anti false-green).
+aura_add_issue_test(test_composite_auto_partial_from_cone_2610)
+aura_issue_test_link_llvm_jit(test_composite_auto_partial_from_cone_2610)
+add_dependencies(all_test_issue_targets test_composite_auto_partial_from_cone_2610)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)

@@ -211,6 +211,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_commit_expected_has_work_total{0};
     std::atomic<std::uint64_t> composite_commit_sdo_entered_total{0};
     std::atomic<std::uint32_t> composite_cs_signature_matrix_wired{1};
+    // Issue #2610: auto-detect expected_partial from dirty cone / CS work
+    // when Agents under-mark. Hard (production/Full/empty-CS hard): effective
+    // expected_partial=true so empty-CS hard-miss / force-SDO fire.
+    // Soft: observe only (auto_partial_from_cone_observe_total).
+    std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_total{0};         // #2610
+    std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_observe_total{0}; // #2610
+    std::atomic<std::uint32_t> composite_auto_partial_from_cone_wired{1};                // #2610
     // Issue #2458: outermost commit gate on truncated reverify / incomplete
     // blame (non-empty under-scanned CS — residual half-green after #2345).
     // Soft/Sampled: observe only (commit may still succeed).
@@ -576,6 +583,9 @@ struct CommitReadinessInput {
     bool truncated_full_solve_recovered = false;
     bool expected_partial = false; // Agent / composite expected partial CS
     bool cs_has_work = false;      // commit_cs_has_work / dirty CS
+    // Issue #2610: true when effective expected_partial was auto-set from
+    // dirty cone / CS work (Agent left expected_partial false).
+    bool auto_partial_from_cone = false;
     // Hard-policy flags (production / Full / env overrides). Soft=false.
     bool empty_cs_hard = false;
     bool truncate_hard = false;
@@ -586,13 +596,15 @@ struct CommitReadinessInput {
 struct CommitReadiness {
     std::uint32_t readiness_bp = 10000;
     bool would_allow_commit = true;
-    // empty_cs | truncate | linear | blame | solve | ok
+    // empty_cs | auto_partial | truncate | linear | blame | solve | ok
     std::string_view force_reason = "ok";
-    // Stable int: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs
+    // Stable int: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs 6=auto_partial
     std::int64_t force_reason_code = 0;
 };
 
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
+    if (r == "auto_partial")
+        return 6; // #2610
     if (r == "empty_cs")
         return 5;
     if (r == "truncate")
@@ -616,10 +628,19 @@ struct CommitReadiness {
         r.readiness_bp = bp;
     };
 
-    // 1) empty_cs — expected_partial + empty CS (#2345 / #2509 matrix).
-    if (in.expected_partial && !in.cs_has_work) {
+    // 1) empty_cs — expected_partial (or #2610 auto) + empty CS (#2345 / #2509).
+    // Auto path uses force_reason "auto_partial" when soft so Agents can
+    // distinguish under-marked cone from explicit expected_partial.
+    const bool expected_eff = in.expected_partial || in.auto_partial_from_cone;
+    if (expected_eff && !in.cs_has_work) {
         if (in.empty_cs_hard)
-            return (set("empty_cs", false, 0), r);
+            return (
+                set(in.auto_partial_from_cone && !in.expected_partial ? "auto_partial" : "empty_cs",
+                    false, 0),
+                r);
+        // Soft observe: auto path uses distinct reason; explicit keeps empty_cs.
+        if (in.auto_partial_from_cone && !in.expected_partial)
+            return (set("auto_partial", true, 7400), r);
         return (set("empty_cs", true, 7500), r); // Soft observe
     }
 
@@ -1294,6 +1315,11 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_expected_has_work_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_sdo_entered_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2610
+    g_typed_mutation_audit_counters.composite_commit_auto_partial_from_cone_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_auto_partial_from_cone_observe_total.store(
         0, std::memory_order_relaxed);
     // Issue #2458
     g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,
