@@ -8821,7 +8821,7 @@ struct CompilerMetrics {
     // Issue #2602: sync remount walk ok/fail counters (distinct from
     // call-time closure_capture_remount_* — sync path uses these).
     std::atomic<std::uint64_t> live_closure_sync_remount_ok_total{0};   // #2602
-    std::atomic<std::uint64_t> live_closure_sync_remount_fail_total{0};  // #2602
+    std::atomic<std::uint64_t> live_closure_sync_remount_fail_total{0}; // #2602
     // Issue #2092: live closures retargeted via the (off-by-default)
     // name fallback path because their stable_func_id stamp was 0
     // (legacy closure / define processed after set_name). Non-zero

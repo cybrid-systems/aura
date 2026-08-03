@@ -298,8 +298,7 @@ static void ac6_source_query() {
 // window between reemit and first call. Distinct counters from
 // call-time closure_capture_remount_ok / _fail_total.
 static std::int64_t href_aot_stats(CompilerService& cs, const char* key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (engine:metrics \"query:aot-stats\") \"{}\")", key));
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"query:aot-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);

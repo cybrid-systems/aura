@@ -123,8 +123,7 @@ def main() -> int:
                 )
                 if m and abs(m.start() - anchor.start()) > 800:
                     failures.append(
-                        f"AC1: {counter} is not adjacent to "
-                        f"live_closure_remap_total in observability_metrics.h"
+                        f"AC1: {counter} is not adjacent to live_closure_remap_total in observability_metrics.h"
                     )
 
     # AC2: sync walk function in aura_jit_runtime.cpp + declaration in runtime_shared.h
@@ -148,31 +147,17 @@ def main() -> int:
             # Must take g_closure_table_mtx exclusive lock + workspace write
             # (AC4 zero-cost path still acquires the lock, then short-circuits).
             if "g_closure_table_mtx" not in sync_body:
-                failures.append(
-                    "AC2: sync walk body does not take g_closure_table_mtx "
-                    "exclusive lock"
-                )
+                failures.append("AC2: sync walk body does not take g_closure_table_mtx exclusive lock")
             if "aura_lock_workspace_write" not in sync_body:
-                failures.append(
-                    "AC2: sync walk body does not call aura_lock_workspace_write"
-                )
+                failures.append("AC2: sync walk body does not call aura_lock_workspace_write")
             # Must skip anonymous (sid=0) — AC3.
             if "stable_func_ids" not in sync_body:
-                failures.append(
-                    "AC2: sync walk body does not reference "
-                    "g_closure_stable_func_ids (no named-only walk)"
-                )
+                failures.append("AC2: sync walk body does not reference g_closure_stable_func_ids (no named-only walk)")
             # Must bump the new counters (distinct from call-time).
             if "live_closure_sync_remount_ok_total" not in sync_body:
-                failures.append(
-                    "AC2: sync walk body does not bump "
-                    "live_closure_sync_remount_ok_total"
-                )
+                failures.append("AC2: sync walk body does not bump live_closure_sync_remount_ok_total")
             if "live_closure_sync_remount_fail_total" not in sync_body:
-                failures.append(
-                    "AC2: sync walk body does not bump "
-                    "live_closure_sync_remount_fail_total"
-                )
+                failures.append("AC2: sync walk body does not bump live_closure_sync_remount_fail_total")
             # Must NOT bump call-time counters (distinct).
             if "closure_capture_remount_ok_total" in sync_body:
                 failures.append(
@@ -181,10 +166,7 @@ def main() -> int:
                     "call-time reserved for JIT-driven path)"
                 )
             if "closure_capture_remount_fail_total" in sync_body:
-                failures.append(
-                    "AC2: sync walk body bumps call-time "
-                    "closure_capture_remount_fail_total (must NOT)"
-                )
+                failures.append("AC2: sync walk body bumps call-time closure_capture_remount_fail_total (must NOT)")
 
         # No-call-time-counter variant must exist.
         if "remount_or_force_deopt_unlocked_no_call_time_counter" not in runtime_cpp:
@@ -201,8 +183,7 @@ def main() -> int:
         runtime_h = RUNTIME_H.read_text(encoding="utf-8", errors="replace")
         if "aura_sync_remount_named_live_closures" not in runtime_h:
             failures.append(
-                "AC2: runtime_shared.h missing extern \"C\" declaration "
-                "for aura_sync_remount_named_live_closures"
+                'AC2: runtime_shared.h missing extern "C" declaration for aura_sync_remount_named_live_closures'
             )
 
     # AC3: bridge drives sync walk after reemit + anonymous path preserved
@@ -217,10 +198,7 @@ def main() -> int:
             r"if\s*\(\s*any_re_emit\s*\)\s*\{",
         )
         if not reemit_block:
-            failures.append(
-                "AC3: aura_jit_bridge.cpp missing if(any_re_emit) block "
-                "(#2542 post-reemit site)"
-            )
+            failures.append("AC3: aura_jit_bridge.cpp missing if(any_re_emit) block (#2542 post-reemit site)")
         else:
             if "aura_sync_remount_named_live_closures" not in reemit_block:
                 failures.append(
@@ -246,19 +224,12 @@ def main() -> int:
             r"std::uint64_t\*\s*fail_count\s*\)",
         )
         if not stub_body:
-            failures.append(
-                "AC4: aura_jit_bridge_stub.cpp missing weak stub for "
-                "aura_sync_remount_named_live_closures"
-            )
+            failures.append("AC4: aura_jit_bridge_stub.cpp missing weak stub for aura_sync_remount_named_live_closures")
         else:
             if "ok_count" not in stub_body or "*ok_count = 0" not in stub_body:
-                failures.append(
-                    "AC4: sync walk stub does not zero out *ok_count"
-                )
+                failures.append("AC4: sync walk stub does not zero out *ok_count")
             if "fail_count" not in stub_body or "*fail_count = 0" not in stub_body:
-                failures.append(
-                    "AC4: sync walk stub does not zero out *fail_count"
-                )
+                failures.append("AC4: sync walk stub does not zero out *fail_count")
 
     # AC5: query surface in evaluator_primitives_obs_eval.cpp + test sections
     if not OBS_EVAL.exists():
@@ -273,10 +244,7 @@ def main() -> int:
             "issue-2602",
         ):
             if key not in obs_eval:
-                failures.append(
-                    f"AC5: evaluator_primitives_obs_eval.cpp does not expose "
-                    f"{key} on query:aot-stats"
-                )
+                failures.append(f"AC5: evaluator_primitives_obs_eval.cpp does not expose {key} on query:aot-stats")
 
     # AC5 (cont.): test file has ac2602_* sections.
     if not TEST.exists():
@@ -304,9 +272,7 @@ def main() -> int:
                 "ac2602_source_and_schema",
             ):
                 if f"{ac_fn}()" not in test_text:
-                    failures.append(
-                        f"AC5: main() does not call {ac_fn}()"
-                    )
+                    failures.append(f"AC5: main() does not call {ac_fn}()")
 
     # AC5 (cont.): schema compatibility — #2542 / #2503 / #2550 surfaces preserved.
     if OBS_EVAL.exists():
@@ -372,7 +338,7 @@ def self_test() -> int:
 
         good_runtime = tmp / "runtime.cpp"
         good_runtime.write_text(
-            "extern \"C\" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {\n"
+            'extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {\n'
             "    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);\n"
             "    aura_lock_workspace_write();\n"
             "    if (g_closure_func_ids.size() == 0) { ... }\n"
@@ -499,7 +465,7 @@ def self_test() -> int:
         # Bad fixture: sync walk bumps call-time counter (AC2 violation)
         bad_runtime = tmp / "runtime_bad.cpp"
         bad_runtime.write_text(
-            "extern \"C\" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {\n"
+            'extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {\n'
             "    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);\n"
             "    aura_lock_workspace_write();\n"
             "    if (g_closure_stable_func_ids.size() < nslots) ...\n"

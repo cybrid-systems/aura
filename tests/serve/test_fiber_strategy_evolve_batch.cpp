@@ -21,12 +21,12 @@ import aura.compiler.value;
 // aura_fiber_run_auto_evolve_tick_1712::run_auto_evolve_tick_1712 ───
 namespace aura_fiber_run_auto_evolve_tick_1712 {
 // @category: unit
-// @reason: Issue #1712 — auto-evolve-tick must not fprintf [DBG tick] to
+// @reason: Issue #1712 — agent:tick must not fprintf [DBG tick] to
 // Issue #1712 (#1978 renamed): issue# moved from filename to header.
 // stderr on every production tick.
 //
 //   AC1: source has no [DBG tick] / detect.val fprintf in tick body
-//   AC2: auto-evolve-tick when not running returns #f
+//   AC2: agent:tick when not running returns 0/#f
 //   AC3: cites Issue #1712 removal comment
 
 
@@ -63,8 +63,8 @@ int run_auto_evolve_tick_1712() {
         }
         CHECK(!src.empty(), "read agent primitives");
         if (!src.empty()) {
-            auto pos = src.find("add(\"auto-evolve-tick\"");
-            CHECK(pos != std::string::npos, "found auto-evolve-tick");
+            auto pos = src.find("add(\"agent:tick\"");
+            CHECK(pos != std::string::npos, "found agent:tick");
             if (pos != std::string::npos) {
                 // Body until next add("
                 auto end = src.find("\n    add(\"", pos + 10);
@@ -94,7 +94,7 @@ int run_auto_evolve_tick_1712() {
     {
         std::println("\n--- AC2: tick while not running ---");
         CompilerService cs;
-        auto r = cs.eval("(auto-evolve-tick)");
+        auto r = cs.eval("(agent:tick)");
         CHECK(r.has_value(), "eval ok");
         if (r && is_bool(*r))
             CHECK(!as_bool(*r), "returns #f when not running");

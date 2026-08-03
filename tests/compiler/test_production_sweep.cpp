@@ -325,8 +325,8 @@ static void ac_1229_1240() {
 
     // #1232: without sandbox, agent primitives still work (gate only when sandbox on)
     {
-        auto r = cs.eval("(auto-evolve-running?)");
-        CHECK(r, "auto-evolve-running? returns");
+        auto r = cs.eval("(agent:running?)");
+        CHECK(r, "agent:running? returns");
     }
 
     {

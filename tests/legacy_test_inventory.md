@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 761 | Preferred destination suites |
-| **Total scanned** | **761** | |
+| `tests/core/test_*.cpp` | 718 | Preferred destination suites |
+| **Total scanned** | **718** | |
 
 ### Related artifacts
 
@@ -32,15 +32,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 219 | 219 | P0 — high volume; strong domain suite foothold |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 75 | 75 | P0 — well-contained, batch drivers already exist |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 207 | 207 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 90 | 90 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 20 | 20 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 19 | 19 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 75 | 75 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 74 | 74 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 45 | 45 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 137 | 137 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 53 | 53 | P3 — review case-by-case |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 125 | 125 | P2 — often thin schema probes; collapse into obs matrix |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 42 | 42 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **71**
+- Existing `*_batch` drivers (migration milestones): **66**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -87,7 +87,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp` → theme `mutation_dirty`
-- `tests/renderer/test_batch_terminal_dirty_phase2_2047.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_build_kv_hash_batch.cpp` → theme `jit_incremental`
 - `tests/core/test_capability_sandbox_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_closure_batch.cpp` → theme `arena_compaction`
@@ -119,7 +118,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` → theme `jit_incremental`
-- `tests/renderer/test_lifetime_pin_batch_ffi_present_2048.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
 - `tests/compiler/test_macro_reflect_batch.cpp` → theme `edsl_hygiene`
@@ -141,15 +139,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` → theme `edsl_hygiene`
-- `tests/renderer/test_render_batch.cpp` → theme `arena_compaction`
 - `tests/core/test_resource_quota_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_shape_soa_unit_batch.cpp` → theme `shape_soa`
 - `tests/core/test_soa_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_stable_ref_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_cow_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_provenance_batch.cpp` → theme `mutation_dirty`
-- `tests/repl/test_terminal_domain_batch.cpp` → theme `uncategorized`
-- `tests/compiler/test_tui_batch_draw_present_2134.cpp` → theme `observability`
 - `tests/compiler/test_typechecker_incremental_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_walk_batch.cpp` → theme `mutation_dirty`
 
@@ -173,7 +168,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/orch/test_agent_name_table_isolation_2078.cpp`
 - `tests/orch/test_agent_scope_2083.cpp`
 - `tests/orch/test_agent_scope_hierarchy_2537.cpp`
-- `tests/renderer/test_ai_closedloop_readiness.cpp`
 - `tests/compiler/test_aot_anonymous_closure_policy_2238.cpp`
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp`
 - `tests/compiler/test_aot_hot_update_health_2506.cpp`
@@ -216,9 +210,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_aura_jit_unused_fn_lock_2475.cpp`
 - `tests/compiler/test_aura_result_error_policy.cpp`
 - `tests/compiler/test_aura_sandbox_env_2076.cpp`
-- `tests/compiler/test_auto_evolve_closure_live.cpp`
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp`
-- `tests/renderer/test_batch_terminal_dirty_phase2_2047.cpp`
 - `tests/compiler/test_bidirectional_annotation.cpp`
 - `tests/compiler/test_bidirectional_match_check_2348.cpp`
 - `tests/core/test_bidirectional_stats.cpp`
@@ -235,7 +227,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_cache_entry_version_stamp.cpp`
 - `tests/reflect/test_cache_header_magic_a2.cpp`
 - `tests/compiler/test_cache_stamp_restamp_contract_2183.cpp`
-- `tests/renderer/test_camera_rays.cpp`
 - `tests/compiler/test_cap_write_effect_matrix_2532.cpp`
 - `tests/core/test_capability_audit_publish_2425.cpp`
 - `tests/compiler/test_capability_effect_force_2072.cpp`
@@ -321,7 +312,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_dirty_aware_shape_linear_passes_2130.cpp`
 - `tests/compiler/test_dirty_cascade_optimize.cpp`
 - `tests/core/test_dirty_column_lock_2423.cpp`
-- `tests/compiler/test_dirty_delta_present.cpp`
 - `tests/compiler/test_dirty_propagation_cascade.cpp`
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp`
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp`
@@ -358,8 +348,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_eval_relower_hotpath.cpp`
 - `tests/compiler/test_exhausted_min_dirty_reemit_2544.cpp`
 - `tests/orch/test_failure_policy_bridge_2539.cpp`
-- `tests/renderer/test_ffi_cellgrid_abi_2216.cpp`
-- `tests/compiler/test_ffi_hot_path_cache_toctou_2474.cpp`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp`
 - `tests/serve/test_fiber_integration_batch.cpp`
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp`
@@ -386,7 +374,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_force_compact_hard_mutex_2157.cpp`
 - `tests/compiler/test_force_jit_repromote_2502.cpp`
 - `tests/compiler/test_frame_budget_cascade_isolation_2137.cpp`
-- `tests/compiler/test_frame_budget_guardian_2218.cpp`
 - `tests/compiler/test_full_strategy_partial_recovery.cpp`
 - `tests/serve/test_gc_batch.cpp`
 - `tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp`
@@ -397,7 +384,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_gc_defer_mutation_hold_2204.cpp`
 - `tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp`
 - `tests/core/test_gc_defer_reconcile_cas_2437.cpp`
-- `tests/core/test_gc_defer_render_pin_2160.cpp`
 - `tests/core/test_gc_evaluator_integration.cpp`
 - `tests/compiler/test_gc_heap_cells_clear_2486.cpp`
 - `tests/serve/test_gc_mark_size_inject_2084.cpp`
@@ -493,7 +479,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_layout_stamp_equality_8field_2519.cpp`
 - `tests/compiler/test_let_poly_solve_delta.cpp`
 - `tests/compiler/test_lifetime_contract_snapshot_2300.cpp`
-- `tests/renderer/test_lifetime_pin_batch_ffi_present_2048.cpp`
 - `tests/compiler/test_linear_batch.cpp`
 - `tests/compiler/test_linear_boundary_consistency.cpp`
 - `tests/compiler/test_linear_cross_closure_escape_2563.cpp`
@@ -652,7 +637,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_per_symbol_dirty_pool_lock.cpp`
 - `tests/core/test_persist_basic.cpp`
 - `tests/compiler/test_persistent_typechecker_2220.cpp`
-- `tests/renderer/test_pixel_framebuffer.cpp`
 - `tests/compiler/test_post_compact_lifecycle_2436.cpp`
 - `tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp`
 - `tests/compiler/test_post_mutate_push_cascade.cpp`
@@ -712,28 +696,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_regex_redos_timeout_2479.cpp`
 - `tests/core/test_region_dense_atomic_2443.cpp`
 - `tests/compiler/test_region_priority_deopt_throttle_2132.cpp`
-- `tests/compiler/test_register_render_hot_prim_2217.cpp`
 - `tests/compiler/test_reload_recovery_query_2367.cpp`
 - `tests/compiler/test_relower_fallback_reason_2193.cpp`
 - `tests/compiler/test_relower_strategy_cache_lock.cpp`
 - `tests/compiler/test_remount_force_deopt_2503.cpp`
-- `tests/renderer/test_render3d_primitives.cpp`
-- `tests/renderer/test_render_agent_closedloop_2051.cpp`
-- `tests/renderer/test_render_ai_native_template.cpp`
-- `tests/renderer/test_render_batch.cpp`
-- `tests/renderer/test_render_critical_hotswap_2050.cpp`
-- `tests/compiler/test_render_deopt_throttle_race_2373.cpp`
-- `tests/compiler/test_render_dispatch_linear_epoch.cpp`
-- `tests/compiler/test_render_effect_gate_2136.cpp`
-- `tests/compiler/test_render_fast_exit_2215.cpp`
-- `tests/renderer/test_render_ffi_hotpath.cpp`
-- `tests/renderer/test_render_frame_arena_2049.cpp`
-- `tests/renderer/test_render_hotpath_observability.cpp`
-- `tests/renderer/test_render_hotpath_stability_under_mutation.cpp`
-- `tests/renderer/test_render_mutation_checkpoint.cpp`
-- `tests/renderer/test_render_pass_incremental.cpp`
-- `tests/compiler/test_render_strategy_layer_2138.cpp`
-- `tests/renderer/test_render_telemetry.cpp`
 - `tests/compiler/test_require_effect_auto_isolation_2490.cpp`
 - `tests/compiler/test_require_effect_live_mid_2384.cpp`
 - `tests/core/test_reset_slot_parent_edges_2412.cpp`
@@ -780,7 +746,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_set_arena_atomic_owner.cpp`
 - `tests/core/test_set_workspace_flat.cpp`
 - `tests/compiler/test_setcode_rebind_survive_2569.cpp`
-- `tests/compiler/test_seva_demo_metrics.cpp`
 - `tests/compiler/test_shape.cpp`
 - `tests/compiler/test_shape_high_mutation_storm_2433.cpp`
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp`
@@ -857,11 +822,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_tag_arity_key_hash_2420.cpp`
 - `tests/core/test_tenant_isolation_enforcement.cpp`
 - `tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp`
-- `tests/renderer/test_terminal_concurrent.cpp`
-- `tests/renderer/test_terminal_deprecation.cpp`
-- `tests/repl/test_terminal_domain_batch.cpp`
-- `tests/renderer/test_terminal_lifecycle.cpp`
-- `tests/renderer/test_terminal_render_production.cpp`
 - `tests/compiler/test_test_strategy.cpp`
 - `tests/compiler/test_tier_dispatch.cpp`
 - `tests/compiler/test_timeout_repair_rich_roots_2548.cpp`
@@ -870,8 +830,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_truncate_commit_gate_2458.cpp`
 - `tests/compiler/test_try_catch_bind_2567.cpp`
 - `tests/core/test_try_lock_workspace_lock_order.cpp`
-- `tests/compiler/test_tui_batch_draw_present_2134.cpp`
-- `tests/compiler/test_tui_present_dirty_2214.cpp`
 - `tests/core/test_type_cache_stats_snapshot.cpp`
 - `tests/compiler/test_type_dep_epoch_prune_2355.cpp`
 - `tests/compiler/test_type_dep_partial_merge_2283.cpp`
@@ -897,10 +855,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_value_tag_hot_path_2259.cpp`
 - `tests/core/test_verification_dirty_bits_lock_2439.cpp`
 - `tests/compiler/test_verify_parse_shared_helper.cpp`
-- `tests/renderer/test_voxel_frame.cpp`
-- `tests/renderer/test_voxel_raycast.cpp`
-- `tests/renderer/test_voxel_shade.cpp`
-- `tests/renderer/test_voxel_volume.cpp`
 - `tests/compiler/test_walk_batch.cpp`
 - `tests/compiler/test_while_define_oneshot_2571.cpp`
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp`
@@ -914,8 +868,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_workspace_swap_guard.cpp`
 - `tests/compiler/test_write_string_escape_2574.cpp`
 - `tests/serve/test_yield_while_mutation_held_2200.cpp`
-- `tests/core/test_zero_copy_arena.cpp`
-- `tests/compiler/test_zero_copy_present_default_2135.cpp`
 
 ## Migration priority roadmap
 
@@ -949,13 +901,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (81)
+### `arena_compaction` — Arena / compaction / GC (75)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (81)
+#### domain/ (75)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -995,7 +947,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_gc_defer_arm_fetch_or_2428.cpp` (#2428) [domain_suite, theme_core] — AC1: arm_defer uses fetch_or (no separate load before note)
 - `tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp` (#2429) [domain_suite, theme_core] — AC1: policy check + arm/reject atomic under g_gc_defer_armed_mtx
 - `tests/core/test_gc_defer_reconcile_cas_2437.cpp` (#2437) [domain_suite, theme_core] — AC1: Concurrent arm + reconcile does NOT clear another thread's Panic bit
-- `tests/core/test_gc_defer_render_pin_2160.cpp` (#2160) [domain_suite, theme_core] — (arm/release on render hotpath + should_defer + stats).
 - `tests/core/test_gc_evaluator_integration.cpp` (—) [domain_suite, theme_core] — test_gc_evaluator_integration.cpp — Issue #113 verification
 - `tests/compiler/test_gc_heap_cells_clear_2486.cpp` (#2486) [domain_suite, theme_compiler] — AC1: after seeding cells + gc-heap, cells().size() == 0
 - `tests/serve/test_gc_mark_size_inject_2084.cpp` (#2084) [domain_suite, theme_serve] — AC1: mark_from_roots with injected sizes → MarkBitVector size == heap size
@@ -1022,8 +973,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp — Issue #740:
 - `tests/compiler/test_query_epoch_contract_2192.cpp` (#2192) [domain_suite, theme_compiler] — AC1: QueryEpoch defined; stamped on primary workspace queries
 - `tests/compiler/test_quota_edge_cases.cpp` (—) [domain_suite, theme_compiler] — AC1: boundary 0→1 transition (unlimited → bounded reject)
-- `tests/renderer/test_render_batch.cpp` (—) [batch_driver, domain_suite, theme_renderer] — test_render_batch.cpp — Merged #1675 + #1559 (Anqi 2026-07-21).
-- `tests/renderer/test_render_frame_arena_2049.cpp` (#2049) [domain_suite, theme_renderer] — AC1: source cites #2049; RenderFrameArena double-buffer; LinearCellGrid
 - `tests/core/test_resource_quota_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_resource_quota_batch.cpp
 - `tests/core/test_root_epoch_gc_safety_post_invalidate.cpp` (—) [domain_suite, theme_core] — test_compiler_root_epoch_gc_safety_post_invalidate.cpp — Issue #599:
 - `tests/compiler/test_root_remap_pass_2267.cpp` (#2267) [domain_suite, theme_compiler] — capture rewrite after Moving densify. Verifies AC1–AC5 from #2294
@@ -1034,18 +983,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
 - `tests/serve/test_spawn_quota_no_leak_2155.cpp` (#2155) [domain_suite, theme_serve] — AC1: Quota reject never calls agent_names_->put (C++ + Aura)
 - `tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp` (#2409) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
-- `tests/renderer/test_terminal_lifecycle.cpp` (—) [domain_suite, theme_renderer] — test_terminal_lifecycle.cpp — Issue #1352: delete/compact + use-after-delete
 - `tests/compiler/test_type_dep_epoch_prune_2355.cpp` (#2355) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
-- `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
-- `tests/compiler/test_zero_copy_present_default_2135.cpp` (#2135) [domain_suite, theme_compiler] — AC1: present_batch / tui:present-batch default arena path
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (219)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (207)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (219)
+#### domain/ (207)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1062,7 +1008,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp` (#2150) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env_2076.cpp` (#2076) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp` (#2522) [batch_driver, domain_suite, theme_compiler] — AC1: Batch API exists; one generation bump per call regardless of N
-- `tests/renderer/test_batch_terminal_dirty_phase2_2047.cpp` (#2047) [phase_slice, batch_driver, domain_suite, theme_renderer] — AC1: kBatchTerminalPhase == 2; source cites #2047; DirtyRegion + dirty build
 - `tests/compiler/test_blame_complete_commit_gate_2221.cpp` (#2221) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/compiler/test_blame_soft_recover_2561.cpp` (#2561) [domain_suite, theme_compiler] — AC1: Sampled incomplete → recover restores dual fields OR escalate
@@ -1104,7 +1049,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dirty_aware_shape_linear_passes_2130.cpp` (#2130) [domain_suite, theme_compiler] — AC1: ShapeAwareFold with dirty mask only processes dirty blocks
 - `tests/compiler/test_dirty_cascade_optimize.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2063 — Dirty cascade subtree-skip (summary-dirty early-exit) test.
 - `tests/core/test_dirty_column_lock_2423.cpp` (#2423) [domain_suite, theme_core] — AC1: concurrent mark_dirty + dirty_nodes_in_range (shared/exclusive lock)
-- `tests/compiler/test_dirty_delta_present.cpp` (—) [domain_suite, theme_compiler] — skip rate >60% under sparse mutations, metrics avg/p99, mutation guard.
 - `tests/compiler/test_dirty_propagation_cascade.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade_mark_dirty / propagate_closure BFS marks all dependents
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp` (—) [small, domain_suite, theme_compiler] — Issue #398/#399/#408/#415 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp` (—) [small, domain_suite, theme_compiler] — Issue #344/#415/#437/#469 (#1978 renamed): issue# moved from filename to header.
@@ -1116,7 +1060,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_envframe_dualpath_stale_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #417/#418/#543/#602 (#1978 renamed): issue# moved from filename to header.
 - `tests/reflect/test_error_kind_names_wire.cpp` (—) [domain_suite, theme_reflect] — Wire C1 into business: P2996 validates name tables used by
 - `tests/compiler/test_exhausted_min_dirty_reemit_2544.cpp` (#2544) [large, domain_suite, theme_compiler] — AC1: Continuous Defuse fail to exhaust → force-JIT mask set +
-- `tests/compiler/test_ffi_hot_path_cache_toctou_2474.cpp` (#2474) [domain_suite, theme_compiler] — AC1: N-thread dispatch_named with rotating sig_hashes — each call
 - `tests/compiler/test_followup_smoke.cpp` (—) [small, followup, domain_suite, theme_compiler] — tests/test_followup_smoke.cpp — Smoke test for follow-up ship
 - `tests/compiler/test_followups.cpp` (—) [followup, domain_suite, theme_compiler] — (mutation-log:diff / dirty:summary /
 - `tests/compiler/test_full_strategy_partial_recovery.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2029; partial_recovery_* counters + boundary path
@@ -1139,7 +1082,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_isolation_audit_mid_2156.cpp` (#2156) [domain_suite, theme_compiler] — AC1: Isolation deny SecurityEvent.mutation_id is Mutation epoch space,
 - `tests/compiler/test_issues_819_829_batch.cpp` (#819) [batch_driver, domain_suite, theme_compiler] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.
 - `tests/core/test_last_validated_generation_atomic_2394.cpp` (#2394) [domain_suite, theme_core] — AC1: 4 threads validate_with_provenance on same ref — no race (TSAN)
-- `tests/renderer/test_lifetime_pin_batch_ffi_present_2048.cpp` (#2048) [batch_driver, domain_suite, theme_renderer] — AC1: source cites #2048; LifetimePin Phase 2; present FfiPresentPinGuard
 - `tests/compiler/test_linear_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_batch.cpp
 - `tests/compiler/test_linear_enforce_boundary_align_2222.cpp` (#2222) [domain_suite, theme_compiler] — AC1: Production → process Strict; sandbox-off → Soft; boundary enter
 - `tests/compiler/test_linear_enforce_production_defaults_2182.cpp` (#2182) [domain_suite, theme_compiler] — AC1: Production defaults → Strict; incomplete trail → hard error
@@ -1200,7 +1142,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_per_symbol_dirty_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1786 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_per_symbol_dirty_pool_lock.cpp` (—) [domain_suite, theme_core] — Issue #1785 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_persistent_typechecker_2220.cpp` (#2220) [domain_suite, theme_compiler] — AC1: N post-mutate typechecks reuse one TypeChecker (pointer stable)
-- `tests/renderer/test_pixel_framebuffer.cpp` (—) [domain_suite, theme_renderer] — test_pixel_framebuffer.cpp — Issue #1980 / Epic #1979
 - `tests/compiler/test_post_mutate_push_cascade.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2038; push_post_mutate_incremental_cascade +
 - `tests/compiler/test_post_steal_linear_revalidate_2197.cpp` (#2197) [domain_suite, theme_compiler] — AC1: Steal under Strict + incomplete linear provenance → hard fail /
 - `tests/compiler/test_predicate_memo_boundary_selective_2104.cpp` (#2104) [domain_suite, theme_compiler] — AC1: mutate binding used in one predicate → only that memo entry drops
@@ -1210,10 +1151,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_and_replace_batch_2527.cpp` (#2527) [batch_driver, domain_suite, theme_compiler] — Issue #2527: mutate:query-and-replace-batch — first-class sugar
 - `tests/compiler/test_query_by_marker_provenance_2242.cpp` (#2242) [domain_suite, theme_compiler] — AC1: all 3 individual primitives are registered and return schema=2242
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
-- `tests/renderer/test_render3d_primitives.cpp` (—) [domain_suite, theme_renderer] — test_render3d_primitives.cpp — Issue #1986 / Epic #1979
-- `tests/renderer/test_render_ai_native_template.cpp` (—) [domain_suite, theme_renderer] — Issue #1677 (#1978 renamed): issue# moved from filename to header.
-- `tests/renderer/test_render_critical_hotswap_2050.cpp` (#2050) [domain_suite, theme_renderer] — AC1: schema-2050 keys on query:render-jit-stability-stats
-- `tests/renderer/test_render_mutation_checkpoint.cpp` (—) [domain_suite, theme_renderer] — test_render_mutation_checkpoint.cpp — Issue #1355: lightweight mutation in render hot path
 - `tests/compiler/test_require_effect_auto_isolation_2490.cpp` (#2490) [domain_suite, theme_compiler] — AC1: Restricted + tenant principal unset + require_effect(Mutate) →
 - `tests/compiler/test_require_effect_live_mid_2384.cpp` (#2384) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges_2412.cpp` (#2412) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
@@ -1247,8 +1184,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_bytes_total_lock_2408.cpp` (#2408) [domain_suite, theme_core] — AC1: 4 threads concurrent intern + string_bytes_total (no crash; TSan clean)
 - `tests/core/test_subtree_dirty_bounds_2424.cpp` (#2424) [domain_suite, theme_core] — AC1: no OOB on dirty_ (bounds use dirty_.size() only)
 - `tests/core/test_summary_recompute_sym_2414.cpp` (#2414) [domain_suite, theme_core] — AC1: recompute(pool) sets keyword + query:/mutate: bits
-- `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_tui_present_dirty_2214.cpp` (#2214) [domain_suite, theme_compiler] — AC1: Primitive registered under AURA_ENABLE_TUI + hot meta
 - `tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp` (#2191) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
 - `tests/compiler/test_type_dirty_txn_order_2516.cpp` (#2516) [domain_suite, theme_compiler] — AC1: Source-cite single ordered sequence on all production partial paths
 - `tests/compiler/test_type_system_health_2350.cpp` (#2350) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)
@@ -1260,7 +1195,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_unify_invalidate_try_acquire.cpp` (—) [domain_suite, theme_compiler] — Issue #1476/#1547/#1628/#1634 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_value_encoding_v2_dispatch_contracts.cpp` (—) [domain_suite, theme_compiler] — Issue #1622/#571/#723 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_verification_dirty_bits_lock_2439.cpp` (#2439) [domain_suite, theme_core] — AC1: concurrent apply_verification_dirty_bits(same_id, same_reasons) → +1 metric
-- `tests/renderer/test_voxel_frame.cpp` (—) [domain_suite, theme_renderer] — test_voxel_frame.cpp — Issue #1985 / Epic #1979
 - `tests/compiler/test_walk_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_walk_batch.cpp
 - `tests/core/test_workspace_isolation_wire_2073.cpp` (#2073) [domain_suite, theme_core] — Issue #2073 — wire check_workspace_isolation + stamp_ref_tenant on
 - `tests/core/test_workspace_lock_reentrancy.cpp` (—) [domain_suite, theme_core] — test_wave1_workspace_lock_reentrancy.cpp — Wave1 B-03 / B-09
@@ -1366,13 +1300,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held_2200.cpp` (#2200) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (20)
+### `linear_ownership` — Linear ownership / borrow / consume (19)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (20)
+#### domain/ (19)
 
 - `tests/core/test_capability_single_use_consume_2586.cpp` (#2586) [domain_suite, theme_core] — tests/core/test_capability_single_use_consume_2586.cpp
 - `tests/compiler/test_commit_readiness_score_2553.cpp` (#2553) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
@@ -1392,7 +1326,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_synth_violation_2357.cpp` (#2357) [domain_suite, theme_compiler] — AC1: Double-move / can_move fail path is first-class (note_linear_synth
 - `tests/compiler/test_linear_three_layer_wire_2559.cpp` (#2559) [domain_suite, theme_compiler] — AC1: Boundary exit cites force_linear_rollback (unified linear deny)
 - `tests/core/test_pcv_unique_hotpath_2058.cpp` (#2058) [domain_suite, theme_core] — AC1: cow_set unique → in-place (no new storage, use_count stays 1)
-- `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
 ### `edsl_hygiene` — EDSL / macro hygiene / reflect (41)
@@ -1445,13 +1378,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_symbol_eq_2568.cpp` (#2568) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 
-### `jit_incremental` — JIT / AOT / incremental relower (75)
+### `jit_incremental` — JIT / AOT / incremental relower (74)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (75)
+#### domain/ (74)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1518,7 +1451,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_reload_recovery_query_2367.cpp` (#2367) [domain_suite, theme_compiler] — AC1: soft empty path — idle recovery → recovery-active=0, zeros free
 - `tests/compiler/test_relower_fallback_reason_2193.cpp` (#2193) [domain_suite, theme_compiler] — AC1: RelowerFallbackReason enum defined
 - `tests/compiler/test_relower_strategy_cache_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.
-- `tests/renderer/test_render_pass_incremental.cpp` (—) [domain_suite, theme_renderer] — AC1: RenderPass satisfies DirtyAware + SoAView + JITFriendly + Incremental
 - `tests/compiler/test_shape_storm_partial_relower_2212.cpp` (#2212) [domain_suite, theme_compiler] — AC1: When StormLevel has Shape bit, partial is preferred for a wider
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
@@ -1583,22 +1515,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path_2259.cpp` (#2259) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (137)
+### `observability` — Observability / metrics / query:*-stats (125)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (137)
+#### domain/ (125)
 
 - `tests/compiler/test_adaptive_reverify_limit_2146.cpp` (#2146) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp` (#2264) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
 - `tests/orch/test_agent_ask_2231.cpp` (#2231) [domain_suite, theme_orch] — AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
-- `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_ops_stats_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1729/#1851/#1852 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_atomic_mark_bitvector_2117.cpp` (#2117) [domain_suite, theme_serve] — AC1: multi-thread concurrent set same/adjacent bits → all set (no lost update)
-- `tests/compiler/test_auto_evolve_closure_live.cpp` (—) [domain_suite, theme_compiler] — Issue #1713 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_bidirectional_match_check_2348.cpp` (#2348) [domain_suite, theme_compiler] — AC1: Match check-mode — annotated (match ...) bodies checked under
 - `tests/core/test_bidirectional_stats.cpp` (—) [domain_suite, theme_core] — tests/test_bidirectional_stats.cpp — Issue #1420 AC3:
 - `tests/compiler/test_blame_stamp_on_degrade.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2064 — blame / provenance stamping on Dynamic degrade + CoercionMap
@@ -1629,7 +1559,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp` (—) [domain_suite, theme_compiler] — Issue #1490/#1592/#1608/#1612 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_fine_dirty_relower.cpp` (—) [domain_suite, theme_compiler] — test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
 - `tests/compiler/test_frame_budget_cascade_isolation_2137.cpp` (#2137) [domain_suite, theme_compiler] — AC1: under FrameBudget / render hotpath, non-render cascade deferred
-- `tests/compiler/test_frame_budget_guardian_2218.cpp` (#2218) [domain_suite, theme_compiler] — AC1: Budget config (default 16000 µs; env AURA_FRAME_BUDGET_US; soft 80%)
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_instr_impact_minimal_dirty_2126.cpp` (#2126) [minimal, domain_suite, theme_compiler] — AC1: nested lambda free-var body-only → no mark_all_blocks_dirty;
 - `tests/compiler/test_instr_level_impact_scope.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2031; ImpactScope::InstrRef + SourceIrLoc + affected_instrs
@@ -1687,13 +1616,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_refinement_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #432/#467/#495/#509/#574 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_regex_redos_timeout_2479.cpp` (#2479) [domain_suite, theme_compiler] — AC1: well-formed regex succeeds within budget
 - `tests/compiler/test_remount_force_deopt_2503.cpp` (#2503) [domain_suite, theme_compiler] — AC1: Unmapped densify candidate → remount_or_force_deopt returns 0,
-- `tests/renderer/test_render_agent_closedloop_2051.cpp` (#2051) [domain_suite, theme_renderer] — AC1: query:render-stats schema-2051 + Agent decision keys present
-- `tests/compiler/test_render_effect_gate_2136.cpp` (#2136) [domain_suite, theme_compiler] — AC1: RENDER_PRIMITIVE_META stamps required_effects=kEffectRender
-- `tests/compiler/test_render_fast_exit_2215.cpp` (#2215) [domain_suite, theme_compiler] — AC1: outermost success under hotpath → render_fast_exit_total +1
-- `tests/renderer/test_render_ffi_hotpath.cpp` (—) [domain_suite, theme_renderer] — c-render-bind / c-render-draw / c-present-batch / c-ansi-emit, micro-benchmark.
-- `tests/renderer/test_render_hotpath_observability.cpp` (—) [obs_named, domain_suite, theme_renderer] — Issue #1674/#1676 (#1978 renamed): issue# moved from filename to header.
-- `tests/renderer/test_render_hotpath_stability_under_mutation.cpp` (—) [domain_suite, theme_renderer] — high-frequency mutate + present; no deopt storm; AOT hit rate observable.
-- `tests/compiler/test_render_strategy_layer_2138.cpp` (#2138) [domain_suite, theme_compiler] — AC1: strategy can be set/get; present path consults it
 - `tests/compiler/test_reverify_expand_2356.cpp` (#2356) [domain_suite, theme_compiler] — occurrence / let-poly priority roots (between bounded reverify and
 - `tests/compiler/test_runtime_observability_correlated_stats.cpp` (—) [obs_named, domain_suite, theme_compiler] — test_runtime_observability_correlated_stats_673.cpp — Issue #673:
 - `tests/compiler/test_safe_snapshot_umbrella.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1856 (#1978 renamed): issue# moved from filename to header.
@@ -1704,7 +1626,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_self_evolution_loop_stats.cpp` (—) [domain_suite, theme_compiler] — Issue #1883 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_self_heal_policy_engine.cpp` (—) [domain_suite, theme_serve] — test_self_heal_policy_engine.cpp — standalone (flaky/failing ACs under batch link)
 - `tests/compiler/test_selfevo_bugfix_941.cpp` (#941) [small, domain_suite, theme_compiler] — test_selfevo_bugfix_941_967.cpp — Issues #941–#967 Phase 1
-- `tests/compiler/test_seva_demo_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1720/#1835/#1840/#1841 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp` (—) [domain_suite, theme_compiler] — Issue #1531/#1661/#462/#606 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_solve_delta_unresolved_export_2107.cpp` (#2107) [large, domain_suite, theme_compiler] — AC1: Synthetic over-limit → TIMEOUT + non-empty unresolved
 - `tests/compiler/test_source_to_ir_desync_recovery_2206.cpp` (#2206) [domain_suite, theme_compiler] — AC1: After intentional map desync, recovery patches/rebuilds and
@@ -1719,7 +1640,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
 - `tests/compiler/test_timeout_repair_rich_roots_2548.cpp` (#2548) [domain_suite, theme_compiler] — AC1: TIMEOUT with live occurrence goals → suggested set includes
 - `tests/compiler/test_tree_walker_fallback_strict_2213.cpp` (#2213) [domain_suite, theme_compiler] — AC1: Under Forbidden (production-strict), needs_tree_walker → HardError
-- `tests/compiler/test_tui_batch_draw_present_2134.cpp` (#2134) [batch_driver, domain_suite, theme_compiler] — AC1: draw-batch + fill-rect update cells and expand dirty AABB
 - `tests/core/test_type_cache_stats_snapshot.cpp` (—) [domain_suite, theme_core] — Issue #1797 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_dep_partial_merge_2283.cpp` (#2283) [domain_suite, theme_compiler] — test_type_dep_partial_merge_2283.cpp
 - `tests/compiler/test_type_prop_invariant_correlation.cpp` (—) [domain_suite, theme_compiler] — Issue #1884 (#1978 renamed): issue# moved from filename to header.
@@ -1729,19 +1649,18 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention_2523.cpp` (#2523) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (53)
+### `uncategorized` — Uncategorized / mixed (42)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (53)
+#### domain/ (42)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
 - `tests/stdlib/test_atomic_swap_stdlib.cpp` (—) [domain_suite, theme_stdlib] — test_atomic_swap_stdlib.cpp — Issue #1380:
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
-- `tests/renderer/test_camera_rays.cpp` (—) [domain_suite, theme_renderer] — test_camera_rays.cpp — Issue #1981 / Epic #1979
 - `tests/compiler/test_channel_rendezvous_2483.cpp` (#2483) [domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
 - `tests/compiler/test_command_line_cap_io_read_2478.cpp` (#2478) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
@@ -1750,7 +1669,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
 - `tests/compiler/test_eval_current_no_auto_fix_2484.cpp` (#2484) [domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
 - `tests/orch/test_failure_policy_bridge_2539.cpp` (#2539) [domain_suite, theme_orch] — AC1: to_agent_policy(FailurePolicy, max_restarts=...) callable under aura::orch
-- `tests/renderer/test_ffi_cellgrid_abi_2216.cpp` (#2216) [domain_suite, theme_renderer] — AC1: abi_from_signature recognizes cellgrid / TermCell* / DirtyRegion
 - `tests/core/test_general_object_pin_coverage_gate_2496.cpp` (#2496) [domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
 - `tests/compiler/test_ir_const_string_intern_2573.cpp` (#2573) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
@@ -1771,23 +1689,14 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — AC1: count > max clamped
 - `tests/compiler/test_primcall_str_intern_2577.cpp` (#2577) [domain_suite, theme_compiler] — AC1: N× (string-append x "!") — eval heap growth ≪ N
 - `tests/compiler/test_query_namespace_audit.cpp` (—) [domain_suite, theme_compiler] — test_query_namespace_audit.cpp — Issue #562:
-- `tests/compiler/test_register_render_hot_prim_2217.cpp` (#2217) [domain_suite, theme_compiler] — AC1: Helper API stamps RENDER_PRIMITIVE_META fields (hot + render_critical)
-- `tests/compiler/test_render_deopt_throttle_race_2373.cpp` (#2373) [domain_suite, theme_compiler] — (CAS loop). N concurrent callers within window → exactly one true.
-- `tests/renderer/test_render_telemetry.cpp` (—) [domain_suite, theme_renderer] — test_render_telemetry.cpp — Issue #1357: per-prim latency + frame time histogram
 - `tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp` (#2494) [domain_suite, theme_compiler] — AC1: Intentionally broken fixture prim (side-effect name, no
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:
 - `tests/core/test_stringpool_concurrent_intern.cpp` (—) [domain_suite, theme_core] — Issue #2062 — StringPool thread-safe intern test.
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp` (—) [domain_suite, theme_stdlib] — test_synthesize_namespace_demotion.cpp — Issue #561:
 - `tests/compiler/test_sys_open_path_harden_2487.cpp` (#2487) [domain_suite, theme_compiler] — AC1: (sys-open "/proc/self/mem") → -1 (path_is_denied)
-- `tests/renderer/test_terminal_concurrent.cpp` (—) [domain_suite, theme_renderer] — test_terminal_concurrent.cpp — Issue #1352 (standalone; free-corruption when co-linked)
-- `tests/renderer/test_terminal_deprecation.cpp` (—) [domain_suite, theme_renderer] — test_terminal_deprecation.cpp — Issue #1351: deprecate 7 no-op terminal:* primitives
-- `tests/repl/test_terminal_domain_batch.cpp` (—) [batch_driver, domain_suite, theme_repl] — test_terminal_domain_batch.cpp — terminal domain batch driver.
 - `tests/compiler/test_truncate_commit_gate_2458.cpp` (#2458) [domain_suite, theme_compiler] — AC1: Soft Sampled + truncated → observe; commit_ok allows; no reject
 - `tests/compiler/test_try_catch_bind_2567.cpp` (#2567) [domain_suite, theme_compiler] — AC1: (try (no-such-fn …) (catch (e) (string? e))) → #t; list/cons usable
 - `tests/core/test_try_lock_workspace_lock_order.cpp` (—) [domain_suite, theme_core] — Issue #1768 (#1978 renamed): issue# moved from filename to header.
-- `tests/renderer/test_voxel_raycast.cpp` (—) [domain_suite, theme_renderer] — test_voxel_raycast.cpp — Issue #1983 / Epic #1979
-- `tests/renderer/test_voxel_shade.cpp` (—) [domain_suite, theme_renderer] — test_voxel_shade.cpp — Issue #1984 / Epic #1979
-- `tests/renderer/test_voxel_volume.cpp` (—) [domain_suite, theme_renderer] — test_voxel_volume.cpp — Issue #1982 / Epic #1979
 - `tests/compiler/test_while_define_oneshot_2571.cpp` (#2571) [domain_suite, theme_compiler] — AC1: issue repro — nested while with (define x 0) yields count=6
 - `tests/compiler/test_workspace_dispatch.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_dispatch.cpp — Issue #1437: workspace :op dispatch contract test.
 

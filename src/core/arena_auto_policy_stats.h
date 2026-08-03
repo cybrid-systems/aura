@@ -573,4 +573,13 @@ inline void record_fiber_transition_compact() noexcept {
 
 } // namespace aura::core::arena_policy
 
+
+// Issue #2495/#2596: AURA_MOVING_UNTRACKED=hard preference (process-wide).
+// Shared header form so security_defaults.hh can lock production default
+// without importing aura.core.arena module. arena.ixx aliases this name
+// into namespace aura::ast for module consumers.
+namespace aura::ast {
+inline std::atomic<int> g_moving_untracked_hard_abort_pref{-1};
+} // namespace aura::ast
+
 #endif // AURA_CORE_ARENA_AUTO_POLICY_STATS_H

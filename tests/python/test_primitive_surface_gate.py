@@ -105,12 +105,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["eda:"], 13)
 
-    def test_auto_evolve_domain_deferred_and_budgeted(self):
-        self.assertEqual(self.m.DOMAIN_STATUS.get("auto-evolve-"), "deferred")
-        self.assertEqual(self.m.domain_status("auto-evolve-once"), "deferred")
-        self.assertEqual(self.m.domain_status("auto-evolve-tick"), "deferred")
-        self.assertIn("auto-evolve-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"], 7)
+    def test_auto_evolve_domain_removed_2627(self):
+        self.assertNotIn("auto-evolve-", self.m.DOMAIN_STATUS)
+        self.assertNotIn("auto-evolve-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_git_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("git-"), "deferred")
@@ -124,12 +121,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertNotIn("terminal:", self.m.DOMAIN_STATUS)
         self.assertNotIn("terminal:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
-    def test_seva_domain_deferred_and_budgeted(self):
-        self.assertEqual(self.m.DOMAIN_STATUS.get("seva:"), "deferred")
-        self.assertEqual(self.m.domain_status("seva:achieve-coverage"), "deferred")
-        self.assertEqual(self.m.domain_status("seva:run-demo-with-metrics"), "deferred")
-        self.assertIn("seva:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["seva:"], 5)
+    def test_seva_domain_removed_2627(self):
+        self.assertNotIn("seva:", self.m.DOMAIN_STATUS)
+        self.assertNotIn("seva:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_synthesize_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("synthesize:"), "deferred")
@@ -162,12 +156,8 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_commercial_domain_counts_prefixes(self):
         names = [
             "query:root",
-            "auto-evolve-once",
-            "auto-evolve-tick",
             "git-status",
             "git-diff",
-            "seva:achieve-coverage",
-            "seva:approve-mutation",
             "synthesize:fill",
             "synthesize:define",
             "tcp-connect",
@@ -181,9 +171,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(counts.get("tui:"), None)  # #2626 removed
         self.assertEqual(counts.get("terminal:"), None)  # #2626 removed
         self.assertEqual(counts.get("eda:"), 0)
-        self.assertEqual(counts.get("auto-evolve-"), 2)
+        self.assertEqual(counts.get("auto-evolve-"), None)  # #2627
         self.assertEqual(counts.get("git-"), 2)
-        self.assertEqual(counts.get("seva:"), 2)
+        self.assertEqual(counts.get("seva:"), None)  # #2627
         self.assertEqual(counts.get("synthesize:"), 2)
         self.assertEqual(counts.get("tcp-"), 2)
         self.assertEqual(counts.get("strategy:"), 2)
@@ -203,11 +193,8 @@ class TestBlockedPatterns(unittest.TestCase):
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
 
-    def test_auto_evolve_commercial_budget_overrun_fails_strict(self):
-        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"]
-        fake = [f"auto-evolve-synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
-        self.assertEqual(rc, 1)
+    def test_auto_evolve_removed_not_budgeted(self):
+        self.assertNotIn("auto-evolve-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_git_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"]
@@ -221,11 +208,8 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertNotIn("terminal:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertNotIn("render3d:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
-    def test_seva_commercial_budget_overrun_fails_strict(self):
-        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["seva:"]
-        fake = [f"seva:synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
-        self.assertEqual(rc, 1)
+    def test_seva_removed_not_budgeted(self):
+        self.assertNotIn("seva:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_synthesize_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"]

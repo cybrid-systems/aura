@@ -2,16 +2,16 @@
 
 # Primitives (generated)
 
-**501** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**489** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 93 primitives (19%)
-- **core**: 352 primitives (70%)
+- **core**: 347 primitives (71%)
 - **internal-observable**: 48 primitives (10%)
-- **convenience**: 8 primitives (2%)
+- **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
@@ -177,7 +177,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (264)
+## Core builtins (257)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -191,13 +191,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `asin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
-- `auto-evolve-cycle-count` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-loop` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-once` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-running?` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-stop` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-tick` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-total-fixed` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-rollback-on-panic` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `boolean?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -594,14 +587,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `security:set-sandbox-mode!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-tenant-principal!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 
-## Seva: (5)
-
-- `seva:achieve-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:approve-mutation` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:fix-reset-bugs` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-
 ## Stats: (4)
 
 - `stats:count` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -743,7 +728,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (352)
+### Core builtins (must remain primitive) (347)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1011,11 +996,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
-- `seva:achieve-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:approve-mutation` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:fix-reset-bugs` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:generate-regression` — `src/compiler/evaluator_primitives_compile.cpp`
-- `seva:run-demo-with-metrics` — `src/compiler/evaluator_primitives_compile.cpp`
 - `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1149,15 +1129,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:templates` — `src/compiler/evaluator_primitives_agent.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-### Convenience (candidates for stdlib migration) (8)
+### Convenience (candidates for stdlib migration) (1)
 
-- `auto-evolve-cycle-count` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-loop` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-once` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-running?` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-stop` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-tick` — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-evolve-total-fixed` — `src/compiler/evaluator_primitives_agent.cpp`
 - `format` — `src/compiler/evaluator_primitives_runtime.cpp`
 
 ## Deprecated (Issue #1438)

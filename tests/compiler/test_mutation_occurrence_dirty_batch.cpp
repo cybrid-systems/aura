@@ -791,7 +791,7 @@ namespace aura_mut_run_verify_dirty_1840 {
 //   AC1: getters use memory_order_acquire; snapshot API present
 //   AC2: compile_07 SEVA sites cite #1840 / use snapshot
 //   AC3: snapshot stable under concurrent fetch_add stress
-//   AC4: seva:achieve-coverage / fix-reset-bugs remain callable
+//   AC4: query:seva-audit-log remains callable (#2627: seva:* wrappers removed)
 
 
 namespace {
@@ -799,6 +799,7 @@ namespace {
     using aura::ast::FlatAST;
     using aura::compiler::CompilerService;
     using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_string;
     using aura::compiler::types::is_void;
     using aura::test::g_failed;
     using aura::test::g_passed;
@@ -843,21 +844,18 @@ int run_verify_dirty_1840() {
 
     // ── AC2: compile_07 wiring ──
     {
-        std::println("\n--- AC2: SEVA sites use snapshot / #1840 ---");
+        std::println("\n--- AC2: seva-audit-log uses snapshot / #1840 (#2627 wrappers gone) ---");
         auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
                                 "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_07.cpp");
         CHECK(prim.find("#1840") != std::string::npos, "cites #1840");
-        auto fix = prim.find("\"seva:fix-reset-bugs\"");
-        CHECK(fix != std::string::npos, "fix-reset-bugs present");
-        auto fix_win = prim.substr(fix, 900);
-        CHECK(fix_win.find("snapshot_verify_dirty_totals") != std::string::npos,
-              "fix-reset-bugs uses snapshot");
         auto audit = prim.find("\"query:seva-audit-log\"");
         CHECK(audit != std::string::npos, "audit-log present");
         auto audit_win = prim.substr(audit, 900);
         CHECK(audit_win.find("snapshot_verify_dirty_totals") != std::string::npos,
               "audit-log uses snapshot");
+        CHECK(prim.find("\"seva:fix-reset-bugs\"") == std::string::npos,
+              "seva:fix-reset-bugs removed (#2627)");
     }
 
     // ── AC3: concurrent stress ──
@@ -893,19 +891,13 @@ int run_verify_dirty_1840() {
 
     // ── AC4: runtime ──
     {
-        std::println("\n--- AC4: SEVA primitives callable ---");
+        std::println("\n--- AC4: seva-audit-log callable (#2627) ---");
         CompilerService cs;
-        auto a = cs.eval("(seva:achieve-coverage \"goal\" 100)");
-        CHECK(a.has_value(), "achieve-coverage returns");
-        CHECK(is_hash(*a) || is_void(*a), "hash or void");
-        auto f = cs.eval("(seva:fix-reset-bugs)");
-        CHECK(f.has_value(), "fix-reset-bugs returns");
-        CHECK(is_hash(*f) || is_void(*f), "hash or void");
         auto q = cs.eval("(engine:metrics \"query:seva-audit-log\")");
         if (!q)
-            q = cs.eval("(query:seva-audit-log)");
+            q = cs.eval("(stats:get \"query:seva-audit-log\")");
         CHECK(q.has_value(), "audit-log returns");
-        CHECK(is_hash(*q) || is_void(*q), "hash or void");
+        CHECK(is_hash(*q) || is_void(*q) || is_string(*q), "hash/void/string");
     }
 
     std::println("\n=== test_verify_dirty_totals_snapshot_1840: {} passed, {} failed ===", g_passed,
