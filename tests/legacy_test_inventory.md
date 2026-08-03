@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 730 | Preferred destination suites |
-| **Total scanned** | **730** | |
+| `tests/core/test_*.cpp` | 731 | Preferred destination suites |
+| **Total scanned** | **731** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 74 | 74 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 46 | 46 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 47 | 47 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 42 | 42 | P3 — review case-by-case |
 
@@ -757,6 +757,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_set_workspace_flat.cpp`
 - `tests/compiler/test_setcode_rebind_survive_2569.cpp`
 - `tests/compiler/test_shape.cpp`
+- `tests/compiler/test_shape_compact_storm_isolation_2617.cpp`
 - `tests/compiler/test_shape_high_mutation_storm_2433.cpp`
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp`
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp`
@@ -1481,13 +1482,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape_2574.cpp` (#2574) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (46)
+### `shape_soa` — Shape / SoA / column layout (47)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (46)
+#### domain/ (47)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
@@ -1513,6 +1514,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_restamp_lazy_align_atomic_2421.cpp` (#2421) [domain_suite, theme_core] — AC1: flag is atomic (store/load with acquire/release)
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape.cpp` (—) [large, domain_suite, theme_compiler] — test_shape.cpp — Unit tests for shape infrastructure (Phase 1, #53)
+- `tests/compiler/test_shape_compact_storm_isolation_2617.cpp` (#2617) [domain_suite, theme_compiler] — AC1: Gate/linter — on_arena_compact never calls update_deopt_storm_state_
 - `tests/compiler/test_shape_high_mutation_storm_2433.cpp` (#2433) [domain_suite, theme_compiler] — AC1: production default applies kHighMutationPreset knobs (no env)
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_profiler_concurrency_2141.cpp` (#2141) [domain_suite, theme_compiler] — AC1: docs model A (shared_mutex) in shape_profiler.h
