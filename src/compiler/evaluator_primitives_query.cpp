@@ -6437,6 +6437,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               tr.would_allow_commit ? 1 : 0);
                     insert_kv("commit-readiness-sample-truncate-reason", tr.force_reason_code);
                 }
+                // Issue #2621: cone_truncate sample (partial cone soft overflow).
+                {
+                    auto c = in;
+                    c.partial_cone_truncated = true;
+                    c.truncated_reverify = false;
+                    const auto cr_cone = commit_readiness(c);
+                    insert_kv("commit-readiness-sample-cone-truncate-allow",
+                              cr_cone.would_allow_commit ? 1 : 0);
+                    insert_kv("commit-readiness-sample-cone-truncate-reason",
+                              cr_cone.force_reason_code);
+                    insert_kv("commit-readiness-force-reason-cone-truncate", 9);
+                }
                 // Issue #2610: auto_partial sample (under-marked cone + empty CS).
                 {
                     auto a = in;
@@ -7508,6 +7520,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("partial-cone-cap-wired", wired);
                 insert_kv("schema-2560", 2560);
                 insert_kv("issue-2560", 2560);
+                // Issue #2621: cone truncate → commit fidelity (pairs #2560).
+                insert_kv("last-partial-cone-truncated",
+                          aura::compiler::typed_audit::last_partial_cone_truncated() ? 1 : 0);
+                insert_kv("last-partial-cone-dropped",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::last_partial_cone_dropped()));
+                insert_kv("last-partial-cone-fanout-trunc",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::last_partial_cone_fanout_trunc()));
+                insert_kv("partial-cone-commit-observe-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::g_partial_cone_commit_observe_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("partial-cone-commit-reject-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::g_partial_cone_commit_reject_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("partial-cone-commit-gate-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::g_partial_cone_commit_gate_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-2621", 2621);
+                insert_kv("issue-2621", 2621);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

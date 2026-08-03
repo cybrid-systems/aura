@@ -2116,6 +2116,13 @@ export struct TypeChecker {
         return last_occurrence_vars_;
     }
     [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
+    // Issue #2621: last infer_flat_partial cone soft/hard truncate fidelity.
+    [[nodiscard]] bool last_partial_cone_truncated() const noexcept {
+        return last_partial_cone_truncated_;
+    }
+    [[nodiscard]] std::uint64_t last_partial_cone_dropped() const noexcept {
+        return last_partial_cone_dropped_;
+    }
     // Issue #2460: true when last infer_flat_partial ownership re-sim
     // failed (dirty linear set). Soft = notes+Warning; production/strict
     // also set_node_error TypeError. Boundary Full audit still runs.
@@ -2480,6 +2487,9 @@ public:
     // Issue #2180: occurrence vars + CS-live flag for composite commit reuse.
     std::vector<aura::core::TypeId> last_occurrence_vars_;
     bool last_partial_cs_live_ = false;
+    // Issue #2621: last partial cone truncate (soft/hard overflow #2560).
+    bool last_partial_cone_truncated_ = false;
+    std::uint64_t last_partial_cone_dropped_ = 0;
     // Issue #2460: last infer_flat_partial dirty ownership re-sim failed.
     bool last_partial_linear_revalidate_fail_ = false;
     // Issue #2514: sticky linear-synth hard-fail from last engine life.
