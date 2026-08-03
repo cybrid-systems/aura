@@ -939,6 +939,25 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
 Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pending_count,
                                               bool* success_flag, bool fine_rollback) noexcept {
+    // Issue #2587: agent_throttle_for_mailbox_starvation gate (single
+    // relaxed atomic load — zero cost when flag == 0, AC5). Soft path
+    // bumps metric only and falls through to quota check; production /
+    // Strict hard-rejects with structured AdmissionRejected:
+    // mailbox-hold-starvation error (#2587 AC1 + AC2 + #2551 closed-loop
+    // BP control plane). The TransactionGuard host callback wraps this
+    // function (#2555), so TransactionGuard ctor is gated transitively.
+    if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled()) {
+        aura::serve::mf_mailbox::note_mutate_rejected_mailbox_starvation();
+        if (typed_audit::production_defaults_active()) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return std::unexpected(
+                aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                      std::string("AdmissionRejected: mailbox-hold-starvation")));
+        }
+        // Soft path (Off / Soft sandbox): fall through (metric-only).
+    }
     // Issue #1547 / #1618 / #1628: typed ResourceQuotaExceeded —
     // never PanicCheckpoint / runtime_error on quota reject.
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
@@ -969,6 +988,20 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                                          std::uint64_t pending_count,
                                                          bool* success_flag,
                                                          bool fine_rollback) noexcept {
+    // Issue #2587: same throttle gate as try_acquire above (single
+    // relaxed load, soft / hard split on production_defaults_active).
+    if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled()) {
+        aura::serve::mf_mailbox::note_mutate_rejected_mailbox_starvation();
+        if (typed_audit::production_defaults_active()) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return std::unexpected(
+                aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                      std::string("AdmissionRejected: mailbox-hold-starvation")));
+        }
+        // Soft path: fall through.
+    }
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
         m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
     if (auto err = ev.check_mutation_quota(pending_count)) {

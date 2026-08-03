@@ -4418,3 +4418,19 @@ add_dependencies(all_test_issue_targets test_orphan_reap_stress)
 aura_add_issue_test(test_capability_single_use_consume_2586)
 aura_issue_test_link_light(test_capability_single_use_consume_2586)
 add_dependencies(all_test_issue_targets test_capability_single_use_consume_2586)
+
+# Issue #2587: mutate admission honors agent_throttle_for_mailbox_starvation
+# on every entry path (P0, closes BP→admission loop with #2551). Source-cite
+# in multi_fiber_mailbox.h (agent_throttle_for_mailbox_starvation atomic +
+# mutate_rejected_mailbox_starvation_total counter + aura_orch_mailbox_
+# starvation_throttled helper [gnu::always_inline single relaxed load, AC5] +
+# note_mutate_rejected_mailbox_starvation bumper) + evaluator_mutation_
+# boundary.cpp (try_acquire + try_acquire_for_region throttle gate at top
+# covers host + fiber soft path + TransactionGuard host callback
+# transitively) + evaluator_primitives_messaging.cpp (query:mf-mailbox-
+# stats surfaces mutate-rejected-mailbox-starvation-total / schema-2587 /
+# issue-2587 parallel #2551 / #2511 / #2347 issue surface). No docs/design/
+# per #1655 #1485.
+aura_add_issue_test(test_mutate_mailbox_starvation_throttle_2587)
+aura_issue_test_link_light(test_mutate_mailbox_starvation_throttle_2587)
+add_dependencies(all_test_issue_targets test_mutate_mailbox_starvation_throttle_2587)
