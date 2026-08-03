@@ -4251,3 +4251,49 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     fprintf(stderr, "compile failed\n");
     return false;
 }
+
+// Issue #2601: exhausted min-dirty retry closed loop driver.
+// Defined here (not in hot_update_registry.cpp) because it needs
+// aura_reemit_aot_for_dirty + aot_metrics() — bridge-side resources.
+// Soft zero-cost when force_jit_regions_mask_ == 0 (idle path — the
+// registry decide short-circuits on the first load). Soft zero-cost
+// on backoff not elapsed (steady_ms_now() check). Bounded by attempts_cap
+// + backoff_ms so recursion within a single reemit pipeline call is safe.
+extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void) {
+    auto& hur = aura::compiler::hot_update_registry();
+    const auto decision = hur.decide_exhausted_min_dirty_retry();
+    switch (decision) {
+        case aura::compiler::HotUpdateRegistry::ExhaustedMinDirtyRetryDecision::Retry: {
+            hur.consume_exhausted_min_dirty_retry_attempt();
+            if (aot_metrics()) {
+                aot_metrics()->aot_exhausted_min_dirty_retry_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            const auto n = aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+            if (n > 0) {
+                if (aot_metrics())
+                    aot_metrics()->aot_exhausted_min_dirty_retry_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            } else if (!hur.has_deferred_reemit()) {
+                // True empty/reject — not counted as success. The retry
+                // happened (retry_total +1) but produced no success.
+                // Failures are observable via retry_total > success_total.
+            }
+            return;
+        }
+        case aura::compiler::HotUpdateRegistry::ExhaustedMinDirtyRetryDecision::NoAttemptsLeft:
+            if (aot_metrics())
+                aot_metrics()->aot_exhausted_min_dirty_retry_cap_hit_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            return;
+        case aura::compiler::HotUpdateRegistry::ExhaustedMinDirtyRetryDecision::StormActive:
+            if (aot_metrics())
+                aot_metrics()->aot_exhausted_min_dirty_retry_storm_skip_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            return;
+        case aura::compiler::HotUpdateRegistry::ExhaustedMinDirtyRetryDecision::NoForceJit:
+        case aura::compiler::HotUpdateRegistry::ExhaustedMinDirtyRetryDecision::BackoffNotElapsed:
+            // Zero-cost no-op.
+            return;
+    }
+}

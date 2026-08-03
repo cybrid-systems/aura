@@ -14130,6 +14130,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t min_dirty_success = 0;              // #2544
         std::uint64_t min_dirty_fail = 0;                 // #2544
         std::uint64_t min_dirty_storm_skip = 0;           // #2544
+        std::uint64_t min_dirty_retry_total = 0;          // #2601
+        std::uint64_t min_dirty_retry_success = 0;        // #2601
+        std::uint64_t min_dirty_retry_storm_skip = 0;     // #2601
+        std::uint64_t min_dirty_retry_cap_hit = 0;        // #2601
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
@@ -14183,6 +14187,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 m->aot_reload_exhausted_min_dirty_reemit_fail_total.load(std::memory_order_relaxed);
             min_dirty_storm_skip = m->aot_reload_exhausted_min_dirty_reemit_storm_skip_total.load(
                 std::memory_order_relaxed);
+            // Issue #2601: exhausted min-dirty retry closed loop.
+            min_dirty_retry_total =
+                m->aot_exhausted_min_dirty_retry_total.load(std::memory_order_relaxed);
+            min_dirty_retry_success =
+                m->aot_exhausted_min_dirty_retry_success_total.load(std::memory_order_relaxed);
+            min_dirty_retry_storm_skip =
+                m->aot_exhausted_min_dirty_retry_storm_skip_total.load(std::memory_order_relaxed);
+            min_dirty_retry_cap_hit =
+                m->aot_exhausted_min_dirty_retry_cap_hit_total.load(std::memory_order_relaxed);
         }
         // Issue #2094: read the unified StormLevel facade OUTSIDE the
         // metrics if-block since aura_hot_update_current_storm_level() is
@@ -14337,6 +14350,20 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-exhausted-min-dirty-reemit-storm-skip-total",
              make_int(static_cast<std::int64_t>(min_dirty_storm_skip))},
             {"aot-reload-exhausted-min-dirty-reemit-wired", make_int(1)},
+            // Issue #2601: exhausted min-dirty retry closed loop. Distinct
+            // 4 counters per issue body — retry_total / _success / _storm_skip
+            // / _cap_hit. Soft zero-cost when force_jit_regions_mask_ == 0.
+            {"aot-exhausted-min-dirty-retry-total",
+             make_int(static_cast<std::int64_t>(min_dirty_retry_total))},
+            {"aot-exhausted-min-dirty-retry-success-total",
+             make_int(static_cast<std::int64_t>(min_dirty_retry_success))},
+            {"aot-exhausted-min-dirty-retry-storm-skip-total",
+             make_int(static_cast<std::int64_t>(min_dirty_retry_storm_skip))},
+            {"aot-exhausted-min-dirty-retry-cap-hit-total",
+             make_int(static_cast<std::int64_t>(min_dirty_retry_cap_hit))},
+            {"aot-exhausted-min-dirty-retry-wired", make_int(1)},
+            {"schema-2601", make_int(2601)},
+            {"issue-2601", make_int(2601)},
             {"schema-2544", make_int(2544)},
             {"issue-2544", make_int(2544)},
             // Issue #2304 / #2366: post-bump epoch invariant walk

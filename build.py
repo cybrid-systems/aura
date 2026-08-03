@@ -3177,6 +3177,28 @@ def cmd_aot_per_eval_slot_invalidate_coverage():
     return 0
 
 
+def cmd_aot_exhausted_min_dirty_retry_2601_coverage():
+    """Issue #2601: exhausted min-dirty retry closed loop under sustained
+    Global storm. Refines #2544 (one-shot min-dirty) + #2502 (force-JIT
+    re-promote window). Validates the 4 new counters, retry hook in
+    on_reemit_pipeline_call, decide/consume in registry, decide driver
+    in aura_jit_bridge.cpp, optional pending-idle policy knob, and
+    schema-2601 / issue-2601 cross-link on query:aot-stats +
+    query:reload-recovery-state + test_issue_2544 #2601 ACs.
+    """
+    print(f"{B}=== exhausted min-dirty retry closed-loop coverage (#2601) ==={N}")
+    script = ROOT / "scripts" / "check_aot_exhausted_min_dirty_retry_2601.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("exhausted min-dirty retry coverage contract rows failed")
+        return 1
+    ok("exhausted min-dirty retry closed-loop coverage clean")
+    return 0
+
+
 def cmd_lifetime_contract_snapshot_coverage():
     """Issue #2300: query:lifetime-contract-snapshot pure Agent surface.
 
@@ -6791,6 +6813,7 @@ def cmd_gate():
         or cmd_capture_cell_remap_coverage()
         or cmd_general_object_pin_coverage()
         or cmd_aot_per_eval_slot_invalidate_coverage()
+        or cmd_aot_exhausted_min_dirty_retry_2601_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
         or cmd_escape_gate_key_contract_coverage()
@@ -7625,6 +7648,7 @@ def main():
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,
         "adaptive-thr": cmd_adaptive_thr_coverage,
         "aot-reload-policy": cmd_aot_reload_policy_coverage,
+        "aot-exhausted-min-dirty-retry-2601": cmd_aot_exhausted_min_dirty_retry_2601_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,
         "aot-stale-probe-hard-reject": cmd_aot_stale_probe_hard_reject_coverage,

@@ -107,6 +107,7 @@ static void clear_idle(aura::compiler::HotUpdateRegistry& reg) {
     reg.reset_deopt_storm_state_for_test();
     reg.reset_reemit_boundary_handshake_for_test();
     reg.reset_force_jit_repromote_for_test();
+    reg.reset_exhausted_min_dirty_retry_for_test();
     reg.on_reload_success();
     aura_set_reemit_candidate_fn(nullptr, nullptr);
     aura_set_aot_emit_fn(nullptr, nullptr);
@@ -419,6 +420,265 @@ static void ac5_schema_and_source() {
           "AC5: cmake target");
 }
 
+// ── Issue #2601: exhausted min-dirty retry closed loop ──
+// AC1: Exhaust + Global storm → storm-skipped; after storm clear, auto retry fires.
+static void ac2601_storm_clear_auto_retry() {
+    std::println("\n--- #2601 AC1: Storm skip → storm clear → auto retry ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+
+    CompilerMetrics metrics;
+    aura_set_aot_metrics(&metrics);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(100);
+    aura_set_module_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    aura_set_aot_reload_auto_retry(1);
+    aura_hot_update_set_reemit_boundary_policy(0); // SoftEnter
+    static MinDirtyFeed feed;
+    feed.served = false;
+    aura_set_reemit_candidate_fn(&reemit_one_candidate, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_set_exhausted_min_dirty_retry_cap(3);
+    aura_set_exhausted_min_dirty_retry_backoff_ms(0); // no backoff for AC
+
+    auto bad = build_defuse_so("ac2601_ac1", 1);
+    if (bad.empty()) {
+        CHECK(true, "AC1 skip (cc unavailable)");
+        aura_set_aot_metrics(nullptr);
+        clear_idle(reg);
+        return;
+    }
+
+    // Exhaust → force-JIT demoted
+    (void)aura_reload_aot_module(bad.c_str(), 1);
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask != 0,
+          "AC1: force-JIT demoted after exhaust");
+
+    // Trip Global storm (soft throttle).
+    reg.set_deopt_storm_threshold(2, 60000);
+    reg.on_stale_deopt();
+    reg.on_stale_deopt();
+    CHECK(static_cast<std::uint8_t>(reg.current_storm_level()) >= 2, "AC1: Global storm active");
+
+    const auto skip0 = metrics.aot_exhausted_min_dirty_retry_storm_skip_total.load();
+    const auto cap0 = metrics.aot_exhausted_min_dirty_retry_cap_hit_total.load();
+
+    // Drive reemit pipeline under storm → retry path storm-skipped.
+    (void)aura_reemit_aot_for_dirty(0);
+
+    const auto skip1 = metrics.aot_exhausted_min_dirty_retry_storm_skip_total.load();
+    std::println("  AC1: storm_skip_delta={}", skip1 - skip0);
+    CHECK(skip1 > skip0, "AC1: storm-skip counter bumped");
+
+    // Clear storm → next reemit pipeline call should fire retry.
+    reg.reset_deopt_storm_state_for_test();
+
+    const auto ret0 = metrics.aot_exhausted_min_dirty_retry_total.load();
+
+    (void)aura_reemit_aot_for_dirty(0);
+
+    const auto ret1 = metrics.aot_exhausted_min_dirty_retry_total.load();
+    std::println("  AC1: retry_delta={} cap_delta={}", ret1 - ret0,
+                 metrics.aot_exhausted_min_dirty_retry_cap_hit_total.load() - cap0);
+    CHECK(ret1 > ret0, "AC1: retry_total bumped after storm clear");
+
+    aura_set_aot_metrics(nullptr);
+    clear_idle(reg);
+}
+
+// AC2: Retry success × N → force_jit_repromote_total advances; mask cleared.
+static void ac2601_retry_success_repromote() {
+    std::println("\n--- #2601 AC2: Retry success × N → re-promote ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2); // small window for AC
+    aura_set_exhausted_min_dirty_retry_cap(3);
+    aura_set_exhausted_min_dirty_retry_backoff_ms(0); // no backoff
+
+    CompilerMetrics metrics;
+    aura_set_aot_metrics(&metrics);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(100);
+    aura_set_module_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    aura_set_aot_reload_auto_retry(1);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static MinDirtyFeed feed;
+    feed.served = false;
+    aura_set_reemit_candidate_fn(&reemit_one_candidate, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+
+    auto bad = build_defuse_so("ac2601_ac2", 1);
+    if (bad.empty()) {
+        CHECK(true, "AC2 skip (cc unavailable)");
+        aura_set_aot_metrics(nullptr);
+        clear_idle(reg);
+        return;
+    }
+
+    const auto rep0 = reg.force_jit_repromote_total();
+
+    // Exhaust → demoted
+    (void)aura_reload_aot_module(bad.c_str(), 1);
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask != 0, "AC2: demoted after exhaust");
+
+    // Drive clean reemit pipelines until re-promote (the retry path + clean success
+    // advance the #2502 streak).
+    while (reg.reload_recovery_state().force_jit_regions_mask != 0 &&
+           reg.force_jit_stable_successes() < reg.force_jit_repromote_window()) {
+        (void)aura_reemit_aot_for_dirty(0);
+    }
+    if (reg.reload_recovery_state().force_jit_regions_mask != 0)
+        (void)aura_reemit_aot_for_dirty(0);
+
+    std::println("  AC2: repromote_delta={}", reg.force_jit_repromote_total() - rep0);
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask == 0,
+          "AC2: mask cleared via re-promote");
+    CHECK(reg.force_jit_repromote_total() > rep0, "AC2: force_jit_repromote_total advanced");
+
+    aura_set_aot_metrics(nullptr);
+    clear_idle(reg);
+}
+
+// AC3: Cap hit → no infinite retry; cap_hit counter bumped.
+static void ac2601_cap_hit_no_infinite() {
+    std::println("\n--- #2601 AC3: Cap hit → no infinite retry ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    aura_set_exhausted_min_dirty_retry_cap(1);        // cap = 1
+    aura_set_exhausted_min_dirty_retry_backoff_ms(0); // no backoff
+
+    CompilerMetrics metrics;
+    aura_set_aot_metrics(&metrics);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(100);
+    aura_set_module_version(0);
+    aura_set_aot_env_frame_version_for_eval(nullptr, 0);
+    aura_set_aot_reload_auto_retry(1);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static MinDirtyFeed feed;
+    feed.served = false;
+    aura_set_reemit_candidate_fn(&reemit_one_candidate, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+
+    auto bad = build_defuse_so("ac2601_ac3", 1);
+    if (bad.empty()) {
+        CHECK(true, "AC3 skip (cc unavailable)");
+        aura_set_aot_metrics(nullptr);
+        clear_idle(reg);
+        return;
+    }
+
+    // Exhaust → demoted
+    (void)aura_reload_aot_module(bad.c_str(), 1);
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask != 0, "AC3: demoted after exhaust");
+
+    const auto cap0 = metrics.aot_exhausted_min_dirty_retry_cap_hit_total.load();
+
+    // Drive multiple reemit pipelines. With cap=1 + backoff=0, the first retry
+    // fires (retry_total +1, attempts_left=0), subsequent calls hit cap_hit
+    // (NoAttemptsLeft decision).
+    (void)aura_reemit_aot_for_dirty(0);
+    (void)aura_reemit_aot_for_dirty(0);
+    (void)aura_reemit_aot_for_dirty(0);
+
+    const auto cap1 = metrics.aot_exhausted_min_dirty_retry_cap_hit_total.load();
+    std::println("  AC3: cap_delta={}", cap1 - cap0);
+    CHECK(cap1 >= cap0 + 2, "AC3: cap_hit counter bumped at least 2 times");
+
+    aura_set_aot_metrics(nullptr);
+    clear_idle(reg);
+}
+
+// AC4: Soft / idle force-JIT → zero extra work; counters do not bump.
+static void ac2601_soft_zero_cost() {
+    std::println("\n--- #2601 AC4: Soft / idle force-JIT → zero extra work ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+
+    CompilerMetrics metrics;
+    aura_set_aot_metrics(&metrics);
+    aura_set_exhausted_min_dirty_retry_cap(3);
+    aura_set_exhausted_min_dirty_retry_backoff_ms(100);
+
+    const auto ret0 = metrics.aot_exhausted_min_dirty_retry_total.load();
+    const auto suc0 = metrics.aot_exhausted_min_dirty_retry_success_total.load();
+    const auto skip0 = metrics.aot_exhausted_min_dirty_retry_storm_skip_total.load();
+    const auto cap0 = metrics.aot_exhausted_min_dirty_retry_cap_hit_total.load();
+
+    // Idle state — no force-JIT demotion. Decide short-circuits on NoForceJit.
+    (void)aura_reemit_aot_for_dirty(0);
+    (void)aura_reemit_aot_for_dirty(0);
+
+    CHECK(metrics.aot_exhausted_min_dirty_retry_total.load() == ret0,
+          "AC4: retry_total unchanged (idle)");
+    CHECK(metrics.aot_exhausted_min_dirty_retry_success_total.load() == suc0,
+          "AC4: success unchanged");
+    CHECK(metrics.aot_exhausted_min_dirty_retry_storm_skip_total.load() == skip0,
+          "AC4: storm_skip unchanged");
+    CHECK(metrics.aot_exhausted_min_dirty_retry_cap_hit_total.load() == cap0,
+          "AC4: cap_hit unchanged");
+
+    aura_set_aot_metrics(nullptr);
+    clear_idle(reg);
+}
+
+// AC5: Additive schema + source-cite (#2601 cross-links).
+static void ac2601_schema_and_source() {
+    std::println("\n--- #2601 AC5: Additive schema + source-cite ---");
+    CompilerService cs;
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+
+    // Schema-2601 + retry keys on query:aot-stats
+    CHECK(href(cs, "query:aot-stats", "schema-2601") == 2601, "AC5: schema-2601 on aot-stats");
+    CHECK(href(cs, "query:aot-stats", "issue-2601") == 2601, "AC5: issue-2601 on aot-stats");
+    CHECK(href(cs, "query:aot-stats", "aot-exhausted-min-dirty-retry-total") >= 0,
+          "AC5: retry-total key");
+    CHECK(href(cs, "query:aot-stats", "aot-exhausted-min-dirty-retry-success-total") >= 0,
+          "AC5: retry-success key");
+    CHECK(href(cs, "query:aot-stats", "aot-exhausted-min-dirty-retry-storm-skip-total") >= 0,
+          "AC5: retry-storm-skip key");
+    CHECK(href(cs, "query:aot-stats", "aot-exhausted-min-dirty-retry-cap-hit-total") >= 0,
+          "AC5: retry-cap-hit key");
+    CHECK(href(cs, "query:aot-stats", "aot-exhausted-min-dirty-retry-wired") == 1,
+          "AC5: wired sentinel");
+
+    // Compatibility with prior surfaces
+    CHECK(href(cs, "query:aot-stats", "schema-2544") == 2544, "AC5: schema-2544 retained");
+    CHECK(href(cs, "query:aot-stats", "schema-2502") == 2502, "AC5: schema-2502 retained");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2601") == 2601,
+          "AC5: schema-2601 on recovery surface");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2544") == 2544,
+          "AC5: schema-2544 on recovery retained");
+
+    // Source-cite
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto metrics = read_file("src/compiler/observability_metrics.h");
+    const auto cmake = read_file("CMakeLists.txt");
+    const auto linter = read_file("scripts/check_aot_exhausted_min_dirty_retry_2601.py");
+
+    CHECK(bridge.find("aura_hot_update_maybe_retry_exhausted_min_dirty") != std::string::npos,
+          "AC5: retry C ABI in bridge");
+    CHECK(bridge.find("aot_exhausted_min_dirty_retry_total") != std::string::npos,
+          "AC5: retry_total counter in bridge");
+    CHECK(hh.find("ExhaustedMinDirtyRetryDecision") != std::string::npos,
+          "AC5: decision enum in hh");
+    CHECK(hh.find("schema_2601") != std::string::npos, "AC5: schema_2601 in snapshot struct");
+    CHECK(cpp.find("decide_exhausted_min_dirty_retry") != std::string::npos,
+          "AC5: decide impl in cpp");
+    CHECK(cpp.find("consume_exhausted_min_dirty_retry_attempt") != std::string::npos,
+          "AC5: consume impl in cpp");
+    CHECK(metrics.find("aot_exhausted_min_dirty_retry_total") != std::string::npos,
+          "AC5: retry_total in metrics");
+    CHECK(cmake.find("test_exhausted_min_dirty_reemit_2544") != std::string::npos,
+          "AC5: cmake target (extended, no new file)");
+    CHECK(linter.find("#2601") != std::string::npos, "AC5: #2601 gate exists");
+}
+
 } // namespace
 
 int main() {
@@ -428,8 +688,13 @@ int main() {
     ac3_storm_skip_region_staging();
     ac4_soft_zero_cost();
     ac5_schema_and_source();
+    ac2601_storm_clear_auto_retry();
+    ac2601_retry_success_repromote();
+    ac2601_cap_hit_no_infinite();
+    ac2601_soft_zero_cost();
+    ac2601_schema_and_source();
     if (g_failed)
         return 1;
-    std::println("exhausted min-dirty reemit #2544: OK ({} passed)", g_passed);
+    std::println("exhausted min-dirty reemit #2544 + #2601: OK ({} passed)", g_passed);
     return 0;
 }

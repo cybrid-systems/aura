@@ -7436,6 +7436,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // (counters live on query:aot-stats; schema cross-link here).
                 insert_kv("schema-2544", 2544);
                 insert_kv("issue-2544", 2544);
+                // Issue #2601: exhausted min-dirty retry closed loop
+                // (schema cross-link to query:aot-stats counters).
+                insert_kv("schema-2601", 2601);
+                insert_kv("issue-2601", 2601);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
