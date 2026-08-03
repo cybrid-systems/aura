@@ -6082,6 +6082,10 @@ public:
                             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                                 m->dispatch_required_effects_check_total.fetch_add(
                                     1, std::memory_order_relaxed);
+                                // Issue #2583: parallel Agent-dashboard surface
+                                // (complement to #2152 counters).
+                                m->dispatch_effect_auto_check_total.fetch_add(
+                                    1, std::memory_order_relaxed);
                                 if (meta.required_effects == 0)
                                     m->dispatch_required_effects_inferred_total.fetch_add(
                                         1, std::memory_order_relaxed);
@@ -6090,6 +6094,9 @@ public:
                                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                                     m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
                                     m->dispatch_required_effects_deny_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                    // Issue #2583: parallel deny counter.
+                                    m->dispatch_effect_auto_deny_total.fetch_add(
                                         1, std::memory_order_relaxed);
                                 }
                                 return primitives_detail::make_primitive_error(
@@ -6138,10 +6145,14 @@ public:
                         "capability denied: sandboxed primitive requires kCapSandbox",
                         primitive_error_counter_ptr());
                 }
-                // Issue #2057 / #2152: non-bypassable required_effects at dispatch.
+                // Issue #2057 / #2152 / #2583: non-bypassable required_effects at dispatch.
                 // Uses explicit PrimMeta bits, or name-inferred bits when unset
                 // (#2152 last line of defense). Skipped only when body already
                 // enforces (add_mutate) or security_exempt is documented.
+                // #2583 hard path: every non-zero required_effects call goes
+                // through require_effect at the dispatch boundary, so prims
+                // that forget body check still fail-closed under
+                // Restricted/Strict even when the static gate passes.
                 // require_effect itself is a no-op under Off sandbox.
                 if (!meta.security_exempt && !meta.effect_enforced_in_body) {
                     const auto req = effective_required_effects(name, meta.required_effects,
@@ -6149,6 +6160,10 @@ public:
                     if (req != 0) {
                         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                             m->dispatch_required_effects_check_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Issue #2583: parallel Agent-dashboard surface for
+                            // the same dispatch gate (complement to #2152 counters).
+                            m->dispatch_effect_auto_check_total.fetch_add(
                                 1, std::memory_order_relaxed);
                             if (meta.required_effects == 0)
                                 m->dispatch_required_effects_inferred_total.fetch_add(
@@ -6158,6 +6173,9 @@ public:
                             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                                 m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
                                 m->dispatch_required_effects_deny_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                // Issue #2583: parallel deny counter.
+                                m->dispatch_effect_auto_deny_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             }
                             return primitives_detail::make_primitive_error(

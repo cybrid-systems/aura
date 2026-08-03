@@ -1,16 +1,26 @@
 // @category: unit
 // @reason: Issue #2152 — Dispatch-level non-bypassable required_effects
 // for side-effect prims (construction-time auto-stamp + dispatch gate).
+//   Issue #2583 — Hard path: every non-zero required_effects call goes
+// through require_effect at dispatch, so prims that forget body check
+// still fail-closed under Restricted/Strict even when the static gate
+// passes. #2583 adds the dispatch_effect_auto_* Agent-dashboard surface
+// alongside the #2152 counters.
 //
 //   AC1: Prim with required_effects=Mutate, no body check → deny under
-//        Restricted without grant; audit ring records deny
+//        Restricted without grant; audit ring records deny; both
+//        #2152 and #2583 metric surfaces advance (#2583 AC1)
 //   AC2: effect_enforced_in_body=true (add_mutate path) does not
-//        double-call require_effect at dispatch
+//        double-call require_effect at dispatch; #2583 check counter
+//        also stays flat (#2583 AC2)
 //   AC3: security_exempt=true + documented reason passes gate;
-//        undocumented allowlist entry fails CI script
+//        undocumented allowlist entry fails CI script (#2583 AC3)
 //   AC4: New prefix-matching name without coverage fails
 //        check_side_effect_security.py
-//   AC5: Off sandbox / legacy tests still green (AURA_SANDBOX=off)
+//   AC5: Off sandbox / legacy tests still green (AURA_SANDBOX=off,
+//        #2583 AC4)
+//   AC6: dispatch_effect_auto_check_total / _deny_total surface
+//        bumped on every require_effect call (#2583 AC6)
 
 #include "test_harness.hpp"
 
@@ -136,6 +146,21 @@ int main() {
                   "AC1: dispatch check metric");
             CHECK(cm->dispatch_required_effects_deny_total.load() > ddeny0,
                   "AC1: dispatch deny metric");
+            // Issue #2583: parallel #2583 metric surface advances in lockstep.
+            const auto dcheck_auto0 = cm->dispatch_effect_auto_check_total.load();
+            const auto ddeny_auto0 = cm->dispatch_effect_auto_deny_total.load();
+            (void)dcheck_auto0;
+            (void)ddeny_auto0;
+            // Re-run invoke to capture the +1 deltas against #2583 counters.
+            auto r2 = ev.invoke_prim_with_telemetry("test:dispatch-mutate-2152", [&]() {
+                auto fn = ev.primitives().lookup("test:dispatch-mutate-2152");
+                return (*fn)({});
+            });
+            CHECK(is_error(r2), "AC1 #2583: second invoke also denied");
+            CHECK(cm->dispatch_effect_auto_check_total.load() > dcheck_auto0,
+                  "AC1 #2583: dispatch_effect_auto_check_total advanced");
+            CHECK(cm->dispatch_effect_auto_deny_total.load() > ddeny_auto0,
+                  "AC1 #2583: dispatch_effect_auto_deny_total advanced");
         }
         // Query surface
         CHECK(href(cs, "schema-2152") == 2152, "schema-2152");
