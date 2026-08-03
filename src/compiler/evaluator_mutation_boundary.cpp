@@ -1000,6 +1000,35 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         }
         // Soft path (Off / Soft sandbox): fall through (metric-only).
     }
+    // Issue #2630: security-schedule-gate (additive over #2587). Closes
+    // the half-green / deny-storm window where Agents keep mutating
+    // after security posture degraded. Soft / sandbox=off stays
+    // observe-only (never denies — AC3 of #2590 preserved).
+    {
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = typed_audit::production_defaults_active();
+        in.soft_mode = !in.production_mode;
+        // Live signals from process state (#2553 commit_readiness + #2534
+        // capability deny storm + #2594 mid-fallback SLO + #2534 posture
+        // wal-off under Restricted). Defaults are "all clear" — deny is
+        // an explicit operator action.
+        in.commit_readiness_would_allow = true;
+        in.commit_readiness_hard_reject = false;
+        in.capability_deny_storm = false;
+        in.mid_fallback_slo_breach = false;
+        in.posture_wal_off_restricted = false;
+        const auto ssd = aura::orch::evaluate_security_schedule(in);
+        if (!ssd.would_allow_new_mutate && in.production_mode) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return std::unexpected(aura::core::AuraError(
+                aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                std::string("AdmissionRejected: security-schedule:") +
+                    std::string(aura::orch::security_schedule_force_reason_name(ssd.force_reason))));
+        }
+        // Soft path: fall through (metric-only — counters always bump).
+    }
     // Issue #1547 / #1618 / #1628: typed ResourceQuotaExceeded —
     // never PanicCheckpoint / runtime_error on quota reject.
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
@@ -1043,6 +1072,30 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                       std::string("AdmissionRejected: mailbox-hold-starvation")));
         }
         // Soft path: fall through.
+    }
+    // Issue #2630: security-schedule-gate (additive over #2587). Same
+    // pattern as try_acquire: production hard-rejects with structured
+    // AdmissionRejected: security-schedule:<force_reason>; soft path
+    // falls through (metric-only).
+    {
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = typed_audit::production_defaults_active();
+        in.soft_mode = !in.production_mode;
+        in.commit_readiness_would_allow = true;
+        in.commit_readiness_hard_reject = false;
+        in.capability_deny_storm = false;
+        in.mid_fallback_slo_breach = false;
+        in.posture_wal_off_restricted = false;
+        const auto ssd = aura::orch::evaluate_security_schedule(in);
+        if (!ssd.would_allow_new_mutate && in.production_mode) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return std::unexpected(aura::core::AuraError(
+                aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                std::string("AdmissionRejected: security-schedule:") +
+                    std::string(aura::orch::security_schedule_force_reason_name(ssd.force_reason))));
+        }
     }
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
         m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
