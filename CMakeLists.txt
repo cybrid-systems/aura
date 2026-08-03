@@ -4160,6 +4160,9 @@ add_dependencies(all_test_issue_targets test_security_audit_fold_2388)
 aura_add_issue_test(test_security_health_2389)
 aura_issue_test_link_light(test_security_health_2389)
 add_dependencies(all_test_issue_targets test_security_health_2389)
+aura_add_issue_test(test_audit_mid_fallback_slo_2594)
+aura_issue_test_link_light(test_audit_mid_fallback_slo_2594)
+add_dependencies(all_test_issue_targets test_audit_mid_fallback_slo_2594)
 
 # Issue #2390: validate_node must not hard-abort on !is_valid (report/throw).
 aura_add_issue_test(test_validate_node_no_abort_2390)

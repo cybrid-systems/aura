@@ -23,6 +23,7 @@ module;
 #include "core/security_event_wal.hh"  // #2389: WAL posture for security-health
 #include "core/provenance_tracker.hh"  // #2182: linear enforce mode on enforcement-stats
 #include "compiler/security_health.hh" // #2389: query:security-health score
+#include "compiler/audit_mid_fallback_slo.h" // #2594: g_audit_mid_fallback_slo_counters (query:audit-mid-fallback-slo)
 #include "orch/security_schedule_gate.h" // #2590: g_orch_security_schedule_counters (query:security-schedule-gate)
 
 module aura.compiler.evaluator;
@@ -326,6 +327,113 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"security-schedule-gate-wired", make_int(1)},
                 {"schema-2590", make_int(2590)},
                 {"issue-2590", make_int(2590)},
+            };
+            return build_hash(kv);
+        });
+
+    // Issue #2594: query:audit-mid-fallback-slo — pure gate derived
+    // from typed_mutation_audit.h counters (#2493 mid resolve:
+    // fallback_gen / contextual_total). Production + rate > SLO →
+    // arm security_health_degraded / posture key
+    // `mid-fallback-slo-breach`. Soft / sandbox=off → observe only.
+    // SLO env override: AURA_MID_FALLBACK_SLO_BP (default 500 = 5%).
+    // See src/compiler/audit_mid_fallback_slo.h.
+    ObservabilityPrims::register_stats_impl(
+        "query:audit-mid-fallback-slo", [&ev](const auto&) -> EvalValue {
+            using aura::compiler::g_audit_mid_fallback_slo_counters;
+            using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+            using aura::compiler::typed_audit::production_defaults_active;
+            using aura::compiler::typed_audit::AuditStrategy;
+            using aura::compiler::typed_audit::get_strategy;
+            using aura::compiler::evaluate_audit_mid_fallback_slo;
+            using aura::compiler::MidFallbackSloInput;
+            MidFallbackSloInput in;
+            in.fallback_gen = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+                std::memory_order_relaxed);
+            in.contextual_total =
+                g_typed_mutation_audit_counters.contextual_total.load(std::memory_order_relaxed);
+            in.production_defaults = production_defaults_active();
+            // Soft mode = !production_defaults OR AURA_SANDBOX=off
+            // (mirrors #2590 soft_mode definition; test-only override
+            // AURA_SANDBOX=off keeps the gate observe-only).
+            const char* sb = std::getenv("AURA_SANDBOX");
+            const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                     (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+            in.soft_mode = !in.production_defaults || sandbox_off;
+            const auto d = evaluate_audit_mid_fallback_slo(in);
+            const auto& c = g_audit_mid_fallback_slo_counters;
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char ch : k)
+                        h = (h ^ static_cast<std::uint8_t>(ch)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"rate-bp", make_int(static_cast<std::int64_t>(d.rate_bp))},
+                {"slo-bp", make_int(static_cast<std::int64_t>(d.slo_bp))},
+                {"breached", make_int(d.breached ? 1 : 0)},
+                {"would-arm-degraded", make_int(d.would_arm_degraded ? 1 : 0)},
+                {"force-reason", make_int(d.force_reason_code)},
+                {"fallback-gen", make_int(static_cast<std::int64_t>(in.fallback_gen))},
+                {"contextual-total", make_int(static_cast<std::int64_t>(in.contextual_total))},
+                {"production-defaults", make_int(in.production_defaults ? 1 : 0)},
+                {"soft-mode", make_int(in.soft_mode ? 1 : 0)},
+                {"checks-total", make_int(static_cast<std::int64_t>(
+                                     c.checks_total.load(std::memory_order_relaxed)))},
+                {"breach-total", make_int(static_cast<std::int64_t>(
+                                     c.breach_total.load(std::memory_order_relaxed)))},
+                {"soft-breach-observe-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.soft_breach_observe_total.load(std::memory_order_relaxed)))},
+                {"arm-degraded-total", make_int(static_cast<std::int64_t>(
+                                           c.arm_degraded_total.load(std::memory_order_relaxed)))},
+                {"last-rate-bp", make_int(static_cast<std::int64_t>(
+                                     c.last_rate_bp.load(std::memory_order_relaxed)))},
+                {"last-slo-bp", make_int(static_cast<std::int64_t>(
+                                    c.last_slo_bp.load(std::memory_order_relaxed)))},
+                {"last-breached", make_int(static_cast<std::int64_t>(
+                                      c.last_breached.load(std::memory_order_relaxed)))},
+                {"last-would-arm-degraded",
+                 make_int(static_cast<std::int64_t>(
+                     c.last_would_arm_degraded.load(std::memory_order_relaxed)))},
+                {"audit-mid-fallback-slo-wired", make_int(1)},
+                {"schema-2594", make_int(2594)},
+                {"issue-2594", make_int(2594)},
             };
             return build_hash(kv);
         });
