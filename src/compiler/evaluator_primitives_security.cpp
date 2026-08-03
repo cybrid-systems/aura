@@ -247,6 +247,88 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+    // Issue #2590: query:security-schedule-gate — pure gate synthesized
+    // from commit_readiness (#2553), capability deny rate (#2534 trail),
+    // mid-fallback SLO breach, and posture wal_off under Restricted
+    // (#2076). Production default denies new mutate when gate flips
+    // false (mailbox already enqueued not killed — additive over
+    // existing admission). Soft / sandbox=off is observe-only.
+    // See src/orch/security_schedule_gate.h.
+    ObservabilityPrims::register_stats_impl(
+        "query:security-schedule-gate", [&ev](const auto&) -> EvalValue {
+            auto& c = aura::orch::g_orch_security_schedule_counters;
+            const auto reason =
+                static_cast<std::int64_t>(c.last_force_reason_code.load(std::memory_order_relaxed));
+            const auto allow = c.last_would_allow.load(std::memory_order_relaxed);
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char ch : k)
+                        h = (h ^ static_cast<std::uint8_t>(ch)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"would-allow-new-mutate", make_int(allow)},
+                {"force-reason-code", make_int(reason)},
+                {"checks-total", make_int(static_cast<std::int64_t>(
+                                     c.checks_total.load(std::memory_order_relaxed)))},
+                {"deny-total",
+                 make_int(static_cast<std::int64_t>(c.deny_total.load(std::memory_order_relaxed)))},
+                {"allow-total", make_int(static_cast<std::int64_t>(
+                                    c.allow_total.load(std::memory_order_relaxed)))},
+                {"deny-commit-not-ready-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_commit_not_ready_total.load(std::memory_order_relaxed)))},
+                {"deny-deny-storm-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_deny_storm_total.load(std::memory_order_relaxed)))},
+                {"deny-mid-fallback-slo-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_mid_fallback_slo_total.load(std::memory_order_relaxed)))},
+                {"deny-posture-degraded-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_posture_degraded_total.load(std::memory_order_relaxed)))},
+                {"security-schedule-gate-wired", make_int(1)},
+                {"schema-2590", make_int(2590)},
+                {"issue-2590", make_int(2590)},
+            };
+            return build_hash(kv);
+        });
+
     // Issue #1565 / #1876: query:capability-effect-stats
     // #1876 folds sandbox-status fields into this existing surface
     // (no new public query name — primitive freeze #1448).

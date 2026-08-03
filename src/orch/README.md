@@ -467,3 +467,70 @@ internally. The facade is additive — `ParallelOrchStats` remains the
 source of truth for parallel-only regression tests.
 
 Regression: `tests/orch/test_orch_obs_facade_2589`.
+
+## Security schedule gate (Issue #2590)
+
+Pure gate that decides whether the orch / agent-body should **admit
+new mutate**. Synthesizes:
+
+- `commit_readiness().would_allow_commit` (Issue #2553, solve × linear
+  × blame × truncate)
+- Capability deny storm (#2534 short-window rate)
+- `mid_fallback_rate_bp > SLO`
+- Posture `wal_off` under Restricted (#2076)
+
+Production default denies new mutate when `would_allow_new_mutate=false`.
+Soft / `sandbox=off` is **observe-only** (counters bump, never denies).
+Mailbox already enqueued is **not** killed — gate is additive over
+existing admission.
+
+`src/orch/security_schedule_gate.h` provides:
+
+| Symbol | Purpose |
+|--------|---------|
+| `enum class SecurityScheduleForceReason` | `ok` / `commit_not_ready` / `deny_storm` / `mid_fallback_slo` / `posture_degraded` |
+| `struct SecurityScheduleInput` | knobs (commit_readiness_would_allow, *_hard_reject, capability_deny_storm, mid_fallback_slo_breach, posture_wal_off_restricted, production_mode, soft_mode) |
+| `struct SecurityScheduleDecision` | `would_allow_new_mutate` + `force_reason` |
+| `decide_security_schedule(in)` | **pure** — same input → same output, no atomics (#2590 AC1) |
+| `evaluate_security_schedule(in)` | pure + bumps process-wide counters atomically (#2590 AC2 + AC3) |
+| `g_orch_security_schedule_counters` | per-reason deny totals + last decision (`last_force_reason_code`, `last_would_allow`) |
+| `reset_orch_security_schedule_counters_for_test()` | test reset |
+
+Decision priority (first match wins, only when `production_mode && !soft_mode`):
+
+| Condition | `force_reason` | allow |
+|-----------|---------------|-------|
+| `!commit_readiness_would_allow && commit_readiness_hard_reject` | `commit_not_ready` | false |
+| `capability_deny_storm` | `deny_storm` | false |
+| `mid_fallback_slo_breach` | `mid_fallback_slo` | false |
+| `posture_wal_off_restricted` | `posture_degraded` | false |
+| other | `ok` | true |
+
+Query surface (`query:security-schedule-gate`, schema-2590):
+
+```text
+would-allow-new-mutate           ← last_would_allow (1=allow, 0=deny)
+force-reason-code                ← last_force_reason_code (enum int)
+checks-total / deny-total / allow-total
+deny-commit-not-ready-total / deny-deny-storm-total /
+  deny-mid-fallback-slo-total / deny-posture-degraded-total
+security-schedule-gate-wired = 1
+schema-2590 / issue-2590
+```
+
+**Call sites** (caller wraps `evaluate_security_schedule()` BEFORE
+admitting new mutate — additive):
+
+- `orch:agent-body` mutate dispatch
+- `orch:parallel-intend` mutate batch
+- mutate-schedule entry points (typed_mutation_audit.h admission)
+
+v1 ships the gate contract; orch admission wiring is per-call-site
+(consumers wire via `evaluate_security_schedule` and surface the
+deny via existing typed Aura errors). The #2543 AOT throttle pattern
+(`decide_hot_update_throttle` in `aot_hot_update_health.hh`) is the
+direct precedent.
+
+Regression: `tests/orch/test_security_schedule_gate_2590` (pure
+idempotency + production/soft mode matrix + counter bumps + query
+surface + README source-cite). No docs/design/ per #1655.
