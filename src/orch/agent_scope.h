@@ -451,6 +451,63 @@ private:
     mutable std::atomic<std::uint32_t> enter_depth_{0};
 };
 
+// Issue #2588: per-Evaluator scope map (Session-local, NOT process-static).
+// Lazy-created on first scope-spawn, destroyed when the Evaluator's scope
+// is empty (cancel-all / join-all) or the scope is explicitly dropped.
+// The map is process-level storage keyed by Evaluator* (typed as void* to
+// avoid circular include with compiler/evaluator.h) — the SCOPE itself
+// is per-Evaluator; the storage is just a convenience container for
+// Aura prims to find / own the lifetime. NOT a global agent registry
+// (MVP linter scripts/check_orch_mvp_scope.py still guards
+// AgentRegistry / global_agent_registry symbols).
+inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent_scopes() noexcept {
+    static std::unordered_map<void*, std::unique_ptr<AgentScope>> m;
+    return m;
+}
+
+// Issue #2588: get or create the scope for the given Evaluator (key).
+// Lazy allocation on first scope-spawn; subsequent calls return the
+// existing scope. Scheduler reference is borrowed — caller must keep
+// `sched` alive for the lifetime of the scope (process-local Scheduler
+// satisfies this for the MVP; production hosts bind a per-session
+// Scheduler to Evaluator).
+inline AgentScope& get_or_create_agent_scope(void* ev_key, serve::Scheduler& sched) {
+    auto& m = g_evaluator_agent_scopes();
+    auto it = m.find(ev_key);
+    if (it == m.end()) {
+        auto scope = std::make_unique<AgentScope>(sched);
+        auto* raw = scope.get();
+        m.emplace(ev_key, std::move(scope));
+        return *raw;
+    }
+    return *it->second;
+}
+
+// Issue #2588: find an existing scope for the given Evaluator (key).
+// Returns nullptr if no scope has been created yet.
+inline AgentScope* find_agent_scope(void* ev_key) noexcept {
+    auto& m = g_evaluator_agent_scopes();
+    auto it = m.find(ev_key);
+    return it == m.end() ? nullptr : it->second.get();
+}
+
+// Issue #2588: drop the scope for the given Evaluator (key). Returns true
+// if a scope was dropped. ~AgentScope is invoked (cancel + drain + reservation
+// release), so per-handle no-leak (#2155 / #2009) holds.
+inline bool drop_agent_scope(void* ev_key) noexcept {
+    auto& m = g_evaluator_agent_scopes();
+    return m.erase(ev_key) > 0;
+}
+
+// Issue #2588: process-wide reset for tests / session boundary (cancels + drains
+// every scope, then clears the map). Returns the count of scopes dropped.
+inline std::size_t reset_all_agent_scopes_for_test() noexcept {
+    auto& m = g_evaluator_agent_scopes();
+    const auto n = m.size();
+    m.clear();
+    return n;
+}
+
 } // namespace aura::orch
 
 #endif // AURA_ORCH_AGENT_SCOPE_H

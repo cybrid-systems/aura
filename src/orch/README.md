@@ -365,6 +365,68 @@ Metrics (`query:orch-module-stats`, schema-2231 / schema-2401 / schema-2538):
 - `agent-ask-typed-corr-wired` — sentinel 1.
 
 See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.md`](../../docs/wire-formats.md) §10.
+
+### `orch:scope-*` AgentScope supervision (Issue #2588)
+
+Aura language surface for the C++ `AgentScope` (#2083 / #2161 / #2537) — multi-agent supervision root bound to Evaluator/session, **no process-global registry** (MVP linter still forbids `AgentRegistry` / `global_agent_registry` / `conduct_parallel`). Name bookkeeping remains `OrchAgentNameTable` only where `orch:spawn-agent` already registers; the scope is a handle container, not an agent map.
+
+```aura
+(orch:scope-spawn name [body] [:keepalive-ms n] [:max-no-yield-ms n] ...)
+(orch:scope-watch [:stall-ms n]
+                  [:policy 'cancel|'report-only|'restart-n]
+                  [:max-restarts n]
+                  [:consecutive-stall-limit n]
+                  [:restart-backoff-ms n])
+(orch:scope-join-all [:timeout-ms n] [:drain-ms n])
+(orch:scope-cancel-all)
+```
+
+Semantics:
+1. **Per-Evaluator scope** — `g_evaluator_agent_scopes()` keyed by `Evaluator*`
+   (typed as `void*` in the header to avoid circular include with
+   `compiler/evaluator.h`). Each Evaluator has its own `AgentScope`; the
+   storage map is process-level but the SCOPE objects themselves are
+   per-Evaluator and do **not** become a global agent map.
+2. **Handles live in scope** — `orch:scope-spawn` pushes the new
+   `AgentHandle` to the scope's `handles_` vector. Destructor /
+   `orch:scope-join-all` = cancel + drain + reservation release (#2155 /
+   #2009 no-leak contract). After `join_all` empties the scope the
+   per-Evaluator slot is dropped (fresh `scope-spawn` re-creates).
+3. **`orch:scope-watch`** — maps to `AgentScope::watch_all(stall_timeout_ms,
+   AgentFailurePolicy)`. `RestartN` re-spawns under the same `AgentSpec`
+   (#2229 sibling). Counts: alive / stalled / cancelled / done / closed /
+   restart-count (incremental from RestartN bumps on the same watch call).
+4. **Hierarchy optional later** — v1 is flat scope per Evaluator/session
+   (`orch:scope-child` deferred). `AgentScope::spawn_child` exists in C++
+   (#2537) but is not yet exposed to Aura.
+5. **Not a global registry** — `scripts/check_orch_mvp_scope.py` still
+   rejects `AgentRegistry` / `global_agent_registry` / `conduct_parallel`.
+   The map `g_evaluator_agent_scopes()` is storage only; the `AgentScope`
+   objects inside it are per-Evaluator. Name→handle bookkeeping stays
+   in `Evaluator::agent_names_` (`orch:spawn-agent` / `orch:agent-join`
+   only); the scope does not duplicate or replace it.
+
+Hash results (AC3):
+- `orch:scope-spawn` → `{ok, id, name, schema=2588, schema-2083, schema-2161, status}`
+- `orch:scope-watch` → `{ok, alive, stalled, cancelled, done, closed, restart-count, policy, schema=2588, schema-2161, schema-2229}`
+- `orch:scope-join-all` → `{ok, status, wait-us, drain-ms, schema=2588, schema-2083, schema-2153}`
+- `orch:scope-cancel-all` → `{ok, cancelled-count, schema=2588, schema-2083, schema-2161}`
+
+Metrics (`query:orch-module-stats`, schema-2588):
+- `scope-spawn-total` — `orch:scope-spawn` invocations.
+- `scope-watch-total` — `orch:scope-watch` invocations.
+- `scope-watch-restart-count` — RestartN re-spawns (#2229 sibling, additive).
+- `scope-join-all-total` — `orch:scope-join-all` invocations.
+- `scope-cancel-all-total` — `orch:scope-cancel-all` invocations.
+- `scope-dropped-total` — scopes dropped after join_all (empty scope released).
+- `orch-scope-wired` — sentinel 1.
+
+Regression: `tests/orch/test_orch_scope_2588` (Aura prims + scope lifecycle).
+`scripts/check_orch_mvp_scope.py` (reintroduction guard) is unchanged
+but the new surface introduces no removed-identifier symbols.
+
+See [`docs/architecture.md`](../../docs/architecture.md) § multi-agent.
+
 ## Mailbox BP admission (default on, #2228 / #2535)
 
 Production default: `kMailboxBpAdmitThresholdDefault = 32` — spawn with
