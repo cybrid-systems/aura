@@ -157,7 +157,6 @@ CATEGORY_PREFIX_MAP: dict[str, str] = {
     "time-": "convenience",
     "orchestrator": "convenience",
     "agent-": "convenience",
-    "auto-evolve": "convenience",
     # Host / FFI boundary (red-line #4) — not "convenience".
     "c-": "mutation-safety",
     "ffi-": "mutation-safety",

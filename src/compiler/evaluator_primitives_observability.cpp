@@ -118,7 +118,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:self-evolution-stability-stats",
     // Issue #550 — Typed mutation + dirty impact
     "query:typed-mutation-stats",
-    "query:dirty-impact",
     // Issue #573 — Task2 solve_delta + narrowing incremental
     "query:typed-incremental-stats",
     // Issue #608 — Incremental type reliability
@@ -255,21 +254,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:jit-fiber-exception-stats",
     "query:l2-specialization-deopt-stats",
     "query:opcode-coverage-deopt-stats",
-    "query:terminal-render-production-stats",
-    "query:render-ffi-buffer-stats",
-    "query:render-hotpath-stats",
-    // Issue #1673: production present/diff/zero-copy closed-loop stats
-    "query:render-stats",
-    // Issue #1675: frame arena + zero-copy + live cell-grid memory bounds
-    "query:render-memory-stats",
-    // Issue #1677: AI Native render closure/buffer/evolution + optimize facade
-    "query:render-closure-stats",
-    "query:render-buffer-stats",
-    "query:render-evolution-stats",
-    "mutate:render-optimize",
-    // Issue #2051 closed-loop tick: register_stats_impl only (not catalog —
-    // side-effect facade; discover via query:render-stats schema-2051 +
-    // (mutate :closed-loop-tick)). Avoids freeze baseline growth.
+    // Issue #2629: orphaned render/TUI catalog names removed (no
+    // register_stats_impl after #2625/#2626 stack purge). Residual
+    // render-* samples stay facade-only via is_legacy_stats_name.
     // Issue #1680: query:module-exports mtime cache observability
     "query:module-export-cache-stats",
     "query:shape-value-hotpath-contracts-stats",
@@ -303,9 +290,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:dirtyaware-impact-enforcement-v2-stats",
     "query:live-irclosure-envframe-gc-stats",
     "query:source-marker-linear-consistency-stats",
-    "query:terminal-buffer-diff-present-stats",
-    "query:render-observability-v2-stats",
-    "query:render-jit-soa-hotpath-stats",
+    // #2629: retired terminal/render catalog names dropped (impls may still
+    // exist as unlisted facades until a later stats collapse pass).
     "query:arena-live-defrag-full-v2-stats",
     "query:ir-soa-dirty-hybrid-full-v2-stats",
     "query:value-shape-consteval-full-v2-stats",
@@ -460,9 +446,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:mutation-coordination-stats",
     // Issue #1672: removed ghost catalog entries (never registered as
     // register_stats_impl / public residual): envframe-stale/bump-stats.
-    "query:dirty-subtree",
     "query:epoch-stats",
-    "query:macro-introduced",
     "query:by-marker",
     // Issue #1914 — node / last-mutation provenance diagnostic hashes
     "query:node-provenance",
@@ -539,7 +523,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #445 — SEVA audit log (OpenClaw integration)
     "query:seva-audit-log",
     // Issue #446 — SEVA demo with metrics
-    "seva:run-demo-with-metrics",
     // Issue #450 (sub-issue #441) — primitive perf stats
     "query:primitive-perf-stats",
     // Issue #452 — AOT hot-update + region filtering
@@ -1102,7 +1085,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // renderer the body asks for. Uses live primitive
     // lookup pattern (mirror #777) to count how many
     // of the 4 expected core primitives are registered.
-    "query:terminal-rendering-module-stats",
 
     // Issue #783: orchestration steal outermost stats.
     // Splits the coarse steal_deferred_mutation_boundary

@@ -88,22 +88,22 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_slim_surface_budgets(self):
         self.assertEqual(self.m.TARGET_BUDGET, 420)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, self.m.TARGET_BUDGET)
-        # Ratchets down with demotion batches (#1449); keep ≥ target.
-        self.assertLessEqual(self.m.INTERIM_HARD_CEILING, 700)
-        self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 500)
+        # Ratchets down with demotion batches (#1449 / #2629); keep ≥ target.
+        self.assertLessEqual(self.m.INTERIM_HARD_CEILING, 520)
+        self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 480)
 
-    # ── Issue #1965 / #1967–#1970 domain status + commercial budgets ──
+    # ── Issue #1965 / #1967–#1970 / #2629 domain status + commercial budgets ──
     def test_tui_domain_removed_2626(self):
-        # Issue #2626: tui:* commercial surface deleted (no budget / status).
+        # Issue #2626: commercial UI surface deleted (no budget / status).
         self.assertNotIn("tui:", self.m.DOMAIN_STATUS)
         self.assertNotIn("tui:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertNotEqual(self.m.domain_status("tui:present"), "deferred")
 
-    def test_eda_domain_deferred_and_budgeted(self):
-        self.assertEqual(self.m.DOMAIN_STATUS.get("eda:"), "deferred")
-        # eda:* primitives fully retired (sub-layer 4.1) — nothing to assert
-        self.assertIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["eda:"], 13)
+    def test_eda_domain_retired_2629(self):
+        # Issue #2629: eda:* public pack retired — no DOMAIN_STATUS / budget.
+        self.assertNotIn("eda:", self.m.DOMAIN_STATUS)
+        self.assertNotIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertNotIn("eda:", self.m.DOMAIN_PREFIXES)
 
     def test_auto_evolve_domain_removed_2627(self):
         self.assertNotIn("auto-evolve-", self.m.DOMAIN_STATUS)
@@ -170,7 +170,7 @@ class TestBlockedPatterns(unittest.TestCase):
         counts = self.m.commercial_domain_counts(names)
         self.assertEqual(counts.get("tui:"), None)  # #2626 removed
         self.assertEqual(counts.get("terminal:"), None)  # #2626 removed
-        self.assertEqual(counts.get("eda:"), 0)
+        self.assertEqual(counts.get("eda:"), None)  # #2629 retired
         self.assertEqual(counts.get("auto-evolve-"), None)  # #2627
         self.assertEqual(counts.get("git-"), 2)
         self.assertEqual(counts.get("seva:"), None)  # #2627
@@ -187,11 +187,8 @@ class TestBlockedPatterns(unittest.TestCase):
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
 
-    def test_eda_commercial_budget_overrun_fails_strict(self):
-        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["eda:"]
-        fake = [f"eda:synthetic-{i}" for i in range(budget + 1)]
-        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
-        self.assertEqual(rc, 1)
+    def test_eda_no_longer_budgeted_2629(self):
+        self.assertNotIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
 
     def test_auto_evolve_removed_not_budgeted(self):
         self.assertNotIn("auto-evolve-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
