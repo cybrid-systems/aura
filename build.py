@@ -6956,6 +6956,40 @@ def cmd_closure_sync_remount_2602_coverage():
     return 0
 
 
+def cmd_orch_scope_child_2631_coverage():
+    """Issue #2631: Aura surface for hierarchical AgentScope
+    (orch:scope-child). Closes the script-side tree supervision
+    gap: #2537 C++ hierarchical AgentScope exists but #2588 Aura
+    surface was flat. Adds the orch:scope-child prim that calls
+    AgentScope::spawn_child() on an existing per-Evaluator scope.
+
+    Validates the 6-AC contract from issue body:
+      AC1: spawn_child hierarchy + cancel_all top-down propagation.
+      AC2: ~AgentScope / scope-join-all drains children then parent.
+      AC3: scripts/check_orch_mvp_scope.py --strict still green
+           (no AgentRegistry / global_agent_registry).
+      AC4: query:orch-module-stats metric + schema keys
+           (scope-child-total, scope-child-wired, schema-2631,
+           issue-2631).
+      AC5: README + source-cite (hierarchical AgentScope #2537 +
+           flat scope #2588 surface preserved).
+      AC6: test + coverage gate source-cite (orch:scope-child prim
+           + OrchModuleStats scope_child_total +
+           check_orch_mvp_scope.py).
+    """
+    print(f"{B}=== orch:scope-child hierarchical AgentScope coverage (#2631) ==={N}")
+    script = ROOT / "scripts" / "check_orch_scope_child_2631.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("orch:scope-child coverage contract rows failed")
+        return 1
+    ok("orch:scope-child coverage clean")
+    return 0
+
+
 def cmd_security_schedule_mutate_admit_2630_coverage():
     """Issue #2630: wire security-schedule-gate (#2590 contract) into
     mutate admission entry points (MutationBoundaryGuard::try_acquire
@@ -7291,6 +7325,7 @@ def cmd_gate():
         or cmd_cross_cow_soft_migrate_obs_2603_coverage()
         or cmd_reemit_auto_drain_boundary_2604_coverage()
         or cmd_security_schedule_mutate_admit_2630_coverage()
+        or cmd_orch_scope_child_2631_coverage()
         or cmd_aot_exhausted_min_dirty_retry_2601_coverage()
         or cmd_lifetime_contract_snapshot_coverage()
         or cmd_type_timeout_repair_graph_coverage()
@@ -8149,6 +8184,7 @@ def main():
         "cross-cow-soft-migrate-2603": cmd_cross_cow_soft_migrate_obs_2603_coverage,
         "reemit-auto-drain-2604": cmd_reemit_auto_drain_boundary_2604_coverage,
         "security-schedule-mutate-admit-2630": cmd_security_schedule_mutate_admit_2630_coverage,
+        "orch-scope-child-2631": cmd_orch_scope_child_2631_coverage,
         "aot-exhausted-min-dirty-retry-2601": cmd_aot_exhausted_min_dirty_retry_2601_coverage,
         "layout-stamp-fence": cmd_layout_stamp_fence_coverage,
         "env-gen-fence": cmd_env_gen_fence_coverage,

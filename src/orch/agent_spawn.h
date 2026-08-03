@@ -279,6 +279,11 @@ struct OrchModuleStats {
     // scope_watch_restart_count mirrors the RestartN bump per
     // AgentScope::watch_all(policy) re-spawn path.
     std::atomic<std::uint64_t> scope_spawn_total{0};
+    // Issue #2631: hierarchical AgentScope — orch:scope-child prim.
+    // Bumped per successful parent.spawn_child() call. Tree cancel /
+    // ~AgentScope semantics unchanged (#2537) — the child is owned
+    // by the parent, parent.cancel_all propagates top-down.
+    std::atomic<std::uint64_t> scope_child_total{0}; // #2631
     std::atomic<std::uint64_t> scope_watch_total{0};
     std::atomic<std::uint64_t> scope_watch_restart_count{0};
     std::atomic<std::uint64_t> scope_join_all_total{0};
