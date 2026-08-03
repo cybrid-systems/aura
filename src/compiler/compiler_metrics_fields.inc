@@ -1822,6 +1822,11 @@ AURA_COMPILER_METRICS_FIELD(last_conflict_goal_kind)
 AURA_COMPILER_METRICS_FIELD(subtype_goal_solve_total)
 AURA_COMPILER_METRICS_FIELD(subtype_goal_conflict_total)
 AURA_COMPILER_METRICS_FIELD(last_unresolved_goal_kind)
+// Issue #2607: INSTANCE goal (depth-capped ∀ peel + unify).
+AURA_COMPILER_METRICS_FIELD(instance_unify_total)
+AURA_COMPILER_METRICS_FIELD(instance_depth_cap_total)
+AURA_COMPILER_METRICS_FIELD(instance_goal_solve_total)
+AURA_COMPILER_METRICS_FIELD(instance_goal_conflict_total)
 // Issue #2196: unified mutation-memory / blame surface.
 AURA_COMPILER_METRICS_FIELD(mutation_memory_query_total)
 AURA_COMPILER_METRICS_FIELD(mutation_memory_join_size_last)

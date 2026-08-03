@@ -924,12 +924,19 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
             m->let_poly_priority_reverify_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         bool ok = false;
-        // Issue #2195: SUBTYPE reverify via consistent_subtype.
+        // Issue #2195 / #2607: SUBTYPE / INSTANCE reverify.
         if (c.kind == Constraint::EQUAL)
             ok = unify(c.lhs, c.rhs);
         else if (c.kind == Constraint::SUBTYPE)
             ok = consistent_subtype(c.lhs, c.rhs);
-        else
+        else if (c.kind == Constraint::INSTANCE) {
+            bool depth_capped = false;
+            ok = consistent_instance(c.lhs, c.rhs, 0, &depth_capped);
+            // Depth-cap on reverify: treat as soft pass (defer to next
+            // solve_delta / TIMEOUT path) — do not hard-fail clean scan.
+            if (ok && depth_capped)
+                return true;
+        } else
             ok = consistent_unify(c.lhs, c.rhs);
         if (!ok) {
             if (metrics_) {
@@ -937,6 +944,8 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                 m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
                 if (c.kind == Constraint::SUBTYPE)
                     m->subtype_goal_conflict_total.fetch_add(1, std::memory_order_relaxed);
+                if (c.kind == Constraint::INSTANCE)
+                    m->instance_goal_conflict_total.fetch_add(1, std::memory_order_relaxed);
             }
             record_cross_delta_blame_hit();
             return false;
@@ -1521,6 +1530,53 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
     return true;
 }
 
+// Issue #2607: INSTANCE — peel ∀ from either side (bounded) then unify
+// with the monomorphic counterpart. Depth cap does NOT return conflict;
+// callers re-queue so solve/solve_delta end TIMEOUT with unresolved export.
+bool ConstraintSystem::consistent_instance(TypeId poly_or_lhs, TypeId mono_or_rhs, int depth,
+                                           bool* depth_capped_out) {
+    if (depth_capped_out)
+        *depth_capped_out = false;
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->instance_unify_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    TypeId lhs = find(poly_or_lhs);
+    TypeId rhs = find(mono_or_rhs);
+
+    // Peel ∀ from whichever side carries a scheme. Prefer lhs (scheme
+    // INSTANCE mono) then rhs (mono INSTANCE scheme — rare but allowed).
+    auto* fl = reg_.forall_of(lhs);
+    auto* fr = reg_.forall_of(rhs);
+    if (fl || fr) {
+        if (depth >= kInstanceDepthCap) {
+            if (depth_capped_out)
+                *depth_capped_out = true;
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->instance_depth_cap_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Soft: do not hard-fail — leave goal for TIMEOUT / escalate.
+            return true;
+        }
+        auto peel = [&](TypeId scheme) -> TypeId {
+            return reg_.instantiate(scheme, [this]() { return fresh_var(); });
+        };
+        if (fl && fr) {
+            // Both schemes: peel both one layer, recurse.
+            return consistent_instance(peel(lhs), peel(rhs), depth + 1, depth_capped_out);
+        }
+        if (fl)
+            return consistent_instance(peel(lhs), rhs, depth + 1, depth_capped_out);
+        return consistent_instance(lhs, peel(rhs), depth + 1, depth_capped_out);
+    }
+
+    // No residual ∀: unify (strict) so Int INSTANCE Bool conflicts.
+    // Use unify (not consistent_unify) so ground mismatch fails closed
+    // for INSTANCE goals (polymorphic call-site correctness).
+    return unify(lhs, rhs);
+}
+
 // Issue #118: returns SolveResult instead of bool. Distinguishes
 // the three outcomes (SOLVED / CONFLICT / TIMEOUT) so the caller
 // can react appropriately. On TIMEOUT, `unresolved_out` (if
@@ -1539,12 +1595,24 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
         for (auto idx : current) {
             auto& c = constraints_[idx];
             bool ok;
-            // Issue #2195: route by goal kind (EQUAL / CONSISTENT / SUBTYPE).
+            // Issue #2195 / #2607: route by goal kind.
             if (c.kind == Constraint::EQUAL)
                 ok = unify(c.lhs, c.rhs);
             else if (c.kind == Constraint::SUBTYPE)
                 ok = consistent_subtype(c.lhs, c.rhs);
-            else
+            else if (c.kind == Constraint::INSTANCE) {
+                bool depth_capped = false;
+                ok = consistent_instance(c.lhs, c.rhs, 0, &depth_capped);
+                if (ok && depth_capped) {
+                    // Cap → re-queue so pass limit yields TIMEOUT (AC2).
+                    worklist.push_back(idx);
+                    continue;
+                }
+                if (ok && metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->instance_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            } else
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok)
                 return SolveResult::CONFLICT;
@@ -1975,8 +2043,8 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                 seen[idx] = true; // #1528: track processed for partial clean
             auto& c = constraints_[idx];
             bool ok;
-            // Issue #2195: SUBTYPE goals via consistent_subtype (zero extra
-            // work when no SUBTYPE dirty goals on the worklist).
+            // Issue #2195 / #2607: SUBTYPE / INSTANCE goals (zero extra
+            // work when no such dirty goals on the worklist).
             if (c.kind == Constraint::EQUAL)
                 ok = unify(c.lhs, c.rhs);
             else if (c.kind == Constraint::SUBTYPE) {
@@ -1985,21 +2053,35 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     m->subtype_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 ok = consistent_subtype(c.lhs, c.rhs);
+            } else if (c.kind == Constraint::INSTANCE) {
+                bool depth_capped = false;
+                ok = consistent_instance(c.lhs, c.rhs, 0, &depth_capped);
+                if (ok && depth_capped) {
+                    // Cap → re-queue for TIMEOUT (AC2); soft, not CONFLICT.
+                    worklist.push_back(idx);
+                    continue;
+                }
+                if (ok && metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->instance_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
+                }
             } else
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok) {
                 if (metrics_) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #2195: last conflict goal kind for Agent export.
+                    // Issue #2195 / #2607: last conflict goal kind for Agent export.
                     m->last_conflict_goal_kind.store(static_cast<std::uint8_t>(c.kind),
                                                      std::memory_order_relaxed);
                     if (c.kind == Constraint::SUBTYPE)
                         m->subtype_goal_conflict_total.fetch_add(1, std::memory_order_relaxed);
+                    if (c.kind == Constraint::INSTANCE)
+                        m->instance_goal_conflict_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 // Issue #2107: include the failing constraint for Agent
                 // diagnostics (AC3 — CONFLICT still returns conflict).
-                // Kind (EQUAL/CONSISTENT/SUBTYPE) is on the constraint.
+                // Kind (EQUAL/CONSISTENT/SUBTYPE/INSTANCE) is on the constraint.
                 if (unresolved_out)
                     unresolved_out->push_back(c);
                 record_cross_delta_blame_hit();
@@ -9798,10 +9880,14 @@ void ConstraintSystem::export_unresolved_var_constraint_graph(
     for (auto r : pending_full_solve_roots_)
         note_seed(r, SuggestedRootReason::PendingFull);
     for (const auto& c : unresolved) {
+        // Issue #2607: INSTANCE endpoints rank above plain unresolved
+        // so degree-tied roots prefer polymorphic instantiate repair.
+        const auto why = (c.kind == Constraint::INSTANCE) ? SuggestedRootReason::Instance
+                                                          : SuggestedRootReason::UnresolvedEndpoint;
         if (c.lhs.valid())
-            note_seed(find(c.lhs).index, SuggestedRootReason::UnresolvedEndpoint);
+            note_seed(find(c.lhs).index, why);
         if (c.rhs.valid())
-            note_seed(find(c.rhs).index, SuggestedRootReason::UnresolvedEndpoint);
+            note_seed(find(c.rhs).index, why);
     }
     // Issue #2548: occurrence goals whose refined no longer matches live UF
     // (replay miss) — seed with OccurrenceReplayMiss so Agents reinfer those
