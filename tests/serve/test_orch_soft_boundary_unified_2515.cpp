@@ -220,15 +220,108 @@ static void ac5_zero_cost_pure_reasoning() {
     CHECK(!linter.empty(), "AC5: linter script present");
 }
 
+// ── Issue #2600: shared exit helper (soft fiber + full Guard) ────────────────
+//
+// Extracted from dual-rail drift between orch_soft_boundary_exit (soft
+// fiber path) and the ResidualPolicy::Clear branch (full Guard
+// outermost). Both now call mutation_boundary_shared_exit (per-evaluator
+// force-clear + MutationHold release + reconcile). Stack-light, idempotent.
+// Closes long-orch-soft-path residual MutationHold / ownership mirror lag.
+//
+// AC6: source-cite for #2600 in mutation_boundary_shared_exit.h (header exists).
+// AC7: orch_soft_boundary_exit calls mutation_boundary_shared_exit (soft path).
+// AC8: full Guard exit (ResidualPolicy::Clear) calls shared helper (full path).
+// AC9: include in both evaluator_fiber_mutation.cpp + evaluator_mutation_boundary.cpp.
+// AC10: build.py wires cmd_mutation_boundary_shared_exit_2600_coverage + gate script.
+static void ac6_header_source_cite() {
+    std::println("\n--- #2600 AC6: shared exit header source-cite ---");
+    const auto hdr = read_file("src/compiler/mutation_boundary_shared_exit.h");
+    CHECK(hdr.find("Issue #2600") != std::string::npos,
+          "AC6: mutation_boundary_shared_exit.h cites #2600");
+    CHECK(hdr.find("mutation_boundary_shared_exit") != std::string::npos,
+          "AC6: header declares mutation_boundary_shared_exit function");
+    CHECK(hdr.find("force_clear_residual_defer_for_evaluator") != std::string::npos,
+          "AC6: helper uses force_clear_residual_defer_for_evaluator (#2314 helper)");
+    CHECK(hdr.find("mutation_hold_defer_active") != std::string::npos &&
+              hdr.find("release_mutation_hold_defer") != std::string::npos,
+          "AC6: helper uses mutation_hold_defer_active + release_mutation_hold_defer");
+    CHECK(hdr.find("reconcile_gc_defer_bits_after_clear") != std::string::npos,
+          "AC6: helper calls reconcile_gc_defer_bits_after_clear");
+    CHECK(hdr.find("Stack-light") != std::string::npos,
+          "AC6: header documents stack-light contract (AC3)");
+}
+
+static void ac7_soft_path_uses_helper() {
+    std::println("\n--- #2600 AC7: soft path uses shared exit helper ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("orch_soft_boundary_exit") != std::string::npos,
+          "AC7: orch_soft_boundary_exit exists");
+    CHECK(efm.find("mutation_boundary_shared_exit") != std::string::npos,
+          "AC7: orch_soft_boundary_exit calls mutation_boundary_shared_exit");
+    // Helper call must be AFTER the mirror publish (issue #2515 order) but
+    // BEFORE clearing g_orch_soft_boundary_ev (preserve the eval pointer).
+    const auto helper_pos = efm.find("mutation_boundary_shared_exit(");
+    const auto mirror_pos = efm.find("publish_mutation_safety_mirrors(depth, /*held=*/false");
+    const auto ev_clear_pos = efm.find("g_orch_soft_boundary_ev = nullptr;");
+    CHECK(helper_pos != std::string::npos, "AC7: helper call exists in orch_soft_boundary_exit");
+    CHECK(mirror_pos != std::string::npos && helper_pos > mirror_pos,
+          "AC7: helper called AFTER mirror publish (preserves #2515 order)");
+    CHECK(helper_pos < ev_clear_pos,
+          "AC7: helper called BEFORE clearing g_orch_soft_boundary_ev (preserves eval pointer)");
+}
+
+static void ac8_full_guard_uses_helper() {
+    std::println("\n--- #2600 AC8: full Guard exit uses shared helper ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("ResidualPolicy::Clear") != std::string::npos,
+          "AC8: ResidualPolicy::Clear branch exists");
+    CHECK(emb.find("mutation_boundary_shared_exit") != std::string::npos,
+          "AC8: full Guard exit calls mutation_boundary_shared_exit");
+    CHECK(emb.find("Issue #2600") != std::string::npos,
+          "AC8: full Guard exit cites #2600 (source-cite)");
+}
+
+static void ac9_includes_source_cite() {
+    std::println("\n--- #2600 AC9: includes source-cite ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // The shared header is in the same directory as both .cpp files, so the
+    // include is bare (e.g. #include "mutation_boundary_shared_exit.h").
+    const auto efm_includes_hdr =
+        efm.find("#include \"mutation_boundary_shared_exit.h\"") != std::string::npos;
+    const auto emb_includes_hdr =
+        emb.find("#include \"mutation_boundary_shared_exit.h\"") != std::string::npos;
+    CHECK(efm_includes_hdr || efm.find("mutation_boundary_shared_exit.h") != std::string::npos,
+          "AC9: evaluator_fiber_mutation.cpp includes the shared exit header");
+    CHECK(emb_includes_hdr || emb.find("mutation_boundary_shared_exit.h") != std::string::npos,
+          "AC9: evaluator_mutation_boundary.cpp includes the shared exit header");
+}
+
+static void ac10_build_gate_wiring_source_cite() {
+    std::println("\n--- #2600 AC10: build.py + gate script source-cite ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("cmd_mutation_boundary_shared_exit_2600_coverage") != std::string::npos,
+          "AC10: build.py wires cmd_mutation_boundary_shared_exit_2600_coverage");
+    CHECK(build.find("check_mutation_boundary_shared_exit_2600") != std::string::npos,
+          "AC10: build.py runs check_mutation_boundary_shared_exit_2600 gate");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2515: orch soft boundary unified with depth/held semantics ===");
+    std::println("=== Issue #2600: shared exit helper (soft fiber + full Guard) (extends #2515 "
+                 "test file per #81967) ===");
     ac1_soft_publishes_mirrors();
     ac2_unified_safety_semantics();
     ac3_gc_defer_via_mirror();
     ac4_source_cite_extensions();
     ac5_zero_cost_pure_reasoning();
-    std::println("\n=== #2515: see per-AC results above ===");
+    ac6_header_source_cite();
+    ac7_soft_path_uses_helper();
+    ac8_full_guard_uses_helper();
+    ac9_includes_source_cite();
+    ac10_build_gate_wiring_source_cite();
+    std::println("\n=== #2515 + #2600: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }

@@ -20,6 +20,7 @@ module;
 #include "compiler/hot_update_registry.hh"   // Issue #2162: aura_hot_update_has_deferred_reemit
 #include "compiler/aot_hot_update_health.hh" // Issue #2543: orch hot-update health throttle tick
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
+#include "compiler/mutation_boundary_shared_exit.h" // Issue #2600: shared exit helper (soft + full Guard)
 #include "core/layout_stamp.hh" // Issue #2519: full 8-field LayoutStamp equality
 #include <algorithm>            // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
@@ -2041,6 +2042,15 @@ namespace {
                                  : std::uint64_t{0};
             fib->publish_mutation_safety_mirrors(depth, /*held=*/false, ver);
             fib->set_orch_agent_boundary_active(false);
+        }
+        // Issue #2600: shared exit helper — force-clear residual GcDefer
+        // for this evaluator + release MutationHold if this path owned
+        // outermost hold. Stack-light (no full Guard construction). Idempotent
+        // (atomic + CAS-based). Same exit steps the full Guard outermost
+        // success path uses — closes dual-rail drift.
+        if (g_orch_soft_boundary_ev != nullptr) {
+            aura::compiler::mutation_boundary_shared_exit(
+                static_cast<void*>(g_orch_soft_boundary_ev));
         }
         if (g_orch_soft_boundary_depth == 0)
             g_orch_soft_boundary_ev = nullptr;

@@ -2881,6 +2881,30 @@ def cmd_envframe_densify_scan_commit_barrier_2599_coverage():
     return 0
 
 
+def cmd_mutation_boundary_shared_exit_2600_coverage():
+    """Issue #2600: shared exit helper for soft fiber boundary + full Guard
+    outermost success paths (refactor closes dual-rail drift).
+
+    Extracts a single stack-light idempotent helper used by both
+    orch_soft_boundary_exit (soft fiber path) and ResidualPolicy::Clear
+    (full Guard outermost). Both perform per-evaluator force-clear +
+    MutationHold release + reconcile. Mirror publish + linear probe remain
+    caller-side (preserves #2515 symmetric mirror + #2545 no-double-count
+    on linear). Soft path keeps #1881 stack-light contract.
+    """
+    print(f"{B}=== mutation boundary shared exit coverage (#2600) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_boundary_shared_exit_2600.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation boundary shared exit (#2600) coverage contract rows failed")
+        return 1
+    ok("mutation boundary shared exit (#2600) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6755,6 +6779,7 @@ def cmd_gate():
         or cmd_general_object_pin_auto_wire_2597_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
+        or cmd_mutation_boundary_shared_exit_2600_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()
