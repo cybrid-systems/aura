@@ -13,8 +13,25 @@
 //        g_moving_untracked_external_roots_total + LiveCompactResult
 //        .moving_incomplete_remap / .untracked_kept_count.
 //   AC5: Source-cite + gate test (registrations).
+//
+//   Issue #2595 — unify densify success gate (pin ∧ untracked ∧ RootRemap
+//   ∧ EnvFrame scan ∧ panic residual). #2495's untracked axis +
+//   panic_residual fold into DensifyConsistencyReport.overall_ok() so
+//   Phase 5 / outermost commit cannot publish success on half-green.
+//   AC6: DensifyConsistencyReport has untracked_ok + panic_residual_ok
+//        axes; overall_ok() ANDs 8 axes.
+//   AC7: force_reason priority includes untracked + panic_residual;
+//        untracked outranks panic_residual outranks legacy axes.
+//   AC8: g_densify_unified_gate_fail_total additive schema key + reset
+//        helper for tests.
+//   AC9: Phase 5 driver source-cite for new axis wiring + unified
+//        fail-counter bump (evaluator_mutation_boundary.cpp).
+//   AC10: Source-cite for panic state (g_gc_defer_pending_panic_depth +
+//         gc_deferred_for_evaluator) in src/core/gc_hooks.h.
 
 #include "test_harness.hpp"
+
+#include "core/densify_consistency_report.h"
 
 #include <cstdint>
 #include <fstream>
@@ -102,14 +119,136 @@ static void ac5_source_and_gate() {
           "AC5: coverage linter present");
 }
 
+// ── Issue #2595: unify densify success gate ────────────────────────
+//
+// AC6: DensifyConsistencyReport has untracked_ok + panic_residual_ok
+//      axes; overall_ok() ANDs 8 axes (pin / untracked / panic_residual
+//      / linear / type / root_remap / closure_remount / envframe).
+static void ac6_unify_axes_in_report() {
+    std::println(
+        "\n--- #2595 AC6: DensifyConsistencyReport has untracked_ok + panic_residual_ok ---");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    CHECK(hdr.find("bool untracked_ok = true;") != std::string::npos,
+          "AC6: DensifyConsistencyReport has untracked_ok field");
+    CHECK(hdr.find("bool panic_residual_ok = true;") != std::string::npos,
+          "AC6: DensifyConsistencyReport has panic_residual_ok field");
+    // overall_ok() must AND the two new axes in addition to the 6 legacy axes.
+    CHECK(
+        hdr.find("return pin_ok && untracked_ok && panic_residual_ok && linear_ok && type_ok &&") !=
+            std::string::npos,
+        "AC6: overall_ok() ANDs 8 axes (pin / untracked / panic_residual / linear / type / "
+        "root_remap / closure_remount / envframe)");
+    // Source-cite marker.
+    CHECK(hdr.find("Issue #2595") != std::string::npos,
+          "AC6: densify_consistency_report.h cites #2595");
+}
+
+// AC7: force_reason priority — untracked outranks panic_residual
+//      outranks the legacy #2341 axes. New force_reason_to_string()
+//      entries for the two new labels.
+static void ac7_force_reason_priority() {
+    std::println("\n--- #2595 AC7: force_reason priority includes untracked + panic_residual ---");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    // The priority order must be: pin > untracked > panic_residual > linear.
+    const auto pin_pos = hdr.find("if (!pin_ok)\n            return \"pin\";");
+    const auto untracked_pos = hdr.find("if (!untracked_ok)\n            return \"untracked\";");
+    const auto panic_pos =
+        hdr.find("if (!panic_residual_ok)\n            return \"panic_residual\";");
+    const auto linear_pos = hdr.find("if (!linear_ok)\n            return \"linear\";");
+    CHECK(pin_pos != std::string::npos, "AC7: force_reason returns \"pin\" first");
+    CHECK(untracked_pos != std::string::npos, "AC7: force_reason returns \"untracked\" after pin");
+    CHECK(panic_pos != std::string::npos,
+          "AC7: force_reason returns \"panic_residual\" after untracked");
+    CHECK(linear_pos != std::string::npos,
+          "AC7: force_reason returns \"linear\" after panic_residual");
+    CHECK(pin_pos < untracked_pos && untracked_pos < panic_pos && panic_pos < linear_pos,
+          "AC7: priority order pin > untracked > panic_residual > linear");
+    // force_reason_to_string covers both new labels.
+    CHECK(hdr.find("if (v == \"untracked\")\n        return \"untracked\";") != std::string::npos,
+          "AC7: force_reason_to_string handles \"untracked\"");
+    CHECK(hdr.find("if (v == \"panic_residual\")\n        return \"panic_residual\";") !=
+              std::string::npos,
+          "AC7: force_reason_to_string handles \"panic_residual\"");
+}
+
+// AC8: g_densify_unified_gate_fail_total additive schema key + reset
+//      helper for hermetic tests. Bumped in lockstep with the legacy
+//      g_densify_consistency_fail_total so production dashboards can
+//      distinguish the new half-green axes (untracked, panic_residual).
+static void ac8_unified_gate_fail_counter() {
+    std::println("\n--- #2595 AC8: unified gate fail counter + reset helper ---");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    CHECK(hdr.find("g_densify_unified_gate_fail_total") != std::string::npos,
+          "AC8: counter g_densify_unified_gate_fail_total declared");
+    CHECK(hdr.find("bump_densify_unified_gate_fail_total") != std::string::npos,
+          "AC8: bump helper exported");
+    CHECK(hdr.find("densify_unified_gate_fail_total") != std::string::npos, "AC8: getter exported");
+    CHECK(hdr.find("reset_densify_unified_gate_for_test") != std::string::npos,
+          "AC8: reset helper exported for tests");
+    // Reset helper must zero the counter (set the counter via atomic store).
+    CHECK(hdr.find("g_densify_unified_gate_fail_total.store(0") != std::string::npos,
+          "AC8: reset helper zeros the counter (atomic store(0, relaxed))");
+}
+
+// AC9: Phase 5 driver (evaluator_mutation_boundary.cpp) wires the
+//      untracked + panic axes from baseline captures (mirror the
+//      existing scan_fail_baseline pattern from #2497 / #2559) and
+//      bumps the unified gate fail counter in the !overall_ok() block.
+static void ac9_phase5_driver_wiring() {
+    std::println("\n--- #2595 AC9: Phase 5 driver wiring ---");
+    const auto driver = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Baseline captures (mirror scan_fail_baseline pattern).
+    CHECK(driver.find("untracked_baseline") != std::string::npos,
+          "AC9: Phase 5 captures untracked_baseline before compact");
+    CHECK(driver.find("panic_depth_baseline") != std::string::npos,
+          "AC9: Phase 5 captures panic_depth_baseline before compact");
+    CHECK(driver.find("g_moving_untracked_external_roots_total.load") != std::string::npos,
+          "AC9: Phase 5 reads g_moving_untracked_external_roots_total");
+    CHECK(driver.find("g_gc_defer_pending_panic_depth.load") != std::string::npos,
+          "AC9: Phase 5 reads g_gc_defer_pending_panic_depth");
+    // Axis computations.
+    CHECK(driver.find("densify_consistency.untracked_ok") != std::string::npos,
+          "AC9: Phase 5 sets densify_consistency.untracked_ok");
+    CHECK(driver.find("densify_consistency.panic_residual_ok") != std::string::npos,
+          "AC9: Phase 5 sets densify_consistency.panic_residual_ok");
+    CHECK(driver.find("gc_deferred_for_evaluator(static_cast<void*>(ev_))") != std::string::npos,
+          "AC9: Phase 5 reads gc_deferred_for_evaluator(ev_)");
+    // Unified gate fail counter bump.
+    CHECK(driver.find("bump_densify_unified_gate_fail_total") != std::string::npos,
+          "AC9: Phase 5 bumps densify_unified_gate_fail_total in !overall_ok()");
+    CHECK(driver.find("Issue #2595") != std::string::npos, "AC9: driver cites #2595");
+}
+
+// AC10: Source-cite for panic state in src/core/gc_hooks.h:
+//       g_gc_defer_pending_panic_depth (process-wide counter) +
+//       gc_deferred_for_evaluator(evaluator_id) (per-eval check).
+//       Both are the inputs Phase 5 reads to compute panic_residual_ok.
+static void ac10_panic_state_source_cite() {
+    std::println("\n--- #2595 AC10: panic state source-cite (gc_hooks.h) ---");
+    const auto gc = read_file("src/core/gc_hooks.h");
+    CHECK(gc.find("g_gc_defer_pending_panic_depth") != std::string::npos,
+          "AC10: gc_hooks.h declares g_gc_defer_pending_panic_depth");
+    CHECK(gc.find("gc_deferred_for_evaluator") != std::string::npos,
+          "AC10: gc_hooks.h declares gc_deferred_for_evaluator");
+    CHECK(gc.find("inline bool gc_deferred_for_evaluator(void* evaluator_id)") != std::string::npos,
+          "AC10: gc_deferred_for_evaluator has evaluator_id signature");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
+    std::println(
+        "=== Issue #2595: unify densify success gate (extends #2495 test file per #81967) ===");
     ac1_source_cite_live_compact_result();
     ac3_soft_zero_extra_work();
     ac4_query_stats_surface();
     ac5_source_and_gate();
+    ac6_unify_axes_in_report();
+    ac7_force_reason_priority();
+    ac8_unified_gate_fail_counter();
+    ac9_phase5_driver_wiring();
+    ac10_panic_state_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

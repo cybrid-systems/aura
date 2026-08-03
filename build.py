@@ -2762,6 +2762,30 @@ def cmd_audit_mid_fallback_slo_2594_coverage():
     return 0
 
 
+def cmd_densify_unified_gate_2595_coverage():
+    """Issue #2595: unify densify success gate
+    (pin ∧ untracked ∧ RootRemap ∧ EnvFrame scan ∧ panic residual).
+
+    Closes the half-green densify window: DensifyConsistencyReport gains
+    untracked_ok + panic_residual_ok axes (8 total). Phase 5 captures
+    baselines before compact, computes deltas, ANDs into overall_ok().
+    Additive schema key densify_unified_gate_fail_total bumps in
+    !overall_ok() block. Production default denies new mutate on
+    unified-gate fail (mirrors pin_contract_held gating at #2266).
+    """
+    print(f"{B}=== densify unified gate coverage (#2595) ==={N}")
+    script = ROOT / "scripts" / "check_densify_unified_gate_2595.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("densify unified gate (#2595) coverage contract rows failed")
+        return 1
+    ok("densify unified gate (#2595) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6631,6 +6655,7 @@ def cmd_gate():
         or cmd_parallel_isolation_level_coverage()
         or cmd_pure_parallel_isolation_wording_coverage()
         or cmd_audit_mid_fallback_slo_2594_coverage()
+        or cmd_densify_unified_gate_2595_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()
