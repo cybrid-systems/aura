@@ -263,6 +263,19 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agent_restart_total{0};
     std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
     std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
+    // Issue #2588: Aura language surface for AgentScope supervision
+    // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
+    // orch:scope-cancel-all). Counters per public prim invocation;
+    // scope_active is a process gauge (spawn_count - join_all_ok_count
+    // - cancel_all_count, approx live scopes that still own handles).
+    // scope_watch_restart_count mirrors the RestartN bump per
+    // AgentScope::watch_all(policy) re-spawn path.
+    std::atomic<std::uint64_t> scope_spawn_total{0};
+    std::atomic<std::uint64_t> scope_watch_total{0};
+    std::atomic<std::uint64_t> scope_watch_restart_count{0};
+    std::atomic<std::uint64_t> scope_join_all_total{0};
+    std::atomic<std::uint64_t> scope_cancel_all_total{0};
+    std::atomic<std::uint64_t> scope_dropped_total{0};
     // Issue #2231: agent-ask request/response channel metrics.
     // Bumped by the C++ helper agent_ask(...) and the Aura
     // primitive (orch:agent-ask name payload [:timeout-ms n]).

@@ -3091,6 +3091,312 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
+    // Issue #2588: Aura language surface for AgentScope supervision.
+    // Per-Evaluator scope (not process-static — see agent_scope.h
+    // g_evaluator_agent_scopes map). Mirrors Aura semantics:
+    //   (orch:scope-spawn name body [:keepalive-ms n] [:max-no-yield-ms n] ...)
+    //   (orch:scope-watch [:stall-ms n] [:policy 'cancel|'report-only|'restart-n]
+    //                       [:max-restarts n] [:consecutive-stall-limit n])
+    //   (orch:scope-join-all [:timeout-ms n] [:drain-ms n])
+    //   (orch:scope-cancel-all)
+    // MVP linter guard: scripts/check_orch_mvp_scope.py still rejects
+    // AgentRegistry / global_agent_registry. The scope map is just a
+    // storage convenience; the AgentScope objects themselves are
+    // per-Evaluator and do not become a global agent map.
+
+    // Issue #2588 AC1: orch:scope-spawn name [body] [:keepalive-ms n]
+    //   [:max-no-yield-ms n] ... → hash {ok, id, name, schema=2588, status}.
+    // Body thunk is optional for MVP (empty body = supervised no-op);
+    // closure-ID parsing mirrors orch:spawn-agent pattern.
+    add("orch:scope-spawn",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:scope-spawn: usage (orch:scope-spawn name [body] [:kw val]…)",
+                    ev.primitive_error_counter_ptr());
+            }
+            orch_sched.ensure(2);
+            auto& scope =
+                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            std::optional<std::uint64_t> cid;
+            std::size_t i = 1;
+            if (i < a.size() && types::is_closure(a[i])) {
+                cid = types::as_closure_id(a[i]);
+                ++i;
+            }
+            // Issue #2588: scope-spawn kw args (parallel to orch:spawn-agent).
+            std::uint32_t keepalive_interval_ms = 0;
+            std::uint32_t max_no_yield_ms = 0; // #2540
+            for (; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
+                    types::is_int(val)) {
+                    keepalive_interval_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "max-no-yield-ms" || k == "max_no_yield_ms") &&
+                           types::is_int(val)) {
+                    max_no_yield_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                }
+            }
+
+            auto body = [&ev, cid]() {
+                if (!cid)
+                    return;
+                try {
+                    // Same per-Evaluator apply gate as orch:spawn-agent.
+                    std::lock_guard lock(ev.agent_apply_mu_);
+                    if (!agent_cid_live(ev, *cid)) {
+                        agent_note_closure_freed_call(ev);
+                        return;
+                    }
+                    (void)ev.apply_closure(*cid, {});
+                } catch (...) {
+                    // [SILENCE-PRIM-#615]: agent body errors surface via
+                    // join/status only (#1669 class B intentional-state).
+                }
+            };
+            aura::orch::AgentSpec spec;
+            spec.name = name;
+            spec.body = std::move(body);
+            spec.attach_mailbox = true; // scope handles mailbox supervision
+            spec.mailbox_high_water = 256;
+            spec.keepalive_interval_ms = keepalive_interval_ms;
+            spec.max_no_yield_ms = max_no_yield_ms;
+            try {
+                auto& handle = scope.spawn(std::move(spec));
+                // #2009: handle is a reference; extract id before any potential
+                // concurrent scope mutation.
+                const auto id = handle.id;
+                const std::string out_name = handle.name.empty() ? name : handle.name;
+                const auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(out_name);
+                aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},
+                    {"id", make_int(static_cast<std::int64_t>(id))},
+                    {"name", make_string(sidx)},
+                    {"schema", make_int(2588)},
+                    {"schema-2083", make_int(2083)},
+                    {"schema-2161", make_int(2161)},
+                    {"status",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("ok");
+                         return make_string(s);
+                     }()},
+                };
+                return build_orch_hash(kv);
+            } catch (...) {
+                // [SILENCE-PRIM-#2588]: scope-spawn exceptions convert to
+                // structured Aura error hash via OrchModuleStats bumps +
+                // ok=false / status="spawn-failed" return (#1669 class B
+                // intentional-state; not silent — counters + return path
+                // both observable).
+                aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aura::orch::g_orch_module_stats.spawn_failures.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"schema", make_int(2588)},
+                    {"status",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("spawn-failed");
+                         return make_string(s);
+                     }()},
+                };
+                return build_orch_hash(kv);
+            }
+        });
+
+    // Issue #2588 AC1 + AC4: orch:scope-watch — scope-level liveness + optional
+    // RestartN. Maps to AgentScope::watch_all(stall_timeout_ms, AgentFailurePolicy).
+    // Returns hash {ok, alive, stalled, cancelled, done, closed,
+    //                restart-count, exhausted, schema=2588}.
+    add("orch:scope-watch",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            orch_sched.ensure(2);
+            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            if (!scope) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:scope-watch: no scope (call orch:scope-spawn first)",
+                    ev.primitive_error_counter_ptr());
+            }
+            aura::orch::AgentFailurePolicy policy{};
+            std::uint32_t stall_ms = 0;
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if ((k == "stall-ms" || k == "stall_ms") && types::is_int(val)) {
+                    stall_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "policy" || k == "on-stall" || k == "on_stall") &&
+                           types::is_string(val)) {
+                    auto pol = heap_str_from(ev.string_heap_, val);
+                    if (pol == "cancel")
+                        policy.on_stall = aura::orch::AgentFailureAction::Cancel;
+                    else if (pol == "report-only" || pol == "report_only")
+                        policy.on_stall = aura::orch::AgentFailureAction::ReportOnly;
+                    else if (pol == "restart-n" || pol == "restart_n")
+                        policy.on_stall = aura::orch::AgentFailureAction::RestartN;
+                } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
+                    policy.max_restarts =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "consecutive-stall-limit" || k == "consecutive_stall_limit") &&
+                           types::is_int(val)) {
+                    policy.consecutive_stall_limit =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "restart-backoff-ms" || k == "restart_backoff_ms") &&
+                           types::is_int(val)) {
+                    policy.restart_backoff_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                }
+            }
+            const auto before_restart =
+                aura::orch::g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto wr = scope->watch_all(stall_ms, policy);
+            const auto after_restart =
+                aura::orch::g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto restart_count =
+                after_restart > before_restart
+                    ? static_cast<std::uint64_t>(after_restart - before_restart)
+                    : std::uint64_t{0};
+            aura::orch::g_orch_module_stats.scope_watch_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            aura::orch::g_orch_module_stats.scope_watch_restart_count.fetch_add(
+                restart_count, std::memory_order_relaxed);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"alive", make_int(static_cast<std::int64_t>(wr.alive))},
+                {"stalled", make_int(static_cast<std::int64_t>(wr.stalled))},
+                {"cancelled", make_int(static_cast<std::int64_t>(wr.cancelled))},
+                {"done", make_int(static_cast<std::int64_t>(wr.done))},
+                {"closed", make_int(static_cast<std::int64_t>(wr.closed))},
+                {"restart-count", make_int(static_cast<std::int64_t>(restart_count))},
+                {"policy",
+                 [&] {
+                     const char* p = "cancel";
+                     switch (policy.on_stall) {
+                         case aura::orch::AgentFailureAction::ReportOnly:
+                             p = "report-only";
+                             break;
+                         case aura::orch::AgentFailureAction::RestartN:
+                             p = "restart-n";
+                             break;
+                         default:
+                             break;
+                     }
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back(p);
+                     return make_string(s);
+                 }()},
+                {"schema", make_int(2588)},
+                {"schema-2161", make_int(2161)},
+                {"schema-2229", make_int(2229)},
+            };
+            return build_orch_hash(kv);
+        });
+
+    // Issue #2588 AC1 + AC4: orch:scope-join-all — cancel + drain + reservation
+    // release for every handle in the scope. Returns hash {ok, status,
+    // wait-us, joined-count, cancelled, schema=2588}.
+    add("orch:scope-join-all",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            orch_sched.ensure(2);
+            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            if (!scope) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:scope-join-all: no scope (call orch:scope-spawn first)",
+                    ev.primitive_error_counter_ptr());
+            }
+            aura::orch::JoinPolicy policy{};
+            policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
+                    policy.primary_ms =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
+                    policy.drain_ms =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                }
+            }
+            const auto jr = scope->join_all(policy);
+            // ~AgentScope semantics: after join_all, scope holds no live
+            // handles (drop the per-Evaluator storage slot so the next
+            // scope-spawn creates a fresh scope with empty handles_).
+            if (scope->empty())
+                aura::orch::drop_agent_scope(static_cast<void*>(&ev));
+            const char* st = "ok";
+            switch (jr.status) {
+                case aura::serve::JoinStatus::Ok:
+                    st = "ok";
+                    break;
+                case aura::serve::JoinStatus::Timeout:
+                    st = "timeout";
+                    break;
+                case aura::serve::JoinStatus::Cancelled:
+                    st = "cancelled";
+                    break;
+                case aura::serve::JoinStatus::Invalid:
+                    st = "invalid";
+                    break;
+                case aura::serve::JoinStatus::Reclaimed:
+                    st = "reclaimed";
+                    break;
+            }
+            const auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(st);
+            aura::orch::g_orch_module_stats.scope_join_all_total.fetch_add(
+                1, std::memory_order_relaxed);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
+                {"status", make_string(sidx)},
+                {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
+                {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
+                {"schema", make_int(2588)},
+                {"schema-2083", make_int(2083)},
+                {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+            };
+            return build_orch_hash(kv);
+        });
+
+    // Issue #2588 AC1 + AC4: orch:scope-cancel-all — best-effort cancel
+    // propagation across the scope's handles. Idempotent (request_cancel
+    // is idempotent). Returns hash {ok, cancelled-count, schema=2588}.
+    add("orch:scope-cancel-all", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        orch_sched.ensure(2);
+        auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+        if (!scope) {
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "orch:scope-cancel-all: no scope (call orch:scope-spawn first)",
+                ev.primitive_error_counter_ptr());
+        }
+        const auto before = scope->size();
+        scope->cancel_all();
+        aura::orch::g_orch_module_stats.scope_cancel_all_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(true)},
+            {"cancelled-count", make_int(static_cast<std::int64_t>(before))},
+            {"schema", make_int(2588)},
+            {"schema-2083", make_int(2083)},
+            {"schema-2161", make_int(2161)},
+        };
+        return build_orch_hash(kv);
+    });
+
     // Issue #2231 / #2538: orch:agent-ask name payload [:timeout-ms n] → hash
     // {ok, status, payload, correlation-id, schema-2231, schema-2538}.
     // Standard cross-agent request/response without a global registry
@@ -3683,6 +3989,32 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2229", 2229);
             insert_kv("issue-2229", 2229);
             insert_kv("agent-failure-policy-wired", 1);
+            // Issue #2588: Aura language surface for AgentScope supervision
+            // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
+            // orch:scope-cancel-all). Per-Evaluator scope map
+            // (g_evaluator_agent_scopes in src/orch/agent_scope.h) is the
+            // storage container; the AgentScope objects themselves are
+            // per-Evaluator and do NOT become a global agent registry
+            // (#1966 / scripts/check_orch_mvp_scope.py still guards
+            // AgentRegistry / global_agent_registry).
+            insert_kv("scope-spawn-total", static_cast<std::int64_t>(os.scope_spawn_total.load(
+                                               std::memory_order_relaxed)));
+            insert_kv("scope-watch-total", static_cast<std::int64_t>(os.scope_watch_total.load(
+                                               std::memory_order_relaxed)));
+            insert_kv("scope-watch-restart-count",
+                      static_cast<std::int64_t>(
+                          os.scope_watch_restart_count.load(std::memory_order_relaxed)));
+            insert_kv(
+                "scope-join-all-total",
+                static_cast<std::int64_t>(os.scope_join_all_total.load(std::memory_order_relaxed)));
+            insert_kv("scope-cancel-all-total",
+                      static_cast<std::int64_t>(
+                          os.scope_cancel_all_total.load(std::memory_order_relaxed)));
+            insert_kv("scope-dropped-total", static_cast<std::int64_t>(os.scope_dropped_total.load(
+                                                 std::memory_order_relaxed)));
+            insert_kv("schema-2588", 2588);
+            insert_kv("issue-2588", 2588);
+            insert_kv("orch-scope-wired", 1);
             // Issue #2153: secondary drain residual / wait after non-Ok cancel.
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(

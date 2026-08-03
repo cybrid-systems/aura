@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**538** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**542** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 98 primitives (18%)
-- **core**: 383 primitives (71%)
+- **core**: 387 primitives (71%)
 - **internal-observable**: 49 primitives (9%)
 - **convenience**: 8 primitives (1%)
 
@@ -543,7 +543,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
-## Orch: (10)
+## Orch: (14)
 
 - `orch:agent-ask` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -554,6 +554,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `orch:agent-touch` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:reset-metrics` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:scope-cancel-all` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-join-all` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-spawn` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-watch` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn-agent` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
 ## Orchestration: (1)
@@ -794,7 +798,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (383)
+### Core builtins (must remain primitive) (387)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -995,6 +999,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `orch:agent-touch` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:scope-cancel-all` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-join-all` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-spawn` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-watch` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn-agent` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orchestration:tune-gc-frequency` — `src/compiler/evaluator_primitives_query.cpp`
 - `pair?` — `src/compiler/evaluator_primitives_pair.cpp`

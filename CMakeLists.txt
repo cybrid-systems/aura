@@ -4434,3 +4434,20 @@ add_dependencies(all_test_issue_targets test_capability_single_use_consume_2586)
 aura_add_issue_test(test_mutate_mailbox_starvation_throttle_2587)
 aura_issue_test_link_light(test_mutate_mailbox_starvation_throttle_2587)
 add_dependencies(all_test_issue_targets test_mutate_mailbox_starvation_throttle_2587)
+
+# Issue #2588: Aura language surface for AgentScope supervision
+# (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
+# orch:scope-cancel-all). Per-Evaluator scope (not process-static —
+# g_evaluator_agent_scopes map in src/orch/agent_scope.h is storage;
+# AgentScope objects themselves are per-Evaluator). NO global registry
+# (MVP linter scripts/check_orch_mvp_scope.py still rejects
+# AgentRegistry / global_agent_registry / conduct_parallel). Source-cite
+# in src/orch/agent_scope.h (per-Evaluator map + helpers) /
+# src/orch/agent_spawn.h (OrchModuleStats 6 new metrics) /
+# src/compiler/evaluator_primitives_agent.cpp (4 new prims + query:
+# orch-module-stats surfaces scope-*-total keys) / src/orch/README.md
+# (orch:scope-* section explicit "not a global registry; bound to
+# Evaluator/session"). No docs/design/ per #1655 #1485.
+aura_add_issue_test(test_orch_scope_2588)
+aura_issue_test_link_light(test_orch_scope_2588)
+add_dependencies(all_test_issue_targets test_orch_scope_2588)
