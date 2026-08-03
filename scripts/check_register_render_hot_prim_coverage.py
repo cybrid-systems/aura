@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Issue #2217: known TUI/render hot prims must use register_render_hot_prim.
+"""Issue #2217 / #2626: render hot prim registrar coverage.
 
-AC4 static gate:
-  - Helper API exists in render_prim_template.hh
-  - kRenderHotPrimNamesRequired lists the known hot names
-  - evaluator_primitives_tui.cpp registers each via register_render_hot_prim
-  - No ad-hoc set_meta_for_name(RENDER_PRIMITIVE_META) for those names after
-    migration (bare add("name") for required names is a failure)
+Historically (#2217) required tui:* hot prims to register via
+register_render_hot_prim. Issue #2626 removed the entire tui:* / terminal
+present surface — this gate now locks that removal:
+
+  AC1: evaluator_primitives_tui.cpp is gone
+  AC2: no tui: / terminal: public prims in source (add("tui:…") / add("terminal:…"))
+  AC3: helper template may remain for residual render: tools (optional)
+  AC4: no tests/renderer tree
+  AC5: build.py still wires this check (regression fence)
 
 Usage:
   python3 scripts/check_register_render_hot_prim_coverage.py
@@ -22,21 +25,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Mirrors kRenderHotPrimNamesRequired in render_prim_template.hh
-REQUIRED = (
-    "tui:present",
-    "tui:cell",
-    "tui:clear",
-    "tui:present-dirty",
-    "tui:draw-batch",
-    "tui:fill-rect",
-    "tui:present-batch",
-    "tui:frame-ansi",
-)
-
-HELPER_RE = re.compile(r'register_render_hot_prim\s*\(\s*add\s*,\s*ev\s*,\s*"([^"]+)"')
-# Bare add("name" that bypasses the helper for a known hot name.
-BARE_ADD_RE = re.compile(r'(?:^|[^\w.])add\(\s*"([^"]+)"')
+ADD_TUI_RE = re.compile(r'\badd\(\s*"(tui:[^"]+|terminal:[^"]+)"')
 
 
 def _read(rel: str) -> str:
@@ -53,102 +42,58 @@ def _must(cond: bool, msg: str, fails: list[str]) -> None:
 
 def check() -> list[str]:
     fails: list[str] = []
-    tpl = _read("src/compiler/render_prim_template.hh")
-    tui = _read("src/compiler/evaluator_primitives_tui.cpp")
-    test = _read("tests/compiler/test_register_render_hot_prim_2217.cpp")
 
-    # AC1 — helper API surface
-    _must(
-        "register_render_hot_prim" in tpl and "template" in tpl,
-        "AC1: register_render_hot_prim template missing in render_prim_template.hh",
-        fails,
-    )
-    _must(
-        "kRenderHotPrimNamesRequired" in tpl,
-        "AC1: kRenderHotPrimNamesRequired table missing",
-        fails,
-    )
-    _must(
-        "g_register_render_hot_prim_total" in tpl or "kRegisterRenderHotPrimIssue" in tpl,
-        "AC1: registration counter / issue stamp missing",
-        fails,
-    )
-    _must(
-        "MUST use register_render_hot_prim" in tpl or "REQUIRED for new hot prims" in tpl,
-        "AC3: template docs do not require helper for new hot prims",
-        fails,
-    )
-    for name in REQUIRED:
-        _must(
-            f'"{name}"' in tpl,
-            f"AC1: {name!r} missing from kRenderHotPrimNamesRequired",
-            fails,
-        )
+    tui_cpp = REPO / "src/compiler/evaluator_primitives_tui.cpp"
+    _must(not tui_cpp.is_file(), "AC1: evaluator_primitives_tui.cpp must be deleted (#2626)", fails)
 
-    # AC2 — TUI migration
-    registered = set(HELPER_RE.findall(tui))
-    for name in REQUIRED:
-        _must(
-            name in registered,
-            f"AC2: {name!r} not registered via register_render_hot_prim in TUI TU",
-            fails,
-        )
-        # Bare add("name" must not remain for required hot names
-        bare = set(BARE_ADD_RE.findall(tui))
-        _must(
-            name not in bare,
-            f"AC2/AC4: {name!r} still uses bare add() instead of helper",
-            fails,
-        )
+    renderer = REPO / "src/renderer"
+    _must(not renderer.exists(), "AC4: src/renderer/ must be gone (#2625/#2626)", fails)
+    tests_renderer = REPO / "tests/renderer"
+    _must(not tests_renderer.exists(), "AC4: tests/renderer/ must be gone (#2625/#2626)", fails)
 
-    # AC2 — no residual ad-hoc RENDER_PRIMITIVE_META set_meta in TUI TU
+    # Scan prim registration TUs for residual tui:/terminal: add()
+    scan_roots = [
+        REPO / "src/compiler",
+    ]
+    for root in scan_roots:
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if path.suffix not in {".cpp", ".ixx", ".h", ".hh"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for m in ADD_TUI_RE.finditer(text):
+                fails.append(f"AC2: residual {m.group(1)!r} in {path.relative_to(REPO)}")
+
+    build = _read("build.py")
     _must(
-        "set_meta_for_name" not in tui or tui.count("set_meta_for_name") == 0,
-        "AC2: residual set_meta_for_name in evaluator_primitives_tui.cpp",
+        "register-render-hot-prim" in build or "cmd_register_render_hot_prim_coverage" in build,
+        "AC5: build.py gate command missing",
         fails,
     )
     _must(
-        "RENDER_PRIMITIVE_META" not in tui,
-        "AC2: residual RENDER_PRIMITIVE_META in TUI TU (use helper)",
+        "#2626" in _read("scripts/check_register_render_hot_prim_coverage.py"),
+        "AC5: this script must cite #2626",
         fails,
     )
 
-    # AC5 — test surface
-    _must(
-        test and "#2217" in test,
-        "AC5: tests/compiler/test_register_render_hot_prim_2217.cpp missing or no #2217 cite",
-        fails,
-    )
-    _must(
-        "register_render_hot_prim" in test,
-        "AC5: test does not exercise/assert helper",
-        fails,
-    )
     return fails
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Issue #2217 register_render_hot_prim coverage linter")
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Exit non-zero on any failure (CI / gate default)",
-    )
-    parser.add_argument(
-        "--self-test",
-        action="store_true",
-        help="Alias for running the check (exit 0 if clean)",
-    )
-    args = parser.parse_args()
+    parser = argparse.ArgumentParser(description="Issue #2217/#2626 register_render_hot_prim / TUI removal coverage")
+    parser.add_argument("--strict", action="store_true", help="alias for default strict exit")
+    _ = parser.parse_args()
     fails = check()
     if fails:
-        print(f"check_register_render_hot_prim_coverage: {len(fails)} failure(s)", file=sys.stderr)
         for f in fails:
-            print(f"  FAIL: {f}", file=sys.stderr)
-        if args.strict or args.self_test:
-            return 1
-        return 0
-    print("check_register_render_hot_prim_coverage: OK (#2217)")
+            print(f"FAIL: {f}", file=sys.stderr)
+        print(
+            f"check_register_render_hot_prim_coverage: {len(fails)} failure(s)",
+            file=sys.stderr,
+        )
+        return 1
+    print("check_register_render_hot_prim_coverage: OK (#2217 retired / #2626 TUI removed)")
     return 0
 
 

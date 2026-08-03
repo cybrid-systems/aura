@@ -53,7 +53,7 @@ inline constexpr int kModuleLayerCount = 10;
 //   Exec     → src/exec/
 //   Repl     → src/repl/
 //   Reflect  → src/reflect/
-//   Renderer → src/renderer/
+//   Renderer → removed (#2625/#2626)
 //   Orch     → src/orch/
 //   Tui      → src/tui/  (domain vertical; still above Core)
 //

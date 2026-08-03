@@ -24,7 +24,6 @@
 #include "runtime_shared.h"
 #include "hash_meta.h"
 #include "security_capabilities.h"
-#include "terminal_buffer_registry.hh"
 #include <string>
 #include <vector>
 
@@ -33,6 +32,14 @@
 #include <cstdlib>
 #include <exception>
 namespace aura::compiler {
+
+// Issue #2626: terminal buffer registry removed with TUI surface.
+namespace primitives_detail {
+    inline void retain_terminal_buffer_registry() noexcept {}
+    inline void release_terminal_buffer_registry() noexcept {}
+    inline void clear_terminal_buffer_registry() noexcept {}
+} // namespace primitives_detail
+
 
 // Bump when extension-kit capture contract version changes.
 // #751: runtime prim_error_unified wiring + query:primitives-contract-stats.

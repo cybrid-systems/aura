@@ -97,7 +97,7 @@ void ac5_inventory_and_surface() {
     std::println("\n--- AC5: inventory + query surface ---");
     auto lp = read_file("src/core/lifetime_pin.ixx");
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-    auto ren = read_file("src/renderer/render_primitives.cpp");
+    // Issue #2626: render_primitives.cpp removed with TUI surface.
     CHECK(lp.find("Object class") != std::string::npos ||
               lp.find("object class") != std::string::npos ||
               lp.find("Object class × required protocol inventory") != std::string::npos,
@@ -117,12 +117,9 @@ void ac5_inventory_and_surface() {
           "AC5: query validate-fail");
     CHECK(q.find("schema-2298") != std::string::npos && q.find("issue-2298") != std::string::npos,
           "AC5: schema-2298 / issue-2298");
-    // AC3: render path still PresentGuard / PinOwner (unchanged).
-    CHECK(ren.find("LifetimePin") != std::string::npos ||
-              ren.find("lifetime") != std::string::npos ||
-              ren.find("PresentGuard") != std::string::npos ||
-              read_file("src/core/lifetime_pin.ixx").find("PinOwner") != std::string::npos,
-          "AC3: PinOwner / LifetimePin render path retained");
+    // AC3: PinOwner / LifetimePin retained after TUI removal (#2626).
+    CHECK(lp.find("LifetimePin") != std::string::npos || lp.find("PinOwner") != std::string::npos,
+          "AC3: PinOwner / LifetimePin path retained");
     CHECK(lp.find("enum class PinOwner") != std::string::npos, "AC3: PinOwner enum retained");
 }
 

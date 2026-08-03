@@ -40,7 +40,6 @@ PROD_GLOBS = (
     re.compile(r"^lib/std/stats\.aura$"),
     re.compile(r"^lib/std/engine-metrics\.aura$"),
     # Issue #1454: TUI protected surface (aura-pets)
-    re.compile(r"^src/compiler/evaluator_primitives_tui\.cpp$"),
     re.compile(r"^src/tui/.*\.(hh|h|cpp|ixx)$"),
     re.compile(r"^lib/std/tui/.*\.aura$"),
     re.compile(r"^examples/(cyber_cat|snake|tetris)\.aura$"),

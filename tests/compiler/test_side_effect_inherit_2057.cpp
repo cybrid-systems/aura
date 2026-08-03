@@ -144,7 +144,7 @@ int main() {
         CHECK(is_side_effect_prim_name("mutate:set-body"), "mutate is side-effect");
         CHECK(is_side_effect_prim_name("write-file"), "write-file is side-effect");
         CHECK(is_side_effect_prim_name("ffi:call"), "ffi is side-effect");
-        CHECK(is_side_effect_prim_name("render3d:draw"), "render3d is side-effect");
+        CHECK(is_side_effect_prim_name("render:present"), "render is side-effect");
         CHECK(!is_side_effect_prim_name("query:node-type"), "query is not");
         CHECK(!is_side_effect_prim_name("+"), "math is not");
         CHECK(infer_required_effects_from_name("mutate:x") == kEffectMutate, "infer mutate");

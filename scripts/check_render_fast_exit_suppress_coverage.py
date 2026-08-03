@@ -15,7 +15,6 @@ Verifies the implementation is wired correctly:
   - observability_metrics.h has all three counters
   - evaluator_primitives_obs_eval.cpp query:mutation-boundary-hold-stats
     has schema-2311 / issue-2311 / suppress keys
-  - tests/compiler/test_render_fast_exit_2215.cpp cites Issue #2311
 
 Exit 0 on success, 1 on any failure. Run as part of the ship loop:
     python3 scripts/check_render_fast_exit_suppress_coverage.py
@@ -128,13 +127,7 @@ def main() -> int:
             "requires_invariant_hard_gate",
             "typed_audit::requires_invariant_hard_gate exists",
         ),
-        # test file
-        (ROOT / "tests/compiler/test_render_fast_exit_2215.cpp", "Issue #2311", "test file cites 2311"),
-        (
-            ROOT / "tests/compiler/test_render_fast_exit_2215.cpp",
-            "render_fast_exit_suppressed_linear_or_match_total",
-            "test file reads suppress counter",
-        ),
+        # Issue #2626: unit test test_render_fast_exit_2215 removed with TUI stack.
         # Linter self-reference (sanity)
         (
             ROOT / "scripts/check_render_fast_exit_suppress_coverage.py",

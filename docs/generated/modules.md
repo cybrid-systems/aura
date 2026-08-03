@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**68** `export module` declarations in `src/**/*.ixx`.
+**64** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -67,10 +67,6 @@
 | `aura.parser.lexer` | `src/parser/lexer.ixx` |
 | `aura.parser.parser` | `src/parser/parser.ixx` |
 | `aura.reflect` | `src/reflect/reflect.ixx` |
-| `aura.renderer.batch_terminal` | `src/renderer/batch_terminal.ixx` |
-| `aura.renderer.render_ffi` | `src/renderer/render_ffi.ixx` |
-| `aura.renderer.render_pass` | `src/renderer/render_pass.ixx` |
 | `aura.serve.multi_fiber_mailbox` | `src/serve/multi_fiber_mailbox.ixx` |
 | `aura.serve.parallel_orch` | `src/serve/parallel_orch.ixx` |
-| `aura.stdlib.render_ffi` | `src/stdlib/render_ffi.ixx` |
 | `aura.test.strategy` | `src/test/test_strategy.ixx` |

@@ -116,9 +116,9 @@ int main() {
         CHECK(s3 == "effect-denied: network not granted tenant=0 op=git-commit",
               "AC3c: network deny string matches shape");
 
-        const auto s4 = format_deny_reason(kEffectRender, 99, "render3d:create-volume");
+        const auto s4 = format_deny_reason(kEffectRender, 99, "render:frame");
         std::println("  render:   {}", s4);
-        CHECK(s4 == "effect-denied: render not granted tenant=99 op=render3d:create-volume",
+        CHECK(s4 == "effect-denied: render not granted tenant=99 op=render:frame",
               "AC3d: render deny string matches shape");
     }
 

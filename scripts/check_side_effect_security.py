@@ -71,11 +71,7 @@ SIDE_EFFECT_PREFIXES = (
     "mutate-",
     "ffi:",
     "ffi-",
-    "render3d:",
     "render:",
-    "tui:",
-    "terminal-present",
-    "c-render-",
     "file:write",
     "sys-write",
     "sys-open",
@@ -84,7 +80,7 @@ SIDE_EFFECT_PREFIXES = (
     "exec-",
     "syscall",
 )
-SIDE_EFFECT_EXACT = frozenset({"write-file", "c-present-batch", "c-ansi-emit"})
+SIDE_EFFECT_EXACT = frozenset({"write-file"})
 
 # Issue #2152: allowlist lines must document a reason with this token.
 EXEMPT_REASON_RE = re.compile(r"SECURITY_EXEMPT\s*:", re.IGNORECASE)

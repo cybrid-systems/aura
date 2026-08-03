@@ -70,8 +70,6 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
     "eda:",
     "seva:",
     "verify:",
-    "tui:",
-    "terminal:",
     "git-",
     "tcp-",
     "auto-evolve-",
@@ -79,7 +77,6 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
     "m4-",
     "strategy:",
     "synthesize:",
-    "render3d:",  # #1986 — software 3D TUI engine surface
 )
 
 # Issue #1965 cycle 2 — formalize which domain prefixes are CORE vs DEFERRED.
@@ -112,17 +109,14 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 DOMAIN_STATUS: dict[str, str] = {
     "verify:": "core",
     "channel:": "core",
-    "tui:": "deferred",
     "eda:": "deferred",
     "auto-evolve-": "deferred",
     "git-": "deferred",
-    "terminal:": "deferred",
     "seva:": "deferred",
     "strategy:": "deferred",
     "synthesize:": "deferred",
     "tcp-": "deferred",
     "m4-": "deferred",
-    "render3d:": "deferred",  # #1986 software voxel 3D (gated with AURA_ENABLE_TUI)
 }
 
 # Issue #1967: per-prefix commercial / UI domain budgets.
@@ -131,11 +125,8 @@ DOMAIN_STATUS: dict[str, str] = {
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "eda:": 13,  # #1968 — EDA vertical retired 4.4; budget kept as zero-count placeholder for legacy test expectations
-    "tui:": 25,  # #1967 + #2134 batch + #2214 present-dirty; AURA_ENABLE_TUI
-    "render3d:": 10,  # #1986 — voxel 3D EDSL surface; gated with AURA_ENABLE_TUI
     "auto-evolve-": 7,  # #1969 — self-evo AI vertical; AURA_ENABLE_AUTO_EVOLVE
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
-    "terminal:": 9,  # #1971 — deprecated no-op terminal:*; AURA_ENABLE_TERMINAL
     "seva:": 5,  # #1972 — SEVA / OpenClaw goal primitives; AURA_ENABLE_SEVA
     "strategy:": 4,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
     "synthesize:": 4,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE

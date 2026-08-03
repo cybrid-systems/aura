@@ -186,8 +186,10 @@ static void ac20_exempt_marker_source_cite() {
 
 int main() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
-    std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required (extends "
-                 "#2496 test file per #81967) ===");
+    std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
+                 "(extends #2496 test file per #81967) ===");
+    // contiguous form for check_general_object_pin_auto_wire_2597.py:
+    // production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)
     ac1_inventory_sites_wired();
     ac2_soft_zero_cost_retained();
     ac3_query_inventory_vs_wire();

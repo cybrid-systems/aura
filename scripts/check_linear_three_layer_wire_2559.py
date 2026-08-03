@@ -147,7 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     must("root_remap_closure_capture_fail_total == 0", "AC3", emb)
     must("scan_fail_delta", "AC3", emb)
     must("scan_fail_baseline", "AC3", emb)
-    must("!scan_fail_delta", "AC3", emb)
+    # Issue #2599: production-only AND via envframe_block = prod && scan_fail_delta
+    # (replaces bare !scan_fail_delta under Soft).
+    must("envframe_block", "AC3", emb)
+    must("prod_for_densify && scan_fail_delta", "AC3", emb)
+    must("!envframe_block", "AC3", emb)
     # Lineage stamps.
     must("Issue #2499", "AC3", emb)
     must("Issue #2497", "AC3", emb)

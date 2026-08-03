@@ -12,8 +12,6 @@ module;
 #include <dlfcn.h>
 #include "compiler/ffi_hot_path.hh"
 #include "core/gc_hooks.h" // Issue #2005: ffi_pin_defer_active + arm/release
-#include "renderer/render_ffi.hh"
-#include "stdlib/render_ffi.hh"
 
 module aura.compiler.ffi_primitives;
 
@@ -23,15 +21,17 @@ import aura.core.lifetime_pin; // Issue #2005: (ffi:pin-buffer)
 
 // (Issue #131 / #1354 / #1560).
 //
-// The C FFI state is per-FFIRuntime. Issue #1354 wraps c-* with
-// FfiRenderHotpathGuard so render-loop FFI participates in deopt / arena soft-gate.
-// Issue #1560: real batch dispatch via ffi_hot_path + stdlib/render_ffi.
+// The C FFI state is per-FFIRuntime.
+// Issue #2626: render-loop FfiRenderHotpathGuard / render_ffi registry removed.
 
 namespace aura::compiler {
 using EvalValue = types::EvalValue;
 using namespace aura::compiler::types;
-using aura::renderer::ffi::FfiRenderHotpathGuard;
-using aura::renderer::ffi::render_ffi_registry;
+
+// No-op stand-in after TUI/render hotpath removal (#2626).
+struct FfiRenderHotpathGuard {
+    FfiRenderHotpathGuard() = default;
+};
 
 void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
                                      std::vector<void*>* opaque_heap,
@@ -301,92 +301,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         return make_int(0);
     });
 
-    // Issue #1354: (c-render-bind lib-id "binding-name" "c-symbol" "signature") → #t/#f
-    // Resolves dlsym from lib-id (-1 = RTLD_DEFAULT) and registers in RenderFfiRegistry.
-    add("c-render-bind", [this, sh](std::span<const EvalValue> a) -> EvalValue {
-        FfiRenderHotpathGuard hp;
-        if (a.size() < 4 || !types::is_int(a[0]) || !types::is_string(a[1]) ||
-            !types::is_string(a[2]) || !types::is_string(a[3]))
-            return make_bool(false);
-        if (!sh)
-            return make_bool(false);
-        auto raw_lib_id = types::as_int(a[0]);
-        void* lib = RTLD_DEFAULT;
-        if (raw_lib_id >= 0) {
-            auto lib_idx = static_cast<std::size_t>(raw_lib_id);
-            if (lib_idx >= libs_.size())
-                return make_bool(false);
-            lib = libs_[lib_idx];
-        }
-        const auto& name = (*sh)[types::as_string_idx(a[1])];
-        const auto& c_name = (*sh)[types::as_string_idx(a[2])];
-        const auto& sig = (*sh)[types::as_string_idx(a[3])];
-        void* fn_ptr = ::dlsym(lib, c_name.c_str());
-        // Allow register even if unresolved (fn_ptr null) for Agent discovery of planned binds.
-        // Prefer non-null when available.
-        auto& reg = render_ffi_registry();
-        int rc = reg.register_binding(name, c_name, sig, fn_ptr);
-        return make_bool(rc == 0);
-    });
-
-    // Issue #1354/#1560: (c-render-call "binding-name" [arg0 ...]) → #t/#f
-    // Real batch hot-path dispatch (ffi_hot_path + registry). MetricsOnly ABI still
-    // returns #t when binding exists (Agent backends that only need resolve/metrics).
-    add("c-render-call", [sh](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0]) || !sh)
-            return make_bool(false);
-        const auto& name = (*sh)[types::as_string_idx(a[0])];
-        auto& reg = render_ffi_registry();
-        {
-            std::lock_guard<std::mutex> lock(reg.registry_mtx);
-            if (reg.bindings.find(name) == reg.bindings.end())
-                return make_bool(false);
-        }
-        // Collect optional int args for BatchArgs ABI.
-        std::vector<std::int64_t> args;
-        args.reserve(a.size() > 1 ? a.size() - 1 : 0);
-        for (std::size_t i = 1; i < a.size(); ++i) {
-            if (types::is_int(a[i]))
-                args.push_back(types::as_int(a[i]));
-        }
-        // dispatch_batch_c_render enters hotpath + records dispatch.
-        (void)aura::stdlib::render_ffi::dispatch_batch_c_render(name, args);
-        return make_bool(true);
-    });
-
-    // Issue #1560: fixed-name render backends via hot path.
-    // (c-render-draw [arg...]) → int (batch result or -1 if unbound)
-    add("c-render-draw", [](std::span<const EvalValue> a) -> EvalValue {
-        std::vector<std::int64_t> args;
-        args.reserve(a.size());
-        for (const auto& v : a) {
-            if (types::is_int(v))
-                args.push_back(types::as_int(v));
-        }
-        return make_int(aura::stdlib::render_ffi::dispatch_c_render_draw(args));
-    });
-
-    // (c-present-batch [arg...]) → int
-    add("c-present-batch", [](std::span<const EvalValue> a) -> EvalValue {
-        std::vector<std::int64_t> args;
-        args.reserve(a.size());
-        for (const auto& v : a) {
-            if (types::is_int(v))
-                args.push_back(types::as_int(v));
-        }
-        return make_int(aura::stdlib::render_ffi::dispatch_c_present_batch(args));
-    });
-
-    // (c-ansi-emit [arg...]) → int
-    add("c-ansi-emit", [](std::span<const EvalValue> a) -> EvalValue {
-        std::vector<std::int64_t> args;
-        args.reserve(a.size());
-        for (const auto& v : a) {
-            if (types::is_int(v))
-                args.push_back(types::as_int(v));
-        }
-        return make_int(aura::stdlib::render_ffi::dispatch_c_ansi_emit(args));
-    });
+    // Issue #2626: c-render-* / c-present / c-ansi-emit removed.
 
     // Issue #2005 / #2048: shared FFI pin registry (single static — pin/unpin
     // and query:ffi-pin-count must share state). (ffi:pin-buffer) arms
@@ -435,13 +350,6 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             return make_int(n);
         });
     }
-
-    // Issue #1354: (query:render-ffi-count) → registered binding count (int).
-    // Full Agent hash lives at query:render-ffi-available (evaluator partition).
-    add("query:render-ffi-count", [](std::span<const EvalValue>) -> EvalValue {
-        auto& reg = render_ffi_registry();
-        return make_int(static_cast<std::int64_t>(reg.registered.load(std::memory_order_relaxed)));
-    });
 }
 
 } // namespace aura::compiler

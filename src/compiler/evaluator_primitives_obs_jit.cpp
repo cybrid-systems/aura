@@ -10,7 +10,6 @@
 // definitions live in src/serve/fiber.cpp at global scope.
 //
 // Issue #1971: 7 terminal:* names (Phase-A deprecated no-ops, #1351) are
-// gated by AURA_ENABLE_TERMINAL in register_jit_p59 + register_jit_p113.
 // See docs/terminal-domain.md.
 
 module;
@@ -44,9 +43,6 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
-#ifndef AURA_ENABLE_TERMINAL
-#define AURA_ENABLE_TERMINAL 1
-#endif
 
 module aura.compiler.evaluator;
 
@@ -7972,75 +7968,7 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 59 (orig lines 18572-18664)
 void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
 
-#if AURA_ENABLE_TERMINAL
-    // Issue #824 Phase 1 counters → Issue #1351 Phase A deprecation.
-    // These no-ops only bump metrics; real terminal APIs live on make-terminal-buffer /
-    // terminal-set-cell* / terminal-present-batch / terminal-diff-update.
-    // Phase A: return #f + one-shot stderr warn; keep counters. Phase B: delete later.
-    // Issue #1971: commercial UI vertical gate (AURA_ENABLE_TERMINAL).
-    auto deprecate_terminal_noop = [](const char* name, const char* replacement) {
-        // Per-name one-shot via address of static storage keyed by name pointer
-        // (literals are unique). Thread-safe enough for stderr warn spam control.
-        static std::mutex warn_mu;
-        static std::unordered_set<const void*> warned;
-        std::lock_guard<std::mutex> lock(warn_mu);
-        if (warned.insert(static_cast<const void*>(name)).second) {
-            std::fprintf(stderr,
-                         "[aura] WARN: %s is deprecated (no-op); use %s instead "
-                         "(see #1351)\n",
-                         name, replacement);
-        }
-    };
-
-    add("terminal:clear", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
-        deprecate_terminal_noop("terminal:clear", "make-terminal-buffer + terminal-present-batch");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_render_clear_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-    add("terminal:draw-batch", [&ev, deprecate_terminal_noop](const auto& a) -> EvalValue {
-        deprecate_terminal_noop("terminal:draw-batch", "terminal-set-cell / terminal-set-cell-rgb");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_render_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
-            if (!a.empty() && is_int(a[0]))
-                m->term_render_present_ns_total.fetch_add(static_cast<std::uint64_t>(as_int(a[0])),
-                                                          std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-    add("terminal:present", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
-        deprecate_terminal_noop("terminal:present", "terminal-present-batch / terminal-present");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_render_present_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-    add("terminal:mark-dirty-region", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
-        deprecate_terminal_noop("terminal:mark-dirty-region",
-                                "terminal-diff-update (real dirty cell count)");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_render_dirty_region_total.fetch_add(1, std::memory_order_relaxed);
-            m->render_hp_dirty_hits_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-    // Issue #1135: present-delta only bumps its own delta counter —
-    // term_render_present_total is owned solely by terminal:present.
-    add("terminal:present-delta", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
-        deprecate_terminal_noop("terminal:present-delta",
-                                "terminal-diff-update + terminal-present-batch");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->render_hp_present_delta_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-#endif // AURA_ENABLE_TERMINAL
+    // Issue #2626: terminal:* removed (was AURA_ENABLE_TERMINAL block)
     // Issue #830: query:pass-shape-epoch-stats
     ObservabilityPrims::register_stats_impl(
         "query:pass-shape-epoch-stats", [&ev](const auto&) -> EvalValue {
@@ -12278,41 +12206,7 @@ void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 113 (orig lines 21395-21426)
 void ObservabilityPrims::register_jit_p113(PrimRegistrar add, Evaluator& ev) {
 
-#if AURA_ENABLE_TERMINAL
-    // Issue #856 / #1136 / #1140 → Issue #1351 Phase A deprecation.
-    // No-op counter stubs; real APIs: make-terminal-buffer / terminal-diff-update.
-    // Issue #1971: commercial UI vertical gate (AURA_ENABLE_TERMINAL).
-    auto deprecate_terminal_noop = [](const char* name, const char* replacement) {
-        static std::mutex warn_mu;
-        static std::unordered_set<const void*> warned;
-        std::lock_guard<std::mutex> lock(warn_mu);
-        if (warned.insert(static_cast<const void*>(name)).second) {
-            std::fprintf(stderr,
-                         "[aura] WARN: %s is deprecated (no-op); use %s instead "
-                         "(see #1351)\n",
-                         name, replacement);
-        }
-    };
-
-    add("terminal:create-buffer", [&ev, deprecate_terminal_noop](const auto& a) -> EvalValue {
-        (void)a;
-        deprecate_terminal_noop("terminal:create-buffer", "make-terminal-buffer");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_buf_diff_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-    add("terminal:diff", [&ev, deprecate_terminal_noop](const auto&) -> EvalValue {
-        deprecate_terminal_noop("terminal:diff", "terminal-diff-update");
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            m->term_buf_diff_hits_total.fetch_add(1, std::memory_order_relaxed);
-            m->render_obs_v2_hits_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        return make_bool(false);
-    });
-#endif // AURA_ENABLE_TERMINAL
+    // Issue #2626: terminal:* removed (was AURA_ENABLE_TERMINAL block)
     // Issue #872: primitives:alias name target (Phase 1 registry of aliases)
     add("primitives:alias", [&ev](const auto& a) -> EvalValue {
         if (ev.compiler_metrics_) {
