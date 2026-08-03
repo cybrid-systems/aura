@@ -314,6 +314,55 @@ static void ac15_query_keys_source_cite() {
           "AC15: arena.ixx cites #2596 (production-default alignment)");
 }
 
+// ── Issue #2599: EnvFrame densify ownership scan fail enters outermost commit barrier ──
+//
+// Production-only gating on EnvFrame scan fail. Closes half-green window
+// where densify moved objects + scan fail kept densify_ok=true under
+// production (commit could publish success with stale EnvFrame roots).
+// Soft / sandbox=off → metric only (existing #2497 inject path keeps test
+// ergonomics). Force_rollback authority follows #2545 / #2563 pattern.
+//
+// AC16: Phase 5 driver gates scan_fail_delta on production_defaults_active
+//       (only envframe_block = prod && scan_fail_delta forces envframe_ok=false).
+// AC17: EnvFrameDensifyOwnership deny reason for force_linear_rollback
+//       (sibling authority pattern from #2545).
+// AC18: Source-cite for #2599 in evaluator_mutation_boundary.cpp + envframe_lifetime.ixx.
+// AC19: Build.py wires cmd_envframe_densify_scan_commit_barrier_2599_coverage +
+//       gate script present.
+static void ac16_production_only_envframe_scan_block() {
+    std::println("\n--- #2599 AC16: production-only envframe scan block ---");
+    const auto driver = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(driver.find("Issue #2599") != std::string::npos, "AC16: Phase 5 driver cites #2599");
+    CHECK(driver.find("production_defaults_active()") != std::string::npos,
+          "AC16: driver reads production_defaults_active()");
+    CHECK(driver.find("envframe_block = prod_for_densify && scan_fail_delta") != std::string::npos,
+          "AC16: envframe_block requires BOTH prod AND scan_fail_delta");
+    CHECK(driver.find("pairing.envframe_ok && linear_type_ok && !envframe_block") !=
+              std::string::npos,
+          "AC16: envframe_ok AND-ed with !envframe_block (production-only)");
+    CHECK(driver.find("densify_ownership_scan_fail_total") != std::string::npos,
+          "AC16: counter still referenced (counter bumps regardless of mode)");
+}
+
+static void ac17_envframe_densify_ownership_deny_reason() {
+    std::println("\n--- #2599 AC17: EnvFrameDensifyOwnership deny reason ---");
+    const auto driver = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(driver.find("EnvFrameDensifyOwnership") != std::string::npos ||
+              driver.find("envframe_densify_ownership") != std::string::npos,
+          "AC17: EnvFrameDensifyOwnership deny reason cited (force_rollback authority)");
+}
+
+static void ac18_source_cite_2599() {
+    std::println("\n--- #2599 AC18: source-cite for #2599 ---");
+    const auto driver = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(driver.find("Issue #2599") != std::string::npos, "AC18: driver cites #2599");
+    CHECK(driver.find("#2545") != std::string::npos,
+          "AC18: #2545 force_linear_rollback unification referenced");
+    CHECK(driver.find("force_linear_rollback") != std::string::npos ||
+              driver.find("force_rollback") != std::string::npos,
+          "AC18: force_linear_rollback authority pattern referenced");
+}
+
 } // namespace
 
 int main() {
@@ -322,6 +371,8 @@ int main() {
         "=== Issue #2595: unify densify success gate (extends #2495 test file per #81967) ===");
     std::println("=== Issue #2596: production default AURA_MOVING_UNTRACKED=hard (extends #2495 "
                  "test file per #81967) ===");
+    std::println("=== Issue #2599: EnvFrame densify ownership scan fail enters outermost commit "
+                 "barrier (extends #2495 test file per #81967) ===");
     ac1_source_cite_live_compact_result();
     ac3_soft_zero_extra_work();
     ac4_query_stats_surface();
@@ -336,6 +387,10 @@ int main() {
     ac13_env_hard_under_soft();
     ac14_soft_unset_keeps_observe();
     ac15_query_keys_source_cite();
+    ac16_production_only_envframe_scan_block();
+    ac17_envframe_densify_ownership_deny_reason();
+    ac18_source_cite_2599();
+    ac19_build_gate_wiring_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

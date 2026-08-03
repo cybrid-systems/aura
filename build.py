@@ -2858,6 +2858,29 @@ def cmd_panic_residual_densify_hard_2598_coverage():
     return 0
 
 
+def cmd_envframe_densify_scan_commit_barrier_2599_coverage():
+    """Issue #2599: EnvFrame densify ownership scan fail enters outermost
+    commit barrier (production-only gating).
+
+    Closes half-green window where densify moved objects + EnvFrame scan
+    fail kept densify_ok=true under production (commit could publish
+    success with stale EnvFrame roots). Soft / sandbox=off → metric only
+    (existing #2497 inject path keeps test ergonomics). Force_rollback
+    authority follows #2545 / #2563 pattern.
+    """
+    print(f"{B}=== envframe densify scan commit barrier coverage (#2599) ==={N}")
+    script = ROOT / "scripts" / "check_envframe_densify_scan_commit_barrier_2599.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("envframe densify scan commit barrier (#2599) coverage contract rows failed")
+        return 1
+    ok("envframe densify scan commit barrier (#2599) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6731,6 +6754,7 @@ def cmd_gate():
         or cmd_moving_untracked_production_hard_2596_coverage()
         or cmd_general_object_pin_auto_wire_2597_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
+        or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()

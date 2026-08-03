@@ -2131,9 +2131,22 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Issue #2497: scan_fail_delta ANDs into envframe_ok. Pairing already
             // checks within-pairing delta — this gate widens the window so a
             // pre-pairing inject (test helper) or compact-callback fail also
-            // suppresses. Phase 5 success gated via overall_ok() at #2266 site.
-            densify_consistency.envframe_ok =
-                pairing.envframe_ok && linear_type_ok && !scan_fail_delta;
+            // suppresses.
+            // Issue #2599: production-only gating — under production
+            // (production_defaults_active()), scan_fail_delta forces
+            // envframe_ok=false (commit barrier rejects outermost commit;
+            // force_rollback_suggestion: EnvFrameDensifyOwnership). Under
+            // Soft / sandbox=off, scan_fail_delta bumps
+            // densify_ownership_scan_fail_total counter but keeps
+            // envframe_ok=true (AC2 metric-only, no forced rollback solely
+            // from EnvFrame axis). Phase 5 success still gated via
+            // overall_ok() at #2266 site.
+            {
+                const bool prod_for_densify = typed_audit::production_defaults_active();
+                const bool envframe_block = prod_for_densify && scan_fail_delta;
+                densify_consistency.envframe_ok =
+                    pairing.envframe_ok && linear_type_ok && !envframe_block;
+            }
             aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
         } else if (had_moving_densify) {
