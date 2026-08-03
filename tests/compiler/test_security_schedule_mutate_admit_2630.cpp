@@ -28,7 +28,7 @@
 #include <string>
 
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
-                                        std::int64_t argc);
+                                          std::int64_t argc);
 
 import std;
 import aura.compiler.service;
@@ -54,8 +54,8 @@ static std::string read_file(const char* path) {
 }
 
 static std::int64_t href(CompilerService& cs, const char* key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (engine:metrics \"query:security-schedule-gate\") \"{}\")", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:security-schedule-gate\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -94,9 +94,8 @@ static void ac2630_soft_falls_through() {
     const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto gate_h = read_file("src/orch/security_schedule_gate.h");
     // Each force_reason must be wired in the gate's pure decide.
-    for (const auto* reason : {
-             "commit_not_ready", "deny_storm",
-             "mid_fallback_slo", "posture_degraded"}) {
+    for (const auto* reason :
+         {"commit_not_ready", "deny_storm", "mid_fallback_slo", "posture_degraded"}) {
         if (gate_h.find(reason) == std::string::npos) {
             std::println("  WARN: gate missing reason: {}", reason);
         }
@@ -135,7 +134,7 @@ static void ac2630_zero_extra_work_all_clear() {
     // The pure decide function must be marked [[nodiscard]] and have
     // no atomics in its body (no side effects — pure).
     CHECK(gate_h.find("[[nodiscard]] inline SecurityScheduleDecision\n"
-                       "decide_security_schedule") != std::string::npos,
+                      "decide_security_schedule") != std::string::npos,
           "AC4: decide_security_schedule is [[nodiscard]] inline");
     // The call site in evaluator_mutation_boundary.cpp does a single
     // call (no additional counter work on the all-clear path).

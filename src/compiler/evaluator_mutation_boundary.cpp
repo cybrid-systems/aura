@@ -1025,7 +1025,8 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
             return std::unexpected(aura::core::AuraError(
                 aura::core::AuraErrorKind::ResourceQuotaExceeded,
                 std::string("AdmissionRejected: security-schedule:") +
-                    std::string(aura::orch::security_schedule_force_reason_name(ssd.force_reason))));
+                    std::string(
+                        aura::orch::security_schedule_force_reason_name(ssd.force_reason))));
         }
         // Soft path: fall through (metric-only — counters always bump).
     }
@@ -1094,7 +1095,8 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             return std::unexpected(aura::core::AuraError(
                 aura::core::AuraErrorKind::ResourceQuotaExceeded,
                 std::string("AdmissionRejected: security-schedule:") +
-                    std::string(aura::orch::security_schedule_force_reason_name(ssd.force_reason))));
+                    std::string(
+                        aura::orch::security_schedule_force_reason_name(ssd.force_reason))));
         }
     }
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
