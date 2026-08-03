@@ -234,12 +234,94 @@ static void ac10_panic_state_source_cite() {
           "AC10: gc_deferred_for_evaluator has evaluator_id signature");
 }
 
+// ── Issue #2596: production default AURA_MOVING_UNTRACKED=hard ─────────────
+//
+// Aligns with Moving default ON (#2256) under production security defaults.
+// Closes silent-UAF risk: #2256 made Moving production default ON but
+// #2495 only hard-aborted when explicitly env=hard. Production lock
+// forces the hard abort path so incomplete-remap always blocks under
+// production, with explicit env=off as the operator override.
+//
+// AC11: apply_production_security_defaults locks pref to 1 (hard) when
+//        production active (sandbox != off) AND env unset.
+// AC12: AURA_MOVING_UNTRACKED=off under production keeps Soft (operator
+//        override — AC3 explicit off wins).
+// AC13: AURA_MOVING_UNTRACKED=hard under Soft / sandbox=off forces hard
+//        (operator override even in dev — env always wins).
+// AC14: Soft / AURA_SANDBOX=off + env unset keeps observe-only
+//        (pref stays at default -1; no hard abort).
+// AC15: Additive query keys source-cite (moving-untracked-production-hard
+//        + moving-untracked-external-roots-total on lifetime-contract-snapshot).
+static void ac11_production_default_hard() {
+    std::println("\n--- #2596 AC11: production default locks pref=1 (hard) ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(hh.find("AURA_MOVING_UNTRACKED") != std::string::npos,
+          "AC11: apply_production_security_defaults parses AURA_MOVING_UNTRACKED");
+    CHECK(hh.find("Issue #2596") != std::string::npos,
+          "AC11: apply_production_security_defaults cites #2596");
+    CHECK(hh.find("production_default: lock to hard when unset") != std::string::npos,
+          "AC11: production-default lock to hard when env unset");
+    CHECK(hh.find("g_moving_untracked_hard_abort_pref.store(1") != std::string::npos,
+          "AC11: locks pref to 1 (hard) under production");
+    CHECK(hh.find("g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) < 0") !=
+              std::string::npos,
+          "AC11: only locks when pref is unset (< 0)");
+}
+
+static void ac12_env_off_operator_override() {
+    std::println("\n--- #2596 AC12: AURA_MOVING_UNTRACKED=off overrides production ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(hh.find("env_pref != -1") != std::string::npos,
+          "AC12: explicit env always wins (operator override branch)");
+    CHECK(hh.find("env_pref == 0") != std::string::npos || hh.find("off") != std::string::npos,
+          "AC12: env=off branch stored as Soft (operator override)");
+    CHECK(hh.find("Operator env always wins (AC3)") != std::string::npos,
+          "AC12: explicit off comment matches AC3");
+}
+
+static void ac13_env_hard_under_soft() {
+    std::println("\n--- #2596 AC13: env=hard under Soft forces hard ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(hh.find("hard") != std::string::npos,
+          "AC13: env=hard recognized (under Soft also forces hard)");
+    CHECK(hh.find("g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed)") !=
+              std::string::npos,
+          "AC13: env=hard stores pref=1 even under dev_off");
+}
+
+static void ac14_soft_unset_keeps_observe() {
+    std::println("\n--- #2596 AC14: Soft + env unset keeps observe-only ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(hh.find("else if (!dev_off)") != std::string::npos,
+          "AC14: production-default branch gated on !dev_off");
+    CHECK(hh.find("dev_off = sandbox_e") != std::string::npos,
+          "AC14: dev_off is the sandbox=off sentinel (matches #2076)");
+}
+
+static void ac15_query_keys_source_cite() {
+    std::println("\n--- #2596 AC15: additive query keys source-cite ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(obs.find("moving-untracked-production-hard") != std::string::npos ||
+              obs.find("moving_untracked_production_hard") != std::string::npos,
+          "AC15: lifetime-contract-snapshot exposes production-hard flag");
+    CHECK(obs.find("moving-untracked-external-roots-total") != std::string::npos ||
+              obs.find("moving_untracked_external_roots_total") != std::string::npos,
+          "AC15: lifetime-contract-snapshot exposes untracked counter");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("g_moving_untracked_hard_abort_pref{-1}") != std::string::npos,
+          "AC15: arena.ixx declares pref with default -1 (unset)");
+    CHECK(arena.find("Issue #2596") != std::string::npos,
+          "AC15: arena.ixx cites #2596 (production-default alignment)");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
         "=== Issue #2595: unify densify success gate (extends #2495 test file per #81967) ===");
+    std::println("=== Issue #2596: production default AURA_MOVING_UNTRACKED=hard (extends #2495 "
+                 "test file per #81967) ===");
     ac1_source_cite_live_compact_result();
     ac3_soft_zero_extra_work();
     ac4_query_stats_surface();
@@ -249,6 +331,11 @@ int main() {
     ac8_unified_gate_fail_counter();
     ac9_phase5_driver_wiring();
     ac10_panic_state_source_cite();
+    ac11_production_default_hard();
+    ac12_env_off_operator_override();
+    ac13_env_hard_under_soft();
+    ac14_soft_unset_keeps_observe();
+    ac15_query_keys_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
