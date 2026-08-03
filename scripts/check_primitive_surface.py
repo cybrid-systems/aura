@@ -57,17 +57,15 @@ ALLOWLIST: frozenset[str] = frozenset()
 
 # Issue #1448: SlimSurface target for public engine primitives (add() names).
 TARGET_BUDGET = 420
-# Interim hard ceiling ratchets down as demotion batches land (#1449).
-# After dirty/render demotion (~573 total). Hard-fail only on growth past this.
-# Raised 520→521 after #1907 (reflect/EDSL bridge public surface +1).
-# Raised 521→523 after #1914 (query:node-provenance + query:last-mutation-provenance
-# diagnostic hashes for AI hygiene root-cause; arg-taking, not engine:metrics-only).
-INTERIM_HARD_CEILING = 535  # bumped 534→535 for #2214 tui:present-dirty
+# Interim hard ceiling ratchets down as demotion batches land (#1449 / #2629).
+# Hard-fail only on growth past this. After #2625–#2628 hard removals
+# (UI/demo wrappers + Issue #1438 deprecated purge) public surface is ~469;
+# lock growth at 500 (was 535).
+INTERIM_HARD_CEILING = 500
 
 # Domain / vertical packs — counted in total inventory; *core* budget
-# (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
+# (→ ≤420) excludes them.
 DOMAIN_PREFIXES: tuple[str, ...] = (
-    "eda:",
     "verify:",
     "git-",
     "tcp-",
@@ -77,37 +75,17 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
     "synthesize:",
 )
 
-# Issue #1965 cycle 2 — formalize which domain prefixes are CORE vs DEFERRED.
-# - "core"     = essential for production compiler / runtime, keep in codebase.
-# - "deferred" = commercial vertical / UI / integration / AI feature — mark for
-#                follow-up issues (filed in cycle 3 governance doc).
-# Rationale:
-#   - verify:    formal verification integration (safety-critical, keep).
-#   - channel:   cross-fiber messaging (agent framework, keep).
-#   - tui:       terminal UI (UI vertical) — KEEP deferred, #1967: gated by
-#                AURA_ENABLE_TUI + COMMERCIAL_DOMAIN_BUDGETS["tui:"].
-#   - auto-evolve-: self-evolution AI — KEEP deferred, #1969: gated by
-#                AURA_ENABLE_AUTO_EVOLVE + COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"].
-#   - git-:      git integration — KEEP deferred, #1970: gated by
-#                AURA_ENABLE_GIT + COMMERCIAL_DOMAIN_BUDGETS["git-"].
-#   - terminal:  terminal ops — KEEP deferred, #1971: gated by
-#                AURA_ENABLE_TERMINAL + COMMERCIAL_DOMAIN_BUDGETS["terminal:"]
-#                (Phase-A deprecated no-ops per #1351; real APIs are hyphenated).
-#   - seva:      service evaluation — KEEP deferred, #1972: gated by
-#                AURA_ENABLE_SEVA + COMMERCIAL_DOMAIN_BUDGETS["seva:"].
-#   - strategy:  strategy DSL — KEEP deferred, #1973: gated by
-#                AURA_ENABLE_STRATEGY + COMMERCIAL_DOMAIN_BUDGETS["strategy:"].
-#   - synthesize: synthesis — KEEP deferred, #1974: gated by
-#                AURA_ENABLE_SYNTHESIZE + COMMERCIAL_DOMAIN_BUDGETS["synthesize:"].
-#   - tcp-:      TCP networking — KEEP deferred, #1975: gated by
-#                AURA_ENABLE_TCP + COMMERCIAL_DOMAIN_BUDGETS["tcp-"].
-#   - m4-:       M4 linear-type stubs (#108) — KEEP deferred, #1976: gated by
-#                AURA_ENABLE_M4 + COMMERCIAL_DOMAIN_BUDGETS["m4-"]
-#                (not the m4 macro processor; naming is historical).
+# Issue #1965 cycle 2 / #2629 — CORE vs DEFERRED domain prefixes.
+# - "core"     = essential for production compiler / runtime.
+# - "deferred" = gated commercial verticals that still ship a surface.
+# Retired vertical packs are intentionally absent — no DOMAIN_STATUS /
+# budget keys (see #2625–#2627). Remaining deferred packs keep
+# AURA_ENABLE_* gates + commercial budgets:
+#   git- (#1970), strategy: (#1973), synthesize: (#1974),
+#   tcp- (#1975), m4- (#1976).
 DOMAIN_STATUS: dict[str, str] = {
     "verify:": "core",
     "channel:": "core",
-    "eda:": "deferred",
     "git-": "deferred",
     "strategy:": "deferred",
     "synthesize:": "deferred",
@@ -115,12 +93,11 @@ DOMAIN_STATUS: dict[str, str] = {
     "m4-": "deferred",
 }
 
-# Issue #1967: per-prefix commercial / UI domain budgets.
-# Deferred DOMAIN_STATUS prefixes that are KEPT (not deleted) must not grow
-# without an intentional budget raise in this map + PR justification.
+# Issue #1967 / #2629: per-prefix commercial domain budgets.
+# Only domains that still exist on the public surface. Growth requires
+# an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "eda:": 13,  # #1968 — EDA vertical retired 4.4; budget kept as zero-count placeholder for legacy test expectations
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
     "strategy:": 4,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
     "synthesize:": 4,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE
