@@ -195,12 +195,7 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
 # Issue #2626: AURA_ENABLE_TUI retired (tui:* surface removed).
 
 
-# Issue #1969: auto-evolve-* self-evolution AI vertical (deferred). Default ON
-# for agent closed-loop tests; slim builds: -DAURA_ENABLE_AUTO_EVOLVE=OFF
-# (see docs/auto-evolve.md). Only the 7 auto-evolve-* names are gated;
-# agent:/strategy: co-registered in the same TU stay available.
-option(AURA_ENABLE_AUTO_EVOLVE
-       "Register auto-evolve-* domain primitives (self-evo vertical, #1969)" ON)
+# Issue #2627: AURA_ENABLE_AUTO_EVOLVE retired (auto-evolve-* removed).
 
 # Issue #1970: git-* integration vertical (deferred). Default ON for
 # production-sweep / git tooling tests; slim builds: -DAURA_ENABLE_GIT=OFF
@@ -209,10 +204,7 @@ option(AURA_ENABLE_GIT "Register git-* domain primitives (integration, #1970)" O
 
 # Issue #2626: AURA_ENABLE_TERMINAL retired (terminal:* surface removed).
 
-# Issue #1972: seva:* service-evaluation commercial vertical (deferred).
-# Default ON for OpenClaw / demo metrics tests; slim:
-# -DAURA_ENABLE_SEVA=OFF (see docs/seva.md).
-option(AURA_ENABLE_SEVA "Register seva:* domain primitives (commercial, #1972)" ON)
+# Issue #2627: AURA_ENABLE_SEVA retired (seva:* demo wrappers removed).
 
 # Issue #1974: synthesize:* synthesis commercial vertical (deferred).
 # Default ON for synthesize/PRNG/workspace-swap tests; slim:
@@ -254,20 +246,10 @@ aura_test_compile_options(aura)
 
 # Issue #1967–#1976: per-source commercial/integration vertical flags
 # (avoids PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
-if(AURA_ENABLE_AUTO_EVOLVE)
-    set(_AURA_ENABLE_AUTO_EVOLVE_VAL 1)
-else()
-    set(_AURA_ENABLE_AUTO_EVOLVE_VAL 0)
-endif()
 if(AURA_ENABLE_GIT)
     set(_AURA_ENABLE_GIT_VAL 1)
 else()
     set(_AURA_ENABLE_GIT_VAL 0)
-endif()
-if(AURA_ENABLE_SEVA)
-    set(_AURA_ENABLE_SEVA_VAL 1)
-else()
-    set(_AURA_ENABLE_SEVA_VAL 0)
 endif()
 if(AURA_ENABLE_SYNTHESIZE)
     set(_AURA_ENABLE_SYNTHESIZE_VAL 1)
@@ -289,18 +271,13 @@ if(AURA_ENABLE_M4)
 else()
     set(_AURA_ENABLE_M4_VAL 0)
 endif()
-# compile.cpp hosts both eda:* (p34/p35) and seva:* (p59–p62) — both flags.
-set_source_files_properties(
-    src/compiler/evaluator_primitives_compile.cpp
-    PROPERTIES COMPILE_DEFINITIONS
-               "AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL}")
-# agent.cpp: auto-evolve (#1969) + synthesize (#1974) + strategy: (#1973).
+# agent.cpp: synthesize (#1974) + strategy: (#1973).
 # agent:/intend/define-strategy co-registered stay always on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_agent.cpp
     PROPERTIES
         COMPILE_DEFINITIONS
-        "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL};AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL};AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL}")
+        "AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL};AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL}")
 # io.cpp: git-* (#1970) + tcp-* (#1975). getenv/http/sys stay on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_io.cpp
@@ -310,10 +287,7 @@ set_source_files_properties(
 set_source_files_properties(
     src/compiler/evaluator_primitives_math.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_M4=${_AURA_ENABLE_M4_VAL}")
-message(STATUS
-        "auto-evolve-* domain: AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL} (#1969)")
 message(STATUS "git-* domain: AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL} (#1970)")
-message(STATUS "seva:* domain: AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL} (#1972)")
 message(STATUS
         "strategy:* domain: AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL} (#1973)")
 message(STATUS

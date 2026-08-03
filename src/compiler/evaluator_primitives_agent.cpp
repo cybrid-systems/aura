@@ -1,11 +1,7 @@
-// evaluator_primitives_agent.cpp — P0 step 18: auto-evolve / synthesize / intend / strategy
+// evaluator_primitives_agent.cpp — P0 step 18: agent / synthesize / intend / strategy
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 //
-// Issue #1969: auto-evolve-* is a commercial self-evolution AI vertical
-// (DOMAIN_STATUS deferred). The 7 auto-evolve-* names are gated by
-// AURA_ENABLE_AUTO_EVOLVE (CMake option, default ON). agent:running? /
-// agent:tick stay available when the flag is OFF (agent:tick degrades when
-// auto-evolve-tick/once are unregistered). See docs/auto-evolve.md.
+// Issue #2627: auto-evolve-* convenience prims removed; agent:tick is the loop surface.
 // Issue #1973: strategy:* (4 names) gated by AURA_ENABLE_STRATEGY in
 // register_auto_evolve_primitives; query:strategy-evolution-stats stays on.
 // See docs/strategy.md.
@@ -44,9 +40,6 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
-#ifndef AURA_ENABLE_AUTO_EVOLVE
-#define AURA_ENABLE_AUTO_EVOLVE 1
-#endif
 #ifndef AURA_ENABLE_SYNTHESIZE
 #define AURA_ENABLE_SYNTHESIZE 1
 #endif
@@ -258,146 +251,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }});
     };
 
-#if AURA_ENABLE_AUTO_EVOLVE
-    // Issue #97 Action 2: Auto-evolve closed loop
-    // (auto-evolve-once detect-fn fix-fn) → runs one cycle:
-    //   1. calls detect-fn → list of "gap" records
-    //   2. for each gap, calls fix-fn gap → #t if fixed
-    //   3. returns the number of fixes
-    //
-    // Issue #1713: ClosureIds must stay live until apply_closure
-    // (shared agent_cid_live in anonymous namespace).
-    // Issue #1969: commercial self-evo vertical (AURA_ENABLE_AUTO_EVOLVE).
-
-    add("auto-evolve-once", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_closure(a[0]) || !is_closure(a[1]))
-            return make_int(0);
-        auto detect_cid = as_closure_id(a[0]);
-        auto fix_cid = as_closure_id(a[1]);
-        // Issue #1713: refuse apply on freed detect/fix (UAF / wrong-fn).
-        if (!agent_cid_live(ev, detect_cid) || !agent_cid_live(ev, fix_cid)) {
-            agent_note_closure_freed_tick(ev);
-            return make_int(0);
-        }
-        auto detect_result = ev.apply_closure(detect_cid, {});
-        if (!detect_result)
-            return make_int(0);
-        EvalValue current = *detect_result;
-        std::int64_t fixed = 0;
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= ev.pairs_.size())
-                break;
-            auto gap = ev.pairs_[idx].car;
-            // Re-check fix before each apply (may free mid-list).
-            if (!agent_cid_live(ev, fix_cid)) {
-                agent_note_closure_freed_tick(ev);
-                break;
-            }
-            auto fix_result = ev.apply_closure(fix_cid, {gap});
-            if (fix_result) {
-                if (is_bool(*fix_result) && as_bool(*fix_result))
-                    ++fixed;
-            }
-            current = ev.pairs_[idx].cdr;
-        }
-        return make_int(fixed);
-    });
-
-    // (auto-evolve-loop "interval" detect-fn fix-fn) → starts background loop
-    // Lifetime contract (#1713): detect-fn / fix-fn must remain live for the
-    // whole loop. Freeing either stops the next tick gracefully.
-    add("auto-evolve-loop", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 3 || !is_string(a[0]) || !is_closure(a[1]) || !is_closure(a[2]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_int(0);
-        double interval = 1.0;
-        try {
-            interval = std::stod(ev.string_heap_[idx]);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Rate-limit interval parse failure is
-            // non-user-visible; default of 1.0 below is the documented
-            // behavior. Upgrading to PRIM_ERROR would force callers to
-            // wrap a system-internal call.
-        }
-        if (interval < 0.1)
-            interval = 0.1;
-        ev.auto_evolve_running_ = true;
-        ev.auto_evolve_interval_ = interval;
-        ev.auto_evolve_detect_closure_ = as_closure_id(a[1]);
-        ev.auto_evolve_fix_closure_ = as_closure_id(a[2]);
-        ev.auto_evolve_cycle_count_ = 0;
-        ev.auto_evolve_total_fixed_ = 0;
-        return make_int(0);
-    });
-
-    add("auto-evolve-stop", [&ev](const auto&) -> EvalValue {
-        if (!ev.auto_evolve_running_)
-            return make_bool(false);
-        ev.auto_evolve_running_ = false;
-        return make_bool(true);
-    });
-
-    add("auto-evolve-running?",
-        [&ev](const auto&) -> EvalValue { return make_bool(ev.auto_evolve_running_); });
-
-    add("auto-evolve-tick", [&ev](const auto&) -> EvalValue {
-        if (!ev.auto_evolve_running_)
-            return make_bool(false);
-        if (ev.auto_evolve_detect_closure_ == 0 || ev.auto_evolve_fix_closure_ == 0)
-            return make_bool(false);
-        // Issue #1713: validate stored ClosureIds still live before apply.
-        if (!agent_cid_live(ev, ev.auto_evolve_detect_closure_) ||
-            !agent_cid_live(ev, ev.auto_evolve_fix_closure_)) {
-            ev.auto_evolve_running_ = false;
-            ev.auto_evolve_detect_closure_ = 0;
-            ev.auto_evolve_fix_closure_ = 0;
-            agent_note_closure_freed_tick(ev);
-            return make_bool(false);
-        }
-        // Issue #1205 Phase 1: GC safepoint on long-running agent tick.
-        if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
-            fn();
-        ++ev.auto_evolve_cycle_count_;
-        // Issue #1712: removed production debug stderr prints on every tick
-        // (log pollution + stdio lock cost on the agent background path).
-        auto detect_result = ev.apply_closure(ev.auto_evolve_detect_closure_, {});
-        if (!detect_result)
-            return make_bool(true);
-        EvalValue current = *detect_result;
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= ev.pairs_.size())
-                break;
-            auto gap = ev.pairs_[idx].car;
-            // Re-check fix mid-tick if agent freed it during detect.
-            if (!agent_cid_live(ev, ev.auto_evolve_fix_closure_)) {
-                ev.auto_evolve_running_ = false;
-                ev.auto_evolve_detect_closure_ = 0;
-                ev.auto_evolve_fix_closure_ = 0;
-                agent_note_closure_freed_tick(ev);
-                return make_bool(false);
-            }
-            auto fix_result = ev.apply_closure(ev.auto_evolve_fix_closure_, {gap});
-            if (fix_result) {
-                if (is_bool(*fix_result) && as_bool(*fix_result))
-                    ++ev.auto_evolve_total_fixed_;
-            }
-            current = ev.pairs_[idx].cdr;
-        }
-        return make_bool(true);
-    });
-
-    add("auto-evolve-cycle-count", [&ev](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(ev.auto_evolve_cycle_count_));
-    });
-
-    add("auto-evolve-total-fixed", [&ev](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(ev.auto_evolve_total_fixed_));
-    });
-#endif // AURA_ENABLE_AUTO_EVOLVE
+    // Issue #2627: auto-evolve-* convenience prims removed; agent:tick keeps loop state.
 
     // ── Issues #1327 Phase 1: agent service bridge (single entry points) ──
     // Full SelfEvolutionService C++ move is multi-week; Phase 1 exposes
@@ -411,22 +265,76 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return make_bool(ev.auto_evolve_running_);
     });
 
+    // Issue #2627: one-shot / loop body inlined (was auto-evolve-tick / once).
     add("agent:tick", [&ev](const auto& a) -> EvalValue {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->agent_tick_total.fetch_add(1, std::memory_order_relaxed);
-        // Prefer the background-loop tick if running; else accept
-        // (detect-fn fix-fn) like auto-evolve-once for one-shot.
+        auto run_once = [&](std::int64_t detect_cid, std::int64_t fix_cid) -> EvalValue {
+            if (!agent_cid_live(ev, detect_cid) || !agent_cid_live(ev, fix_cid)) {
+                agent_note_closure_freed_tick(ev);
+                return make_int(0);
+            }
+            auto detect_result = ev.apply_closure(detect_cid, {});
+            if (!detect_result)
+                return make_int(0);
+            EvalValue current = *detect_result;
+            std::int64_t fixed = 0;
+            while (is_pair(current)) {
+                auto idx = as_pair_idx(current);
+                if (idx >= ev.pairs_.size())
+                    break;
+                auto gap = ev.pairs_[idx].car;
+                if (!agent_cid_live(ev, fix_cid)) {
+                    agent_note_closure_freed_tick(ev);
+                    break;
+                }
+                auto fix_result = ev.apply_closure(fix_cid, {gap});
+                if (fix_result && is_bool(*fix_result) && as_bool(*fix_result))
+                    ++fixed;
+                current = ev.pairs_[idx].cdr;
+            }
+            return make_int(fixed);
+        };
+        // Background loop state (legacy auto_evolve_* fields).
         if (ev.auto_evolve_running_) {
-            auto tick = ev.primitives().lookup("auto-evolve-tick");
-            if (tick)
-                return (*tick)(a);
-            return make_bool(false);
+            if (ev.auto_evolve_detect_closure_ == 0 || ev.auto_evolve_fix_closure_ == 0)
+                return make_bool(false);
+            if (!agent_cid_live(ev, ev.auto_evolve_detect_closure_) ||
+                !agent_cid_live(ev, ev.auto_evolve_fix_closure_)) {
+                ev.auto_evolve_running_ = false;
+                ev.auto_evolve_detect_closure_ = 0;
+                ev.auto_evolve_fix_closure_ = 0;
+                agent_note_closure_freed_tick(ev);
+                return make_bool(false);
+            }
+            if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
+                fn();
+            ++ev.auto_evolve_cycle_count_;
+            auto detect_result = ev.apply_closure(ev.auto_evolve_detect_closure_, {});
+            if (!detect_result)
+                return make_bool(true);
+            EvalValue current = *detect_result;
+            while (is_pair(current)) {
+                auto idx = as_pair_idx(current);
+                if (idx >= ev.pairs_.size())
+                    break;
+                auto gap = ev.pairs_[idx].car;
+                if (!agent_cid_live(ev, ev.auto_evolve_fix_closure_)) {
+                    ev.auto_evolve_running_ = false;
+                    ev.auto_evolve_detect_closure_ = 0;
+                    ev.auto_evolve_fix_closure_ = 0;
+                    agent_note_closure_freed_tick(ev);
+                    return make_bool(false);
+                }
+                auto fix_result = ev.apply_closure(ev.auto_evolve_fix_closure_, {gap});
+                if (fix_result && is_bool(*fix_result) && as_bool(*fix_result))
+                    ++ev.auto_evolve_total_fixed_;
+                current = ev.pairs_[idx].cdr;
+            }
+            return make_bool(true);
         }
-        if (a.size() >= 2) {
-            auto once = ev.primitives().lookup("auto-evolve-once");
-            if (once)
-                return (*once)(a);
-        }
+        if (a.size() >= 2 && is_closure(a[0]) && is_closure(a[1]))
+            return run_once(as_closure_id(a[0]), as_closure_id(a[1]));
         return make_int(0);
     });
 

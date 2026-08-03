@@ -46,7 +46,8 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     hh = _read("src/compiler/security_defaults.hh")
-    arena = _read("src/core/arena.ixx")
+    stats_h = _read("src/core/arena_auto_policy_stats.h")
+    _read("src/core/arena.ixx")
     _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/core/test_moving_densify_fail_closed_2495.cpp")
     build = _read("build.py")
@@ -80,7 +81,7 @@ def main() -> int:
     # are deferred to a follow-up issue; this ship closes the P0
     # production-lock gap (security_defaults.hh step 14) which is the
     # primary AC1-AC4 contract.
-    must("g_moving_untracked_hard_abort_pref{-1}", "AC15", arena)
+    must("g_moving_untracked_hard_abort_pref{-1}", "AC15", stats_h)
 
     # Test additions (per #81967 — same src-aligned test file as #2495 / #2595).
     must("Issue #2596", "test", test)

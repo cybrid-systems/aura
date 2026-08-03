@@ -37,7 +37,6 @@
     "control"
     "char"
     "mutation"
-    "auto-evolve"
     "workspace-query"
     "mutate"
     "workspace"

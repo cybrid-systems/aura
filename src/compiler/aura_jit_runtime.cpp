@@ -1890,8 +1890,7 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
     }
 
     if (aot_metrics()) {
-        aot_metrics()->live_closure_sync_remount_ok_total.fetch_add(ok,
-                                                                     std::memory_order_relaxed);
+        aot_metrics()->live_closure_sync_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
         aot_metrics()->live_closure_sync_remount_fail_total.fetch_add(fail,
                                                                       std::memory_order_relaxed);
     }

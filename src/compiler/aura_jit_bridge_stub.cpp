@@ -403,8 +403,7 @@ aura_remap_live_closures_after_reemit(const std::uint32_t* /*stable_ids*/, std::
 // no live closures / no force-JIT demotion path, just zero out counters
 // (matches production zero-extra-work contract on idle paths).
 extern "C" __attribute__((weak)) void
-aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
-                                      std::uint64_t* fail_count) {
+aura_sync_remount_named_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {
     if (ok_count)
         *ok_count = 0;
     if (fail_count)

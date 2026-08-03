@@ -103,11 +103,12 @@ int main() {
             aot = cs.eval("(compile:aot-stats)");
         CHECK(aot && is_hash(*aot), "aot-stats hash");
 
-        auto seva = cs.eval("(seva:achieve-coverage \"g\" 100)");
-        CHECK(seva.has_value() && (is_hash(*seva) || is_void(*seva)), "achieve-coverage ok");
-
-        auto demo = cs.eval("(seva:run-demo-with-metrics)");
-        CHECK(demo && is_hash(*demo), "run-demo-with-metrics hash");
+        // Issue #2627: seva:* demo wrappers removed; audit query remains.
+        auto seva = cs.eval("(engine:metrics \"query:seva-audit-log\")");
+        if (!seva)
+            seva = cs.eval("(stats:get \"query:seva-audit-log\")");
+        CHECK(seva.has_value() && (is_hash(*seva) || is_void(*seva) || is_string(*seva)),
+              "seva-audit-log ok");
 
         auto bi = cs.eval("(engine:metrics \"compile:bidirectional-stats\")");
         if (!bi)

@@ -68,11 +68,9 @@ INTERIM_HARD_CEILING = 535  # bumped 534→535 for #2214 tui:present-dirty
 # (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
 DOMAIN_PREFIXES: tuple[str, ...] = (
     "eda:",
-    "seva:",
     "verify:",
     "git-",
     "tcp-",
-    "auto-evolve-",
     "channel:",
     "m4-",
     "strategy:",
@@ -110,9 +108,7 @@ DOMAIN_STATUS: dict[str, str] = {
     "verify:": "core",
     "channel:": "core",
     "eda:": "deferred",
-    "auto-evolve-": "deferred",
     "git-": "deferred",
-    "seva:": "deferred",
     "strategy:": "deferred",
     "synthesize:": "deferred",
     "tcp-": "deferred",
@@ -125,9 +121,7 @@ DOMAIN_STATUS: dict[str, str] = {
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "eda:": 13,  # #1968 — EDA vertical retired 4.4; budget kept as zero-count placeholder for legacy test expectations
-    "auto-evolve-": 7,  # #1969 — self-evo AI vertical; AURA_ENABLE_AUTO_EVOLVE
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
-    "seva:": 5,  # #1972 — SEVA / OpenClaw goal primitives; AURA_ENABLE_SEVA
     "strategy:": 4,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
     "synthesize:": 4,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE
     "tcp-": 4,  # #1975 — TCP sockets; AURA_ENABLE_TCP

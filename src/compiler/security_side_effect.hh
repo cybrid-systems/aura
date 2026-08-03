@@ -67,8 +67,9 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     if (name.starts_with("exec:") || name.starts_with("exec-") || name.starts_with("syscall") ||
         name.starts_with("sys-exec"))
         return kEffectExec;
-    if (name.starts_with("agent:") || name.starts_with("auto-evolve") ||
-        name.starts_with("synthesize:") || name.starts_with("strategy:"))
+    // Issue #2627: auto-evolve-* removed; agent: remains the self-evo surface.
+    if (name.starts_with("agent:") || name.starts_with("synthesize:") ||
+        name.starts_with("strategy:"))
         return kEffectMutate; // self-mod / agent surfaces treated as mutate-class
     return kEffectNone;
 }

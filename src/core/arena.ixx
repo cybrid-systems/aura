@@ -532,10 +532,9 @@ export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/de
 // when objects_moved > 0 && untracked_kept_count > 0. Agent dashboards
 // surface untracked-buffer accumulation.
 export inline std::atomic<std::uint64_t> g_moving_untracked_external_roots_total{0};
-// Issue #2495: AURA_MOVING_UNTRACKED=hard → abort under production security
-// defaults when densify observes untracked candidates. Off / unset keeps
-// Soft semantics (success metrics suppressed but no abort) for unit path.
-export inline std::atomic<int> g_moving_untracked_hard_abort_pref{-1};
+// Issue #2495/#2596: g_moving_untracked_hard_abort_pref defined in
+// arena_auto_policy_stats.h (header form for security_defaults.hh).
+// Visible here via #include in global fragment (namespace aura::ast).
 
 export inline void set_moving_compact_enabled(int enabled) noexcept {
     g_moving_compact_enabled_pref.store(enabled ? 1 : 0, std::memory_order_release);

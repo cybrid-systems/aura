@@ -3,8 +3,7 @@
 // reduced). aura.compiler.evaluator module partition; registered via
 // evaluator_primitives_registry.cpp.
 //
-// Issue #1972: five seva:* adds in register_compile_p59–p62. Gated by
-// AURA_ENABLE_SEVA (see docs/seva.md). query:seva-audit-log stays always on.
+// Issue #2627: seva:* demo wrappers removed. query:seva-audit-log stays on.
 
 module;
 
@@ -16,9 +15,6 @@ module;
 #include "basis_points.h"
 #include "security_capabilities.h"
 
-#ifndef AURA_ENABLE_SEVA
-#define AURA_ENABLE_SEVA 1
-#endif
 
 module aura.compiler.evaluator;
 
@@ -5463,159 +5459,22 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 59 (orig 4947-5042)
 void CompilePrims::register_compile_p59(PrimRegistrar add, Evaluator& ev) {
-#if !AURA_ENABLE_SEVA
+    // Issue #2627: seva:* demo wrappers removed.
     (void)add;
     (void)ev;
-#else
-    // ── Issue #445: SEVA high-level goal primitives ──────
-    //
-    // The SEVA demo (#442) is the Aura-side verification
-    // loop. The OpenClaw integration (#445) is the LLM
-    // agent that drives the loop via natural-language
-    // goals. This block ships the Aura-side primitives
-    // that the OpenClaw skill/plugin calls into. Each
-    // primitive wraps 1+ existing lower-level operations
-    // (mutate:*, verify:*, query:*) so the agent doesn't
-    // need to know the Aura primitives in detail.
-    //
-    // The primitives are deliberately conservative: they
-    // return hashes (not raw lists) so the audit log
-    // can be replayed post-hoc, and they never call into
-    // destructive operations without a guard.
-    //
-    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
-    //
-    // (seva:achieve-coverage name target-pct) — the
-    // canonical SEVA goal. Reads the current coverage
-    // (via verify-dirty-stats), compares to target,
-    // returns a hash with the gap (or zero if already
-    // met). The actual mutation loop is driven by the
-    // OpenClaw agent, not by this primitive — the agent
-    // decides which mutate:* primitive to call next.
-    add("seva:achieve-coverage", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
-            return make_void();
-        auto name_idx = as_string_idx(a[0]);
-        auto target = as_int(a[1]);
-        if (name_idx >= ev.string_heap_.size())
-            return make_void();
-        // Read the current coverage hole count via
-        // the existing verify-dirty primitive
-        // (#437 / #469). Issue #1840: acquire-load accessor.
-        std::uint64_t current_dirty = 0;
-        if (auto* ws = ev.workspace_flat()) {
-            current_dirty = ws->verify_coverage_dirty_total();
-        }
-        // The "achievement" metric: dirty holes / 100 =
-        // percent coverage hole. If current_dirty == 0
-        // and target == 100, the goal is met.
-        // The primitive returns a hash with the gap
-        // analysis; the agent uses it to drive the loop.
-        std::int64_t gap = (target >= 100) ? 0 : static_cast<std::int64_t>(current_dirty);
-        std::int64_t achieved = (gap == 0) ? 1 : 0;
-        // name as a string field
-        auto name_idx_in_heap = ev.string_heap_.size();
-        ev.string_heap_.push_back(ev.string_heap_[name_idx]);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"name", make_string(name_idx_in_heap)},
-            {"target-pct", make_int(target)},
-            {"current-dirty", make_int(static_cast<std::int64_t>(current_dirty))},
-            {"gap", make_int(gap)},
-            {"achieved", make_int(achieved)},
-        };
-        return build_kv_hash(ev, kv);
-    });
-#endif // AURA_ENABLE_SEVA
 }
 
 // Issue #909 compile part 60 (orig 5043-5111)
 void CompilePrims::register_compile_p60(PrimRegistrar add, Evaluator& ev) {
-#if !AURA_ENABLE_SEVA
+    // Issue #2627: seva:* demo wrappers removed.
     (void)add;
     (void)ev;
-#else
-    // (seva:fix-reset-bugs) — read the current verify-
-    // dirty state, identify reset-related holes, return
-    // the list of node IDs the agent should target.
-    // The actual mutate call is the agent's job; the
-    // primitive just identifies the targets.
-    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
-    add("seva:fix-reset-bugs", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat())
-            return make_void();
-        // For now: query verify-dirty-stats and return a
-        // hash with the breakdown by reason. The agent
-        // reads this and decides which (mutate:set-body
-        // / mutate:replace-pattern) call to make next.
-        // Issue #1840: single logical snapshot of the 4 counters
-        // (pre-#1840: 4 independent relaxed loads → mixed epochs).
-        std::uint64_t assertion = 0, coverage = 0, sva = 0, cex = 0;
-        if (auto* ws = ev.workspace_flat()) {
-            const auto snap = ws->snapshot_verify_dirty_totals();
-            assertion = snap.assertion;
-            coverage = snap.coverage;
-            sva = snap.sva;
-            cex = snap.formal_cex;
-        }
-        std::int64_t reset_holes = static_cast<std::int64_t>(assertion);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"assertion-dirty", make_int(static_cast<std::int64_t>(assertion))},
-            {"coverage-dirty", make_int(static_cast<std::int64_t>(coverage))},
-            {"sva-dirty", make_int(static_cast<std::int64_t>(sva))},
-            {"formal-cex-dirty", make_int(static_cast<std::int64_t>(cex))},
-            {"reset-holes", make_int(reset_holes)},
-        };
-        return build_kv_hash(ev, kv);
-    });
-#endif // AURA_ENABLE_SEVA
 }
 
 // Issue #909 compile part 61 (orig 5112-5221)
 void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
-
-#if AURA_ENABLE_SEVA
-    // (seva:generate-regression) — emit a regression
-    // script (in Aura syntax) from the current state.
-    // For the MVP this returns a string with the
-    // testbench skeleton; the agent fills in the
-    // specifics. The string is in ev.string_heap_.
-    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
-    add("seva:generate-regression", [&ev](const auto&) -> EvalValue {
-        auto sidx = ev.string_heap_.size();
-        std::string script = ";; Auto-generated regression script (seva:generate-regression)\n"
-                             ";; Step 1: re-load the workspace\n"
-                             "(set-code \"<paste your DUT spec here>\")\n"
-                             ";; Step 2: run the verification loop\n"
-                             "(eval-current)\n"
-                             ";; Step 3: query readiness\n"
-                             "(query:edsl-readiness)\n"
-                             ";; Step 4: query verify-dirty\n"
-                             "(query:verify-dirty-stats)\n";
-        ev.string_heap_.push_back(script);
-        return make_string(sidx);
-    });
-
-    // (seva:approve-mutation id flag) — safety gate.
-    // For the MVP this is a no-op that bumps a counter
-    // (the agent's audit trail records every mutation
-    // regardless). The flag "force" / "auto" / "deny"
-    // tells the system whether the agent has human
-    // approval for the mutation.
-    add("seva:approve-mutation", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto nid = as_int(a[0]);
-        std::string flag = "auto";
-        if (a.size() >= 2 && is_string(a[1])) {
-            auto fidx = as_string_idx(a[1]);
-            if (fidx < ev.string_heap_.size())
-                flag = ev.string_heap_[fidx];
-        }
-        bool approved = (flag == "force" || flag == "auto");
-        (void)nid;
-        return make_bool(approved);
-    });
-#endif // AURA_ENABLE_SEVA
+    (void)add;
+    // Issue #2627: seva:* demo wrappers removed; audit query retained.
 
     // (query:seva-audit-log) — Issue #445: the agent's
     // audit trail. Returns the recent mutations as a
@@ -5654,78 +5513,9 @@ void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 62 (orig 5222-5318)
 void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
-#if !AURA_ENABLE_SEVA
+    // Issue #2627: seva:run-demo-with-metrics removed.
     (void)add;
     (void)ev;
-#else
-    // (seva:run-demo-with-metrics) — Issue #446: collect
-    // standardized metrics for L4-L5 claims. Returns a
-    // hash with 6 fields covering the 5 metrics from the
-    // issue body (iterations / coverage-improvement /
-    // human-intervention / mutation-success-rate /
-    // time-breakdown) + the active-strategy. The time-
-    // breakdown is approximated as the lifetime
-    // auto-evolve-cycle-count (proxy for "iteration
-    // time"); real wall-time measurement is a follow-up
-    // (would need a start/end timestamp pair).
-    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
-    add("seva:run-demo-with-metrics", [&ev](const auto&) -> EvalValue {
-        // Issue #1841: compiler_metrics_ is non-owning (#1835
-        // ownership contract); active_strategy_ is under
-        // strategies_mtx_ (#1720/#1722). verify totals use
-        // snapshot_verify_dirty_totals (#1840).
-        std::uint64_t iterations = ev.auto_evolve_cycle_count_;
-        std::uint64_t mutations = 0;
-        std::uint64_t mutations_success = 0;
-        std::uint64_t verify_total = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            mutations = m->atomic_batch_commits.load(std::memory_order_relaxed);
-        }
-        if (auto* ws = ev.workspace_flat()) {
-            const auto snap = ws->snapshot_verify_dirty_totals();
-            verify_total = snap.assertion + snap.coverage;
-            // mutations_success approximated as the
-            // difference: total fixed - auto-evolve-fixed
-            // is hard to compute without a per-mutation
-            // outcome counter. For MVP: success-rate is
-            // derived from strategy pheromone (see below).
-        }
-        // Read strategy pheromone for success-rate.
-        std::uint64_t greedy_s = 0, bugfix_s = 0, minimal_s = 0;
-        std::uint64_t greedy_h = 0, bugfix_h = 0, minimal_h = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            greedy_s = m->strategy_greedy_successes.load(std::memory_order_relaxed);
-            bugfix_s = m->strategy_bugfix_successes.load(std::memory_order_relaxed);
-            minimal_s = m->strategy_minimal_successes.load(std::memory_order_relaxed);
-            greedy_h = m->strategy_greedy_hits.load(std::memory_order_relaxed);
-            bugfix_h = m->strategy_bugfix_hits.load(std::memory_order_relaxed);
-            minimal_h = m->strategy_minimal_hits.load(std::memory_order_relaxed);
-        }
-        std::uint64_t total_hits = greedy_h + bugfix_h + minimal_h;
-        std::uint64_t total_success = greedy_s + bugfix_s + minimal_s;
-        std::int64_t success_rate =
-            total_hits > 0 ? static_cast<std::int64_t>((total_success * 100) / total_hits) : 0;
-        std::int64_t human_intervention = 0; // MVP: agent runs autonomously
-        auto active_idx = ev.string_heap_.size();
-        {
-            // Issue #1720: active_strategy_ guarded by strategies_mtx_.
-            std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
-            ev.string_heap_.push_back(ev.active_strategy_.empty() ? std::string("none")
-                                                                  : ev.active_strategy_);
-        }
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"iterations-to-closure", make_int(static_cast<std::int64_t>(iterations))},
-            {"coverage-improvement", make_int(static_cast<std::int64_t>(verify_total))},
-            {"human-intervention-count", make_int(human_intervention)},
-            {"mutation-success-rate-pct", make_int(success_rate)},
-            {"mutations-total", make_int(static_cast<std::int64_t>(mutations))},
-            {"active-strategy", make_string(active_idx)},
-        };
-        return build_kv_hash(ev, kv);
-    });
-#endif // AURA_ENABLE_SEVA
 }
 
 // Issue #909 compile part 63 (orig 5319-5319)

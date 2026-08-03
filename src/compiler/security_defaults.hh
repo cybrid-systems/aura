@@ -15,10 +15,12 @@
 #include "compiler/pipeline_policy.hh"     // Issue #2213 tree-walker fallback production gate
 #include "core/gc_hooks.h"                 // Issue #2338: gc_defer production lock wire-up
 #include "core/capability_model.hh"
+#include "core/lifetime_pin.hh" // #2597 g_general_object_pin_required_pref
 #include "core/mutation_audit_wal.hh"
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_isolation.hh"
+#include "core/arena_auto_policy_stats.h" // #2596 g_moving_untracked_hard_abort_pref
 
 #include <atomic>
 #include <cstdio>

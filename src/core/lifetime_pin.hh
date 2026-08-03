@@ -6,6 +6,9 @@
 #define AURA_CORE_LIFETIME_PIN_HH
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <string_view>
 #include <cstdint>
 #include <mutex>
 #include <unordered_set>
@@ -35,6 +38,22 @@ inline LifetimePinStats& g_lifetime_pin_stats() noexcept {
     static LifetimePinStats s;
     return s;
 }
+
+// Issue #2496/#2597: AURA_GENERAL_OBJECT_PIN=required (header form for security_defaults).
+inline std::atomic<std::uint64_t> g_general_object_pin_required_enforced_total{0};
+inline std::atomic<int> g_general_object_pin_required_pref{-1};
+inline void apply_general_object_pin_required_env() noexcept {
+    const char* e = std::getenv("AURA_GENERAL_OBJECT_PIN");
+    if (!e || !*e)
+        return;
+    std::string_view v(e);
+    if (v == "required" || v == "1" || v == "true" || v == "yes" || v == "on") {
+        g_general_object_pin_required_pref.store(1, std::memory_order_release);
+    } else if (v == "off" || v == "0" || v == "false" || v == "no") {
+        g_general_object_pin_required_pref.store(0, std::memory_order_release);
+    }
+}
+
 
 class LifetimePin;
 
