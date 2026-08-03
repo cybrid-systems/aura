@@ -3724,6 +3724,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2540", aura::orch::kAgentMaxNoYieldIssue);
             insert_kv("issue-2540", aura::orch::kAgentMaxNoYieldIssue);
             insert_kv("agent-max-no-yield-wired", 1);
+            // Issue #2585: production default coop window — bumped once per
+            // spawn that injects the 50ms default under !dev_off (opt-out via
+            // AURA_AGENT_MAX_NO_YIELD_MS=0 keeps zero-cost).
+            insert_kv("agent-no-yield-default-applied-total",
+                      static_cast<std::int64_t>(
+                          os.agent_no_yield_default_applied_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2585", 2585);
+            insert_kv("issue-2585", 2585);
+            insert_kv("agent-no-yield-default-applied-wired", 1);
             // Issue #2543: orch self-throttle over aot-hot-update-health.
             insert_kv("orch-hot-update-health-throttle-total",
                       static_cast<std::int64_t>(os.orch_hot_update_health_throttle_total.load(

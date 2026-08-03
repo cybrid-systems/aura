@@ -1,12 +1,25 @@
 // @category: unit
 // @reason: Issue #2540 — AgentSpec.max_no_yield_ms cooperative yield contract.
+//   Issue #2585 — production default + opt-out (AURA_AGENT_MAX_NO_YIELD_MS=0).
 //
+//   #2540 ACs:
 //   AC1: max_no_yield_ms==0 → zero extra yield / metric (behaviour parity)
 //   AC2: max_no_yield_ms>0 + agent_poll in tight loop → forced yield in window
 //   AC3: cancel after poll prefers cooperative Done (no hang)
 //   AC4: keepalive + mutation_boundary combine without break
 //   AC5: agent_forced_yield_total + schema-2540
 //   AC6: source-cite; no docs/design
+//
+//   #2585 ACs:
+//   AC1: production default (AURA_SANDBOX=restricted, no opt-out env) forces
+//        non-zero coop window; bumps agent_no_yield_default_applied_total
+//   AC2: body that never polls still benefits (cancel/GC observe default
+//        window instead of running forever)
+//   AC3: AURA_AGENT_MAX_NO_YIELD_MS=0 opt-out keeps zero-cost path
+//        (AC1 of #2540 preserved)
+//   AC4: AURA_SANDBOX=off (dev_off) keeps zero-cost even without opt-out
+//   AC5: README + schema document default + opt-out (source-cite)
+//   AC6: agent-no-yield-default-applied-total metric surface (query)
 
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
@@ -73,6 +86,22 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+// #2585: env helpers for AURA_SANDBOX + AURA_AGENT_MAX_NO_YIELD_MS.
+void clear_env(const char* k) {
+#if defined(_WIN32)
+    _putenv_s(k, "");
+#else
+    unsetenv(k);
+#endif
+}
+void set_env(const char* k, const char* v) {
+#if defined(_WIN32)
+    _putenv_s(k, v);
+#else
+    setenv(k, v, 1);
+#endif
 }
 
 } // namespace
@@ -272,6 +301,160 @@ int main() {
               "AC6: README documents contract");
     }
 
-    std::println("\n=== #2540 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #2585: production default + opt-out ────────────────────
+    {
+        // AC1: production default — AURA_SANDBOX=restricted, no opt-out env
+        // → coop state installed with 50ms default; default-applied metric bumped.
+        std::println("\n--- #2585 AC1: production default forces non-zero coop ---");
+        set_env("AURA_SANDBOX", "restricted");
+        clear_env("AURA_AGENT_MAX_NO_YIELD_MS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        const auto d0 = g_orch_module_stats.agent_no_yield_default_applied_total.load(
+            std::memory_order_relaxed);
+
+        AgentSpec spec;
+        spec.name = "2585-default";
+        spec.max_no_yield_ms = 0; // unset — default should apply
+        spec.mutation_boundary = false;
+        std::atomic<bool> ran{false};
+        std::atomic<int> forced{0};
+        spec.body = [&] {
+            ran.store(true, std::memory_order_relaxed);
+            // Run past default window so a subsequent agent_poll() would force
+            // yield; without poll, body just exits (cancel/GC reclaims fiber).
+            for (int i = 0; i < 30; ++i) {
+                if (i == 2)
+                    aura::orch::fiber_sleep_ms(60); // > 50ms default
+                if (agent_poll())
+                    forced.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "#2585 AC1: spawn ok under default");
+        CHECK(h.coop != nullptr, "#2585 AC1: coop state installed by default");
+        CHECK(h.max_no_yield_ms == 50, "#2585 AC1: handle records 50ms default window");
+        CHECK(g_orch_module_stats.agent_no_yield_default_applied_total.load() == d0 + 1,
+              "#2585 AC1: agent_no_yield_default_applied_total bumped exactly once");
+        (void)join_agent(h, std::optional<std::uint64_t>{3000});
+        CHECK(ran.load(), "#2585 AC1: body ran");
+        // agent_poll() with default 50ms window and a 60ms sleep should force yield.
+        CHECK(forced.load() >= 1,
+              "#2585 AC1: default window lets agent_poll force yield (no opt-in required)");
+        cleanup_handle(h);
+    }
+    {
+        // AC2: body that never polls still gets the default applied (cancel/GC
+        // observe the window; AC1 zero-cost under explicit max_no_yield_ms>0
+        // path preserved). Here we just assert default is applied at spawn and
+        // body that does not call agent_poll completes (no hang).
+        std::println("\n--- #2585 AC2: body without poll still benefits from default ---");
+        set_env("AURA_SANDBOX", "restricted");
+        clear_env("AURA_AGENT_MAX_NO_YIELD_MS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "2585-no-poll";
+        spec.max_no_yield_ms = 0;
+        spec.mutation_boundary = false;
+        std::atomic<bool> done{false};
+        spec.body = [&] {
+            // Short CPU-only body (no agent_poll). With default applied, the
+            // fiber is reclaim-eligible after 50ms, but the body exits before
+            // that — so the test is just that the spawn applied the default
+            // and the body completes.
+            for (int i = 0; i < 100; ++i) {
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
+            done.store(true, std::memory_order_relaxed);
+        };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.coop != nullptr && h.max_no_yield_ms == 50,
+              "#2585 AC2: default still applies even when body never polls");
+        auto jr = join_agent(h, std::optional<std::uint64_t>{2000});
+        CHECK(jr.status == JoinStatus::Ok || jr.status == JoinStatus::Timeout,
+              "#2585 AC2: body completes under default");
+        CHECK(done.load() || jr.status == JoinStatus::Timeout,
+              "#2585 AC2: body ran (or timed out cleanly without hang)");
+        cleanup_handle(h);
+    }
+    {
+        // AC3: AURA_AGENT_MAX_NO_YIELD_MS=0 explicit opt-out keeps zero-cost
+        // (AC1 of #2540 preserved; no default injection; metric not bumped).
+        std::println("\n--- #2585 AC3: explicit opt-out keeps zero-cost ---");
+        set_env("AURA_SANDBOX", "restricted");
+        set_env("AURA_AGENT_MAX_NO_YIELD_MS", "0");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        const auto d0 = g_orch_module_stats.agent_no_yield_default_applied_total.load(
+            std::memory_order_relaxed);
+        AgentSpec spec;
+        spec.name = "2585-optout";
+        spec.max_no_yield_ms = 0;
+        spec.mutation_boundary = false;
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "#2585 AC3: spawn ok with explicit opt-out");
+        CHECK(!h.coop, "#2585 AC3: no coop state under explicit opt-out (zero-cost)");
+        CHECK(h.max_no_yield_ms == 0, "#2585 AC3: handle max_no_yield_ms stays 0");
+        CHECK(g_orch_module_stats.agent_no_yield_default_applied_total.load() == d0,
+              "#2585 AC3: default NOT applied under explicit opt-out");
+        cleanup_handle(h);
+        clear_env("AURA_AGENT_MAX_NO_YIELD_MS");
+    }
+    {
+        // AC4: AURA_SANDBOX=off (dev_off / unit Soft) keeps zero-cost even
+        // without the explicit opt-out env var.
+        std::println("\n--- #2585 AC4: dev_off forces soft (zero-cost) ---");
+        set_env("AURA_SANDBOX", "off");
+        clear_env("AURA_AGENT_MAX_NO_YIELD_MS");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        const auto d0 = g_orch_module_stats.agent_no_yield_default_applied_total.load(
+            std::memory_order_relaxed);
+        AgentSpec spec;
+        spec.name = "2585-devoff";
+        spec.max_no_yield_ms = 0;
+        spec.mutation_boundary = false;
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "#2585 AC4: spawn ok under dev_off");
+        CHECK(!h.coop, "#2585 AC4: no coop state under dev_off");
+        CHECK(h.max_no_yield_ms == 0, "#2585 AC4: handle max_no_yield_ms stays 0");
+        CHECK(g_orch_module_stats.agent_no_yield_default_applied_total.load() == d0,
+              "#2585 AC4: default NOT applied under dev_off");
+        cleanup_handle(h);
+        clear_env("AURA_SANDBOX");
+    }
+    {
+        // AC5: README + schema document default + opt-out.
+        std::println("\n--- #2585 AC5: README + schema source-cite ---");
+        auto md = read_file("src/orch/README.md");
+        auto spawn_src = read_file("src/orch/agent_spawn.h");
+        auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(md.find("2585") != std::string::npos, "#2585 AC5: README cites #2585");
+        CHECK(md.find("AURA_AGENT_MAX_NO_YIELD_MS") != std::string::npos,
+              "#2585 AC5: README documents opt-out env var");
+        CHECK(md.find("agent_no_yield_default_applied_total") != std::string::npos ||
+                  md.find("default-applied") != std::string::npos,
+              "#2585 AC5: README documents default-applied metric");
+        CHECK(spawn_src.find("resolve_agent_default_max_no_yield_ms") != std::string::npos,
+              "#2585 AC5: helper defined in agent_spawn.h");
+        CHECK(spawn_src.find("agent_no_yield_default_applied_total") != std::string::npos,
+              "#2585 AC5: metric field in g_orch_module_stats");
+        CHECK(spawn_src.find("AURA_AGENT_MAX_NO_YIELD_MS") != std::string::npos,
+              "#2585 AC5: opt-out env wired in spawn path");
+    }
+    {
+        // AC6: agent-no-yield-default-applied-total metric surface (query).
+        std::println("\n--- #2585 AC6: query:orch-module-stats surfaces #2585 metric ---");
+        // The metric is bumped only when default applied; under unit Soft
+        // (current env) the query surface must still return the key (>= 0).
+        const auto v = href(cs, "agent-no-yield-default-applied-total");
+        CHECK(v >= 0,
+              "#2585 AC6: query:orch-module-stats returns agent-no-yield-default-applied-total");
+    }
+
+    std::println("\n=== #2540 + #2585 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

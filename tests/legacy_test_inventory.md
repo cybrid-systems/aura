@@ -1268,7 +1268,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_agent_apply_mutex_2158.cpp` (#2158) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr_2538.cpp` (#2538) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
 - `tests/orch/test_agent_failure_policy_2229.cpp` (#2229) [domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
-- `tests/orch/test_agent_max_no_yield_2540.cpp` (#2540) [domain_suite, theme_orch] — AC1: max_no_yield_ms==0 → zero extra yield / metric (behaviour parity)
+- `tests/orch/test_agent_max_no_yield_2540.cpp` (#2540) [domain_suite, theme_orch] — Issue #2585 — production default + opt-out (AURA_AGENT_MAX_NO_YIELD_MS=0).
 - `tests/orch/test_agent_scope_hierarchy_2537.cpp` (#2537) [domain_suite, theme_orch] — AC1: parent / children links via spawn_child (unique_ptr, not static table)
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/serve/test_boundary_yield_steal_metrics_2119.cpp` (#2119) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns

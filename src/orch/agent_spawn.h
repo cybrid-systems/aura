@@ -311,6 +311,11 @@ struct OrchModuleStats {
     // Bumped when agent_poll forces Fiber::yield after the no-yield window.
     // Zero cost when max_no_yield_ms==0 (no coop state, poll is no-op).
     std::atomic<std::uint64_t> agent_forced_yield_total{0};
+    // Issue #2585: production default coop window applied when
+    // AgentSpec.max_no_yield_ms==0 and !dev_off (default 50ms).
+    // Opt-out via env AURA_AGENT_MAX_NO_YIELD_MS=0 keeps zero-cost.
+    // Bumped once per spawn that injects the default (advisory).
+    std::atomic<std::uint64_t> agent_no_yield_default_applied_total{0};
     // Issue #2543: orch self-throttle when aot-hot-update-health_bp < budget.
     // Advisory only (never hard-fails mutate). Bumped on agent body enter /
     // parallel-intend when throttle fires. last_force_reason mirrors
@@ -650,6 +655,27 @@ struct AgentSpec {
     std::uint32_t max_no_yield_ms = 0;
 };
 
+// Issue #2585: production default for AgentSpec.max_no_yield_ms.
+// Returns the effective coop window in milliseconds:
+//   - spec_value > 0: respect it (no change).
+//   - spec_value == 0 + dev_off: 0 (zero-cost, unit Soft ergonomics).
+//   - spec_value == 0 + AURA_AGENT_MAX_NO_YIELD_MS=0 opt-out: 0 (zero-cost).
+//   - else: 50ms default under production defaults.
+//
+// Caller bumps agent_no_yield_default_applied_total when the returned
+// value differs from spec_value (i.e., default was injected).
+[[nodiscard]] inline std::uint32_t resolve_agent_default_max_no_yield_ms(std::uint32_t spec_value,
+                                                                         bool dev_off) noexcept {
+    if (spec_value > 0)
+        return spec_value;
+    if (dev_off)
+        return 0;
+    const char* env = std::getenv("AURA_AGENT_MAX_NO_YIELD_MS");
+    if (env && env[0] == '0' && env[1] == '\0')
+        return 0; // explicit operator opt-out
+    return 50;    // production default
+}
+
 // Issue #2540: force Fiber::yield when elapsed since last coop edge ≥
 // max_no_yield_ms. Returns true when a forced yield ran.
 // max_no_yield_ms==0 → always false (AC1 zero cost).
@@ -878,13 +904,27 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         live = std::make_shared<AgentLiveness>();
         live->interval_ms = ka_interval;
     }
-    // Issue #2540: coop yield state only when max_no_yield_ms > 0 (AC1 zero cost).
+    // Issue #2585: production default coop window under !dev_off.
+    // dev_off follows security_defaults.hh convention (AURA_SANDBOX=off).
+    // The effective window is what the spawn path installs; default
+    // injection (50ms) bumps agent_no_yield_default_applied_total once.
+    const char* sb_e = std::getenv("AURA_SANDBOX");
+    const bool dev_off_agent = sb_e && *sb_e && std::string_view(sb_e) == "off";
+    const auto spec_max_no_yield_ms = spec.max_no_yield_ms;
+    const auto effective_max_no_yield_ms =
+        resolve_agent_default_max_no_yield_ms(spec_max_no_yield_ms, dev_off_agent);
+    // Issue #2540: coop yield state only when effective window > 0 (zero-cost
+    // when off; AC1 of #2540 preserved when opted out via AURA_AGENT_MAX_NO_YIELD_MS=0).
     std::shared_ptr<AgentCoopYield> coop;
-    const auto max_no_yield_ms = spec.max_no_yield_ms;
-    if (max_no_yield_ms > 0) {
+    if (effective_max_no_yield_ms > 0) {
         coop = std::make_shared<AgentCoopYield>();
-        coop->max_no_yield_ms = max_no_yield_ms;
+        coop->max_no_yield_ms = effective_max_no_yield_ms;
         coop->last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
+        // Issue #2585: count default injection (spec==0 → effective>0).
+        if (effective_max_no_yield_ms != spec_max_no_yield_ms) {
+            g_orch_module_stats.agent_no_yield_default_applied_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
     }
 
     const bool register_soft = spec.mutation_boundary;
@@ -972,7 +1012,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     h.ok = true;
     h.keepalive_interval_ms = ka_interval;
     h.liveness = live;
-    h.max_no_yield_ms = max_no_yield_ms;
+    h.max_no_yield_ms = effective_max_no_yield_ms;
     h.coop = std::move(coop);
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
     g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);

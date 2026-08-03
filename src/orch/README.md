@@ -217,13 +217,13 @@ Rules (per Issue #2229 AC2-AC3):
    — the `consecutive_stall_limit` cap is the simpler version of
    the same idea and ships in #2229.
 
-### Cooperative yield contract (Issue #2540)
+### Cooperative yield contract (Issue #2540 + production default #2585)
 
 Long-running LLM-style agent bodies that never yield starve cancel/steal/GC
 and force residual hard-reclaim (#2227 / #2533). Optional **`AgentSpec.max_no_yield_ms`**
-(default **0 = off**, zero cost) documents a cooperative budget; bodies call
-`agent_poll()` / `orch:agent-poll` (or `note_agent_progress` / `orch:agent-touch`)
-so a `Fiber::yield` runs when the window elapses.
+documents a cooperative budget; bodies call `agent_poll()` / `orch:agent-poll`
+(or `note_agent_progress` / `orch:agent-touch`) so a `Fiber::yield` runs
+when the window elapses.
 
 ```cpp
 AgentSpec spec{.name = "worker", .max_no_yield_ms = 10};
@@ -237,15 +237,27 @@ spec.body = [] {
 };
 ```
 
+**Production default (Issue #2585):** when production defaults are active
+(`AURA_SANDBOX != off`) and `max_no_yield_ms == 0`, `spawn_agent_with_mailbox`
+injects a **50ms** default window so the cancel/steal/GC surface stays
+alive even when an agent body forgets `agent_poll`. Explicit `> 0` still
+wins. Opt out via env `AURA_AGENT_MAX_NO_YIELD_MS=0` to keep the zero-cost
+`#2540` path; under `AURA_SANDBOX=off` (unit Soft) the default is never
+applied (preserves unit-test ergonomics).
+
 | Setting | Behaviour |
 |---------|-----------|
-| `max_no_yield_ms == 0` | identical to pre-#2540 (no coop state, poll no-op) |
+| `max_no_yield_ms == 0` + `AURA_AGENT_MAX_NO_YIELD_MS=0` opt-out | identical to pre-#2540 (no coop state, poll no-op) |
+| `max_no_yield_ms == 0` + `AURA_SANDBOX=off` (dev_off) | identical to pre-#2540 (zero-cost, unit Soft) |
+| `max_no_yield_ms == 0` + production | **50ms default injected** (Issue #2585); coop state installed; `agent_no_yield_default_applied_total` bumped once |
 | `max_no_yield_ms > 0` | spawn installs `AgentCoopYield`; poll yields after window |
 
-Metrics: `agent-forced-yield-total`, `schema-2540`, `agent-max-no-yield-wired`.
+Metrics: `agent-forced-yield-total`, `schema-2540`, `agent-max-no-yield-wired`,
+`agent-no-yield-default-applied-total` (#2585, bumped once per default injection).
 Complements residual force-safepoint (#2533): cooperate first, hard-reclaim second.
 
-Regression: `tests/orch/test_agent_max_no_yield_2540`.
+Regression: `tests/orch/test_agent_max_no_yield_2540` (extends #2540 ACs with #2585 default
++ opt-out coverage; same binary, same `AURA_SANDBOX` env discipline).
 
 ### FailurePolicy ↔ AgentFailurePolicy bridge (Issue #2539)
 
