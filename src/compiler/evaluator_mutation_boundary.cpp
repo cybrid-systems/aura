@@ -888,6 +888,28 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         typed_audit::record_boundary_outcome(mid, "rollback", cp.version, epoch_after,
                                              /*success=*/false, 0, 0, fid);
     }
+    // Issue #2604: outermost MutationBoundary exit auto-drain deferred
+    // reemit + one region-filtered pass. Closes the "visible but
+    // unhealed" stale window without making reemit unbounded.
+    // Soft path (no deferred + mask=0) → zero extra work (AC4).
+    if (!nested_boundary && success) {
+        auto& reg = hot_update_registry();
+        if (reg.has_deferred_reemit() || reg.last_region_mask_from_dirty() != 0) {
+            aura_bump_reemit_auto_drain_on_boundary_exit_total();
+            // AC3: storm throttle → skip body, bump throttled. Leave
+            // deferred pending per existing policy (no silent drop forever).
+            if (reg.should_throttle_reemit()) {
+                aura_bump_reemit_auto_drain_throttled_total();
+            } else {
+                auto v = reg.take_deferred_reemit_version();
+                if (v == 0)
+                    v = aura_get_aot_defuse_version();
+                const auto n = aura_reemit_aot_for_dirty(v);
+                if (n > 0)
+                    aura_bump_reemit_auto_drain_success_total();
+            }
+        }
+    }
     return cp;
 }
 

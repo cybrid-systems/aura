@@ -14174,6 +14174,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             auto_retry_ok = m->aot_reload_auto_retry_success_total.load(std::memory_order_relaxed);
             auto_retry_exh =
                 m->aot_reload_auto_retry_exhausted_total.load(std::memory_order_relaxed);
+            // Issue #2604: outermost MutationBoundary exit auto-drain
+            // deferred reemit + one region-filtered pass (clones the
+            // "visible but unhealed" stale window without unbounded reemit).
+            auto_drain_total =
+                m->reemit_auto_drain_on_boundary_exit_total.load(std::memory_order_relaxed);
+            auto_drain_ok =
+                m->reemit_auto_drain_success_total.load(std::memory_order_relaxed);
+            auto_drain_throttled =
+                m->reemit_auto_drain_throttled_total.load(std::memory_order_relaxed);
             // Issue #2232: reason-driven multi-round retry policy
             // metrics (per-attempt counter + exhausted-fall-back-to-JIT).
             auto_retry_policy_attempt =
@@ -14321,6 +14330,17 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-reload-auto-retry-enabled",
              make_int(static_cast<std::int64_t>(::aura_aot_reload_auto_retry_enabled()))},
             {"schema-2165", make_int(2165)},
+            // Issue #2604: outermost exit auto-drain deferred reemit
+            // (additive to #2165 / #2232 / #2249).
+            {"reemit-auto-drain-on-boundary-exit-total",
+             make_int(static_cast<std::int64_t>(auto_drain_total))},
+            {"reemit-auto-drain-success-total",
+             make_int(static_cast<std::int64_t>(auto_drain_ok))},
+            {"reemit-auto-drain-throttled-total",
+             make_int(static_cast<std::int64_t>(auto_drain_throttled))},
+            {"reemit-auto-drain-wired", make_int(1)},
+            {"schema-2604", make_int(2604)},
+            {"issue-2604", make_int(2604)},
             // Issue #2232: reason-driven multi-round retry policy
             // (supersedes the #2165 single-retry via policy_for()).
             {"aot-reload-policy-attempt-total",

@@ -1454,6 +1454,29 @@ extern "C" void aura_hot_update_on_reemit_throttled(void) {
     aura::compiler::hot_update_registry().on_reemit_throttled();
 }
 
+// Issue #2604: outermost MutationBoundary exit auto-drain deferred
+// reemit + one region-filtered pass. Bumped from
+// evaluator_mutation_boundary.cpp exit_mutation_boundary success path.
+// on_boundary_exit_total: outermost exit attempts.
+// success_total: aura_reemit_aot_for_dirty returned >0.
+// throttled_total: storm throttle / storm-skip blocked (defer re-pending
+// per existing policy; no silent drop forever).
+extern "C" void aura_bump_reemit_auto_drain_on_boundary_exit_total(void) {
+    if (aot_metrics())
+        aot_metrics()->reemit_auto_drain_on_boundary_exit_total.fetch_add(
+            1, std::memory_order_relaxed);
+}
+extern "C" void aura_bump_reemit_auto_drain_success_total(void) {
+    if (aot_metrics())
+        aot_metrics()->reemit_auto_drain_success_total.fetch_add(
+            1, std::memory_order_relaxed);
+}
+extern "C" void aura_bump_reemit_auto_drain_throttled_total(void) {
+    if (aot_metrics())
+        aot_metrics()->reemit_auto_drain_throttled_total.fetch_add(
+            1, std::memory_order_relaxed);
+}
+
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                                           std::uint64_t window_ms) {
     aura::compiler::hot_update_registry().set_deopt_storm_threshold(deopts_per_window, window_ms);
