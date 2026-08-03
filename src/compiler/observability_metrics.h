@@ -8853,6 +8853,13 @@ struct CompilerMetrics {
     // abort under AURA_NAMED_NAME_FALLBACK_HARD=1. Steady-state named
     // create (#2550) should keep this at 0.
     std::atomic<std::uint64_t> live_closure_named_name_fallback_reject_total{0}; // #2605
+    // Issue #2606: reemit pipeline dropped a host-pushed candidate because
+    // the name maps to an AOT slot owned by a *different* eval than the
+    // current reemit/register owner (multi-AotState / multi-agent hosts).
+    // Soft single-eval / process-default (filter eval = nullptr) keeps
+    // this at 0 — no behavioral change on the MVP path. Pairs with
+    // schema-2606 on query:aot-incremental-reemit-stats.
+    std::atomic<std::uint64_t> reemit_cross_eval_candidate_skipped_total{0}; // #2606
     // Issue #2177: AOT-side MacroIntroduced marker observability (refine
     // #2100 which was JIT-only). Process-wide AOT stats for Agent dashboards:
     // propagated = AOT lowering successfully stamped IRFunction.marker from

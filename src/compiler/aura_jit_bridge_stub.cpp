@@ -302,6 +302,11 @@ extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) 
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
     return 0;
 }
+// Issue #2606: reemit owner TLS (weak stub — production TU owns real TLS).
+extern "C" __attribute__((weak)) void aura_aot_set_reemit_owner_eval(void* /*eval_ptr*/) {}
+extern "C" __attribute__((weak)) void* aura_aot_get_reemit_owner_eval(void) {
+    return nullptr;
+}
 extern "C" __attribute__((weak)) void
 aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t /*fn*/, void* /*userdata*/) {}
 extern "C" __attribute__((weak)) void aura_set_aot_emit_fn(aura_aot_emit_fn_t /*fn*/,

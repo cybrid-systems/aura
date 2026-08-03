@@ -641,6 +641,20 @@ void* aura_aot_get_register_owner_eval(void);
 // (0 when never called / cleared). Agent dashboard observability.
 std::uintptr_t aura_aot_last_slot_invalidate_eval(void);
 
+// Issue #2606: TLS stamp for aura_reemit_aot_for_dirty ownership filter.
+// When non-null, the reemit candidate loop skips names whose stable
+// func_id maps to a live AOT slot owned by a *different* eval (mirrors
+// aura_aot_invalidate_all_stale_slots_for_eval owner filter). nullptr
+// = process-default: no cross-eval filter (soft single-eval MVP path
+// identical to pre-#2606). Hosts should set this to the current
+// Evaluator* around cascade / boundary reemit; reload_for_eval also
+// falls back to the register-owner TLS when reemit-owner is unset.
+// Invariant: joint bridge/AOT table epoch remains process-global —
+// isolation is ownership + region mask + PerEval storm, not per-eval
+// epoch domains.
+void aura_aot_set_reemit_owner_eval(void* eval_ptr);
+void* aura_aot_get_reemit_owner_eval(void);
+
 // Issue #1522: register AuraJIT* so bridge can notify fn_trackers_ batch_deopt
 // without a C++ module import. Host (CompilerService ctor) calls set;
 // ~CompilerService calls clear so the file-scope g_batch_deopt_jit

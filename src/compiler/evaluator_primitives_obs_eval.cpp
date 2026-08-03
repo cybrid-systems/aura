@@ -14504,8 +14504,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             ev.string_heap_.push_back(kDebugDir);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // #2369 keys expand this surface — capacity 64 for headroom.
-                auto* ht = FlatHashTable::create(64);
+                // #2369/#2605/#2606 keys expand this surface — capacity 128.
+                auto* ht = FlatHashTable::create(128);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -14553,6 +14553,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t sid_assign = 0;
             std::uint64_t sid_preserve = 0;
             std::uint64_t named_invent = 0;
+            // Issue #2606: multi-AotState reemit ownership skip counter.
+            std::uint64_t cross_eval_skip = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
@@ -14566,6 +14568,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 sid_preserve = m->stable_func_id_preserved_total.load(std::memory_order_relaxed);
                 named_invent = m->live_closure_named_name_fallback_reject_total.load(
                     std::memory_order_relaxed);
+                cross_eval_skip =
+                    m->reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
@@ -14623,6 +14627,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"residual-sid0-policy-wired", make_int(1)},
                 {"schema-2605", make_int(2605)},
                 {"issue-2605", make_int(2605)},
+                // Issue #2606: multi-AotState reemit ownership filter.
+                // Soft single-eval / nullptr owner keeps skip counter at 0.
+                {"reemit_cross_eval_candidate_skipped_total",
+                 make_int(static_cast<std::int64_t>(cross_eval_skip))},
+                {"reemit-cross-eval-candidate-skipped-total",
+                 make_int(static_cast<std::int64_t>(cross_eval_skip))},
+                {"reemit-cross-eval-filter-wired", make_int(1)},
+                {"schema-2606", make_int(2606)},
+                {"issue-2606", make_int(2606)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.

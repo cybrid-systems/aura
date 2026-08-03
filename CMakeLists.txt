@@ -3712,6 +3712,11 @@ aura_add_issue_test(test_anonymous_residual_stable_id_policy_2605)
 aura_issue_test_link_llvm_jit(test_anonymous_residual_stable_id_policy_2605)
 add_dependencies(all_test_issue_targets test_anonymous_residual_stable_id_policy_2605)
 
+# Issue #2606: PerEval / multi-AotState reemit + invalidate region independence.
+aura_add_issue_test(test_pereval_reemit_region_independence_2606)
+aura_issue_test_link_llvm_jit(test_pereval_reemit_region_independence_2606)
+add_dependencies(all_test_issue_targets test_pereval_reemit_region_independence_2606)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)

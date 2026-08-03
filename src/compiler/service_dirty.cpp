@@ -114,6 +114,27 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
     // Stable func ids are preserved inside aura_reemit_aot_for_dirty on success.
     if (reg.reemit_provider_wired()) {
         reg.on_cascade_reemit_trigger();
+        // Issue #2606: stamp reemit + register owner to this Evaluator so
+        // multi-AotState candidate filter drops foreign-owned slots and
+        // successful re-registers stamp ownership for later invalidate.
+        // Soft single-eval: owner is set but slots are typically unowned
+        // (owner==0) → filter is a no-op (zero behavioral change).
+        struct ReemitEvalOwnerGuard {
+            void* prev_reemit;
+            void* prev_reg;
+            explicit ReemitEvalOwnerGuard(void* e) noexcept
+                : prev_reemit(aura_aot_get_reemit_owner_eval())
+                , prev_reg(aura_aot_get_register_owner_eval()) {
+                aura_aot_set_reemit_owner_eval(e);
+                aura_aot_set_register_owner_eval(e);
+            }
+            ~ReemitEvalOwnerGuard() noexcept {
+                aura_aot_set_reemit_owner_eval(prev_reemit);
+                aura_aot_set_register_owner_eval(prev_reg);
+            }
+            ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
+            ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+        } owner_guard(static_cast<void*>(&evaluator_));
         const auto n = aura_reemit_aot_for_dirty(evaluator_.defuse_version());
         // Always count the cascade-driven reemit attempt (#1640 / #2035).
         metrics_.aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
