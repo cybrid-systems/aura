@@ -1604,7 +1604,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_delta_truncate_goal_priority_2508.cpp` (#2508) [domain_suite, theme_compiler] — AC1: Truncate + non-empty occurrence_goals → goal-priority reverify
 - `tests/compiler/test_densify_envframe_ok_2361.cpp` (#2361) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → envframe_ok stays true (vacuous)
 - `tests/compiler/test_densify_root_closure_closed_loop_2365.cpp` (#2365) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → root_remap_ok + closure_remount_ok true
-- `tests/compiler/test_dispatch_required_effects_2152.cpp` (#2152) [domain_suite, theme_compiler] — AC1: Prim with required_effects=Mutate, no body check → deny under
+- `tests/compiler/test_dispatch_required_effects_2152.cpp` (#2152) [domain_suite, theme_compiler] — Issue #2583 — Hard path: every non-zero required_effects call goes
 - `tests/compiler/test_dual_path_desync_hard_fail_2116.cpp` (#2116) [domain_suite, theme_compiler] — AC1: inject desync → hard path; metric++; materialize bindings empty
 - `tests/compiler/test_engine_metrics_facade.cpp` (—) [domain_suite, theme_compiler] — AC1: (engine:metrics) returns hash with nested groups + ≥200 metric fields
 - `tests/compiler/test_envframe_resolve_distinction.cpp` (—) [domain_suite, theme_compiler] — Issue #1708/#1709/#1754/#1756/#1890 (#1978 renamed): issue# moved from filename to header.
