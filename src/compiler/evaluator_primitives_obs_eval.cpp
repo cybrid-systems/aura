@@ -15014,6 +15014,15 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"aos-bridge-production-banned", make_int(1)},
                 {"schema-2520", make_int(2520)},
                 {"issue-2520", make_int(2520)},
+                // Issue #2618: continuous production smoke residual==0 proof.
+                {"schema-2618", make_int(2618)},
+                {"issue-2618", make_int(2618)},
+                {"soa-residual-production-smoke-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::soa_residual_production_smoke_wired()))},
+                {"soa-only-path-total", make_int(static_cast<std::int64_t>(
+                                            aura::compiler::g_soa_only_path_total_atomic().load(
+                                                std::memory_order_relaxed)))},
                 {"issue", make_int(1629)},
                 {"schema", make_int(1629)}, // lineage 1619|1517|1377 → 1629 + #1920
             };

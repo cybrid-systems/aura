@@ -4194,6 +4194,26 @@ def cmd_soa_ban_residual_aos_bridge_coverage():
     return 0
 
 
+def cmd_soa_residual_production_smoke_coverage():
+    """Issue #2618: production smoke residual_aos_bridge_total == 0 under SoA-only.
+
+    Continuous CI proof: lower/eval SoA path advances soa_only_path_total and
+    hard-fails if residual_aos_bridge_total != 0 (schema-2520/#2618). Test
+    opt-in AURA_ALLOW_AOS_BRIDGE remains for dedicated dual-emit jobs only.
+    """
+    print(f"{B}=== soa residual production smoke coverage (#2618) ==={N}")
+    script = ROOT / "scripts" / "check_soa_residual_production_smoke_2618.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("soa residual production smoke (#2618) coverage contract rows failed")
+        return 1
+    ok("soa residual production smoke (#2618) coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_equality_8field_coverage():
     """Issue #2519: LayoutStamp::operator== full 8-field equality.
 
@@ -7230,6 +7250,7 @@ def cmd_gate():
         or cmd_dead_coercion_columnar_coverage()
         or cmd_ir_soa_layout_stamp_coverage()
         or cmd_soa_ban_residual_aos_bridge_coverage()
+        or cmd_soa_residual_production_smoke_coverage()
         or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
@@ -8022,6 +8043,7 @@ def main():
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
+        "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

@@ -76,11 +76,14 @@ export inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() n
     return v;
 }
 
-// Issue #2520: residual AoS bridge is test/opt-in only under AURA_IR_SOA_ONLY.
-// Production packs must not call to_aos_view / to_aos_module without
-// AURA_ALLOW_AOS_BRIDGE (compile-time) or set_allow_aos_bridge_for_test /
-// AURA_ALLOW_AOS_BRIDGE=1 (runtime test seam). residual_aos_bridge_total
-// remains a test-only observability metric on production smoke (target 0).
+// Issue #2520 / #2618: residual AoS bridge is test/opt-in only under
+// AURA_IR_SOA_ONLY. Production packs must not call to_aos_view /
+// to_aos_module without AURA_ALLOW_AOS_BRIDGE (compile-time) or
+// set_allow_aos_bridge_for_test / AURA_ALLOW_AOS_BRIDGE=1 (runtime test
+// seam). residual_aos_bridge_total is a test-only observability metric
+// on production smoke (target 0) — continuous CI proof:
+//   scripts/check_soa_residual_production_smoke_2618.py
+//   test_soa_residual_production_smoke_2618 (hard residual==0).
 export inline std::atomic<std::uint8_t>& g_allow_aos_bridge_for_test() noexcept {
     static std::atomic<std::uint8_t> v{0};
     return v;
@@ -107,6 +110,15 @@ export [[nodiscard]] inline bool aos_bridge_allowed() noexcept {
 // production SoA-only (AC5). Production pipeline target remains 0.
 export inline constexpr int kResidualAosBridgeTestOnly = 1;
 export inline constexpr std::uint64_t kSchemaResidualAosBan = 2520;
+// Issue #2618: production smoke hard-asserts residual == 0 under SoA-only.
+export inline constexpr int kSchemaResidualAosProductionSmoke = 2618;
+export inline std::atomic<std::uint64_t>& g_soa_residual_production_smoke_wired_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{1};
+    return v;
+}
+export [[nodiscard]] inline std::uint64_t soa_residual_production_smoke_wired() noexcept {
+    return g_soa_residual_production_smoke_wired_atomic().load(std::memory_order_acquire);
+}
 
 // Issue #2432: process-global IR SoA generation fence (LayoutStamp 8th field).
 // Advanced on every IRFunctionSoA / IRModuleV2 generation bump so Fiber
@@ -866,8 +878,9 @@ export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
 #if AURA_IR_SOA_ONLY
     if (!aos_bridge_allowed()) {
         std::fprintf(stderr, "FATAL: to_aos_view under AURA_IR_SOA_ONLY without "
-                             "AURA_ALLOW_AOS_BRIDGE (#2520); residual AoS bridge banned "
-                             "on production path\n");
+                             "AURA_ALLOW_AOS_BRIDGE (#2520/#2618 schema-2520); residual AoS "
+                             "bridge banned on production path (smoke expects "
+                             "residual_aos_bridge_total==0)\n");
         std::abort();
     }
 #endif
