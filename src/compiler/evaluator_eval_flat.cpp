@@ -343,8 +343,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // via the shared metrics pointer (set by service.ixx).
     // Issue #1918: EDSL apply_closure hot path uses EnvFrame SoA +
     // dual-epoch checks (no AoS pointer-chasing for live closures).
-    // Issue #2259: hot-path invariant probe (zero assert cost under NDEBUG);
-    // tag tests on args use pure is_* helpers (no classify atomics).
+    // Issue #2259 / #2616: hot-path invariant probe (zero assert cost under NDEBUG);
+    // tag tests on args use pure is_* helpers — never classify_eval_value_tag (atomics).
     AURA_HOT_RECORD();
     types::note_value_tag_hot_path();
     soa_view::record_edsl_apply_soa_path();

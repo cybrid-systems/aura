@@ -104,8 +104,8 @@ export inline EvalValue make_int(std::int64_t v) noexcept {
     AURA_HOT_CONTRACT(v >= kMin && v <= kMax);
     return EvalValue(v << kFixnumShift); // fixnum encoding (#907)
 }
-// Issue #2259: pure low2/range tag test — no atomics on the hot path.
-// Full observability still available via classify_eval_value_tag().
+// Issue #2259 / #2616: pure low2/range tag test — no atomics on the hot path.
+// Cold Agent full classify: classify_eval_value_tag() (never on eval_flat/IR/apply).
 export inline bool is_int(const EvalValue& v) noexcept {
     return is_fixnum_hot(v.val);
 }

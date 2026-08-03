@@ -8271,8 +8271,14 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"value-tag-stability-run-total",
                  make_int(static_cast<std::int64_t>(
                      types::value_tag_stability_run_total.load(std::memory_order_relaxed)))},
+                // Issue #2616: hard-ban classify_eval_value_tag on hot eval/IR/apply TUs.
+                {"schema-2616", make_int(2616)},
+                {"issue-2616", make_int(2616)},
+                {"value-tag-hotpath-ban-2616-wired",
+                 make_int(static_cast<std::int64_t>(
+                     types::value_tag_hotpath_ban_2616_wired.load(std::memory_order_relaxed)))},
                 {"issue", make_int(1622)},
-                {"schema", make_int(1622)}, // lineage 723|571|#2259
+                {"schema", make_int(1622)}, // lineage 723|571|#2259|#2616
             };
             return build_hash(kv);
         });

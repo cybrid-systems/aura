@@ -438,9 +438,16 @@ static_assert(classify_eval_value_tag_consteval(1) == EvalValueTag::Ref,
 static_assert(kTagPatterns[0] == EvalValueTag::Fixnum && kTagPatterns[3] == EvalValueTag::Special,
               "#1622: kTagPatterns order Fixnum..Special");
 
-// Issue #571: full tagged-value classification with v2 string
+// Issue #571 / #2616: full tagged-value classification with v2 string
 // range check + float/fixnum disambiguation. Bumps dispatch hit/
 // miss counters for observability via (query:value-dispatch-stats).
+//
+// *** HOT-PATH BAN (#2616 / #2259) ***
+// Do NOT call this from eval_flat / ir_executor / apply tight loops —
+// every invoke does atomic RMW on value_classify_call_count. Use
+// is_fixnum_hot / is_string_v2_hot / is_* / as_* (value.ixx) or
+// classify_eval_value_tag_consteval instead. Gate:
+// scripts/check_value_tag_hotpath_ban_2616.py.
 //
 // Order matters: fixnums use (v<<1) so val=2,6,10… have (v&3)==2
 // but are NOT strings — string-v2 requires (v&3)==2 AND
@@ -454,6 +461,7 @@ static_assert(kTagPatterns[0] == EvalValueTag::Fixnum && kTagPatterns[3] == Eval
 //
 // Issue #1622: runtime path uses low2 table first, then range refine
 // (same control flow as classify_eval_value_tag_consteval).
+// Cold / Agent only — intentional atomic observability.
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     value_classify_call_count.fetch_add(1, std::memory_order_relaxed);
     aura::core::cpp26::record_hotpath_invariant_hit();
@@ -498,20 +506,25 @@ inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     return EvalValueTag::Unknown;
 }
 
-// Issue #1622: range / tag validity probe for hot paths (evaluator, shape).
-[[nodiscard]] inline bool is_valid_tagged_value(std::int64_t v) noexcept {
-    return classify_eval_value_tag(v) != EvalValueTag::Unknown;
+// Issue #1622 / #2616: pure range/tag validity for hot paths (no atomics).
+// Agent full classification with counters: call classify_eval_value_tag.
+[[nodiscard]] inline constexpr bool is_valid_tagged_value(std::int64_t v) noexcept {
+    return classify_eval_value_tag_consteval(v) != EvalValueTag::Unknown;
+}
+// Alias for explicit hot-path call sites / gate documentation.
+[[nodiscard]] inline constexpr bool is_valid_tagged_value_hot(std::int64_t v) noexcept {
+    return is_valid_tagged_value(v);
 }
 
-// ── Issue #2259: zero-overhead pure tag tests (no atomics) ──────────
+// ── Issue #2259 / #2616: zero-overhead pure tag tests (no atomics) ──
 //
 // classify_eval_value_tag() bumps process-wide counters — correct for
-// Agent dashboards, wrong for every is_int/is_string on the eval_flat /
-// IR arithmetic / apply hot path. These pure helpers share the same
-// control flow as classify_eval_value_tag_consteval (single low2 branch
-// + range refine) with zero atomic cost under NDEBUG contracts.
+// Agent dashboards, **hard-banned** on eval_flat / IR arithmetic / apply
+// tight loops (#2616). These pure helpers share the same control flow as
+// classify_eval_value_tag_consteval (single low2 branch + range refine)
+// with zero atomic cost under NDEBUG contracts.
 //
-// Prefer these (or is_*/as_* in value.ixx which now route here) on
+// Prefer these (or is_*/as_* in value.ixx which route here) on
 // eval_flat / call-apply / ir_executor tight loops.
 [[nodiscard]] inline constexpr bool is_fixnum_hot(std::int64_t v) noexcept {
     return classify_eval_value_tag_consteval(v) == EvalValueTag::Fixnum;
@@ -579,6 +592,9 @@ inline std::atomic<std::uint64_t> value_dispatch_consteval_table_wired{1};
 inline std::atomic<std::uint64_t> value_dispatch_hotpath_contracts_wired{1};
 // Issue #2259: pure hot-path tag tests + as_* contracts.
 inline std::atomic<std::uint64_t> value_tag_hotpath_2259_wired{1};
+// Issue #2616: hard-ban classify_eval_value_tag on production hot TUs (gate).
+inline std::atomic<std::uint64_t> value_tag_hotpath_ban_2616_wired{1};
+inline constexpr int kValueTagHotpathBanIssue = 2616;
 
 } // namespace aura::compiler::types
 
