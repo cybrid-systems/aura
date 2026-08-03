@@ -227,5 +227,5 @@ int main() {
 
     std::println("=== Issue #2315: chaos soak for steal × mutate × GC × mailbox ===");
     aura_2315_detail::run_chaos_matrix();
-    return g_failed ? 1 : 0;
+    return aura::test::g_failed ? 1 : 0;
 }

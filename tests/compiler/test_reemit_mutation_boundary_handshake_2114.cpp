@@ -19,8 +19,11 @@
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/observability_metrics.h"
+#include "compiler/runtime_shared.h"
 #include "test_harness.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -44,6 +47,7 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 using aura::compiler::hot_update_registry;
@@ -344,7 +348,11 @@ static void ac2604_soft_zero_cost() {
     // The guard must reference has_deferred_reemit AND last_region_mask_from_dirty.
     // Approximate: both terms appear in a block preceding the bumper call.
     const auto bumper_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total");
-    const auto preceding = eval_cpp [std::max<std::size_t>(0, bumper_idx - 600):bumper_idx];
+    const auto start =
+        bumper_idx == std::string::npos ? std::size_t{0} : bumper_idx - std::min(bumper_idx, 600UL);
+    const auto preceding = bumper_idx == std::string::npos
+                               ? std::string{}
+                               : eval_cpp.substr(start, bumper_idx - start);
     CHECK(preceding.find("has_deferred_reemit") != std::string::npos,
           "AC4: guard checks has_deferred_reemit()");
     CHECK(preceding.find("last_region_mask_from_dirty") != std::string::npos,

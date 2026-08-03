@@ -32,11 +32,12 @@ extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(voi
 #include <vector>
 
 
-// C-linkage decls from src/compiler/aura_jit_runtime.cpp (Issue #2232 hot-update).
+// C-linkage decls from aura_jit_bridge (Issue #2232 hot-update).
+// Must match noexcept on the real definitions (Werror=mismatched-exception-spec).
 extern "C" {
-void aura_set_live_workspace_cow_gen(std::uint64_t cow_gen);
+void aura_set_live_workspace_cow_gen(std::uint64_t cow_gen) noexcept;
 void aura_set_aot_expected_cow_gen_for_eval(void* eval_ptr, std::uint64_t cow_gen);
-std::uint64_t aura_get_live_workspace_cow_gen(void);
+std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept;
 std::uint64_t aura_get_aot_expected_cow_gen_for_eval(void* eval_ptr);
 }
 

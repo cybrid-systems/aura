@@ -24,6 +24,7 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 
@@ -39,6 +40,17 @@ namespace aura_type_dep_partial_merge_2283 {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 static std::int64_t query_field(CompilerService& cs, const char* field) {
     auto r =

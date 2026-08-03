@@ -18,6 +18,7 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.core.type;
 import aura.core.lifetime_pin; // Issue #2363: general-object pin adopt keys on production surface
+import aura.compiler.root_remap_pass; // Issue #2339 / #2267: RootRemap auto-register keys
 import aura.compiler.value;
 
 namespace aura::compiler::primitives_detail {
@@ -687,6 +688,30 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 {"schema-2166", make_int(aura::ast::kMovingCompactIssue)},
                 {"issue-2166", make_int(aura::ast::kMovingCompactIssue)},
                 {"moving-compact-wired", make_int(1)},
+                // Issue #2267 / #2294: RootRemapPass stable + closure capture counters.
+                // Prefer CompilerMetrics when present; process atomics otherwise.
+                {"root-remap-stable-ref-total",
+                 make_int(m ? load(m->root_remap_stable_ref_total) : 0)},
+                {"root-remap-stable-ref-fail-total",
+                 make_int(m ? load(m->root_remap_stable_ref_fail_total) : 0)},
+                {"root-remap-closure-capture-total",
+                 make_int(m ? load(m->root_remap_closure_capture_total) : 0)},
+                {"root-remap-closure-capture-fail-total",
+                 make_int(m ? load(m->root_remap_closure_capture_fail_total) : 0)},
+                {"schema-2267", make_int(2267)},
+                {"issue-2267", make_int(2267)},
+                {"root-remap-pass-wired", make_int(1)},
+                // Issue #2339: RootRemap auto-register / auto-unregister (#2294 lineage).
+                // Production surface wins over obs_eval p11 (same name, later ctor path).
+                {"root-remap-auto-register-total",
+                 make_int(static_cast<std::int64_t>(root_remap_auto_register_total()))},
+                {"root_remap_auto_register_total",
+                 make_int(static_cast<std::int64_t>(root_remap_auto_register_total()))},
+                {"root-remap-auto-register-unregister-total",
+                 make_int(static_cast<std::int64_t>(root_remap_auto_register_unregister_total()))},
+                {"root-remap-auto-register-wired", make_int(1)},
+                {"schema-2339", make_int(2339)},
+                {"issue-2339", make_int(2339)},
                 // Issue #2298: non-render general object pin-or-remap.
                 {"general-object-pin-total",
                  make_int(static_cast<std::int64_t>(

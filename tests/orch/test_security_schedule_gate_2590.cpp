@@ -57,13 +57,13 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::g_orch_hot_update_health_checks_total;
+using aura::compiler::g_orch_hot_update_health_last_force_reason;
+using aura::compiler::g_orch_hot_update_health_throttle_total;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::orch::decide_security_schedule;
 using aura::orch::evaluate_security_schedule;
-using aura::orch::g_orch_hot_update_health_checks_total;
-using aura::orch::g_orch_hot_update_health_last_force_reason;
-using aura::orch::g_orch_hot_update_health_throttle_total;
 using aura::orch::g_orch_security_schedule_counters;
 using aura::orch::reset_orch_security_schedule_counters_for_test;
 using aura::orch::SecurityScheduleForceReason;
