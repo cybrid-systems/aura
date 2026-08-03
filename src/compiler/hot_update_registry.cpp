@@ -4,7 +4,8 @@
 #include "compiler/hot_update_registry.hh"
 
 #include "compiler/aura_jit_bridge.h"
-#include "compiler/lock_order_audit.h" // Issue #2316: lock-order audit wire
+#include "compiler/lock_order_audit.h"      // Issue #2316: lock-order audit wire
+#include "compiler/observability_metrics.h" // CompilerMetrics for #2604 auto-drain bumps
 
 #include <chrono>
 #include <cstdlib> // Issue #2236: std::getenv for AURA_STORM_ISOLATION resolver
@@ -1461,18 +1462,20 @@ extern "C" void aura_hot_update_on_reemit_throttled(void) {
 // success_total: aura_reemit_aot_for_dirty returned >0.
 // throttled_total: storm throttle / storm-skip blocked (defer re-pending
 // per existing policy; no silent drop forever).
+//
+// Use aura_get_aot_metrics() (cross-TU) — aot_metrics() is static in
+// aura_jit_bridge.cpp only and is not visible here (asan-build / gate).
 extern "C" void aura_bump_reemit_auto_drain_on_boundary_exit_total(void) {
-    if (aot_metrics())
-        aot_metrics()->reemit_auto_drain_on_boundary_exit_total.fetch_add(
-            1, std::memory_order_relaxed);
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
+        m->reemit_auto_drain_on_boundary_exit_total.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" void aura_bump_reemit_auto_drain_success_total(void) {
-    if (aot_metrics())
-        aot_metrics()->reemit_auto_drain_success_total.fetch_add(1, std::memory_order_relaxed);
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
+        m->reemit_auto_drain_success_total.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" void aura_bump_reemit_auto_drain_throttled_total(void) {
-    if (aot_metrics())
-        aot_metrics()->reemit_auto_drain_throttled_total.fetch_add(1, std::memory_order_relaxed);
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
+        m->reemit_auto_drain_throttled_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,

@@ -364,8 +364,10 @@ extern "C" __attribute__((weak)) void
 aura_bump_must_deopt_force_deopt_success_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t /*n*/) {}
-// Issue #2371: weak stubs for cross-COW soft migrate counters.
+// Issue #2371 / #2603: weak stubs for cross-COW soft migrate counters.
 extern "C" __attribute__((weak)) void aura_bump_cross_cow_soft_migrate_total(void) noexcept {}
+extern "C" __attribute__((weak)) void
+aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept {}
 extern "C" __attribute__((weak)) void aura_bump_cross_cow_hard_reject_total(void) noexcept {}
 extern "C" __attribute__((weak)) void
 aura_bump_cross_cow_hard_reject_reason(std::uint8_t /*reason*/) noexcept {}

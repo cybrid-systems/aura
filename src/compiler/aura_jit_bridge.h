@@ -569,6 +569,8 @@ std::uint64_t aura_jit_closure_safe_fallbacks(void);
 //   0=None 1=Disabled 2=Freed 3=FarBehind 4=Linear 5=RemountFail 6=Other
 //   7=CowGenMismatch (#2547 — true workspace COW gen; wires #2240 on call)
 void aura_bump_cross_cow_soft_migrate_total(void) noexcept;
+// Issue #2603: same-gen soft-migrate success (distinct from cross-gen hard).
+void aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept;
 void aura_bump_cross_cow_hard_reject_total(void) noexcept;
 // Issue #2505: reason breakdown bumpers + policy knobs (Agent query).
 void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept;
