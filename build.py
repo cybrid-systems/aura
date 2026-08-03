@@ -5240,6 +5240,25 @@ def cmd_dce_elided_deopt_meta_coverage():
     return 0
 
 
+def cmd_type_linear_commit_health_coverage():
+    """Issue #2613: query:type-linear-commit-health unified Agent face.
+
+    Folds commit_readiness × coercion SLO × linear force × occurrence stale;
+    pure aggregation; schema-2613.
+    """
+    print(f"{B}=== type-linear-commit-health coverage (#2613) ==={N}")
+    script = ROOT / "scripts" / "check_type_linear_commit_health_2613.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type-linear-commit-health (#2613) coverage contract rows failed")
+        return 1
+    ok("type-linear-commit-health (#2613) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -7195,6 +7214,7 @@ def cmd_gate():
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
+        or cmd_type_linear_commit_health_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
@@ -7920,6 +7940,7 @@ def main():
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
+        "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

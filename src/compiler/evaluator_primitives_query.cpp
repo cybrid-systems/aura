@@ -24,6 +24,7 @@ module;
 #include "core/provenance_tracker.hh"              // Issue #2030 linear-provenance consistency bp
 #include "mutate_type_gate.hh"                     // Issue #2219 Soft/Hard post-mutate type gate
 #include "compiler/type_system_health.hh"          // Issue #2350: query:type-system-health score
+#include "compiler/type_linear_commit_health.hh"   // Issue #2613: query:type-linear-commit-health
 #include "compiler/mutation_concurrency_health.hh" // Issue #2379: mutation-concurrency-health
 #include "compiler/aot_hot_update_health.hh"       // Issue #2506: query:aot-hot-update-health
 #include "compiler/hot_update_registry.hh"         // Issue #2506: reload recovery C snapshot
@@ -8250,6 +8251,114 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("castop_density_production_default_wired", prod_wired);
             insert_kv("schema-2459", 2459);
             insert_kv("issue-2459", 2459);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2613: query:type-linear-commit-health — single Agent fold of
+    // commit_readiness (#2553) × coercion SLO (#2558) × linear force (#2545/#2563)
+    // × occurrence/memo stale (#2359). Pure aggregation (AC4: no commit policy change).
+    ObservabilityPrims::register_stats_impl(
+        "query:type-linear-commit-health",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* __qev_ = Evaluator::get_query_evaluator();
+
+            TypeLinearCommitHealthSnapshot snap = type_linear_commit_health_live_base();
+            // #2558 coercion completeness + SLO force pending.
+            snap.coercion_completeness_bp = coercion_provenance_completeness_bp();
+            snap.coercion_slo_force_pending = coercion_prov_slo_force_full_pending();
+            // #2359 occurrence goals + predicate memo stale (vacuous 0 without TC).
+            if (__qev_) {
+                if (auto* ctc = static_cast<aura::compiler::TypeChecker*>(
+                        __qev_->commit_type_checker_handle())) {
+                    const auto& cs = ctc->constraint_system();
+                    snap.occurrence_stale = static_cast<std::uint64_t>(
+                        cs.occurrence_goals_stale_vs_epoch(ctc->cache_epoch()));
+                    snap.predicate_memo_stale =
+                        static_cast<std::uint64_t>(ctc->last_predicate_memo_stale_vs_epoch());
+                }
+                if (auto* eng = static_cast<aura::compiler::InferenceEngine*>(
+                        __qev_->guard_infer_engine())) {
+                    snap.predicate_memo_stale =
+                        static_cast<std::uint64_t>(eng->predicate_memo_stale_vs_epoch());
+                }
+            }
+
+            const auto scored = compute_type_linear_commit_health(snap);
+
+            auto* ht = FlatHashTable::create(48);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            // #2553 readiness face
+            insert_kv("readiness-bp", static_cast<std::int64_t>(scored.readiness_bp));
+            insert_kv("force-reason", scored.force_reason_code);
+            insert_kv("force-reason-code", scored.force_reason_code);
+            insert_kv("would-allow-commit", scored.would_allow_commit ? 1 : 0);
+            // #2558 coercion
+            insert_kv("coercion-completeness-bp",
+                      static_cast<std::int64_t>(scored.coercion_completeness_bp));
+            insert_kv("coercion-slo-force-pending", scored.coercion_slo_force_pending ? 1 : 0);
+            // #2545 / #2563 linear
+            insert_kv("linear-force-unified", scored.linear_force_unified ? 1 : 0);
+            insert_kv("linear-cross-closure-escape-total",
+                      static_cast<std::int64_t>(scored.linear_cross_closure_escape_total));
+            insert_kv("linear-cross-closure-force-total",
+                      static_cast<std::int64_t>(scored.linear_cross_closure_force_total));
+            insert_kv("linear-cross-closure-observe-total",
+                      static_cast<std::int64_t>(scored.linear_cross_closure_observe_total));
+            // #2359 occurrence / memo
+            insert_kv("occurrence-stale", static_cast<std::int64_t>(scored.occurrence_stale));
+            insert_kv("predicate-memo-stale",
+                      static_cast<std::int64_t>(scored.predicate_memo_stale));
+            // Advisory throttle (optional orch map)
+            insert_kv("throttle-action", scored.throttle_action); // 0 none 1 delay 2 split
+            // force-reason code legend
+            insert_kv("force-reason-ok", 0);
+            insert_kv("force-reason-solve", 1);
+            insert_kv("force-reason-blame", 2);
+            insert_kv("force-reason-linear", 3);
+            insert_kv("force-reason-truncate", 4);
+            insert_kv("force-reason-empty-cs", 5);
+            insert_kv("force-reason-auto-partial", 6);
+            insert_kv("force-reason-coercion-slo", 7);
+            insert_kv("force-reason-occurrence-stale", 8);
+            insert_kv("type-linear-commit-health-wired", 1);
+            insert_kv("schema-2613", kTypeLinearCommitHealthIssue);
+            insert_kv("issue-2613", kTypeLinearCommitHealthIssue);
+            // Lineage schemas (detailed queries remain authoritative)
+            insert_kv("schema-2553", 2553);
+            insert_kv("schema-2558", 2558);
+            insert_kv("schema-2545", 2545);
+            insert_kv("schema-2563", 2563);
+            insert_kv("schema-2359", 2359);
+
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
