@@ -2809,6 +2809,30 @@ def cmd_moving_untracked_production_hard_2596_coverage():
     return 0
 
 
+def cmd_general_object_pin_auto_wire_2597_coverage():
+    """Issue #2597: auto-wire GeneralObjectPin for all densify-tracked
+    intermediate creates (production default AURA_GENERAL_OBJECT_PIN=required).
+
+    Closes the GeneralObjectPin vs render dual-track gap that lets new
+    mutate/agent/scratch creates land without a pin wire (creating Moving
+    densify untracked externals — #2495). Production lock + operator
+    env always wins (mirror #2596 pattern). GENERAL_OBJECT_PIN_EXEMPT
+    marker documents sites that don't need a wire call (stable handle /
+    RootRemap-registered only).
+    """
+    print(f"{B}=== general object pin auto wire coverage (#2597) ==={N}")
+    script = ROOT / "scripts" / "check_general_object_pin_auto_wire_2597.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("general object pin auto wire (#2597) coverage contract rows failed")
+        return 1
+    ok("general object pin auto wire (#2597) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6680,6 +6704,7 @@ def cmd_gate():
         or cmd_audit_mid_fallback_slo_2594_coverage()
         or cmd_densify_unified_gate_2595_coverage()
         or cmd_moving_untracked_production_hard_2596_coverage()
+        or cmd_general_object_pin_auto_wire_2597_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()
