@@ -2741,6 +2741,27 @@ def cmd_pure_parallel_isolation_wording_coverage():
     return 0
 
 
+def cmd_audit_mid_fallback_slo_2594_coverage():
+    """Issue #2594: audit mid-fallback 率 SLO → security-health 降级标志.
+
+    Pure gate: rate_bp = 10000 * fallback_gen / max(1, contextual_total).
+    Production + rate > SLO → arm degraded posture / `mid-fallback-slo-breach`.
+    Soft / sandbox=off → observe only (never arm). SLO env override
+    AURA_MID_FALLBACK_SLO_BP (default 500 = 5%).
+    """
+    print(f"{B}=== audit mid-fallback SLO coverage (#2594) ==={N}")
+    script = ROOT / "scripts" / "check_audit_mid_fallback_slo_2594.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("audit mid-fallback SLO (#2594) coverage contract rows failed")
+        return 1
+    ok("audit mid-fallback SLO (#2594) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6609,6 +6630,7 @@ def cmd_gate():
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()
         or cmd_pure_parallel_isolation_wording_coverage()
+        or cmd_audit_mid_fallback_slo_2594_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()
