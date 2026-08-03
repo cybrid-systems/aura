@@ -44,6 +44,30 @@ void set_steal_snapshot_soft_production_locked(bool v) noexcept;
 
 namespace aura::compiler::security {
 
+// Issue #2584: commercial tenant config profile — optional hardening for
+// commercial Restricted deployments (fiber-level grant isolation by
+// default). Read once during apply_production_security_defaults (step 6);
+// cache exposed via is_commercial_tenant_profile() so query:security-posture
+// (#2534) can surface the active profile flag to Agents. Function-local
+// static + inline function give single shared instance across TUs (C++17
+// inline-variable rules).
+inline std::atomic<bool>& commercial_tenant_profile_flag() noexcept {
+    static std::atomic<bool> v{false};
+    return v;
+}
+
+// Read the cached commercial profile flag (true when AURA_COMMERCIAL_TENANT
+// was set under !dev_off and not explicitly overridden off by
+// AURA_HARD_FIBER_ISOLATION=0|false|off|...).
+[[nodiscard]] inline bool is_commercial_tenant_profile() noexcept {
+    return commercial_tenant_profile_flag().load(std::memory_order_acquire);
+}
+
+// Test helper: reset the cached flag (unit tests need a clean slate).
+inline void reset_commercial_tenant_profile_for_test(bool v = false) noexcept {
+    commercial_tenant_profile_flag().store(v, std::memory_order_release);
+}
+
 // Issue #2076: free-function sandbox env apply for main() before Evaluator.
 inline void apply_aura_sandbox_env() noexcept {
     const char* e = std::getenv("AURA_SANDBOX");
@@ -300,11 +324,40 @@ inline void apply_production_security_defaults() noexcept {
     //      AURA_HARD_FIBER_ISOLATION=1|true|yes|on  → hard
     //      AURA_HARD_FIBER_ISOLATION=0|false|off|… → soft
     //    AURA_SANDBOX=off forces soft (unit tests must not inherit hard deny).
+    //
+    //    Issue #2584: AURA_COMMERCIAL_TENANT config profile. When set
+    //    (1|true|yes|on) under !dev_off, hard_fiber_isolation is forced
+    //    true even under pure Restricted — the common commercial Restricted
+    //    deployment pattern. AURA_HARD_FIBER_ISOLATION=0|false|off still
+    //    wins (explicit off overrides the profile). Active profile flag is
+    //    cached and surfaced via query:security-posture (#2534) under the
+    //    "commercial-tenant-profile" key.
     if (dev_off) {
+        commercial_tenant_profile_flag().store(false, std::memory_order_release);
         g_capability_registry().set_hard_fiber_isolation(false);
     } else {
+        // #2584: detect commercial profile (does not change today's
+        // defaults; only flips hard_fiber_isolation when set).
+        const char* ct = std::getenv("AURA_COMMERCIAL_TENANT");
+        bool commercial_active = false;
+        if (ct && *ct) {
+            std::string_view cv(ct);
+            commercial_active = (cv == "1" || cv == "true" || cv == "yes" || cv == "on");
+        }
+        // Explicit off from AURA_HARD_FIBER_ISOLATION wins (AC3).
         const char* hfi = std::getenv("AURA_HARD_FIBER_ISOLATION");
+        bool hfi_explicit_off = false;
         if (hfi && *hfi) {
+            std::string_view hv(hfi);
+            hfi_explicit_off = (hv == "0" || hv == "false" || hv == "off" || hv == "no");
+        }
+        commercial_tenant_profile_flag().store(commercial_active, std::memory_order_release);
+        if (commercial_active && !hfi_explicit_off) {
+            // #2584: commercial profile forces hard fiber even under
+            // pure Restricted (AC2). AURA_HARD_FIBER_ISOLATION=0 still
+            // wins (AC3) via the hfi_explicit_off branch above.
+            g_capability_registry().set_hard_fiber_isolation(true);
+        } else if (hfi && *hfi) {
             // Issue #2536: env applies under Restricted as well as Strict —
             // not overwritten by the multi_tenant&&strict default branch.
             std::string_view hv(hfi);

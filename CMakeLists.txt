@@ -4278,6 +4278,14 @@ aura_add_issue_test(test_hard_fiber_restricted_2536)
 aura_issue_test_link_light(test_hard_fiber_restricted_2536)
 add_dependencies(all_test_issue_targets test_hard_fiber_restricted_2536)
 
+# Issue #2584: AURA_COMMERCIAL_TENANT config profile (Restricted default
+# hard-fiber isolation for commercial deployments; AURA_HARD_FIBER_ISOLATION=0
+# still wins as explicit override). Active profile exposed via
+# query:security-posture #2534 under "commercial-tenant-profile" key.
+aura_add_issue_test(test_commercial_tenant_profile_2584)
+aura_issue_test_link_light(test_commercial_tenant_profile_2584)
+add_dependencies(all_test_issue_targets test_commercial_tenant_profile_2584)
+
 # Issue #2537: hierarchical AgentScope (parent/children cancel tree).
 aura_add_issue_test(test_agent_scope_hierarchy_2537)
 aura_issue_test_link_light(test_agent_scope_hierarchy_2537)

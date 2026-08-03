@@ -9,6 +9,7 @@ module;
 #include "shape.h"
 #include "value_tags.h"
 #include "security_capabilities.h"
+#include "security_defaults.hh"    // #2584 is_commercial_tenant_profile()
 #include "security_side_effect.hh" // #2152 kDispatchRequiredEffectsIssue
 #include "typed_mutation_audit.h"  // #2053 production defaults query keys
 #include "serve/http_health.h"
@@ -4391,6 +4392,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("grant-epoch-retain-window",
                       static_cast<std::int64_t>(reg.grant_epoch_retain_window));
             insert_kv("hard-fiber-isolation", reg.hard_fiber_isolation ? 1 : 0);
+            // Issue #2584: commercial-tenant-profile flag exposed for Agent
+            // dashboards (same surface as #2534 security-posture).
+            insert_kv("commercial-tenant-profile",
+                      ::aura::compiler::security::is_commercial_tenant_profile() ? 1 : 0);
             // Issue #2536: Agent self-throttle surface — mismatch rate + hard-deny.
             insert_kv("fiber-mismatch-total", static_cast<std::int64_t>(cap.fiber_mismatch));
             insert_kv("fiber-hard-deny-total", static_cast<std::int64_t>(cap.fiber_hard_deny));
