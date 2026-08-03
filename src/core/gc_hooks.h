@@ -982,6 +982,21 @@ struct PanicDeferDensifyAuditResult {
     return env != nullptr && *env != '\0' && std::string_view(env) == "hard";
 }
 
+// Issue #2598: AURA_PANIC_CONTRACT=soft operator override (mirrors #2596 /
+// #2597 patterns). When set under production, force Soft semantics
+// for audit_panic_defer_after_densify (residual clear-only, no hard
+// abort). Aligns with the #2338 GcDefer overflow operator-override
+// pattern. Production lock + soft_override=false → hard fail.
+[[nodiscard]] inline bool panic_contract_soft_override() noexcept {
+    const char* env = std::getenv("AURA_PANIC_CONTRACT");
+    if (env == nullptr || *env == '\0')
+        return false;
+    std::string_view v(env);
+    if (v == "soft" || v == "0" || v == "off" || v == "false" || v == "no")
+        return true;
+    return false;
+}
+
 // densify_ran: true when Moving densify was attempted (enabled) this exit.
 // has_panic_checkpoint: Evaluator still holds a live PanicCheckpoint.
 inline PanicDeferDensifyAuditResult audit_panic_defer_after_densify(void* evaluator_id,
@@ -1034,16 +1049,27 @@ inline PanicDeferDensifyAuditResult audit_panic_defer_after_densify(void* evalua
     // Checkpoint gone: residual panic defer for this eval must not linger.
     if (deferred_for_eval || panic_bit) {
         r.residual_found = true;
-        if (panic_contract_hard_enabled()) {
+        // Issue #2598: production lock (mirrors #2338 GcDefer overflow
+        // HardFail pattern). Under production_locked + !soft_override →
+        // hard fail. Operator env AURA_PANIC_CONTRACT=soft forces Soft
+        // semantics (override). Explicit env=hard still wins
+        // (pre-existing path). Aligns with steal residual hard-AND #2546.
+        const bool hard_from_env = panic_contract_hard_enabled();
+        const bool soft_override = panic_contract_soft_override();
+        const bool production_lock = gc_defer_production_locked();
+        if (hard_from_env || (production_lock && !soft_override)) {
             r.hard_fail = true;
             g_panic_defer_after_densify_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
-            std::fprintf(stderr, "[#2364] residual Panic GcDefer after densify outlives "
-                                 "cleared PanicCheckpoint (AURA_PANIC_CONTRACT=hard) — aborting\n");
+            std::fprintf(stderr,
+                         "[#2598] residual Panic GcDefer after densify outlives "
+                         "cleared PanicCheckpoint (production lock or env=hard) — aborting\n");
             std::abort();
         }
         // Soft/clear: force-clear residual for this evaluator (panic table
         // + depth + bit reconcile). Do NOT release MutationHold here —
         // densify audit is panic-scoped (hold already released in Phase 5).
+        // Explicit env=soft under production still takes this path
+        // (operator override wins).
         if (evaluator_id) {
             const auto fr = force_clear_all_gc_defer_for_evaluator(evaluator_id);
             (void)fr;

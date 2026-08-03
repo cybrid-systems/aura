@@ -162,15 +162,78 @@ static void ac5_source_cite() {
     CHECK(q.find("panic-defer-after-densify-wired") != std::string::npos, "AC5: query wired");
 }
 
+// ── Issue #2598: production densify-after panic residual → hard ──────────────
+//
+// Aligns audit_panic_defer_after_densify hard-fail with the steal residual
+// hard-AND (#2546) — production / Restricted now hard-fails when residual
+// panic defer outlives a cleared PanicCheckpoint, not just env=hard.
+// Operator env AURA_PANIC_CONTRACT=soft forces Soft semantics (override).
+//
+// AC6: gc_defer_production_locked() is callable from tests (source-cite).
+// AC7: panic_contract_soft_override() recognized (soft / 0 / off / false / no).
+// AC8: source-cite for #2598 production lock + soft override in gc_hooks.h.
+// AC9: audit_panic_defer_after_densify modified to read production_lock +
+//     soft_override (mirrors #2338 / #2546 / #2596 pattern).
+// AC10: build.py wires cmd_panic_residual_densify_hard_2598_coverage +
+//      scripts/check_panic_residual_densify_hard_2598.py present.
+static void ac6_production_lock_helper_source_cite() {
+    std::println("\n--- #2598 AC6: gc_defer_production_locked helper source-cite ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(gh.find("gc_defer_production_locked") != std::string::npos,
+          "AC6: gc_hooks.h declares gc_defer_production_locked()");
+    CHECK(gh.find("set_gc_defer_production_locked") != std::string::npos,
+          "AC6: gc_hooks.h declares set_gc_defer_production_locked()");
+    CHECK(gh.find("g_production_locked") != std::string::npos,
+          "AC6: gc_hooks.h has process-wide g_production_locked atomic");
+}
+
+static void ac7_soft_override_helper() {
+    std::println("\n--- #2598 AC7: panic_contract_soft_override helper ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(gh.find("panic_contract_soft_override") != std::string::npos,
+          "AC7: gc_hooks.h declares panic_contract_soft_override()");
+    CHECK(gh.find("\"soft\"") != std::string::npos,
+          "AC7: 'soft' env value recognized in soft_override parser");
+    CHECK(gh.find("\"off\"") != std::string::npos,
+          "AC7: 'off' env value recognized in soft_override parser");
+}
+
+static void ac8_production_lock_source_cite() {
+    std::println("\n--- #2598 AC8: production lock source-cite in audit ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(gh.find("Issue #2598") != std::string::npos, "AC8: gc_hooks.h cites #2598");
+    CHECK(gh.find("production_lock && !soft_override") != std::string::npos,
+          "AC8: audit reads production_lock && !soft_override");
+    CHECK(gh.find("hard_from_env") != std::string::npos,
+          "AC8: audit reads hard_from_env (pre-existing path)");
+    CHECK(gh.find("hard_from_env || (production_lock && !soft_override)") != std::string::npos,
+          "AC8: audit hard-fail condition is hard_from_env OR (production_lock && !soft_override)");
+}
+
+static void ac9_build_gate_wiring_source_cite() {
+    std::println("\n--- #2598 AC9: build.py + gate script source-cite ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("cmd_panic_residual_densify_hard_2598_coverage") != std::string::npos,
+          "AC9: build.py wires cmd_panic_residual_densify_hard_2598_coverage");
+    CHECK(build.find("check_panic_residual_densify_hard_2598") != std::string::npos,
+          "AC9: build.py runs check_panic_residual_densify_hard_2598 gate");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2364: PanicCheckpoint residual × densify ===");
+    std::println("=== Issue #2598: production densify-after panic residual → hard (extends #2364 "
+                 "test file per #81967) ===");
     ac1_soft_free();
     ac2_clear_orphan_after_densify();
     ac3_rearm_for_live_checkpoint();
     ac4_hard_and_query();
     ac5_source_cite();
-    std::println("\n=== #2364: {} passed, {} failed ===", g_passed, g_failed);
+    ac6_production_lock_helper_source_cite();
+    ac7_soft_override_helper();
+    ac8_production_lock_source_cite();
+    ac9_build_gate_wiring_source_cite();
+    std::println("\n=== #2364 + #2598: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

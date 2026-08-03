@@ -2833,6 +2833,31 @@ def cmd_general_object_pin_auto_wire_2597_coverage():
     return 0
 
 
+def cmd_panic_residual_densify_hard_2598_coverage():
+    """Issue #2598: production densify-after panic residual → hard
+    (align with steal residual hard-AND).
+
+    Closes the #2364 audit_panic_defer_after_densify half-green window
+    under production. Pre-existing soft-clear path is fine for Soft /
+    sandbox, but production / Restricted needs hard-fail when residual
+    panic defer outlives a cleared PanicCheckpoint (long agent loops can
+    Soft-clear residual after densify and hide checkpoint lifecycle bugs).
+    Operator env AURA_PANIC_CONTRACT=soft forces Soft (override).
+    Aligns with steal residual hard-AND #2546.
+    """
+    print(f"{B}=== panic residual densify hard coverage (#2598) ==={N}")
+    script = ROOT / "scripts" / "check_panic_residual_densify_hard_2598.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("panic residual densify hard (#2598) coverage contract rows failed")
+        return 1
+    ok("panic residual densify hard (#2598) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6705,6 +6730,7 @@ def cmd_gate():
         or cmd_densify_unified_gate_2595_coverage()
         or cmd_moving_untracked_production_hard_2596_coverage()
         or cmd_general_object_pin_auto_wire_2597_coverage()
+        or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()
