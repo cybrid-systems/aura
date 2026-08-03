@@ -5221,6 +5221,25 @@ def cmd_composite_auto_partial_from_cone_coverage():
     return 0
 
 
+def cmd_dce_elided_deopt_meta_coverage():
+    """Issue #2611: stamp mid + narrow_evidence on elided CastOp deopt meta.
+
+    Bounded side map; schema-2611 on dead-coercion-layered-stats;
+    no stamp without evidence; soft empty cone zero cost.
+    """
+    print(f"{B}=== dce elided cast deopt meta coverage (#2611) ==={N}")
+    script = ROOT / "scripts" / "check_dce_elided_deopt_meta_2611.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dce elided cast deopt meta (#2611) coverage contract rows failed")
+        return 1
+    ok("dce elided cast deopt meta (#2611) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -7156,6 +7175,7 @@ def cmd_gate():
         or cmd_occurrence_goal_persist_rehydrate_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
+        or cmd_dce_elided_deopt_meta_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
@@ -7880,6 +7900,7 @@ def main():
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
+        "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

@@ -38,6 +38,7 @@ module;
 #include <cstdint>
 #include <vector>
 #include "core/provenance_tracker.hh"             // Issue #2024: hygiene stamp + chain recovery
+#include "compiler/dce_elided_deopt_meta.h"       // Issue #2611: AST identity elision deopt meta
 #include "core/sandbox.hh"                        // Issue #2147: Strict honesty
 #include "compiler/typed_mutation_audit.h"        // Issue #2147: Full vs Sampled walk cap
 #include "compiler/coercion_provenance_policy.hh" // Issue #2102 / #2185 miss policy
@@ -690,6 +691,15 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                 map_mut->mark_eliminated();
             // Issue #2025: AST elision feeds layered dead-coercion metrics.
             g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2611: evidence-backed AST identity elision → deopt meta
+            // (mid from coercion provenance; no stamp when evidence==0).
+            if (e.narrow_evidence != 0) {
+                const auto site =
+                    dce_deopt::make_site_key(0, static_cast<std::uint32_t>(e.original_child),
+                                             static_cast<std::uint32_t>(e.parent_id));
+                dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
+                                                        e.narrow_evidence, e.type_tag);
+            }
             continue;
         }
 
@@ -700,6 +710,14 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             if (map_mut)
                 map_mut->mark_eliminated();
             g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2611: Dynamic-tag elision with evidence also stamps meta.
+            if (e.narrow_evidence != 0) {
+                const auto site =
+                    dce_deopt::make_site_key(0, static_cast<std::uint32_t>(e.original_child),
+                                             static_cast<std::uint32_t>(e.parent_id));
+                dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
+                                                        e.narrow_evidence, e.type_tag);
+            }
             continue;
         }
 

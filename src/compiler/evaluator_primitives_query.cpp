@@ -18,6 +18,7 @@ module;
 #include "serve/parallel_orch.h"                   // #1597 orch readiness
 #include "hash_meta.h"                             // FNV constants (#901)
 #include "typed_mutation_audit.h"                  // Issue #1613 macro hygiene audit trail
+#include "compiler/dce_elided_deopt_meta.h"        // Issue #2611: elided CastOp deopt meta
 #include "linear_occurrence_mutate_stats.h"        // Issue #2030 occurrence hit-rate ratios
 #include "basis_points.h"                          // Issue #2030 ratio bp helpers
 #include "core/provenance_tracker.hh"              // Issue #2030 linear-provenance consistency bp
@@ -7920,6 +7921,42 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-dual-require-wired", 1);
             insert_kv("schema-2562", 2562);
             insert_kv("issue-2562", 2562);
+            // Issue #2611: elided CastOp deopt meta (mid + narrow_evidence + type_tag).
+            // last-* atomics are stamped at elision; expose_last_deopt_meta (deopt path /
+            // tests) bumps deopt-meta-deopt-expose-total for Agent join (AC1).
+            {
+                using namespace ::aura::compiler::dce_deopt;
+                insert_kv("schema-2611", 2611);
+                insert_kv("issue-2611", 2611);
+                insert_kv("deopt-meta-stamped-total",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_stamped_total.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-map-size",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_map_size.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-skipped-no-evidence",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_skipped_no_evidence.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-lookup-hits",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_lookup_hits.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-deopt-expose-total",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_deopt_expose_total.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-last-mid",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_last_mid.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-last-evidence",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_last_evidence.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-last-type-tag",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_last_type_tag.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-last-site-key",
+                          static_cast<std::int64_t>(
+                              dce_deopt_meta_last_site_key.load(std::memory_order_relaxed)));
+                insert_kv("deopt-meta-wired", 1);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
