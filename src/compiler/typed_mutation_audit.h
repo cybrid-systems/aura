@@ -256,6 +256,8 @@ struct TypedMutationAuditCounters {
     // Soft Warning synth never appears as SynthHardFail (#2514 AC retained).
     // Soft cross-closure: observe counters only unless AURA_LINEAR_CROSS_CLOSURE_HARD=1
     // or production/Full (#2563 AC1).
+    // Issue #2623: cone truncation under hard → fail-closed (same CrossClosureEscape
+    // authority / deny=linear-cross-closure-escape); Soft trunc → metrics only.
     //
     // Counter ownership table (no double-count of same logical violation):
     //   linear_synth_violation_total / linear_synth_hard_fail_total (#2357)
@@ -268,6 +270,8 @@ struct TypedMutationAuditCounters {
     //     → all force_linear_rollback authorities + non-linear hard-gate deny
     //   linear_cross_closure_escape_total / force_total / observe_total (#2563)
     //     → discovery path only; force_linear_rollback does not re-bump escape_total
+    //   linear_cross_closure_trunc_force_total (#2623)
+    //     → discovery path when cap_truncations under hard (fail-closed scan)
     //   When synth early-exits, invariant audit is NOT re-run for that mid
     //   (so linear_invariant_fail does not also bump for the same violation).
     // All hard-gate / outermost boundary exit / composite reject sites must
@@ -289,6 +293,10 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> linear_cross_closure_depth2_entries_total{0};
     std::atomic<std::uint64_t> linear_cross_closure_depth2_escape_total{0};
     std::atomic<std::uint32_t> linear_cross_closure_depth_wired{1};
+    // Issue #2623: production fail-closed when discovery cone is truncated.
+    std::atomic<std::uint64_t> linear_cross_closure_trunc_force_total{0};
+    std::atomic<std::uint32_t> linear_cross_closure_depth_max{3}; // hard cap (env clamp)
+    std::atomic<std::uint32_t> linear_cross_closure_prod_depth_default{2};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -1023,23 +1031,33 @@ struct InvariantAuditResult {
     return production_defaults_active() || get_strategy() == AuditStrategy::Full;
 }
 
-// Issue #2612: free-capture discovery depth (default 1; max 2).
-// Soft default remains 1 (no new force / no nested walk). Production may
-// opt-in with AURA_LINEAR_CROSS_CLOSURE_DEPTH=2 under the same cone_cap.
-// Values >2 clamp to 2; 0 or empty → 1. Hard path still uses
-// linear_cross_closure_hard_enabled() only (depth does not force alone).
+// Issue #2612 / #2623: free-capture discovery depth.
+//   Soft/dev unset → 1 (legacy #2563 one-level; no nested walk)
+//   production_defaults unset → 2 (nested free-capture; still cone-capped)
+//   AURA_LINEAR_CROSS_CLOSURE_DEPTH=0 → disable discovery (zero cost)
+//   1..3 → use value; values >3 clamp to hard max 3
+// Hard force path still linear_cross_closure_hard_enabled() only
+// (depth alone never forces; trunc under hard is fail-closed — #2623).
 [[nodiscard]] inline int linear_cross_closure_depth_cap() noexcept {
+    constexpr int kMax = 3;
     const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
-    if (!e || !*e)
+    if (!e || !*e) {
+        // Issue #2623: production default depth 2; Soft/dev remains 1.
+        if (production_defaults_active())
+            return 2;
         return 1;
-    // Accept "2" / "2..." only for depth-2; anything else → 1 (safe default).
+    }
+    if (e[0] == '0')
+        return 0; // emergency disable (#2623 AC5)
+    if (e[0] == '1')
+        return 1;
     if (e[0] == '2')
         return 2;
-    if (e[0] == '1' || e[0] == '0')
-        return 1;
-    // Non-numeric / large → clamp to max 2 if starts with digit >2.
-    if (e[0] >= '3' && e[0] <= '9')
-        return 2;
+    if (e[0] == '3')
+        return 3;
+    // Non-numeric or larger digits → clamp to hard max.
+    if (e[0] >= '4' && e[0] <= '9')
+        return kMax;
     return 1;
 }
 
@@ -1472,6 +1490,13 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.linear_cross_closure_depth_wired.store(
         1, std::memory_order_relaxed);
+    // Issue #2623
+    g_typed_mutation_audit_counters.linear_cross_closure_trunc_force_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_depth_max.store(3,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_prod_depth_default.store(
+        2, std::memory_order_relaxed);
     apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)

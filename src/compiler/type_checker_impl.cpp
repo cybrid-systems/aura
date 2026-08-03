@@ -8567,18 +8567,22 @@ bool analyze_linear_escape_for_dirty(const FlatAST& flat, const StringPool& pool
     return all_pass;
 }
 
-// Issue #2563: cone-capped one-level cross-closure linear escape discovery.
+// Issue #2563 / #2612 / #2623: cone-capped cross-closure linear escape discovery.
 // Free use of a dirty linear binding inside a Lambda body (not a param) is an
-// escape site. Nested Lambdas are scanned as separate top-level sites (no
-// recursive enter). cone_cap limits nodes scanned (respects #2560 soft/hard).
+// escape site. Depth 0 disables (zero cost). Depth 1 skips nested Lambda enter
+// (legacy #2563). Depth ≥2 enters nested Lambda bodies up to hard max 3 (#2623).
+// cone_cap limits nodes scanned (respects #2560 soft/hard); truncation is
+// reported via cap_truncations (caller fail-closes under hard — #2623).
 bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool& pool,
                                            const std::unordered_set<std::string>& dirty_bindings,
                                            std::size_t cone_cap, CrossClosureEscapeResult& out) {
     out = {};
-    // Issue #2612: depth 1 default; opt-in depth 2 via AURA_LINEAR_CROSS_CLOSURE_DEPTH.
-    out.depth_cap = static_cast<std::size_t>(
-        std::max(1, std::min(2, aura::compiler::typed_audit::linear_cross_closure_depth_cap())));
-    if (dirty_bindings.empty() || flat.size() == 0)
+    // Issue #2623: honor 0 (disable) and clamp to hard max 3 (not force to 1).
+    const int raw_depth = aura::compiler::typed_audit::linear_cross_closure_depth_cap();
+    const int depth = std::max(0, std::min(3, raw_depth));
+    out.depth_cap = static_cast<std::size_t>(depth);
+    // Issue #2623 AC5: depth 0 → zero-cost no discovery.
+    if (depth <= 0 || dirty_bindings.empty() || flat.size() == 0)
         return true;
     const std::size_t limit = cone_cap == 0 ? flat.size() : std::min(flat.size(), cone_cap);
     if (cone_cap != 0 && flat.size() > cone_cap)
@@ -8586,12 +8590,13 @@ bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool
 
     // Frame: body root + param set + remaining depth budget for nested entry.
     // depth=1 → skip nested Lambda (legacy #2563 one-level).
-    // depth>=2 → enter one nested Lambda body (still cone-bounded via nodes_scanned).
+    // depth>=2 → enter nested Lambda bodies while depth_remaining >= 2
+    // (depth 3 allows two nested levels; still cone-bounded via nodes_scanned).
     struct WalkFrame {
         NodeId id;
         std::unordered_set<std::string> params;
         int depth_remaining = 1;
-        bool is_nested_entry = false; // true when entered via depth-2 nest
+        bool is_nested_entry = false; // true when entered via nested Lambda
     };
 
     auto walk_body = [&](NodeId body, std::unordered_set<std::string> params, int depth_remaining) {
@@ -8606,16 +8611,16 @@ bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool
                 continue;
             ++out.nodes_scanned;
             // Soft cone: stop body walk when nodes_scanned hits hard-ish bound.
-            // Issue #2612 / #2563: never O(workspace) — same 4× cone_cap budget.
+            // Issue #2612 / #2563 / #2623: never O(workspace) — same 4× cone_cap budget.
             if (cone_cap != 0 && out.nodes_scanned > cone_cap * 4) {
-                // Truncation under depth-2 nested walk still counts as cap trunc.
+                // Truncation under nested walk still counts as cap trunc.
                 if (out.cap_truncations == 0)
                     out.cap_truncations = 1;
                 break;
             }
             auto v = flat.get(id);
             if (v.tag == NodeTag::Lambda) {
-                // Issue #2612: optional one nested Lambda level under depth_cap>=2.
+                // Issue #2612 / #2623: nested Lambda levels under depth_cap>=2.
                 // Free-capture for the nested site uses *nested* params only (outer
                 // bindings remain free if not nested params — classic free capture).
                 if (fr.depth_remaining >= 2) {
@@ -8632,7 +8637,8 @@ bool discover_cross_closure_linear_escapes(const FlatAST& flat, const StringPool
                                                   fr.depth_remaining - 1, /*nested=*/true});
                     }
                 }
-                // depth 1 (or after nesting): do not walk Lambda node children as plain tree
+                // depth 1 (or after nesting budget exhausted): do not walk Lambda
+                // node children as plain tree
                 continue;
             }
             if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {

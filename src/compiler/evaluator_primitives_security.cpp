@@ -3613,6 +3613,22 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                          .linear_cross_closure_depth_wired.load(std::memory_order_relaxed)))},
                 {"schema-2612", make_int(2612)},
                 {"issue-2612", make_int(2612)},
+                // Issue #2623: production depth default + trunc fail-closed + depth 0 disable.
+                {"linear-cross-closure-trunc-force-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_trunc_force_total.load(std::memory_order_relaxed)))},
+                {"linear-cross-closure-depth-max",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_depth_max.load(std::memory_order_relaxed)))},
+                {"linear-cross-closure-prod-depth-default",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_prod_depth_default.load(
+                             std::memory_order_relaxed)))},
+                {"schema-2623", make_int(2623)},
+                {"issue-2623", make_int(2623)},
             };
             return build_hash(kv);
         });
