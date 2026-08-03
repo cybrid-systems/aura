@@ -468,6 +468,12 @@ struct CompilerMetrics {
     // remount-fail / soft-disabled. Production default soft on.
     // #2505: reason breakdown (Agents plan recreate-closure vs soft recovery).
     std::atomic<std::uint64_t> cross_cow_soft_migrate_total{0};
+    // Issue #2603: same-gen soft restamp counter (distinct from
+    // cross_cow_soft_migrate_total which lumps all soft successes).
+    // Agents read soft / (soft+hard) to throttle under multi-COW pressure
+    // without log scraping. Cross-gen dual miss hard-rejects on
+    // CowGenMismatch and does NOT increment this counter.
+    std::atomic<std::uint64_t> cross_cow_soft_migrate_same_gen_total{0}; // #2603
     std::atomic<std::uint64_t> cross_cow_hard_reject_total{0};
     std::atomic<std::uint64_t> cross_cow_hard_reject_disabled_total{0};     // #2505
     std::atomic<std::uint64_t> cross_cow_hard_reject_freed_total{0};        // #2505
