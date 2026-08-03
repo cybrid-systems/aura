@@ -435,6 +435,46 @@ Production default: `kMailboxBpAdmitThresholdDefault = 32` — spawn with
 Opt-out (legacy / diagnostic): `AURA_ORCH_BP_ADMIT_THRESHOLD=0`.
 Quiet-period recovery: `#2398` / `AURA_ORCH_BP_WINDOW_MS` (default 30s).
 
+### Per-spec override (Issue #2591, multi-tenant / multi-scope isolation)
+
+Multi-tenant / multi-`AgentScope` hosts cannot rely on a single
+process-wide threshold: one noisy producer scope can deny
+`attach_mailbox` spawns for unrelated scopes/tenants. `#2591` adds a
+**per-spec override** that isolates *policy* (not the gauge — the BP
+recent gauge stays process-global for v1; cheaper, sufficient for
+most production hosts).
+
+`AgentSpec::bp_admit_threshold` is `std::optional<std::uint64_t>`:
+
+| Value | Meaning |
+|-------|---------|
+| `nullopt` | Use process default (`#2535` default=32, or `AURA_ORCH_BP_ADMIT_THRESHOLD` env override) |
+| `0` | **Admit off for THIS spawn** — always reject under `attach_mailbox` (cheap self-isolation for low-trust scopes) |
+| `N > 0` | **Local threshold** — only deny if `mailbox_bp_recent_total >= N` (relax policy for trusted scopes) |
+
+Aura surface: `:bp-admit-threshold n` kwarg on `(orch:spawn-agent …)`:
+
+```text
+(orch:spawn-agent my-agent body :attach-mailbox #t
+                   :bp-admit-threshold 64)  ; trusted scope, tolerate more BP
+(orch:spawn-agent untrusted-agent body :attach-mailbox #t
+                   :bp-admit-threshold 0)   ; always reject mailbox attach
+```
+
+Metrics: `spawn_bp_admit_reject_total` (process-default storm) and
+`spawn_bp_admit_reject_override_total` (per-spec override storm —
+separate counter so dashboards can distinguish "global BP storm"
+from "local noisy producer").
+
+Structured reject stays `quota_dimension="mailbox-bp"` + `reserved=0`
+(no-leak contract `#2155`); reject path unchanged otherwise. Agent
+frameworks can branch on `quota_dimension` to surface BP vs fiber /
+memory quota in different ways. Scope-local recent BP counter is the
+natural follow-up (heavier; v1 keeps process-global gauge +
+per-spawn threshold only).
+
+Regression: `tests/orch/test_per_scope_bp_admit_2591`.
+
 ## Observability facade (Issue #2589)
 
 Cancel-storm health for the **unified** hard-reclaim protocol

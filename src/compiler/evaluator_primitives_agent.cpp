@@ -2877,6 +2877,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::size_t high_water = 256;
             std::uint32_t keepalive_interval_ms = 0;
             std::uint32_t max_no_yield_ms = 0; // Issue #2540
+            // Issue #2591: per-spec BP admit threshold override
+            // (multi-tenant / multi-scope isolation). nullopt → process
+            // default (#2535 default=32, env override via
+            // AURA_ORCH_BP_ADMIT_THRESHOLD); 0 → admit off for THIS
+            // spawn (always reject under attach_mailbox); N > 0 →
+            // local threshold. Gauge stays process-global; v1 isolates
+            // policy per spawn, not per gauge.
+            std::optional<std::uint64_t> bp_admit_threshold{};
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -2895,6 +2903,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Issue #2540: cooperative yield budget (0 = off).
                     max_no_yield_ms =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "bp-admit-threshold" || k == "bp_admit_threshold") &&
+                           types::is_int(val)) {
+                    // Issue #2591: per-spec BP admit override. Negative
+                    // or absent → leave nullopt (process default); 0 →
+                    // admit off for this spawn; N > 0 → local threshold.
+                    const auto raw = types::as_int(val);
+                    if (raw >= 0) {
+                        bp_admit_threshold = static_cast<std::uint64_t>(raw);
+                    }
                 }
             }
 
@@ -2934,7 +2951,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.attach_mailbox = attach_mailbox;
             spec.mailbox_high_water = high_water;
             spec.keepalive_interval_ms = keepalive_interval_ms;
-            spec.max_no_yield_ms = max_no_yield_ms; // Issue #2540
+            spec.max_no_yield_ms = max_no_yield_ms;       // Issue #2540
+            spec.bp_admit_threshold = bp_admit_threshold; // Issue #2591
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
             const bool ok = handle.ok;

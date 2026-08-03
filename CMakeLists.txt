@@ -4467,3 +4467,13 @@ add_dependencies(all_test_issue_targets test_orch_obs_facade_2589)
 aura_add_issue_test(test_security_schedule_gate_2590)
 aura_issue_test_link_light(test_security_schedule_gate_2590)
 add_dependencies(all_test_issue_targets test_security_schedule_gate_2590)
+# Issue #2591 — per-spec mailbox BP admit threshold override
+# (multi-tenant / multi-scope isolation). AgentSpec.bp_admit_threshold
+# (optional) overrides the process default (#2535) for one spawn;
+# nullopt → process default; 0 → admit off for THIS spawn; N > 0 →
+# local threshold. Wire surface: Aura :bp-admit-threshold n kwarg on
+# (orch:spawn-agent ...). Test in tests/orch/test_per_scope_bp_admit_2591.cpp
+# (src-aligned per #81934). No docs/design/ per #1655 #1485.
+aura_add_issue_test(test_per_scope_bp_admit_2591)
+aura_issue_test_link_light(test_per_scope_bp_admit_2591)
+add_dependencies(all_test_issue_targets test_per_scope_bp_admit_2591)

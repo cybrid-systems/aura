@@ -28,6 +28,7 @@
 #include "serve/scheduler.h"
 
 #include <atomic>
+#include <optional>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -229,6 +230,13 @@ struct OrchModuleStats {
     // configured admit threshold. Reserved memory stays 0 (no
     // leak per #2155 / #2227 sibling contract).
     std::atomic<std::uint64_t> spawn_bp_admit_reject_total{0};
+    // Issue #2591: per-spec override deny counter (separate from the
+    // process-default spawn_bp_admit_reject_total above). Multi-tenant
+    // hosts can distinguish "process default storm" (gauge too hot
+    // against env threshold) from "local override storm" (gauge too
+    // hot against per-spec threshold — usually a single noisy scope
+    // or producer).
+    std::atomic<std::uint64_t> spawn_bp_admit_reject_override_total{0};
     std::atomic<std::uint64_t> send_closed_total{0};
     std::atomic<std::uint64_t> recv_empty_total{0};
     std::atomic<std::uint64_t> join_wait_us_total{0};
@@ -666,6 +674,14 @@ struct AgentSpec {
     // (or orch:agent-poll / note_agent_progress) so cancel/steal/GC can
     // cooperate before residual hard-reclaim (#2227 / #2533).
     std::uint32_t max_no_yield_ms = 0;
+    // Issue #2591: per-spec override for mailbox BP admit threshold
+    // (multi-tenant / multi-scope isolation). nullopt = process default
+    // (#2535 default=32, env override via AURA_ORCH_BP_ADMIT_THRESHOLD);
+    // 0 = admit off for this spawn (always reject under attach_mailbox);
+    // N > 0 = local threshold (per-spawn policy isolation; gauge is
+    // still process-global). Wire surface: Aura kwarg
+    // :bp-admit-threshold n on (orch:spawn-agent).
+    std::optional<std::uint64_t> bp_admit_threshold{};
 };
 
 // Issue #2585: production default for AgentSpec.max_no_yield_ms.
@@ -866,7 +882,16 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // Production default threshold=32 (#2535). threshold==0 (env
         // opt-out) → admit control off; zero cost beyond the single
         // threshold load (no decay work, no BP reject).
-        const auto threshold = resolve_mailbox_bp_admit_threshold();
+        // Issue #2591: spec.bp_admit_threshold (optional) overrides
+        // the process default for this spawn only — multi-tenant /
+        // multi-scope isolation. nullopt → process default; 0 →
+        // admit off for THIS spawn (always reject when attach_mailbox);
+        // N > 0 → local threshold (per-spawn policy isolation, gauge
+        // is still process-global).
+        const auto override_threshold = spec.bp_admit_threshold;
+        const auto process_threshold = resolve_mailbox_bp_admit_threshold();
+        const auto threshold = override_threshold ? *override_threshold : process_threshold;
+        const bool override_active = override_threshold.has_value();
         if (threshold > 0) {
             // Issue #2398: quiet-period decay — if no BP events for
             // window_ms (AURA_ORCH_BP_WINDOW_MS / AURA_ORCH_BP_DECAY_MS),
@@ -877,8 +902,16 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
             if (bp_recent >= threshold) {
                 g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
-                g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                if (override_active) {
+                    // #2591: per-spec override deny (separate counter
+                    // so multi-tenant hosts can distinguish "process
+                    // default storm" from "local override storm").
+                    g_orch_module_stats.spawn_bp_admit_reject_override_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 h.quota_exceeded = true;
                 h.quota_dimension = "mailbox-bp";
                 h.quota_used = bp_recent;
@@ -886,7 +919,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 h.retry_after_ms = 50;
                 h.error = "AdmissionRejected: mailbox backpressure (bp_recent=" +
                           std::to_string(bp_recent) + " >= threshold=" + std::to_string(threshold) +
-                          ")";
+                          " override=" + (override_active ? "true" : "false") + ")";
                 // #2155 parity: reserved never set on BP reject
                 // (h.reserved_memory_bytes still holds the planned
                 // mem_cost, but finalize_spawn_quota_reject is no-leak
