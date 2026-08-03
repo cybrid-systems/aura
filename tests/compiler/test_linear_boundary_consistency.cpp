@@ -85,7 +85,7 @@ int main() {
     // ── AC6 query shape ──
     {
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:linear-boundary-consistency-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:linear-boundary-consistency-stats\"))");
         CHECK(h && is_hash(*h), "boundary-consistency-stats is hash");
         CHECK(href_m(cs, "schema") == 1596 || href_m(cs, "schema") == 1568,
               "schema 1606|1596|1568 lineage");

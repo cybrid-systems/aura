@@ -67,8 +67,10 @@ static void ac2_query_find_wired() {
     std::println("\n--- #2488 AC2: query:find uses SoAReadGuard ---");
     auto src = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
     CHECK(!src.empty(), "AC2: read query_workspace");
-    auto pos = src.find("add(\"query:find\"");
+    auto pos = src.find("query:find");
     CHECK(pos != std::string::npos, "AC2: query:find found");
+    CHECK(src.find("(*q_impls)") != std::string::npos || src.find("q_impls") != std::string::npos,
+          "AC2: private q_impls (#2628)");
     auto body = src.substr(pos, 1800);
     CHECK(body.find("try_acquire_soa_reader_lock") != std::string::npos ||
               body.find("SoAReadGuard") != std::string::npos,

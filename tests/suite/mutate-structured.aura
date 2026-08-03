@@ -26,10 +26,10 @@
   (check (= (calc 2) 7))
   ; Find the (* x 3) call node (lambda body child)
   (define r (query:root))
-  (define def-calc (car (query:children r)))
-  (define lam-calc (car (query:children def-calc)))
-  (define body (car (query:children lam-calc)))
-  (define mul-call (car (cdr (query:children body))))
+  (define def-calc (car (query :children r)))
+  (define lam-calc (car (query :children def-calc)))
+  (define body (car (query :children lam-calc)))
+  (define mul-call (car (cdr (query :children body))))
   (check (mutate:extract-function mul-call "mul3"))
   (eval-current)
   ; Original function still works
@@ -46,7 +46,7 @@
   (eval-current)
   ; Move display(3) to position 0
   (define r (query:root))
-  (define kids (query:children r))
+  (define kids (query :children r))
   (define third-child (car (cdr (cdr kids))))
   (check (mutate:move-node third-child r 0))
   ; eval-current still works (no crash)
@@ -61,9 +61,9 @@
   (check (= (g 5) 6))
   ; Find the (f x) call in g's body
   (define r (query:root))
-  (define def-g (car (cdr (query:children r))))
-  (define lam-g (car (query:children def-g)))
-  (define body (car (query:children lam-g)))
+  (define def-g (car (cdr (query :children r))))
+  (define lam-g (car (query :children def-g)))
+  (define body (car (query :children lam-g)))
   (check (mutate:inline-call body))
   (eval-current)
   ; g should still work

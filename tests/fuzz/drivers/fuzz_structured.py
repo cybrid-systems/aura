@@ -266,7 +266,7 @@ def gen_edsl():
     """EDSL query/mutate/set-code sequences: empty AST, chain operations."""
     # set-code then query
     yield '(set-code "(define (f x) (+ x 1))")(display (query:node-type "Define"))'
-    yield '(set-code "(define (f x) (+ x 1))")(display (query:find "f"))'
+    yield '(set-code "(define (f x) (+ x 1))")(display (query :find "f"))'
     yield '(set-code "(define (f x) (+ x 1))")(display (query:calls "f"))'
     yield '(set-code "(define (f x) (+ x 1))")(display (current-source))'
     # mutate then eval
@@ -276,7 +276,7 @@ def gen_edsl():
     yield '(set-code "()")(display (current-source))'
     # Query on empty AST
     yield '(display (query:node-type "Define"))'
-    yield '(display (query:find "nonexistent"))'
+    yield '(display (query :find "nonexistent"))'
     # Chain: set-code → mutate → query
     yield (
         '(set-code "(define (f x) (+ x 1))")'
@@ -284,7 +284,7 @@ def gen_edsl():
         '(display (query:node-type "Lambda"))'
     )
     # Remove node
-    yield ('(set-code "(begin (define x 1) (define y 2))")(display (query:children 0))')
+    yield ('(set-code "(begin (define x 1) (define y 2))")(display (query :children 0))')
 
 
 # ═══════════════════════════════════════════════════════════

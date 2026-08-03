@@ -3,7 +3,7 @@
 //
 // AC1: workspace_mtx_acquire / contended / wait_ns counters + hold
 //      histogram p99 proxy exist on CompilerMetrics.
-// AC2: (engine:metrics "query:mutation-boundary-hold-stats") exposes
+// AC2: (engine:metrics \"query:mutation-boundary-hold-stats\") exposes
 //      hold p99/max + workspace-mtx-* fields (schema 2040). Reuses the
 //      existing stats name (SlimSurface freeze — no new *-stats).
 // AC3: Single-thread Guard cycle bumps holds-total + acquire-total;

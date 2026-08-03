@@ -11,7 +11,7 @@
 // AC list (all preserved; each AC section cites original issue#):
 //   #509/#518/#526/#536/#537/#550 (orig):
 //     AC1: 4 dirty/narrowing counters reachable + start at 0
-//     AC2: (engine:metrics "query:typed-mutation-stats") returns integer sum
+//     AC2: (engine:metrics \"query:typed-mutation-stats\") returns integer sum
 //     AC3: (query:dirty-impact) returns touched_roots_size
 //     AC4: narrowing_refresh_count bumps under Aura mutate
 //     AC5: 200-iter typed mutate cycle — narrowing + passes_skipped monotonic

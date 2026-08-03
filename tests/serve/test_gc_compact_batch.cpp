@@ -1195,7 +1195,7 @@ static void run_464_arena_auto_compaction() {
         CHECK(g.auto_compact_guard_call_count() == before_guard + 1, "guard-call advances by 1");
         CHECK(g.compaction_yield_checks_group() == before_yield + 1, "yield-check advances by 1");
     }
-    // AC5: EDSL (engine:metrics "query:arena-auto-stats") returns a hash with 4 fields
+    // AC5: EDSL (engine:metrics \"query:arena-auto-stats\") returns a hash with 4 fields
     CompilerService cs;
     {
         std::println("\n--- #464 AC5: EDSL (engine:metrics \"query:arena-auto-stats\") hash ---");
@@ -2134,7 +2134,7 @@ static void run_1488_arena_adaptive_stats_no_dead_heap_push() {
         std::println("\n--- #1488 AC4: production-hardening flag ---");
         CompilerService cs;
         auto r = cs.eval(
-            R"((hash-ref (engine:metrics "query:production-hardening-1072-1096-stats") "arena-adaptive-no-dead-push"))");
+            R"((hash-ref (engine:metrics \"query:production-hardening-1072-1096-stats\") "arena-adaptive-no-dead-push"))");
         CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 1,
               "arena-adaptive-no-dead-push == 1 (flag set, #1072 fix landed)");
     }
@@ -2232,7 +2232,7 @@ static void run_1489_panic_checkpoint_gc_deferral() {
         CHECK(h && aura::compiler::types::is_hash(*h), "gc-panic-deferral-stats is hash");
         auto href_field = [&](const char* key) -> std::int64_t {
             std::string src = std::format(
-                R"((hash-ref (engine:metrics "query:gc-panic-deferral-stats") "{}"))", key);
+                R"((hash-ref (engine:metrics \"query:gc-panic-deferral-stats\") "{}"))", key);
             auto r = cs.eval(src);
             if (!r || !aura::compiler::types::is_int(*r))
                 return -1;

@@ -133,7 +133,7 @@
   (if (eq? scope :workspace) #t
     (if (symbol? scope)
       ; Scope is a function name — check if node is inside it
-      (let ((defs (query:def-use (symbol->string scope))))
+      (let ((defs (query :def-use (symbol->string scope))))
         (if (pair? (car defs))
           ; Node is in scope if it's a child of the define
           #t

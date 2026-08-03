@@ -348,6 +348,9 @@ aura_specjit_per_eval_storm_skip_foreign_total_v_read(void) {
 // binaries that don't link the production TU).
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_remap_name_fallback_total(std::uint64_t /*n*/) {}
+// Issue #2602 / #2628: weak stub for sync remount counter bumper (runtime.cpp).
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_sync_remount_totals(std::uint64_t /*ok*/, std::uint64_t /*fail*/) {}
 // Issue #2175: weak stub for legacy sid=0 backfill counter bumper.
 // Production impl is in aura_jit_bridge.cpp; light bundles compile
 // aura_jit_runtime.cpp + this stub (not the full bridge). Without
@@ -839,6 +842,8 @@ aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w
 extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}
 // Issue #2035: weak no-ops when hot_update_registry.cpp is not linked.
 extern "C" __attribute__((weak)) void aura_hot_update_notify_dirty_define(const char* /*name*/) {}
+// Issue #2601: weak no-op when full bridge not linked (light test bundles).
+extern "C" __attribute__((weak)) void aura_hot_update_maybe_retry_exhausted_min_dirty(void) {}
 extern "C" __attribute__((weak)) int aura_hot_update_reemit_provider_wired(void) {
     return 0;
 }

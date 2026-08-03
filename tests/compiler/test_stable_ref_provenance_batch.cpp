@@ -147,8 +147,8 @@ static void ac738_3_cow_propagates() {
     std::println("\n--- AC3: workspace COW clone propagates boundary pins (#738 AC3) ---");
     CompilerService cs;
     CHECK(setup_parent(cs), "parent workspace setup");
-    (void)cs.eval("(workspace:create \"child-a\")");
-    (void)cs.eval("(workspace:switch 1)");
+    (void)cs.eval("(workspace :create \"child-a\")");
+    (void)cs.eval("(workspace :switch 1)");
     const auto pins_child_before = cs.evaluator().cow_boundary_pins_total();
     (void)cs.eval("(mutate:rebind \"x\" \"42\")");
     const auto pins_child_after = cs.evaluator().cow_boundary_pins_total();
@@ -156,7 +156,7 @@ static void ac738_3_cow_propagates() {
     std::println("  pins: {} -> {} cow_epoch={}", pins_child_before, pins_child_after, cow_epoch);
     CHECK(pins_child_after >= pins_child_before, "pins monotonic after COW mutate");
     CHECK(cow_epoch > 0, "workspace-cow-epoch bumped after lazy COW clone");
-    (void)cs.eval("(workspace:switch 0)");
+    (void)cs.eval("(workspace :switch 0)");
 }
 
 static void ac738_4_cross_cow() {
@@ -177,14 +177,14 @@ static void ac738_5_multi_round() {
     CHECK(setup_parent(cs), "loop setup");
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:stable-ref 1)");
-        (void)cs.eval(std::format("(workspace:create \"child-{}\")", round));
+        (void)cs.eval(std::format("(workspace :create \"child-{}\")", round));
         auto ws_id = 1 + round;
-        (void)cs.eval(std::format("(workspace:switch {})", ws_id));
+        (void)cs.eval(std::format("(workspace :switch {})", ws_id));
         (void)cs.eval(std::format("(mutate:rebind \"y\" \"{}\")", round + 10));
         auto valid =
             cs.eval("(let ((r (query:stable-ref 1))) (if (pair? r) (query:ref-valid? r) #f))");
         CHECK(valid.has_value(), std::format("round {} ref-valid? in child", round));
-        (void)cs.eval("(workspace:switch 0)");
+        (void)cs.eval("(workspace :switch 0)");
     }
     CHECK(cs.evaluator().cow_boundary_pins_total() >= 3,
           "multi-round loop accumulated boundary pins");
@@ -213,7 +213,7 @@ static void ac1564_1_schema_1630() {
         "\n--- AC7: query:stable-ref-provenance-stats schema 1630 (#1564 AC6/#1630 AC1) ---");
     reset_provenance_enforcement_for_test();
     CompilerService cs;
-    auto h = cs.eval(R"((engine:metrics "query:stable-ref-provenance-stats"))");
+    auto h = cs.eval(R"((engine:metrics \"query:stable-ref-provenance-stats\"))");
     CHECK(h && is_hash(*h), "provenance-stats is hash");
     CHECK(href(cs, "schema") == 1630, "schema 1630 (lineage 1564)");
     CHECK(href(cs, "active") == 1, "active");
@@ -312,7 +312,7 @@ static void ac1630_1_schema() {
     std::println(
         "\n--- AC7 cont.: #1630 schema + provenance_tracker phase/issue constants (#1630 AC1) ---");
     CompilerService cs;
-    auto h = cs.eval(R"((engine:metrics "query:stable-ref-provenance-stats"))");
+    auto h = cs.eval(R"((engine:metrics \"query:stable-ref-provenance-stats\"))");
     CHECK(h && is_hash(*h), "provenance-stats is hash");
     CHECK(href(cs, "schema") == 1630, "schema 1630");
     CHECK(href(cs, "active") == 1, "active");

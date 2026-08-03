@@ -319,7 +319,7 @@ static void ac_1229_1240() {
 
     // #1230: ffi:opaque-stats returns int count
     {
-        auto r = cs.eval("(ffi:opaque-stats)");
+        auto r = cs.eval("(engine:metrics \"ffi:opaque-stats\")");
         CHECK(r && is_int(*r) && as_int(*r) >= 0, "ffi:opaque-stats count");
     }
 
@@ -908,13 +908,13 @@ static void ac_1291_1295() {
         CompilerService cs2;
         (void)cs2.eval("(set-code \"(define (f x) (+ x 1))\")");
         (void)cs2.eval("(eval-current)");
-        auto created = cs2.eval("(workspace:create \"w1\")");
+        auto created = cs2.eval("(workspace :create \"w1\")");
         CHECK(created.has_value(), "workspace:create");
         std::int64_t wid = -1;
         if (created && is_int(*created))
             wid = as_int(*created);
         if (wid > 0) {
-            (void)cs2.eval(std::format("(workspace:switch {})", wid));
+            (void)cs2.eval(std::format("(workspace :switch {})", wid));
             (void)cs2.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 2))\")");
             auto del = cs2.eval(std::format("(workspace:delete {})", wid));
             CHECK(del.has_value(), "workspace:delete active");

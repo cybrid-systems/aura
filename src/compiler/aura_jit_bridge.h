@@ -84,6 +84,7 @@ void* aura_get_aot_metrics(void);
 // Production impl in aura_jit_bridge.cpp; weak stub in
 // aura_jit_bridge_stub.cpp so light test binaries link cleanly.
 void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n);
+void aura_bump_live_closure_sync_remount_totals(std::uint64_t ok, std::uint64_t fail);
 // Issue #2175 / #2550: residual sid=0 named closures (pre-#2550 or
 // force-injected) get a one-shot backfill via get_or_preserve during
 // aura_remap_live_closures_after_reemit. Named set_name now stamps

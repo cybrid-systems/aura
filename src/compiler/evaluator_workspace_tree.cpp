@@ -581,7 +581,7 @@ void Evaluator::update_shared_tree_root() {
     //
     // MUST restamp live node_gen_ after the bump. is_valid(id)
     // requires node_gen_[id] == generation_; bump alone leaves every
-    // existing NodeId stale, so (eval-current) after (workspace:create)
+    // existing NodeId stale, so (eval-current) after (workspace :create)
     // + (set-code ...) aborts at contract_assert(f->is_valid) —
     // suite/edsl_self_test synthesize:optimize path.
     //

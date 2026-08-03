@@ -215,7 +215,7 @@ int run_protected_metadata_1838() {
         CompilerService cs;
         // Materialize workspace AST (same pattern as #1783 / #366).
         CHECK(cs.eval("(set-code \"(define y 2)\")").has_value(), "set-code");
-        auto rid = cs.eval("(car (query:find \"y\"))");
+        auto rid = cs.eval("(car (query :find \"y\"))");
         CHECK(rid && is_int(*rid), "find y");
         const auto id = as_int(*rid);
         // Marker 1 = MacroIntroduced.

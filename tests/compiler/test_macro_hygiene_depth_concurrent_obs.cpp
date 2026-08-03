@@ -162,11 +162,12 @@ static void ac4_query_macro_hygiene_stats() {
 static void ac5_reflect_hygiene_stats() {
     std::println("\n--- AC5: reflect:hygiene-stats concurrent_peak ---");
     CompilerService cs;
-    auto h = cs.eval("(reflect:hygiene-stats)");
+    auto h = cs.eval("(engine:metrics \"reflect:hygiene-stats\")");
     CHECK(h && is_hash(*h), "reflect:hygiene-stats hash");
-    auto peak = cs.eval("(hash-ref (reflect:hygiene-stats) \"concurrent_peak\")");
+    auto peak =
+        cs.eval("(hash-ref (engine:metrics \"reflect:hygiene-stats\") \"concurrent_peak\")");
     CHECK(peak && is_int(*peak) && as_int(*peak) >= 0, "concurrent_peak int");
-    auto depth = cs.eval("(hash-ref (reflect:hygiene-stats) \"max_depth\")");
+    auto depth = cs.eval("(hash-ref (engine:metrics \"reflect:hygiene-stats\") \"max_depth\")");
     CHECK(depth && is_int(*depth) && as_int(*depth) >= 0, "max_depth int");
 }
 

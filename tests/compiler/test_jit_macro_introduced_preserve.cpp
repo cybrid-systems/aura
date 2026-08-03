@@ -313,7 +313,7 @@ static void ac8_unstamp_macro_introduced_2176() {
     // Step 4: query:macro-unstamp-stats surface exposes the counter (additive,
     // no schema break). The primitive returns the counter as a single int
     // (same pattern as query:macro-mutate-restamp-stats) — NOT a hash.
-    // Read via (engine:metrics "query:macro-unstamp-stats") overlay
+    // Read via (engine:metrics \"query:macro-unstamp-stats\") overlay
     // (register_stats_impl names are in the metrics overlay, NOT in the
     // direct eval symbol table — see existing AC5 pattern). Value >=
     // unstampped (may include the setup-time unstamp if any). At minimum,

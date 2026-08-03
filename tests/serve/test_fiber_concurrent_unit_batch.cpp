@@ -1181,7 +1181,7 @@ int run_135_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto d = cs.eval("(query:def-use \"f\")");
+    auto d = cs.eval("(query :def-use \"f\")");
     CHECK(d.has_value() || true, "query:def-use surface");
     return g_failed ? 1 : 0;
 }

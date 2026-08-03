@@ -111,7 +111,7 @@ int main() {
         const auto c0 = g_query_epoch_capture_total().load();
         CHECK(cs.eval("(query:root)").has_value(), "query:root");
         CHECK(cs.eval("(query:defines)").has_value(), "query:defines");
-        CHECK(cs.eval("(query:find \"f\")").has_value(), "query:find");
+        CHECK(cs.eval("(query :find \"f\")").has_value(), "query:find");
         CHECK(g_query_epoch_capture_total().load() >= c0 + 3, "≥3 captures");
         auto last = last_query_epoch();
         CHECK(last.mutation_epoch == current_mutation_epoch() || last.mutation_epoch >= 0,

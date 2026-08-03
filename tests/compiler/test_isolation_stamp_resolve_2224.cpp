@@ -252,7 +252,7 @@ int main() {
         reset_all();
         CompilerService cs;
         auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
-        auto st = cs.eval(R"((engine:metrics "query:tenant-isolation-stats"))");
+        auto st = cs.eval(R"((engine:metrics \"query:tenant-isolation-stats\"))");
         CHECK(st && is_hash(*st), "AC6: stats hash present");
         CHECK(href_iso(cs, "schema-2224") == 2224, "AC6: schema-2224 = 2224");
         CHECK(href_iso(cs, "issue-2224") == 2224, "AC6: issue-2224 = 2224");
@@ -276,10 +276,10 @@ int main() {
         std::println("\n--- AC7: primitive discoverable ---");
         reset_all();
         CompilerService cs;
-        auto st = cs.eval(R"((engine:metrics "query:tenant-isolation-stats"))");
+        auto st = cs.eval(R"((engine:metrics \"query:tenant-isolation-stats\"))");
         CHECK(st && is_hash(*st), "AC7: primitive returns hash");
         // The hash should be non-empty (at least the wired entries).
-        auto size_r = cs.eval(R"((hash-count (engine:metrics "query:tenant-isolation-stats")))");
+        auto size_r = cs.eval(R"((hash-count (engine:metrics \"query:tenant-isolation-stats\")))");
         CHECK(size_r && is_int(*size_r), "AC7: hash-count returns int");
         const auto sz = as_int(*size_r);
         CHECK(sz >= 14, std::format("AC7: stats has at least 14 keys (got {})", sz));

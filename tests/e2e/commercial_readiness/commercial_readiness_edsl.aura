@@ -17,8 +17,8 @@
 
 (expect "set-code-add" (begin (set-code "(+ 10 32)") (eval-current)) 42)
 (expect-true "query-root" (not (null? (query:root))))
-(expect-true "query-children" (pair? (query:children (query:root))))
-(expect-true "query-node" (pair? (query:node (query:root))))
+(expect-true "query-children" (pair? (query :children (query:root))))
+(expect-true "query-node" (pair? (query :node (query:root))))
 
 (if (= *e2e-fails* 0)
     (begin (display "E2E-PASS") (newline))

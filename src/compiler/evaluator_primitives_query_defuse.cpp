@@ -76,12 +76,14 @@ void register_defuse_query_primitives(
                             std::move(reaches_for_node), std::move(effects_for_sym),
                             std::move(build_index),      std::move(index_stats)};
 
-    add("query:def-use",
+    // Issue #2628: private for (query :def-use); not a public add().
+    ObservabilityPrims::register_stats_impl(
+        "query:def-use",
         [&workspace_mtx, &workspace_flat, &workspace_pool, &string_heap, cb,
          make_merr](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
             if (a.empty() || !is_string(a[0]))
-                return make_merr("bad-arg", "usage: (query:def-use sym-name)");
+                return make_merr("bad-arg", "usage: (query :def-use sym-name)");
             if (!workspace_flat || !workspace_pool)
                 return make_merr("no-workspace", "no workspace AST loaded");
             auto sym_idx = as_string_idx(a[0]);

@@ -816,36 +816,36 @@ static void ac12_query_gc_defer_reason_stats_2088() {
     reset();
 
     CompilerService cs;
-    auto h = cs.eval(R"((engine:metrics "query:gc-defer-reason-stats"))");
+    auto h = cs.eval(R"((engine:metrics \"query:gc-defer-reason-stats\"))");
     CHECK(h && aura::compiler::types::is_hash(*h),
           "AC12: query:gc-defer-reason-stats returns hash");
 
     if (h && aura::compiler::types::is_hash(*h)) {
         auto schema =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "schema"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "schema"))");
         CHECK(schema && aura::compiler::types::is_int(*schema) &&
                   aura::compiler::types::as_int(*schema) == 2088,
               "AC12: schema == 2088");
 
         auto reasons =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "reasons"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "reasons"))");
         CHECK(reasons && aura::compiler::types::is_int(*reasons), "AC12: reasons present");
         CHECK(aura::compiler::types::as_int(*reasons) == 0, "AC12: baseline reasons == 0");
 
         auto panic_bit =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "panic-bit"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "panic-bit"))");
         CHECK(panic_bit && aura::compiler::types::is_int(*panic_bit) &&
                   aura::compiler::types::as_int(*panic_bit) == 0,
               "AC12: baseline panic-bit == 0");
 
         auto ffi_bit =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "ffi-pin-bit"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "ffi-pin-bit"))");
         CHECK(ffi_bit && aura::compiler::types::is_int(*ffi_bit) &&
                   aura::compiler::types::as_int(*ffi_bit) == 0,
               "AC12: baseline ffi-pin-bit == 0");
 
         auto any_total =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "any-total"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "any-total"))");
         CHECK(any_total && aura::compiler::types::is_int(*any_total), "AC12: any-total present");
     }
 
@@ -853,12 +853,12 @@ static void ac12_query_gc_defer_reason_stats_2088() {
     aura::gc_hooks::arm_gc_defer_pending_panic();
     if (h && aura::compiler::types::is_hash(*h)) {
         auto panic_bit =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "panic-bit"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "panic-bit"))");
         CHECK(panic_bit && aura::compiler::types::is_int(*panic_bit) &&
                   aura::compiler::types::as_int(*panic_bit) == 1,
               "AC12: after arm Panic → panic-bit == 1");
         auto ffi_bit =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-defer-reason-stats") "ffi-pin-bit"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-defer-reason-stats\") "ffi-pin-bit"))");
         CHECK(ffi_bit && aura::compiler::types::is_int(*ffi_bit) &&
                   aura::compiler::types::as_int(*ffi_bit) == 0,
               "AC12: after arm Panic → ffi-pin-bit == 0 (orthogonal)");

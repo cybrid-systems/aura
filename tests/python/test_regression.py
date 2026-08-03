@@ -614,7 +614,7 @@ def test_mutation_sequences():
     # ── DefUseIndex incremental: query:def-use works after rebind ──
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query:def-use "f") (mutate:rebind "f" "(lambda (x) (* x 2))") (query:def-use "f") (stats:get "typecheck-status"))',
+        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query :def-use "f") (mutate:rebind "f" "(lambda (x) (* x 2))") (query :def-use "f") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,

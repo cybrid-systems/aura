@@ -1895,11 +1895,7 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
         aura_unlock_workspace_write();
     }
 
-    if (aot_metrics()) {
-        aot_metrics()->live_closure_sync_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
-        aot_metrics()->live_closure_sync_remount_fail_total.fetch_add(fail,
-                                                                      std::memory_order_relaxed);
-    }
+    aura_bump_live_closure_sync_remount_totals(ok, fail);
 
     if (ok_count)
         *ok_count = ok;

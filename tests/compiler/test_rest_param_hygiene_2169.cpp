@@ -257,9 +257,10 @@ int main() {
         CHECK(href(cs, "query:macro-hygiene-stats", "macro-rest-param-hygiene-total") >= 0,
               "rest total");
         CHECK(href(cs, "query:macro-hygiene-stats", "rest-param-gensym-serial") >= 0, "serial");
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "schema-2169") == 2169,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")", "schema-2169") == 2169,
               "reflect:hygiene-stats schema-2169");
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "rest-param-hygiene-complete-wired") == 1,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")",
+                        "rest-param-hygiene-complete-wired") == 1,
               "reflect wired");
     }
 

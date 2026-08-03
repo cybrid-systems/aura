@@ -24,7 +24,7 @@
 (define (ws:merge-symbols child-id)
   (let ((parent-src (current-source)))
     ; Switch to child, get its source
-    (workspace:switch child-id)
+    (workspace :switch child-id)
     (define child-src (current-source))
     
     ; Parse child source to extract define names
@@ -34,7 +34,7 @@
     ; For each define in child, get the name
     (define (get-define-name node-id)
       ; Use query:node to get the name of the define
-      (query:node node-id))
+      (query :node node-id))
     
     ; Collect child define names
     (define child-names '())
@@ -42,7 +42,7 @@
       (if (pair? ids)
         (begin
           ; query:node returns something like ("Define" sym-name children...)
-          (define info (query:node (car ids)))
+          (define info (query :node (car ids)))
           ; The sym_id info is in the raw node view — for now, use node's
           ; children to extract the function name
           (set! child-names (cons (car ids) child-names))
@@ -50,7 +50,7 @@
         #f))
     
     ; Switch back to parent
-    (workspace:switch 0)
+    (workspace :switch 0)
     (set-code parent-src)
     
     ; For now, just return the list of define nodes found

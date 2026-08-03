@@ -6094,6 +6094,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return k;
         };
         auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
+            // Issue #2628: validate-against-schema is stats_impl-only.
+            if (auto sfn = ObservabilityPrims::lookup_stats_impl(prim))
+                return (*sfn)(args);
             auto fn = ev.primitives_.lookup(prim);
             if (!fn)
                 return mev("no-prim", std::string("mutate dispatch: missing ") + prim);
@@ -6201,7 +6204,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             "mutate:replace-type",
             "mutate:move-node",
             "mutate:extract-function",
-            "mutate:validate-against-schema",
+            // #2628: mutate:validate-against-schema removed (stats_impl + :validate)
             "mutate:atomic-batch",
             // SV/EDA flagged as extension-scope (stay registered; not kernel surface)
             "mutate:sv-add-coverpoint",

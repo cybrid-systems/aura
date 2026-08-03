@@ -223,7 +223,7 @@ int main() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (k x) x)\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        auto st = cs.eval(R"((engine:metrics "query:stable-ref-provenance-stats"))");
+        auto st = cs.eval(R"((engine:metrics \"query:stable-ref-provenance-stats\"))");
         CHECK(st && is_hash(*st), "stats hash");
         CHECK(href_prov(cs, "schema-2056") == 2056, "schema-2056");
         CHECK(href_prov(cs, "issue-2056") == 2056, "issue-2056");

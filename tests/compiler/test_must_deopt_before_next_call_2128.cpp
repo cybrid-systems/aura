@@ -132,7 +132,7 @@ int main() {
         (void)aura_closure_call(cid, args, 0);
         aura_free_closure(cid);
 
-        auto h = cs.eval(R"((engine:metrics "query:aot-incremental-reemit-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:aot-incremental-reemit-stats\"))");
         CHECK(h.has_value(), "reemit stats hash");
         // Keys present (schema-2128 may be 2128 when metrics wired).
         const auto sch = href(cs, "schema-2128");

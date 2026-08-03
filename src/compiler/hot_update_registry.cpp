@@ -1468,13 +1468,11 @@ extern "C" void aura_bump_reemit_auto_drain_on_boundary_exit_total(void) {
 }
 extern "C" void aura_bump_reemit_auto_drain_success_total(void) {
     if (aot_metrics())
-        aot_metrics()->reemit_auto_drain_success_total.fetch_add(
-            1, std::memory_order_relaxed);
+        aot_metrics()->reemit_auto_drain_success_total.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" void aura_bump_reemit_auto_drain_throttled_total(void) {
     if (aot_metrics())
-        aot_metrics()->reemit_auto_drain_throttled_total.fetch_add(
-            1, std::memory_order_relaxed);
+        aot_metrics()->reemit_auto_drain_throttled_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,

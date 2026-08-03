@@ -20,7 +20,7 @@
 ; Recommended Agent pattern:
 ;   1. (query:node-types)             ; discover primitive namespaces
 ;   2. (query:help "find")             ; read the help string
-;   3. (query:find name)               ; find a node by name
+;   3. (query :find name)               ; find a node by name
 ;   4. (query:where '(<3) (filter-call)) ; filter nodes by predicate
 ;
 ; Where each step is one engine primitive call (no stdlib
@@ -76,10 +76,10 @@
     (list)))
 
 ; ── (query:find-by-name name) — high-level wrapper around
-;     (query:find name) (case-sensitive string match).
+;     (query :find name) (case-sensitive string match).
 (define (query:find-by-name name)
   (if (string? name)
-    (query:find name)
+    (query :find name)
     -1))
 
 ; ── (query:subtree root-id) — return root-id + all descendants
@@ -92,7 +92,7 @@
       (else
         (let* ((current (car queue))
                (rest (cdr queue))
-               (children (query:children current))
+               (children (query :children current))
                (new-acc (cons current acc)))
           (loop (append rest children) new-acc)))))
 ; ── Issue #278 — high-level "all defines / all calls" wrappers ──

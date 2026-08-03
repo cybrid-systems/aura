@@ -226,7 +226,7 @@ def run_session(n_cycles):
                 stats["restore_pass"] += 1
 
                 # Verify: query def-use should still work after restore
-                resp = send(proc, '(display (query:def-use "display"))')
+                resp = send(proc, '(display (query :def-use "display"))')
                 if resp is None:
                     stats["crash"] += 1
                     break

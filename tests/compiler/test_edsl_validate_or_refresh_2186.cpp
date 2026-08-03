@@ -114,23 +114,23 @@ int main() {
         // We re-query each time via eval that embeds the pair through
         // (let ((r (query:stable-ref N))) (query:X r)).
         auto kids =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query:children r))", nid));
+            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :children r))", nid));
         CHECK(kids.has_value() && !is_error(*kids), "query:children accepts packed stable-ref");
 
-        auto node = cs.eval(std::format("(let ((r (query:stable-ref {}))) (query:node r))", nid));
+        auto node = cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :node r))", nid));
         CHECK(node.has_value() && !is_error(*node), "query:node accepts packed stable-ref");
 
         auto parent =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query:parent r))", nid));
+            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :parent r))", nid));
         CHECK(parent.has_value() && !is_error(*parent), "query:parent accepts packed stable-ref");
 
         auto kids_s = cs.eval(
-            std::format("(let ((r (query:stable-ref {}))) (query:children-stable r))", nid));
+            std::format("(let ((r (query:stable-ref {}))) (query :children-stable r))", nid));
         CHECK(kids_s.has_value() && !is_error(*kids_s),
               "query:children-stable accepts packed stable-ref");
 
         auto parent_s =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query:parent-stable r))", nid));
+            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :parent-stable r))", nid));
         CHECK(parent_s.has_value() && !is_error(*parent_s),
               "query:parent-stable accepts packed stable-ref");
 
@@ -145,7 +145,7 @@ int main() {
               "query:node-provenance accepts packed stable-ref");
 
         // Bare int still works (promoted via make_stamped_ref + ensure).
-        auto bare = cs.eval(std::format("(query:children {})", nid));
+        auto bare = cs.eval(std::format("(query :children {})", nid));
         CHECK(bare.has_value() && !is_error(*bare), "query:children still accepts bare NodeId");
     }
 
@@ -207,17 +207,17 @@ int main() {
 
             // EDSL path: re-feed packed stable-ref from a fresh capture
             // taken *before* this round's restamp, then consume.
-            // Pattern: capture → restamp already done → (query:children r)
+            // Pattern: capture → restamp already done → (query :children r)
             // with r holding pre-restamp gen via let of query:stable-ref
             // is live; for true stale we use C++-built pair via eval of
             // bare id after restamp (promotes + ensure) which must succeed
             // for live nodes.
-            auto kids = cs.eval(std::format("(query:children {})", nid));
+            auto kids = cs.eval(std::format("(query :children {})", nid));
             CHECK(kids.has_value() && !is_error(*kids),
                   std::format("round {} query:children after restamp", round));
 
             auto node =
-                cs.eval(std::format("(let ((r (query:stable-ref {}))) (query:node r))", nid));
+                cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :node r))", nid));
             CHECK(node.has_value() && !is_error(*node),
                   std::format("round {} query:node via packed ref", round));
         }

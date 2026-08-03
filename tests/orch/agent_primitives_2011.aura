@@ -7,7 +7,7 @@
 ;;   (orch:agent-recv name [:wait bool] [:timeout-ms n])
 ;;   (orch:agent-join name [:timeout-ms n])
 ;;   (orch:parallel-intend …)
-;;   (engine:metrics "query:orch-module-stats")
+;;   (engine:metrics \"query:orch-module-stats\")
 ;;
 ;; Run:
 ;;   ./build/aura < tests/orch/agent_primitives_2011.aura
@@ -52,7 +52,7 @@
 (newline)
 
 ;; ── stats query ───────────────────────────────────────
-(define st (engine:metrics "query:orch-module-stats"))
+(define st (engine:metrics \"query:orch-module-stats\"))
 (display "schema=")
 (display (hash-ref st "schema"))
 (display " spawned=")

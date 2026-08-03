@@ -115,7 +115,7 @@ def run_session(n_cycles):
         if phase < 2:
             # Create a new workspace
             name = f"ws-{cycle}"
-            resp = send(proc, f'(display (workspace:create "{name}"))')
+            resp = send(proc, f'(display (workspace :create "{name}"))')
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -135,7 +135,7 @@ def run_session(n_cycles):
         elif phase < 4 and len(workspace_ids) > 1:
             # Switch to a random child workspace and mutate
             wid = rng.choice(workspace_ids[1:])
-            resp = send(proc, f"(display (workspace:switch {wid}))")
+            resp = send(proc, f"(display (workspace :switch {wid}))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -158,7 +158,7 @@ def run_session(n_cycles):
                 stats["ok"] += 1
 
             # Query something in child to verify it works
-            resp = send(proc, f'(display (query:def-use "{fn}"))')
+            resp = send(proc, f'(display (query :def-use "{fn}"))')
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -166,7 +166,7 @@ def run_session(n_cycles):
 
         elif phase == 4:
             # Switch to root and verify isolation
-            resp = send(proc, "(display (workspace:switch 0))")
+            resp = send(proc, "(display (workspace :switch 0))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -181,7 +181,7 @@ def run_session(n_cycles):
 
             # Query a def that should exist in all workspaces
             sym = rng.choice(["f", "add", "fact", "map", "double"])
-            resp = send(proc, f'(display (query:def-use "{sym}"))')
+            resp = send(proc, f'(display (query :def-use "{sym}"))')
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -191,7 +191,7 @@ def run_session(n_cycles):
             # Lock/unlock test
             if len(workspace_ids) > 1:
                 wid = rng.choice(workspace_ids[1:])
-                resp = send(proc, f"(display (workspace:lock {wid} #t))")
+                resp = send(proc, f"(display (workspace :lock {wid} #t))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -201,7 +201,7 @@ def run_session(n_cycles):
                     stats["crash"] += 1
                     break
                 # Unlock
-                resp = send(proc, f"(display (workspace:lock {wid} #f))")
+                resp = send(proc, f"(display (workspace :lock {wid} #f))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -236,7 +236,7 @@ def run_session(n_cycles):
                 # Sample a ref via query + mutate + check stats.
                 fn = rng.choice(SYMBOLS)
                 # Capture-phase: query the def.
-                resp = send(proc, f'(display (query:def-use "{fn}"))')
+                resp = send(proc, f'(display (query :def-use "{fn}"))')
                 if resp is None or resp.get("status") not in ("ok", "closure"):
                     stats["error"] += 1
                 else:
@@ -272,7 +272,7 @@ def run_session(n_cycles):
                     stats["ok"] += 1
 
             # Verify workspace list is still valid
-            resp = send(proc, "(display (workspace:list))")
+            resp = send(proc, "(display (workspace :list))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -280,7 +280,7 @@ def run_session(n_cycles):
 
             # After deleting, switch to root and verify
             if rng.random() < 0.5:
-                resp = send(proc, "(display (workspace:switch 0))")
+                resp = send(proc, "(display (workspace :switch 0))")
                 if resp is None:
                     stats["crash"] += 1
                     break

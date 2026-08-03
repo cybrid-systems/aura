@@ -63,7 +63,7 @@ int main() {
     // ── AC6: query:tenant-isolation-stats shape ──
     {
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:tenant-isolation-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:tenant-isolation-stats\"))");
         CHECK(h && is_hash(*h), "tenant-isolation-stats is hash");
         CHECK(href_m(cs, "schema") == 1566, "schema 1566");
         CHECK(href_m(cs, "active") == 1, "active");

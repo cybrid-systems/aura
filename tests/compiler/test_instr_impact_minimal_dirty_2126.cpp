@@ -148,7 +148,7 @@ int main() {
         }
         (void)cs.eval("(eval-current)");
 
-        auto h = cs.eval(R"((engine:metrics "query:incremental-relower-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:incremental-relower-stats\"))");
         CHECK(h && is_hash(*h), "incremental-relower-stats hash");
         CHECK(href(cs, "schema-2126") == 2126, "schema-2126");
         CHECK(href(cs, "issue-2126") == 2126, "issue-2126");

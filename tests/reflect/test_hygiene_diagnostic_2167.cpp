@@ -239,11 +239,13 @@ int main() {
         std::println("\n--- AC5: schema-2167 on hygiene stats surfaces ---");
         CompilerService cs;
         CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "schema-2167") == 2167,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")", "schema-2167") == 2167,
               "AC5: reflect:hygiene-stats schema-2167");
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "hygiene-diagnostic-wired") == 1,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")",
+                        "hygiene-diagnostic-wired") == 1,
               "AC5: diagnostic wired");
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "macro-provenance-chain-wired") == 1,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")",
+                        "macro-provenance-chain-wired") == 1,
               "AC5: chain wired");
         // ir-hygiene-stats via engine:metrics facade
         CHECK(href(cs, "query:ir-hygiene-stats", "schema-2167") == 2167 ||
@@ -260,10 +262,11 @@ int main() {
         std::println("\n--- AC3: lazy query-only surface ---");
         CompilerService cs;
         // Without ever calling diagnostic, reflect stats still work.
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "schema") == 2020,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")", "schema") == 2020,
               "AC3: stats without diag");
-        CHECK(href_expr(cs, "(reflect:hygiene-stats)", "lazy") == -1 ||
-                  href_expr(cs, "(reflect:hygiene-stats)", "schema-2167") == 2167,
+        CHECK(href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")", "lazy") == -1 ||
+                  href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")", "schema-2167") ==
+                      2167,
               "AC3: 2167 stamp present without forcing chain walk");
     }
 

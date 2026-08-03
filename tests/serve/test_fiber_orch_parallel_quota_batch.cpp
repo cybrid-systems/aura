@@ -167,10 +167,10 @@ namespace {
 (parallel-intend (vector (lambda () 1)) :timeout-ms 5000)
 )");
         auto schema =
-            cs.eval(R"((hash-ref (engine:metrics "query:parallel-orch-stats") "schema"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:parallel-orch-stats\") "schema"))");
         CHECK(schema && is_int(*schema) && as_int(*schema) == 1586, "orch schema 1586");
         auto batches =
-            cs.eval(R"((hash-ref (engine:metrics "query:parallel-orch-stats") "batches"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:parallel-orch-stats\") "batches"))");
         CHECK(batches && is_int(*batches) && as_int(*batches) >= 1, "batches advanced");
     }
 
@@ -1206,7 +1206,7 @@ int run_orch_quota_integration() {
         std::println("\n--- AC4: query:resource-quota-stats #1880 ---");
         reset_process_resource_quota_for_test();
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:resource-quota-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:resource-quota-stats\"))");
         CHECK(h && is_hash(*h), "stats hash");
         CHECK(href(cs, "schema-1880") == 1880, "schema-1880");
         CHECK(href(cs, "orch_agent_body_try_acquire_wired") == 1, "try_acquire wired");
@@ -2342,7 +2342,8 @@ int run_orch_quota_structured_2079() {
         // Verify counters also visible via query:orch-module-stats primitive.
         CHECK(href_int(
                   cs,
-                  R"((hash-ref (engine:metrics "query:orch-module-stats") "spawn-failures"))") >= 0,
+                  R"((hash-ref (engine:metrics \"query:orch-module-stats\") "spawn-failures"))") >=
+                  0,
               "spawn-failures readable via query:orch-module-stats");
         reset_process_resource_quota_for_test();
     }

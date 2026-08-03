@@ -55,8 +55,10 @@ int main() {
                                 "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_05.cpp");
         CHECK(prim.find("#1785") != std::string::npos, "cites #1785");
-        auto pos = prim.find("add(\"compile:per-symbol-dirty-stats\"");
-        CHECK(pos != std::string::npos, "primitive present");
+        auto pos = prim.find("compile:per-symbol-dirty-stats");
+        CHECK(pos != std::string::npos, "stats name present");
+        CHECK(prim.find("register_stats_impl") != std::string::npos,
+              "registered via register_stats_impl (#2628)");
         auto win = prim.substr(pos, 3500);
         CHECK(win.find("workspace_mtx_") != std::string::npos, "uses workspace_mtx_");
         CHECK(win.find("shared_lock") != std::string::npos, "shared_lock for read path");
@@ -72,12 +74,13 @@ int main() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define foo 1)\")").has_value(), "set-code");
         (void)cs.eval("(eval-current)");
-        auto r = cs.eval("(compile:per-symbol-dirty-stats \"foo\")");
+        auto r = cs.eval("(engine:metrics \"compile:per-symbol-dirty-stats\" \"foo\")");
         CHECK(r.has_value() && is_hash(*r), "returns hash for known sym");
-        auto n = cs.eval(
-            "(hash-ref (compile:per-symbol-dirty-stats \"foo\") \"per-symbol-affected-count\")");
+        auto n = cs.eval("(hash-ref (engine:metrics \"compile:per-symbol-dirty-stats\" \"foo\") "
+                         "\"per-symbol-affected-count\")");
         CHECK(n && is_int(*n) && as_int(*n) >= 0, "per-symbol-affected-count >= 0");
-        auto lk = cs.eval("(hash-ref (compile:per-symbol-dirty-stats \"foo\") \"lookup-count\")");
+        auto lk = cs.eval("(hash-ref (engine:metrics \"compile:per-symbol-dirty-stats\" \"foo\") "
+                          "\"lookup-count\")");
         CHECK(lk && is_int(*lk) && as_int(*lk) >= 1, "lookup-count bumped");
     }
 
@@ -86,11 +89,12 @@ int main() {
         std::println("\n--- AC4: unbound symbol zeroed stats ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define x 0)\")").has_value(), "set-code");
-        auto r = cs.eval("(compile:per-symbol-dirty-stats \"__not_a_real_symbol_1785__\")");
+        auto r = cs.eval(
+            "(engine:metrics \"compile:per-symbol-dirty-stats\" \"__not_a_real_symbol_1785__\")");
         CHECK(r.has_value() && is_hash(*r), "unbound returns hash");
-        auto n =
-            cs.eval("(hash-ref (compile:per-symbol-dirty-stats \"__not_a_real_symbol_1785__\") "
-                    "\"per-symbol-affected-count\")");
+        auto n = cs.eval("(hash-ref (engine:metrics \"compile:per-symbol-dirty-stats\" "
+                         "\"__not_a_real_symbol_1785__\") "
+                         "\"per-symbol-affected-count\")");
         CHECK(n && is_int(*n) && as_int(*n) == 0, "unbound affected-count 0");
     }
 

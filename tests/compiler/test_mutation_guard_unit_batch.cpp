@@ -2320,7 +2320,7 @@ int run_346_mutation_log_smoke() {
     CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     (void)cs.eval("(mutate:rebind \"m\" \"2\")");
-    auto log = cs.eval("(query:mutation-log)");
+    auto log = cs.eval("(query :mutation-log)");
     CHECK(log.has_value(), "query:mutation-log reachable");
     auto since = cs.eval("(query:mutations-since 0)");
     CHECK(since.has_value(), "query:mutations-since reachable");
@@ -2342,7 +2342,7 @@ int run_349_last_mutation_blame_smoke() {
     auto r = cs.eval("(query:last-mutation-blame)");
     CHECK(true, "query:last-mutation-blame invoked");
     (void)r;
-    auto log = cs.eval("(query:mutation-log)");
+    auto log = cs.eval("(query :mutation-log)");
     CHECK(log.has_value(), "mutation-log still reachable after rebind");
     return g_failed ? 1 : 0;
 }
@@ -2382,7 +2382,7 @@ int run_367_syntax_provenance_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define y 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto id = cs.eval("(car (query:find \"y\"))");
+    auto id = cs.eval("(car (query :find \"y\"))");
     CHECK(id && is_int(*id), "query:find y id");
     if (id && is_int(*id)) {
         auto nid = as_int(*id);
@@ -2442,7 +2442,7 @@ int run_329_stable_ref_query_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1) (define b (+ a 2))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto ch = cs.eval("(query:children 0)");
+    auto ch = cs.eval("(query :children 0)");
     CHECK(ch.has_value(), "query:children reachable");
     (void)cs.eval("(mutate:rebind \"a\" \"10\")");
     auto st = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
@@ -2612,7 +2612,7 @@ int run_369_structural_rollback_stats_smoke() {
     CHECK(st.has_value(), "ast:generation-stats reachable");
     CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto log = cs.eval("(query:mutation-log)");
+    auto log = cs.eval("(query :mutation-log)");
     CHECK(log.has_value(), "mutation-log");
     return g_failed ? 1 : 0;
 }
@@ -2723,7 +2723,7 @@ int run_1408_rebind_rollback_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     CHECK(cs.eval("(mutate:rebind \"x\" \"100\")").has_value(), "rebind");
     CHECK(cs.eval("x").has_value(), "x evaluates");
-    CHECK(cs.eval("(query:mutation-log)").has_value(), "mutation-log");
+    CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave45_1408
@@ -2806,7 +2806,7 @@ int run_1502_batch_rollback_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     CHECK(cs.eval("(length (query:defines))").has_value(), "defines count");
     (void)cs.eval("(mutate:rebind \"a\" \"10\")");
-    CHECK(cs.eval("(query:mutation-log)").has_value(), "mutation-log");
+    CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave45_1502
@@ -2934,7 +2934,7 @@ int run_1419_mutation_provenance_smoke() {
     (void)cs.eval("(mutate:rebind \"p\" \"2\" \"#1419\")");
     auto mp = cs.eval("(query:mutation-provenance)");
     CHECK(mp.has_value() || true, "query:mutation-provenance surface");
-    CHECK(cs.eval("(query:mutation-log)").has_value(), "mutation-log");
+    CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave46_1419
@@ -3063,9 +3063,9 @@ using aura::test::g_passed;
 int run_178_cycle3_schema_validate_smoke() {
     std::println("\n=== #178 cycle3: mutate:validate-against-schema smoke ===");
     CompilerService cs;
-    auto ok = cs.eval("(mutate:validate-against-schema \"expr\" \"(+ 1 2)\")");
+    auto ok = cs.eval("(mutate :validate \"expr\" \"(+ 1 2)\")");
     CHECK(ok.has_value() || true, "validate valid surface");
-    auto bad = cs.eval("(mutate:validate-against-schema \"expr\" \"\")");
+    auto bad = cs.eval("(mutate :validate \"expr\" \"\")");
     CHECK(bad.has_value() || true, "validate empty surface");
     CHECK(cs.eval("(set-code \"(define v 1)\")").has_value(), "set-code");
     return g_failed ? 1 : 0;
@@ -3246,7 +3246,7 @@ int run_314_sv_mutation_log_smoke() {
     flat.mark_dirty(iface);
     CHECK(flat.dirty_view().size() > iface || true, "dirty after interface mutate");
     CompilerService cs;
-    CHECK(cs.eval("(query:mutation-log)").has_value() || true, "mutation-log surface");
+    CHECK(cs.eval("(query :mutation-log)").has_value() || true, "mutation-log surface");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave47_314
@@ -3260,7 +3260,7 @@ int run_317_defuse_interface_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define bus 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto du = cs.eval("(query:def-use \"bus\")");
+    auto du = cs.eval("(query :def-use \"bus\")");
     CHECK(du.has_value() || true, "query:def-use surface");
     CHECK(cs.eval("(query:node-type \"Interface\")").has_value() || true,
           "query:node-type Interface");
@@ -3815,9 +3815,9 @@ int run_249_children_stable_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto c = cs.eval("(query:children-stable 0)");
+    auto c = cs.eval("(query :children-stable 0)");
     CHECK(c.has_value() || true, "children-stable surface");
-    auto p = cs.eval("(query:parent-stable 0)");
+    auto p = cs.eval("(query :parent-stable 0)");
     CHECK(p.has_value() || true, "parent-stable surface");
     return g_failed ? 1 : 0;
 }
@@ -4251,7 +4251,7 @@ int run_141_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define w 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto f = cs.eval("(query:find \"w\")");
+    auto f = cs.eval("(query :find \"w\")");
     CHECK(f.has_value() || true, "query:find surface");
     return g_failed ? 1 : 0;
 }
