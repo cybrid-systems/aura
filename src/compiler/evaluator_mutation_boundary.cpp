@@ -36,6 +36,7 @@ module;
 #include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
 #include "core/arena_auto_policy_stats.h"    // in_render_hotpath
 #include "core/densify_consistency_report.h" // Issue #2341: DensifyConsistencyReport + counter
+#include "core/moving_densify_health.hh"     // Issue #2619: Agent Moving densify health
 #include "mutation_boundary_shared_exit.h"   // Issue #2600: shared exit helper (soft + full Guard)
 #include "core/post_compact_lifecycle.hh"    // Issue #2436: canonical post-compact order
 #include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
@@ -2002,6 +2003,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2353: true only when Moving densify actually relocated live objects
         // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
         bool had_moving_densify = false;
+        // Issue #2619: last densify window aggregates for Agent health surface.
+        std::size_t densify_objects_moved = 0;
+        std::size_t densify_untracked_kept = 0;
+        bool densify_incomplete_remap = false;
+        std::size_t densify_root_remap_fails = 0;
         // Issue #2499 / #2559: densify-call RootRemap axis (last-call fail totals
         // == 0). Three-layer memory inventory: pin ∧ root_remap ∧ scan_fail.
         // Soft / no Moving → vacuous true. Used for DensifyConsistencyReport so
@@ -2056,6 +2062,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             pin_contract_held = compact_r.pin_contract_held;
             had_moving_densify = compact_r.moved_live_objects;
+            // Issue #2619: capture window aggregates for Agent densify-health.
+            densify_objects_moved = compact_r.objects_moved_total;
+            densify_untracked_kept = compact_r.untracked_kept_total;
+            densify_incomplete_remap = compact_r.moving_incomplete_remap_any;
+            densify_root_remap_fails = compact_r.root_remap_stable_ref_fail_total +
+                                       compact_r.root_remap_closure_capture_fail_total;
             // Issue #2499: densify-call RootRemap fail axis (last-call totals
             // aggregated by compact_all_moving_pinned). live_compact already
             // folds non-zero fails into pin_contract_held at the densify source;
@@ -2278,6 +2290,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         aura::core::densify_consistency::note_last_densify_closure_remount_ok(
             densify_consistency.closure_remount_ok, cl_fc);
         aura::core::densify_consistency::bump_last_densify_call_seq();
+        // Issue #2619: publish Agent-visible Moving densify health window.
+        // Soft/no densify → vacuous healthy (would-allow-mutate=true). Production
+        // hard (#2596) + incomplete remap → agent_throttle (orch refuse mutate).
+        {
+            const bool incomplete =
+                densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
+            aura::core::moving_densify_health::publish_last_moving_densify_window(
+                had_moving_densify, pin_contract_held && densify_consistency.pin_ok, incomplete,
+                static_cast<std::uint64_t>(densify_objects_moved),
+                static_cast<std::uint64_t>(densify_untracked_kept),
+                static_cast<std::uint64_t>(densify_root_remap_fails));
+        }
         if (!densify_consistency.overall_ok()) {
             // Issue #2341 AC2: unified fail — mirror pin_contract_held
             // gating above. Bump fail counter; optional hard abort
