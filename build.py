@@ -5164,6 +5164,25 @@ def cmd_instance_constraint_depth_cap_coverage():
     return 0
 
 
+def cmd_occurrence_goal_persist_rehydrate_coverage():
+    """Issue #2608: optional OccurrenceGoal persist / rehydrate.
+
+    Soft default OFF; production/env snapshot + rehydrate after epoch prune;
+    cap truncations; schema-2608 fidelity keys.
+    """
+    print(f"{B}=== OccurrenceGoal persist/rehydrate coverage (#2608) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_goal_persist_rehydrate_2608.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("OccurrenceGoal persist/rehydrate (#2608) coverage contract rows failed")
+        return 1
+    ok("OccurrenceGoal persist/rehydrate (#2608) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -7096,6 +7115,7 @@ def cmd_gate():
         or cmd_anonymous_residual_stable_id_policy_coverage()
         or cmd_pereval_reemit_region_independence_coverage()
         or cmd_instance_constraint_depth_cap_coverage()
+        or cmd_occurrence_goal_persist_rehydrate_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
