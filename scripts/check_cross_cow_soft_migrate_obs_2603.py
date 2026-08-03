@@ -182,27 +182,20 @@ def main() -> int:
             runtime_cpp,
             r"static\s+int\s+try_cross_cow_soft_migrate_\s*\(\s*std::size_t\s+cid\s*\)",
         )
-        if cow_block:
-            # AC2: the CowGenMismatch cross-cow_note_hard_ branch must NOT
-            # be followed by same-gen bumper in the same branch.
-            if "closure_cow_gen_mismatch_" in cow_block:
-                # Find the hard branch context: cow_gen_mismatch → hard.
-                # The cross-gen hard should not bump same-gen.
-                # Check: cross_cow_soft_migrate_same_gen_total is NOT in
-                # the same block as the CowGenMismatch hard-reject call.
-                # Approximate: the same-gen bumper must be in a separate
-                # branch from the CowGenMismatch hard.
-                # We already verified the success path (return 1) bumps
-                # the counter. Here we verify the hard path (return 0) does
-                # NOT bump it.
-                if cow_block.count(
-                    "aura_bump_cross_cow_soft_migrate_same_gen_total"
-                ) > 1:
-                    failures.append(
-                        "AC2: try_cross_cow_soft_migrate_ has multiple "
-                        "same-gen bumper calls (cross-gen hard path must NOT "
-                        "bump same-gen counter)"
-                    )
+        # AC2: the CowGenMismatch cross-cow_note_hard_ branch must NOT
+        # be followed by same-gen bumper in the same branch.
+        # We already verified the success path (return 1) bumps the counter.
+        # Here we verify the hard path does not bump it more than once.
+        if (
+            cow_block
+            and "closure_cow_gen_mismatch_" in cow_block
+            and cow_block.count("aura_bump_cross_cow_soft_migrate_same_gen_total") > 1
+        ):
+            failures.append(
+                "AC2: try_cross_cow_soft_migrate_ has multiple "
+                "same-gen bumper calls (cross-gen hard path must NOT "
+                "bump same-gen counter)"
+            )
 
     # AC3: soft disabled env → always hard; counters consistent
     if BRIDGE.exists():
@@ -213,12 +206,9 @@ def main() -> int:
                 "AC3: cross_cow_hard_reject_disabled_total not found in "
                 "aura_jit_bridge.cpp (soft-disabled env must bump hard)"
             )
-        if "AURA_CROSS_COW_SOFT_MIGRATE" not in RUNTIME_CPP.read_text(
-            encoding="utf-8", errors="replace"
-        ):
+        if "AURA_CROSS_COW_SOFT_MIGRATE" not in RUNTIME_CPP.read_text(encoding="utf-8", errors="replace"):
             failures.append(
-                "AC3: AURA_CROSS_COW_SOFT_MIGRATE env not referenced in "
-                "aura_jit_runtime.cpp (soft-disabled env path)"
+                "AC3: AURA_CROSS_COW_SOFT_MIGRATE env not referenced in aura_jit_runtime.cpp (soft-disabled env path)"
             )
 
     # AC4: additive schema only; #2505 / #2547 surfaces remain compatible
@@ -234,8 +224,7 @@ def main() -> int:
         ):
             if key not in obs_eval:
                 failures.append(
-                    f"AC4: evaluator_primitives_obs_eval.cpp does not expose "
-                    f"{key} on query:aot-reload-stats"
+                    f"AC4: evaluator_primitives_obs_eval.cpp does not expose {key} on query:aot-reload-stats"
                 )
         # Compatibility: prior schemas preserved.
         for key in (
@@ -277,9 +266,7 @@ def main() -> int:
                 "ac2603_soft_no_cross_workspace_write",
             ):
                 if f"{ac_fn}()" not in test_text:
-                    failures.append(
-                        f"AC5: main() does not call {ac_fn}()"
-                    )
+                    failures.append(f"AC5: main() does not call {ac_fn}()")
 
     if failures:
         for f in failures:
@@ -350,7 +337,7 @@ def self_test() -> int:
             'extern "C" void aura_bump_cross_cow_soft_migrate_same_gen_total(void) {\n'
             "    aot_metrics()->cross_cow_soft_migrate_same_gen_total.fetch_add(1, ...);\n"
             "}\n"
-            "static const char* AURA_CROSS_COW_SOFT_MIGRATE = \"AURA_CROSS_COW_SOFT_MIGRATE\";\n",
+            'static const char* AURA_CROSS_COW_SOFT_MIGRATE = "AURA_CROSS_COW_SOFT_MIGRATE";\n',
             encoding="utf-8",
         )
 

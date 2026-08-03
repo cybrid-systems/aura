@@ -217,7 +217,7 @@ static void ac6_query_keys() {
     std::println("\n--- AC6: query:capability-effect-stats MacroSelfEvo keys ---");
     reset_all();
     CompilerService cs;
-    auto h = cs.eval(R"((engine:metrics "query:capability-effect-stats"))");
+    auto h = cs.eval(R"((engine:metrics \"query:capability-effect-stats\"))");
     CHECK(h && is_hash(*h), "capability-effect-stats hash");
     CHECK(href_cap(cs, "macro-self-evo-wired") == 1, "macro-self-evo-wired");
     CHECK(href_cap(cs, "macro-self-evo-schema") == 2023, "macro-self-evo-schema 2023");

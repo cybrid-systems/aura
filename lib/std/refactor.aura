@@ -34,7 +34,7 @@
       ; 1. Rename Define nodes
       (define (rename-defs ids)
         (when (pair? ids)
-          (let* ((info (query:node (car ids)))
+          (let* ((info (query :node (car ids)))
                  (name (if (pair? (cdr info)) (car (cdr info)) "")))
             (when (and (string? name) (string=? name old))
               (try (mutate:rebind (car ids) new) (catch #f))
@@ -47,7 +47,7 @@
       (when (pair? vars)
         (define (rename-vars ids)
           (when (pair? ids)
-            (let* ((info (query:node (car ids)))
+            (let* ((info (query :node (car ids)))
                    (name (if (pair? (cdr info)) (car (cdr info)) "")))
               (when (and (string? name) (string=? name old))
                 (try (mutate:rebind (car ids) new) (catch #f))
@@ -91,7 +91,7 @@
       ; 找到 Define 节点
       (define (find-def ids)
         (when (and (pair? ids) (not found))
-          (let* ((info (query:node (car ids)))
+          (let* ((info (query :node (car ids)))
                  (name (if (pair? (cdr info)) (car (cdr info)) "")))
             (when (and (string? name) (string=? name fn-name))
               (set! found (car ids)))

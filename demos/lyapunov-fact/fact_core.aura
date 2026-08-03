@@ -27,7 +27,7 @@
     (if (not r)
         0
         (let cnt ((id r))
-          (+ 1 (apply + (map cnt (query:children id))))))))
+          (+ 1 (apply + (map cnt (query :children id))))))))
 
 (define (recursive-residual)
   (length (query:calls "fact")))

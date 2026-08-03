@@ -167,7 +167,7 @@ static void run_454_matrix() {
 
     std::println("\n--- AC8 (#454): query regression ---");
     auto rps = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
-    auto qn = cs.eval("(query:node 0)");
+    auto qn = cs.eval("(query :node 0)");
     CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
     CHECK(qn && is_pair(*qn), "query:node regression");
 }

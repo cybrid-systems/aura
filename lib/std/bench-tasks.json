@@ -1294,7 +1294,7 @@
     "",
     [
       "(set-code \"(define outer 42)(define (f n) (+ outer n))\")",
-      "(display (car (query:def-use 'outer)))"
+      "(display (car (query :def-use 'outer)))"
     ]
   ],
   [
@@ -1306,7 +1306,7 @@
     "",
     [
       "(set-code \"(define (f x) (+ x 1))(define (g y) (* y 2))\")",
-      "(display (+ (length (car (query:def-use 'f)))(length (car (query:def-use 'g)))))"
+      "(display (+ (length (car (query :def-use 'f)))(length (car (query :def-use 'g)))))"
     ]
   ],
   [
@@ -1321,7 +1321,7 @@
       ";; set-code loads code into workspace",
       "(set-code \"(define (g x) (+ x 1))\")",
       ";; query:def-use returns ((def-node-id ...) . (use-node-id ...))",
-      "(display (car (query:def-use \"g\")))"
+      "(display (car (query :def-use \"g\")))"
     ]
   ],
   [
@@ -1589,7 +1589,7 @@
       "(define sid (ast:snapshot \"before\"))",
       "(mutate:rebind \"g\" \"(lambda (x) (+ x 1))\" \"test\")",
       "(ast:restore sid)",
-      "(display (car (query:def-use \"g\")))"
+      "(display (car (query :def-use \"g\")))"
     ]
   ],
   [
@@ -1662,11 +1662,11 @@
     "",
     [
       "(set-code \"(define x 1)\")",
-      "(define ws (workspace:create 'test))",
-      "(workspace:switch ws)",
+      "(define ws (workspace :create 'test))",
+      "(workspace :switch ws)",
       "(set-code \"(define y 2)\")",
-      "(workspace:switch 0)",
-      "(display (car (car (query:def-use 'x))))"
+      "(workspace :switch 0)",
+      "(display (car (car (query :def-use 'x))))"
     ]
   ],
   [
@@ -1679,12 +1679,12 @@
     [
       "--- Workspace layering ---",
       "(set-code \"(define (g x) (+ x 1))\")",
-      "(define ws (workspace:create \"sandbox\"))",
-      "(workspace:switch ws)",
+      "(define ws (workspace :create \"sandbox\"))",
+      "(workspace :switch ws)",
       "(mutate:rebind \"g\" \"(lambda (x) (* x 2))\" \"mutate\")",
-      "(workspace:switch 0)",
-      "(workspace:merge ws)",
-      "(display (car (query:def-use \"g\")))"
+      "(workspace :switch 0)",
+      "(workspace :merge ws)",
+      "(display (car (query :def-use \"g\")))"
     ]
   ],
   [

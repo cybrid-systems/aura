@@ -134,8 +134,8 @@
 ;; ── T6: metrics surfaces (sample ints BEFORE gc-heap) ────────
 ;; FlatHashTable keys/values are heap-allocated; aggressive gc-heap
 ;; can invalidate live hash handles — always copy out scalars first.
-(define po (engine:metrics "query:parallel-orch-stats"))
-(define cl (engine:metrics "query:ai-closedloop-readiness-stats"))
+(define po (engine:metrics \"query:parallel-orch-stats\"))
+(define cl (engine:metrics \"query:ai-closedloop-readiness-stats\"))
 (define po-schema (safe-int po "schema" -1))
 (define po-batches (safe-int po "batches" 0))
 (define po-joined (safe-int po "joined" 0))
@@ -160,7 +160,7 @@
 (section "post-gc-binding" t7-ok)
 
 ;; ── T8: re-query closed-loop after GC (fresh hash) ────────────
-(define cl2 (engine:metrics "query:ai-closedloop-readiness-stats"))
+(define cl2 (engine:metrics \"query:ai-closedloop-readiness-stats\"))
 (define cl2-schema (safe-int cl2 "schema" -1))
 (define cl2-health (safe-int cl2 "orch-health-score" -1))
 (define cl2-join (safe-int cl2 "avg-join-latency-us" -1))

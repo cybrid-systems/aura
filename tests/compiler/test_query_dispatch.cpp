@@ -43,12 +43,11 @@ int main() {
         CHECK(eval_ok(cs, "(eval-current)"), "eval-current");
     }
 
-    // AC1: :root / :node
+    // AC1: :root / :node  (#2628: bare aliases removed)
     {
         auto root = eval_int(cs, "(query :root)");
         CHECK(root >= 0, "query :root non-neg");
         CHECK(eval_ok(cs, "(query :node " + std::to_string(root) + ")"), "query :node");
-        CHECK(eval_ok(cs, "(query:node " + std::to_string(root) + ")"), "query:node alias");
     }
 
     // AC2: :children + :stable
@@ -58,37 +57,32 @@ int main() {
         CHECK(eval_ok(cs, "(query :children " + id + ")"), "query :children");
         CHECK(eval_ok(cs, "(query :children " + id + " :stable #t)"), "query :children :stable");
         CHECK(eval_ok(cs, "(query :children-stable " + id + ")"), "query :children-stable");
-        CHECK(eval_ok(cs, "(query:children " + id + ")"), "query:children alias");
-        CHECK(eval_ok(cs, "(query:children-stable " + id + ")"), "query:children-stable alias");
     }
 
     // AC3: :parent
     {
         auto root = eval_int(cs, "(query :root)");
         CHECK(eval_ok(cs, "(query :parent " + std::to_string(root) + ")"), "query :parent");
-        CHECK(eval_ok(cs, "(query:parent " + std::to_string(root) + ")"), "query:parent alias");
     }
 
     // AC4: :find
     {
         CHECK(eval_ok(cs, "(query :find \"f\")"), "query :find f");
-        CHECK(eval_ok(cs, "(query:find \"g\")"), "query:find alias");
+        CHECK(eval_ok(cs, "(query :find \"g\")"), "query :find g");
     }
 
     // AC5: :def-use
     {
         CHECK(eval_ok(cs, "(query :def-use \"f\")"), "query :def-use");
-        CHECK(eval_ok(cs, "(query:def-use \"f\")"), "query:def-use alias");
     }
 
     // AC6: :mutation-log
     {
         CHECK(eval_ok(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"), "mutate");
         CHECK(eval_ok(cs, "(query :mutation-log)"), "query :mutation-log");
-        CHECK(eval_ok(cs, "(query:mutation-log)"), "query:mutation-log alias");
     }
 
-    // AC7: api-reference
+    // AC7: api-reference — #2628 purged query:* aliases (no public names)
     {
         auto r = cs.eval("(api-reference)");
         CHECK(r && is_string(*r), "api-reference string");
@@ -96,9 +90,10 @@ int main() {
             auto idx = as_string_idx(*r);
             auto heap = cs.evaluator().string_heap();
             std::string s = idx < heap.size() ? heap[idx] : "";
-            CHECK(s.find("query") != std::string::npos, "lists query");
-            CHECK(s.find("*deprecated*") != std::string::npos, "*deprecated* section");
-            CHECK(s.find("query:children") != std::string::npos, "deprecated query:children");
+            CHECK(s.find("query") != std::string::npos, "lists query dispatcher");
+            CHECK(s.find("query:children") == std::string::npos, "no public query:children");
+            CHECK(s.find("query:find") == std::string::npos, "no public query:find");
+            CHECK(s.find("query:def-use") == std::string::npos, "no public query:def-use");
         }
     }
 

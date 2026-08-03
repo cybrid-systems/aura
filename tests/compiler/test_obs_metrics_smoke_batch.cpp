@@ -307,7 +307,7 @@ int run_1462_compat_shim_smoke() {
     auto imp = cs.eval("(import \"std/compat\")");
     (void)imp;
     auto r_fbn = cs.eval("(query:find-by-name \"nonexistent-test-name-xyz\")");
-    auto r_find = cs.eval("(query:find \"nonexistent-test-name-xyz\")");
+    auto r_find = cs.eval("(query :find \"nonexistent-test-name-xyz\")");
     // both should resolve (compat or native); presence is enough
     CHECK(r_fbn.has_value() || r_find.has_value(), "find path reachable");
     auto r_nwm = cs.eval("(query:nodes-with-marker 'nonexistent-test-marker-xyz)");

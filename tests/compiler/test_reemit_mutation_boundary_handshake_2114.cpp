@@ -278,8 +278,7 @@ static void ac2604_deferred_triggers_reemit() {
 
     // Source-cite: auto-drain wired in exit_mutation_boundary success path.
     const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") !=
-              std::string::npos,
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") != std::string::npos,
           "AC1: auto-drain bumper wired in evaluator_mutation_boundary.cpp");
     CHECK(eval_cpp.find("!nested_boundary && success") != std::string::npos,
           "AC1: auto-drain guarded on outermost + success");
@@ -287,14 +286,12 @@ static void ac2604_deferred_triggers_reemit() {
           "AC1: auto-drain checks has_deferred_reemit()");
     CHECK(eval_cpp.find("aura_reemit_aot_for_dirty") != std::string::npos,
           "AC1: auto-drain calls aura_reemit_aot_for_dirty (region-filtered pass)");
-    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_success_total") !=
-              std::string::npos,
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_success_total") != std::string::npos,
           "AC1: auto-drain success bumper called");
     // Counters exist + start at 0.
     CHECK(metrics.reemit_auto_drain_on_boundary_exit_total.load() == 0,
           "AC1: on_boundary_exit_total starts at 0");
-    CHECK(metrics.reemit_auto_drain_success_total.load() == 0,
-          "AC1: success_total starts at 0");
+    CHECK(metrics.reemit_auto_drain_success_total.load() == 0, "AC1: success_total starts at 0");
     CHECK(metrics.reemit_auto_drain_throttled_total.load() == 0,
           "AC1: throttled_total starts at 0");
     aura_set_aot_metrics(nullptr);
@@ -328,8 +325,7 @@ static void ac2604_storm_throttle_bumps_throttled() {
     // Source-cite: auto-drain must check should_throttle_reemit and bump
     // throttled_total before calling reemit (no silent drop forever).
     const auto eval_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_throttled_total") !=
-              std::string::npos,
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_throttled_total") != std::string::npos,
           "AC3: throttled bumper wired");
     CHECK(eval_cpp.find("should_throttle_reemit") != std::string::npos,
           "AC3: auto-drain checks should_throttle_reemit");
@@ -348,7 +344,7 @@ static void ac2604_soft_zero_cost() {
     // The guard must reference has_deferred_reemit AND last_region_mask_from_dirty.
     // Approximate: both terms appear in a block preceding the bumper call.
     const auto bumper_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total");
-    const auto preceding = eval_cpp[std::max<std::size_t>(0, bumper_idx - 600): bumper_idx];
+    const auto preceding = eval_cpp [std::max<std::size_t>(0, bumper_idx - 600):bumper_idx];
     CHECK(preceding.find("has_deferred_reemit") != std::string::npos,
           "AC4: guard checks has_deferred_reemit()");
     CHECK(preceding.find("last_region_mask_from_dirty") != std::string::npos,
@@ -373,14 +369,11 @@ static void ac2604_source_and_schema() {
     const auto build = read_file("build.py");
 
     // Source-cite.
-    CHECK(hur.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") !=
-              std::string::npos,
+    CHECK(hur.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") != std::string::npos,
           "AC5: C ABI in hot_update_registry.cpp");
-    CHECK(hur_h.find("bump_reemit_auto_drain_on_boundary_exit_total") !=
-              std::string::npos,
+    CHECK(hur_h.find("bump_reemit_auto_drain_on_boundary_exit_total") != std::string::npos,
           "AC5: class decl in hot_update_registry.hh");
-    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") !=
-              std::string::npos,
+    CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total") != std::string::npos,
           "AC5: wired in evaluator_mutation_boundary.cpp");
     CHECK(metrics.find("reemit_auto_drain_on_boundary_exit_total") != std::string::npos,
           "AC5: counter in metrics.h");
@@ -414,7 +407,6 @@ int main() {
     aura_hot_update_reset_reemit_boundary_handshake_for_test();
     aura_set_reemit_candidate_fn(nullptr, nullptr);
     aura_set_aot_emit_fn(nullptr, nullptr);
-    std::println("\n=== #2114 + #2604 Results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== #2114 + #2604 Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

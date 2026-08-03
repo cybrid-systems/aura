@@ -97,8 +97,7 @@ def main() -> int:
         ):
             if counter not in metrics:
                 failures.append(
-                    f"AC1: observability_metrics.h missing atomic counter "
-                    f"{counter} (outermost exit auto-drain metric)"
+                    f"AC1: observability_metrics.h missing atomic counter {counter} (outermost exit auto-drain metric)"
                 )
         # Paired-declaration: new counters should be near existing
         # aot_reload_auto_retry_total (related reemit family).
@@ -118,8 +117,7 @@ def main() -> int:
                 )
                 if m and abs(m.start() - anchor.start()) > 600:
                     failures.append(
-                        f"AC1: {counter} is not adjacent to "
-                        f"aot_reload_auto_retry_total in observability_metrics.h"
+                        f"AC1: {counter} is not adjacent to aot_reload_auto_retry_total in observability_metrics.h"
                     )
 
     # AC1 (cont.): C ABI bump functions in hot_update_registry.cpp
@@ -134,8 +132,7 @@ def main() -> int:
         ):
             if fn not in hur:
                 failures.append(
-                    f"AC1: hot_update_registry.cpp missing C ABI "
-                    f"definition for {fn} (outermost exit auto-drain bumper)"
+                    f"AC1: hot_update_registry.cpp missing C ABI definition for {fn} (outermost exit auto-drain bumper)"
                 )
 
     # AC1 (cont.): declarations in hot_update_registry.hh
@@ -150,8 +147,7 @@ def main() -> int:
         ):
             if fn not in hur_h:
                 failures.append(
-                    f"AC1: hot_update_registry.hh missing class declaration "
-                    f"for {fn} (outermost exit auto-drain bumper)"
+                    f"AC1: hot_update_registry.hh missing class declaration for {fn} (outermost exit auto-drain bumper)"
                 )
 
     # AC1 (cont.): auto-drain logic in exit_mutation_boundary
@@ -175,24 +171,18 @@ def main() -> int:
             # the !nested_boundary && success guard. Guard is BEFORE
             # the bumper call (the if-condition is in preceding text).
             block_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total")
-            surrounding = eval_cpp[max(0, block_idx - 800): block_idx + 400]
+            surrounding = eval_cpp[max(0, block_idx - 800) : block_idx + 400]
             if "nested_boundary" not in surrounding or "success" not in surrounding:
-                failures.append(
-                    "AC1: auto-drain block must guard on "
-                    "!nested_boundary && success (outermost exit only)"
-                )
+                failures.append("AC1: auto-drain block must guard on !nested_boundary && success (outermost exit only)")
 
     # AC1 (cont.): auto-drain takes deferred + calls aura_reemit_aot_for_dirty
     if EVAL.exists():
         eval_cpp = EVAL.read_text(encoding="utf-8", errors="replace")
         if "aura_bump_reemit_auto_drain_on_boundary_exit_total" in eval_cpp:
             block_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total")
-            surrounding_after = eval_cpp[block_idx: block_idx + 1500]
+            surrounding_after = eval_cpp[block_idx : block_idx + 1500]
             if "aura_reemit_aot_for_dirty" not in surrounding_after:
-                failures.append(
-                    "AC1: auto-drain must call aura_reemit_aot_for_dirty "
-                    "(region-filtered reemit pass)"
-                )
+                failures.append("AC1: auto-drain must call aura_reemit_aot_for_dirty (region-filtered reemit pass)")
 
     # AC2: same auto pass when only last_region_mask_from_dirty set.
     # Source-cite: the auto-drain block must check
@@ -202,7 +192,7 @@ def main() -> int:
         if "aura_bump_reemit_auto_drain_on_boundary_exit_total" in eval_cpp:
             block_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total")
             # Guard is BEFORE the bumper call (the if-condition).
-            surrounding = eval_cpp[max(0, block_idx - 800): block_idx + 400]
+            surrounding = eval_cpp[max(0, block_idx - 800) : block_idx + 400]
             if "last_region_mask_from_dirty" not in surrounding:
                 failures.append(
                     "AC2: auto-drain must check last_region_mask_from_dirty != 0 "
@@ -210,8 +200,7 @@ def main() -> int:
                 )
             if "has_deferred_reemit" not in surrounding:
                 failures.append(
-                    "AC2: auto-drain must check has_deferred_reemit() "
-                    "(deferred-only path also triggers auto pass)"
+                    "AC2: auto-drain must check has_deferred_reemit() (deferred-only path also triggers auto pass)"
                 )
 
     # AC3: storm throttle → skip body, bump throttled counter.
@@ -219,7 +208,7 @@ def main() -> int:
         eval_cpp = EVAL.read_text(encoding="utf-8", errors="replace")
         if "aura_bump_reemit_auto_drain_on_boundary_exit_total" in eval_cpp:
             block_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total")
-            surrounding = eval_cpp[block_idx: block_idx + 1500]
+            surrounding = eval_cpp[block_idx : block_idx + 1500]
             if "aura_bump_reemit_auto_drain_throttled_total" not in surrounding:
                 failures.append(
                     "AC3: auto-drain must call "
@@ -227,10 +216,7 @@ def main() -> int:
                     "throttle (no silent drop of deferred forever)"
                 )
             if "should_throttle_reemit" not in surrounding:
-                failures.append(
-                    "AC3: auto-drain must check should_throttle_reemit "
-                    "(storm gate before reemit body)"
-                )
+                failures.append("AC3: auto-drain must check should_throttle_reemit (storm gate before reemit body)")
 
     # AC4: soft path (no deferred, mask=0) → zero extra work.
     if EVAL.exists():
@@ -241,7 +227,7 @@ def main() -> int:
             block_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total")
             # Look for the guard pattern: "if (!reg.has_deferred_reemit() &&"
             # or "if (!reg.has_deferred_reemit() ||"
-            preceding = eval_cpp[max(0, block_idx - 600): block_idx]
+            preceding = eval_cpp[max(0, block_idx - 600) : block_idx]
             if "has_deferred_reemit" not in preceding or "last_region_mask_from_dirty" not in preceding:
                 failures.append(
                     "AC4: soft path guard (has_deferred_reemit || "
@@ -264,8 +250,7 @@ def main() -> int:
         ):
             if key not in obs_eval:
                 failures.append(
-                    f"AC5: evaluator_primitives_obs_eval.cpp does not expose "
-                    f"{key} on query:aot-reload-stats"
+                    f"AC5: evaluator_primitives_obs_eval.cpp does not expose {key} on query:aot-reload-stats"
                 )
         # Compatibility: prior aot-reload-stats schemas preserved.
         for key in (
@@ -305,9 +290,7 @@ def main() -> int:
                 "ac2604_source_and_schema",
             ):
                 if f"{ac_fn}()" not in test_text:
-                    failures.append(
-                        f"AC5: main() does not call {ac_fn}()"
-                    )
+                    failures.append(f"AC5: main() does not call {ac_fn}()")
 
     if failures:
         for f in failures:

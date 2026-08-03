@@ -114,7 +114,7 @@ int run_398_for_each_stable_child_smoke() {
     CompilerService cs;
     auto q = cs.eval("(engine:metrics \"query:children-column-stats\")");
     CHECK(q.has_value(), "column stats still reachable");
-    auto csb = cs.eval("(query:children-stable 0)");
+    auto csb = cs.eval("(query :children-stable 0)");
     (void)csb;
     CHECK(true, "query:children-stable invoked");
     return g_failed ? 1 : 0;

@@ -67,7 +67,7 @@ int main() {
     // ── AC5: query:audit-wal-stats shape ──
     {
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:audit-wal-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:audit-wal-stats\"))");
         CHECK(h && is_hash(*h), "audit-wal-stats is hash");
         CHECK(href_m(cs, "schema") == 1567, "schema 1567");
         CHECK(href_m(cs, "active") == 1, "active");
@@ -163,7 +163,7 @@ int main() {
                       (log && (is_pair(*log) || is_string(*log)));
         if (!ok_log) {
             // Fallback: call through stats if public query demoted
-            auto log3 = cs.eval(R"((engine:metrics "query:mutation-audit-log"))");
+            auto log3 = cs.eval(R"((engine:metrics \"query:mutation-audit-log\"))");
             ok_log = log3.has_value();
         }
         CHECK(ok_log || ev.mutation_audit_total() >= 2, "audit log reachable or ring has entries");

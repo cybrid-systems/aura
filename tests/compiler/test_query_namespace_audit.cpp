@@ -139,7 +139,7 @@ bool test_query_safe_fallback_wrappers() {
                                 content.find("(query:by-marker marker)") != std::string::npos;
     // (query:find-by-name n) returns -1 for non-string
     const bool has_find_safe = content.find("(if (string? name)") != std::string::npos &&
-                               content.find("(query:find name)") != std::string::npos &&
+                               content.find("(query :find name)") != std::string::npos &&
                                content.find("    -1))") != std::string::npos;
     std::println("  safe fallbacks: nodes-with-marker + find-by-name");
     CHECK(has_nodes_safe, "stdlib/query.aura (query:nodes-with-marker) safe fallback");
@@ -155,11 +155,11 @@ bool test_query_subtree_iterative_walk() {
     CHECK(f.good(), "lib/std/query.aura exists");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     f.close();
-    // (query:subtree root-id) does iterative walk using (query:children)
+    // (query:subtree root-id) does iterative walk using (query :children)
     // to avoid the Infinite-Loop pitfall (§1 of contributing.md).
     const bool has_subtree = content.find("(define (query:subtree") != std::string::npos;
     const bool uses_iterative = content.find("(let loop ((queue") != std::string::npos &&
-                                content.find("(query:children current)") != std::string::npos;
+                                content.find("(query :children current)") != std::string::npos;
     std::println("  (query:subtree) defined + uses iterative walk");
     CHECK(has_subtree, "stdlib/query.aura (query:subtree) defined");
     CHECK(uses_iterative, "stdlib/query.aura (query:subtree) uses iterative walk "
@@ -207,10 +207,10 @@ bool test_regression_core_query_primitives() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     // Core query primitives MUST stay (red-line #2).
-    auto r1 = cs.eval("(query:node \"a\")");
-    CHECK(r1.has_value(), "(query:node \"a\") (regression - core)");
-    auto r2 = cs.eval("(query:children-stable 0)");
-    CHECK(r2.has_value(), "(query:children-stable) (regression - core)");
+    auto r1 = cs.eval("(query :node \"a\")");
+    CHECK(r1.has_value(), "(query :node \"a\") (regression - core)");
+    auto r2 = cs.eval("(query :children-stable 0)");
+    CHECK(r2.has_value(), "(query :children-stable) (regression - core)");
     auto r3 = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(r3.has_value(), "(query:by-marker) (regression - core)");
     auto r4 = cs.eval("(query:tag-arity-count 32 0)");

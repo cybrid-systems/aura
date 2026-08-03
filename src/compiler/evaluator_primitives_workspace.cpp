@@ -62,6 +62,9 @@ using types::make_void;
 void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                                    std::function<void()> destroy_defuse_index) {
 
+    // Issue #2628: private PrimFn table for op-dispatch (not public names).
+    auto w_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
+
     // Issue #737: (workspace:snapshot name) → snapshot ID.
     // Named convenience wrapper over (ast:snapshot name) for
     // AI Agent multi-round edit loops.
@@ -174,8 +177,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // P13: Workspace Layering (P1 — COW + read-only lock)
     // ═══════════════════════════════════════════════════════════════
 
-    // (workspace:create name) → workspace ID (COW, no clone until mutate)
-    add("workspace:create", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    // (workspace :create name) → workspace ID (COW, no clone until mutate)
+    (*w_impls)["workspace:create"] = PrimFn{[&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #1994 / Wave1 B-09: unique workspace lock, adopt outer Guard.
         Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
         // Issue #1566: tenant isolation on workspace structural ops.
@@ -211,7 +214,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         auto parent_idx = wt->active_idx();
         auto id = wt->create_child(name, parent_idx, ev.workspace_flat_, ev.workspace_pool_);
         return make_int(static_cast<std::int64_t>(id));
-    });
+    }};
 
     // Issue #276: (workspace:resolve-stable-ref from-layer node-id gen [to-layer])
     // Remaps a StableNodeRef captured in one workspace layer to the
@@ -276,11 +279,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // different SymIds), but name-based lookup goes through
     // the *current* layer's pool and AST. A caller who
     // captured a StableNodeRef in the parent layer and then
-    // (workspace:switch) to a child can re-resolve by name:
+    // (workspace :switch) to a child can re-resolve by name:
     //
-    //   (workspace:switch parent-id)
+    //   (workspace :switch parent-id)
     //   (define ref-id (workspace:find-define "my-fn"))
-    //   (workspace:switch child-id)
+    //   (workspace :switch child-id)
     //   (define child-ref (workspace:find-define "my-fn"))
     //
     // The two NodeIds may differ (parent's pre-mutation vs
@@ -288,7 +291,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // respective layers.
     //
     // Falls back to the implicit root workspace's flat + pool
-    // when no WorkspaceTree is initialized (no (workspace:create)
+    // when no WorkspaceTree is initialized (no (workspace :create)
     // has been called yet) — useful for ad-hoc lookups in tests
     // and for callers that haven't adopted the workspace_tree.
     add("workspace:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -299,7 +302,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         const auto& name = ev.string_heap_[name_idx];
         // Prefer the active workspace layer's flat + pool when
-        // a WorkspaceTree exists (so (workspace:switch) actually
+        // a WorkspaceTree exists (so (workspace :switch) actually
         // changes where lookups go). If the tree is missing or
         // the active layer is unset, fall back to the implicit
         // root workspace's flat + pool — top-level (define ...)
@@ -320,48 +323,49 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(*found));
     });
 
-    // (workspace:switch id) → #t
-    add("workspace:switch", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-            return make_bool(false);
-        // Issue #1566: tenant isolation before layer switch.
-        if (!ev.check_workspace_isolation(0, 0, 0, "workspace:switch"))
-            return make_bool(false);
-        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (!wt->set_active(idx))
-            return make_bool(false);
-        auto* ws = wt->active();
-        if (ws) {
-            ev.workspace_flat_ = ws->flat;
-            ev.workspace_pool_ = ws->pool;
-            // Issue #141 AC: COW must be lazy (zero-cost until first mutate).
-            // Don't trigger ensure_local_flat on switch — let mutate:* do it.
-            ws = wt->active();
+    // (workspace :switch id) → #t
+    (*w_impls)["workspace:switch"] =
+        PrimFn{[&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_bool(false);
+            // Issue #1566: tenant isolation before layer switch.
+            if (!ev.check_workspace_isolation(0, 0, 0, "workspace:switch"))
+                return make_bool(false);
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+            if (!wt->set_active(idx))
+                return make_bool(false);
+            auto* ws = wt->active();
             if (ws) {
                 ev.workspace_flat_ = ws->flat;
                 ev.workspace_pool_ = ws->pool;
-                // Issue #738: sync COW epoch into flat for StableNodeRef capture.
-                if (ws->flat)
-                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+                // Issue #141 AC: COW must be lazy (zero-cost until first mutate).
+                // Don't trigger ensure_local_flat on switch — let mutate:* do it.
+                ws = wt->active();
+                if (ws) {
+                    ev.workspace_flat_ = ws->flat;
+                    ev.workspace_pool_ = ws->pool;
+                    // Issue #738: sync COW epoch into flat for StableNodeRef capture.
+                    if (ws->flat)
+                        ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+                }
             }
-        }
-        ev.workspace_read_only_ = ws ? ws->read_only : false;
-        // (ASAN fix #107 leak) delete the old index.
-        destroy_defuse_index();
-        return make_bool(true);
-    });
+            ev.workspace_read_only_ = ws ? ws->read_only : false;
+            // (ASAN fix #107 leak) delete the old index.
+            destroy_defuse_index();
+            return make_bool(true);
+        }};
 
-    // (workspace:current) → id
-    add("workspace:current", [&ev](const auto&) -> EvalValue {
+    // (workspace :current) → id
+    (*w_impls)["workspace:current"] = PrimFn{[&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         return make_int(static_cast<std::int64_t>(wt->active_idx()));
-    });
+    }};
 
-    // (workspace:list) → ((id name [flags]) ...)
-    add("workspace:list", [&ev](const auto&) -> EvalValue {
+    // (workspace :list) → ((id name [flags]) ...)
+    (*w_impls)["workspace:list"] = PrimFn{[&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_void();
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -380,7 +384,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             result = make_pair(cons_pair);
         }
         return result;
-    });
+    }};
 
     // Issue #97 Action 3: per-workspace memory primitives
     // (workspace:memory-used) → bytes used by current workspace
@@ -473,9 +477,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_bool(true);
     });
 
-    // (workspace:lock id [read-only?])
+    // (workspace :lock id [read-only?])
     //   → #t on success. Sets/clears read-only flag.
-    add("workspace:lock", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    (*w_impls)["workspace:lock"] = PrimFn{[&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -491,15 +495,15 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // Update quick flag for P6 mutations (can't see WorkspaceTree)
         ev.workspace_read_only_ = ro;
         return make_bool(true);
-    });
+    }};
 
-    // (workspace:unlock id) — the natural companion to
+    // (workspace :unlock id) — the natural companion to
     // workspace:lock; sets read_only=false on the
     // workspace. The lock primitive already accepts
-    // (workspace:lock id #f) to set read_only=false, but
+    // (workspace :lock id #f) to set read_only=false, but
     // having an explicit unlock primitive makes the
     // agent-orchestration code more readable.
-    add("workspace:unlock", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    (*w_impls)["workspace:unlock"] = PrimFn{[&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -510,7 +514,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         if (idx == wt->active_idx())
             ev.workspace_read_only_ = false;
         return make_bool(true);
-    });
+    }};
 
     // (workspace:can-write? [id])
     //   → #t if workspace allows mutations
@@ -720,114 +724,115 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(true);
         });
 
-    // (workspace:merge child-id)
+    // (workspace :merge child-id)
     //   → result string: alist of ("name" . "updated"|"added")
     //   Source-level merge: combines parent + child source.
     //   Child definitions override parent for conflicting symbols.
     //   Works because set-code now updates the correct WorkspaceNode flat.
-    add("workspace:merge", [&ev, get_ws_source, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-            return make_bool(false);
-        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (child_idx == 0 || child_idx >= tree->size())
-            return make_bool(false);
+    (*w_impls)["workspace:merge"] =
+        PrimFn{[&ev, get_ws_source, destroy_defuse_index](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_bool(false);
+            auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+            if (child_idx == 0 || child_idx >= tree->size())
+                return make_bool(false);
 
-        // Get child's source
-        auto child_source = get_ws_source(child_idx);
-        if (child_source.empty())
-            return make_bool(false);
+            // Get child's source
+            auto child_source = get_ws_source(child_idx);
+            if (child_source.empty())
+                return make_bool(false);
 
-        // Parent is root (0)
-        auto& parent = tree->nodes_[0];
-        if (parent.read_only || !parent.flat || !parent.pool)
-            return make_bool(false);
+            // Parent is root (0)
+            auto& parent = tree->nodes_[0];
+            if (parent.read_only || !parent.flat || !parent.pool)
+                return make_bool(false);
 
-        // ── Get parent's current source ──
-        // Point to parent's workspace flat for source extraction
-        ev.workspace_flat_ = parent.flat;
-        ev.workspace_pool_ = parent.pool;
-        tree->set_active(0);
+            // ── Get parent's current source ──
+            // Point to parent's workspace flat for source extraction
+            ev.workspace_flat_ = parent.flat;
+            ev.workspace_pool_ = parent.pool;
+            tree->set_active(0);
 
-        // ── Parse child's source to extract define names ──
-        aura::ast::StringPool child_pool;
-        aura::ast::FlatAST child_flat;
-        auto child_pr = aura::parser::parse_to_flat(child_source, child_flat, child_pool);
-        if (!child_pr.success || child_pr.root == aura::ast::NULL_NODE) {
-            return make_bool(false);
-        }
-        child_flat.root = child_pr.root;
-
-        // Collect child define names
-        std::unordered_set<std::string> child_names;
-        for (aura::ast::NodeId id = 0; id < child_flat.size(); ++id) {
-            auto v = child_flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
-                auto nm = child_pool.resolve(v.sym_id);
-                if (!nm.empty())
-                    child_names.insert(std::string(nm));
+            // ── Parse child's source to extract define names ──
+            aura::ast::StringPool child_pool;
+            aura::ast::FlatAST child_flat;
+            auto child_pr = aura::parser::parse_to_flat(child_source, child_flat, child_pool);
+            if (!child_pr.success || child_pr.root == aura::ast::NULL_NODE) {
+                return make_bool(false);
             }
-        }
+            child_flat.root = child_pr.root;
 
-        // ── Get parent's current source ──
-        auto src_fn = ev.primitives_.lookup("current-source");
-        std::string parent_source;
-        if (src_fn) {
-            // Issue #135: pass :workspace so we read the parent
-            // workspace's saved flat, not the per-eval current flat.
-            std::uint64_t ws_kw = ev.keyword_table_.size();
-            ev.keyword_table_.push_back(":workspace");
-            auto src = (*src_fn)({types::make_keyword(ws_kw)});
-            if (is_string(src)) {
-                auto sidx = as_string_idx(src);
-                if (sidx < ev.string_heap_.size())
-                    parent_source = ev.string_heap_[sidx];
+            // Collect child define names
+            std::unordered_set<std::string> child_names;
+            for (aura::ast::NodeId id = 0; id < child_flat.size(); ++id) {
+                auto v = child_flat.get(id);
+                if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+                    auto nm = child_pool.resolve(v.sym_id);
+                    if (!nm.empty())
+                        child_names.insert(std::string(nm));
+                }
             }
-        }
 
-        // ── Source-level merge ──
-        // Keep parent source first, then append child source.
-        // In Scheme, later definitions override earlier ones.
-        std::string merged = parent_source;
-        if (!merged.empty() && merged.back() != '\n')
-            merged += '\n';
-        merged += child_source;
+            // ── Get parent's current source ──
+            auto src_fn = ev.primitives_.lookup("current-source");
+            std::string parent_source;
+            if (src_fn) {
+                // Issue #135: pass :workspace so we read the parent
+                // workspace's saved flat, not the per-eval current flat.
+                std::uint64_t ws_kw = ev.keyword_table_.size();
+                ev.keyword_table_.push_back(":workspace");
+                auto src = (*src_fn)({types::make_keyword(ws_kw)});
+                if (is_string(src)) {
+                    auto sidx = as_string_idx(src);
+                    if (sidx < ev.string_heap_.size())
+                        parent_source = ev.string_heap_[sidx];
+                }
+            }
 
-        // ── Apply merged source via set-code ──
-        // set-code updates the active node's flat (via update_shared_tree_root fix)
-        // so parent.flat now points to the merged workspace.
-        auto mi = ev.string_heap_.size();
-        ev.string_heap_.push_back(merged);
-        bool ok = false;
-        if (auto set_fn2 = ev.primitives_.lookup("set-code")) {
-            auto r = (*set_fn2)({make_string(mi)});
-            ok = is_bool(r) ? as_bool(r) : false;
-        }
+            // ── Source-level merge ──
+            // Keep parent source first, then append child source.
+            // In Scheme, later definitions override earlier ones.
+            std::string merged = parent_source;
+            if (!merged.empty() && merged.back() != '\n')
+                merged += '\n';
+            merged += child_source;
 
-        // ── Build result string ──
-        std::string result = "(";
-        bool first = true;
-        for (auto& nm : child_names) {
-            if (!first)
-                result += " ";
-            result += "(\"" + nm + "\" . \"merged\")";
-            first = false;
-        }
-        result += ")";
-        auto ri = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
+            // ── Apply merged source via set-code ──
+            // set-code updates the active node's flat (via update_shared_tree_root fix)
+            // so parent.flat now points to the merged workspace.
+            auto mi = ev.string_heap_.size();
+            ev.string_heap_.push_back(merged);
+            bool ok = false;
+            if (auto set_fn2 = ev.primitives_.lookup("set-code")) {
+                auto r = (*set_fn2)({make_string(mi)});
+                ok = is_bool(r) ? as_bool(r) : false;
+            }
 
-        // Keep the new merged flat active (set-code already set ev.workspace_flat_
-        // to the new arena-allocated flat, and update_shared_tree_root updated
-        // root's WorkspaceNode to point to it).
-        tree->set_active(0);
-        // Issue #1904: removed redundant bump — workspace:merge
-        // doesn't currently use MutationBoundaryGuard, so this scope
-        // needs its own Guard. Marked TODO: add Guard wrap.
-        // (ASAN fix #107 leak) delete the old index.
-        destroy_defuse_index();
-        return make_string(ri);
-    });
+            // ── Build result string ──
+            std::string result = "(";
+            bool first = true;
+            for (auto& nm : child_names) {
+                if (!first)
+                    result += " ";
+                result += "(\"" + nm + "\" . \"merged\")";
+                first = false;
+            }
+            result += ")";
+            auto ri = ev.string_heap_.size();
+            ev.string_heap_.push_back(result);
+
+            // Keep the new merged flat active (set-code already set ev.workspace_flat_
+            // to the new arena-allocated flat, and update_shared_tree_root updated
+            // root's WorkspaceNode to point to it).
+            tree->set_active(0);
+            // Issue #1904: removed redundant bump — workspace:merge
+            // doesn't currently use MutationBoundaryGuard, so this scope
+            // needs its own Guard. Marked TODO: add Guard wrap.
+            // (ASAN fix #107 leak) delete the old index.
+            destroy_defuse_index();
+            return make_string(ri);
+        }};
 
     // Issue #98 Action 1: Workspace conflict detection & 3-way merge
     // Phase 2.5.0: tmp_pool stays separate from canonical_pool.
@@ -1016,10 +1021,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_pair(pid);
     });
 
-    // ── Issue #1437: (workspace :op …) unified dispatcher ──────────
-    // Canonical surface for create/switch/merge/lock/unlock (+ list/current).
-    // Existing workspace:* remain registered (thin aliases, deprecated).
-    add("workspace", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    // ── Issue #1437 / #2628: (workspace :op …) unified dispatcher ──
+    // Canonical surface; core aliases live in private w_impls only.
+    add("workspace", [&ev, w_impls](std::span<const EvalValue> a) -> EvalValue {
         auto kw_name = [&](const EvalValue& v) -> std::string {
             if (!is_keyword(v))
                 return {};
@@ -1032,6 +1036,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return k;
         };
         auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
+            // Issue #2628: prefer private impl table (public aliases removed).
+            if (w_impls) {
+                auto it = w_impls->find(prim);
+                if (it != w_impls->end())
+                    return it->second(args);
+            }
             auto fn = ev.primitives_.lookup(prim);
             if (!fn)
                 return make_void();
@@ -1071,43 +1081,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_void(); // unknown op
     });
 
-    // Issue #1437: deprecate core workspace:* aliases.
-    {
-        static constexpr const char* kCoreWsAliases[] = {
-            "workspace:create", "workspace:switch", "workspace:merge",   "workspace:lock",
-            "workspace:unlock", "workspace:list",   "workspace:current",
-        };
-        for (const char* name : kCoreWsAliases) {
-            const auto slot = ev.primitives_.slot_for_name(name);
-            if (slot >= ev.primitives_.slot_count())
-                continue;
-            PrimMeta meta = ev.primitives_.meta_for_slot(slot);
-            meta.deprecated = true;
-            if (meta.category.empty() || meta.category == "general")
-                meta.category = "deprecated";
-            const std::string op =
-                std::string(name).size() > 10 ? std::string(name).substr(10) : std::string(name);
-            const std::string hint =
-                std::string("DEPRECATED (#1437): prefer (workspace :") + op + " …)";
-            if (meta.doc.empty())
-                meta.doc = hint;
-            else if (meta.doc.find("DEPRECATED") == std::string::npos)
-                meta.doc = hint + ". " + meta.doc;
-            ev.primitives_.set_meta_for_name(name, std::move(meta));
-        }
-        {
-            const auto slot = ev.primitives_.slot_for_name("workspace");
-            if (slot < ev.primitives_.slot_count()) {
-                PrimMeta meta = ev.primitives_.meta_for_slot(slot);
-                meta.doc =
-                    "Canonical workspace dispatcher (#1437): (workspace :create|:switch|:merge|"
-                    ":lock|:unlock|:list|:current …).";
-                meta.category = "general";
-                meta.arity = 255;
-                ev.primitives_.set_meta_for_name("workspace", std::move(meta));
-            }
-        }
-    }
+    // Issue #2628: core workspace:* public aliases removed (use (workspace :op)).
 
 } // register_workspace_primitives
 

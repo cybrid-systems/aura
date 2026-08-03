@@ -173,6 +173,15 @@ extern "C" void aura_bump_live_closure_remap_name_fallback_total(std::uint64_t n
     }
 }
 
+// Issue #2602 / #2628: bump sync remount counters from aura_jit_runtime.cpp
+// (aot_metrics() is TU-local static in this file).
+extern "C" void aura_bump_live_closure_sync_remount_totals(std::uint64_t ok, std::uint64_t fail) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_sync_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        m->live_closure_sync_remount_fail_total.fetch_add(fail, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2175: legacy sid=0 backfill counter (one-shot lookup per
 // successful backfill during aura_remap_live_closures_after_reemit).
 // Independent of the name-fallback path (AC2) — fires whenever the
@@ -1392,8 +1401,8 @@ extern "C" void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
 // success path; cross-gen → CowGenMismatch hard does NOT bump this.
 extern "C" void aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept {
     if (aot_metrics())
-        aot_metrics()->cross_cow_soft_migrate_same_gen_total.fetch_add(
-            1, std::memory_order_relaxed);
+        aot_metrics()->cross_cow_soft_migrate_same_gen_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
 }
 extern "C" void aura_bump_cross_cow_hard_reject_total(void) noexcept {
     if (aot_metrics())

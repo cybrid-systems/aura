@@ -19,7 +19,7 @@
   },
   {
     "name": "issue_135_define_ws_workspace_create_t",
-    "code": "\n        (define ws (workspace:create \"test\"))\n        (workspace:switch ws)\n    ",
+    "code": "\n        (define ws (workspace :create \"test\"))\n        (workspace :switch ws)\n    ",
     "pipeline": "eval",
     "expected": "#t"
   },
@@ -49,19 +49,19 @@
   },
   {
     "name": "issue_135_workspace_create_ws1",
-    "code": "(workspace:create \"ws1\")",
+    "code": "(workspace :create \"ws1\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_135_workspace_current",
-    "code": "(workspace:current)",
+    "code": "(workspace :current)",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_135_workspace_set_memory_limit_1048576",
-    "code": "(workspace:create \"mem-test\")\n(workspace:set-memory-limit 1048576)",
+    "code": "(workspace :create \"mem-test\")\n(workspace:set-memory-limit 1048576)",
     "pipeline": "eval",
     "expected": "#t"
   },

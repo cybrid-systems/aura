@@ -20,7 +20,7 @@
 // `evaluator_primitives_obs_eval.cpp` (mirroring the
 // `query:aot-reload-func-table-stats` / `query:compact-stats`
 // shape from #644 / #2168) and surfaces via Aura as
-// `(engine:metrics "query:aot-version-triple")` per the
+// `(engine:metrics \"query:aot-version-triple\")` per the
 // `href` helper pattern used in `test_aot_reload_primitive.cpp:69`.
 
 #include "test_harness.hpp"
@@ -49,7 +49,7 @@ using aura::test::g_passed;
 
 namespace {
 
-// Hash-ref helper for (engine:metrics "query:aot-version-triple").
+// Hash-ref helper for (engine:metrics \"query:aot-version-triple\").
 // Mirrors the `href` helper in test_aot_reload_primitive.cpp:69
 // — query:* forms are routed through `engine:metrics`. Returns
 // the int64 value or -1 on miss.

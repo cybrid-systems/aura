@@ -71,7 +71,7 @@ int main() {
     // ── AC: query:capability-effect-stats shape ──
     {
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:capability-effect-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:capability-effect-stats\"))");
         CHECK(h && is_hash(*h), "capability-effect-stats is hash");
         CHECK(href_m(cs, "schema") == 1565, "schema 1565");
         CHECK(href_m(cs, "active") == 1, "active");
@@ -452,7 +452,7 @@ int main() {
         std::println("\n--- AC4: capability-effect-stats sandbox fields + Off mode ---");
         reset_all();
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:capability-effect-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:capability-effect-stats\"))");
         CHECK(h && is_hash(*h), "capability-effect-stats is hash");
         CHECK(href(cs, "schema") == 1565, "schema 1565 preserved");
         CHECK(href(cs, "sandbox-status-schema") == 1876, "sandbox-status-schema 1876");
@@ -473,7 +473,7 @@ int main() {
         // After Strict path, status shows counters
         ev.set_effect_sandbox_mode(2);
         (void)ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac4-strict", 0, 0, 0);
-        auto h2 = cs.eval(R"((engine:metrics "query:capability-effect-stats"))");
+        auto h2 = cs.eval(R"((engine:metrics \"query:capability-effect-stats\"))");
         CHECK(h2 && is_hash(*h2), "stats still hash");
         CHECK(href(cs, "sandbox-strict") == 1, "sandbox-strict flag set");
         CHECK(href(cs, "sandbox-mode") == 2, "sandbox-mode Strict");
@@ -623,7 +623,7 @@ int main() {
         CHECK(stats_href(cs, "weak-atomicity-used") == 0, "weak-atomicity-used starts 0");
         CHECK(stats_href(cs, "schema-1878") == 1878, "schema-1878");
         CHECK(stats_href(cs, "tenant-isolation-denials") >= 0, "tenant-isolation-denials field");
-        auto qh = cs.eval(R"((engine:metrics "query:atomic-batch-stats-hash"))");
+        auto qh = cs.eval(R"((engine:metrics \"query:atomic-batch-stats-hash\"))");
         CHECK(qh && is_hash(*qh), "query:atomic-batch-stats-hash hash");
         CHECK(qhref(cs, "atomicity-mode") == 1, "hash atomicity-mode");
         CHECK(qhref(cs, "schema-1878") == 1878, "hash schema-1878");

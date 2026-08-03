@@ -8,20 +8,20 @@
 //   - (workspace-state)             — shared_lock
 //   - (workspace:rollback-latest)   — unique_lock (reads + writes)
 //   - (workspace:mutation-count)    — shared_lock  (stats primitive)
-//   - (workspace:create)            — unique_lock (writer)
+//   - (workspace :create)            — unique_lock (writer)
 //   - (workspace:resolve-stable-ref) — shared_lock
 //
 // AC list:
 //   AC1: (workspace-state) is callable after the fix (smoke)
 //   AC2: (workspace-state) returns non-empty header when workspace is loaded
-//   AC3: Concurrent (workspace-state) + (workspace:create) don't crash
+//   AC3: Concurrent (workspace-state) + (workspace :create) don't crash
 //   AC4: linter self-test (scripts/check_workspace_state_lock_coverage.py)
 //
 // Note: (workspace:mutation-count) is registered via
 // ObservabilityPrims::register_stats_impl — a stats primitive, NOT
 // accessible via cs.eval(). The lock-scope invariant for that
 // primitive is enforced by the linter, not the runtime test.
-// (workspace:create) is exercised by AC3's concurrent stress (which
+// (workspace :create) is exercised by AC3's concurrent stress (which
 // hammers it from a dedicated thread).
 //
 // The actual lock-scope invariants (workspace_mtx_ lock acquired for
@@ -70,7 +70,7 @@ int main() {
         CHECK(r_ws.has_value(), "AC2: (workspace-state) returns after populated state");
     }
 
-    // === AC3: Concurrent (workspace-state) + (workspace:create) don't crash ===
+    // === AC3: Concurrent (workspace-state) + (workspace :create) don't crash ===
     // Multiple threads hammer the same CompilerService with primitives
     // that take the workspace_mtx_ locks fixed by #1994. With the fix,
     // shared_lock + unique_lock on workspace_mtx_ serialize correctly
@@ -94,11 +94,11 @@ int main() {
             }
         });
 
-        // Thread B: (workspace:create) hammer — writer path (unique_lock)
+        // Thread B: (workspace :create) hammer — writer path (unique_lock)
         threads.emplace_back([&]() noexcept {
             for (int i = 0; i < kIterations; ++i) {
                 try {
-                    (void)cs.eval("(workspace:create test-ws)");
+                    (void)cs.eval("(workspace :create test-ws)");
                 } catch (...) {
                     ++errors;
                 }
@@ -131,7 +131,7 @@ int main() {
             th.join();
 
         CHECK(errors.load() == 0, "AC3: no exceptions under concurrent (workspace-state) + "
-                                  "(workspace:create) + eval stress");
+                                  "(workspace :create) + eval stress");
     }
 
     // === AC4: linter self-test ===

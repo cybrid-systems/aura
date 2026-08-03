@@ -163,13 +163,13 @@ bool test_regression_existing_primitives() {
     auto r4 = cs.eval("(stats:get \"ast:generation\")");
     CHECK(r4.has_value(), "(stats:get \"ast:generation\") (regression)");
     // Core workspace:* primitives.
-    auto r5 = cs.eval("(workspace:current)");
-    CHECK(r5.has_value(), "(workspace:current) (regression)");
-    auto r6 = cs.eval("(workspace:list)");
-    CHECK(r6.has_value(), "(workspace:list) (regression)");
+    auto r5 = cs.eval("(workspace :current)");
+    CHECK(r5.has_value(), "(workspace :current) (regression)");
+    auto r6 = cs.eval("(workspace :list)");
+    CHECK(r6.has_value(), "(workspace :list) (regression)");
     // Tier-3 query:* primitive (regression for #562).
-    auto r7 = cs.eval("(query:node \"a\")");
-    CHECK(r7.has_value(), "(query:node \"a\") (regression for #562)");
+    auto r7 = cs.eval("(query :node \"a\")");
+    CHECK(r7.has_value(), "(query :node \"a\") (regression for #562)");
     if (!cs.eval("(define reg-563-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

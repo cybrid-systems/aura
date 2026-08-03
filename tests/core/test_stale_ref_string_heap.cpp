@@ -96,15 +96,16 @@ int main() {
     std::println("\n--- AC5/AC6/AC7: #2001 compact + remap ---");
     {
         // AC5: query:gc-compact-stats schema-2001 reachable + non-zero counters
-        auto h = cs.eval(R"((engine:metrics "query:gc-compact-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:gc-compact-stats\"))");
         CHECK(h && is_hash(*h), "AC5: query:gc-compact-stats returns hash");
         if (h && is_hash(*h)) {
-            auto sch = cs.eval(R"((hash-ref (engine:metrics "query:gc-compact-stats") "schema"))");
+            auto sch =
+                cs.eval(R"((hash-ref (engine:metrics \"query:gc-compact-stats\") "schema"))");
             CHECK(sch && is_int(*sch) && as_int(*sch) == 2001, "AC5: schema == 2001");
             auto sc = cs.eval(
-                R"((hash-ref (engine:metrics "query:gc-compact-stats") "strings-compacted"))");
-            auto pr =
-                cs.eval(R"((hash-ref (engine:metrics "query:gc-compact-stats") "pairs-remapped"))");
+                R"((hash-ref (engine:metrics \"query:gc-compact-stats\") "strings-compacted"))");
+            auto pr = cs.eval(
+                R"((hash-ref (engine:metrics \"query:gc-compact-stats\") "pairs-remapped"))");
             CHECK(sc && is_int(*sc) && as_int(*sc) >= 0, "AC5: strings-compacted present");
             CHECK(pr && is_int(*pr) && as_int(*pr) >= 0, "AC5: pairs-remapped present");
         }

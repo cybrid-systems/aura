@@ -221,7 +221,7 @@ int main() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        auto st = cs.eval(R"((engine:metrics "query:capability-effect-stats"))");
+        auto st = cs.eval(R"((engine:metrics \"query:capability-effect-stats\"))");
         CHECK(st && is_hash(*st), "capability-effect-stats hash");
         CHECK(href(cs, "schema-2055") == 2055, "schema-2055");
         CHECK(href(cs, "issue-2055") == 2055, "issue-2055");

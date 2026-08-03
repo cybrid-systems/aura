@@ -304,22 +304,22 @@ static void ac8_phase2_env_id_remap_2087() {
                       load_u64(m->gc_env_frames_remapped_total), env_frames_before));
 
     // query:envframe-lifetime-stats exposes phase=3 + schema-2087 lineage + schema-2164.
-    auto h = cs.eval(R"((engine:metrics "query:envframe-lifetime-stats"))");
+    auto h = cs.eval(R"((engine:metrics \"query:envframe-lifetime-stats\"))");
     CHECK(h && aura::compiler::types::is_hash(*h),
           "AC8: query:envframe-lifetime-stats returns hash");
     if (h && aura::compiler::types::is_hash(*h)) {
         auto phase =
-            cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "phase"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "phase"))");
         CHECK(phase && aura::compiler::types::is_int(*phase) &&
                   aura::compiler::types::as_int(*phase) == 3,
               "AC8/H4: query phase == 3");
-        auto s2087 =
-            cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2087"))");
+        auto s2087 = cs.eval(
+            R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "schema-2087"))");
         CHECK(s2087 && aura::compiler::types::is_int(*s2087) &&
                   aura::compiler::types::as_int(*s2087) == 2087,
               "AC8: schema-2087 == 2087 (lineage retained)");
-        auto s2164 =
-            cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2164"))");
+        auto s2164 = cs.eval(
+            R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "schema-2164"))");
         CHECK(s2164 && aura::compiler::types::is_int(*s2164) &&
                   aura::compiler::types::as_int(*s2164) == 2164,
               "AC8/H4: schema-2164 == 2164");
@@ -327,11 +327,11 @@ static void ac8_phase2_env_id_remap_2087() {
 
     // query:gc-compact-stats exposes closures-compacted + env-frames-remapped
     // + schema-2087 lineage.
-    auto g = cs.eval(R"((engine:metrics "query:gc-compact-stats"))");
+    auto g = cs.eval(R"((engine:metrics \"query:gc-compact-stats\"))");
     CHECK(g && aura::compiler::types::is_hash(*g), "AC8: query:gc-compact-stats returns hash");
     if (g && aura::compiler::types::is_hash(*g)) {
         auto s2087g =
-            cs.eval(R"((hash-ref (engine:metrics "query:gc-compact-stats") "schema-2087"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:gc-compact-stats\") "schema-2087"))");
         CHECK(s2087g && aura::compiler::types::is_int(*s2087g) &&
                   aura::compiler::types::as_int(*s2087g) == 2087,
               "AC8: gc-compact-stats schema-2087 == 2087");
@@ -476,27 +476,28 @@ static void ac_h4_phase_and_schema() {
     using namespace aura::core::envframe_lifetime;
     CHECK(kEnvFrameLifetimePhase == 3, "AC_H4: phase == 3");
     CompilerService cs;
-    auto phase = cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "phase"))");
+    auto phase =
+        cs.eval(R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "phase"))");
     CHECK(phase && aura::compiler::types::is_int(*phase) &&
               aura::compiler::types::as_int(*phase) == 3,
           "AC_H4: query phase == 3");
     auto s2164 =
-        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2164"))");
+        cs.eval(R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "schema-2164"))");
     CHECK(s2164 && aura::compiler::types::is_int(*s2164) &&
               aura::compiler::types::as_int(*s2164) == 2164,
           "AC_H4: schema-2164 present");
     auto s2087 =
-        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-2087"))");
+        cs.eval(R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "schema-2087"))");
     CHECK(s2087 && aura::compiler::types::is_int(*s2087) &&
               aura::compiler::types::as_int(*s2087) == 2087,
           "AC_H4: schema-2087 retained");
-    auto wired =
-        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "hold-pin-wired"))");
+    auto wired = cs.eval(
+        R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "hold-pin-wired"))");
     CHECK(wired && aura::compiler::types::is_int(*wired) &&
               aura::compiler::types::as_int(*wired) == 1,
           "AC_H4: hold-pin-wired == 1");
     auto blocked = cs.eval(
-        R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "blocked-compact-while-guard-held"))");
+        R"((hash-ref (engine:metrics \"query:envframe-lifetime-stats\") "blocked-compact-while-guard-held"))");
     CHECK(blocked && aura::compiler::types::is_int(*blocked) &&
               aura::compiler::types::as_int(*blocked) >= 0,
           "AC_H4: blocked-compact-while-guard-held key present");

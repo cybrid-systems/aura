@@ -49,43 +49,37 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_void;
 
-// Known #1435 demotion: core query:* aliases marked deprecated in
-// favor of (query :op …). Still registered for compat.
+// Issue #2628: query:children purged (no public registration).
 constexpr const char* kDeprecatedAlias = "query:children";
 
 void ac1_deprecated_meta_flag() {
-    std::println("\n--- AC1: PrimMeta.deprecated on demoted alias ---");
+    std::println("\n--- AC1: #2628 purged query:children (no public registration) ---");
     CompilerService cs;
     auto& prims = cs.evaluator().primitives();
     const auto slot = prims.slot_for_name(kDeprecatedAlias);
-    CHECK(slot < prims.slot_count(), "query:children is still registered (compat)");
-    if (slot >= prims.slot_count())
-        return;
-    const auto& meta = prims.meta_for_slot(slot);
-    CHECK(meta.deprecated, "query:children has PrimMeta.deprecated == true");
-    // Category may be "deprecated" after mark; empty is legacy-only.
-    if (!meta.category.empty()) {
-        CHECK(meta.category == "deprecated" || meta.category == "general",
-              std::format("category is set (got '{}')", meta.category));
+    CHECK(slot >= prims.slot_count(), "query:children is NOT registered (#2628)");
+    // Remaining mutate:* aliases may still be deprecated; check one still public.
+    const auto rebind_slot = prims.slot_for_name("mutate:rebind");
+    if (rebind_slot < prims.slot_count()) {
+        const auto& meta = prims.meta_for_slot(rebind_slot);
+        CHECK(meta.deprecated, "mutate:rebind still PrimMeta.deprecated until later purge");
     }
 }
 
 void ac2_dispatch_bumps_counter() {
-    std::println("\n--- AC2: deprecated dispatch bumps counter ---");
+    std::println("\n--- AC2: remaining deprecated mutate alias bumps counter ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
     const auto before = ev.deprecated_prim_dispatch_total();
 
-    // Minimal AST so query:children has something to walk.
     auto set = cs.eval("(set-code \"(define (f x) (+ x 1))\")");
     CHECK(set.has_value(), "set-code setup");
     if (!set.has_value())
         return;
 
-    // Invoke the deprecated alias through the normal eval path
-    // (invoke_prim_with_telemetry).
-    auto r = cs.eval("(query:children (query:root))");
-    CHECK(r.has_value(), "deprecated alias still executes (compat)");
+    // mutate:rebind is still a public deprecated alias (not in #2628 list).
+    auto r = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")");
+    CHECK(r.has_value(), "mutate:rebind still executes");
 
     const auto after = ev.deprecated_prim_dispatch_total();
     CHECK(after > before,

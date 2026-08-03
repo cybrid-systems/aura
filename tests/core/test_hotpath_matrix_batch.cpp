@@ -2548,7 +2548,7 @@ static void run_138_incremental_dirty_propagation_type_checking() {
                                      "(typecheck-current)");
         CHECK(s1.find("no errors") != std::string::npos, "typecheck passes before mutation");
         std::string s2 = run_str(cs, "(set-code \"(define x 1)\") "
-                                     "(mutate:replace-value (query:find \"x\") "
+                                     "(mutate:replace-value (query :find \"x\") "
                                      "\"\\\"hello\\\"\" \"test\") "
                                      "(typecheck-current)");
         bool has_error = s2.find("error") != std::string::npos ||
@@ -2678,11 +2678,12 @@ static void run_139_structural_refactor_operators() {
                         "  (length (query:node-type \"Define\")))");
         CHECK(r4 == 2, "after refactor/extract: 2 Defines (original + extracted)");
         // move-node
-        int64_t r5 = run_int(cs, "(set-code \"(begin (define a 1) (define b 2))\") "
-                                 "(begin "
-                                 "  (mutate:move-node (query:find \"b\") "
-                                 "                       (query:find \"a\") 0 \"move b before a\") "
-                                 "  (eval-current) (+ a b))");
+        int64_t r5 =
+            run_int(cs, "(set-code \"(begin (define a 1) (define b 2))\") "
+                        "(begin "
+                        "  (mutate:move-node (query :find \"b\") "
+                        "                       (query :find \"a\") 0 \"move b before a\") "
+                        "  (eval-current) (+ a b))");
         CHECK(r5 == 3, "after move-node, (+ a b) = 3");
         // extract-function
         // extract-function on a free-var occurrence may rewrite the body;
@@ -2690,7 +2691,7 @@ static void run_139_structural_refactor_operators() {
         int64_t r6 =
             run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
                         "(begin "
-                        "  (mutate:extract-function (car (query:find \"x\")) \"double-of\") "
+                        "  (mutate:extract-function (car (query :find \"x\")) \"double-of\") "
                         "  (eval-current) (f 5))");
         CHECK(r6 >= 0, "after extract-function, (f 5) still evaluates to an int");
         // hygiene preservation
@@ -2732,7 +2733,7 @@ static void run_139_structural_refactor_operators() {
         // splice and wrap
         std::string code3 = "(set-code \"(define x 5)\") "
                             "(begin "
-                            "  (mutate:wrap (car (query:find \"x\")) \"lambda-wrap\" \"test\") "
+                            "  (mutate:wrap (car (query :find \"x\")) \"lambda-wrap\" \"test\") "
                             "  (typecheck-current))";
         std::string status3 = run_str(cs, code3);
         bool ok3 = status3.find("no errors") != std::string::npos;
@@ -2751,7 +2752,7 @@ static void run_139_structural_refactor_operators() {
         std::string s2 =
             run_str(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
                         "(begin "
-                        "  (mutate:extract-function (car (query:find \"x\")) \"double-of\") "
+                        "  (mutate:extract-function (car (query :find \"x\")) \"double-of\") "
                         "  (typecheck-current))");
         bool ok2 = s2.find("no errors") != std::string::npos;
         CHECK(ok2, "after extract-function, typecheck passes");

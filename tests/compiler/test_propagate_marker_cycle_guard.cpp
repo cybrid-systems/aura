@@ -81,7 +81,7 @@ int main() {
         // Use a real define subtree via Aura (no cycle).
         (void)cs.eval("(set-code \"(define (f x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        auto r = cs.eval("(car (query:find \"f\"))");
+        auto r = cs.eval("(car (query :find \"f\"))");
         CHECK(r && is_int(*r), "find f");
         const auto root = as_int(*r);
         auto prop = cs.eval(std::format("(syntax:propagate-marker {} 1)", root));

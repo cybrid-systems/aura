@@ -24,9 +24,9 @@
 (test-suite "engine:metrics-by-name"
   ; Lookup routes to underlying stats prim when registered (full mode).
   ; Under s0, individual query:*-stats are absent → void (still OK).
-  (define one (engine:metrics "query:macro-hygiene-stats"))
+  (define one (engine:metrics \"query:macro-hygiene-stats\"))
   (check (or (hash? one) (eq? one (void))))
-  (check (eq? (engine:metrics "query:no-such-stats-zzz") (void))))
+  (check (eq? (engine:metrics \"query:no-such-stats-zzz\") (void))))
 
 (test-suite "engine:metrics-all"
   (define all (engine:metrics :all))
@@ -36,11 +36,11 @@
 
 ; Full-mode parity: direct stats prim matches facade by-name.
 (test-suite "engine:metrics-parity"
-  (define via (engine:metrics "query:macro-hygiene-stats"))
+  (define via (engine:metrics \"query:macro-hygiene-stats\"))
   (if (eq? via (void))
       (check #t) ; s0: no bulk stats registered
     (begin
-      (define direct (engine:metrics "query:macro-hygiene-stats"))
+      (define direct (engine:metrics \"query:macro-hygiene-stats\"))
       (check (hash? direct))
       (check (hash? via))
       (check (number? (hash-ref via "schema"))))))

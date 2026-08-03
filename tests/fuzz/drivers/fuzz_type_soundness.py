@@ -129,7 +129,7 @@ def build_mutation(fns, mut_type, serve_script):
         # (define (name ...) body) is at Define.child[0].child[1] (Lambda's body).
         # We store query results for the next iteration to use.
         return [
-            f'(query:find "{fn}")',
+            f'(query :find "{fn}")',
             f'(mutate:extract-function 2 "extracted_{rng.randint(100, 999)}")',
         ]
     elif mut_type == "mutate:inline-call":

@@ -2,29 +2,26 @@
 
 # Primitives (generated)
 
-**489** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**470** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 93 primitives (19%)
-- **core**: 347 primitives (71%)
-- **internal-observable**: 48 primitives (10%)
+- **mutation-safety**: 84 primitives (18%)
+- **core**: 345 primitives (73%)
+- **internal-observable**: 40 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
-## Query: (48)
+## Query: (40)
 
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:build-index` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children-stable` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:def-use` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:defines` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -34,7 +31,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:ensure-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:ffi-pin-count` *[internal-observable]* — `src/compiler/ffi_primitives_impl.cpp`
 - `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:find` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:hygiene-diagnostic` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:last-mutation-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -43,15 +39,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:mark-occurrence-stale` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-log` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutations-since` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:node` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:parent` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:parent-stable` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -66,11 +58,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (4)
+## Mutate: (3)
 
 - `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-against-schema` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
 
 ## Ast: (15)
@@ -91,29 +82,22 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `ast:validate-ownership` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 
-## Workspace: (21)
+## Workspace: (14)
 
 - `workspace:can-write?` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:create` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:current` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:find-define` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:list` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:lock` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-used` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:merge-3way` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:resolve-stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-latest` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-to` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:switch` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:unlock` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ## Fiber: (3)
 
@@ -137,7 +121,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (24)
+## Compile: (23)
 
 - `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -158,7 +142,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -498,9 +481,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 - `evaluator:compact-env-frames` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
-## Ffi: (3)
+## Ffi: (2)
 
-- `ffi:opaque-stats` *[core]* **deprecated** — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:pin-buffer` *[core]* — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` *[core]* — `src/compiler/ffi_primitives_impl.cpp`
 
@@ -555,9 +537,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `primitives:alias` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` *[core]* — `src/compiler/evaluator_primitives_test.cpp`
 
-## Reflect: (4)
+## Reflect: (3)
 
-- `reflect:hygiene-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:provenance-blame` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-edsl` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-macro-body` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -632,7 +613,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (93)
+### Mutation safety (must remain primitive) (84)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -679,7 +660,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-symbol-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -697,7 +677,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `git-status` — `src/compiler/evaluator_primitives_io.cpp`
 - `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-against-schema` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -708,27 +687,20 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:create` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:current` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:find-define` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:list` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:lock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:memory-used` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-to` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:switch` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (347)
+### Core builtins (must remain primitive) (345)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -830,7 +802,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `evaluator:compact-env-frames` — `src/compiler/evaluator_primitives_compile.cpp`
 - `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
-- `ffi:opaque-stats` **deprecated** — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:pin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -957,7 +928,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-module-exports` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-type` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `reflect:hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:provenance-blame` — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-edsl` — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-macro-body` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1078,16 +1048,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (48)
+### Internal observable (stats/counters) (40)
 
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:calls-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children-stable` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:def-use` **deprecated** — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:defines` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:dirty-impact` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1097,7 +1064,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:ensure-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:ffi-pin-count` — `src/compiler/ffi_primitives_impl.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:find` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:hygiene-diagnostic` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:last-mutation-provenance` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1106,15 +1072,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:mark-occurrence-stale` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-log` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutations-since` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:node` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-provenance` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:parent` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:parent-stable` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1132,27 +1094,3 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 ### Convenience (candidates for stdlib migration) (1)
 
 - `format` — `src/compiler/evaluator_primitives_runtime.cpp`
-
-## Deprecated (Issue #1438)
-
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **19** names:
-
-- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
-- `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
-- `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:children` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:children-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:def-use` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:find` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:mutation-log` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `reflect:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
-- `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:lock` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:switch` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:unlock` — `src/compiler/evaluator_primitives_workspace.cpp`

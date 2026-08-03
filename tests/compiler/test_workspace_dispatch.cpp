@@ -51,12 +51,12 @@ int main() {
     CHECK(eval_ok(cs, "(set-code \"(define (f x) (+ x 1)) (f 1)\")"), "set-code");
     CHECK(eval_ok(cs, "(eval-current)"), "eval-current");
 
-    // AC1: :create
+    // AC1: :create  (#2628: bare aliases removed)
     {
         auto id = eval_int(cs, "(workspace :create \"child-a\")");
         CHECK(id >= 0, "workspace :create returns id");
-        auto id2 = eval_int(cs, "(workspace:create \"child-b\")");
-        CHECK(id2 >= 0, "workspace:create alias still works");
+        auto id2 = eval_int(cs, "(workspace :create \"child-b\")");
+        CHECK(id2 >= 0, "workspace :create second child");
     }
 
     // AC2: :switch
@@ -65,9 +65,7 @@ int main() {
         CHECK(id >= 0, "create for switch");
         CHECK(eval_truthy(cs, "(workspace :switch " + std::to_string(id) + ")"),
               "workspace :switch");
-        // switch back to 0 (root) if present
         CHECK(eval_ok(cs, "(workspace :switch 0)"), "switch to root");
-        CHECK(eval_ok(cs, "(workspace:switch 0)"), "workspace:switch alias");
     }
 
     // AC3: :lock / :unlock
@@ -77,10 +75,6 @@ int main() {
         CHECK(eval_truthy(cs, "(workspace :lock " + std::to_string(id) + ")"), "workspace :lock");
         CHECK(eval_truthy(cs, "(workspace :unlock " + std::to_string(id) + ")"),
               "workspace :unlock");
-        CHECK(eval_truthy(cs, "(workspace:lock " + std::to_string(id) + ")"),
-              "workspace:lock alias");
-        CHECK(eval_truthy(cs, "(workspace:unlock " + std::to_string(id) + ")"),
-              "workspace:unlock alias");
     }
 
     // AC4: :merge (may no-op/fail without divergent child — still returns)
@@ -89,8 +83,6 @@ int main() {
         CHECK(id >= 0, "create for merge");
         auto r = cs.eval("(workspace :merge " + std::to_string(id) + ")");
         CHECK(r.has_value(), "workspace :merge returns");
-        auto r2 = cs.eval("(workspace:merge " + std::to_string(id) + ")");
-        CHECK(r2.has_value(), "workspace:merge alias returns");
     }
 
     // AC5: :list / :current convenience
@@ -99,7 +91,7 @@ int main() {
         CHECK(eval_ok(cs, "(workspace :current)"), "workspace :current");
     }
 
-    // AC6: api-reference
+    // AC6: api-reference — #2628 purged workspace:* aliases
     {
         auto r = cs.eval("(api-reference)");
         CHECK(r && is_string(*r), "api-reference string");
@@ -107,9 +99,9 @@ int main() {
             auto idx = as_string_idx(*r);
             auto heap = cs.evaluator().string_heap();
             std::string s = idx < heap.size() ? heap[idx] : "";
-            CHECK(s.find("workspace") != std::string::npos, "lists workspace");
-            CHECK(s.find("*deprecated*") != std::string::npos, "*deprecated* section");
-            CHECK(s.find("workspace:create") != std::string::npos, "deprecated workspace:create");
+            CHECK(s.find("workspace") != std::string::npos, "lists workspace dispatcher");
+            CHECK(s.find("workspace:create") == std::string::npos, "no public workspace:create");
+            CHECK(s.find("workspace:list") == std::string::npos, "no public workspace:list");
         }
     }
 

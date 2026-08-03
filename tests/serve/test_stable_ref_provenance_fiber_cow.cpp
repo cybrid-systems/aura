@@ -9,7 +9,7 @@
 // AC list (all preserved; each AC section cites original issue#):
 //   #457/#497/#527/#540/#549 (orig):
 //     AC1: 4 self-evolution-stability counters reachable + monotonic
-//     AC2: (engine:metrics "query:self-evolution-stability-stats") returns int sum
+//     AC2: (engine:metrics \"query:self-evolution-stability-stats\") returns int sum
 //     AC3: validate_stable_ref classification — captured_gen mismatch bumps cross_cow
 //     AC4: 200-iter structural mutate + COW + validate loop
 //     AC5: exit_mutation_boundary(false) with mutations to undo → rollback counter

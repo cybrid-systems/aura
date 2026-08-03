@@ -166,7 +166,7 @@ echo ""
 echo "=== EDSL Tests ==="
 
 run_test "edsl:set-code"     "$(printf '(set-code \"(define (f x) (+ x 1))\")')" "#t"
-run_test "edsl:find"         "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:find \"f\")')" "(5)"
+run_test "edsl:find"         "$(printf '(set-code \"(define (f x) (+ x 1))\") (query :find \"f\")')" "(5)"
 run_test "edsl:node-type"    "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:node-type \"Define\")')" "(5)"
 
 echo ""
@@ -643,7 +643,7 @@ run_typecheck_test "diag:typecheck-ok" "(+ 1 2)" "type: Intno errors"
 # Parse error: unterminated string
 
 # set-code + query:find
-run_test "agent:set-code-query" "$(printf '(set-code "(define (f x) (+ x 1))")(query:find \"f\")')" "(5)"
+run_test "agent:set-code-query" "$(printf '(set-code "(define (f x) (+ x 1))")(query :find \"f\")')" "(5)"
 
 # set-code + query:node-type
 run_test "agent:query-node-type" "$(printf '(set-code "(define (f x) (+ x 1))")(query:node-type \"Define\")')" "(5)"
@@ -655,7 +655,7 @@ run_test "agent:query-calls" "$(printf '(set-code "(define (f x) (+ x 1)) (defin
 run_test "agent:pipe-mode" "$(printf '(display 42)')" "42"
 
 # EDSL mutate: rebind function
-run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))")(query:find \"add\")(mutate:rebind \"add\" \"(define (add x y) (* x y))\")(eval-current)(add 1 2)')" "2"
+run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))")(query :find \"add\")(mutate:rebind \"add\" \"(define (add x y) (* x y))\")(eval-current)(add 1 2)')" "2"
 
 # query:filter / query:where — combined filter queries
 run_test "edsl:filter-where" \
@@ -701,7 +701,7 @@ echo "=== EDSL IR Cache V2 Tests (Phase 2) ==="
 # (The ctest test_ir_cache_v2 verifies the FNV-1a hash function.)
 
 run_test "edsl-ir-cache:set-code-populates"  \
-    "$(printf '(set-code \"(define my-fn (lambda (x) (* x x)))\") (length (query:find \"my-fn\"))')" \
+    "$(printf '(set-code \"(define my-fn (lambda (x) (* x x)))\") (length (query :find \"my-fn\"))')" \
     '1'
 run_test "edsl-ir-cache:eval-current-binds"  \
     "$(printf '(set-code \"(define f (lambda (x) (+ x 1)))\") (eval-current) (f 5)')" \

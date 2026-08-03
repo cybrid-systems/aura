@@ -24,22 +24,22 @@
         query:nodes-with-marker
         query:subtree)
 
-;; ── query:siblings → filter over (query:children (query:parent n)) ──
+;; ── query:siblings → filter over (query :children (query :parent n)) ──
 ;; Demoted per docs/design/query-namespace-decision.md #33.
 ;; The wrapper excludes `self` from the children list (the original
 ;; `query:siblings` semantics).
 (define (query:siblings n)
   (filter (lambda (s) (not (= s n)))
-          (query:children (query:parent n))))
+          (query :children (query :parent n))))
 
-;; ── query:find-by-name → (query:find n) ──
+;; ── query:find-by-name → (query :find n) ──
 ;; Demoted per query-namespace-decision.md #34. `query:find` is a
 ;; superset (matches by name OR symbol); the shim narrows the input
 ;; to a string when given a symbol so the caller stays compatible.
 (define (query:find-by-name name)
   (if (symbol? name)
-      (query:find (symbol->string name))
-      (query:find name)))
+      (query :find (symbol->string name))
+      (query :find name)))
 
 ;; ── query:nodes-with-marker → (query:by-marker m) ──
 ;; Demoted per query-namespace-decision.md #35.
@@ -53,4 +53,4 @@
 ;; see at least the direct children). When `fold-tree` lands in
 ;; stdlib, this wrapper is the only thing that needs to change.
 (define (query:subtree n)
-  (query:children n))
+  (query :children n))

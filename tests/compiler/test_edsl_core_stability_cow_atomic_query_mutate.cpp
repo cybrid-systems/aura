@@ -105,7 +105,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "edsl-core-stability stats monotonic");
 
     std::println("\n--- AC6: query:children-stable safe view ---");
-    auto children = cs.eval("(query:children-stable 0)");
+    auto children = cs.eval("(query :children-stable 0)");
     CHECK(children.has_value(), "query:children-stable returns");
     const auto safe = hash_int(cs, "children-safe-views");
     CHECK(safe >= 0, "children-safe-views readable");

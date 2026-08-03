@@ -798,16 +798,16 @@ namespace {
         {
             CompilerService cs;
             auto s2010 =
-                cs.eval(R"((hash-ref (engine:metrics "query:mf-mailbox-stats") "schema-2010"))");
+                cs.eval(R"((hash-ref (engine:metrics \"query:mf-mailbox-stats\") "schema-2010"))");
             CHECK(s2010 && is_int(*s2010) && as_int(*s2010) == 2010, "mf schema-2010");
             auto fbp = cs.eval(
-                R"((hash-ref (engine:metrics "query:mf-mailbox-stats") "fanout-backpressure-rejects"))");
+                R"((hash-ref (engine:metrics \"query:mf-mailbox-stats\") "fanout-backpressure-rejects"))");
             CHECK(fbp && is_int(*fbp) && as_int(*fbp) >= 0, "fanout-backpressure-rejects key");
             auto orch2010 =
-                cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2010"))");
+                cs.eval(R"((hash-ref (engine:metrics \"query:orch-module-stats\") "schema-2010"))");
             CHECK(orch2010 && is_int(*orch2010) && as_int(*orch2010) == 2010, "orch schema-2010");
             auto mfb = cs.eval(
-                R"((hash-ref (engine:metrics "query:orch-module-stats") "mailbox-fanout-backpressure-rejects"))");
+                R"((hash-ref (engine:metrics \"query:orch-module-stats\") "mailbox-fanout-backpressure-rejects"))");
             CHECK(mfb && is_int(*mfb) && as_int(*mfb) >= 0, "orch fanout BP key");
         }
     }
@@ -1043,14 +1043,15 @@ namespace {
     static void ac6_stats() {
         std::println("\n--- AC6: query:orch-module-stats ---");
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:orch-module-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:orch-module-stats\"))");
         CHECK(h && is_hash(*h), "stats hash");
-        auto schema = cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "schema"))");
+        auto schema =
+            cs.eval(R"((hash-ref (engine:metrics \"query:orch-module-stats\") "schema"))");
         CHECK(schema && is_int(*schema) && as_int(*schema) == 1588, "schema 1588");
-        auto phase = cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "phase"))");
+        auto phase = cs.eval(R"((hash-ref (engine:metrics \"query:orch-module-stats\") "phase"))");
         CHECK(phase && is_int(*phase) && as_int(*phase) >= 1, "phase >= 1");
         auto spawned =
-            cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "agents-spawned"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:orch-module-stats\") "agents-spawned"))");
         CHECK(spawned && is_int(*spawned) && as_int(*spawned) >= 1, "agents-spawned advanced");
     }
 
@@ -1121,7 +1122,7 @@ namespace {
 
         // Stats query still advances after language primitives.
         auto sends =
-            cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "agents-send"))");
+            cs.eval(R"((hash-ref (engine:metrics \"query:orch-module-stats\") "agents-send"))");
         CHECK(sends && is_int(*sends) && as_int(*sends) >= 1, "agents-send advanced");
     }
 
@@ -1290,21 +1291,21 @@ namespace {
         // (d) query surface exposes #2008 keys.
         {
             CompilerService cs;
-            auto h = cs.eval(R"((engine:metrics "query:orch-module-stats"))");
+            auto h = cs.eval(R"((engine:metrics \"query:orch-module-stats\"))");
             CHECK(h && is_hash(*h), "orch-module-stats hash");
             auto s2008 =
-                cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2008"))");
+                cs.eval(R"((hash-ref (engine:metrics \"query:orch-module-stats\") "schema-2008"))");
             CHECK(s2008 && is_int(*s2008) && as_int(*s2008) == 2008, "schema-2008");
             auto emitted = cs.eval(
-                R"((hash-ref (engine:metrics "query:orch-module-stats") "keepalive-emitted-total"))");
+                R"((hash-ref (engine:metrics \"query:orch-module-stats\") "keepalive-emitted-total"))");
             CHECK(emitted && is_int(*emitted) && as_int(*emitted) >= 1,
                   "keepalive-emitted-total in query");
             auto stalled = cs.eval(
-                R"((hash-ref (engine:metrics "query:orch-module-stats") "stalled-agents-total"))");
+                R"((hash-ref (engine:metrics \"query:orch-module-stats\") "stalled-agents-total"))");
             CHECK(stalled && is_int(*stalled) && as_int(*stalled) >= 1,
                   "stalled-agents-total in query");
             auto wired = cs.eval(
-                R"((hash-ref (engine:metrics "query:orch-module-stats") "keepalive-wired"))");
+                R"((hash-ref (engine:metrics \"query:orch-module-stats\") "keepalive-wired"))");
             CHECK(wired && is_int(*wired) && as_int(*wired) == 1, "keepalive-wired");
         }
     }
@@ -1497,11 +1498,11 @@ namespace {
             CHECK(href_int(cs, R"((hash-ref (orch:agent-touch "pc-touch3") "schema-2080"))") ==
                       2080,
                   "schema-2080 in touch result");
-            CHECK(
-                href_int(
-                    cs, R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2008"))") ==
-                    2008,
-                "schema-2008 lineage preserved");
+            CHECK(href_int(
+                      cs,
+                      R"((hash-ref (engine:metrics \"query:orch-module-stats\") "schema-2008"))") ==
+                      2008,
+                  "schema-2008 lineage preserved");
             CHECK(h.liveness->last_keepalive_us.load() > before,
                   "orch:agent-touch advanced shared clock");
 
@@ -1641,7 +1642,7 @@ int run_orch_observability() {
     {
         std::println("\n--- AC2: query:orch-module-stats #1881 ---");
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:orch-module-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:orch-module-stats\"))");
         CHECK(h && is_hash(*h), "orch-module-stats hash");
         CHECK(href(cs, "query:orch-module-stats", "schema") == 1588, "schema 1588");
         CHECK(href(cs, "query:orch-module-stats", "schema-1881") == 1881, "schema-1881");
@@ -1662,13 +1663,13 @@ int run_orch_observability() {
     {
         std::println("\n--- AC3: mf-mailbox + parallel-orch stats ---");
         CompilerService cs;
-        auto m = cs.eval(R"((engine:metrics "query:mf-mailbox-stats"))");
+        auto m = cs.eval(R"((engine:metrics \"query:mf-mailbox-stats\"))");
         CHECK(m && is_hash(*m), "mf-mailbox-stats hash");
         CHECK(href(cs, "query:mf-mailbox-stats", "schema-1881") == 1881, "mb schema-1881");
         CHECK(href(cs, "query:mf-mailbox-stats", "priority-high") >= 0, "priority-high");
         CHECK(href(cs, "query:mf-mailbox-stats", "linear-checks") >= 0, "linear-checks");
         CHECK(href(cs, "query:mf-mailbox-stats", "recv-waits") >= 0, "recv-waits");
-        auto p = cs.eval(R"((engine:metrics "query:parallel-orch-stats"))");
+        auto p = cs.eval(R"((engine:metrics \"query:parallel-orch-stats\"))");
         CHECK(p && is_hash(*p), "parallel-orch-stats hash");
         CHECK(href(cs, "query:parallel-orch-stats", "schema-1881") == 1881, "par schema-1881");
         CHECK(href(cs, "query:parallel-orch-stats", "batch-ok") >= 0, "batch-ok");
@@ -1895,7 +1896,7 @@ int run_orch_stable_ref() {
     {
         std::println("\n--- AC2: orch-module-stats #1879 fields ---");
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics "query:orch-module-stats"))");
+        auto h = cs.eval(R"((engine:metrics \"query:orch-module-stats\"))");
         CHECK(h && is_hash(*h), "stats hash");
         CHECK(href(cs, "schema") == 1588, "schema 1588 preserved");
         CHECK(href(cs, "schema-1879") == 1879, "schema-1879");

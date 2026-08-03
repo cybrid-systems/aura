@@ -1351,14 +1351,12 @@ bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
     // Multi-arg observability APIs that require node-id / name args must
     // stay public — (stats:get)/(engine:metrics) cannot forward those args.
     static constexpr std::string_view kMultiArgPublic[] = {
-        "compile:per-symbol-dirty-stats",
+        // Issue #2628: compile:per-symbol-dirty-stats + reflect:hygiene-stats
+        // demoted — (engine:metrics name args...) forwards rest (#2054).
         "compile:func-block-dirty-count",
         "compile:block-dirty-count",
         "dirty:reasons",     // (dirty:reasons node-id)
         "dirty:ppa-reasons", // (dirty:ppa-reasons node-id)
-        // Issue #2020: Agent hygiene snapshot; optional node-id root
-        // (engine:metrics cannot forward optional subtree scope).
-        "reflect:hygiene-stats",
     };
     for (auto m : kMultiArgPublic) {
         if (name == m)

@@ -93,7 +93,7 @@ def recursive_residual(repl: AuraRepl) -> int:
 
 def node_count(repl: AuraRepl) -> float:
     raw = repl.eval(
-        "(let ((r (query:root))) (if (not r) 0 (let cnt ((id r)) (+ 1 (apply + (map cnt (query:children id)))))))"
+        "(let ((r (query:root))) (if (not r) 0 (let cnt ((id r)) (+ 1 (apply + (map cnt (query :children id)))))))"
     ).strip()
     try:
         return float(raw)

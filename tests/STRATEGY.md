@@ -3,7 +3,7 @@
 **Authority (code):** [`src/test/test_strategy.h`](../src/test/test_strategy.h) ·
 [`src/test/test_strategy.ixx`](../src/test/test_strategy.ixx)  
 **Issue:** #1887  
-**Observability:** `(engine:metrics "query:test-strategy-stats")` (schema **1887**)
+**Observability:** `(engine:metrics \"query:test-strategy-stats\")` (schema **1887**)
 
 This document formalizes the **high-level** coverage strategy for production
 readiness. It complements (does not replace):

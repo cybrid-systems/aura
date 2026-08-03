@@ -116,7 +116,7 @@ int main() {
         std::println("\n--- AC4: marker + provenance round-trip ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "set-code");
-        auto r = cs.eval("(car (query:find \"z\"))");
+        auto r = cs.eval("(car (query :find \"z\"))");
         CHECK(r && is_int(*r), "find z");
         const auto id = as_int(*r);
 
@@ -136,7 +136,7 @@ int main() {
         std::println("\n--- AC5: multi-thread FlatAST metadata stress ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code stress");
-        auto r = cs.eval("(car (query:find \"a\"))");
+        auto r = cs.eval("(car (query :find \"a\"))");
         CHECK(r && is_int(*r), "find a");
         const auto id = static_cast<aura::ast::NodeId>(as_int(*r));
         auto* flat = cs.workspace_flat();

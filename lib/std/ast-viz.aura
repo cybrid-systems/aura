@@ -64,7 +64,7 @@
 
 ; ── 构造节点 DOT 标签 ──
 (define (node-label id)
-  (define info (query:node id))
+  (define info (query :node id))
   (if (not (pair? info)) (string-append "Node" (number->string id))
     (let* ((tag (car info))
            (val (if (pair? (cdr info)) (car (cdr info)) #f))
@@ -81,7 +81,7 @@
 
 ; ── 构造边 DOT 定义 ──
 (define (node-edges id)
-  (define children (query:children id))
+  (define children (query :children id))
   (if (not (pair? children)) ""
     (let loop ((kids children) (result ""))
       (if (null? kids) result
@@ -110,7 +110,7 @@
           (let ((new-done (cons id done)))
             (set! result (string-append result (node-label id) "\n" (node-edges id)))
             ; 递归子节点
-            (define children (try (query:children id) (catch (quote ()))))
+            (define children (try (query :children id) (catch (quote ()))))
             (let loop ((kids children) (d new-done))
               (if (null? kids) d
                 (loop (cdr kids) (walk (car kids) d)))))))

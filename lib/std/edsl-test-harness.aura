@@ -6,7 +6,7 @@
 ; Usage:
 ;   (require "std/edsl-test-harness" all:)
 ;   (section "Query")
-;   (it "def-use" (= (length (car (query:def-use "x"))) 1))
+;   (it "def-use" (= (length (car (query :def-use "x"))) 1))
 ;   (describe "Governance" (lambda ()
 ;     (it "validate-new blocks stats" …)))
 ;   (summary)   ; prints totals; returns #t iff zero failures

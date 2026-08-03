@@ -50,8 +50,9 @@ std::string read_first(std::initializer_list<const char*> paths) {
 }
 
 std::int64_t ancestor_count(CompilerService& cs, const char* sym) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (compile:per-symbol-dirty-stats \"{}\") \"ancestor-affected-count\")", sym));
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"compile:per-symbol-dirty-stats\" "
+                                 "\"{}\") \"ancestor-affected-count\")",
+                                 sym));
     if (!r || !is_int(*r))
         return -999;
     return as_int(*r);
@@ -67,7 +68,7 @@ int main() {
                                 "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_05.cpp");
         CHECK(prim.find("#1786") != std::string::npos, "cites #1786");
-        auto pos = prim.find("add(\"compile:per-symbol-dirty-stats\"");
+        auto pos = prim.find("compile:per-symbol-dirty-stats");
         CHECK(pos != std::string::npos, "primitive present");
         // Walk body is deep in the lambda — use a large window + #1786 site.
         auto win = prim.substr(pos, 9000);
@@ -86,7 +87,7 @@ int main() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define foo 1)\")").has_value(), "set-code");
         (void)cs.eval("(eval-current)");
-        auto h = cs.eval("(compile:per-symbol-dirty-stats \"foo\")");
+        auto h = cs.eval("(engine:metrics \"compile:per-symbol-dirty-stats\" \"foo\")");
         CHECK(h && is_hash(*h), "returns hash");
         const auto ac = ancestor_count(cs, "foo");
         // Root-ish define may have 0 ancestors or a few container nodes.

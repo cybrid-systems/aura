@@ -210,8 +210,8 @@ static void ac2603_same_gen_soft_counter() {
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
-    const auto same0 = metrics.cross_cow_soft_migrate_same_gen_total.load(
-        std::memory_order_relaxed);
+    const auto same0 =
+        metrics.cross_cow_soft_migrate_same_gen_total.load(std::memory_order_relaxed);
     const auto all0 = metrics.cross_cow_soft_migrate_total.load(std::memory_order_relaxed);
     CHECK(same0 == 0, "AC1: same-gen counter starts at 0");
     CHECK(all0 == 0, "AC1: all-soft counter starts at 0");
@@ -225,8 +225,7 @@ static void ac2603_same_gen_soft_counter() {
     CHECK(rt.find("aura_bump_cross_cow_soft_migrate_same_gen_total") != std::string::npos,
           "AC1: same-gen bumper called in runtime success path");
     CHECK(metrics.cross_cow_soft_migrate_total.is_lock_free(), "AC1: all-soft atomic");
-    CHECK(metrics.cross_cow_soft_migrate_same_gen_total.is_lock_free(),
-          "AC1: same-gen atomic");
+    CHECK(metrics.cross_cow_soft_migrate_same_gen_total.is_lock_free(), "AC1: same-gen atomic");
     aura_set_aot_metrics(nullptr);
 }
 
@@ -236,10 +235,10 @@ static void ac2603_cross_gen_no_soft_bump() {
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
 
-    const auto same0 = metrics.cross_cow_soft_migrate_same_gen_total.load(
-        std::memory_order_relaxed);
-    const auto hard_cow0 = metrics.cross_cow_hard_reject_cow_gen_mismatch_total.load(
-        std::memory_order_relaxed);
+    const auto same0 =
+        metrics.cross_cow_soft_migrate_same_gen_total.load(std::memory_order_relaxed);
+    const auto hard_cow0 =
+        metrics.cross_cow_hard_reject_cow_gen_mismatch_total.load(std::memory_order_relaxed);
 
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto try_block = rt.find("try_cross_cow_soft_migrate_");
@@ -265,8 +264,8 @@ static void ac2603_soft_disabled_no_soft_bump() {
     const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
     CHECK(bridge.find("cross_cow_hard_reject_disabled_total") != std::string::npos,
           "AC3: disabled hard counter exists in bridge");
-    const auto same0 = metrics.cross_cow_soft_migrate_same_gen_total.load(
-        std::memory_order_relaxed);
+    const auto same0 =
+        metrics.cross_cow_soft_migrate_same_gen_total.load(std::memory_order_relaxed);
     CHECK(same0 == 0, "AC3: same-gen counter unchanged");
     aura_set_aot_metrics(nullptr);
 }
@@ -278,10 +277,8 @@ static void ac2603_schema_and_source() {
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
     CHECK(href(cs, "cross-cow-soft-migrate-same-gen-total") >= 0,
           "AC4: same-gen key on query:aot-reload-stats");
-    CHECK(href(cs, "cross_cow_soft_migrate_same_gen_total") >= 0,
-          "AC4: same-gen legacy key");
-    CHECK(href(cs, "cross-cow-soft-migrate-same-gen-wired") == 1,
-          "AC4: same-gen-wired sentinel");
+    CHECK(href(cs, "cross_cow_soft_migrate_same_gen_total") >= 0, "AC4: same-gen legacy key");
+    CHECK(href(cs, "cross-cow-soft-migrate-same-gen-wired") == 1, "AC4: same-gen-wired sentinel");
     CHECK(href(cs, "cross-cow-soft-rate-x10000") >= 0, "AC4: soft rate helper");
     CHECK(href(cs, "schema-2371") == 2371, "AC4: schema-2371 retained");
     CHECK(href(cs, "schema-2505") == 2505, "AC4: schema-2505 retained");
@@ -334,7 +331,6 @@ int main() {
     ac2603_soft_no_cross_workspace_write();
     if (g_failed)
         return 1;
-    std::println(
-        "cross-COW soft migrate #2371 + #2603: OK ({} passed)", g_passed);
+    std::println("cross-COW soft migrate #2371 + #2603: OK ({} passed)", g_passed);
     return 0;
 }

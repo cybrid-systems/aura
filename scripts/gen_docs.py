@@ -38,18 +38,12 @@ class Primitive:
 
 # Issue #1434–#1437: names marked PrimMeta.deprecated in the engine.
 # Keep in sync with mark_p1b_top_stats / query·mutate·workspace dispatch.
+# Issue #2628 purged the #1435 query aliases, workspace aliases, and
+# mutate:validate-against-schema (private dispatch / engine:metrics only).
+# Remaining deprecated mutate:* aliases still prefer (mutate :op).
 _DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset(
     {
-        # #1435 query
-        "query:node",
-        "query:children",
-        "query:children-stable",
-        "query:parent",
-        "query:parent-stable",
-        "query:find",
-        "query:def-use",
-        "query:mutation-log",
-        # #1436 mutate
+        # #1436 mutate (still public thin aliases; prefer (mutate :op))
         "mutate:rebind",
         "mutate:replace-pattern",
         "mutate:replace-subtree",
@@ -57,18 +51,9 @@ _DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset(
         "mutate:replace-type",
         "mutate:move-node",
         "mutate:extract-function",
-        "mutate:validate-against-schema",
         "mutate:atomic-batch",
         "mutate:sv-add-coverpoint",
         "mutate:sv-weaken-property",
-        # #1437 workspace
-        "workspace:create",
-        "workspace:switch",
-        "workspace:merge",
-        "workspace:lock",
-        "workspace:unlock",
-        "workspace:list",
-        "workspace:current",
     }
 )
 

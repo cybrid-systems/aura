@@ -18,7 +18,7 @@
 (display (typecheck-current))
 (newline)
 ;; Find the define node id. We expect a few Define nodes; we
-;; can probe with (query:node) and (query:node-type) but for
+;; can probe with (query :node) and (query:node-type) but for
 ;; the test we just check that (get-inferred-type 0) returns
 ;; something other than "unknown" / "out-of-range".
 (display (get-inferred-type 0))

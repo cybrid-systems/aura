@@ -8,4 +8,4 @@
 mutate:set-agent-fingerprint  # SECURITY_EXEMPT: metadata-only agent identity stamp (no AST write)
 # Diagnostic / metrics-only "mutate:" names (no AST write) — security_exempt.
 mutate:validate-reflected  # SECURITY_EXEMPT: diagnostic reflect counters only
-mutate:validate-against-schema  # SECURITY_EXEMPT: read-only schema check (no AST write)
+# #2628: mutate:validate-against-schema demoted (mutate :validate / stats_impl)

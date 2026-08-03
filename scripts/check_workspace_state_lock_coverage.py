@@ -9,7 +9,7 @@
        / mark_dirty_upward / status update).
   AC3: (workspace:mutation-count) in evaluator_primitives_workspace.cpp
        takes a shared_lock on workspace_mtx_ (read-only).
-  AC4: (workspace:create) in evaluator_primitives_workspace.cpp
+  AC4: (workspace :create) in evaluator_primitives_workspace.cpp
        takes a unique_lock on workspace_mtx_ (writer — updates
        workspace_tree_ and the root node's flat/pool).
   AC5: (workspace:resolve-stable-ref) in evaluator_primitives_workspace.cpp
@@ -48,7 +48,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 AGENT = ROOT / "src" / "compiler" / "evaluator_primitives_agent.cpp"
 WORK = ROOT / "src" / "compiler" / "evaluator_primitives_workspace.cpp"
-TEST = ROOT / "tests" / "mutation" / "test_workspace_state_lock.cpp"
+TEST = ROOT / "tests" / "core" / "test_workspace_state_lock.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -69,14 +69,28 @@ def _extract_body(text: str, open_idx: int) -> str:
 
 
 def _find_primitive_body(text: str, prim_name: str) -> str:
-    """Find a `add("<prim_name>", ...)` or `register_stats_impl("<prim_name>", ...)`
-    lambda and return its body."""
-    pat_add = re.compile(r'add\(\s*"' + re.escape(prim_name) + r'"\s*,\s*[^;]*?\{', re.DOTALL)
-    pat_reg = re.compile(
-        r'register_stats_impl\(\s*"' + re.escape(prim_name) + r'"\s*,\s*[^;]*?\{',
-        re.DOTALL,
-    )
-    m = pat_add.search(text) or pat_reg.search(text)
+    """Find a public/private registration for prim_name and return its body.
+
+    Matches (Issue #2628 private tables included):
+      add("name", …){…}
+      register_stats_impl("name", …){…}
+      (*w_impls)["name"] = PrimFn{…}
+      (*q_impls)["name"] = PrimFn{…}
+    """
+    escaped = re.escape(prim_name)
+    pats = [
+        re.compile(r'add\(\s*"' + escaped + r'"\s*,\s*[^;]*?\{', re.DOTALL),
+        re.compile(r'register_stats_impl\(\s*"' + escaped + r'"\s*,\s*[^;]*?\{', re.DOTALL),
+        re.compile(
+            r'\(\*(?:w|q)_impls\)\s*\[\s*"' + escaped + r'"\s*\]\s*=\s*PrimFn\s*\{',
+            re.DOTALL,
+        ),
+    ]
+    m = None
+    for pat in pats:
+        m = pat.search(text)
+        if m:
+            break
     if not m:
         return ""
     open_idx = text.find("{", m.end() - 1)
@@ -88,9 +102,15 @@ def _find_primitive_body(text: str, prim_name: str) -> str:
 def _check_lock(body: str, prim_name: str, lock_type: str, failures: list[str]) -> None:
     """Verify the body contains the requested workspace_mtx_ lock pattern."""
     if lock_type == "shared":
-        ok = "std::shared_lock<std::shared_mutex>" in body and "workspace_mtx_" in body
+        ok = (
+            "std::shared_lock<std::shared_mutex>" in body and "workspace_mtx_" in body
+        ) or "pin_workspace_flat" in body
     elif lock_type == "unique":
-        ok = "std::unique_lock<std::shared_mutex>" in body and "workspace_mtx_" in body
+        ok = (
+            ("std::unique_lock<std::shared_mutex>" in body and "workspace_mtx_" in body)
+            or "WorkspaceUniqueIfNeeded" in body
+            or "WorkspaceUniqueGuard" in body
+        )
     else:
         raise ValueError(f"Unknown lock_type {lock_type!r}")
     if not ok:
@@ -180,7 +200,7 @@ def self_test() -> int:
             "    std::shared_lock<std::shared_mutex> lock(ev.workspace_mtx_);\n"
             "    return make_int(0);\n"
             "});\n"
-            'add("workspace:create", [&ev](std::span<const EvalValue> a) -> EvalValue {\n'
+            '(*w_impls)["workspace:create"] = PrimFn{[&ev](std::span<const EvalValue> a) -> EvalValue {\n'
             "    std::unique_lock<std::shared_mutex> lock(ev.workspace_mtx_);\n"
             "    return make_int(0);\n"
             "});\n"

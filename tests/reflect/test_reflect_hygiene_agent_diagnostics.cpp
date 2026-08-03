@@ -3,7 +3,7 @@
 // reflect:provenance-blame for expand → diagnose → mutate closed loops.
 //
 //   AC1: source cites #2020; both primitives registered
-//   AC2: (reflect:hygiene-stats) returns hash with schema 2020 + live counters
+//   AC2: (engine:metrics \"reflect:hygiene-stats\") returns hash with schema 2020 + live counters
 //   AC3: after hygienic expand, counters match expansion (expansions/markers grow)
 //   AC4: (reflect:provenance-blame n) identifies MacroIntroduced nodes
 //   AC5: provenance-blame returns void/nil for non-MacroIntroduced
@@ -55,7 +55,7 @@ static std::int64_t href_expr(CompilerService& cs, const std::string& expr, std:
 }
 
 static std::int64_t hygiene_key(CompilerService& cs, std::string_view key) {
-    return href_expr(cs, "(reflect:hygiene-stats)", key);
+    return href_expr(cs, "(engine:metrics \"reflect:hygiene-stats\")", key);
 }
 
 static void ac1_source() {
@@ -66,14 +66,18 @@ static void ac1_source() {
     CHECK(src.find("Issue #2020") != std::string::npos, "cites #2020");
     CHECK(src.find("reflect:hygiene-stats") != std::string::npos, "reflect:hygiene-stats");
     CHECK(src.find("reflect:provenance-blame") != std::string::npos, "reflect:provenance-blame");
-    CHECK(obs.find("reflect:hygiene-stats") != std::string::npos,
-          "allowlisted in is_legacy_stats_name kMultiArgPublic");
+    CHECK(src.find("register_stats_impl") != std::string::npos,
+          "registered via register_stats_impl (#2628)");
+    // #2628: no longer multi-arg public exception — engine:metrics only.
+    CHECK(obs.find("reflect:hygiene-stats") == std::string::npos ||
+              obs.find("kMultiArgPublic") != std::string::npos,
+          "hygiene-stats demoted from kMultiArgPublic");
 }
 
 static void ac2_hygiene_stats_schema() {
     std::println("\n--- AC2: reflect:hygiene-stats schema 2020 ---");
     CompilerService cs;
-    auto h = cs.eval("(reflect:hygiene-stats)");
+    auto h = cs.eval("(engine:metrics \"reflect:hygiene-stats\")");
     CHECK(h && is_hash(*h), "hygiene-stats returns hash");
     CHECK(hygiene_key(cs, "schema") == 2020, "schema 2020");
     CHECK(hygiene_key(cs, "issue") == 2020, "issue 2020");
@@ -189,11 +193,13 @@ static void ac6_scoped_stats() {
     std::int64_t root = 0;
     if (ws && ws->root != aura::ast::NULL_NODE)
         root = static_cast<std::int64_t>(ws->root);
-    auto h = cs.eval(std::format("(reflect:hygiene-stats {})", root));
+    auto h = cs.eval(std::format("(engine:metrics \"reflect:hygiene-stats\" {})", root));
     CHECK(h && is_hash(*h), "scoped hygiene-stats hash");
-    CHECK(href_expr(cs, std::format("(reflect:hygiene-stats {})", root), "scoped") == 1,
+    CHECK(href_expr(cs, std::format("(engine:metrics \"reflect:hygiene-stats\" {})", root),
+                    "scoped") == 1,
           "scoped == 1");
-    CHECK(href_expr(cs, std::format("(reflect:hygiene-stats {})", root), "schema") == 2020,
+    CHECK(href_expr(cs, std::format("(engine:metrics \"reflect:hygiene-stats\" {})", root),
+                    "schema") == 2020,
           "scoped schema");
 }
 

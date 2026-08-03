@@ -94,6 +94,9 @@ void register_workspace_query_primitives(
     // WorkspaceQueryState::tag_arity_index_mtx above.
     std::shared_mutex& tag_arity_index_mtx, std::function<aura::ast::StringPool*()> canonical_pool,
     std::function<void()> build_tag_arity_index, MakeErrorVal mev, Evaluator& ev) {
+    // Issue #2628: private PrimFn table for op-dispatch (not public names).
+    auto q_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
+
     WorkspaceQueryState ws{workspace_mtx,       workspace_flat, workspace_pool,
                            type_registry,       keyword_table,  pairs,
                            string_heap,         temp_arena,     tag_arity_index,
@@ -197,68 +200,68 @@ void register_workspace_query_primitives(
         return make_void();
     };
 
-    // (query:find name) — Find all node IDs with matching symbol name
-    add("query:find", [ws, mev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:find name)");
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "name string index out of range");
-        if (!ws.workspace_flat || !ws.workspace_pool)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto& flat = *ws.workspace_flat;
-        const auto qe = begin_query_epoch(&flat); // Issue #2192
-        auto name = ws.string_heap[idx];
-        // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
-        auto sym = ws.canonical_pool()->intern(name);
-        EvalValue result = make_void();
-        // Issue #2488: SoA shared lock for multi-column get() vs concurrent
-        // add_node (workspace_mtx shared alone does not cover flatast_mutex_
-        // size domain — structural_mtx_ is also independent).
-        auto soa = flat.try_acquire_soa_reader_lock();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
-            if (flat.is_free_slot(id))
-                continue;
-            auto v = flat.get(id);
-            if (v.sym_id == sym) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
-            }
-        }
-        return end_query_epoch(qe, &flat, result);
-    });
-
-    // (query:children node-id|stable-ref) — Get children node IDs
-    // Issue #2186: resolve via ensure_valid_or_refresh (no bare get).
-    add("query:children",
-        [ws, mev, resolve_query_node_arg, begin_query_epoch,
-         end_query_epoch](const auto& a) -> EvalValue {
+    // (query :find name) — Find all node IDs with matching symbol name
+    (*q_impls)["query:find"] =
+        PrimFn{[ws, mev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !ws.workspace_flat)
-                return mev("bad-arg", "usage: (query:children node-id|stable-ref)");
-            bool ok = true;
-            aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
-            if (!ok)
-                return err;
+            if (a.empty() || !is_string(a[0]))
+                return mev("bad-arg", "usage: (query :find name)");
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "name string index out of range");
+            if (!ws.workspace_flat || !ws.workspace_pool)
+                return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *ws.workspace_flat;
             const auto qe = begin_query_epoch(&flat); // Issue #2192
-            auto v = flat.get(node);
+            auto name = ws.string_heap[idx];
+            // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
+            auto sym = ws.canonical_pool()->intern(name);
             EvalValue result = make_void();
-            for (std::size_t i = v.children.size(); i > 0; --i) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.child(i - 1))), result});
-                result = make_pair(pid);
+            // Issue #2488: SoA shared lock for multi-column get() vs concurrent
+            // add_node (workspace_mtx shared alone does not cover flatast_mutex_
+            // size domain — structural_mtx_ is also independent).
+            auto soa = flat.try_acquire_soa_reader_lock();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+                if (flat.is_free_slot(id))
+                    continue;
+                auto v = flat.get(id);
+                if (v.sym_id == sym) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
             }
             return end_query_epoch(qe, &flat, result);
-        });
+        }};
 
-    // Issue #249: (query:children-stable node-id|stable-ref) — Get children
+    // (query :children node-id|stable-ref) — Get children node IDs
+    // Issue #2186: resolve via ensure_valid_or_refresh (no bare get).
+    (*q_impls)["query:children"] = PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
+                                           end_query_epoch](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !ws.workspace_flat)
+            return mev("bad-arg", "usage: (query :children node-id|stable-ref)");
+        bool ok = true;
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
+        if (!ok)
+            return err;
+        auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        auto v = flat.get(node);
+        EvalValue result = make_void();
+        for (std::size_t i = v.children.size(); i > 0; --i) {
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.child(i - 1))), result});
+            result = make_pair(pid);
+        }
+        return end_query_epoch(qe, &flat, result);
+    }};
+
+    // Issue #249: (query :children-stable node-id|stable-ref) — Get children
     // as a list of (node-id . generation) stable-ref pairs. Use
-    // this instead of (query:children ...) when the result is
+    // this instead of (query :children ...) when the result is
     // stored in a variable that may be used after a mutate call.
     // The captured generation lets validate the ref later (via
     // (mutate:check-stable-ref) or pass it back to a mutate
@@ -266,73 +269,73 @@ void register_workspace_query_primitives(
     // Issue #2186: parent handle goes through ensure_valid_or_refresh.
     // Issue #2404 soft path: for_each_stable_child captures at live gen
     // (already-valid export); re-export of stored pairs uses query:ensure-ref.
-    add("query:children-stable",
-        [ws, mev, resolve_query_node_arg, begin_query_epoch,
-         end_query_epoch](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !ws.workspace_flat)
-                return mev("bad-arg", "usage: (query:children-stable node-id|stable-ref)");
-            bool ok = true;
-            aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
-            if (!ok)
-                return err;
-            auto& flat = *ws.workspace_flat;
-            const auto qe = begin_query_epoch(&flat); // Issue #2192
-            // Issue #398: truly zero-allocation path (no local
-            // vector). The result is a list of (id . gen) pairs
-            // — each child takes 3 entries in ws.pairs:
-            //   - (gen, nil)
-            //   - (id, ^prev)
-            //   - (pair_ev, ^next-list-node)
-            // We pre-allocate 3*N entries directly in ws.pairs
-            // (no temp vector), fill them via the callback, then
-            // thread the list-node cdrs in a second O(N) walk.
-            auto gen = flat.generation();
-            std::size_t n = flat.stable_child_count(node);
-            if (n == 0)
-                return end_query_epoch(qe, &flat, make_void());
-            const auto base = ws.pairs.size();
-            // Pre-allocate 3*N slots with placeholder pairs. The
-            // exact car / cdr values are filled in below; the
-            // placeholders keep the indices stable.
-            for (std::size_t i = 0; i < 3 * n; ++i) {
-                ws.pairs.push_back({make_void(), make_void()});
-            }
-            // Fill (gen, nil) and (id, ^gen-pair) for each child.
-            // The list-node cdr is filled in the second loop.
-            std::size_t i = 0;
-            flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
-                const auto gen_idx = static_cast<int>(base + 3 * i);
-                const auto pair_idx = static_cast<int>(base + 3 * i + 1);
-                const auto list_idx = static_cast<int>(base + 3 * i + 2);
-                ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
-                ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)),
-                                      make_pair(gen_idx)};
-                // The list-node cdr is filled below (we don't know
-                // the next list-node index until the loop ends).
-                ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
-                ++i;
-            });
-            // Thread the list-node cdrs: list[i].cdr = list[i+1]
-            // for i in 0..N-2; list[N-1].cdr = nil (already set).
-            for (std::size_t j = 0; j + 1 < n; ++j) {
-                const auto list_idx = static_cast<int>(base + 3 * j + 2);
-                const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
-                ws.pairs[list_idx].cdr = make_pair(next_idx);
-            }
-            // The final result is the first list-node.
-            return end_query_epoch(qe, &flat, make_pair(static_cast<int>(base + 2)));
+    (*q_impls)["query:children-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
+                                                  begin_query_epoch,
+                                                  end_query_epoch](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !ws.workspace_flat)
+            return mev("bad-arg", "usage: (query :children-stable node-id|stable-ref)");
+        bool ok = true;
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
+        if (!ok)
+            return err;
+        auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        // Issue #398: truly zero-allocation path (no local
+        // vector). The result is a list of (id . gen) pairs
+        // — each child takes 3 entries in ws.pairs:
+        //   - (gen, nil)
+        //   - (id, ^prev)
+        //   - (pair_ev, ^next-list-node)
+        // We pre-allocate 3*N entries directly in ws.pairs
+        // (no temp vector), fill them via the callback, then
+        // thread the list-node cdrs in a second O(N) walk.
+        auto gen = flat.generation();
+        std::size_t n = flat.stable_child_count(node);
+        if (n == 0)
+            return end_query_epoch(qe, &flat, make_void());
+        const auto base = ws.pairs.size();
+        // Pre-allocate 3*N slots with placeholder pairs. The
+        // exact car / cdr values are filled in below; the
+        // placeholders keep the indices stable.
+        for (std::size_t i = 0; i < 3 * n; ++i) {
+            ws.pairs.push_back({make_void(), make_void()});
+        }
+        // Fill (gen, nil) and (id, ^gen-pair) for each child.
+        // The list-node cdr is filled in the second loop.
+        std::size_t i = 0;
+        flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
+            const auto gen_idx = static_cast<int>(base + 3 * i);
+            const auto pair_idx = static_cast<int>(base + 3 * i + 1);
+            const auto list_idx = static_cast<int>(base + 3 * i + 2);
+            ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
+            ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_idx)};
+            // The list-node cdr is filled below (we don't know
+            // the next list-node index until the loop ends).
+            ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
+            ++i;
         });
+        // Thread the list-node cdrs: list[i].cdr = list[i+1]
+        // for i in 0..N-2; list[N-1].cdr = nil (already set).
+        for (std::size_t j = 0; j + 1 < n; ++j) {
+            const auto list_idx = static_cast<int>(base + 3 * j + 2);
+            const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
+            ws.pairs[list_idx].cdr = make_pair(next_idx);
+        }
+        // The final result is the first list-node.
+        return end_query_epoch(qe, &flat, make_pair(static_cast<int>(base + 2)));
+    }};
 
-    // Issue #249: (query:parent-stable node-id|stable-ref) — Get the
+    // Issue #249: (query :parent-stable node-id|stable-ref) — Get the
     // parent as a (node-id . generation) stable-ref pair. Returns
     // an empty list if the node has no parent.
     // Issue #2186: resolve via ensure_valid_or_refresh.
-    add("query:parent-stable", [ws, mev, resolve_query_node_arg, &ev](const auto& a) -> EvalValue {
+    (*q_impls)["query:parent-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
+                                                &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !ws.workspace_flat)
-            return mev("bad-arg", "usage: (query:parent-stable node-id|stable-ref)");
+            return mev("bad-arg", "usage: (query :parent-stable node-id|stable-ref)");
         bool ok = true;
         aura::ast::NodeId node = aura::ast::NULL_NODE;
         auto err = resolve_query_node_arg(a[0], "query:parent-stable", &ok, node);
@@ -353,7 +356,7 @@ void register_workspace_query_primitives(
         auto pair_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
         return make_pair(pair_pid);
-    });
+    }};
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
     add("query:root", [ws, mev, begin_query_epoch, end_query_epoch](const auto&) -> EvalValue {
@@ -368,51 +371,52 @@ void register_workspace_query_primitives(
     });
 
 
-    // (query:node node-id|stable-ref) — Get node details as list (tag value type sym-id)
+    // (query :node node-id|stable-ref) — Get node details as list (tag value type sym-id)
     // Issue #2186: resolve via ensure_valid_or_refresh before flat.get.
-    add("query:node", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query:node node-id|stable-ref)");
-        if (!ws.workspace_flat || !ws.workspace_pool)
-            return mev("no-workspace", "no workspace AST loaded");
-        bool ok = true;
-        aura::ast::NodeId node = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:node", &ok, node);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        auto v = flat.get(node);
+    (*q_impls)["query:node"] =
+        PrimFn{[ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query :node node-id|stable-ref)");
+            if (!ws.workspace_flat || !ws.workspace_pool)
+                return mev("no-workspace", "no workspace AST loaded");
+            bool ok = true;
+            aura::ast::NodeId node = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a[0], "query:node", &ok, node);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            auto v = flat.get(node);
 
-        // Build result: list of (tag-id value sym-name children-count)
-        EvalValue result = make_void();
+            // Build result: list of (tag-id value sym-name children-count)
+            EvalValue result = make_void();
 
-        // children-count
-        auto pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.children.size())), result});
-        result = make_pair(pid);
-
-        // value (int or string content for string literals)
-        if (v.has_int() && v.tag != aura::ast::NodeTag::LiteralString) {
-            pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(v.int_value), result});
+            // children-count
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.children.size())), result});
             result = make_pair(pid);
-        } else if (v.sym_id != aura::ast::INVALID_SYM) {
-            auto sym_name = std::string(ws.workspace_pool->resolve(v.sym_id));
-            auto sid = ws.string_heap.size();
-            ws.string_heap.push_back(sym_name);
+
+            // value (int or string content for string literals)
+            if (v.has_int() && v.tag != aura::ast::NodeTag::LiteralString) {
+                pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(v.int_value), result});
+                result = make_pair(pid);
+            } else if (v.sym_id != aura::ast::INVALID_SYM) {
+                auto sym_name = std::string(ws.workspace_pool->resolve(v.sym_id));
+                auto sid = ws.string_heap.size();
+                ws.string_heap.push_back(sym_name);
+                pid = ws.pairs.size();
+                ws.pairs.push_back({make_string(sid), result});
+                result = make_pair(pid);
+            }
+
+            // tag-id (integer tag == NodeTag enum value)
             pid = ws.pairs.size();
-            ws.pairs.push_back({make_string(sid), result});
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.tag)), result});
             result = make_pair(pid);
-        }
 
-        // tag-id (integer tag == NodeTag enum value)
-        pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.tag)), result});
-        result = make_pair(pid);
-
-        return result;
-    });
+            return result;
+        }};
 
     // Issue #235 / #2404: (query:stable-ref node-id) — Returns a
     // stable reference to a node as (node-id . current-gen).
@@ -576,8 +580,8 @@ void register_workspace_query_primitives(
 
     // Issue #347 follow-up #1 / #393: (query:ref-valid? stable-ref)
     // — Verify a stable-ref (the (id . gen) pair shape returned by
-    // (query:stable-ref) / (query:children-stable) /
-    // (query:parent-stable)) is still valid in the current
+    // (query:stable-ref) / (query :children-stable) /
+    // (query :parent-stable)) is still valid in the current
     // workspace. Returns #t iff the slot at `id` is in-bounds AND
     // its stored generation matches `gen` AND the wrap_epoch
     // matches (Issue #368 second-wrap protection).
@@ -604,7 +608,7 @@ void register_workspace_query_primitives(
             return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *ws.workspace_flat;
         // Unpack the (id . gen) pair. Same shape as
-        // (query:children-stable)'s return value.
+        // (query :children-stable)'s return value.
         auto& outer = ws.pairs[as_pair_idx(a[0])];
         if (!is_int(outer.car))
             return mev("bad-arg", "stable-ref car must be a node id (int)");
@@ -702,41 +706,40 @@ void register_workspace_query_primitives(
     // P1: Query/Transform EDSL 扩展
     // ═══════════════════════════════════════════════════════════════
 
-    // (query:parent node-id|stable-ref) — Find parent node IDs (nodes whose children include this
+    // (query :parent node-id|stable-ref) — Find parent node IDs (nodes whose children include this
     // ID) Issue #2186: resolve target via ensure_valid_or_refresh.
-    add("query:parent",
-        [ws, mev, resolve_query_node_arg, begin_query_epoch,
-         end_query_epoch](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty())
-                return mev("bad-arg", "usage: (query:parent node-id|stable-ref)");
-            if (!ws.workspace_flat)
-                return mev("no-workspace", "no workspace AST loaded");
-            bool ok = true;
-            aura::ast::NodeId target = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
-            if (!ok)
-                return err;
-            auto& flat = *ws.workspace_flat;
-            const auto qe = begin_query_epoch(&flat); // Issue #2192
-            EvalValue result = make_void();
-            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                auto v = flat.get(id);
-                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                    if (v.child(ci) == target) {
-                        auto pid = ws.pairs.size();
-                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                        result = make_pair(pid);
-                        break;
-                    }
+    (*q_impls)["query:parent"] = PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
+                                         end_query_epoch](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty())
+            return mev("bad-arg", "usage: (query :parent node-id|stable-ref)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        bool ok = true;
+        aura::ast::NodeId target = aura::ast::NULL_NODE;
+        auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
+        if (!ok)
+            return err;
+        auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                if (v.child(ci) == target) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                    break;
                 }
             }
-            return end_query_epoch(qe, &flat, result);
-        });
+        }
+        return end_query_epoch(qe, &flat, result);
+    }};
 
     // Issue #1449 / Tier-1 demotion: (query:siblings) removed from the public
     // engine registry. Use lib/std/compat.aura shim or:
-    //   (filter (lambda (s) (not (= s n))) (query:children (query:parent n)))
+    //   (filter (lambda (s) (not (= s n))) (query :children (query :parent n)))
     // See lib/std/compat.aura for the demotion shim.
 
     // ═══════════════════════════════════════════════════════════════
@@ -2763,13 +2766,10 @@ void register_workspace_query_primitives(
             return result;
         });
 
-    // ── Issue #1435: (query :op …) unified dispatcher ──────────────
-    // Canonical surface for the 6 core structural ops. Existing
-    // query:node / query:children / … remain registered (thin aliases
-    // with PrimMeta.deprecated) and are invoked via lookup so behavior
-    // stays identical. Call-time lookup also reaches query:def-use and
-    // query:mutation-log registered later in the boot sequence.
-    add("query", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+    // ── Issue #1435 / #2628: (query :op …) unified dispatcher ─────
+    // Canonical surface for core structural ops. Aliases live in private
+    // q_impls / stats_impl only (no public add registrations).
+    add("query", [&ev, mev, q_impls](std::span<const EvalValue> a) -> EvalValue {
         auto kw_name = [&](const EvalValue& v) -> std::string {
             if (!is_keyword(v))
                 return {};
@@ -2783,6 +2783,14 @@ void register_workspace_query_primitives(
             return k;
         };
         auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
+            // Issue #2628: prefer private impl table / stats_impl (public aliases removed).
+            if (q_impls) {
+                auto it = q_impls->find(prim);
+                if (it != q_impls->end())
+                    return it->second(args);
+            }
+            if (auto sfn = ObservabilityPrims::lookup_stats_impl(prim))
+                return (*sfn)(args);
             auto fn = ev.primitives().lookup(prim);
             if (!fn)
                 return mev("no-prim", std::string("query dispatch: missing ") + prim);
@@ -2889,43 +2897,7 @@ void register_workspace_query_primitives(
                                   ":mutation-provenance");
     });
 
-    // Issue #1435: mark core query:* names deprecated in favor of (query :op).
-    {
-        static constexpr const char* kCoreQueryAliases[] = {
-            "query:node",          "query:children", "query:children-stable", "query:parent",
-            "query:parent-stable", "query:find",     "query:mutation-log",
-        };
-        for (const char* name : kCoreQueryAliases) {
-            const auto slot = ev.primitives().slot_for_name(name);
-            if (slot >= ev.primitives().slot_count())
-                continue;
-            PrimMeta meta = ev.primitives().meta_for_slot(slot);
-            meta.deprecated = true;
-            if (meta.category.empty() || meta.category == "general")
-                meta.category = "deprecated";
-            const std::string op =
-                std::string(name).size() > 6 ? std::string(name).substr(6) : std::string(name);
-            const std::string hint =
-                std::string("DEPRECATED (#1435): prefer (query :") + op + " …)";
-            if (meta.doc.empty())
-                meta.doc = hint;
-            else if (meta.doc.find("DEPRECATED") == std::string::npos)
-                meta.doc = hint + ". " + meta.doc;
-            ev.primitives().set_meta_for_name(name, std::move(meta));
-        }
-        {
-            const auto slot = ev.primitives().slot_for_name("query");
-            if (slot < ev.primitives().slot_count()) {
-                PrimMeta meta = ev.primitives().meta_for_slot(slot);
-                meta.doc =
-                    "Canonical query dispatcher (#1435): (query :node|:children|:parent|:find|"
-                    ":def-use|:mutation-log …). :children/:parent accept :stable #t (#393).";
-                meta.category = "general";
-                meta.arity = 255;
-                ev.primitives().set_meta_for_name("query", std::move(meta));
-            }
-        }
-    }
+    // Issue #2628: core query:* public aliases removed (use (query :op)).
 
     // Issue #279 follow-up #4: (register-predicate! name
     // type-name) — register a custom Occurrence Typing

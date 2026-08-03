@@ -187,10 +187,10 @@ def run_session(n_cycles):
         # Pick a random def-use operation
         op = rng.choice(
             [
-                lambda s=sym: f'(display (query:def-use "{s}"))',
+                lambda s=sym: f'(display (query :def-use "{s}"))',
                 lambda s=sym: f'(display (query:effects "{s}"))',
                 lambda: f"(display (query:reaches {rng.randint(0, 10)}))",
-                lambda s=sym: f'(display (query:def-use "{s}"))\n(display (query:def-use "{rng.choice(SYMBOLS)}"))',
+                lambda s=sym: f'(display (query :def-use "{s}"))\n(display (query :def-use "{rng.choice(SYMBOLS)}"))',
                 lambda: "(typecheck-current)",
                 lambda: "(display (current-source))",
             ]

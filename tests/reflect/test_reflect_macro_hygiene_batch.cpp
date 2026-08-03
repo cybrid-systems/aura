@@ -661,7 +661,7 @@ namespace aura_422_detail {
     static bool stamp_macro_introduced_define(CompilerService& cs, std::int64_t& nid_out) {
         if (!cs.eval("(set-code \"(define myvar 42)\")"))
             return false;
-        auto find_r = cs.eval("(car (query:find \"myvar\"))");
+        auto find_r = cs.eval("(car (query :find \"myvar\"))");
         if (!find_r || !is_int(*find_r))
             return false;
         nid_out = as_int(*find_r);
@@ -963,7 +963,7 @@ int run_366_syntax_marker_primitives_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define y 7)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    auto find = cs.eval("(query:find \"y\")");
+    auto find = cs.eval("(query :find \"y\")");
     CHECK(find.has_value(), "query:find y reachable");
     // set-marker / propagate may be optional surfaces; no crash is the smoke.
     auto setm = cs.eval("(syntax:set-marker 0 0)");
