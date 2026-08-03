@@ -569,6 +569,28 @@ inline void apply_production_security_defaults() noexcept {
             }
         }
     }
+
+    // 15) Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required
+    //     (align with Moving default ON + GeneralObjectPin inventory).
+    //     Closes the GeneralObjectPin vs render dual-track gap that lets
+    //     new mutate/agent/scratch creates land without a pin wire
+    //     (creating Moving densify untracked externals — #2495). Operator
+    //     env always wins (AC3: AURA_GENERAL_OBJECT_PIN=off under
+    //     production keeps Soft observe-only). Soft / AURA_SANDBOX=off +
+    //     env unset keeps observe-only (pref=-1). Calls the existing
+    //     apply_general_object_pin_required_env helper which handles env
+    //     parsing (required / off), then applies the production-default
+    //     lock when env was unset.
+    {
+        using aura::core::lifetime::apply_general_object_pin_required_env;
+        using aura::core::lifetime::g_general_object_pin_required_pref;
+        // Operator env parsing first (env always wins when set).
+        apply_general_object_pin_required_env();
+        // Production-default lock: only when env was unset (still -1).
+        if (g_general_object_pin_required_pref.load(std::memory_order_relaxed) == -1 && !dev_off) {
+            g_general_object_pin_required_pref.store(1, std::memory_order_release);
+        }
+    }
 }
 
 } // namespace aura::compiler::security

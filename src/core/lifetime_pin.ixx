@@ -227,8 +227,20 @@ inline std::atomic<std::uint64_t> g_pin_registry_lock_wait_us_total{0};
 inline std::atomic<std::uint64_t> g_general_object_pin_required_enforced_total{0};
 // Issue #2496: AURA_GENERAL_OBJECT_PIN=required preference (process-wide).
 // -1 = env/default unset, 0 = off, 1 = required. Applied by
-// apply_general_object_pin_required_env().
+// apply_general_object_pin_required_env() + production-default lock
+// in apply_production_security_defaults step 15 (Issue #2597).
 inline std::atomic<int> g_general_object_pin_required_pref{-1};
+
+// Issue #2597: marker for create sites that don't need a
+// wire_general_object_create_pair call. Used for sites that are
+// stable-handle / RootRemap-registered only. Linter
+// (scripts/check_general_object_pin_auto_wire_2597.py) verifies each
+// EXEMPT site has a reason string. Format:
+//   // GENERAL_OBJECT_PIN_EXEMPT: <reason>
+//   //   stable-handle | RootRemap-registered | hot-path-bypass | ...
+#define GENERAL_OBJECT_PIN_EXEMPT(reason)                                                          \
+    /* GENERAL_OBJECT_PIN_EXEMPT: reason */                                                        \
+    static_assert(true, "EXEMPT site — see reason above")
 
 // Issue #2496: read AURA_GENERAL_OBJECT_PIN env var at process start
 // (called from production security defaults). Values: "required" / "1" /

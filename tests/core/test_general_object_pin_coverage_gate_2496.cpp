@@ -101,15 +101,103 @@ static void ac5_source_cite_registrations() {
           "AC5: coverage linter present");
 }
 
+// ── Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required ──────────
+//
+// Closes the GeneralObjectPin vs render dual-track gap that lets new
+// mutate/agent/scratch creates land without a pin wire (creating
+// Moving densify untracked externals — #2495). Mirrors #2596 pattern:
+// production-default lock + operator env always wins.
+//
+// AC16: production default locks g_general_object_pin_required_pref to 1
+//       (required) when production active + env unset.
+// AC17: AURA_GENERAL_OBJECT_PIN=off under production keeps Soft
+//       (operator override — AC3 explicit off wins).
+// AC18: Soft / AURA_SANDBOX=off + env unset keeps observe-only
+//       (pref stays at default -1).
+// AC19: apply_general_object_pin_required_env handles required / off
+//       env values (linter source-cite + call site in security_defaults).
+// AC20: GENERAL_OBJECT_PIN_EXEMPT marker source-cite in lifetime_pin.ixx
+//       (for sites that don't need a wire call — stable handle /
+//       RootRemap-registered only).
+static void ac16_production_default_required() {
+    std::println("\n--- #2597 AC16: production default locks pref=1 (required) ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(hh.find("Issue #2597") != std::string::npos,
+          "AC16: apply_production_security_defaults cites #2597");
+    CHECK(hh.find("AURA_GENERAL_OBJECT_PIN=required") != std::string::npos,
+          "AC16: step 15 sets production default AURA_GENERAL_OBJECT_PIN=required");
+    CHECK(hh.find("apply_general_object_pin_required_env") != std::string::npos,
+          "AC16: step 15 calls apply_general_object_pin_required_env (operator env wins first)");
+    CHECK(hh.find("g_general_object_pin_required_pref.store(1, std::memory_order_release)") !=
+              std::string::npos,
+          "AC16: locks pref to 1 (required) under production");
+    CHECK(hh.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) == -1") !=
+              std::string::npos,
+          "AC16: only locks when env was unset (pref still -1)");
+    CHECK(hh.find("!dev_off") != std::string::npos,
+          "AC16: production-default branch gated on !dev_off");
+}
+
+static void ac17_env_off_operator_override() {
+    std::println("\n--- #2597 AC17: AURA_GENERAL_OBJECT_PIN=off overrides production ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("apply_general_object_pin_required_env") != std::string::npos,
+          "AC17: lifetime_pin.ixx declares env parser");
+    CHECK(lp.find("g_general_object_pin_required_pref.store(0, std::memory_order_release)") !=
+              std::string::npos,
+          "AC17: env=off branch stored as Soft (operator override)");
+    CHECK(lp.find("\"off\"") != std::string::npos, "AC17: env=off recognized in parser");
+}
+
+static void ac18_soft_unset_keeps_observe() {
+    std::println("\n--- #2597 AC18: Soft + env unset keeps observe-only ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(hh.find("dev_off = sandbox_e") != std::string::npos,
+          "AC18: dev_off is the sandbox=off sentinel");
+    CHECK(hh.find("&& !dev_off") != std::string::npos,
+          "AC18: production-default branch gated on !dev_off");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("g_general_object_pin_required_pref{-1}") != std::string::npos,
+          "AC18: pref default -1 (unset → observe-only)");
+}
+
+static void ac19_env_parser_source_cite() {
+    std::println("\n--- #2597 AC19: env parser source-cite ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("apply_general_object_pin_required_env") != std::string::npos,
+          "AC19: lifetime_pin.ixx declares apply_general_object_pin_required_env");
+    CHECK(lp.find("AURA_GENERAL_OBJECT_PIN") != std::string::npos,
+          "AC19: env name AURA_GENERAL_OBJECT_PIN");
+    CHECK(lp.find("required") != std::string::npos, "AC19: 'required' env value recognized");
+    CHECK(lp.find("\"off\"") != std::string::npos, "AC19: 'off' env value recognized");
+}
+
+static void ac20_exempt_marker_source_cite() {
+    std::println("\n--- #2597 AC20: GENERAL_OBJECT_PIN_EXEMPT marker source-cite ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("GENERAL_OBJECT_PIN_EXEMPT") != std::string::npos,
+          "AC20: lifetime_pin.ixx defines GENERAL_OBJECT_PIN_EXEMPT marker");
+    CHECK(lp.find("stable-handle") != std::string::npos ||
+              lp.find("RootRemap-registered") != std::string::npos,
+          "AC20: EXEMPT marker documents use cases (stable-handle / RootRemap-registered)");
+}
+
 } // namespace
 
 int main() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
+    std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required (extends "
+                 "#2496 test file per #81967) ===");
     ac1_inventory_sites_wired();
     ac2_soft_zero_cost_retained();
     ac3_query_inventory_vs_wire();
     ac4_required_mode_fail_closed();
     ac5_source_cite_registrations();
+    ac16_production_default_required();
+    ac17_env_off_operator_override();
+    ac18_soft_unset_keeps_observe();
+    ac19_env_parser_source_cite();
+    ac20_exempt_marker_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
