@@ -36,6 +36,7 @@ module;
 #include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
 #include "core/arena_auto_policy_stats.h"    // in_render_hotpath
 #include "core/densify_consistency_report.h" // Issue #2341: DensifyConsistencyReport + counter
+#include "mutation_boundary_shared_exit.h"   // Issue #2600: shared exit helper (soft + full Guard)
 #include "core/post_compact_lifecycle.hh"    // Issue #2436: canonical post-compact order
 #include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
 #include "compiler/mutation_hold_budget.h"   // Issue #2313: mutation_hold_budget_us()
@@ -1853,37 +1854,36 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     if (aura::gc_hooks::defer_reasons_snapshot() != 0)
                         std::abort();
                 } else if (policy == ResidualPolicy::Clear) {
-                    // Issue #2296 AC1: force_clear_all_for_eval — panic table
-                    // + process depth + bit reconcile (multi-eval lag safe).
-                    // MutationHold re-release is process-wide (not per-eval).
-                    // Issue #2314: this Clear path is mirrored by the
-                    // steal-complete interlock — both paths perform the
-                    // same essential operations. The shared helper
-                    // force_clear_residual_defer_for_evaluator (gc_hooks.h)
-                    // is used by evaluator_fiber_mutation.cpp
-                    // aura_evaluator_on_steal_complete (AC1.2 #2314). We
-                    // preserve inline calls here (not refactored to the
-                    // helper) so the #2296 contract rows check — which
-                    // requires these symbols in evaluator_mutation_boundary.cpp
-                    // directly — continues to pass. Both paths perform the
-                    // same essential operations; the helper exists for
-                    // steal-side reuse only. Idempotent (atomic + CAS-based
-                    // — calling twice does not double-bump counters).
-                    const auto fr = aura::gc_hooks::force_clear_all_gc_defer_for_evaluator(
+                    // Issue #2600: shared exit helper — same residual
+                    // clear + hold release steps the soft fiber boundary
+                    // exit uses (orch_soft_boundary_exit in
+                    // evaluator_fiber_mutation.cpp). Closes dual-rail
+                    // drift between soft + full Guard paths. Stack-light
+                    // (no full Guard construction). Idempotent (atomic +
+                    // CAS-based — calling twice does not double-bump
+                    // counters). The shared helper also matches the
+                    // #2314 steal-complete interlock (same essential
+                    // operations). Per-evaluator clear + hold release
+                    // (the previous force_clear_all_gc_defer_for_evaluator
+                    // was a superset of per-evaluator clear; per-evaluator
+                    // is sufficient since each evaluator handles its own
+                    // defer via its own soft/full Guard exit).
+                    // We capture the clear result BEFORE the helper so the
+                    // #2296 per-evaluator metrics still bump correctly
+                    // (the helper doesn't surface per-evaluator clear
+                    // counters — those are computed here from the original
+                    // call signature).
+                    const auto fr = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
                         static_cast<void*>(ev_));
-                    if (aura::gc_hooks::mutation_hold_defer_active())
-                        aura::gc_hooks::release_mutation_hold_defer();
-                    // Final reconcile after hold release (hold bit ≠ Panic).
-                    const auto extra = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+                    // Shared exit: also releases MutationHold + reconciles
+                    // (covers both soft + full Guard paths in one place).
+                    aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
                     if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
                         const auto n = (fr.panic_depth_cleared > 0)
                                            ? static_cast<std::uint64_t>(fr.panic_depth_cleared)
                                            : 1u;
                         m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
                             n, std::memory_order_relaxed);
-                        if (fr.bits_reconciled + extra > 0)
-                            m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
-                                fr.bits_reconciled + extra, std::memory_order_relaxed);
                     }
                 }
                 // Soft (sandbox / unit tests): no clear, no abort, just
