@@ -4458,3 +4458,12 @@ add_dependencies(all_test_issue_targets test_orch_scope_2588)
 aura_add_issue_test(test_orch_obs_facade_2589)
 aura_issue_test_link_light(test_orch_obs_facade_2589)
 add_dependencies(all_test_issue_targets test_orch_obs_facade_2589)
+# Issue #2590 — security schedule gate: pure decide_security_schedule
+# synthesizes commit_readiness (#2553) + deny rate (#2534) +
+# mid-fallback SLO + posture wal_off (#2076). Production denies new
+# mutate when gate flips false; soft / sandbox=off is observe-only.
+# Test in tests/orch/test_security_schedule_gate_2590.cpp
+# (src-aligned per #81934). No docs/design/ per #1655 #1485.
+aura_add_issue_test(test_security_schedule_gate_2590)
+aura_issue_test_link_light(test_security_schedule_gate_2590)
+add_dependencies(all_test_issue_targets test_security_schedule_gate_2590)
