@@ -467,7 +467,8 @@ bool Evaluator::security_event_wal_enabled() const noexcept {
 
 void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                         std::uint16_t effect_bits,
-                                        std::uint64_t provenance_mutation_id) noexcept {
+                                        std::uint64_t provenance_mutation_id,
+                                        bool single_use) noexcept {
     using namespace ::aura::core::capability;
     // Issue #2074 / #2055: anti privilege-sticky + WorkspaceEpoch Mutation bind.
     // force_mutation_bind when sandbox active (Restricted/Strict or evaluator
@@ -476,7 +477,10 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // Issue #2151: stamp grant with effect_fiber_id_or (override for tests).
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
     auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
-    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov);
+    // Issue #2586: single_use flag forwarded to registry grant (auto-revoke
+    // after first successful check_and_record_effect that uses the bits).
+    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                                  single_use);
     // Issue #2136: count Render grants (effect-only path when name empty;
     // named "render" also bumps via grant_capability below).
     if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {

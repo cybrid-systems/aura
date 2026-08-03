@@ -453,6 +453,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.grant_epoch_window_advance));
                 insert_kv("grant-epoch-window-wired", 1);
             }
+            // Issue #2586: single-use / mutation-bound grant (auto-revoke
+            // after first successful check_and_record_effect that uses the
+            // grant's bits; deny path does NOT consume).
+            {
+                insert_kv("schema-2586", 2586);
+                insert_kv("issue-2586", 2586);
+                insert_kv("capability-single-use-consumed-total",
+                          static_cast<std::int64_t>(snap.capability_single_use_consumed));
+                insert_kv("capability-single-use-consumed-wired", 1);
+            }
             // Issue #2152: dispatch-level non-bypassable required_effects
             {
                 using aura::compiler::kDispatchRequiredEffectsIssue;

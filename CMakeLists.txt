@@ -4405,3 +4405,16 @@ add_dependencies(all_test_issue_targets test_fiber_resume_state)
 aura_add_issue_test(test_orphan_reap_stress)
 aura_issue_test_link_light(test_orphan_reap_stress)
 add_dependencies(all_test_issue_targets test_orphan_reap_stress)
+
+# Issue #2586: single-use / mutation-bound grant (auto-revoke after first
+# successful check_and_record_effect that uses the grant's bits; deny path
+# does NOT consume). Source-cite in capability_model.hh (CapabilityGrant
+# .single_use field, grant() extended signature, grant_once sugar,
+# check_and_record_effect consume block, CapabilityEffectMetrics +
+# Snapshot) + evaluator_security.cpp / evaluator.ixx (grant_effect_
+# capability single_use param) + evaluator_primitives_security.cpp
+# (query:capability-effect-stats surfaces capability-single-use-consumed-
+# total / schema-2586 / issue-2586). No docs/design/ per #1655 #1485.
+aura_add_issue_test(test_capability_single_use_consume_2586)
+aura_issue_test_link_light(test_capability_single_use_consume_2586)
+add_dependencies(all_test_issue_targets test_capability_single_use_consume_2586)
