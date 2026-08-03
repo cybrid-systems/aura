@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 728 | Preferred destination suites |
-| **Total scanned** | **728** | |
+| `tests/core/test_*.cpp` | 729 | Preferred destination suites |
+| **Total scanned** | **729** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 75 | 75 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 210 | 210 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 211 | 211 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 91 | 91 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **66**
+- Existing `*_batch` drivers (migration milestones): **67**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -87,6 +87,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_batch_dirty_discipline_2615.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_build_kv_hash_batch.cpp` → theme `jit_incremental`
 - `tests/core/test_capability_sandbox_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_closure_batch.cpp` → theme `arena_compaction`
@@ -212,6 +213,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_aura_result_error_policy.cpp`
 - `tests/compiler/test_aura_sandbox_env_2076.cpp`
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp`
+- `tests/compiler/test_batch_dirty_discipline_2615.cpp`
 - `tests/compiler/test_bidirectional_annotation.cpp`
 - `tests/compiler/test_bidirectional_match_check_2348.cpp`
 - `tests/core/test_bidirectional_stats.cpp`
@@ -995,13 +997,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp` (#2409) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_type_dep_epoch_prune_2355.cpp` (#2355) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (210)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (211)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (210)
+#### domain/ (211)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1018,6 +1020,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp` (#2150) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env_2076.cpp` (#2076) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/compiler/test_batch_dirty_cascade_2522.cpp` (#2522) [batch_driver, domain_suite, theme_compiler] — AC1: Batch API exists; one generation bump per call regardless of N
+- `tests/compiler/test_batch_dirty_discipline_2615.cpp` (#2615) [batch_driver, domain_suite, theme_compiler] — AC1: Multi-block production sites use batch; fence +1 for N blocks
 - `tests/compiler/test_blame_complete_commit_gate_2221.cpp` (#2221) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/compiler/test_blame_soft_recover_2561.cpp` (#2561) [domain_suite, theme_compiler] — AC1: Sampled incomplete → recover restores dual fields OR escalate

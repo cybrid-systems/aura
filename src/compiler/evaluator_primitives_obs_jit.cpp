@@ -55,6 +55,7 @@ import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
+import aura.compiler.ir_soa;                // Issue #2615: batch dirty cascade fence metrics
 import aura.compiler.lowering_linear_types; // Issue #2263: linear_move_elided_total
 import aura.compiler.root_remap_pass;       // Issue #2341: last_root_remap_any_fail()
 
@@ -839,6 +840,28 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2522", make_int(2522)},
                 {"issue-2522", make_int(2522)},
                 {"soa-batch-dirty-wired", make_int(1)},
+                // Issue #2615: production multi-block cascade discipline + fence metric.
+                {"schema-2615", make_int(2615)},
+                {"issue-2615", make_int(2615)},
+                {"soa-batch-dirty-cascades-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-batch-dirty-blocks-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-single-dirty-marks-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_ir_soa_single_dirty_marks_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-batch-bit-only-cascades-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_ir_soa_batch_bit_only_cascades_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-dirty-fence-total", make_int(static_cast<std::int64_t>(
+                                              aura::compiler::current_ir_soa_generation_fence()))},
+                {"soa-batch-dirty-discipline-wired", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

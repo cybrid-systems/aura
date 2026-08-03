@@ -4349,8 +4349,30 @@ public:
         // Issue #2109: mark block dirty without cascading every instruction
         // dirty — used when ImpactScope has precise affected_instrs so clean
         // instructions inside the block can be skipped on re-emit.
+        // Prefer mark_blocks_dirty_bit_only for multi-block precise scopes (#2615).
         void mark_block_dirty_bit_only(std::size_t func_idx, std::uint32_t block_idx) {
             mark_block_dirty_impl(func_idx, block_idx, /*cascade_instrs=*/false);
+        }
+
+        // Issue #2615: multi-block bit-only + one SoA generation fence.
+        // AoS block bits set; SoA uses mark_blocks_dirty_bits_only (no instr cascade).
+        void mark_blocks_dirty_bit_only(std::size_t func_idx,
+                                        std::span<const std::uint32_t> block_idxs) {
+            if (block_idxs.empty())
+                return;
+            if (func_idx >= block_dirty_per_func_.size())
+                block_dirty_per_func_.resize(func_idx + 1);
+            auto& fb = block_dirty_per_func_[func_idx];
+            std::uint32_t max_id = 0;
+            for (const auto bi : block_idxs)
+                max_id = std::max(max_id, bi);
+            if (max_id >= fb.size())
+                fb.resize(max_id + 1, 0);
+            for (const auto bi : block_idxs)
+                fb[bi] = 1;
+            // No cascade_block_to_instructions — precise instr marks follow.
+            if (func_idx < soa_mod.functions.size())
+                soa_mod.functions[func_idx].mark_blocks_dirty_bits_only(block_idxs);
         }
 
         void mark_block_dirty_impl(std::size_t func_idx, std::uint32_t block_idx,
@@ -4363,15 +4385,28 @@ public:
                 fb.resize(block_idx + 1, 1);
                 if (cascade_instrs)
                     cascade_block_to_instructions(func_idx, block_idx);
-                if (func_idx < soa_mod.functions.size())
-                    soa_mod.functions[func_idx].mark_block_dirty(block_idx);
+                if (func_idx < soa_mod.functions.size()) {
+                    if (cascade_instrs)
+                        soa_mod.functions[func_idx].mark_block_dirty(block_idx);
+                    else {
+                        // Issue #2615: single-block bit-only via batch of 1 (one fence).
+                        const std::uint32_t one[] = {block_idx};
+                        soa_mod.functions[func_idx].mark_blocks_dirty_bits_only(one);
+                    }
+                }
                 return;
             }
             fb[block_idx] = 1;
             if (cascade_instrs)
                 cascade_block_to_instructions(func_idx, block_idx);
-            if (func_idx < soa_mod.functions.size())
-                soa_mod.functions[func_idx].mark_block_dirty(block_idx);
+            if (func_idx < soa_mod.functions.size()) {
+                if (cascade_instrs)
+                    soa_mod.functions[func_idx].mark_block_dirty(block_idx);
+                else {
+                    const std::uint32_t one[] = {block_idx};
+                    soa_mod.functions[func_idx].mark_blocks_dirty_bits_only(one);
+                }
+            }
         }
 
         // Issue #684: mark every instruction in a block dirty (SoA cascade).
@@ -5307,10 +5342,16 @@ public:
     std::size_t apply_impact_scope_dirty(IRCacheEntry& entry, const ImpactScope& scope) {
         const bool precise = !scope.affected_instrs.empty();
         if (precise) {
+            // Issue #2615: batch bit-only per function (one fence each), not
+            // N× mark_block_dirty_bit_only → N× generation fence advances.
+            std::unordered_map<std::size_t, std::vector<std::uint32_t>> by_fn;
             for (const auto& b : scope.affected_blocks)
-                entry.mark_block_dirty_bit_only(b.function_index, b.block_index);
+                by_fn[b.function_index].push_back(b.block_index);
+            for (auto& [fi, ids] : by_fn)
+                entry.mark_blocks_dirty_bit_only(fi, ids);
         } else if (!scope.affected_blocks.empty()) {
             // Group block ids by function for mark_blocks_dirty batch.
+            // Issue #2522 / #2615: one generation bump per function.
             std::unordered_map<std::size_t, std::vector<std::uint32_t>> by_fn;
             for (const auto& b : scope.affected_blocks)
                 by_fn[b.function_index].push_back(b.block_index);

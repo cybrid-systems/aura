@@ -3616,6 +3616,24 @@ def cmd_batch_dirty_cascade_coverage():
     return 0
 
 
+def cmd_batch_dirty_discipline_coverage():
+    """Issue #2615: production multi-block cascades use batch (no residual N× fence).
+
+    DCE + impact_scope batch; fence metrics schema-2615; gate residual loops.
+    """
+    print(f"{B}=== batch dirty cascade discipline coverage (#2615) ==={N}")
+    script = ROOT / "scripts" / "check_batch_dirty_discipline_2615.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("batch dirty cascade discipline (#2615) coverage contract rows failed")
+        return 1
+    ok("batch dirty cascade discipline (#2615) coverage clean")
+    return 0
+
+
 def cmd_workspace_mtx_contention_coverage():
     """Issue #2523: residual workspace_mtx contention stats + soft path.
 
@@ -7143,6 +7161,7 @@ def cmd_gate():
         or cmd_pcv_tls_scratch_coverage()
         or cmd_pcv_tls_default_on_coverage()
         or cmd_batch_dirty_cascade_coverage()
+        or cmd_batch_dirty_discipline_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
@@ -7961,6 +7980,7 @@ def main():
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
+        "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

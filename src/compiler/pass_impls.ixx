@@ -1418,15 +1418,20 @@ public:
         for (auto& func : mod.functions) {
             // Issue #2143: single dirty-aware entry uses for_each_block
             // (clean_skips / dirty_runs metrics via record_dirty_block_*).
+            // Issue #2615: collect changed block ids → one mark_blocks_dirty
+            // (single generation fence), not N× mark_block_dirty.
+            std::vector<std::uint32_t> changed_blocks;
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
                     // Issue #2431: pure columnar path (no AoS materialize).
                     g_dead_coercion_columnar_total.fetch_add(1, std::memory_order_relaxed);
                     if (!run_columnar_block(func, block))
                         return;
-                    func.mark_block_dirty(block.block_id);
+                    changed_blocks.push_back(block.block_id);
                 },
                 /*dirty_only=*/dirty_blocks_only);
+            if (!changed_blocks.empty())
+                func.mark_blocks_dirty(changed_blocks);
             if (skips)
                 aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
             if (runs)

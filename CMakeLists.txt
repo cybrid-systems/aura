@@ -2428,6 +2428,11 @@ aura_add_issue_test(test_batch_dirty_cascade_2522)
 aura_issue_test_link_light(test_batch_dirty_cascade_2522)
 add_dependencies(all_test_issue_targets test_batch_dirty_cascade_2522)
 
+# Issue #2615: production multi-block dirty cascades must use batch API.
+aura_add_issue_test(test_batch_dirty_discipline_2615)
+aura_issue_test_link_light(test_batch_dirty_discipline_2615)
+add_dependencies(all_test_issue_targets test_batch_dirty_discipline_2615)
+
 # Issue #2523: residual workspace_mtx contention stats + soft region path.
 aura_add_issue_test(test_workspace_mtx_contention_2523)
 aura_issue_test_link_light(test_workspace_mtx_contention_2523)
