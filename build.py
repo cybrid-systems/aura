@@ -4267,6 +4267,24 @@ def cmd_hot_children_columnar_coverage():
     return 0
 
 
+def cmd_value_tag_hotpath_ban_coverage():
+    """Issue #2616: hard-ban classify_eval_value_tag on eval/IR/apply hot paths.
+
+    Pure *_hot only; cold classify for Agent query:value-dispatch-stats; gate.
+    """
+    print(f"{B}=== value-tag hotpath ban coverage (#2616) ==={N}")
+    script = ROOT / "scripts" / "check_value_tag_hotpath_ban_2616.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("value-tag hotpath ban (#2616) coverage contract rows failed")
+        return 1
+    ok("value-tag hotpath ban (#2616) coverage clean")
+    return 0
+
+
 def cmd_hot_contract_placement_coverage():
     """Issue #2435: hot vs cold contract placement (production hot OFF).
 
@@ -7197,6 +7215,7 @@ def cmd_gate():
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
         or cmd_hot_children_columnar_coverage()
+        or cmd_value_tag_hotpath_ban_coverage()
         or cmd_hot_contract_placement_coverage()
         or cmd_post_compact_lifecycle_coverage()
         or cmd_gc_defer_reconcile_cas_coverage()
@@ -7981,6 +8000,7 @@ def main():
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
+        "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

@@ -2743,6 +2743,11 @@ aura_add_issue_test(test_value_tag_hot_path_2259)
 aura_issue_test_link_light(test_value_tag_hot_path_2259)
 add_dependencies(all_test_issue_targets test_value_tag_hot_path_2259)
 
+# Issue #2616: hard-ban classify_eval_value_tag (atomics) on eval/IR/apply hot paths.
+aura_add_issue_test(test_value_tag_hotpath_ban_2616)
+aura_issue_test_link_light(test_value_tag_hotpath_ban_2616)
+add_dependencies(all_test_issue_targets test_value_tag_hotpath_ban_2616)
+
 # Issue #2260: MutationBoundary type-proof hard-gate (SOLVED / full resync).
 aura_add_issue_test(test_boundary_solve_hard_gate_2260)
 aura_issue_test_link_light(test_boundary_solve_hard_gate_2260)
