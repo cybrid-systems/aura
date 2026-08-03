@@ -122,6 +122,16 @@ export [[nodiscard]] inline std::uint64_t current_ir_soa_generation_fence() noex
 
 // Issue #2522: batch dirty cascade (mark_blocks_dirty + single generation bump).
 export inline constexpr int kIrSoaBatchDirtyIssue = 2522;
+// Issue #2615: production multi-block cascades must use batch (fence metric).
+export inline constexpr int kIrSoaBatchDirtyDisciplineIssue = 2615;
+
+// Issue #2615: observability — fence advances vs logical cascade / block counts.
+// Target: batch_cascades ≈ fence advances from multi-block invalidates;
+// batch_blocks / batch_cascades ≈ mean blocks per cascade (>>1 under multi-block).
+export inline std::atomic<std::uint64_t> g_ir_soa_batch_dirty_cascades_total{0};
+export inline std::atomic<std::uint64_t> g_ir_soa_batch_dirty_blocks_total{0};
+export inline std::atomic<std::uint64_t> g_ir_soa_single_dirty_marks_total{0};
+export inline std::atomic<std::uint64_t> g_ir_soa_batch_bit_only_cascades_total{0};
 
 // Compile-time SoA-only default (macro lives in this TU + consumers that
 // #include the GMF define block or set -DAURA_IR_SOA_ONLY). Exported for
@@ -268,12 +278,20 @@ export struct IRFunctionSoA {
     // complete) because the cascade needs to read
     // `block.start_idx` / `block.end_idx`.
     // Issue #2522: one generation bump (same as mark_blocks_dirty of 1).
+    // Prefer mark_blocks_dirty for multi-block cascades (#2615).
     void mark_block_dirty(std::uint32_t block_id);
 
     // Issue #2522: batch mark N blocks dirty + cascade instr ranges,
     // then **one** bump_generation() / g_ir_soa_generation_fence advance
     // regardless of block count. Empty span is a no-op (no bump).
+    // Issue #2615: production multi-block cascade entry (not a loop of
+    // mark_block_dirty).
     void mark_blocks_dirty(std::span<const std::uint32_t> block_ids);
+
+    // Issue #2615 / #2109: set block_dirty_ bits only (no instr cascade),
+    // then **one** generation bump. Used when precise affected_instrs
+    // will stamp instruction_dirty_ separately.
+    void mark_blocks_dirty_bits_only(std::span<const std::uint32_t> block_ids);
 
     // Issue #2522: bulk-fill instruction_dirty_[start, end) + one bump.
     // Used by block cascade and optional range invalidates.
@@ -477,21 +495,47 @@ namespace detail {
             fill_instruction_dirty_range(fn, block.start_idx, block.end_idx);
         }
     }
+
+    // Issue #2615 / #2109: block_dirty_ bit only; no instr cascade; no bump.
+    inline void mark_block_dirty_bit_only_no_bump(IRFunctionSoA& fn, std::uint32_t block_id) {
+        AURA_HOT_CONTRACT(block_id < fn.blocks_.size() || fn.block_dirty_.empty() ||
+                          block_id <= fn.block_dirty_.size());
+        if (block_id >= fn.block_dirty_.size()) {
+            fn.block_dirty_.resize(block_id + 1, 1);
+        } else {
+            fn.block_dirty_[block_id] = 1;
+        }
+    }
 } // namespace detail
 
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     detail::mark_block_dirty_no_bump(*this, block_id);
     // Issue #2111 / #2432: generation fence on block dirty (and instr cascade).
     bump_generation();
+    // Issue #2615: single-block mark accounting (AC2 path).
+    g_ir_soa_single_dirty_marks_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #2522: batch API — N blocks, one fence.
+// Issue #2522 / #2615: batch API — N blocks, one fence.
 inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> block_ids) {
     if (block_ids.empty())
         return;
     for (const auto block_id : block_ids)
         detail::mark_block_dirty_no_bump(*this, block_id);
     bump_generation(); // once regardless of block count
+    g_ir_soa_batch_dirty_cascades_total.fetch_add(1, std::memory_order_relaxed);
+    g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
+}
+
+// Issue #2615: multi-block bit-only + one fence (precise ImpactScope path).
+inline void IRFunctionSoA::mark_blocks_dirty_bits_only(std::span<const std::uint32_t> block_ids) {
+    if (block_ids.empty())
+        return;
+    for (const auto block_id : block_ids)
+        detail::mark_block_dirty_bit_only_no_bump(*this, block_id);
+    bump_generation(); // once
+    g_ir_soa_batch_bit_only_cascades_total.fetch_add(1, std::memory_order_relaxed);
+    g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
 }
 
 // Issue #2522: optional range API + one fence.
