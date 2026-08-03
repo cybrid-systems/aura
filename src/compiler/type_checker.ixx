@@ -728,6 +728,10 @@ public:
                               std::uint32_t predicate_cond_node, std::uint64_t source_mutation_id,
                               std::uint64_t epoch) noexcept;
     [[nodiscard]] std::size_t prune_occurrence_goals(std::uint64_t min_epoch) noexcept;
+    // Issue #2622: drop goals whose predicate_cond_node is in the dirty set
+    // (single invalidate authority with predicate_memo). Zero cost when empty.
+    [[nodiscard]] std::size_t
+    drop_occurrence_goals_for_conds(std::span<const std::uint32_t> cond_nodes) noexcept;
     [[nodiscard]] std::size_t occurrence_goals_size() const noexcept {
         return occurrence_goals_.size();
     }
@@ -1528,6 +1532,9 @@ public:
     // predicate_memo_hits_/misses_ which are epoch-only historically).
     std::uint64_t occurrence_cache_key_hits_ = 0;
     std::uint64_t occurrence_cache_key_misses_ = 0;
+    // Issue #2622: correlation when memo refined ≠ goal refined for same cond.
+    std::uint64_t occurrence_memo_goal_diverge_total_ = 0;
+    std::uint64_t occurrence_sync_after_dirty_total_ = 0;
     [[nodiscard]] std::uint64_t occurrence_cache_key_hits() const noexcept {
         return occurrence_cache_key_hits_;
     }
@@ -1579,6 +1586,20 @@ public:
                                              const aura::ast::FlatAST* flat = nullptr);
     // Prefer evicting stale-epoch entries first when over capacity.
     void prune_predicate_memo_stale_epochs();
+    // Issue #2622: single dirty-key authority — invalidate memo for
+    // affected If/cond nodes AND drop matching OccurrenceGoals (engine CS
+    // + optional long-lived solve_delta CS). Zero cost when affected empty.
+    // Returns goals dropped. Bumps occurrence_memo_goal_diverge_total on
+    // pre-sync refined mismatch (memo vs goal for same cond).
+    std::size_t sync_occurrence_after_dirty(std::span<const aura::ast::NodeId> affected,
+                                            const aura::ast::FlatAST* flat = nullptr,
+                                            ConstraintSystem* long_lived_cs = nullptr) noexcept;
+    [[nodiscard]] std::uint64_t occurrence_memo_goal_diverge_total() const noexcept {
+        return occurrence_memo_goal_diverge_total_;
+    }
+    [[nodiscard]] std::uint64_t occurrence_sync_after_dirty_total() const noexcept {
+        return occurrence_sync_after_dirty_total_;
+    }
     // Issue #2068: selective predicate-memo invalidation by affected
     // var_names (drop only entries that mention affected SymIds) OR by
     // min_gen (drop entries captured under an older generation). Returns
@@ -2030,14 +2051,17 @@ export struct TypeChecker {
             cache_epoch_ = epoch;
         }
     }
-    // Issue #2552: joint steal/densify freshness fence for OccurrenceGoal
-    // + type_dep. On LayoutStamp-success restamp (or Moving densify that
-    // clears escape keys): advance cache_epoch → prune type_dep epoch
-    // edges + long-lived solve_delta_cs_ occurrence goals. Soft/hard-fail
-    // steal paths must NOT call this. AC4: same epoch → zero prune cost
+    // Issue #2552 / #2622: joint steal/densify freshness fence for
+    // OccurrenceGoal + type_dep + predicate_memo epoch authority.
+    // On LayoutStamp-success restamp (or Moving densify that clears
+    // escape keys): advance cache_epoch → prune type_dep epoch edges +
+    // long-lived solve_delta_cs_ occurrence goals. Soft/hard-fail steal
+    // paths must NOT call this. AC4: same epoch → zero prune cost
     // (returns 0, counters stable). Returns occurrence goals dropped.
     // Bumps occurrence_goal_steal_prune_total / type_dep_steal_prune_total
     // when an advance actually prunes.
+    // Issue #2622: also clears last_predicate_memo_* snapshots so Agents
+    // never see memo stale_vs_epoch rise without a joint goal prune.
     std::size_t note_steal_or_densify_epoch_fence(std::uint64_t new_epoch) noexcept {
         if (new_epoch == 0 || new_epoch == cache_epoch_)
             return 0; // AC4: zero cost when epoch unchanged
@@ -2052,6 +2076,11 @@ export struct TypeChecker {
             solve_delta_cs_.set_metrics(metrics_);
         solve_delta_cs_.set_current_epoch(new_epoch);
         const auto goals_dropped = solve_delta_cs_.prune_occurrence_goals(new_epoch);
+        // Issue #2622: joint memo epoch authority — ephemeral engine memo
+        // dies at partial end; clear Agent-facing stale snapshot so fence
+        // cannot leave memo stale_vs_epoch ahead of goals.
+        last_predicate_memo_live_ = 0;
+        last_predicate_memo_stale_vs_epoch_ = 0;
         // Issue #2608: after steal/densify prune, try rehydrate from
         // persist side buffer so priority roots stay non-empty when
         // production/env snapshot was written on prior boundary exit.
@@ -2068,6 +2097,8 @@ export struct TypeChecker {
             if (edges_dropped > 0)
                 m->type_dep_steal_prune_entries_total.fetch_add(edges_dropped,
                                                                 std::memory_order_relaxed);
+            // Issue #2622: fence joint memo+goal authority wired.
+            m->occurrence_memo_goal_fence_joint_total.fetch_add(1, std::memory_order_relaxed);
         }
         return goals_dropped;
     }

@@ -4269,6 +4269,24 @@ def cmd_partial_cone_commit_gate_coverage():
     return 0
 
 
+def cmd_occurrence_dirty_key_authority_coverage():
+    """Issue #2622: single dirty-key authority for OccurrenceGoal + predicate_memo.
+
+    sync_occurrence_after_dirty joint invalidate; steal fence memo joint clear.
+    """
+    print(f"{B}=== occurrence dirty-key authority coverage (#2622) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_dirty_key_authority_2622.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence dirty-key authority (#2622) coverage contract rows failed")
+        return 1
+    ok("occurrence dirty-key authority (#2622) coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_equality_8field_coverage():
     """Issue #2519: LayoutStamp::operator== full 8-field equality.
 
@@ -7309,6 +7327,7 @@ def cmd_gate():
         or cmd_arena_moving_densify_health_coverage()
         or cmd_coercion_unify_incomplete_skip_coverage()
         or cmd_partial_cone_commit_gate_coverage()
+        or cmd_occurrence_dirty_key_authority_coverage()
         or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
@@ -8105,6 +8124,7 @@ def main():
         "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
+        "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

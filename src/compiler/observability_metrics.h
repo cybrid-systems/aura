@@ -1232,6 +1232,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> occurrence_goal_steal_prune_entries_total{0}; // #2552
     std::atomic<std::uint64_t> type_dep_steal_prune_total{0};                // #2552
     std::atomic<std::uint64_t> type_dep_steal_prune_entries_total{0};        // #2552
+    // Issue #2622: single dirty-key authority (memo + goals).
+    std::atomic<std::uint64_t> occurrence_memo_goal_diverge_total{0};     // #2622
+    std::atomic<std::uint64_t> occurrence_sync_after_dirty_total{0};      // #2622
+    std::atomic<std::uint64_t> occurrence_memo_goal_fence_joint_total{0}; // #2622
+    std::atomic<std::uint32_t> occurrence_dirty_key_authority_wired{1};   // #2622
     // Issue #2608: optional OccurrenceGoal persist / rehydrate side buffer.
     // Soft default OFF (zero writes). Production or AURA_OCCURRENCE_PERSIST=1.
     //   occurrence_persist_write_total: entries written to side buffer

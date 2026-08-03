@@ -7327,6 +7327,39 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("occurrence-cache-key-wired", 1);
                 insert_kv("schema-2461", 2461);
                 insert_kv("issue-2461", 2461);
+                // Issue #2622: single dirty-key authority (memo + goals).
+                std::int64_t diverge = 0;
+                std::int64_t sync_tot = 0;
+                std::int64_t fence_joint = 0;
+                if (m) {
+                    diverge = static_cast<std::int64_t>(
+                        m->occurrence_memo_goal_diverge_total.load(std::memory_order_relaxed));
+                    sync_tot = static_cast<std::int64_t>(
+                        m->occurrence_sync_after_dirty_total.load(std::memory_order_relaxed));
+                    fence_joint = static_cast<std::int64_t>(
+                        m->occurrence_memo_goal_fence_joint_total.load(std::memory_order_relaxed));
+                }
+                if (ev) {
+                    if (auto* eng = static_cast<aura::compiler::InferenceEngine*>(
+                            ev->guard_infer_engine())) {
+                        diverge =
+                            static_cast<std::int64_t>(eng->occurrence_memo_goal_diverge_total());
+                        sync_tot =
+                            static_cast<std::int64_t>(eng->occurrence_sync_after_dirty_total());
+                    }
+                }
+                insert_kv("occurrence-memo-goal-diverge-total", diverge);
+                insert_kv("occurrence_memo_goal_diverge_total", diverge);
+                insert_kv("occurrence-sync-after-dirty-total", sync_tot);
+                insert_kv("occurrence_sync_after_dirty_total", sync_tot);
+                insert_kv("occurrence-memo-goal-fence-joint-total", fence_joint);
+                insert_kv(
+                    "occurrence-dirty-key-authority-wired",
+                    m ? static_cast<std::int64_t>(
+                            m->occurrence_dirty_key_authority_wired.load(std::memory_order_relaxed))
+                      : 1);
+                insert_kv("schema-2622", 2622);
+                insert_kv("issue-2622", 2622);
             }
             insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
             insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030
