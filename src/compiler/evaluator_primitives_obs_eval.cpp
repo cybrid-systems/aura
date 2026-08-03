@@ -14155,6 +14155,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t min_dirty_retry_success = 0;        // #2601
         std::uint64_t min_dirty_retry_storm_skip = 0;     // #2601
         std::uint64_t min_dirty_retry_cap_hit = 0;        // #2601
+        std::uint64_t auto_drain_total = 0;               // #2604
+        std::uint64_t auto_drain_ok = 0;                  // #2604
+        std::uint64_t auto_drain_throttled = 0;           // #2604
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
