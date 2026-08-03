@@ -125,6 +125,12 @@ struct CapabilityGrant {
     // Issue #2055: mutation epoch at revoke time (0 = never revoked / legacy).
     std::uint64_t revoke_epoch = 0;
     bool revoked = false;
+    // Issue #2586: single-use / mutation-bound grant — auto-revoke after
+    // first successful check_and_record_effect that this grant contributed
+    // required bits to. Layout-additive at end of struct so existing
+    // serialized / stable-layout consumers keep binary compat.
+    // Deny path does NOT consume (retryable).
+    bool single_use = false;
 };
 
 // Sandbox mode mirror for effect checks (also in sandbox.ixx).
@@ -184,6 +190,10 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_fiber_hard_deny_total{0};
     // Issue #2154: sliding grant_min_valid window advanced on epoch bump.
     std::atomic<std::uint64_t> capability_grant_epoch_window_advance_total{0};
+    // Issue #2586: single-use grant consumption counter (parity
+    // capability_revoke_total for histogram breakdown of revoke reasons —
+    // auto-revoke vs operator-revoke).
+    std::atomic<std::uint64_t> capability_single_use_consumed_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -388,12 +398,17 @@ struct CapabilityRegistry {
     // Grant effects to a tenant (OR into named grant).
     // Issue #2055: stamps grant_epoch (WorkspaceEpoch Mutation) + grant_fiber_id
     // from EffectProvenance so long-running multi-tenant blame stays consistent.
+    // Issue #2586: single_use=true marks this grant for auto-revoke after
+    // first successful check_and_record_effect that uses its bits; re-grant
+    // resets the flag (fresh grant semantics).
     void grant(TenantId tenant, std::string_view name, Effect effects,
-               const EffectProvenance& prov = {}) {
+               const EffectProvenance& prov = {}, bool single_use = false) {
         std::lock_guard<std::mutex> lock(mtx);
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
             g.effects = g.effects | effects;
+            // Issue #2586: re-grant resets single_use flag (fresh grant).
+            g.single_use = single_use;
             g.revoked = false;
             g.bound_mutation_id = prov.mutation_id;
             g.bound_node_id = prov.node_id;
@@ -424,8 +439,17 @@ struct CapabilityRegistry {
         g.name = std::string(name);
         g.effects = effects;
         g.tenant_id = tenant;
+        g.single_use = single_use; // #2586
         apply(g);
         vec.push_back(std::move(g));
+    }
+
+    // Issue #2586: single-use grant sugar — auto-revoke after first successful
+    // check_and_record_effect that uses its bits. Equivalent to
+    // grant(name, effects, prov, /*single_use=*/true).
+    void grant_once(TenantId tenant, std::string_view name, Effect effects,
+                    const EffectProvenance& prov = {}) {
+        grant(tenant, name, effects, prov, /*single_use=*/true);
     }
 
     // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
@@ -816,6 +840,36 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         // Issue #2151 / #2388: Agent-stable reason when hard fiber isolation denies.
         const char* reason_hint = (!allowed && hard1 > hard0) ? "fiber-grant-mismatch" : nullptr;
         reg.record_audit(required, actual, tenant, prov, !allowed, op, reason_hint);
+
+        // Issue #2586: single-use grant auto-revoke on successful allow.
+        // Skip under wildcard_ok (wildcard grants all bits; single_use grant
+        // was not necessary for allow and must stay intact). Skip when
+        // required is None (no effect to match grants against).
+        if (allowed && required != Effect::None && !wildcard_ok) {
+            auto it = reg.by_tenant.find(tenant);
+            if (it != reg.by_tenant.end()) {
+                for (auto& g : it->second) {
+                    if (g.revoked || !g.single_use)
+                        continue;
+                    if (!has_effect(g.effects, required))
+                        continue;
+                    g.revoked = true;
+                    g.effects = Effect::None;
+                    auto ep = ::aura::core::current_mutation_epoch();
+                    if (ep == 0)
+                        ep = 1; // non-zero audit stamp at process origin
+                    g.revoke_epoch = ep;
+                    met.capability_single_use_consumed_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                    // #2586 AC5: audit / SE dual-write reason "single-use-consumed"
+                    // (record_audit pushes to SecurityEvent ring + WAL via
+                    // emit_security_event_durable).
+                    reg.record_audit(required, Effect::None, tenant, prov,
+                                     /*denied=*/false, op, "single-use-consumed");
+                }
+            }
+        }
     }
 
     if (allowed)
@@ -882,6 +936,7 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_mutation_bridge_split_total.store(0, std::memory_order_relaxed);
     m.capability_fiber_hard_deny_total.store(0, std::memory_order_relaxed);
     m.capability_grant_epoch_window_advance_total.store(0, std::memory_order_relaxed);
+    m.capability_single_use_consumed_total.store(0, std::memory_order_relaxed); // #2586
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -916,6 +971,8 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t grant_min_valid_epoch = 0;
     std::uint64_t grant_epoch_retain_window = 0;
     std::uint64_t grant_epoch_window_advance = 0;
+    // Issue #2586
+    std::uint64_t capability_single_use_consumed = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -960,6 +1017,8 @@ struct CapabilityEffectStatsSnapshot {
         s.grant_epoch_retain_window = reg.grant_epoch_retain_window();
         s.grant_epoch_window_advance =
             m.capability_grant_epoch_window_advance_total.load(std::memory_order_acquire);
+        s.capability_single_use_consumed =
+            m.capability_single_use_consumed_total.load(std::memory_order_acquire); // #2586
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&
