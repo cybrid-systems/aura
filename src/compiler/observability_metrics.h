@@ -4730,11 +4730,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_unresolved_constraints_total{0};
     std::atomic<std::uint64_t> solve_delta_timeout_unresolved_total{0};
     // Issue #2195: SUBTYPE goal participation + last conflict kind export.
-    // last_conflict_goal_kind: Constraint::Kind as uint8 (0=EQUAL,1=CONSISTENT,2=SUBTYPE).
+    // last_conflict_goal_kind: Constraint::Kind as uint8
+    // (0=EQUAL,1=CONSISTENT,2=SUBTYPE,3=INSTANCE).
     std::atomic<std::uint8_t> last_conflict_goal_kind{0};
     std::atomic<std::uint64_t> subtype_goal_solve_total{0};
     std::atomic<std::uint64_t> subtype_goal_conflict_total{0};
     std::atomic<std::uint64_t> last_unresolved_goal_kind{0}; // first unresolved on TIMEOUT
+    // Issue #2607: INSTANCE goal participation (depth-capped ∀ peel + unify).
+    // instance_unify_total: every consistent_instance call (success / conflict / cap).
+    // instance_depth_cap_total: nested ∀ peels hit kInstanceDepthCap (TIMEOUT path).
+    // instance_goal_solve_total: worklist INSTANCE goals that resolved successfully.
+    // instance_goal_conflict_total: worklist INSTANCE hard conflicts (non-cap).
+    std::atomic<std::uint64_t> instance_unify_total{0};         // #2607
+    std::atomic<std::uint64_t> instance_depth_cap_total{0};     // #2607
+    std::atomic<std::uint64_t> instance_goal_solve_total{0};    // #2607
+    std::atomic<std::uint64_t> instance_goal_conflict_total{0}; // #2607
     // Issue #2196: unified query:mutation-memory / query:blame-of join.
     // mutation_memory_query_total: calls into the unified surface.
     // mutation_memory_join_size_last: related records joined last call.

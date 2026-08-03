@@ -94,11 +94,16 @@ public:
 };
 
 // ── Constraint System ────────────────────────────────────
+// Issue #2607: max nested ∀ peels for INSTANCE goals. Cap hit leaves
+// the constraint on the worklist → TIMEOUT (not infinite instantiate).
+export inline constexpr int kInstanceDepthCap = 8;
+
 export struct Constraint {
-    // Issue #2195: SUBTYPE (lhs <: rhs) participates in solve_delta;
-    // INSTANCE reserved for phase 2 (optional higher-rank).
-    // Stable order: EQUAL=0, CONSISTENT=1, SUBTYPE=2 (do not reorder).
-    enum Kind { EQUAL, CONSISTENT, SUBTYPE };
+    // Issue #2195: SUBTYPE (lhs <: rhs) participates in solve_delta.
+    // Issue #2607: INSTANCE (poly schema instance-of mono) with
+    // depth-capped ∀ peel + unify. Stable order: EQUAL=0, CONSISTENT=1,
+    // SUBTYPE=2, INSTANCE=3 (do not reorder existing values).
+    enum Kind { EQUAL, CONSISTENT, SUBTYPE, INSTANCE };
     Kind kind;
     aura::core::TypeId lhs, rhs;
     // Issue #1529: delta blame provenance (0 = unset).
@@ -131,13 +136,16 @@ export inline constexpr std::size_t kUnresolvedGraphEdgeQueryCap = 16;
 // Issue #2548: structured reason per suggested root (Agent self-repair
 // without free-form diagnostic parsing). Higher numeric value wins when
 // a rep appears in multiple seed sets (prefer occurrence / let-poly).
+// Issue #2607: Instance ranks above occurrence when degrees tie so
+// Agents re-instantiate polymorphic call sites first under TIMEOUT.
 export enum class SuggestedRootReason : std::uint8_t {
-    Touched = 0,             // plain touched_roots_
-    UnresolvedEndpoint = 1,  // only from unresolved constraint endpoints
-    PendingFull = 2,         // pending_full_solve_roots_
-    LetPoly = 3,             // let_poly_dirty_roots_ ∩ unresolved subgraph
-    Occurrence = 4,          // occurrence_priority_roots_ / live goals
-    OccurrenceReplayMiss = 5 // live goal refined no longer UF-consistent
+    Touched = 0,              // plain touched_roots_
+    UnresolvedEndpoint = 1,   // only from unresolved constraint endpoints
+    PendingFull = 2,          // pending_full_solve_roots_
+    LetPoly = 3,              // let_poly_dirty_roots_ ∩ unresolved subgraph
+    Occurrence = 4,           // occurrence_priority_roots_ / live goals
+    OccurrenceReplayMiss = 5, // live goal refined no longer UF-consistent
+    Instance = 6              // unresolved INSTANCE goal endpoint (#2607)
 };
 
 // Issue #2548: degree-ranked suggested root with structured reason.
@@ -800,6 +808,12 @@ public:
     aura::core::TypeId find(aura::core::TypeId id); // normalize via Union-Find
     bool consistent_unify(aura::core::TypeId t1, aura::core::TypeId t2);
     bool consistent_subtype(aura::core::TypeId sub, aura::core::TypeId sup);
+    // Issue #2607: INSTANCE goal — peel ∀ layers (bounded) then unify.
+    // Returns: true = solved; false = hard conflict (non-forall mismatch).
+    // Depth-cap hits return true but set *depth_capped_out when provided;
+    // callers re-queue the goal so solve_delta ends TIMEOUT (not CONFLICT).
+    bool consistent_instance(aura::core::TypeId poly_or_lhs, aura::core::TypeId mono_or_rhs,
+                             int depth = 0, bool* depth_capped_out = nullptr);
     bool occurs_check(aura::core::TypeId var, aura::core::TypeId ty);
     aura::core::TypeId normalize(aura::core::TypeId id);
 };

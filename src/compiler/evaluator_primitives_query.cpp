@@ -6971,6 +6971,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("subtype-goal-wired", 1);
                 insert_kv("schema-2195", 2195);
                 insert_kv("issue-2195", 2195);
+                // Issue #2607: INSTANCE goal (depth-capped ∀ peel + unify).
+                insert_kv("instance-unify-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->instance_unify_total.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("instance-depth-cap-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->instance_depth_cap_total.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("instance-goal-solve-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->instance_goal_solve_total.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("instance-goal-conflict-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->instance_goal_conflict_total.load(std::memory_order_relaxed))
+                            : 0);
+                insert_kv("instance-depth-cap",
+                          static_cast<std::int64_t>(aura::compiler::kInstanceDepthCap));
+                insert_kv("instance-goal-wired", 1);
+                insert_kv("schema-2607", 2607);
+                insert_kv("issue-2607", 2607);
             }
             // Issue #2030: agent blame completeness + occurrence post-mutate hit rate
             {
@@ -7586,6 +7608,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("type-repair-root-reason-let-poly", 3);
             insert_kv("type-repair-root-reason-occurrence", 4);
             insert_kv("type-repair-root-reason-occurrence-replay-miss", 5);
+            // Issue #2607: Instance ranks above occurrence when degrees tie.
+            insert_kv("type-repair-root-reason-instance", 6);
+            insert_kv("instance-unify-total",
+                      m ? static_cast<std::int64_t>(
+                              m->instance_unify_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("instance-depth-cap-total",
+                      m ? static_cast<std::int64_t>(
+                              m->instance_depth_cap_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("instance-goal-solve-total",
+                      m ? static_cast<std::int64_t>(
+                              m->instance_goal_solve_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("instance-goal-conflict-total",
+                      m ? static_cast<std::int64_t>(
+                              m->instance_goal_conflict_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("instance-depth-cap",
+                      static_cast<std::int64_t>(aura::compiler::kInstanceDepthCap));
+            insert_kv("instance-goal-wired", 1);
+            insert_kv("schema-2607", 2607);
+            insert_kv("issue-2607", 2607);
             insert_kv("type-repair-edge-cap", 64);
             insert_kv("type-repair-root-cap", 8);
             insert_kv("schema-2548", 2548);

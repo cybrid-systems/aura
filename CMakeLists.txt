@@ -3717,6 +3717,11 @@ aura_add_issue_test(test_pereval_reemit_region_independence_2606)
 aura_issue_test_link_llvm_jit(test_pereval_reemit_region_independence_2606)
 add_dependencies(all_test_issue_targets test_pereval_reemit_region_independence_2606)
 
+# Issue #2607: minimal INSTANCE constraint + depth-capped ∀ peel (false TIMEOUT).
+aura_add_issue_test(test_instance_constraint_depth_cap_2607)
+aura_issue_test_link_llvm_jit(test_instance_constraint_depth_cap_2607)
+add_dependencies(all_test_issue_targets test_instance_constraint_depth_cap_2607)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)
