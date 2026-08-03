@@ -10968,6 +10968,43 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("residual-defer-steal-hard-and-wired", 1);
             insert_kv("schema-2546", 2546);
             insert_kv("issue-2546", 2546);
+            // Issue #2609: hard-AND residual + linear force + type fence.
+            {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+                insert_kv(
+                    "steal-densify-linear-type-hard-fail-total",
+                    m ? static_cast<std::int64_t>(m->steal_densify_linear_type_hard_fail_total.load(
+                            std::memory_order_relaxed))
+                      : 0);
+                insert_kv("steal-densify-linear-type-soft-observe-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->steal_densify_linear_type_soft_observe_total.load(
+                                      std::memory_order_relaxed))
+                            : 0);
+                insert_kv("steal-densify-linear-type-fail-residual-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->steal_densify_linear_type_fail_residual_total.load(
+                                      std::memory_order_relaxed))
+                            : 0);
+                insert_kv("steal-densify-linear-type-fail-linear-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->steal_densify_linear_type_fail_linear_total.load(
+                                      std::memory_order_relaxed))
+                            : 0);
+                insert_kv("steal-densify-linear-type-fail-type-fence-total",
+                          m ? static_cast<std::int64_t>(
+                                  m->steal_densify_linear_type_fail_type_fence_total.load(
+                                      std::memory_order_relaxed))
+                            : 0);
+                insert_kv(
+                    "steal-densify-linear-type-last-fail-axis",
+                    m ? static_cast<std::int64_t>(m->steal_densify_linear_type_last_fail_axis.load(
+                            std::memory_order_relaxed))
+                      : 0);
+                insert_kv("steal-densify-linear-type-hard-and-wired", 1);
+                insert_kv("schema-2609", 2609);
+                insert_kv("issue-2609", 2609);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

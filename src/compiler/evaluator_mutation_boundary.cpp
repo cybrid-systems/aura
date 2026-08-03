@@ -2143,6 +2143,45 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                               : false;
         densify_consistency.linear_ok = linear_type_ok;
         densify_consistency.type_ok = linear_type_ok;
+        // Issue #2609: hard-AND linear force sticky + residual GcDefer into
+        // densify success (same pure gate as steal-complete). Soft / no
+        // production: metric-only observe when axes fail but keep Soft
+        // vacuous axes unless overall densify already fails closed.
+        // Production or Hard densify contract: force linear_ok / panic axis
+        // so Phase 5 cannot publish half-green success.
+        {
+            const bool residual_zero = (aura::gc_hooks::defer_reasons_snapshot() == 0);
+            // Type fence applied later on Moving success; for densify gate
+            // evaluate residual + linear first (type fence is step after).
+            const auto axis = ev_->evaluate_linear_type_provenance_hard_and(
+                residual_zero, /*type_fence_applied=*/true);
+            const char* densify_contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
+            const bool hard_densify = typed_audit::production_defaults_active() ||
+                                      (densify_contract_env != nullptr &&
+                                       std::string_view(densify_contract_env) == "hard");
+            if (axis != Evaluator::LinearTypeProvenanceAxis::Ok) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    if (hard_densify) {
+                        m->steal_densify_linear_type_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->steal_densify_linear_type_last_fail_axis.store(
+                            static_cast<std::uint8_t>(axis), std::memory_order_relaxed);
+                        if (axis == Evaluator::LinearTypeProvenanceAxis::LinearForcePending) {
+                            m->steal_densify_linear_type_fail_linear_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            densify_consistency.linear_ok = false;
+                        } else if (axis == Evaluator::LinearTypeProvenanceAxis::ResidualGcDefer) {
+                            m->steal_densify_linear_type_fail_residual_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            densify_consistency.panic_residual_ok = false;
+                        }
+                    } else {
+                        m->steal_densify_linear_type_soft_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
         // Issue #2365 / #2368: densify-success closed-loop. Soft / no Moving
         // densify → root_remap / closure / envframe vacuous true (zero cost).
         // Moving + unified contract held → force_densify_remap_pairing() encodes
@@ -2282,6 +2321,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // Issue #2552 AC3: pair densify escape-clear with type
                 // OccurrenceGoal + type_dep epoch fence. Soft densify /
                 // no Moving: skip (zero cost).
+                // Issue #2609: fence is the type axis of the hard-AND;
+                // residual/linear already gated overall_ok above.
                 ev_->note_type_freshness_after_steal_or_densify();
             }
             // Issue #2360: the post-densify ownership-exit scan at the
