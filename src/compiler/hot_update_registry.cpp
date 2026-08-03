@@ -73,6 +73,11 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
         maybe_force_jit_repromote_on_clean_success();
     else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
         force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    // Issue #2601: lazy retry hook. Zero-cost when force_jit_regions_mask_ == 0
+    // (idle path) — the decide_exhausted_min_dirty_retry() short-circuits.
+    // The bridge owns the actual reemit drive (counter bumps + reemit call).
+    if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
+        aura_hot_update_maybe_retry_exhausted_min_dirty();
 }
 
 void HotUpdateRegistry::on_reload_success() noexcept {
@@ -87,6 +92,11 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     // Issue #2502: wholesale clear ends the re-promote streak (mask
     // already idle; streak is only meaningful while demoted).
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    // Issue #2601: clear retry state (reload succeeded — no more
+    // bounded retries needed; the next exhaust will re-seed).
+    exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
+    exhausted_min_dirty_retry_last_at_ms_.store(0, std::memory_order_relaxed);
+    exhausted_min_dirty_retry_last_reason_.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2502: auto re-promote force-JIT regions after a stable window of
@@ -121,8 +131,18 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
     }
     if (force_jit_repromote_require_pending_idle_.load(std::memory_order_relaxed) != 0 &&
         pending_dirty_count_.load(std::memory_order_relaxed) != 0) {
-        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
-        return;
+        // Issue #2601 AC2: optional policy knob — when enabled, advance
+        // the streak even with pending_dirty > 0 if the success covered
+        // the force-JIT reason regions (force_jit_regions_mask_ != 0 AND
+        // successes > 0 on this reemit pipeline call). Default off
+        // preserves #2502 require-pending-idle behavior.
+        if (force_jit_repromote_allow_pending_idle_when_force_jit_covered_.load(
+                std::memory_order_relaxed) == 0) {
+            force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+            return;
+        }
+        // Fall through with the knob enabled — caller-side successes
+        // already proved the reemit covered the force-JIT regions.
     }
     const auto streak = force_jit_stable_successes_.fetch_add(1, std::memory_order_relaxed) + 1;
     if (streak < window)
@@ -178,6 +198,118 @@ void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
     force_jit_repromote_total_.store(0, std::memory_order_relaxed);
     last_force_jit_repromote_reason_.store(0, std::memory_order_relaxed);
     last_force_jit_repromote_at_epoch_notify_.store(0, std::memory_order_relaxed);
+}
+
+// ── Issue #2601: exhausted min-dirty retry closed loop ──
+// Setters / getters (zero-cost reads; set is rare).
+void HotUpdateRegistry::set_exhausted_min_dirty_retry_cap(std::uint32_t n) noexcept {
+    exhausted_min_dirty_retry_attempts_cap_.store(n, std::memory_order_relaxed);
+}
+
+std::uint32_t HotUpdateRegistry::exhausted_min_dirty_retry_cap() const noexcept {
+    return exhausted_min_dirty_retry_attempts_cap_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::set_exhausted_min_dirty_retry_backoff_ms(std::uint64_t ms) noexcept {
+    exhausted_min_dirty_retry_backoff_ms_.store(ms, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::exhausted_min_dirty_retry_backoff_ms() const noexcept {
+    return exhausted_min_dirty_retry_backoff_ms_.load(std::memory_order_relaxed);
+}
+
+std::uint32_t HotUpdateRegistry::exhausted_min_dirty_retry_attempts_left() const noexcept {
+    return exhausted_min_dirty_retry_attempts_left_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::exhausted_min_dirty_retry_last_at_ms() const noexcept {
+    return exhausted_min_dirty_retry_last_at_ms_.load(std::memory_order_relaxed);
+}
+
+std::uint8_t HotUpdateRegistry::exhausted_min_dirty_retry_last_reason() const noexcept {
+    return exhausted_min_dirty_retry_last_reason_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::aot_exhausted_min_dirty_retry_total() const noexcept {
+    return aot_exhausted_min_dirty_retry_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::aot_exhausted_min_dirty_retry_success_total() const noexcept {
+    return aot_exhausted_min_dirty_retry_success_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::aot_exhausted_min_dirty_retry_storm_skip_total() const noexcept {
+    return aot_exhausted_min_dirty_retry_storm_skip_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::aot_exhausted_min_dirty_retry_cap_hit_total() const noexcept {
+    return aot_exhausted_min_dirty_retry_cap_hit_total_.load(std::memory_order_relaxed);
+}
+
+// Issue #2601 AC2: policy knob.
+void HotUpdateRegistry::set_force_jit_repromote_allow_pending_idle_when_force_jit_covered(
+    bool allow) noexcept {
+    force_jit_repromote_allow_pending_idle_when_force_jit_covered_.store(allow ? 1 : 0,
+                                                                         std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::force_jit_repromote_allow_pending_idle_when_force_jit_covered()
+    const noexcept {
+    return force_jit_repromote_allow_pending_idle_when_force_jit_covered_.load(
+               std::memory_order_relaxed) != 0;
+}
+
+// Issue #2601: pure decision helper. Caller (bridge) reads this and
+// dispatches based on the outcome. Zero-cost when force_jit_regions_mask_
+// is 0 (idle path) — short-circuits on the first load.
+HotUpdateRegistry::ExhaustedMinDirtyRetryDecision
+HotUpdateRegistry::decide_exhausted_min_dirty_retry() const noexcept {
+    if (force_jit_regions_mask_.load(std::memory_order_relaxed) == 0)
+        return ExhaustedMinDirtyRetryDecision::NoForceJit;
+    const auto attempts_left =
+        exhausted_min_dirty_retry_attempts_left_.load(std::memory_order_relaxed);
+    if (attempts_left == 0)
+        return ExhaustedMinDirtyRetryDecision::NoAttemptsLeft;
+    const auto last_at = exhausted_min_dirty_retry_last_at_ms_.load(std::memory_order_relaxed);
+    if (last_at != 0) {
+        const auto now = steady_ms_now();
+        const auto backoff = exhausted_min_dirty_retry_backoff_ms_.load(std::memory_order_relaxed);
+        if (now < last_at || (now - last_at) < backoff)
+            return ExhaustedMinDirtyRetryDecision::BackoffNotElapsed;
+    }
+    if (current_storm_level() != StormLevel::None)
+        return ExhaustedMinDirtyRetryDecision::StormActive;
+    if (hard_storm_active())
+        return ExhaustedMinDirtyRetryDecision::StormActive;
+    return ExhaustedMinDirtyRetryDecision::Retry;
+}
+
+// Issue #2601: consume one retry attempt. Single bookkeeping site —
+// CAS loop on attempts_left, then stamp last_at_ms.
+void HotUpdateRegistry::consume_exhausted_min_dirty_retry_attempt() noexcept {
+    auto attempts_left = exhausted_min_dirty_retry_attempts_left_.load(std::memory_order_relaxed);
+    while (attempts_left > 0) {
+        if (exhausted_min_dirty_retry_attempts_left_.compare_exchange_weak(
+                attempts_left, attempts_left - 1, std::memory_order_relaxed))
+            break;
+    }
+    exhausted_min_dirty_retry_last_at_ms_.store(steady_ms_now(), std::memory_order_relaxed);
+}
+
+// Issue #2601: test isolation. Clear retry state + counters without
+// touching force_jit_regions_mask_ (use on_reload_success for that).
+void HotUpdateRegistry::reset_exhausted_min_dirty_retry_for_test() noexcept {
+    exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
+    exhausted_min_dirty_retry_attempts_cap_.store(3, std::memory_order_relaxed);
+    exhausted_min_dirty_retry_backoff_ms_.store(100, std::memory_order_relaxed);
+    exhausted_min_dirty_retry_last_at_ms_.store(0, std::memory_order_relaxed);
+    exhausted_min_dirty_retry_last_reason_.store(0, std::memory_order_relaxed);
+    aot_exhausted_min_dirty_retry_total_.store(0, std::memory_order_relaxed);
+    aot_exhausted_min_dirty_retry_success_total_.store(0, std::memory_order_relaxed);
+    aot_exhausted_min_dirty_retry_storm_skip_total_.store(0, std::memory_order_relaxed);
+    aot_exhausted_min_dirty_retry_cap_hit_total_.store(0, std::memory_order_relaxed);
+    force_jit_repromote_allow_pending_idle_when_force_jit_covered_.store(0,
+                                                                         std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_reload_rollback(AotReloadFail reason) noexcept {
@@ -262,6 +394,17 @@ void HotUpdateRegistry::on_exhausted_min_dirty_queue(AotReloadFail reason) noexc
     const auto mask = static_cast<std::uint64_t>(1) << static_cast<std::uint8_t>(reason);
     on_region_mask_from_dirty(mask);
     on_cascade_reemit_trigger(/*candidates_hint=*/1);
+    // Issue #2601: seed retry closed loop. attempts_left = cap (default 3),
+    // last_reason = reason, last_at_ms = 0 (the first retry is ready
+    // immediately when storm clears — no backoff on the first attempt).
+    // Subsequent retries await a steady_ms_now() >= last_at + backoff_ms.
+    const auto cap = exhausted_min_dirty_retry_attempts_cap_.load(std::memory_order_relaxed);
+    if (cap > 0) {
+        exhausted_min_dirty_retry_attempts_left_.store(cap, std::memory_order_relaxed);
+        exhausted_min_dirty_retry_last_reason_.store(static_cast<std::uint8_t>(reason),
+                                                     std::memory_order_relaxed);
+        exhausted_min_dirty_retry_last_at_ms_.store(0, std::memory_order_relaxed);
+    }
 }
 
 void HotUpdateRegistry::on_live_closure_remap(std::uint64_t count) noexcept {
@@ -642,9 +785,32 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->force_jit_repromote_require_pending_idle =
         reg.force_jit_repromote_require_pending_idle() ? 1 : 0;
     out->schema_2502 = 2502;
+    // Issue #2601: exhausted min-dirty retry closed loop.
+    out->aot_exhausted_min_dirty_retry_total =
+        static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_total());
+    out->aot_exhausted_min_dirty_retry_success_total =
+        static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_success_total());
+    out->aot_exhausted_min_dirty_retry_storm_skip_total =
+        static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_storm_skip_total());
+    out->aot_exhausted_min_dirty_retry_cap_hit_total =
+        static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_cap_hit_total());
+    out->exhausted_min_dirty_retry_attempts_left =
+        static_cast<std::int64_t>(reg.exhausted_min_dirty_retry_attempts_left());
+    out->exhausted_min_dirty_retry_attempts_cap =
+        static_cast<std::int64_t>(reg.exhausted_min_dirty_retry_cap());
+    out->exhausted_min_dirty_retry_backoff_ms =
+        static_cast<std::int64_t>(reg.exhausted_min_dirty_retry_backoff_ms());
+    out->exhausted_min_dirty_retry_last_at_ms =
+        static_cast<std::int64_t>(reg.exhausted_min_dirty_retry_last_at_ms());
+    out->exhausted_min_dirty_retry_last_reason =
+        static_cast<std::int64_t>(reg.exhausted_min_dirty_retry_last_reason());
+    out->force_jit_repromote_allow_pending_idle_when_force_jit_covered =
+        reg.force_jit_repromote_allow_pending_idle_when_force_jit_covered() ? 1 : 0;
+    out->schema_2601 = 2601;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
-                        snap.storm_level != 0 || snap.reemit_deferred_pending != 0;
+                        snap.storm_level != 0 || snap.reemit_deferred_pending != 0 ||
+                        reg.exhausted_min_dirty_retry_attempts_left() != 0;
     out->recovery_active = active ? 1 : 0;
     out->reload_recovery_wired = 1;
 }
@@ -1048,6 +1214,29 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
         static_cast<std::int64_t>(deopt_storm_region_last_id_.load(std::memory_order_relaxed));
     s.schema_2236 = 2236;
     s.issue_2236 = 2236;
+    // Issue #2601: exhausted min-dirty retry closed loop.
+    s.aot_exhausted_min_dirty_retry_total = static_cast<std::int64_t>(
+        aot_exhausted_min_dirty_retry_total_.load(std::memory_order_relaxed));
+    s.aot_exhausted_min_dirty_retry_success_total = static_cast<std::int64_t>(
+        aot_exhausted_min_dirty_retry_success_total_.load(std::memory_order_relaxed));
+    s.aot_exhausted_min_dirty_retry_storm_skip_total = static_cast<std::int64_t>(
+        aot_exhausted_min_dirty_retry_storm_skip_total_.load(std::memory_order_relaxed));
+    s.aot_exhausted_min_dirty_retry_cap_hit_total = static_cast<std::int64_t>(
+        aot_exhausted_min_dirty_retry_cap_hit_total_.load(std::memory_order_relaxed));
+    s.exhausted_min_dirty_retry_attempts_left = static_cast<std::int64_t>(
+        exhausted_min_dirty_retry_attempts_left_.load(std::memory_order_relaxed));
+    s.exhausted_min_dirty_retry_attempts_cap = static_cast<std::int64_t>(
+        exhausted_min_dirty_retry_attempts_cap_.load(std::memory_order_relaxed));
+    s.exhausted_min_dirty_retry_backoff_ms = static_cast<std::int64_t>(
+        exhausted_min_dirty_retry_backoff_ms_.load(std::memory_order_relaxed));
+    s.exhausted_min_dirty_retry_last_at_ms = static_cast<std::int64_t>(
+        exhausted_min_dirty_retry_last_at_ms_.load(std::memory_order_relaxed));
+    s.exhausted_min_dirty_retry_last_reason = static_cast<std::int64_t>(
+        exhausted_min_dirty_retry_last_reason_.load(std::memory_order_relaxed));
+    s.force_jit_repromote_allow_pending_idle_when_force_jit_covered = static_cast<std::int64_t>(
+        force_jit_repromote_allow_pending_idle_when_force_jit_covered_.load(
+            std::memory_order_relaxed));
+    // schema_2601 / issue_2601 are constexpr defaults in the struct.
     return s;
 }
 
@@ -1139,6 +1328,23 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->deopt_storm_region_last_id = s.deopt_storm_region_last_id;
     out->schema_2236 = s.schema_2236;
     out->issue_2236 = s.issue_2236;
+    // Issue #2601: exhausted min-dirty retry closed loop.
+    out->aot_exhausted_min_dirty_retry_total = s.aot_exhausted_min_dirty_retry_total;
+    out->aot_exhausted_min_dirty_retry_success_total =
+        s.aot_exhausted_min_dirty_retry_success_total;
+    out->aot_exhausted_min_dirty_retry_storm_skip_total =
+        s.aot_exhausted_min_dirty_retry_storm_skip_total;
+    out->aot_exhausted_min_dirty_retry_cap_hit_total =
+        s.aot_exhausted_min_dirty_retry_cap_hit_total;
+    out->exhausted_min_dirty_retry_attempts_left = s.exhausted_min_dirty_retry_attempts_left;
+    out->exhausted_min_dirty_retry_attempts_cap = s.exhausted_min_dirty_retry_attempts_cap;
+    out->exhausted_min_dirty_retry_backoff_ms = s.exhausted_min_dirty_retry_backoff_ms;
+    out->exhausted_min_dirty_retry_last_at_ms = s.exhausted_min_dirty_retry_last_at_ms;
+    out->exhausted_min_dirty_retry_last_reason = s.exhausted_min_dirty_retry_last_reason;
+    out->force_jit_repromote_allow_pending_idle_when_force_jit_covered =
+        s.force_jit_repromote_allow_pending_idle_when_force_jit_covered;
+    out->schema_2601 = s.schema_2601;
+    out->issue_2601 = s.issue_2601;
 }
 
 extern "C" void aura_hot_update_note_deopt(void) {
@@ -1307,4 +1513,39 @@ extern "C" int aura_hot_update_has_deferred_reemit(void) {
 // Issue #2273: C ABI bumper for steal-path observability.
 extern "C" void aura_hot_update_on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) {
     aura::compiler::hot_update_registry().on_deferred_reemit_seen_on_steal(fiber_id);
+}
+
+// Issue #2601: exhausted min-dirty retry closed loop C ABI.
+extern "C" void aura_set_exhausted_min_dirty_retry_cap(std::uint32_t n) noexcept {
+    aura::compiler::hot_update_registry().set_exhausted_min_dirty_retry_cap(n);
+}
+
+extern "C" std::uint32_t aura_get_exhausted_min_dirty_retry_cap(void) noexcept {
+    return aura::compiler::hot_update_registry().exhausted_min_dirty_retry_cap();
+}
+
+extern "C" void aura_set_exhausted_min_dirty_retry_backoff_ms(std::uint64_t ms) noexcept {
+    aura::compiler::hot_update_registry().set_exhausted_min_dirty_retry_backoff_ms(ms);
+}
+
+extern "C" std::uint64_t aura_get_exhausted_min_dirty_retry_backoff_ms(void) noexcept {
+    return aura::compiler::hot_update_registry().exhausted_min_dirty_retry_backoff_ms();
+}
+
+extern "C" void
+aura_set_force_jit_repromote_allow_pending_idle_when_force_jit_covered(int allow) noexcept {
+    aura::compiler::hot_update_registry()
+        .set_force_jit_repromote_allow_pending_idle_when_force_jit_covered(allow != 0);
+}
+
+extern "C" int
+aura_get_force_jit_repromote_allow_pending_idle_when_force_jit_covered(void) noexcept {
+    return aura::compiler::hot_update_registry()
+                   .force_jit_repromote_allow_pending_idle_when_force_jit_covered()
+               ? 1
+               : 0;
+}
+
+extern "C" void aura_hot_update_reset_exhausted_min_dirty_retry_for_test(void) noexcept {
+    aura::compiler::hot_update_registry().reset_exhausted_min_dirty_retry_for_test();
 }

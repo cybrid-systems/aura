@@ -426,6 +426,19 @@ public:
         // Issue #2273: steal-path observability fields.
         std::int64_t reemit_deferred_seen_on_steal_total = 0;
         std::int64_t reemit_deferred_seen_on_steal_last_fiber_id = 0;
+        // Issue #2601: exhausted min-dirty retry closed loop
+        std::int64_t aot_exhausted_min_dirty_retry_total = 0;
+        std::int64_t aot_exhausted_min_dirty_retry_success_total = 0;
+        std::int64_t aot_exhausted_min_dirty_retry_storm_skip_total = 0;
+        std::int64_t aot_exhausted_min_dirty_retry_cap_hit_total = 0;
+        std::int64_t exhausted_min_dirty_retry_attempts_left = 0;
+        std::int64_t exhausted_min_dirty_retry_attempts_cap = 3;
+        std::int64_t exhausted_min_dirty_retry_backoff_ms = 100;
+        std::int64_t exhausted_min_dirty_retry_last_at_ms = 0;
+        std::int64_t exhausted_min_dirty_retry_last_reason = 0;
+        std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered = 0;
+        std::int64_t schema_2601 = 2601;
+        std::int64_t issue_2601 = 2601;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -536,6 +549,34 @@ private:
     std::atomic<std::uint64_t> force_jit_repromote_total_{0};
     std::atomic<std::uint8_t> last_force_jit_repromote_reason_{0};
     std::atomic<std::uint64_t> last_force_jit_repromote_at_epoch_notify_{0};
+    // Zero-cost when force_jit_regions_mask_ == 0 (idle path).
+    // Issue #2601: exhausted min-dirty retry closed loop state.
+    //   exhausted_min_dirty_retry_attempts_left_: cap-based budget
+    //     remaining. Reset to cap in on_exhausted_min_dirty_queue.
+    //   exhausted_min_dirty_retry_attempts_cap_: max retries (default 3).
+    //   exhausted_min_dirty_retry_backoff_ms_: min interval between
+    //     retries (default 100ms). 0 = no backoff.
+    //   exhausted_min_dirty_retry_last_at_ms_: steady_ms_now() of last
+    //     retry attempt. 0 = never tried (initial state). Initial value
+    //     in on_exhausted_min_dirty_queue is 0 so the first retry is
+    //     ready immediately when storm clears.
+    //   exhausted_min_dirty_retry_last_reason_: AotReloadFail enum of
+    //     the last exhaust that seeded the retry series.
+    //   aot_exhausted_min_dirty_retry_*_total: lifetime counters.
+    //   force_jit_repromote_allow_pending_idle_when_force_jit_covered_:
+    //     policy knob (default 0 = off). When set, the #2502 streak
+    //     advances with pending_dirty > 0 if successes > 0 hit a
+    //     reemit pipeline call while force_jit_regions_mask_ != 0.
+    std::atomic<std::uint32_t> exhausted_min_dirty_retry_attempts_left_{0};
+    std::atomic<std::uint32_t> exhausted_min_dirty_retry_attempts_cap_{3};
+    std::atomic<std::uint64_t> exhausted_min_dirty_retry_backoff_ms_{100};
+    std::atomic<std::uint64_t> exhausted_min_dirty_retry_last_at_ms_{0};
+    std::atomic<std::uint8_t> exhausted_min_dirty_retry_last_reason_{0};
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_total_{0};
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_success_total_{0};
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_storm_skip_total_{0};
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_cap_hit_total_{0};
+    std::atomic<std::uint8_t> force_jit_repromote_allow_pending_idle_when_force_jit_covered_{0};
 
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
@@ -637,6 +678,53 @@ private:
 
 public:
     [[nodiscard]] ReloadRecoveryState reload_recovery_state() const noexcept;
+    // Issue #2601: exhausted min-dirty retry closed loop under sustained
+    // Global storm. After the one-shot min-dirty reemit (#2544) exhausts,
+    // schedule a bounded retry series (cap 2-3, backoff) — only while
+    // force_jit_regions_mask_ != 0. Zero-cost when no force-JIT demotion.
+    // Counter family:
+    //   aot_exhausted_min_dirty_retry_total        — retries attempted
+    //   aot_exhausted_min_dirty_retry_success_total — reemit returned >0
+    //   aot_exhausted_min_dirty_retry_storm_skip_total — storm skipped
+    //   aot_exhausted_min_dirty_retry_cap_hit_total — cap hit / no attempts left
+    enum class ExhaustedMinDirtyRetryDecision : std::uint8_t {
+        NoForceJit = 0,        // force_jit_regions_mask_ == 0 (idle)
+        NoAttemptsLeft = 1,    // cap exhausted
+        BackoffNotElapsed = 2, // now - last_at < backoff_ms
+        StormActive = 3,       // storm level != None or hard storm
+        Retry = 4,             // ready to retry
+    };
+    void set_exhausted_min_dirty_retry_cap(std::uint32_t n) noexcept;
+    [[nodiscard]] std::uint32_t exhausted_min_dirty_retry_cap() const noexcept;
+    void set_exhausted_min_dirty_retry_backoff_ms(std::uint64_t ms) noexcept;
+    [[nodiscard]] std::uint64_t exhausted_min_dirty_retry_backoff_ms() const noexcept;
+    [[nodiscard]] std::uint32_t exhausted_min_dirty_retry_attempts_left() const noexcept;
+    [[nodiscard]] std::uint64_t exhausted_min_dirty_retry_last_at_ms() const noexcept;
+    [[nodiscard]] std::uint8_t exhausted_min_dirty_retry_last_reason() const noexcept;
+    [[nodiscard]] std::uint64_t aot_exhausted_min_dirty_retry_total() const noexcept;
+    [[nodiscard]] std::uint64_t aot_exhausted_min_dirty_retry_success_total() const noexcept;
+    [[nodiscard]] std::uint64_t aot_exhausted_min_dirty_retry_storm_skip_total() const noexcept;
+    [[nodiscard]] std::uint64_t aot_exhausted_min_dirty_retry_cap_hit_total() const noexcept;
+    // Issue #2601 AC2: optional policy knob — when enabled, advance the
+    // #2502 re-promote streak even if pending_dirty_count_ > 0, IF the
+    // clean success covered the force-JIT reason regions (successes > 0
+    // on a reemit pipeline call with force_jit_regions_mask_ != 0).
+    // Default off (preserves #2502 require-pending-idle behavior).
+    void set_force_jit_repromote_allow_pending_idle_when_force_jit_covered(bool allow) noexcept;
+    [[nodiscard]] bool
+    force_jit_repromote_allow_pending_idle_when_force_jit_covered() const noexcept;
+    // Issue #2601: decide whether the next reemit pipeline call should
+    // trigger a deferred exhausted-min-dirty retry. Returns the
+    // decision enum (Retry means caller should drive the retry).
+    [[nodiscard]] ExhaustedMinDirtyRetryDecision decide_exhausted_min_dirty_retry() const noexcept;
+    // Consume one retry attempt: decrement attempts_left, stamp last_at.
+    // Caller decides whether to actually drive the reemit (this is the
+    // single bookkeeping site).
+    void consume_exhausted_min_dirty_retry_attempt() noexcept;
+    // Test isolation: clear retry state + counters without touching
+    // force_jit_regions_mask_ (use on_reload_success for that).
+    void reset_exhausted_min_dirty_retry_for_test() noexcept;
+
     // Issue #2367: force-JIT observability (paired with recovery query).
     [[nodiscard]] std::uint64_t force_jit_for_reason_total() const noexcept {
         return force_jit_for_reason_total_.load(std::memory_order_relaxed);
@@ -774,6 +862,19 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t deopt_storm_region_last_id;
     std::int64_t schema_2236;
     std::int64_t issue_2236;
+    // Issue #2601: exhausted min-dirty retry closed loop (additive).
+    std::int64_t aot_exhausted_min_dirty_retry_total;
+    std::int64_t aot_exhausted_min_dirty_retry_success_total;
+    std::int64_t aot_exhausted_min_dirty_retry_storm_skip_total;
+    std::int64_t aot_exhausted_min_dirty_retry_cap_hit_total;
+    std::int64_t exhausted_min_dirty_retry_attempts_left;
+    std::int64_t exhausted_min_dirty_retry_attempts_cap;
+    std::int64_t exhausted_min_dirty_retry_backoff_ms;
+    std::int64_t exhausted_min_dirty_retry_last_at_ms;
+    std::int64_t exhausted_min_dirty_retry_last_reason;
+    std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
+    std::int64_t schema_2601;
+    std::int64_t issue_2601;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2014: C entry points for deopt feed / throttle / config.
@@ -831,6 +932,18 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_repromote_window;
     std::int64_t force_jit_repromote_require_pending_idle;
     std::int64_t schema_2502; // 2502 when wired
+    // Issue #2601: exhausted min-dirty retry closed loop (additive).
+    std::int64_t aot_exhausted_min_dirty_retry_total;
+    std::int64_t aot_exhausted_min_dirty_retry_success_total;
+    std::int64_t aot_exhausted_min_dirty_retry_storm_skip_total;
+    std::int64_t aot_exhausted_min_dirty_retry_cap_hit_total;
+    std::int64_t exhausted_min_dirty_retry_attempts_left;
+    std::int64_t exhausted_min_dirty_retry_attempts_cap;
+    std::int64_t exhausted_min_dirty_retry_backoff_ms;
+    std::int64_t exhausted_min_dirty_retry_last_at_ms;
+    std::int64_t exhausted_min_dirty_retry_last_reason;
+    std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
+    std::int64_t schema_2601; // 2601 when wired
     // recovery-active: 1 when any non-idle recovery signal is set
     // (force-jit mask, attempts_left, pending dirty, deferred reemit,
     // storm_level != None). Soft empty path → 0.
@@ -874,6 +987,12 @@ void* aura_get_storm_eval_context(void) noexcept;
 std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void);
 std::uint64_t aura_specjit_per_eval_storm_skip_foreign_total_v_read(void);
 std::uint64_t aura_specjit_storm_clear_total_v_read(void);
+// Issue #2601: exhausted min-dirty retry closed loop C ABI. Defined in
+// aura_jit_bridge.cpp where aura_reemit_aot_for_dirty + aot_metrics live.
+// Called from on_reemit_pipeline_call (registry lazy hook) and from
+// explicit drain on the bridge exhaust path. Bounded by attempts_cap +
+// backoff_ms, so recursion within a single reemit pipeline call is safe.
+extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void);
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH

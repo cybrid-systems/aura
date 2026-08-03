@@ -6935,6 +6935,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_success_total{0};    // #2544
     std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_fail_total{0};       // #2544
     std::atomic<std::uint64_t> aot_reload_exhausted_min_dirty_reemit_storm_skip_total{0}; // #2544
+    // Issue #2601: exhausted min-dirty retry closed loop. 4 counters —
+    // retry / success / storm_skip / cap_hit. Soft zero-cost when
+    // force_jit_regions_mask_ == 0 (idle path).
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_total{0};            // #2601
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_success_total{0};    // #2601
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_storm_skip_total{0}; // #2601
+    std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_cap_hit_total{0};    // #2601
     // Issue #2299: per-eval physical invalidate observability.
     //   - last_eval: last eval_ptr (as u64) passed to invalidate (0 = null/process-default).
     //   - per_eval_calls_total: invalidate invocations with non-null eval_ptr.
