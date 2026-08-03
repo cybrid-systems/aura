@@ -32,6 +32,7 @@ namespace aura::compiler {
 // below so compiler/ callers see them without an extra
 // import.
 export using ::aura::ast::walk_children;
+export using ::aura::ast::walk_children_hot; // Issue #2614: ChildColumnar-forced walk
 export using ::aura::ast::count_nodes_with_predicate;
 export using ::aura::ast::find_first_node_with;
 export using ::aura::ast::walk_ancestors;
@@ -76,8 +77,9 @@ export struct ASTIndex {
         return tag_index_.nodes(t);
     }
 
-    // Get children of a node as a range
-    auto children_of(aura::ast::NodeId id) const { return ast.get(id).children; }
+    // Issue #2614: children via ChildColumnar SafePCVSpan (not raw PCV span).
+    // Production query/pattern hot path must not take unconstrained children.
+    auto children_of(aura::ast::NodeId id) const { return ast.children_columnar(id); }
 
     // Find calls to a specific function by name
     // Find calls to a specific function by name — uses TagIndex

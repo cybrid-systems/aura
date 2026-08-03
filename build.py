@@ -4231,6 +4231,24 @@ def cmd_hot_pass_hard_dod_coverage():
     return 0
 
 
+def cmd_hot_children_columnar_coverage():
+    """Issue #2614: force ChildColumnar/SoAColumnarFull on walk/query/PCV hot templates.
+
+    Compile-time requires + static_assert; walk_children_hot; no design docs.
+    """
+    print(f"{B}=== hot children columnar coverage (#2614) ==={N}")
+    script = ROOT / "scripts" / "check_hot_children_columnar_2614.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hot children columnar (#2614) coverage contract rows failed")
+        return 1
+    ok("hot children columnar (#2614) coverage clean")
+    return 0
+
+
 def cmd_hot_contract_placement_coverage():
     """Issue #2435: hot vs cold contract placement (production hot OFF).
 
@@ -7159,6 +7177,7 @@ def cmd_gate():
         or cmd_layout_stamp_equality_8field_coverage()
         or cmd_shape_high_mutation_storm_coverage()
         or cmd_hot_pass_hard_dod_coverage()
+        or cmd_hot_children_columnar_coverage()
         or cmd_hot_contract_placement_coverage()
         or cmd_post_compact_lifecycle_coverage()
         or cmd_gc_defer_reconcile_cas_coverage()
@@ -7941,6 +7960,7 @@ def main():
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
+        "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

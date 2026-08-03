@@ -3153,6 +3153,11 @@ aura_add_issue_test(test_flatast_soa_read_guard_2488)
 aura_issue_test_link_light(test_flatast_soa_read_guard_2488)
 add_dependencies(all_test_issue_targets test_flatast_soa_read_guard_2488)
 
+# Issue #2614: force ChildColumnar/SoAColumnarFull on walk/query/PCV hot templates.
+aura_add_issue_test(test_hot_children_columnar_2614)
+aura_issue_test_link_light(test_hot_children_columnar_2614)
+add_dependencies(all_test_issue_targets test_hot_children_columnar_2614)
+
 # Issue #2414: summary_recompute(pool) restores HasKeywordVar / query-mutate bits.
 aura_add_issue_test(test_summary_recompute_sym_2414)
 aura_issue_test_link_light(test_summary_recompute_sym_2414)
