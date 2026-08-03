@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 736 | Preferred destination suites |
-| **Total scanned** | **736** | |
+| `tests/core/test_*.cpp` | 737 | Preferred destination suites |
+| **Total scanned** | **737** | |
 
 ### Related artifacts
 
@@ -35,7 +35,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 76 | 76 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 214 | 214 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 91 | 91 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 22 | 22 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 74 | 74 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 48 | 48 | P2 — small-medium; soa_batch precedent |
@@ -491,6 +491,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_batch.cpp`
 - `tests/compiler/test_linear_boundary_consistency.cpp`
 - `tests/compiler/test_linear_cross_closure_depth2_2612.cpp`
+- `tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp`
 - `tests/compiler/test_linear_cross_closure_escape_2563.cpp`
 - `tests/compiler/test_linear_enforce_boundary_align_2222.cpp`
 - `tests/compiler/test_linear_enforce_production_defaults_2182.cpp`
@@ -1328,13 +1329,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held_2200.cpp` (#2200) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (21)
+### `linear_ownership` — Linear ownership / borrow / consume (22)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (21)
+#### domain/ (22)
 
 - `tests/core/test_capability_single_use_consume_2586.cpp` (#2586) [domain_suite, theme_core] — tests/core/test_capability_single_use_consume_2586.cpp
 - `tests/compiler/test_commit_readiness_score_2553.cpp` (#2553) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
@@ -1344,6 +1345,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hardware_resource_linear_ownership.cpp` (—) [domain_suite, theme_compiler] — test_hardware_resource_linear_ownership.cpp — Issue #306:
 - `tests/compiler/test_lifetime_contract_snapshot_2300.cpp` (#2300) [domain_suite, theme_compiler] — for pin / linear / EnvFrame / GC-defer / residual contract.
 - `tests/compiler/test_linear_cross_closure_depth2_2612.cpp` (#2612) [domain_suite, theme_compiler] — AC1: Default depth 1 → #2563 behavior; nested free-capture outside cone
+- `tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp` (#2623) [domain_suite, theme_compiler] — AC1: One-level capture Soft observe / production force (#2563 lock)
 - `tests/compiler/test_linear_cross_closure_escape_2563.cpp` (#2563) [domain_suite, theme_compiler] — AC1: dirty linear free-captured by Lambda → discovered; hard forces
 - `tests/compiler/test_linear_escape_commit_hardblock_2108.cpp` (#2108) [domain_suite, theme_compiler] — AC1: Cross-batch escape → commit fails; blocked + escape counters
 - `tests/compiler/test_linear_ownership_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_ownership_batch.cpp

@@ -59,6 +59,13 @@ MEMORY_LAYER_SITES = (
 # Format: (file, exempt_token) — presence of token documents intentional skip.
 LINEAR_WIRE_EXEMPTS: tuple[tuple[str, str], ...] = ()
 
+# Issue #2623 AC7: cross-closure env keys in the linear safety inventory
+# (HARD force, DEPTH scan budget; must remain source-cited in audit).
+LINEAR_CROSS_CLOSURE_ENV_KEYS = (
+    "AURA_LINEAR_CROSS_CLOSURE_HARD",
+    "AURA_LINEAR_CROSS_CLOSURE_DEPTH",
+)
+
 
 def _read(rel: str) -> str:
     p = ROOT / rel
@@ -182,6 +189,13 @@ def main(argv: list[str] | None = None) -> int:
     must("Issue #2559", "AC5", emb)
     must("Issue #2559", "AC5", etc)
     must("#2559", "AC5", mut)
+    # Issue #2623 AC7: inventory lists cross-closure env keys + audit cites them.
+    aud = _read("src/compiler/typed_mutation_audit.h")
+    must("LINEAR_CROSS_CLOSURE_ENV_KEYS", "AC5-2623", this)
+    must("#2623", "AC5-2623", this)
+    for env_key in LINEAR_CROSS_CLOSURE_ENV_KEYS:
+        must(env_key, "AC5-2623", this)
+        must(env_key, "AC5-2623", aud)
 
     # ── AC6: test + cmake + build.py ──
     must("ac1_boundary_force_linear", "AC6", test)

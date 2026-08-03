@@ -5633,6 +5633,25 @@ def cmd_linear_cross_closure_depth2_coverage():
     return 0
 
 
+def cmd_linear_cross_closure_depth_trunc_coverage():
+    """Issue #2623: configurable cross-closure depth + production fail-closed trunc.
+
+    Soft depth 1 / production default 2 / hard max 3; DEPTH=0 disables;
+    cone truncation under hard → CrossClosureEscape force.
+    """
+    print(f"{B}=== cross-closure depth + trunc fail-closed coverage (#2623) ==={N}")
+    script = ROOT / "scripts" / "check_linear_cross_closure_depth_trunc_2623.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross-closure depth+trunc (#2623) coverage contract rows failed")
+        return 1
+    ok("cross-closure depth + trunc fail-closed (#2623) coverage clean")
+    return 0
+
+
 def cmd_adt_match_goal_table_coverage():
     """Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
 
@@ -7299,6 +7318,7 @@ def cmd_gate():
         or cmd_coercion_dual_require_coverage()
         or cmd_linear_cross_closure_escape_coverage()
         or cmd_linear_cross_closure_depth2_coverage()
+        or cmd_linear_cross_closure_depth_trunc_coverage()
         or cmd_adt_match_goal_table_coverage()
         or cmd_module_require_freevar_coverage()
         or cmd_try_catch_bind_coverage()
@@ -8165,6 +8185,7 @@ def main():
         "coercion-dual-require": cmd_coercion_dual_require_coverage,
         "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
         "linear-cross-closure-depth2": cmd_linear_cross_closure_depth2_coverage,
+        "linear-cross-closure-depth-trunc": cmd_linear_cross_closure_depth_trunc_coverage,
         "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
         "module-require-freevar": cmd_module_require_freevar_coverage,
         "try-catch-bind": cmd_try_catch_bind_coverage,
