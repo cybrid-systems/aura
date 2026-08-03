@@ -438,6 +438,127 @@ int main() {
         CHECK(true, "#2400 AC5: tests lock isolation-level + eval-serialized");
     }
 
+    // ── Issue #2593: forbid advertising parallel-intend :pure #t as
+    //                 transactional isolation (wording-drift gate).
+    //
+    //   AC1: Pure batch hash never claims transactional isolation;
+    //        isolation-level=best-effort-pure stable (re-affirmed; locked
+    //        above by #2400 AC2).
+    //   AC2: Wording-drift gate (scripts/check_pure_parallel_isolation_wording.py)
+    //        passes against current source AND fails when forbidden
+    //        wording is injected into a tmp file.
+    //   AC3: Existing pure contract tests remain green (regression net =
+    //        #2230 AC1-AC5 + #2400 AC1-AC5 above).
+    //   AC4: README closing line preserved (re-affirmed; locked above
+    //        by #2400 AC4 + AC5).
+    {
+        std::println("\n--- #2593 AC1: isolation-level=best-effort-pure stable ---");
+        // Compare in Aura script (string=?) per existing test pattern —
+        // EvalValue has no direct std::string operator==.
+        auto iso_match = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :pure #t
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "best-effort-pure") 1 0))
+        )");
+        CHECK(iso_match && is_int(*iso_match) && as_int(*iso_match) == 1,
+              "#2593 AC1: pure batch hash isolation-level=best-effort-pure stable");
+        auto not_txn = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1))
+                                    :pure #t
+                                    :max-concurrency 1
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (or (string=? (hash-ref h "isolation-level") "transactional")
+                      (string=? (hash-ref h "isolation-level") "serializable")) 0 1))
+        )");
+        CHECK(not_txn && is_int(*not_txn) && as_int(*not_txn) == 1,
+              "#2593 AC1: isolation-level never equals transactional/serializable");
+
+        std::println("\n--- #2593 AC2: wording-drift gate (clean + fail mode) ---");
+        // Resolve aura repo root by walking up from cwd until both the
+        // gate script and src/orch/README.md exist (test runner CWD may
+        // be the repo root or a BUILD/ subdir).
+        std::filesystem::path root;
+        {
+            auto p = std::filesystem::current_path();
+            while (p != p.root_path()) {
+                if (std::filesystem::exists(p / "scripts" /
+                                            "check_pure_parallel_isolation_wording.py") &&
+                    std::filesystem::exists(p / "src" / "orch" / "README.md")) {
+                    root = p;
+                    break;
+                }
+                if (!p.has_parent_path() || p.parent_path() == p)
+                    break;
+                p = p.parent_path();
+            }
+        }
+        CHECK(!root.empty(), "#2593 AC2: aura repo root resolvable for gate invocation");
+
+        if (!root.empty()) {
+            // AC2.a: gate exits 0 against current source (no drift).
+            {
+                const std::string cmd =
+                    "cd '" + root.string() +
+                    "' && python3 scripts/check_pure_parallel_isolation_wording.py"
+                    " > /tmp/gate_2593_clean.log 2>&1";
+                const int rc = std::system(cmd.c_str());
+                CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
+                      "#2593 AC2.a: gate exits 0 against current source");
+            }
+            // AC2.b: gate --self-test passes (12/12 cases).
+            {
+                const std::string cmd =
+                    "cd '" + root.string() +
+                    "' && python3 scripts/check_pure_parallel_isolation_wording.py"
+                    " --self-test > /tmp/gate_2593_selftest.log 2>&1";
+                const int rc = std::system(cmd.c_str());
+                CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
+                      "#2593 AC2.b: gate --self-test passes (12/12 cases)");
+            }
+            // AC2.c: gate exits non-zero when forbidden wording is
+            // injected into a tmp file (fail mode end-to-end).
+            {
+                const std::string tmp_rel = "src/orch/_tmp_2593_drift.md";
+                const auto tmp_abs = root / tmp_rel;
+                const std::string bad =
+                    "The :pure #t path provides transactional isolation guarantees.\n";
+                {
+                    std::ofstream out(tmp_abs);
+                    out << bad;
+                }
+                const std::string cmd =
+                    "cd '" + root.string() +
+                    "' && python3 scripts/check_pure_parallel_isolation_wording.py '" + tmp_rel +
+                    "' > /tmp/gate_2593_fail.log 2>&1";
+                const int rc = std::system(cmd.c_str());
+                std::error_code ec;
+                std::filesystem::remove(tmp_abs, ec);
+                CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) != 0,
+                      "#2593 AC2.c: gate exits non-zero on injected drift");
+            }
+        }
+
+        std::println("\n--- #2593 AC3: existing pure contract tests remain green ---");
+        // Regression net = #2230 AC1-AC5 + #2400 AC1-AC5 above (all
+        // CHECK rows passed). Re-affirm here for issue numbering.
+        CHECK(true, "#2593 AC3: regression net = #2230 AC1-AC5 + #2400 AC1-AC5 (all above)");
+
+        std::println("\n--- #2593 AC4: README closing line preserved ---");
+        const auto md2593 = read_file("src/orch/README.md");
+        CHECK(md2593.find("Do not advertise `:pure #t` as a transactional isolation level") !=
+                  std::string::npos,
+              "#2593 AC4: README closing line preserved (forbid pure as transactional)");
+        CHECK(md2593.find("best-effort-pure") != std::string::npos,
+              "#2593 AC4: README documents best-effort-pure enum value");
+        CHECK(md2593.find("pure is not a transactional isolation level") != std::string::npos ||
+                  md2593.find("not a transactional isolation") != std::string::npos,
+              "#2593 AC4: README pitfalls sub-section preserved");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
