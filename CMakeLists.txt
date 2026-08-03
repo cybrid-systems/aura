@@ -3737,6 +3737,11 @@ aura_add_issue_test(test_composite_auto_partial_from_cone_2610)
 aura_issue_test_link_llvm_jit(test_composite_auto_partial_from_cone_2610)
 add_dependencies(all_test_issue_targets test_composite_auto_partial_from_cone_2610)
 
+# Issue #2611: stamp mutation_id + narrow_evidence on elided CastOp deopt meta.
+aura_add_issue_test(test_dce_elided_deopt_meta_2611)
+aura_issue_test_link_light(test_dce_elided_deopt_meta_2611)
+add_dependencies(all_test_issue_targets test_dce_elided_deopt_meta_2611)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)

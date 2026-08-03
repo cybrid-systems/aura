@@ -3,6 +3,9 @@
 
 module;
 
+// Issue #2611: note_dce_narrow_hits after evidence-backed elisions.
+#include "compiler/typed_mutation_audit.h"
+
 export module aura.compiler.optimization_passes;
 
 import std;
@@ -58,6 +61,10 @@ inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_partial_runs{0};
 inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_cast_sites_scanned{0};
 // Issue #2556: full-module / no-cone DCE runs (regression counter for AC2).
 inline std::atomic<std::uint64_t> dead_coercion_full_scan_runs{0};
+
+// Issue #2611: re-export dce deopt-meta counter names for query/docs lineage.
+// Authority lives in dce_elided_deopt_meta.h (stamp at CastOp elision).
+inline constexpr int kDceElidedDeoptMetaSchema = 2611;
 
 // Issue #2130: ShapeAwareFold / LinearOwnership dirty-aware peel metrics.
 inline std::atomic<std::uint64_t> shape_fold_dirty_blocks_processed{0};
@@ -478,6 +485,10 @@ public:
             dead_coercion_ir_narrow_evidence_hits.fetch_add(last_narrow_hits_,
                                                             std::memory_order_relaxed);
         }
+        // Issue #2611 / #1884: coordinate last_dce_narrow_hits with evidence elisions.
+        if (last_narrow_hits_ > 0)
+            ::aura::compiler::typed_audit::note_dce_narrow_hits(
+                static_cast<std::uint64_t>(last_narrow_hits_));
         error_ = pass.has_error();
         if (error_)
             opt_pass_errors_total.fetch_add(1, std::memory_order_relaxed);
@@ -544,12 +555,19 @@ public:
             dead_coercion_ir_narrow_evidence_hits.fetch_add(pass.narrow_evidence_hits(),
                                                             std::memory_order_relaxed);
         }
+        // Issue #2611 / #1884: note narrow hits after dirty-cone / full fn peel.
+        if (pass.narrow_evidence_hits() > 0)
+            ::aura::compiler::typed_audit::note_dce_narrow_hits(
+                static_cast<std::uint64_t>(pass.narrow_evidence_hits()));
     }
     void run(aura::ir::BasicBlock& b) {
         aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
         (void)pass.run_on_block(b);
         last_eliminated_ += pass.eliminated_count();
         last_narrow_hits_ += pass.narrow_evidence_hits();
+        if (pass.narrow_evidence_hits() > 0)
+            ::aura::compiler::typed_audit::note_dce_narrow_hits(
+                static_cast<std::uint64_t>(pass.narrow_evidence_hits()));
     }
 
     // Issue #2143: SoaDirtyAwarePass — dirty-only SoA fold (for_each_block).

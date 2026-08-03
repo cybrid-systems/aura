@@ -24,6 +24,7 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/jit_typed_mutation_stats.h"
+#include "compiler/dce_elided_deopt_meta.h" // Issue #2611: elided CastOp deopt meta stamp
 
 export module aura.compiler.pass_impls;
 import std;
@@ -1247,13 +1248,23 @@ public:
                 //   6a type_id match
                 //   6b source shares overlapping narrow_evidence bits
                 //   6c Dynamic target (tag≥3) with any narrow_evidence
+                // Issue #2611: stamp deopt meta (mid + narrow_evidence + type_tag)
+                // before replacing CastOp so Agents can join later deopt to MutationLog.
                 if (instr.narrow_evidence != 0) {
                     auto elide_local = [&](std::uint32_t tid) {
+                        // Issue #2611: site = block|instr|result; mid from provenance.
+                        const auto site = aura::compiler::dce_deopt::make_site_key(
+                            block_index, static_cast<std::uint32_t>(i), ops[0]);
+                        aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(
+                            site, static_cast<std::uint64_t>(instr.provenance),
+                            instr.narrow_evidence, target_tag);
                         block.instructions[i] = aura::ir::IRInstruction{
                             .opcode = aura::ir::IROpcode::Local,
                             .operands = {ops[0], ops[1], 0, 0},
                             .type_id = tid,
                             .narrow_evidence = instr.narrow_evidence,
+                            // Preserve mid chain for JIT deopt / audit join.
+                            .provenance = instr.provenance,
                         };
                         ++eliminated_;
                         ++narrow_evidence_hits_;
@@ -1362,13 +1373,22 @@ public:
                             // source and can be elided
                             // too (Rule 3 → Rule 1
                             // transitively).
+                            const auto out_ev = src->narrow_evidence != 0 ? src->narrow_evidence
+                                                                          : instr.narrow_evidence;
+                            // Issue #2611: stamp when evidence-backed Dynamic elide.
+                            if (out_ev != 0) {
+                                const auto site = aura::compiler::dce_deopt::make_site_key(
+                                    block_index, static_cast<std::uint32_t>(i), ops[0]);
+                                aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(
+                                    site, static_cast<std::uint64_t>(instr.provenance), out_ev,
+                                    target_tag);
+                            }
                             block.instructions[i] = aura::ir::IRInstruction{
                                 .opcode = aura::ir::IROpcode::Local,
                                 .operands = {ops[0], ops[1], 0, 0},
                                 .type_id = src_tid != 0 ? src_tid : instr.type_id,
-                                .narrow_evidence = src->narrow_evidence != 0
-                                                       ? src->narrow_evidence
-                                                       : instr.narrow_evidence,
+                                .narrow_evidence = out_ev,
+                                .provenance = instr.provenance,
                             };
                             ++eliminated_;
                             ++dynamic_hits_;
@@ -1487,7 +1507,16 @@ private:
                     return std::nullopt;
                 return it->second;
             };
-            auto elide_local = [&](std::uint32_t i, std::uint32_t tid, std::uint32_t evidence) {
+            // Issue #2611: stamp evidence-backed CastOp elisions (SoA has no
+            // provenance column — mid=0; AoS path carries provenance mid).
+            auto elide_local = [&](std::uint32_t i, std::uint32_t tid, std::uint32_t evidence,
+                                   std::uint32_t type_tag) {
+                if (evidence != 0) {
+                    const auto site = aura::compiler::dce_deopt::make_site_key(
+                        block.block_id, i - start, func.operand0_[i]);
+                    aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(site, /*mutation_id=*/0,
+                                                                            evidence, type_tag);
+                }
                 func.opcodes_[i] = aura::ir::IROpcode::Local;
                 // operand0 (result) / operand1 (source) unchanged
                 func.operand2_[i] = 0;
@@ -1521,7 +1550,7 @@ private:
                         const auto src_ev = func.narrow_evidence_[si];
                         // 6a: concrete type_id identity under evidence
                         if (cast_tid != 0 && src_tid != 0 && src_tid == cast_tid) {
-                            elide_local(i, cast_tid, cast_ev);
+                            elide_local(i, cast_tid, cast_ev, target_tag);
                             ++narrow_evidence_hits_;
                             continue;
                         }
@@ -1530,7 +1559,8 @@ private:
                             const bool types_ok =
                                 src_tid == 0 || cast_tid == 0 || src_tid == cast_tid;
                             if (types_ok) {
-                                elide_local(i, cast_tid != 0 ? cast_tid : src_tid, cast_ev);
+                                elide_local(i, cast_tid != 0 ? cast_tid : src_tid, cast_ev,
+                                            target_tag);
                                 ++narrow_evidence_hits_;
                                 continue;
                             }
@@ -1538,7 +1568,7 @@ private:
                     }
                     // 6c: Dynamic target + narrow_evidence → passthrough
                     if (target_tag >= 3) {
-                        elide_local(i, cast_tid, cast_ev);
+                        elide_local(i, cast_tid, cast_ev, target_tag);
                         ++narrow_evidence_hits_;
                         continue;
                     }
@@ -1550,7 +1580,8 @@ private:
                         const auto si = *src_opt;
                         const auto src_tid = func.type_ids_[si];
                         if (src_tid != 0 && src_tid == cast_tid) {
-                            elide_local(i, cast_tid, 0);
+                            // Rule 1 identity: no evidence → no deopt meta stamp (AC2).
+                            elide_local(i, cast_tid, 0, target_tag);
                             ++type_prop_hits_;
                             continue;
                         }
@@ -1592,7 +1623,7 @@ private:
                             const auto out_ev = func.narrow_evidence_[si] != 0
                                                     ? func.narrow_evidence_[si]
                                                     : cast_ev;
-                            elide_local(i, out_tid, out_ev);
+                            elide_local(i, out_tid, out_ev, target_tag);
                             ++dynamic_hits_;
                             continue;
                         }
