@@ -3727,6 +3727,11 @@ aura_add_issue_test(test_occurrence_goal_persist_rehydrate_2608)
 aura_issue_test_link_llvm_jit(test_occurrence_goal_persist_rehydrate_2608)
 add_dependencies(all_test_issue_targets test_occurrence_goal_persist_rehydrate_2608)
 
+# Issue #2609: steal/densify hard-AND residual + linear force + type fence.
+aura_add_issue_test(test_steal_densify_linear_type_hard_and_2609)
+aura_issue_test_link_light(test_steal_densify_linear_type_hard_and_2609)
+add_dependencies(all_test_issue_targets test_steal_densify_linear_type_hard_and_2609)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)

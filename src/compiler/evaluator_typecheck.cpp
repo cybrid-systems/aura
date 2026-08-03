@@ -1986,6 +1986,21 @@ void Evaluator::note_type_freshness_after_steal_or_densify() noexcept {
         fence_one(persistent_typechecker_opaque_);
 }
 
+// Issue #2609: pure hard-AND residual + linear force + type fence.
+// Priority residual > linear > type (matches issue body). Zero cost when
+// residual_zero && linear None && fence applied (three cheap checks).
+Evaluator::LinearTypeProvenanceAxis
+Evaluator::evaluate_linear_type_provenance_hard_and(bool residual_zero,
+                                                    bool type_fence_applied) const noexcept {
+    if (!residual_zero)
+        return LinearTypeProvenanceAxis::ResidualGcDefer;
+    if (classify_linear_force() != LinearForceAuthority::None)
+        return LinearTypeProvenanceAxis::LinearForcePending;
+    if (!type_fence_applied)
+        return LinearTypeProvenanceAxis::TypeFenceMiss;
+    return LinearTypeProvenanceAxis::Ok;
+}
+
 // Issue #2180: long-lived TypeChecker for composite commit CS reuse.
 void Evaluator::destroy_commit_type_checker() noexcept {
     // If commit TC is an alias of the #2220 persistent TC, only null the

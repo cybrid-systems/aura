@@ -7938,6 +7938,15 @@ struct CompilerMetrics {
     // under Hard/production → Cancel+Done (mirrors process-wide
     // g_residual_defer_steal_hard_fail_total). Soft leftover is process-wide only.
     std::atomic<std::uint64_t> residual_defer_steal_hard_fail_total{0}; // #2546
+    // Issue #2609: steal-complete / densify hard-AND residual + linear force
+    // + type fence (no half-green). Soft observe aligns #2546 Soft leftover.
+    // last_fail_axis: LinearTypeProvenanceAxis as uint8 (0=ok,1=residual,2=linear,3=fence).
+    std::atomic<std::uint64_t> steal_densify_linear_type_hard_fail_total{0};       // #2609
+    std::atomic<std::uint64_t> steal_densify_linear_type_soft_observe_total{0};    // #2609
+    std::atomic<std::uint64_t> steal_densify_linear_type_fail_residual_total{0};   // #2609
+    std::atomic<std::uint64_t> steal_densify_linear_type_fail_linear_total{0};     // #2609
+    std::atomic<std::uint64_t> steal_densify_linear_type_fail_type_fence_total{0}; // #2609
+    std::atomic<std::uint8_t> steal_densify_linear_type_last_fail_axis{0};         // #2609
     // Issue #2364: PanicCheckpoint residual × densify closed-loop audit.
     // Bumped when audit_panic_defer_after_densify runs a non-free path
     // (densify attempted); cleared/rearmed/hard_fail are outcome counters.

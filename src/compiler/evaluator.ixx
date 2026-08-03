@@ -3851,6 +3851,21 @@ public:
     // successful steal restamp or Moving densify (escape-clear path).
     // Soft free when no live TypeChecker. Hard-fail steal must not call.
     void note_type_freshness_after_steal_or_densify() noexcept;
+    // Issue #2609: pure hard-AND residual + linear force + type fence
+    // for steal-complete / densify success (no half-green). Priority:
+    // residual > linear_force > type_fence. Soft paths use SoftObserve
+    // only; Hard/production cancel Ready enqueue / suppress densify success.
+    enum class LinearTypeProvenanceAxis : std::uint8_t {
+        Ok = 0,
+        ResidualGcDefer = 1,
+        LinearForcePending = 2,
+        TypeFenceMiss = 3,
+    };
+    // Pure evaluate — residual_zero from caller (after optional force_clear);
+    // type_fence_applied true when note_steal fence ran or vacuous (no TC).
+    [[nodiscard]] LinearTypeProvenanceAxis
+    evaluate_linear_type_provenance_hard_and(bool residual_zero,
+                                             bool type_fence_applied) const noexcept;
     // Issue #356: is_env_frame_invalid — true if the frame's
     // version_ has been marked INVALID_VERSION by a post-rollback
     // invalidation pass. Distinct from is_env_frame_stale:

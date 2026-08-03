@@ -2415,10 +2415,10 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
-// Issue #2203 / #2314 / #2351 / #2377 / #2510 / #2546 / #2552: single mandatory
-// steal-complete entry. Called from WorkerThread::try_steal_from on every
-// successful cross-worker steal (strong symbol linked). Production multi-
-// worker MUST link this strong def (Issue #2377) — weak no-op / null ABI
+// Issue #2203 / #2314 / #2351 / #2377 / #2510 / #2546 / #2552 / #2609:
+// single mandatory steal-complete entry. Called from WorkerThread::try_steal_from
+// on every successful cross-worker steal (strong symbol linked). Production
+// multi-worker MUST link this strong def (Issue #2377) — weak no-op / null ABI
 // is fail-closed under production.
 //
 // ── steal-complete transaction (one atomic migration path; do not reorder) ──
@@ -2439,6 +2439,9 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
 //        force_clear residual if non-zero; if still non-zero under Hard →
 //        cancel + Done (same fail-closed shape as LayoutStamp hard-fail).
 //        Soft: leftover metric only, no cancel. Zero cost when already 0.
+//   9. Issue #2609: hard-AND residual + linear force authority + type fence
+//        (extends #2546; pure evaluate_linear_type_provenance_hard_and).
+//        Soft: soft-observe metric only. Zero cost when all axes clean.
 // Soft: steps 3–4 free when residual zero / stamp unset (relaxed loads).
 // Does NOT clear resume_layout_stamp (resume dual-check retains it — #2351).
 // Does NOT reemit / SoftEnter (leave to Guard / #2114).
@@ -2602,8 +2605,12 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // ABI). Skipped after hard-fail so generation-behind fiber never gets
     // a green restamp that would look Ready-safe. Idempotent with resume
     // refresh_after_fiber_migration (#2194). Does NOT clear layout stamp.
+    // Issue #2609: track type fence application for hard-AND (vacuous true
+    // when no live evaluator — Soft zero cost / no TC).
+    bool type_fence_applied = true;
     if (fiber && !hard_failed) {
         if (auto* ev = evaluator_for_scheduler_hooks()) {
+            type_fence_applied = false;
             const auto hint_env = fiber->resume_env_hint();
             const auto expected_epoch = fiber->resume_bridge_epoch_hint();
             (void)ev->refresh_stale_frames_after_steal(hint_env, expected_epoch);
@@ -2618,6 +2625,7 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             // LayoutStamp/provenance restamp. Soft free when no live TC.
             // Hard-fail path above skips this (AC2: goals preserved).
             ev->note_type_freshness_after_steal_or_densify();
+            type_fence_applied = true; // fence entry ran (same-epoch advance ok)
         }
     }
 
@@ -2708,6 +2716,15 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                         // Feed lifetime / mutation-concurrency health residual axis.
                         m->mutation_boundary_residual_defer_hard_fail_total.fetch_add(
                             1, std::memory_order_relaxed);
+                        // Issue #2609: combined hard-AND residual axis.
+                        m->steal_densify_linear_type_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->steal_densify_linear_type_fail_residual_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->steal_densify_linear_type_last_fail_axis.store(
+                            static_cast<std::uint8_t>(
+                                Evaluator::LinearTypeProvenanceAxis::ResidualGcDefer),
+                            std::memory_order_relaxed);
                     }
                 }
                 fiber->request_cancel();
@@ -2717,9 +2734,53 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                 // Soft: residual left uncleared — metric only, no cancel (AC3).
                 aura::gc_hooks::g_residual_defer_steal_soft_leftover_total.fetch_add(
                     1, std::memory_order_relaxed);
+                if (auto* ev = evaluator_for_scheduler_hooks()) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                        m->steal_densify_linear_type_soft_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
             }
         }
     }
+
+    // (9) Issue #2609: hard-AND residual (already 0 here) + linear force
+    // authority + type fence. Extends #2546 so steal-complete cannot leave
+    // half-green linear sticky / skipped type fence under Hard/production.
+    // Soft: observe-only (align #2546 Soft leftover). Zero cost when clean.
+    if (fiber && !hard_failed) {
+        if (auto* ev = evaluator_for_scheduler_hooks()) {
+            const bool residual_zero = (aura::gc_hooks::defer_reasons_snapshot() == 0);
+            const auto axis =
+                ev->evaluate_linear_type_provenance_hard_and(residual_zero, type_fence_applied);
+            if (axis != Evaluator::LinearTypeProvenanceAxis::Ok) {
+                if (aura::serve::is_steal_snapshot_hard_mode()) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                        m->steal_densify_linear_type_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->steal_densify_linear_type_last_fail_axis.store(
+                            static_cast<std::uint8_t>(axis), std::memory_order_relaxed);
+                        if (axis == Evaluator::LinearTypeProvenanceAxis::LinearForcePending)
+                            m->steal_densify_linear_type_fail_linear_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        else if (axis == Evaluator::LinearTypeProvenanceAxis::TypeFenceMiss)
+                            m->steal_densify_linear_type_fail_type_fence_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        else if (axis == Evaluator::LinearTypeProvenanceAxis::ResidualGcDefer)
+                            m->steal_densify_linear_type_fail_residual_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    fiber->request_cancel();
+                    fiber->set_state(aura::serve::FiberState::Done);
+                    hard_failed = true;
+                } else {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                        m->steal_densify_linear_type_soft_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+    (void)hard_failed; // reserved for future post-gate steps
 }
 
 // Issue #2203: test-only helper — seed fiber yield-checkpoint evaluator_id
