@@ -1056,15 +1056,22 @@ export bool analyze_linear_escape_for_dirty(const aura::ast::FlatAST& flat,
                                             std::vector<OwnershipNote>& notes_out,
                                             LinearEscapeAnalysisResult& out);
 
-// Issue #2563: cross-closure / one-level free-capture linear escape discovery.
+// Issue #2563 / #2612: cross-closure free-capture linear escape discovery.
 // Scans Lambda sites (cone-capped) for free uses of dirty linear bindings that
-// are not lambda params. Does not recurse into nested lambdas (one-level AC).
+// are not lambda params. Default depth 1 skips nested Lambda interiors
+// (outer for-loop still visits nested Lambda nodes whose id is in range).
+// AURA_LINEAR_CROSS_CLOSURE_DEPTH=2 (max 2) enters one nested Lambda level
+// from within a body walk so free-captures under nested closures remain
+// discoverable when nested node ids fall outside the cone id window.
 // Returns true when no escape sites found. cone_cap=0 → scan full size.
 export struct CrossClosureEscapeResult {
-    std::size_t sites_scanned = 0;   // Lambda nodes visited
-    std::size_t escape_sites = 0;    // free dirty linear captures
-    std::size_t nodes_scanned = 0;   // AST nodes walked (≤ cone_cap)
-    std::size_t cap_truncations = 0; // 1 if cone_cap truncated workspace
+    std::size_t sites_scanned = 0;       // Lambda nodes visited (top-level loop)
+    std::size_t escape_sites = 0;        // free dirty linear captures
+    std::size_t nodes_scanned = 0;       // AST nodes walked (cone-bounded)
+    std::size_t cap_truncations = 0;     // 1 if cone_cap truncated workspace
+    std::size_t depth_cap = 1;           // effective depth (1 or 2) for this run
+    std::size_t depth2_entries = 0;      // nested Lambda bodies entered (#2612)
+    std::size_t depth2_escape_sites = 0; // escapes found at nested depth only
 };
 
 export bool

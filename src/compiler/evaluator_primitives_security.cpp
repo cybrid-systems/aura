@@ -3587,6 +3587,26 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                          .linear_cross_closure_wired.load(std::memory_order_relaxed)))},
                 {"schema-2563", make_int(2563)},
                 {"issue-2563", make_int(2563)},
+                // Issue #2612: optional depth-2 nested free-capture (still cone-capped).
+                {"linear-cross-closure-depth-cap",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::linear_cross_closure_depth_cap()))},
+                {"linear-cross-closure-depth2-entries-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_depth2_entries_total.load(
+                             std::memory_order_relaxed)))},
+                {"linear-cross-closure-depth2-escape-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_depth2_escape_total.load(
+                             std::memory_order_relaxed)))},
+                {"linear-cross-closure-depth-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .linear_cross_closure_depth_wired.load(std::memory_order_relaxed)))},
+                {"schema-2612", make_int(2612)},
+                {"issue-2612", make_int(2612)},
             };
             return build_hash(kv);
         });

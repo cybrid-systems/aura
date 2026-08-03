@@ -283,6 +283,12 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> linear_cross_closure_observe_total{0};
     std::atomic<std::uint64_t> linear_cross_closure_cap_trunc_total{0};
     std::atomic<std::uint32_t> linear_cross_closure_wired{1};
+    // Issue #2612: optional depth-2 nested Lambda free-capture (still cone-capped).
+    // depth2_entries_total: nested Lambda bodies entered under depth_cap>=2.
+    // depth2_escape_total: free dirty linear captures found only at nested depth.
+    std::atomic<std::uint64_t> linear_cross_closure_depth2_entries_total{0};
+    std::atomic<std::uint64_t> linear_cross_closure_depth2_escape_total{0};
+    std::atomic<std::uint32_t> linear_cross_closure_depth_wired{1};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -947,6 +953,26 @@ struct InvariantAuditResult {
     return production_defaults_active() || get_strategy() == AuditStrategy::Full;
 }
 
+// Issue #2612: free-capture discovery depth (default 1; max 2).
+// Soft default remains 1 (no new force / no nested walk). Production may
+// opt-in with AURA_LINEAR_CROSS_CLOSURE_DEPTH=2 under the same cone_cap.
+// Values >2 clamp to 2; 0 or empty → 1. Hard path still uses
+// linear_cross_closure_hard_enabled() only (depth does not force alone).
+[[nodiscard]] inline int linear_cross_closure_depth_cap() noexcept {
+    const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    if (!e || !*e)
+        return 1;
+    // Accept "2" / "2..." only for depth-2; anything else → 1 (safe default).
+    if (e[0] == '2')
+        return 2;
+    if (e[0] == '1' || e[0] == '0')
+        return 1;
+    // Non-numeric / large → clamp to max 2 if starts with digit >2.
+    if (e[0] >= '3' && e[0] <= '9')
+        return 2;
+    return 1;
+}
+
 // Issue #2027: stamp composite audit outcome (nested and/or atomic_batch).
 inline void record_composite_invariant_audit(bool nested, bool batch_active,
                                              const InvariantAuditResult& r) noexcept {
@@ -1369,6 +1395,13 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.linear_cross_closure_cap_trunc_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.linear_cross_closure_wired.store(1, std::memory_order_relaxed);
+    // Issue #2612
+    g_typed_mutation_audit_counters.linear_cross_closure_depth2_entries_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_depth2_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_depth_wired.store(
+        1, std::memory_order_relaxed);
     apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)

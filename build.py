@@ -5430,6 +5430,24 @@ def cmd_linear_cross_closure_escape_coverage():
     return 0
 
 
+def cmd_linear_cross_closure_depth2_coverage():
+    """Issue #2612: optional depth-2 cross-closure free-capture (cone-capped).
+
+    AURA_LINEAR_CROSS_CLOSURE_DEPTH default 1; max 2; Soft observe unless hard.
+    """
+    print(f"{B}=== cross-closure depth-2 free-capture coverage (#2612) ==={N}")
+    script = ROOT / "scripts" / "check_linear_cross_closure_depth2_2612.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross-closure depth-2 free-capture (#2612) coverage contract rows failed")
+        return 1
+    ok("cross-closure depth-2 free-capture (#2612) coverage clean")
+    return 0
+
+
 def cmd_adt_match_goal_table_coverage():
     """Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
 
@@ -7062,6 +7080,7 @@ def cmd_gate():
         or cmd_blame_soft_recover_coverage()
         or cmd_coercion_dual_require_coverage()
         or cmd_linear_cross_closure_escape_coverage()
+        or cmd_linear_cross_closure_depth2_coverage()
         or cmd_adt_match_goal_table_coverage()
         or cmd_module_require_freevar_coverage()
         or cmd_try_catch_bind_coverage()
@@ -7906,6 +7925,7 @@ def main():
         "blame-soft-recover": cmd_blame_soft_recover_coverage,
         "coercion-dual-require": cmd_coercion_dual_require_coverage,
         "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
+        "linear-cross-closure-depth2": cmd_linear_cross_closure_depth2_coverage,
         "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
         "module-require-freevar": cmd_module_require_freevar_coverage,
         "try-catch-bind": cmd_try_catch_bind_coverage,
