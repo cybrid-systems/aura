@@ -5,9 +5,10 @@
 // pure-aggregate pattern). Soft / empty remap / no Moving → trivially ok.
 //
 // Force-reason priority (most severe first):
-//   pin > linear > type > root_remap > closure > envframe > none
-// Codes (also returned as string for observability): pin / linear / type /
-// root_remap / closure / envframe / none. (#2353 adds type axis.)
+//   pin > untracked > panic_residual > linear > type > root_remap > closure > envframe > none
+// Codes (also returned as string for observability): pin / untracked /
+// panic_residual / linear / type / root_remap / closure / envframe / none.
+// (#2353 adds type axis; #2595 adds untracked + panic_residual axes.)
 //
 // Used by Phase 5 mutation boundary driver (evaluator_mutation_boundary.cpp)
 // to gate outermost success publishes — mirrors pin_contract_held gating
@@ -52,6 +53,17 @@ namespace aura::core::densify_consistency {
 // Soft / empty / no Moving trivially ok (all fields default true).
 struct DensifyConsistencyReport {
     bool pin_ok = true;
+    // Issue #2595: untracked axis — Moving densify must leave no
+    // incomplete-remap external roots (live_compact untracked_kept_count
+    // path; any_moving_incomplete_remap from AdaptiveCompactResult aggregate
+    // OR #2495 process-wide g_moving_untracked_external_roots_total delta
+    // during the densify window). Default true (no Moving / Soft).
+    bool untracked_ok = true;
+    // Issue #2595: panic_residual axis — if any PanicCheckpoint is live
+    // AND not deferred (gc_deferred_for_evaluator), Phase 5 must NOT
+    // claim success (panic in progress can leak half-green densify).
+    // Default true (no panic_cp OR gc_deferred_for_evaluator is true).
+    bool panic_residual_ok = true;
     bool linear_ok = true;
     // Issue #2353: type-axis after densify/steal (ownership + optional partial).
     // Default true (no densify / Soft / no linear → vacuous ok).
@@ -61,14 +73,20 @@ struct DensifyConsistencyReport {
     bool envframe_ok = true;
 
     [[nodiscard]] bool overall_ok() const noexcept {
-        return pin_ok && linear_ok && type_ok && root_remap_ok && closure_remount_ok && envframe_ok;
+        return pin_ok && untracked_ok && panic_residual_ok && linear_ok && type_ok &&
+               root_remap_ok && closure_remount_ok && envframe_ok;
     }
 
-    // force_reason priority: pin > linear > type > root_remap > closure > envframe > none.
+    // force_reason priority:
+    //   pin > untracked > panic_residual > linear > type > root_remap > closure > envframe > none.
     // Returns the *most-severe* failing axis (or "none" when all ok).
     [[nodiscard]] const char* force_reason() const noexcept {
         if (!pin_ok)
             return "pin";
+        if (!untracked_ok)
+            return "untracked";
+        if (!panic_residual_ok)
+            return "panic_residual";
         if (!linear_ok)
             return "linear";
         if (!type_ok)
@@ -87,6 +105,14 @@ struct DensifyConsistencyReport {
 // computes a DensifyConsistencyReport with !overall_ok(). Exposed via
 // the query surface (query:lifetime-contract-snapshot additive keys).
 inline std::atomic<std::uint64_t> g_densify_consistency_fail_total{0};
+
+// Issue #2595: unified gate fail counter — additive schema key. Bumped
+// when Phase 5 / densify success path computes a report with
+// !overall_ok() under production_defaults (or via the gate's own
+// evaluate path). Mirrors g_densify_consistency_fail_total (which
+// covers all paths); this one is the unified-gate fail-closed contract
+// for AI self-mod under Moving default ON.
+inline std::atomic<std::uint64_t> g_densify_unified_gate_fail_total{0};
 
 // Issue #2361 / #2376: last Phase 5 densify envframe_ok (1=ok, 0=fail).
 // Query surface reads this instead of forcing true; Soft / no densify leaves 1.
@@ -138,6 +164,19 @@ struct DensifyRemapPairingResult {
 
 inline void bump_densify_consistency_fail_total() noexcept {
     g_densify_consistency_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t densify_unified_gate_fail_total() noexcept {
+    return g_densify_unified_gate_fail_total.load(std::memory_order_relaxed);
+}
+
+inline void bump_densify_unified_gate_fail_total() noexcept {
+    g_densify_unified_gate_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Test helper: reset unified gate counter for hermetic tests.
+inline void reset_densify_unified_gate_for_test() noexcept {
+    g_densify_unified_gate_fail_total.store(0, std::memory_order_relaxed);
 }
 
 inline void note_last_densify_envframe_ok(bool ok,
@@ -209,6 +248,10 @@ inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
     std::string_view v(r);
     if (v == "pin")
         return "pin";
+    if (v == "untracked")
+        return "untracked";
+    if (v == "panic_residual")
+        return "panic_residual";
     if (v == "linear")
         return "linear";
     if (v == "type")

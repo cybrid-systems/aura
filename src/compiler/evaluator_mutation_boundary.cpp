@@ -1975,12 +1975,36 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // pin_contract_held does (no path where scan fail is metrics-only —
         // mirrors #2266 fail-closed). Cross-layer inventory gate: #2559.
         std::uint64_t scan_fail_baseline = 0;
+        // Issue #2595: untracked external roots counter baseline (#2495
+        // source). Any growth during the densify window → untracked_ok=false
+        // and the unified densify gate (overall_ok) fails. Same fail-closed
+        // shape as the envframe scan baseline above. Closes the
+        // half-green window where pin ok + root_remap ok + envframe ok but
+        // any arena left untracked_kept_count > 0 after Moving relocate.
+        std::uint64_t untracked_baseline = 0;
+        // Issue #2595: panic checkpoint depth baseline (gc_hooks). Phase 5
+        // may not claim success while a panic checkpoint is live AND not
+        // deferred via gc_deferred_for_evaluator (half-green densify can
+        // leak panic mid-stack). Baseline captured before compact; post-
+        // compact depth (>= baseline + any new arm) drives panic_residual_ok
+        // under production / when !gc_deferred_for_evaluator.
+        std::uint32_t panic_depth_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
             // Issue #2497: snapshot densify-ownership-scan fail baseline before
             // compact runs (covers compact callbacks + pairing + injected fails
             // across the entire Moving densify window).
             scan_fail_baseline = aura::core::envframe_lifetime::
                 envframe_lifetime_densify_ownership_scan_fail_total();
+            // Issue #2595: capture untracked + panic baselines for the
+            // densify success gate. Both are read AFTER compact_all_moving_pinned
+            // completes (paired with the envframe scan-fail baseline pattern
+            // above) so any test injection or production callback that bumps
+            // either counter during the densify window surfaces as
+            // !untracked_ok / !panic_residual_ok.
+            untracked_baseline =
+                aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
+            panic_depth_baseline =
+                aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
                                        : aura::ast::AdaptiveCompactResult{};
@@ -2048,6 +2072,29 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2499: pin_ok is pin-verify axis only when RootRemap alone fails
         // (densify_pin_axis_ok); unified pin_contract_held still gates success.
         densify_consistency.pin_ok = densify_pin_axis_ok;
+        // Issue #2595: untracked_ok = no moving_incomplete_remap delta during
+        // the densify window. Soft / no Moving → vacuous true. The untracked
+        // axis catches #2495 half-green (pin_ok true + any arena leaving
+        // untracked_kept_count > 0 after relocate_tracked_objects_for_moving_).
+        // Read the delta AFTER compact_all_moving_pinned + pairing (any
+        // injection during either window bumps g_moving_untracked_external_roots_total).
+        const auto untracked_after =
+            aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
+        const bool untracked_ok = !had_moving_densify || (untracked_after <= untracked_baseline);
+        densify_consistency.untracked_ok = untracked_ok;
+        // Issue #2595: panic_residual_ok = no live panic_cp OR
+        // gc_deferred_for_evaluator is true (defer armed so the panic can
+        // be drained before Phase 5 publishes success). If a panic_cp is
+        // armed mid-densify AND the eval isn't deferring, !panic_residual_ok
+        // so the unified gate fails (half-green densify can leak panic
+        // mid-stack into a published success).
+        const auto panic_depth_after =
+            aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
+        const bool panic_cp_live_now = panic_depth_after > 0;
+        const bool panic_deferred_now =
+            aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_));
+        const bool panic_residual_ok = !panic_cp_live_now || panic_deferred_now;
+        densify_consistency.panic_residual_ok = panic_residual_ok;
         // Issue #2353: linear_ok + type_ok from post-densify revalidate
         // (pin-subsumed linear pin verify remains in pin_ok; this is the
         // ownership + type axis complementary to #2341 object-axis).
@@ -2145,6 +2192,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // when AURA_DENSIFY_CONTRACT=hard (aligns RootRemap hard
             // contract pattern at root_remap_pass.ixx:380).
             aura::core::densify_consistency::bump_densify_consistency_fail_total();
+            // Issue #2595: unified gate fail counter (additive schema key
+            // densify_unified_gate_fail_total). Bumps in lockstep with the
+            // existing g_densify_consistency_fail_total so production
+            // dashboards can distinguish the new half-green axes (untracked,
+            // panic_residual) from the legacy #2341 axes (pin / linear /
+            // type / root_remap / closure / envframe).
+            aura::core::densify_consistency::bump_densify_unified_gate_fail_total();
             const char* contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
             const bool hard_fail = (contract_env != nullptr && std::string(contract_env) == "hard");
             if (hard_fail) {
