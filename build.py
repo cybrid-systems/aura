@@ -2786,6 +2786,29 @@ def cmd_densify_unified_gate_2595_coverage():
     return 0
 
 
+def cmd_moving_untracked_production_hard_2596_coverage():
+    """Issue #2596: production default AURA_MOVING_UNTRACKED=hard
+    (align with Moving default ON, #2256).
+
+    Closes silent-UAF risk: #2256 made Moving production default ON but
+    #2495 only hard-aborted when explicitly env=hard. Production lock
+    forces the hard abort path so incomplete-remap always blocks under
+    production, with explicit env=off as the operator override. Soft /
+    sandbox=off + env unset keeps observe-only.
+    """
+    print(f"{B}=== moving untracked production hard coverage (#2596) ==={N}")
+    script = ROOT / "scripts" / "check_moving_untracked_production_hard_2596.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving untracked production hard (#2596) coverage contract rows failed")
+        return 1
+    ok("moving untracked production hard (#2596) coverage clean")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6656,6 +6679,7 @@ def cmd_gate():
         or cmd_pure_parallel_isolation_wording_coverage()
         or cmd_audit_mid_fallback_slo_2594_coverage()
         or cmd_densify_unified_gate_2595_coverage()
+        or cmd_moving_untracked_production_hard_2596_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()

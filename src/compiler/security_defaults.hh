@@ -533,6 +533,42 @@ inline void apply_production_security_defaults() noexcept {
     //     AURA_LOCK_ORDER_AUDIT=0|off forces off under production; =1 forces soft.
     ::aura::compiler::lock_order::apply_production_lock_order_default(
         /*sandbox_off=*/dev_off);
+
+    // 14) Issue #2596: production default AURA_MOVING_UNTRACKED=hard (align
+    //     with Moving default ON, #2256). Closes silent-UAF risk under
+    //     sustained agent mutate when #2256's Moving compact production
+    //     default ON is paired with #2495's untracked detection (which sets
+    //     moving_incomplete_remap + clears pin_contract_held but only
+    //     hard-aborts when explicitly env=hard). Operator env always wins
+    //     (AC3: AURA_MOVING_UNTRACKED=off under production keeps Soft).
+    //     Soft / AURA_SANDBOX=off keeps observe-only unless env=hard
+    //     (operator override wins). Existing #2495 hard-abort path at
+    //     arena.ixx:1360 reads this pref and sets
+    //     moving_blocked_precondition + soft_gated when pref > 0.
+    {
+        using aura::ast::g_moving_untracked_hard_abort_pref;
+        const char* mvt = std::getenv("AURA_MOVING_UNTRACKED");
+        int env_pref = -1;
+        if (mvt && *mvt) {
+            std::string_view mv(mvt);
+            if (mv == "hard" || mv == "1" || mv == "on" || mv == "true" || mv == "yes") {
+                env_pref = 1;
+            } else if (mv == "off" || mv == "0" || mv == "soft" || mv == "false" || mv == "no") {
+                env_pref = 0;
+            }
+        }
+        if (env_pref != -1) {
+            // Operator env always wins (AC3).
+            g_moving_untracked_hard_abort_pref.store(env_pref, std::memory_order_relaxed);
+        } else if (!dev_off) {
+            // Production default: lock to hard when unset (align with
+            // #2256 Moving default ON — silent-UAF risk under sustained
+            // agent mutate). Soft / sandbox=off keeps observe-only.
+            if (g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) < 0) {
+                g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+            }
+        }
+    }
 }
 
 } // namespace aura::compiler::security
