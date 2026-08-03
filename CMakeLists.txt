@@ -3807,6 +3807,11 @@ aura_add_issue_test(test_linear_cross_closure_depth2_2612)
 aura_issue_test_link_light(test_linear_cross_closure_depth2_2612)
 add_dependencies(all_test_issue_targets test_linear_cross_closure_depth2_2612)
 
+# Issue #2613: unified query:type-linear-commit-health (readiness×linear×coercion×occurrence).
+aura_add_issue_test(test_type_linear_commit_health_2613)
+aura_issue_test_link_light(test_type_linear_commit_health_2613)
+add_dependencies(all_test_issue_targets test_type_linear_commit_health_2613)
+
 # Issue #2564: ADT match exhaustiveness goal table + delta reverify roots
 aura_add_issue_test(test_adt_match_goal_table_2564)
 aura_issue_test_link_light(test_adt_match_goal_table_2564)
