@@ -147,6 +147,15 @@ struct MultiFiberMailboxStats {
     // (query-visible) so orch can refuse new mutate until depth clears.
     std::atomic<std::uint64_t> mailbox_hold_starvation_hard_total{0};    // #2551
     std::atomic<std::uint64_t> agent_throttle_for_mailbox_starvation{0}; // #2551 0/1
+    // Issue #2587: count of mutate rejects gated by agent_throttle_for_
+    // mailbox_starvation (mirror capability_revoke_total breakdown —
+    // hard reject vs metric-only soft path). Bumped from every gate site
+    // (TransactionGuard ctor + MutationBoundaryGuard::try_acquire +
+    // try_acquire_for_region + evaluator_primitives_mutate.cpp public
+    // prims); production_defaults_active at the call site decides whether
+    // a bumped count accompanies a Rejected result (hard) or just a metric
+    // tick (soft — single relaxed load path; AC2 / AC5).
+    std::atomic<std::uint64_t> mutate_rejected_mailbox_starvation_total{0}; // #2587
 };
 
 // Process-wide aggregate (tests / observability).
@@ -199,6 +208,31 @@ inline void note_mailbox_mutation_hold_defer() noexcept {
 // Called on free drain path (depth==0) and when open window closes (1→0).
 inline void clear_agent_throttle_for_mailbox_starvation() noexcept {
     g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2587: zero-cost probe for agent_throttle_for_mailbox_starvation.
+// Single relaxed atomic load (no side effects, no syscall). When the flag
+// is 0 the inlined load + branch is the entire hot-path overhead (AC5 —
+// zero cost when flag == 0). MutationBoundaryGuard::try_acquire (host +
+// fiber soft path), TransactionGuard ctor (#2555 unified entry), and the
+// public mutate:* prims in evaluator_primitives_mutate.cpp call this
+// before admitting new mutate work; the call site decides hard reject vs
+// metric-only soft tick based on production_defaults_active() (#2543
+// sibling pattern). Header-inline + always_inline so the relaxed load
+// folds into the gate branch with no extra symbol cost in caller TUs.
+[[nodiscard, gnu::always_inline]] inline bool aura_orch_mailbox_starvation_throttled() noexcept {
+    return g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
+               std::memory_order_relaxed) != 0;
+}
+
+// Issue #2587: bump the throttle-rejected counter at every gate site.
+// Hard-reject / metric-only decision lives at the call site so callers
+// can decide whether production_defaults_active() is the actual hard
+// gate (Strict/Restricted) or whether to allow the work (Soft / Off).
+// Header-inline so the relaxed fetch_add folds with the caller's branch.
+[[gnu::always_inline]] inline void note_mutate_rejected_mailbox_starvation() noexcept {
+    g_mf_mailbox_stats.mutate_rejected_mailbox_starvation_total.fetch_add(
+        1, std::memory_order_relaxed);
 }
 
 // Issue #2378: successful enqueue after possible open defer window.

@@ -403,6 +403,19 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-hold-starvation-hard-wired", 1);
             insert_kv("schema-2551", 2551);
             insert_kv("issue-2551", 2551);
+            // Issue #2587: mutate admission gate counter (hard reject
+            // vs metric-only soft path; AC1 / AC2). Zero cost when
+            // agent-throttle flag == 0 — single relaxed load at every
+            // gate site (try_acquire + try_acquire_for_region +
+            // public mutate prims + TransactionGuard host callback
+            // transitively).
+            insert_kv("mutate-rejected-mailbox-starvation-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mutate_rejected_mailbox_starvation_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mutate-rejected-mailbox-starvation-wired", 1);
+            insert_kv("schema-2587", 2587);
+            insert_kv("issue-2587", 2587);
             // Issue #2347: Strict hard audit + optional Guard-window force-rollback.
             // Soft path leaves hard-total / force-rollback-total at 0; Policy A
             // soft reject remains on recv-rejected-in-mutation-boundary.
