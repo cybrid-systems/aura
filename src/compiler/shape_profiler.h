@@ -112,6 +112,15 @@ inline constexpr std::uint32_t kShapeStormForceReasonNone = 0;
 inline constexpr std::uint32_t kShapeStormForceReasonThreshold = 1;
 inline constexpr std::uint32_t kShapeStormForceReasonAdaptiveSuppress = 3;
 inline constexpr int kShapeStormAdaptiveIssue = 2526;
+// Issue #2617: hard coverage — compact path must never feed deopt-storm ring.
+inline constexpr int kShapeCompactStormIsolationIssue = 2617;
+inline std::atomic<std::uint64_t>& g_shape_compact_storm_isolation_wired_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{1};
+    return v;
+}
+[[nodiscard]] inline std::uint64_t shape_compact_storm_isolation_wired() noexcept {
+    return g_shape_compact_storm_isolation_wired_atomic().load(std::memory_order_acquire);
+}
 inline std::atomic<std::uint32_t>& g_shape_storm_force_reason_atomic() noexcept {
     static std::atomic<std::uint32_t> v{kShapeStormForceReasonNone};
     return v;
@@ -170,13 +179,15 @@ public:
     // Unlike reset(), preserves profiles and bumps version per fn.
     void invalidate_all() noexcept;
 
-    // Issue #1521: Arena compact / defrag coordination.
+    // Issue #1521 / #2617: Arena compact / defrag coordination.
     // Soft path for multi-round AI mutation under GC pressure:
     //   - Bumps version on every tracked profile (JIT guards notice)
     //   - Fires deopt hook with kShapeDirtyScopeArenaCompact
     //   - Preserves is_stable + history (value-tag shapes are address-
     //     independent; full invalidate_all would thrash deopt storms)
     //   - Does NOT feed the deopt-storm ring (compact is expected pressure)
+    //   - Does NOT bump mutation_induced_invalidations_ (#2617 hard contract)
+    // Gate: scripts/check_shape_compact_storm_isolation_2617.py
     // Returns number of profiles touched.
     std::uint32_t on_arena_compact() noexcept;
 
@@ -387,7 +398,9 @@ private:
     };
 
     void maybe_evict_profiles_();
-    // Issue #1468: update deopt-storm ring + active flag.
+    // Issue #1468 / #2617: update deopt-storm ring + active flag.
+    // MUTATION-ONLY callers: invalidate_unlocked_ / record_shape stability-loss.
+    // Forbidden from on_arena_compact (gate + runtime ring-count contract).
     void update_deopt_storm_state_(FnKey fn) noexcept;
 
     // Issue #2141: guards profiles_ / history / deopt ring / config knobs.

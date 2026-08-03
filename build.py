@@ -4285,6 +4285,25 @@ def cmd_value_tag_hotpath_ban_coverage():
     return 0
 
 
+def cmd_shape_compact_storm_isolation_coverage():
+    """Issue #2617: compact path must never feed deopt-storm ring as mutation.
+
+    Gate forbids on_arena_compact → update_deopt_storm_state_; pure-compact
+    stress keeps Threshold force-reason quiet; mutation still storms.
+    """
+    print(f"{B}=== shape compact storm isolation coverage (#2617) ==={N}")
+    script = ROOT / "scripts" / "check_shape_compact_storm_isolation_2617.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape compact storm isolation (#2617) coverage contract rows failed")
+        return 1
+    ok("shape compact storm isolation (#2617) coverage clean")
+    return 0
+
+
 def cmd_hot_contract_placement_coverage():
     """Issue #2435: hot vs cold contract placement (production hot OFF).
 
@@ -7216,6 +7235,7 @@ def cmd_gate():
         or cmd_hot_pass_hard_dod_coverage()
         or cmd_hot_children_columnar_coverage()
         or cmd_value_tag_hotpath_ban_coverage()
+        or cmd_shape_compact_storm_isolation_coverage()
         or cmd_hot_contract_placement_coverage()
         or cmd_post_compact_lifecycle_coverage()
         or cmd_gc_defer_reconcile_cas_coverage()
@@ -8001,6 +8021,7 @@ def main():
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
+        "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
         "blame-soft-recover": cmd_blame_soft_recover_coverage,

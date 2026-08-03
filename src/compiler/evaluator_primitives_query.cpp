@@ -13112,7 +13112,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             health_bp -= iso_pen;
             if (health_bp < 0)
                 health_bp = 0;
-            // Issue #2526: capacity 32 for adaptive keys + schema-2526.
+            // Issue #2526 / #2617: capacity 32 for adaptive + compact-isolation keys.
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -13169,6 +13169,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("force-reason-adaptive-suppress",
                       static_cast<std::int64_t>(shape::kShapeStormForceReasonAdaptiveSuppress));
             insert_kv("adaptive-policy-wired", 1);
+            // Issue #2617: compact path never feeds deopt-storm ring (gate + contract).
+            insert_kv("schema-2617", 2617);
+            insert_kv("issue-2617", 2617);
+            insert_kv("compact-storm-isolated-wired",
+                      static_cast<std::int64_t>(shape::shape_compact_storm_isolation_wired()));
+            insert_kv("deopt-storm-compact-suppressed",
+                      static_cast<std::int64_t>(
+                          shape::deopt_storm_compact_suppressed.load(std::memory_order_relaxed)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

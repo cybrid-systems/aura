@@ -2748,6 +2748,11 @@ aura_add_issue_test(test_value_tag_hotpath_ban_2616)
 aura_issue_test_link_light(test_value_tag_hotpath_ban_2616)
 add_dependencies(all_test_issue_targets test_value_tag_hotpath_ban_2616)
 
+# Issue #2617: compact path must never feed deopt-storm ring as mutation.
+aura_add_issue_test(test_shape_compact_storm_isolation_2617)
+aura_issue_test_link_light(test_shape_compact_storm_isolation_2617)
+add_dependencies(all_test_issue_targets test_shape_compact_storm_isolation_2617)
+
 # Issue #2260: MutationBoundary type-proof hard-gate (SOLVED / full resync).
 aura_add_issue_test(test_boundary_solve_hard_gate_2260)
 aura_issue_test_link_light(test_boundary_solve_hard_gate_2260)

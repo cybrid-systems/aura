@@ -644,11 +644,16 @@ void ShapeProfiler::invalidate_all() noexcept {
         (void)invalidate(fn);
 }
 
-// Issue #1521: Arena compact soft coordination.
+// Issue #1521 / #2617: Arena compact soft coordination.
 // Value-tag shapes (int/float/bool/string/ref-kind) do not depend on
 // arena addresses; full invalidate_all would clear history and feed
 // the deopt-storm ring, thrashing JIT under multi-round AI self-modify
 // + GC. Instead: version bump + compact-scoped deopt hook, keep stable.
+//
+// *** COMPACT ↛ STORM RING (#2617) ***
+// Do NOT call update_deopt_storm_state_ from this path. Compact pressure
+// is expected GC pressure, not mutation churn. Gate:
+// scripts/check_shape_compact_storm_isolation_2617.py
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
@@ -669,8 +674,17 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
 
     {
         auto lock = unique_lock_();
+        // #2617 runtime contract: compact must not grow storm ring or
+        // mutation-induced invalidation counters.
+        const auto ring_before = deopt_ring_count_;
+        const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
+
         if (profiles_.empty()) {
             deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+            contract_assert(deopt_ring_count_ == ring_before);
+            contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
+                            mut_before);
+            contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
             return 0;
         }
 
@@ -695,9 +709,17 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
             hooks_to_fire.push_back(HookWork{fn, profile.version});
             deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
             arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
-            // Explicitly do NOT call update_deopt_storm_state_(fn).
+            // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
             deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
         }
+
+        // #2617: fail-closed if a future edit feeds the storm ring from compact.
+        contract_assert(deopt_ring_count_ == ring_before);
+        contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
+                        mut_before);
+        contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
+        (void)ring_before;
+        (void)mut_before;
     }
 
     for (const auto& h : hooks_to_fire) {
@@ -744,23 +766,27 @@ double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) n
     return shape_stable_ratio();
 }
 
-// Issue #1468 / #2526: deopt-storm detection helper. Called from
-// invalidate() and from the deopt-hook path. Maintains a ring of
-// (time, fn) pairs and sets deopt_storm_active_ when the count
-// in the last deopt_storm_window_ events exceeds the (adaptive)
-// threshold.
+// Issue #1468 / #2526 / #2617: deopt-storm detection helper.
+// MUTATION-ONLY — called from invalidate_unlocked_ and from
+// record_shape stability-loss. Maintains a ring of (time, fn) pairs
+// and sets deopt_storm_active_ when the count in the last
+// deopt_storm_window_ events exceeds the (adaptive) threshold.
 //
 // Issue #2526 adaptive closed-loop:
 //   if compact-dominated pressure && shape_stable_ratio high
 //     → raise threshold (or suppress enter when only base thr would trip)
 //   else mutation-induced deopts >= adaptive_threshold
 //     → storm enter + shape_version bump + SpecJIT isolate (hard fence)
-// Compact alone never feeds this ring (on_arena_compact skips it).
+// Compact alone never feeds this ring (on_arena_compact skips it) —
+// enforced by #2617 gate + contract_assert on ring_count.
 //
 // Why a per-instance ring (vs global): the storm is local to this
 // ShapeProfiler's workload — different evaluators (eval / IR / JIT)
 // can run with isolated profilers and not stomp each other.
 void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
+    // #2617: ring events are mutation-sourced only (call-site gate).
+    // Adaptive suppress under compact-dominated pressure remains soft
+    // (kShapeStormForceReasonAdaptiveSuppress) — never Threshold hard fence.
     // Push the new event into the ring.
     if (deopt_ring_.size() != deopt_storm_window_) {
         deopt_ring_.assign(deopt_storm_window_ > 0 ? deopt_storm_window_ : 1, DeoptEvent{0, 0});
