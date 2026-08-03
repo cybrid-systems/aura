@@ -2717,6 +2717,30 @@ def cmd_parallel_isolation_level_coverage():
     return 0
 
 
+def cmd_pure_parallel_isolation_wording_coverage():
+    """Issue #2593: forbid advertising parallel-intend :pure #t as
+    transactional isolation (wording-drift gate).
+
+    Scans src/orch/, src/compiler/evaluator_primitives_agent.cpp, and
+    docs/ for banned phrases pairing pure-parallel terminology with
+    transactional / ACID / serializable isolation-level claims beyond
+    `best-effort-pure`. Disclaimer lines (containing 'never' / 'NOT' /
+    'not' / 'best-effort' / 'forbid' / 'footgun' / 'do not' etc.) are
+    accepted.
+    """
+    print(f"{B}=== pure parallel isolation wording-drift coverage (#2593) ==={N}")
+    script = ROOT / "scripts" / "check_pure_parallel_isolation_wording.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pure parallel isolation wording (#2593) drift detected")
+        return 1
+    ok("pure parallel isolation wording (#2593) clean (no drift)")
+    return 0
+
+
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -6584,6 +6608,7 @@ def cmd_gate():
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()
+        or cmd_pure_parallel_isolation_wording_coverage()
         or cmd_agent_reply_coverage()
         or cmd_restamp_incremental_coverage()
         or cmd_query_index_composite_coverage()

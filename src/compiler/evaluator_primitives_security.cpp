@@ -23,6 +23,7 @@ module;
 #include "core/security_event_wal.hh"  // #2389: WAL posture for security-health
 #include "core/provenance_tracker.hh"  // #2182: linear enforce mode on enforcement-stats
 #include "compiler/security_health.hh" // #2389: query:security-health score
+#include "orch/security_schedule_gate.h" // #2590: g_orch_security_schedule_counters (query:security-schedule-gate)
 
 module aura.compiler.evaluator;
 
