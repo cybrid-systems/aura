@@ -48,8 +48,8 @@ static std::string read_file(const char* path) {
 }
 
 static std::int64_t href(CompilerService& cs, const char* key) {
-    auto r = cs.eval(std::format(
-        "(hash-ref (engine:metrics \"query:orch-module-stats\") \"{}\")", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:orch-module-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -77,8 +77,7 @@ static void ac2631_spawn_child_hierarchy() {
 static void ac2631_cancel_top_down_propagates() {
     std::println("\n--- #2631 AC2: cancel_all propagates top-down ---");
     const auto scope_h = read_file("src/orch/agent_scope.h");
-    CHECK(scope_h.find("cancel_all") != std::string::npos,
-          "AC2: AgentScope::cancel_all exists");
+    CHECK(scope_h.find("cancel_all") != std::string::npos, "AC2: AgentScope::cancel_all exists");
     CHECK(scope_h.find("spawn_child") != std::string::npos,
           "AC2: AgentScope::spawn_child for hierarchical children");
     // parent_/children_ pattern (Issue #2537).
@@ -96,8 +95,7 @@ static void ac2631_mvp_linter_still_green() {
           "AC3: check_orch_mvp_scope.py still rejects AgentRegistry");
     CHECK(mvp.find("global_agent_registry") != std::string::npos,
           "AC3: check_orch_mvp_scope.py still rejects global_agent_registry");
-    CHECK(mvp.find("scope") != std::string::npos,
-          "AC3: linter mentions scope");
+    CHECK(mvp.find("scope") != std::string::npos, "AC3: linter mentions scope");
 }
 
 // AC4: query:orch-module-stats metric + schema keys.
@@ -132,8 +130,7 @@ static void ac2631_source_and_readme() {
     // #2537 / #2588 / #2083 / #2161 preserved.
     CHECK(scope_h.find("AgentScope& spawn_child") != std::string::npos,
           "AC5: #2537 hierarchical AgentScope");
-    CHECK(agent.find("orch:scope-spawn") != std::string::npos,
-          "AC5: #2588 flat scope-spawn");
+    CHECK(agent.find("orch:scope-spawn") != std::string::npos, "AC5: #2588 flat scope-spawn");
     // README explicit per-Evaluator hierarchy.
     CHECK(readme.find("#2537") != std::string::npos || readme.find("2537") != std::string::npos,
           "AC5: README references #2537 hierarchical AgentScope");

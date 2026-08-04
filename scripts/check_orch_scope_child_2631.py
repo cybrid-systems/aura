@@ -38,7 +38,6 @@ Rationale (Issue #2631 body):
 
 from __future__ import annotations
 
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -66,8 +65,7 @@ def main() -> int:
     if agent:
         if 'add("orch:scope-child"' not in agent:
             failures.append(
-                "AC1: orch:scope-child prim not registered in "
-                "evaluator_primitives_agent.cpp (call-site wiring missing)"
+                "AC1: orch:scope-child prim not registered in evaluator_primitives_agent.cpp (call-site wiring missing)"
             )
         # Must call AgentScope::spawn_child() (or equivalent).
         if "spawn_child" not in agent:
@@ -90,16 +88,12 @@ def main() -> int:
         spawn = AGENT_SPAWN.read_text(encoding="utf-8", errors="replace")
 
     if spawn and "scope_child_total" not in spawn:
-        failures.append(
-            "AC4: src/orch/agent_spawn.h missing scope_child_total counter "
-            "(hierarchical AgentScope #2631)"
-        )
+        failures.append("AC4: src/orch/agent_spawn.h missing scope_child_total counter (hierarchical AgentScope #2631)")
 
     if agent and "scope_child_total" not in agent:
         # Agent file must also have the fetch.
         failures.append(
-            "AC4: evaluator_primitives_agent.cpp does not bump "
-            "scope_child_total counter (call-site wiring missing)"
+            "AC4: evaluator_primitives_agent.cpp does not bump scope_child_total counter (call-site wiring missing)"
         )
 
     # AC4: query:orch-module-stats keys
@@ -111,10 +105,7 @@ def main() -> int:
             "issue-2631",
         ):
             if key not in agent:
-                failures.append(
-                    f"AC4: evaluator_primitives_agent.cpp does not expose "
-                    f"{key} on query:orch-module-stats"
-                )
+                failures.append(f"AC4: evaluator_primitives_agent.cpp does not expose {key} on query:orch-module-stats")
         # Compatibility: prior #2588 / #2083 / #2161 keys preserved.
         for key in ("schema-2588", "schema-2083", "schema-2161", "orch-scope-wired"):
             if key not in agent:
@@ -127,10 +118,7 @@ def main() -> int:
     if AGENT_SCOPE.exists():
         scope = AGENT_SCOPE.read_text(encoding="utf-8", errors="replace")
         if "spawn_child" not in scope:
-            failures.append(
-                "AC2: AgentScope::spawn_child missing from src/orch/agent_scope.h "
-                "(#2537 hierarchical C++)"
-            )
+            failures.append("AC2: AgentScope::spawn_child missing from src/orch/agent_scope.h (#2537 hierarchical C++)")
     else:
         failures.append("AC2: src/orch/agent_scope.h not found")
 
@@ -159,23 +147,14 @@ def main() -> int:
             )
         # Must reference #2537 + #2588.
         if "#2537" not in readme and "2537" not in readme:
-            failures.append(
-                "AC5: src/orch/README.md must reference #2537 (C++ hierarchical "
-                "AgentScope)"
-            )
+            failures.append("AC5: src/orch/README.md must reference #2537 (C++ hierarchical AgentScope)")
         if "#2588" not in readme and "2588" not in readme:
-            failures.append(
-                "AC5: src/orch/README.md must reference #2588 (flat Aura scope)"
-            )
+            failures.append("AC5: src/orch/README.md must reference #2588 (flat Aura scope)")
         # Must note per-Evaluator hierarchy (no global registry).
         # Accept mentions of "AgentRegistry" / "global_agent_registry" as
         # *things to avoid* (the README documents the guardrail).
-        if "per-Evaluator" not in readme and "per-evaluator" not in readme.lower() and \
-                "per Evaluator" not in readme:
-            failures.append(
-                "AC5: src/orch/README.md must note per-Evaluator hierarchy "
-                "(no global registry allowed)"
-            )
+        if "per-Evaluator" not in readme and "per-evaluator" not in readme.lower() and "per Evaluator" not in readme:
+            failures.append("AC5: src/orch/README.md must note per-Evaluator hierarchy (no global registry allowed)")
 
     # AC6: test file has ac2631_* sections
     found_test = False
@@ -198,10 +177,7 @@ def main() -> int:
                 any_ac2631 = True
                 break
         if not any_ac2631:
-            failures.append(
-                "AC6: no test file has ac2631_* sections "
-                "(#2631 call-site wiring test coverage missing)"
-            )
+            failures.append("AC6: no test file has ac2631_* sections (#2631 call-site wiring test coverage missing)")
 
     if failures:
         for f in failures:
@@ -272,17 +248,13 @@ def self_test() -> int:
 
         good_scope = tmp / "agent_scope.h"
         good_scope.write_text(
-            "class AgentScope {\n"
-            "public:\n"
-            "    AgentScope& spawn_child() { return *this; }\n"
-            "};\n",
+            "class AgentScope {\npublic:\n    AgentScope& spawn_child() { return *this; }\n};\n",
             encoding="utf-8",
         )
 
         good_mvp = tmp / "mvp.py"
         good_mvp.write_text(
-            "if 'AgentRegistry' in src or 'global_agent_registry' in src:\n"
-            "    fail('no global registry allowed')\n",
+            "if 'AgentRegistry' in src or 'global_agent_registry' in src:\n    fail('no global registry allowed')\n",
             encoding="utf-8",
         )
 
