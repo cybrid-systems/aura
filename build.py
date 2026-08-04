@@ -296,6 +296,18 @@ def cmd_lint():
     if r != 0:
         fail("pure probe hardening coverage linter failed — run python3 scripts/check_pure_probe_hardening_2634.py")
         return r
+    # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
+    # last-resort branch gains a fail-closed face under production+strict when
+    # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
+    # regression in the #2635 AC surface fails the same gate.
+    mid_script = ROOT / "scripts" / "check_mid_fallback_hard_deny_2635.py"
+    if not mid_script.exists():
+        fail(f"missing {mid_script}")
+        return 1
+    r = run([sys.executable, str(mid_script)], cwd=ROOT)
+    if r != 0:
+        fail("mid-fallback hard-deny coverage linter failed — run python3 scripts/check_mid_fallback_hard_deny_2635.py")
+        return r
     ok("lint OK")
     return 0
 
