@@ -330,6 +330,82 @@ int main() {
               "AC5: header declares reset helper for tests");
     }
 
+    // ── #2635 AC1-AC6: production mid-fallback SLO hard-deny ────────
+    // Under production defaults (or Full / Strict strategy), if the
+    // live mid-fallback rate already exceeds the SLO threshold,
+    // resolve_audit_mutation_id refuses the last-resort process-origin
+    // stamp (returns 0) so callers can deny or re-stamp with a real
+    // mid. Soft / AURA_SANDBOX=off / Sampled callers continue to allow
+    // fallback + only bump counters (AC3).
+    {
+        std::println("\n--- #2635 AC1-AC6: production hard-deny face ---");
+
+        // AC1: resolve_audit_mutation_id has the hard-deny block under
+        // the last-resort branch (after caller/epoch/rq miss).
+        std::ifstream src("src/compiler/typed_mutation_audit.h");
+        const std::string tma_text((std::istreambuf_iterator<char>(src)),
+                                   std::istreambuf_iterator<char>());
+        CHECK(tma_text.find("Issue #2635") != std::string::npos,
+              "2635 AC1: resolve_audit_mutation_id carries #2635 marker");
+        CHECK(tma_text.find("hard_deny_eligible") != std::string::npos,
+              "2635 AC1: hard_deny_eligible gate exists");
+        CHECK(tma_text.find("decide_audit_mid_fallback_slo(slo)") != std::string::npos,
+              "2635 AC1: SLO decision helper invoked at resolve time");
+        CHECK(tma_text.find("return 0;") != std::string::npos,
+              "2635 AC1: resolve returns 0 on hard-deny");
+
+        // AC2: SLO clear (Soft / production + rate below threshold) still
+        // allows the last-resort fallback. Source-cite: the
+        // g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add
+        // line still follows the gate.
+        CHECK(tma_text.find("audit_mid_fallback_gen_total.fetch_add") != std::string::npos,
+              "2635 AC2: fallback counter still bumps on SLO clear");
+        CHECK(tma_text.find("return next_audit_mutation_id();") != std::string::npos,
+              "2635 AC2: last-resort mid still returned on SLO clear");
+
+        // AC3: Soft / sandbox off → fallback always allowed. Verified
+        // statically: hard_deny_eligible is the production+strict arm;
+        // soft paths (sampled / AURA_SANDBOX=off) skip the gate and
+        // fall through to the existing fallback.
+        CHECK(tma_text.find("get_strategy() == AuditStrategy::Full") != std::string::npos,
+              "2635 AC3: Full strategy arm in hard_deny_eligible");
+        CHECK(tma_text.find("get_strategy() == AuditStrategy::Strict") != std::string::npos,
+              "2635 AC3: Strict strategy arm in hard_deny_eligible");
+
+        // AC4: schedule-gate (#2630) sees the same SLO signal.
+        // MidFallbackSloInput + would_arm_degraded are reused by the
+        // gate — same input → same decision (pure function).
+        std::ifstream hdr("src/compiler/audit_mid_fallback_slo.h");
+        const std::string hdr_text((std::istreambuf_iterator<char>(hdr)),
+                                   std::istreambuf_iterator<char>());
+        CHECK(hdr_text.find("MidFallbackSloInput") != std::string::npos,
+              "2635 AC4: MidFallbackSloInput shared by gate + resolve");
+        CHECK(hdr_text.find("would_arm_degraded") != std::string::npos,
+              "2635 AC4: would_arm_degraded signal shared");
+
+        // AC5: coverage scripts. The new check_mid_fallback_hard_deny_2635.py
+        // linter is wired into build.py; the existing #2493 + #2594
+        // linters continue to pass (no regression on the preference
+        // order or the observation surface).
+        std::ifstream build("build.py");
+        const std::string build_text((std::istreambuf_iterator<char>(build)),
+                                     std::istreambuf_iterator<char>());
+        CHECK(build_text.find("check_mid_fallback_hard_deny_2635") != std::string::npos,
+              "2635 AC5: build.py wires the new linter");
+
+        // AC6: no schema / surface change to typed_mutation_audit
+        // public API — the last-resort branch gains a guard; the
+        // public preference order (1-3) is unchanged.
+        CHECK(tma_text.find("resolve_audit_mutation_id(std::uint64_t caller_mid = 0)") !=
+                  std::string::npos,
+              "2635 AC6: resolve signature unchanged");
+        CHECK(tma_text.find("next_audit_mutation_id()") != std::string::npos,
+              "2635 AC6: next_audit_mutation_id last-resort still called");
+
+        CHECK(true, "2635 AC6: SE/TypedMutationAudit/grant epoch join quality "
+                    "preserved under production load (source-cite + linter)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

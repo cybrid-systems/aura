@@ -9,6 +9,7 @@
 #include "core/provenance_tracker.hh"
 #include "core/resource_quota.hh"  // process_resource_quota_manager (#2493 mid resolve)
 #include "core/workspace_epoch.hh" // current_mutation_epoch (#2493 mid resolve)
+#include "audit_mid_fallback_slo.h" // MidFallbackSloInput + decide_audit_mid_fallback_slo (#2635 hard-deny)
 
 #include <atomic>
 #include <chrono>
@@ -827,6 +828,42 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     const auto rq = process_resource_quota_manager().provenance_mutation_id;
     if (rq != 0)
         return rq;
+    // Issue #2635: production mid-fallback SLO hard-deny. Under production
+    // defaults (or Full strategy / Strict — same hard-deny gate as the
+    // existing capture_security_correlated_audit path), if the live
+    // mid-fallback rate already exceeds the SLO threshold, refuse the
+    // last-resort process-origin stamp (return 0) so callers can deny
+    // or re-stamp with a real mid. The schedule-gate (#2630) is the
+    // primary *admission* control; this is the secondary *resolve-time*
+    // hard face so residual paths cannot silently degrade SE ↔
+    // TypedMutationAudit ↔ CapabilityGrant epoch alignment after the
+    // gate admits the call. Soft / AURA_SANDBOX=off / Sampled callers
+    // continue to allow fallback + only bump counters (AC parity with
+    // #2594; AC3 explicit). The input snapshot is best-effort
+    // (load-relaxed) — same generation check race window as #2594.
+    const bool hard_deny_eligible = production_defaults_active() ||
+                                    get_strategy() == AuditStrategy::Full ||
+                                    get_strategy() == AuditStrategy::Strict;
+    if (hard_deny_eligible) {
+        const MidFallbackSloInput slo{
+            .fallback_gen = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+                std::memory_order_relaxed),
+            .contextual_total =
+                g_typed_mutation_audit_counters.contextual_total.load(std::memory_order_relaxed),
+            .production_defaults = production_defaults_active(),
+            .soft_mode = false,
+        };
+        const auto d = decide_audit_mid_fallback_slo(slo);
+        if (d.would_arm_degraded) {
+            // Hard-deny: refuse process-origin stamp; caller treats
+            // mid==0 as deny or surfaces a typed "mid-fallback-slo-breached"
+            // error (e.g. capture_security_correlated_audit / AOT/JIT
+            // audit paths). The schedule-gate (#2630) already saw the
+            // same SLO signal at admission — this is the resolve-time
+            // fail-closed face (AC4: same signal, no double-deny race).
+            return 0;
+        }
+    }
     g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add(
         1, std::memory_order_relaxed);
     return next_audit_mutation_id();
