@@ -451,65 +451,49 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_int(static_cast<std::int64_t>(len));
     });
-    add("string-ref", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string-ref", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.size() < 2) {
-            auto __i = string_heap.size();
-            string_heap.push_back("string-ref: too few args");
+            auto __i = static_cast<std::uint64_t>(ev.push_string_heap("string-ref: too few args"));
             auto __e = error_values.size();
             error_values.push_back(make_string(__i));
             return make_error(__e);
         }
         std::string s;
-        if (is_string(a[0])) {
-            auto idx = as_string_idx(a[0]);
-            if (idx < string_heap.size())
-                s = string_heap[idx];
-        } else if (is_int(a[0])) {
+        if (is_string(a[0]))
+            s = ev.copy_string_heap_at(as_string_idx(a[0]));
+        else if (is_int(a[0]))
             s = std::to_string(as_int(a[0]));
-        }
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         if (pos >= s.size()) {
-            auto __i = string_heap.size();
-            string_heap.push_back("string-ref: index out of bounds");
+            auto __i =
+                static_cast<std::uint64_t>(ev.push_string_heap("string-ref: index out of bounds"));
             auto __e = error_values.size();
             error_values.push_back(make_string(__i));
             return make_error(__e);
         }
-        if (pos < s.size())
-            return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
-        return make_int(0);
+        return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
     });
-    add("substring", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("substring", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.size() < 3)
             return make_int(0);
-        std::string s_buf;
-        const std::string* sp = nullptr;
-        if (is_string(a[0])) {
-            auto idx = as_string_idx(a[0]);
-            if (idx < string_heap.size())
-                sp = &string_heap[idx];
-        } else if (is_int(a[0])) {
-            s_buf = std::to_string(as_int(a[0]));
-            sp = &s_buf;
-        }
-        if (!sp)
+        // Issue #2652: copy source under lock then push via locked helper.
+        std::string s;
+        if (is_string(a[0]))
+            s = ev.copy_string_heap_at(as_string_idx(a[0]));
+        else if (is_int(a[0]))
+            s = std::to_string(as_int(a[0]));
+        else
             return make_int(0);
-        const auto& s = *sp;
         auto start = static_cast<std::size_t>(as_int(a[1]));
         auto end = static_cast<std::size_t>(as_int(a[2]));
         if (start > s.size())
             start = s.size();
         if (end > s.size())
             end = s.size();
-        if (start >= end) {
-            auto id = string_heap.size();
-            string_heap.push_back("");
-            return make_string(id);
-        }
-        auto sub = s.substr(start, end - start);
-        auto nid = string_heap.size();
-        string_heap.push_back(std::move(sub));
-        return make_string(nid);
+        if (start >= end)
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
+        return make_string(
+            static_cast<std::uint64_t>(ev.push_string_heap(s.substr(start, end - start))));
     });
     add("string=?", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.size() < 2)
@@ -580,7 +564,7 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
     });
 
-    add("number->string", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("number->string", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         std::string s;
@@ -601,9 +585,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                     s = s.substr(0, dot);
             }
         }
-        auto id = string_heap.size();
-        string_heap.push_back(std::move(s));
-        return make_string(id);
+        // Issue #2652: locked push.
+        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(s))));
     });
     add("string->number", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))

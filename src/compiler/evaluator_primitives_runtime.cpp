@@ -345,31 +345,27 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         auto id = gs_counter_.fetch_add(1, std::memory_order_relaxed);
         std::string prefix = "G__";
         if (a.size() >= 1 && is_string(a[0])) {
-            auto idx = as_string_idx(a[0]);
-            if (idx < ev.string_heap_.size()) {
-                prefix = ev.string_heap_[idx] + "__";
-            }
+            // Issue #2652: snapshot under lock (multi-fiber).
+            prefix = ev.copy_string_heap_at(as_string_idx(a[0]));
+            if (!prefix.empty())
+                prefix += "__";
+            else
+                prefix = "G__";
         }
-        std::string name = prefix + std::to_string(id);
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(name);
-        return make_string(sid);
+        return make_string(
+            static_cast<std::uint64_t>(ev.push_string_heap(prefix + std::to_string(id))));
     });
 
     add("symbol-append", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #2652: lock string growth (same class as string-append).
         std::string result;
         for (auto& v : a) {
-            if (is_string(v)) {
-                auto idx = as_string_idx(v);
-                if (idx < ev.string_heap_.size())
-                    result += ev.string_heap_[idx];
-            } else if (is_int(v)) {
+            if (is_string(v))
+                result += ev.copy_string_heap_at(as_string_idx(v));
+            else if (is_int(v))
                 result += std::to_string(as_int(v));
-            }
         }
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
-        return make_string(sid);
+        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(result))));
     });
 
     add("apply", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -410,6 +406,20 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("display", [&ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
+        // Issue #2652: snapshot string under lock before print so concurrent
+        // string_heap_ reallocate cannot UAF; NUL-safe path in io_print_val.
+        if (is_string(a[0])) {
+            auto s = ev.copy_string_heap_at(as_string_idx(a[0]));
+            // Display must not emit raw NULs (bash "ignored null byte" / log
+            // corruption under overnight WAVE lines).
+            for (unsigned char c : s) {
+                if (c == 0)
+                    continue; // skip embedded NULs
+                std::fputc(static_cast<int>(c), stdout);
+            }
+            std::fflush(stdout);
+            return make_void();
+        }
         io_print_val(a[0], ev.string_heap_, ev.pairs_, false, 0, ev.keyword_table_);
         std::fflush(stdout);
         return make_void();
@@ -418,6 +428,39 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("write", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_void();
+        if (is_string(a[0])) {
+            // Issue #2652: quoted write with escapes (incl. NUL as \x00;).
+            auto s = ev.copy_string_heap_at(as_string_idx(a[0]));
+            std::fputc('"', stdout);
+            for (unsigned char c : s) {
+                switch (c) {
+                    case '"':
+                        std::fputs("\\\"", stdout);
+                        break;
+                    case '\\':
+                        std::fputs("\\\\", stdout);
+                        break;
+                    case '\n':
+                        std::fputs("\\n", stdout);
+                        break;
+                    case '\r':
+                        std::fputs("\\r", stdout);
+                        break;
+                    case '\t':
+                        std::fputs("\\t", stdout);
+                        break;
+                    default:
+                        if (c < 0x20 || c == 0x7f)
+                            std::fprintf(stdout, "\\x%02X;", static_cast<unsigned>(c));
+                        else
+                            std::fputc(static_cast<int>(c), stdout);
+                        break;
+                }
+            }
+            std::fputc('"', stdout);
+            std::fflush(stdout);
+            return make_void();
+        }
         io_print_val(a[0], ev.string_heap_, ev.pairs_, true, 0, ev.keyword_table_);
         std::fflush(stdout);
         return make_void();
@@ -433,10 +476,8 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
     add("format", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
-        auto tidx = as_string_idx(a[0]);
-        if (tidx >= ev.string_heap_.size())
-            return make_void();
-        auto& tmpl = ev.string_heap_[tidx];
+        // Issue #2652: snapshot template under lock; push result via locked helper.
+        auto tmpl = ev.copy_string_heap_at(as_string_idx(a[0]));
         std::string result;
         std::size_t arg_idx = 1; // first arg in a[1..]
         for (std::size_t i = 0; i < tmpl.size(); ++i) {
@@ -445,14 +486,35 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                     case 'a': // display arg
                         if (arg_idx < a.size()) {
                             auto val = a[arg_idx++];
-                            result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false);
+                            if (is_string(val)) {
+                                // Snapshot string args (avoid UAF during format).
+                                result += ev.copy_string_heap_at(as_string_idx(val));
+                            } else {
+                                result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false);
+                            }
                         }
                         ++i;
                         break;
                     case 's': // write arg (quoted)
                         if (arg_idx < a.size()) {
                             auto val = a[arg_idx++];
-                            result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true);
+                            if (is_string(val)) {
+                                auto s = ev.copy_string_heap_at(as_string_idx(val));
+                                result += '"';
+                                for (unsigned char c : s) {
+                                    if (c == 0)
+                                        result += "\\x00;";
+                                    else if (c == '"')
+                                        result += "\\\"";
+                                    else if (c == '\\')
+                                        result += "\\\\";
+                                    else
+                                        result += static_cast<char>(c);
+                                }
+                                result += '"';
+                            } else {
+                                result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true);
+                            }
                         }
                         ++i;
                         break;
@@ -472,9 +534,7 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                 result += tmpl[i];
             }
         }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
-        return make_string(sidx);
+        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(result))));
     });
 
     add("error", [&ev](std::span<const EvalValue> a) -> EvalValue {

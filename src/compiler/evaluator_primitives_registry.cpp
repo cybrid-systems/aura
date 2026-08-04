@@ -95,7 +95,7 @@ void Evaluator::register_all_primitives() {
 
     primitives_detail::register_vector_and_hash_primitives(prim_registrar(), pairs_, string_heap_,
                                                            error_values_, vector_heap_,
-                                                           primitive_error_counter);
+                                                           primitive_error_counter, *this);
 
     primitives_detail::register_math_regex_and_arithmetic_primitives(
         prim_registrar(), pairs_, string_heap_, error_values_, primitive_error_counter, *this);

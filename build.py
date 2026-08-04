@@ -4536,6 +4536,26 @@ def cmd_pmr_alloc_fiber_safe_coverage():
     return 0
 
 
+def cmd_string_heap_corruption_guard_coverage():
+    """Issue #2652 / #2649 H12: empty stats keys / NUL display / hash races.
+
+    hash-set!/hash-ref under hash_tables_mutex + alloc_storage_lock_;
+    refuse empty string keys; display/write snapshot + NUL-safe emit;
+    format/symbol-append/number->string locked push.
+    """
+    print(f"{B}=== string heap corruption guard coverage (#2652/#2649) ==={N}")
+    script = COVERAGE_CHECKS / "check_string_heap_corruption_guard_2652.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("string heap corruption guard (#2652) coverage contract rows failed")
+        return 1
+    ok("string heap corruption guard (#2652/#2649) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -7850,6 +7870,7 @@ def cmd_gate():
         or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_fiber_eval_depth_isolation_coverage()
         or cmd_pmr_alloc_fiber_safe_coverage()
+        or cmd_string_heap_corruption_guard_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
@@ -8689,6 +8710,7 @@ def main():
         "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,
         "fiber-eval-depth-isolation": cmd_fiber_eval_depth_isolation_coverage,
         "pmr-alloc-fiber-safe": cmd_pmr_alloc_fiber_safe_coverage,
+        "string-heap-corruption-guard": cmd_string_heap_corruption_guard_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,

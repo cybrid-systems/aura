@@ -1145,7 +1145,8 @@ namespace primitives_detail {
                                              std::pmr::vector<std::string>& string_heap,
                                              std::vector<EvalValue>& error_values,
                                              std::vector<std::vector<EvalValue>>& vector_heap,
-                                             std::atomic<std::uint64_t>* primitive_error_counter);
+                                             std::atomic<std::uint64_t>* primitive_error_counter,
+                                             Evaluator& ev);
     void register_math_regex_and_arithmetic_primitives(
         std::function<void(std::string, PrimFn)> add, std::pmr::vector<Pair>& pairs,
         std::pmr::vector<std::string>& string_heap, std::vector<EvalValue>& error_values,
@@ -4555,6 +4556,10 @@ public:
     // suite/ast_viz and fuzz seed edge_qq_nested (Issue #1397 lock
     // added without same-thread re-entrancy).
     mutable std::recursive_mutex alloc_storage_lock_;
+    // Issue #2652: FlatHashTable store + key string compare under multi-fiber
+    // (aether:stats-bump! / hash-set!). Separate from alloc_storage_lock_
+    // so pure pair/string growth is not serialized with hash probes.
+    mutable std::mutex hash_tables_mtx_;
     // Issue #1401: serializes load_module_file ↔ compact_env_frames().
     // compact_env_frames (Issue #1386) re-packs env_frames_ and
     // rewrites Closure::env_id via a remap table. load_module_file
@@ -6840,6 +6845,20 @@ public:
         string_heap_.push_back(std::move(s));
         return idx;
     }
+    // Issue #2652: snapshot string under alloc_storage_lock_ so concurrent
+    // push_back cannot reallocate while display/hash/compare holds a ref.
+    // OOB / empty heap → empty string (fail-closed for printing).
+    [[nodiscard]] std::string copy_string_heap_at(std::size_t idx) const {
+        std::lock_guard lock(alloc_storage_lock_);
+        if (idx >= string_heap_.size())
+            return {};
+        return string_heap_[idx];
+    }
+    // Issue #2652: process-wide mutex for g_hash_tables mutation + string
+    // key compare (hash-set! / hash-ref under multi-fiber stats-bump).
+    // Nested with alloc_storage_lock_ when both are needed: take this outer,
+    // then alloc_storage_lock_ (recursive).
+    std::mutex& hash_tables_mutex() noexcept { return hash_tables_mtx_; }
     // Issue #346: push_pair helper. Returns the new
     // pair's index. Used by the query:mutation-log +
     // query:mutations-since primitives to build the
