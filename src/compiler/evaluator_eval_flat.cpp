@@ -9,6 +9,7 @@ module;
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/value_tags.h"       // Issue #2259: pure tag hot path + metrics
 #include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
+#include "serve/fiber.h"               // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
 
 module aura.compiler.evaluator;
 
@@ -3065,29 +3066,34 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         // so the default 8MB process stack only holds ~1000 frames. A guard of
         // 2000 allowed SIGSEGV before the limit tripped. Keep headroom under
         // the OS stack (~700 frames ≈ 5.5MB of eval_flat alone).
-        // ── Recursion depth guard (thread_local) ────────────────────────
-        // #109 (P0): the depth counter must be PER THREAD, not per Evaluator.
-        // Fiber fallback (std::thread + [this] capture) shares an Evaluator
-        // across N OS threads; if each thread increments a shared counter, a
-        // modest amount of parallel work trips the guard even though no single
-        // thread is deeply nested. That is what made
-        // `tests/suite/concurrent.aura` T7-T10 (orch:parallel 5-way, nested
-        // spawn+join) flaky with the old shared counter.
+        //
+        // ── Recursion depth guard ownership ─────────────────────────────
+        // #109 (P0): counter must NOT be per-Evaluator (multi-thread share).
+        // #2650 / #2649 (P1 overnight multi-agent): counter must NOT be pure
+        // thread_local either — stackful ucontext fibers share one OS thread;
+        // a TLS depth sums concurrent fibers on the same worker and trips
+        // MAX_C_STACK_DEPTH even when each fiber is shallow (sequential-yield /
+        // parallel-yield fanout under agents=60). Depth lives on Fiber when
+        // g_current_fiber is set (aura_eval_c_stack_depth_slot); host TLS only
+        // for non-fiber CompilerService paths.
         //
         // The shared eval_depth_ member is still used below for auto-gc-temp
         // sampling and auto-gc cooldown, where "global eval activity" is the
         // intended signal (one thread's deep call can still be enough work
         // to warrant a periodic gc-temp). The two are now decoupled.
         static constexpr std::size_t MAX_C_STACK_DEPTH = 700;
-        thread_local std::size_t t_c_stack_depth = 0;
+        std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
         struct DepthGuard {
             std::size_t& d;
             ~DepthGuard() { --d; }
-        } _dg{t_c_stack_depth};
-        if (++t_c_stack_depth > MAX_C_STACK_DEPTH)
-            return std::unexpected(
-                Diagnostic{ErrorKind::InternalError,
-                           std::format("recursion depth exceeded (>{})", MAX_C_STACK_DEPTH)});
+        } _dg{c_stack_depth};
+        if (++c_stack_depth > MAX_C_STACK_DEPTH) {
+            const auto fid = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->id()
+                                                          : static_cast<std::uint64_t>(0);
+            return std::unexpected(Diagnostic{
+                ErrorKind::InternalError,
+                std::format("recursion depth exceeded (>{}) fiber={}", MAX_C_STACK_DEPTH, fid)});
+        }
 
         // ── Memory pressure auto-governance sampling (P1) ─────────
         // Every sample_every_ calls to eval_flat, recompute pressure

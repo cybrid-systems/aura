@@ -4498,6 +4498,25 @@ def cmd_coercion_evidence_loss_slo_coverage():
     return 0
 
 
+def cmd_fiber_eval_depth_isolation_coverage():
+    """Issue #2650 / #2649: fiber-local eval depth + #2653 module path refuse.
+
+    Stackful fibers share an OS thread — depth must live on Fiber, not TLS.
+    load_module_file fails closed on empty / prompt / pure-digit paths.
+    """
+    print(f"{B}=== fiber eval depth isolation coverage (#2650/#2649) ==={N}")
+    script = COVERAGE_CHECKS / "check_fiber_eval_depth_isolation_2650.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("fiber eval depth isolation (#2650) coverage contract rows failed")
+        return 1
+    ok("fiber eval depth isolation (#2650/#2649) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -7810,6 +7829,7 @@ def cmd_gate():
         or cmd_occurrence_goal_persist_rehydrate_coverage()
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_coercion_evidence_loss_slo_coverage()
+        or cmd_fiber_eval_depth_isolation_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
@@ -8647,6 +8667,7 @@ def main():
         "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,
+        "fiber-eval-depth-isolation": cmd_fiber_eval_depth_isolation_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,

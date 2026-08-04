@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 769 | Preferred destination suites |
-| **Total scanned** | **769** | |
+| `tests/core/test_*.cpp` | 770 | Preferred destination suites |
+| **Total scanned** | **770** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 222 | 222 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 94 | 94 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 95 | 95 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 42 | 42 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
@@ -393,6 +393,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp`
 - `tests/orch/test_failure_policy_bridge.cpp`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp`
+- `tests/compiler/test_fiber_eval_depth_isolation.cpp`
 - `tests/serve/test_fiber_integration_batch.cpp`
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp`
 - `tests/serve/test_fiber_migration_refresh.cpp`
@@ -1301,13 +1302,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (94)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (95)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (94)
+#### domain/ (95)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1327,6 +1328,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_envframe_ownership_steal_densify.cpp` (—) [domain_suite, theme_compiler] — AC1: Live set — register/inject populates live_env_frame_refs();
 - `tests/compiler/test_escape_gate_steal_densify_clear.cpp` (—) [domain_suite, theme_compiler] — AC1: Publish escape block under key K → clear_for_eval → re-lower →
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_concurrent_unit_batch.cpp — light concurrent units
+- `tests/compiler/test_fiber_eval_depth_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: Fiber A and Fiber B have independent eval_c_stack_depth slots
 - `tests/serve/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_fiber_integration_batch.cpp — closure-bridge Cycle-4 integration (Issue #226).
 - `tests/serve/test_fiber_migration_refresh.cpp` (—) [domain_suite, theme_serve] — AC1: Every resume after cross-worker steal runs
 - `tests/serve/test_fiber_mutation_steal_safety.cpp` (—) [domain_suite, theme_serve] — test_fiber_mutation_steal_safety.cpp — Issue #542:

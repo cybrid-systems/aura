@@ -757,6 +757,21 @@ public:
         return mutation_stack_storage_.compare_exchange_weak(
             expected, desired, std::memory_order_acq_rel, std::memory_order_acquire);
     }
+    // Issue #2650 / #2649: per-fiber eval C-stack depth + env-lookup depth.
+    // Stackful ucontext fibers share one OS thread; a thread_local depth
+    // counter would SUM concurrent fibers on the same worker and trip
+    // MAX_C_STACK_DEPTH (700) / MAX_ENV_DEPTH even when each fiber is shallow.
+    // Depth lives on the Fiber so yield/resume (g_current_fiber switch)
+    // automatically isolates stacks without TLS save/restore.
+    [[nodiscard]] std::size_t& eval_c_stack_depth_slot() noexcept { return eval_c_stack_depth_; }
+    [[nodiscard]] const std::size_t& eval_c_stack_depth_slot() const noexcept {
+        return eval_c_stack_depth_;
+    }
+    [[nodiscard]] std::size_t& env_lookup_depth_slot() noexcept { return env_lookup_depth_; }
+    [[nodiscard]] const std::size_t& env_lookup_depth_slot() const noexcept {
+        return env_lookup_depth_;
+    }
+
     // Issue #264: per-fiber yield-boundary checkpoint stack.
     void* yield_checkpoint_ptr() const noexcept {
         return yield_checkpoint_storage_.load(std::memory_order_acquire);
@@ -945,6 +960,9 @@ private:
     // patterns allowed.
     std::atomic<void*> mutation_stack_storage_{nullptr};
     std::atomic<void*> yield_checkpoint_storage_{nullptr};
+    // Issue #2650 / #2649: fiber-local recursion depths (see public slots).
+    std::size_t eval_c_stack_depth_ = 0;
+    std::size_t env_lookup_depth_ = 0;
     // Issue #1580: captured at MutationBoundary yield for post-resume refresh.
     std::uint64_t resume_env_hint_ = 0;
     std::uint64_t resume_bridge_epoch_hint_ = 0;
@@ -1170,6 +1188,13 @@ extern thread_local WorkerContext* g_worker_ctx;
 struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
+
+// Issue #2650 / #2649: recursion depth slots for eval_flat / env lookup.
+// When a Fiber is current, returns that Fiber's slots; otherwise host
+// thread_local (non-fiber CompilerService / test paths).
+// Defined out-of-line in fiber.cpp (same TU as g_current_fiber).
+[[nodiscard]] std::size_t& aura_eval_c_stack_depth_slot() noexcept;
+[[nodiscard]] std::size_t& aura_env_lookup_depth_slot() noexcept;
 
 // Issue #2184 / ubsan-smoke: publish held/defuse mirrors for the *current*
 // fiber only. Defined out-of-line in fiber.cpp (same TU as g_current_fiber)

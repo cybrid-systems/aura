@@ -135,6 +135,48 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     return {};
 }
 
+// Issue #2653 / #2649 H10: refuse paths that cannot be legitimate module
+// names (empty, NULs, control chars, multi-line LLM prompts, env numbers).
+// Under heap corruption / UAF the "path" may be a dangling view into a
+// freed pad or prompt; fail closed before resolve so we never treat free
+// text as a module path. Display is truncated to keep stderr usable.
+[[nodiscard]] static bool is_plausible_module_path(std::string_view path) noexcept {
+    if (path.empty() || path.size() > 1024)
+        return false;
+    bool has_path_sep = false;
+    bool has_space = false;
+    for (unsigned char c : path) {
+        if (c == 0 || c < 0x20 || c == 0x7f)
+            return false; // NUL / control / DEL
+        if (c == '/' || c == '\\' || c == '.')
+            has_path_sep = true;
+        if (c == ' ' || c == '\t')
+            has_space = true;
+    }
+    // Leading/trailing whitespace is never a module path.
+    if (path.front() == ' ' || path.front() == '\t' || path.back() == ' ' || path.back() == '\t')
+        return false;
+    // Pure decimal (e.g. "16384" from AETHER_LLM_CONTEXT_CHARS) is never a module.
+    bool all_digit = true;
+    for (unsigned char c : path) {
+        if (c < '0' || c > '9') {
+            all_digit = false;
+            break;
+        }
+    }
+    if (all_digit)
+        return false;
+    // Long free-text without path separators (LLM system prompts).
+    if (path.size() > 64 && has_space && !has_path_sep)
+        return false;
+    return true;
+}
+
+[[nodiscard]] static std::string_view truncate_path_for_log(std::string_view path) noexcept {
+    constexpr std::size_t kMax = 96;
+    return path.size() <= kMax ? path : path.substr(0, kMax);
+}
+
 // ── Load module file, return module object ────────────────
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Issue #1401: acquire the interlock FIRST so we serialize with
@@ -143,10 +185,23 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // concurrent compact_env_frames could miss those closures (Step 2
     // walk) or reclaim frames the loader is about to use (Step 3 pack).
     std::lock_guard interlock(compact_env_frames_lock_);
+    // Issue #2653: validate before resolve (H10 fail-closed).
+    if (!is_plausible_module_path(path)) {
+        const auto shown = truncate_path_for_log(path);
+        if (path.empty())
+            std::println(std::cerr, "load_module_file: refuse empty path");
+        else if (path.size() > shown.size())
+            std::println(std::cerr, "load_module_file: refuse non-module path '{}…' (len={})",
+                         shown, path.size());
+        else
+            std::println(std::cerr, "load_module_file: refuse non-module path '{}'", shown);
+        return types::make_void();
+    }
     // 1. Resolve path
     auto resolved = resolve_module_path(path);
     if (resolved.empty()) {
-        std::println(std::cerr, "load_module_file: cannot resolve '{}'", path);
+        std::println(std::cerr, "load_module_file: cannot resolve '{}'",
+                     truncate_path_for_log(path));
         return types::make_void();
     }
 

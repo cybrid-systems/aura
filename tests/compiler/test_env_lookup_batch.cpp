@@ -94,7 +94,9 @@ static void run_1858_depth_one_per_frame() {
                   src.find("peaks at N") != std::string::npos ||
                   src.find("not halved") != std::string::npos,
               "documents correct N-not-2N semantics");
-        CHECK(src.find("g_env_lookup_depth") != std::string::npos, "depth counter present");
+        CHECK(src.find("aura_env_lookup_depth_slot") != std::string::npos ||
+                  src.find("g_env_lookup_depth") != std::string::npos,
+              "depth counter present (fiber-local slot #2650)");
         CHECK(src.find("parent_->lookup") != std::string::npos, "recursive parent walk");
     }
 
@@ -146,6 +148,7 @@ static void run_1860_binding_depth_cycle() {
         CHECK(pos != std::string::npos, "lookup_binding present");
         auto win = src.substr(pos, 900);
         CHECK(win.find("env_lookup_enter") != std::string::npos ||
+                  win.find("aura_env_lookup_depth_slot") != std::string::npos ||
                   win.find("g_env_lookup_depth") != std::string::npos ||
                   win.find("EnvLookupDepthGuard") != std::string::npos,
               "uses shared depth guard");

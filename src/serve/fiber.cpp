@@ -132,6 +132,25 @@ thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;
 
+// Issue #2650 / #2649: host-only depth when no fiber is current.
+// Fibers store depth on Fiber (see eval_c_stack_depth_slot).
+thread_local std::size_t g_host_eval_c_stack_depth = 0;
+thread_local std::size_t g_host_env_lookup_depth = 0;
+
+std::size_t& aura_eval_c_stack_depth_slot() noexcept {
+    Fiber* f = g_current_fiber;
+    if (f != nullptr)
+        return f->eval_c_stack_depth_slot();
+    return g_host_eval_c_stack_depth;
+}
+
+std::size_t& aura_env_lookup_depth_slot() noexcept {
+    Fiber* f = g_current_fiber;
+    if (f != nullptr)
+        return f->env_lookup_depth_slot();
+    return g_host_env_lookup_depth;
+}
+
 void publish_current_fiber_mutation_safety(std::size_t depth, bool held,
                                            std::uint64_t defuse_version) noexcept {
     // Single TLS load in the defining TU — see fiber.h. Keep noinline-ish
