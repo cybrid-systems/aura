@@ -5618,6 +5618,26 @@ def cmd_castop_typed_meta_coverage():
     return 0
 
 
+def cmd_issue_coverage():
+    """Declarative issue-coverage manifests (architecture Phase 1).
+
+    Runs scripts/coverage/runner.py over scripts/coverage/manifests/*.json.
+    Pilot issues: #2622 #2623 #2624 (thin check_*.py wrappers). New issues
+    should add a manifest, not a full hand-written check_*.py.
+    """
+    print(f"{B}=== issue coverage manifests (Phase 1 runner) ==={N}")
+    runner = ROOT / "scripts" / "coverage" / "runner.py"
+    if not runner.exists():
+        fail(f"missing {runner}")
+        return 1
+    r = subprocess.run([sys.executable, str(runner), "--all"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("issue coverage manifest runner failed")
+        return 1
+    ok("issue coverage manifests clean")
+    return 0
+
+
 def cmd_type_linear_commit_health_coverage():
     """Issue #2613: query:type-linear-commit-health unified Agent face.
 
@@ -8497,6 +8517,7 @@ def main():
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
         "castop-typed-meta": cmd_castop_typed_meta_coverage,
+        "issue-coverage": cmd_issue_coverage,
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
