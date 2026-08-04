@@ -60,6 +60,7 @@ Test suites:
   check       构建 + core + safety + issues（CI 默认）
 """
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -8295,28 +8296,17 @@ def _repro_cmake_flags() -> tuple[str, str, str]:
     return flags, flags, ldflags
 
 
-def cmd_repro():
-    """Reproducible Release build (verify path removed per Anqi 2026-07-19
-    directive — scripts/ci_reproducibility.py deleted; the --verify entry
-    point is dropped, but the reproducible build itself remains)."""
-    print(f"{B}═══ Reproducible build ═══{N}")
-    global BUILD, AURA, TEST_BIN
-    BUILD = ROOT / "build_repro"
-    AURA = BUILD / "aura"
-    TEST_BIN = BUILD / "aura"
-    BUILD.mkdir(parents=True, exist_ok=True)
+def _repro_configure_and_build(build_dir: Path, *, label: str = "repro") -> int:
+    """Configure + link `aura` under SOURCE_DATE_EPOCH / prefix-map flags.
+
+    Honors AURA_LINK_JOBS (same as cmd_build) so CI can serialize link and
+    avoid the arena.ixx.o rebuild deadlock noted in #2636.
+    """
+    build_dir.mkdir(parents=True, exist_ok=True)
     nproc = _build_jobs()
     cflags, cxxflags, ldflags = _repro_cmake_flags()
-    # Issue #2636 follow-up: resolve compiler paths via shutil.which so
-    # this works even when /usr/bin/{c++,g++} is a broken symlink
-    # (some local dev environments have alternatives pointing at
-    # nothing). CMake's auto-detect picks /usr/bin/c++ first and fails
-    # with "is not a full path to an existing compiler tool" if the
-    # symlink target is missing. Explicit -DCMAKE_{C,CXX}_COMPILER
-    # overrides the auto-detect and keeps the repro build reproducible
-    # across dev/CI image drift. CI container (ghcr.io/cybrid-systems/dev:v1.0.5)
-    # has working symlinks so this is belt-and-suspenders for CI but
-    # mandatory for local dev.
+    # Issue #2636: explicit compiler paths — /usr/bin/c++ can be a dangling
+    # symlink on some local dev boxes; CMake auto-detect then fails.
     c_compiler = shutil.which("gcc") or shutil.which("cc") or "gcc"
     cxx_compiler = shutil.which("g++") or shutil.which("c++") or "g++"
     env = {
@@ -8325,37 +8315,88 @@ def cmd_repro():
         "CCACHE_DISABLE": "1",
         "AURA_BUILD_TYPE": "Release",
     }
+    cmake_args = [
+        "cmake",
+        "-B",
+        str(build_dir),
+        "-G",
+        "Ninja",
+        "-Wno-author",  # was -Wno-dev (CMake 4.x deprecated it)
+        "-DCMAKE_BUILD_TYPE=Release",
+        f"-DCMAKE_C_COMPILER={c_compiler}",
+        f"-DCMAKE_CXX_COMPILER={cxx_compiler}",
+        f"-DCMAKE_C_FLAGS={cflags}",
+        f"-DCMAKE_CXX_FLAGS={cxxflags}",
+        f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}",
+        f"-DCMAKE_SHARED_LINKER_FLAGS={ldflags}",
+    ]
+    link_jobs = os.environ.get("AURA_LINK_JOBS", "").strip()
+    if link_jobs.isdigit() and int(link_jobs) > 0:
+        cmake_args.append(f"-DAURA_LINK_JOBS={link_jobs}")
+    r = run(cmake_args, cwd=ROOT, env=env)
+    if r != 0:
+        return r
     r = run(
-        [
-            "cmake",
-            "-B",
-            str(BUILD),
-            "-G",
-            "Ninja",
-            "-Wno-author",  # was -Wno-dev (CMake 4.x deprecated it)
-            "-DCMAKE_BUILD_TYPE=Release",
-            f"-DCMAKE_C_COMPILER={c_compiler}",
-            f"-DCMAKE_CXX_COMPILER={cxx_compiler}",
-            f"-DCMAKE_C_FLAGS={cflags}",
-            f"-DCMAKE_CXX_FLAGS={cxxflags}",
-            f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}",
-            f"-DCMAKE_SHARED_LINKER_FLAGS={ldflags}",
-        ],
+        ["cmake", "--build", str(build_dir), "--target", "aura", "-j", str(nproc)],
         cwd=ROOT,
         env=env,
     )
     if r != 0:
+        fail(f"{label} build failed → {build_dir}")
         return r
-    r = run(
-        ["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)],
-        cwd=ROOT,
-        env=env,
-    )
-    if r == 0:
-        ok(f"repro build OK → {AURA}")
-    else:
-        fail("repro build failed")
-    return r
+    aura = build_dir / "aura"
+    if not aura.is_file():
+        fail(f"{label}: missing binary {aura}")
+        return 1
+    h = hashlib.sha256(aura.read_bytes()).hexdigest()
+    ok(f"{label} build OK → {aura}  sha256={h[:16]}…")
+    return 0
+
+
+def cmd_repro():
+    """Reproducible Release build (#675).
+
+    Default: one SOURCE_DATE_EPOCH Release build of `aura` in build_repro/.
+
+    `--verify`: dual-build bit-identity check (Issue #675 / CI job
+    `reproducible-build`). Builds into build_repro_a/ and build_repro_b/,
+    then requires matching sha256 of the two aura binaries. (scripts/
+    ci_reproducibility.py was deleted in audit wave 9; verify is inline.)
+    """
+    verify = "--verify" in sys.argv[2:]
+    global BUILD, AURA, TEST_BIN
+
+    if verify:
+        print(f"{B}═══ Reproducible build verify (dual build) ═══{N}")
+        dir_a = ROOT / "build_repro_a"
+        dir_b = ROOT / "build_repro_b"
+        # Clean prior trees so stale objects cannot fake a match/mismatch.
+        for d in (dir_a, dir_b):
+            if d.exists():
+                shutil.rmtree(d)
+        r = _repro_configure_and_build(dir_a, label="repro-a")
+        if r != 0:
+            return r
+        r = _repro_configure_and_build(dir_b, label="repro-b")
+        if r != 0:
+            return r
+        ha = hashlib.sha256((dir_a / "aura").read_bytes()).hexdigest()
+        hb = hashlib.sha256((dir_b / "aura").read_bytes()).hexdigest()
+        if ha != hb:
+            fail(f"repro binaries differ\n  a={ha}\n  b={hb}")
+            return 1
+        ok(f"repro verify OK — dual builds match sha256={ha[:16]}…")
+        # Keep a stable path for downstream consumers.
+        BUILD = dir_a
+        AURA = dir_a / "aura"
+        TEST_BIN = AURA
+        return 0
+
+    print(f"{B}═══ Reproducible build ═══{N}")
+    BUILD = ROOT / "build_repro"
+    AURA = BUILD / "aura"
+    TEST_BIN = BUILD / "aura"
+    return _repro_configure_and_build(BUILD, label="repro")
 
 
 def cmd_sbom():
