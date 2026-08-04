@@ -425,6 +425,14 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 240  # #2636 belt-and-suspenders: same root cause as
+                          # asan-build + ubsan-smoke (arena.ixx.o rebuild
+                          # deadlock under header change). Normal build
+                          # (no sanitizer) is faster than ASAN/UBSAN but
+                          # still hits the link-stage race without
+                          # AURA_LINK_JOBS=1. Same 4h budget for
+                          # consistency across the 3 main-only sanitizer
+                          # + health smoke jobs.
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
@@ -441,6 +449,9 @@ jobs:
     - name: Build aura
       env:
         AURA_ISSUE_BUILD: none
+        AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
+                               # rebuild deadlock (mirrors asan-build +
+                               # ubsan-smoke fix in the same #2636 round).
       run: python3 build.py build
 
     - name: Health endpoint smoke
