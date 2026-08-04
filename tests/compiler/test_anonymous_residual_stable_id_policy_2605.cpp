@@ -330,8 +330,200 @@ static void ac2637_schema_and_source_cite() {
           "AC6: build.py references linter");
 }
 
+// ── #2638: residual sid=0 growth hard cap + fail-closed drop/MustDeopt ──
+//
+//   AC1: Cap reached → no further invent; MustDeopt + cap-hit counter
+//   AC2: Below cap → existing one-shot backfill still works (#2605)
+//   AC3: Soft / Off + cap=0 → unlimited (env "0"/"off"/"unlimited")
+//   AC4: Named create path (sid≠0) never hits residual cap
+//   AC5: Query keys + schema + wired sentinel; #2605 axes preserved
+//   AC6: src-aligned soak (no residual growth under normal) + inject-over-cap test + coverage gate
+//
+// Note: setenv("AURA_RESIDUAL_SID0_CAP", "2", 1) is called at start of
+// main() BEFORE any aura_* call, so the resolver caches cap=2 for all
+// tests. This lets the same binary exercise both below-cap (1 residual
+// backfills) and above-cap (3 residuals → 3rd hits cap) paths.
+
+static void ac2638_cap_below_threshold_backfill_works() {
+    std::println("\n--- #2638 AC2: below cap → existing backfill still works ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    // cap=2 (set in main via setenv). 1 residual → cur_backfill=0 < 2 → backfill works.
+    const auto cid = aura_alloc_closure(11);
+    CHECK(cid >= 0, "AC2: alloc");
+    aura_closure_set_name(cid, "ac2638_below_2605");
+    CHECK(aura_get_closure_stable_func_id(cid) != 0, "AC2: named stamps non-zero");
+    aura_test_force_closure_stable_func_id(cid, 0); // residual inject
+    CHECK(aura_get_closure_stable_func_id(cid) == 0, "AC2: residual sid=0 after force");
+
+    const auto sid = aura_lookup_stable_func_id("ac2638_below_2605");
+    const std::uint32_t ids[] = {sid};
+    const auto bb0 = metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    const auto ch0 = metrics.live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
+    (void)aura_remap_live_closures_after_reemit(ids, 1, /*new_bridge_epoch=*/300);
+    // Below cap (1 < 2) → backfill works.
+    CHECK(metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed) == bb0 + 1,
+          "AC2: below cap → backfill still works (bb counter +1)");
+    CHECK(metrics.live_closure_residual_cap_hit_total.load(std::memory_order_relaxed) == ch0,
+          "AC2: below cap → cap-hit counter unchanged");
+    CHECK(aura_get_closure_stable_func_id(cid) == sid, "AC2: backfill restored sid");
+
+    aura_free_closure(cid);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+}
+
+static void ac2638_cap_above_threshold_force_must_deopt() {
+    std::println("\n--- #2638 AC1: above cap → MustDeopt + cap-hit counter ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    // cap=2 (set in main). Inject 3 residuals, reemit 3 times. After 2
+    // successful backfills (cur_backfill=2 == cap), the 3rd reemit
+    // hits cap → force MustDeopt + bump cap-hit counter.
+    constexpr std::size_t kN = 3;
+    std::vector<std::int64_t> cids;
+    std::vector<std::uint32_t> sids;
+    for (std::size_t i = 0; i < kN; ++i) {
+        const auto name = std::format("ac2638_above_{}_2605", i);
+        const auto cid = aura_alloc_closure(20 + static_cast<std::int64_t>(i));
+        CHECK(cid >= 0, "AC1: alloc");
+        aura_closure_set_name(cid, name.c_str());
+        CHECK(aura_get_closure_stable_func_id(cid) != 0, "AC1: named stamps non-zero");
+        aura_test_force_closure_stable_func_id(cid, 0); // residual inject
+        const auto sid_i = aura_lookup_stable_func_id(name.c_str());
+        CHECK(sid_i != 0, "AC1: map holds name→sid");
+        cids.push_back(cid);
+        sids.push_back(sid_i);
+    }
+
+    const auto ch0 = metrics.live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
+    const auto bb0 = metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    // Reemit 3 times with one id at a time → backfill counter increments per
+    // successful backfill. After 2 backfills (bb=2 == cap), the 3rd hits cap.
+    for (std::size_t r = 0; r < kN; ++r) {
+        const std::uint32_t ids[] = {sids[r]};
+        (void)aura_remap_live_closures_after_reemit(ids, 1, static_cast<std::uint64_t>(400 + r));
+    }
+    const auto bb_after =
+        metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    const auto ch_after =
+        metrics.live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
+    CHECK(bb_after == bb0 + 2, "AC1: exactly 2 backfills succeeded (cap=2, 3rd hits cap)");
+    CHECK(ch_after == ch0 + 1, "AC1: cap-hit counter bumped once (3rd reemit hit cap)");
+    // The 3rd cid should have MustDeopt set (cap-hit → force MustDeopt).
+    const auto cid_3 = cids[2];
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid_3) != 0,
+          "AC1: 3rd cid has MustDeopt set (cap-hit → force)");
+
+    for (auto cid : cids)
+        aura_free_closure(cid);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+}
+
+static void ac2638_named_sid_nonzero_skips_cap() {
+    std::println("\n--- #2638 AC4: named path with sid≠0 never hits residual cap ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    // cap=2. Create 5 named closures with non-zero sid, force reemit.
+    // These never enter the residual branch (filter on sid==0) → no
+    // backfill, no cap-hit, named path is independent of residual cap.
+    constexpr std::size_t kN = 5;
+    std::vector<std::int64_t> cids;
+    std::vector<std::uint32_t> sids;
+    for (std::size_t i = 0; i < kN; ++i) {
+        const auto name = std::format("ac2638_named_{}_2605", i);
+        const auto cid = aura_alloc_closure(30 + static_cast<std::int64_t>(i));
+        CHECK(cid >= 0, "AC4: alloc");
+        aura_closure_set_name(cid, name.c_str());
+        const auto sid_i = aura_get_closure_stable_func_id(cid);
+        CHECK(sid_i != 0, "AC4: named stamps non-zero");
+        cids.push_back(cid);
+        sids.push_back(sid_i);
+    }
+    // Reemit all 5 sids at once.
+    const auto ch0 = metrics.live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
+    const auto bb0 = metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+    (void)aura_remap_live_closures_after_reemit(sids.data(), sids.size(),
+                                                /*new_bridge_epoch=*/500);
+    // Named path never enters residual branch → counters unchanged.
+    CHECK(metrics.live_closure_residual_cap_hit_total.load(std::memory_order_relaxed) == ch0,
+          "AC4: named path (sid≠0) → cap-hit counter unchanged");
+    CHECK(metrics.live_closure_stable_id_backfill_total.load(std::memory_order_relaxed) == bb0,
+          "AC4: named path (sid≠0) → backfill counter unchanged");
+
+    for (auto cid : cids)
+        aura_free_closure(cid);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+}
+
+static void ac2638_source_and_schema_cite() {
+    std::println("\n--- #2638 AC5+AC6: schema + source-cite + linter ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2638") == 2638, "AC5: schema-2638");
+    CHECK(href(cs, "issue-2638") == 2638, "AC5: issue-2638");
+    CHECK(href(cs, "live-closure-residual-cap-wired") == 1, "AC5: residual-cap wired sentinel");
+    CHECK(href(cs, "live-closure-residual-cap-hit-total") >= 0, "AC5: cap-hit counter key exposed");
+    CHECK(href(cs, "live-closure-residual-sid0-cap") >= 0, "AC5: cap value key exposed");
+    // #2605 / #2637 / #2550 / #2602 axes preserved (AC5)
+    CHECK(href(cs, "schema-2605") == 2605, "AC5: schema-2605 retained");
+    CHECK(href(cs, "stable-id-residual-backfill-total") >= 0,
+          "AC5: residual_backfill key retained");
+    CHECK(href(cs, "schema-2637") == 2637, "AC5: schema-2637 retained");
+    CHECK(href(cs, "schema-2602") == 2602, "AC5: schema-2602 retained");
+
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto bh = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto lint = read_file("scripts/check_residual_sid0_cap_coverage.py");
+    const auto build = read_file("build.py");
+    CHECK(rt.find("Issue #2638") != std::string::npos, "AC6: runtime cites #2638");
+    CHECK(rt.find("aura_residual_sid0_cap_default") != std::string::npos,
+          "AC6: env flag resolver present in runtime.cpp");
+    CHECK(rt.find("AURA_RESIDUAL_SID0_CAP") != std::string::npos,
+          "AC6: cap check reads AURA_RESIDUAL_SID0_CAP");
+    CHECK(rt.find("aura_bump_live_closure_residual_cap_hit_total") != std::string::npos,
+          "AC6: cap-hit bumper called from runtime.cpp");
+    CHECK(rt.find("aura_closure_set_must_deopt") != std::string::npos,
+          "AC6: MustDeopt forced on cap-hit");
+    CHECK(bh.find("aura_bump_live_closure_residual_cap_hit_total") != std::string::npos,
+          "AC6: cap-hit bumper strong def in bridge.cpp");
+    CHECK(bh.find("aura_residual_sid0_cap_default") != std::string::npos,
+          "AC6: env flag weak decl in bridge.cpp");
+    CHECK(stub.find("aura_bump_live_closure_residual_cap_hit_total") != std::string::npos,
+          "AC6: cap-hit bumper weak stub in bridge_stub.cpp");
+    CHECK(stub.find("aura_residual_sid0_cap_default") != std::string::npos,
+          "AC6: env flag weak stub in bridge_stub.cpp");
+    CHECK(met.find("live_closure_residual_cap_hit_total") != std::string::npos,
+          "AC6: cap-hit field in observability_metrics.h");
+    CHECK(q.find("live-closure-residual-cap-hit-total") != std::string::npos,
+          "AC5: query key for cap-hit");
+    CHECK(q.find("live-closure-residual-sid0-cap") != std::string::npos,
+          "AC5: query key for cap value");
+    CHECK(q.find("schema-2638") != std::string::npos, "AC5: schema-2638 in query surface");
+    CHECK(!lint.empty(), "AC6: linter file present");
+    CHECK(build.find("cmd_residual_sid0_cap_coverage") != std::string::npos,
+          "AC6: build.py cmd wired");
+    CHECK(build.find("check_residual_sid0_cap_coverage") != std::string::npos,
+          "AC6: build.py references linter");
+}
+
 int main() {
-    std::println("=== Issue #2605+#2637: anonymous / residual sid=0 policy + sync remount ===");
+    std::println(
+        "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
+    // Set AURA_RESIDUAL_SID0_CAP=2 BEFORE any aura_* call so the
+    // resolver caches cap=2 (allow testing both below-cap and
+    // above-cap paths in this binary).
+    setenv("AURA_RESIDUAL_SID0_CAP", "2", 1);
     ac1_named_soak_no_residual_growth();
     ac2_anonymous_must_deopt_no_invent();
     ac3_residual_one_shot_backfill();
@@ -339,6 +531,10 @@ int main() {
     ac5_source_and_linter();
     ac2637_anon_sync_off_default();
     ac2637_schema_and_source_cite();
-    std::println("\n=== #2605+#2637: {} passed, {} failed ===", g_passed, g_failed);
+    ac2638_cap_below_threshold_backfill_works();
+    ac2638_cap_above_threshold_force_must_deopt();
+    ac2638_named_sid_nonzero_skips_cap();
+    ac2638_source_and_schema_cite();
+    std::println("\n=== #2605+#2637+#2638: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

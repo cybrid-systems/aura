@@ -8896,6 +8896,17 @@ struct CompilerMetrics {
     // can distinguish "legacy closures remapped cleanly" (backfill > 0)
     // from "legacy closures relying on name fallback" (fallback > 0).
     std::atomic<std::uint64_t> live_closure_stable_id_backfill_total{0}; // #2175
+    // Issue #2638: residual sid=0 growth hard cap + fail-closed
+    // drop/MustDeopt under sustained reemit. Bumped when residual
+    // backfill would exceed AURA_RESIDUAL_SID0_CAP (default 256 under
+    // production; 0 = unlimited for Soft / sandbox=off / tests). On
+    // cap-hit the residual branch skips the one-shot backfill invent,
+    // sets MustDeopt on the offending cid, and `continue`s — operators
+    // see the rising counter as a signal to lower the cap or fix the
+    // upstream residual injector. Distinct from
+    // live_closure_stable_id_backfill_total (which counts successful
+    // backfills, never cap-hits).
+    std::atomic<std::uint64_t> live_closure_residual_cap_hit_total{0}; // #2638
     // Issue #2605: named name-fallback reject (fail-closed). Bumped when a
     // *named* live closure would remount via the legacy name-fallback
     // invent path (name resolves in reemit set but stored sid miss /

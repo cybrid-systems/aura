@@ -14561,6 +14561,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t named_invent = 0;
             // Issue #2606: multi-AotState reemit ownership skip counter.
             std::uint64_t cross_eval_skip = 0;
+            // Issue #2638: residual sid=0 growth hard cap + fail-closed
+            // drop/MustDeopt under sustained reemit.
+            std::uint64_t residual_cap_hit = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
@@ -14576,6 +14579,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed);
                 cross_eval_skip =
                     m->reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
+                residual_cap_hit =
+                    m->live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
@@ -14665,6 +14670,21 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-anon-wired", make_int(1)},
                 {"schema-2637", make_int(2637)},
                 {"issue-2637", make_int(2637)},
+                // Issue #2638: residual sid=0 growth hard cap + fail-closed
+                // drop/MustDeopt under sustained reemit. env
+                // AURA_RESIDUAL_SID0_CAP (default 256 under production;
+                // 0 = unlimited for Soft / sandbox=off / tests). Cap-hit
+                // counter bumps when residual backfill would exceed the
+                // configured cap → skip invent + force MustDeopt + continue.
+                {"live-closure-residual-cap-hit-total",
+                 make_int(static_cast<std::int64_t>(residual_cap_hit))},
+                {"live-closure-residual-sid0-cap",
+                 make_int(static_cast<std::int64_t>(aura_residual_sid0_cap_default
+                                                        ? aura_residual_sid0_cap_default()
+                                                        : 0))}, // weak default = unlimited
+                {"live-closure-residual-cap-wired", make_int(1)},
+                {"schema-2638", make_int(2638)},
+                {"issue-2638", make_int(2638)},
             };
             return build_hash(kv);
         });

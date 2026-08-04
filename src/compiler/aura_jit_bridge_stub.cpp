@@ -377,6 +377,13 @@ aura_sync_remount_anon_live_closures(std::uint64_t* ok_count, std::uint64_t* fai
 extern "C" __attribute__((weak)) int aura_sync_remount_anon_enabled_default() {
     return 0;
 }
+// Issue #2638: residual cap-hit counter weak stub (zero-cost in light builds).
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_residual_cap_hit_total(std::uint64_t /*n*/) {}
+// Issue #2638: env opt-in flag weak stub (default 0 = unlimited).
+extern "C" __attribute__((weak)) std::uint64_t aura_residual_sid0_cap_default() {
+    return 0;
+}
 // Issue #2175: weak stub for legacy sid=0 backfill counter bumper.
 // Production impl is in aura_jit_bridge.cpp; light bundles compile
 // aura_jit_runtime.cpp + this stub (not the full bridge). Without

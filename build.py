@@ -2693,6 +2693,28 @@ def cmd_orphan_reap_tick_coverage():
     return 0
 
 
+def cmd_residual_sid0_cap_coverage():
+    """Issue #2638: residual sid=0 growth hard cap + fail-closed drop/MustDeopt.
+
+    Env-gated by AURA_RESIDUAL_SID0_CAP (default 256 under production;
+    0 = unlimited for Soft / sandbox=off / tests). When the residual
+    backfill would exceed the cap, the named-residual branch skips
+    invent + force MustDeopt + bumps live_closure_residual_cap_hit_total.
+    Named create path (sid≠0) never hits the residual cap.
+    """
+    print(f"{B}=== residual sid0 cap coverage (#2638) ==={N}")
+    script = ROOT / "scripts" / "check_residual_sid0_cap_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual sid0 cap (#2638) coverage contract rows failed")
+        return 1
+    ok("residual sid0 cap (#2638) coverage clean")
+    return 0
+
+
 def cmd_sync_remount_anon_coverage():
     """Issue #2637: anon / residual sync remount walk on reemit (sid == 0).
 
@@ -7414,6 +7436,7 @@ def cmd_gate():
         or cmd_join_drain_reclaim_still_running_coverage()
         or cmd_residual_body_age_coverage()
         or cmd_sync_remount_anon_coverage()
+        or cmd_residual_sid0_cap_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()
