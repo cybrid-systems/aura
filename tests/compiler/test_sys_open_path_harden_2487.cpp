@@ -164,7 +164,7 @@ static void ac6_gate() {
 
 } // namespace
 
-int main() {
+int run_test_sys_open_path_harden_2487() {
     std::println("=== Issue #2487: sys-open path harden ===");
     ac1_proc_self_mem();
     ac2_symlink_nofollow();
@@ -175,3 +175,9 @@ int main() {
     std::println("\n=== #2487 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_sys_open_path_harden_2487();
+}
+#endif

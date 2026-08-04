@@ -193,7 +193,7 @@ static void ac_query_surface() {
 
 } // namespace
 
-int main() {
+int run_test_aot_anonymous_closure_policy_2238() {
     std::println("=== Issue #2238 — anonymous AOT-bound closure policy ===");
     ac_check_rejects_anonymous();
     ac_set_name_null_sets_must_deopt();
@@ -204,3 +204,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aot_anonymous_closure_policy_2238();
+}
+#endif

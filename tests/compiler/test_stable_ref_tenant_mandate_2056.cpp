@@ -84,7 +84,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_stable_ref_tenant_mandate_2056() {
     std::println("=== Issue #2056: StableNodeRef tenant stamp mandate ===");
     CHECK(kStableRefTenantMandateIssue == 2056, "issue stamp");
 
@@ -293,3 +293,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stable_ref_tenant_mandate_2056();
+}
+#endif

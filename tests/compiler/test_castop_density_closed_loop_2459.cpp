@@ -182,7 +182,7 @@ static void ac5_schema_source() {
 
 } // namespace
 
-int main() {
+int run_test_castop_density_closed_loop_2459() {
     std::println("=== Issue #2459: CastOp density production closed-loop ===");
     ac1_soft_no_gate_reject();
     ac4_then_ac2_streak_gate();
@@ -191,3 +191,9 @@ int main() {
     std::println("\n=== #2459 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_castop_density_closed_loop_2459();
+}
+#endif

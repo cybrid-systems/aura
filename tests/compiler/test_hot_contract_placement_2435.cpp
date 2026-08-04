@@ -67,7 +67,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_hot_contract_placement_2435() {
     std::println("=== Issue #2435: hot contract placement (hot OFF in production) ===");
     CHECK(kHotContractPlacementIssue == 2435, "issue stamp");
     CHECK(current_hot_contracts_mode() == kHotContractsMode, "mode accessor");
@@ -207,3 +207,9 @@ int main() {
     std::println("\n=== #2435 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_contract_placement_2435();
+}
+#endif

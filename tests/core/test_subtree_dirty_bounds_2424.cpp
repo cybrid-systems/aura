@@ -30,7 +30,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_subtree_dirty_bounds_2424() {
     std::println("=== Issue #2424: is_subtree_dirty_node dirty_.size() bounds ===");
 
     // ── AC3 non-racing semantics ───────────────────────────────────
@@ -162,3 +162,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_subtree_dirty_bounds_2424();
+}
+#endif

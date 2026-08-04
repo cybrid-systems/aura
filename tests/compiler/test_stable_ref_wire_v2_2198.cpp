@@ -264,7 +264,7 @@ static void ac5_tenant_and_pin() {
 
 } // namespace
 
-int main() {
+int run_test_stable_ref_wire_v2_2198() {
     std::println("=== Issue #2198: StableNodeRef wire format v2 ===");
     ac1_v2_roundtrip();
     ac2_v1_compat();
@@ -274,3 +274,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stable_ref_wire_v2_2198();
+}
+#endif

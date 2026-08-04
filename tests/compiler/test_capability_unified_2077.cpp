@@ -295,7 +295,7 @@ static void ac7_matrix() {
 
 } // namespace
 
-int main() {
+int run_test_capability_unified_2077() {
     std::println("=== Issue #2077: unify has_capability with Effect matrix ===");
     ac1_source_and_strict_delegates();
     ac2_effect_only_grant_satisfies();
@@ -307,3 +307,9 @@ int main() {
     std::println("\n=== #2077: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_unified_2077();
+}
+#endif

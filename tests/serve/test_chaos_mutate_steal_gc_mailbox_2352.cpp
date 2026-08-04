@@ -794,7 +794,7 @@ static void ac2513_docs_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_chaos_mutate_steal_gc_mailbox_2352() {
     std::println(
         "=== Issue #2352/#2380/#2513/#2554: chaos mutate×steal×GC×mailbox production gate ===");
 
@@ -832,3 +832,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_chaos_mutate_steal_gc_mailbox_2352();
+}
+#endif

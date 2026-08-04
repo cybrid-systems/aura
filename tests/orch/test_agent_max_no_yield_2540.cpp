@@ -106,7 +106,7 @@ void set_env(const char* k, const char* v) {
 
 } // namespace
 
-int main() {
+int run_test_agent_max_no_yield_2540() {
     std::println("=== Issue #2540: AgentSpec.max_no_yield_ms cooperative yield ===");
     CHECK(kAgentMaxNoYieldIssue == 2540, "issue stamp");
     CompilerService cs;
@@ -458,3 +458,9 @@ int main() {
     std::println("\n=== #2540 + #2585 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_max_no_yield_2540();
+}
+#endif

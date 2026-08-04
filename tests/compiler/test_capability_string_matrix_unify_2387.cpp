@@ -181,7 +181,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_capability_string_matrix_unify_2387() {
     std::println("=== Issue #2387: string-cap / Effect matrix unify ===");
     ac1_registry_only_mutate();
     ac2_revoke_clears_both();
@@ -191,3 +191,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_string_matrix_unify_2387();
+}
+#endif

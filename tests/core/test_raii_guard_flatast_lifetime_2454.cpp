@@ -37,7 +37,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_raii_guard_flatast_lifetime_2454() {
     std::println("=== Issue #2454: RAII guard FlatAST lifetime contract ===");
 
     // ── AC1: scoped guards (production default) ────────────────────
@@ -122,3 +122,9 @@ int main() {
     std::println("\n=== #2454 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_raii_guard_flatast_lifetime_2454();
+}
+#endif

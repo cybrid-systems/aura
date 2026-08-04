@@ -103,7 +103,7 @@ static std::size_t count_castops(const IRModuleV2& mod) {
 
 } // namespace
 
-int main() {
+int run_test_dead_coercion_columnar_2431() {
     std::println("=== Issue #2431: pure columnar DeadCoercionElimination ===");
 
     // ── AC1 residual bridge stays 0; columnar counter bumps ────────
@@ -286,3 +286,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dead_coercion_columnar_2431();
+}
+#endif

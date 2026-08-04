@@ -193,7 +193,7 @@ static void ac6_source_query() {
 
 } // namespace
 
-int main() {
+int run_test_epoch_invariant_soft_prod_2541() {
     std::println("=== Issue #2541: production epoch-invariant soft + force clear ===");
     ac1_production_soft_default();
     ac2_soft_clears_stale_slot();
@@ -204,3 +204,9 @@ int main() {
     std::println("\n=== #2541 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_epoch_invariant_soft_prod_2541();
+}
+#endif

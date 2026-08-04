@@ -228,7 +228,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_reload_recovery_query_2367() {
     std::println("test_reload_recovery_query_2367");
     ac1_soft_empty();
     ac2_force_jit_exhaustion();
@@ -240,3 +240,9 @@ int main() {
     std::println("reload recovery query #2367: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reload_recovery_query_2367();
+}
+#endif

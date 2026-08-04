@@ -355,7 +355,7 @@ void ac2250_fiber_resume_fence() {
 
 } // namespace
 
-int main() {
+int run_test_layout_stamp_2170() {
     CompilerService cs;
     std::print("[test_layout_stamp_2170] running 5 ACs (S1-S4 + #2250)\n");
 
@@ -368,3 +368,9 @@ int main() {
     std::print("[test_layout_stamp_2170] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_layout_stamp_2170();
+}
+#endif

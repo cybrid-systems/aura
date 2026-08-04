@@ -209,7 +209,7 @@ static void ac5_fence_rate() {
 
 } // namespace
 
-int main() {
+int run_test_batch_dirty_discipline_2615() {
     std::println("=== Issue #2615: batch dirty cascade discipline ===");
     ac1_multi_batch();
     ac2_single_unchanged();
@@ -219,3 +219,9 @@ int main() {
     std::println("\n=== #2615: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_batch_dirty_discipline_2615();
+}
+#endif

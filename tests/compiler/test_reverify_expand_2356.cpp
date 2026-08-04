@@ -210,7 +210,7 @@ static void ac5_query_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_reverify_expand_2356() {
     std::println("=== Issue #2356: truncated reverify one-shot expand ===");
     ac5_query_and_source();
     ac4_timeout_escalate_source();
@@ -220,3 +220,9 @@ int main() {
     std::println("\n=== #2356: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reverify_expand_2356();
+}
+#endif

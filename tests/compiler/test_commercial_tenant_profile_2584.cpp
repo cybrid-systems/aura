@@ -92,7 +92,7 @@ std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_commercial_tenant_profile_2584() {
     std::println("=== Issue #2584: AURA_COMMERCIAL_TENANT config profile ===");
 
     // ── AC1: No AURA_COMMERCIAL_TENANT — Restricted default soft (#2536) ──
@@ -238,3 +238,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_commercial_tenant_profile_2584();
+}
+#endif

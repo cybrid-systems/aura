@@ -58,7 +58,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_pcv_exclusive_with_set_2140() {
     std::println("=== Issue #2140: PCV exclusive with_set ===");
     CHECK(kPcvExclusiveSetIssue == 2140, "issue stamp");
     CHECK(kPcvHotpathIssue == 2058, "2058 lineage stamp");
@@ -218,3 +218,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_pcv_exclusive_with_set_2140();
+}
+#endif

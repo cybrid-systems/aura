@@ -46,7 +46,7 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 
 } // namespace
 
-int main() {
+int run_test_steal_complete_strong_entry_2377() {
     std::println("=== Issue #2377: steal-complete strong entry contract ===");
 
     // AC1: production path requires strong ABI (source + lock API)
@@ -142,3 +142,9 @@ int main() {
     std::println("\n=== #2377 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_complete_strong_entry_2377();
+}
+#endif

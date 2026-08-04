@@ -249,7 +249,7 @@ static void ac5_steal_mismatch_revalidate() {
 
 } // namespace
 
-int main() {
+int run_test_post_densify_linear_type_revalidate_2353() {
     std::println("=== Issue #2353: post-densify Linear+Type revalidate ===");
     ac5_source_cite();
     ac3_soft_no_densify_zero_cost();
@@ -261,3 +261,9 @@ int main() {
     std::println("\n=== #2353: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_post_densify_linear_type_revalidate_2353();
+}
+#endif

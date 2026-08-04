@@ -180,7 +180,7 @@ static void ac6_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_linear_enforce_strict_2103() {
     std::println("=== Issue #2103: LinearEnforceMode Soft/Strict ===");
     ac1_soft_incomplete_continues();
     ac2_strict_incomplete_hard_fail();
@@ -191,3 +191,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_enforce_strict_2103();
+}
+#endif

@@ -222,7 +222,7 @@ static void ac5_source_and_query() {
 
 } // namespace
 
-int main() {
+int run_test_linear_escape_commit_hardblock_2108() {
     std::println("=== Issue #2108: linear escape commit hard-block ===");
     ac1_escape_blocks_commit();
     ac2_sampled_force_linear();
@@ -232,3 +232,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_escape_commit_hardblock_2108();
+}
+#endif

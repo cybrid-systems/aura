@@ -111,7 +111,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_json_parse_number_exception_2480() {
     std::println("=== Issue #2480: json-parse number exception safety ===");
     ac1_int_out_of_range();
     ac2_float_out_of_range();
@@ -121,3 +121,9 @@ int main() {
     std::println("\n=== #2480 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_json_parse_number_exception_2480();
+}
+#endif

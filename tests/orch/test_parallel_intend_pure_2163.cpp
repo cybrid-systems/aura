@@ -235,7 +235,7 @@ static void ac_stats_query() {
 
 } // namespace
 
-int main() {
+int run_test_parallel_intend_pure_2163() {
     std::println("=== test_parallel_intend_pure_2163 ===");
     ac1_default_serialized();
     ac2_pure_path_throughput();
@@ -246,3 +246,9 @@ int main() {
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_parallel_intend_pure_2163();
+}
+#endif

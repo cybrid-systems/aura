@@ -203,7 +203,7 @@ static void ac5_query() {
 
 } // namespace
 
-int main() {
+int run_test_pcv_tls_default_on_2521() {
     std::println("=== Issue #2521: PCV TLS freelist production default ON ===");
     ac1_default_on();
     ac2_exclusive_stress();
@@ -214,3 +214,9 @@ int main() {
     std::println("\n=== #2521: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_pcv_tls_default_on_2521();
+}
+#endif

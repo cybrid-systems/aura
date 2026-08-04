@@ -173,7 +173,7 @@ static void ac5_counters_and_query() {
 
 } // namespace
 
-int main() {
+int run_test_type_dirty_txn_order_2516() {
     std::println("=== Issue #2516: type_dep dirty txn order (invalidate→reinfer→mirror) ===");
     ac1_single_ordered_sequence();
     ac2_invalidate_before_reinfer();
@@ -183,3 +183,9 @@ int main() {
     std::println("\n=== #2516: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_dirty_txn_order_2516();
+}
+#endif

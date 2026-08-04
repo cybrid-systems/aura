@@ -211,7 +211,7 @@ static void ac5_inventory_query() {
 
 } // namespace
 
-int main() {
+int run_test_general_object_pin_adopt_2363() {
     std::println("=== Issue #2363: complete GeneralObjectPin adopt ===");
     ac1_wire_pair();
     ac2_pin_moving_validate();
@@ -221,3 +221,9 @@ int main() {
     std::println("\n=== #2363: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_general_object_pin_adopt_2363();
+}
+#endif

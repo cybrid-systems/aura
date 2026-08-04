@@ -271,7 +271,7 @@ static void ac5_query_and_surface() {
 
 } // namespace
 
-int main() {
+int run_test_envframe_ownership_steal_densify_2362() {
     std::println("=== Issue #2362: EnvFrameRef ownership steal+densify ===");
     ac1_live_set();
     ac2_transfer_drop_protocol();
@@ -281,3 +281,9 @@ int main() {
     std::println("\n=== #2362: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_envframe_ownership_steal_densify_2362();
+}
+#endif

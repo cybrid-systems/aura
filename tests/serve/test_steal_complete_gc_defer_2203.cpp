@@ -377,7 +377,7 @@ static void ac2314_source_cite_rows() {
 
 } // namespace
 
-int main() {
+int run_test_steal_complete_gc_defer_2203() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
     ac1_ac5_ac6_source();
@@ -396,3 +396,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_complete_gc_defer_2203();
+}
+#endif

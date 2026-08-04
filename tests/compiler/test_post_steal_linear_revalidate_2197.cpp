@@ -251,7 +251,7 @@ static void ac5_source() {
 
 } // namespace
 
-int main() {
+int run_test_post_steal_linear_revalidate_2197() {
     std::println("=== Issue #2197: post-steal linear×type provenance revalidate ===");
     ac1_strict_hard_fail();
     ac2_soft_metric_only();
@@ -261,3 +261,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_post_steal_linear_revalidate_2197();
+}
+#endif

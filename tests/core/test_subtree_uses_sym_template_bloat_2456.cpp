@@ -45,7 +45,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_subtree_uses_sym_template_bloat_2456() {
     std::println("=== Issue #2456: subtree_uses_sym single-TU instantiation ===");
 
     // ── AC1: subtree_uses_sym semantics ────────────────────────────
@@ -132,3 +132,9 @@ int main() {
     std::println("\n=== #2456 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_subtree_uses_sym_template_bloat_2456();
+}
+#endif

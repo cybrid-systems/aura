@@ -435,7 +435,7 @@ static void ac10_2321_gradual_dynamic_no_drift() {
 
 } // namespace
 
-int main() {
+int run_test_occurrence_goal_epoch_table_2278() {
     std::println(
         "=== Issue #2278 + #2307 + #2321: OccurrenceGoal table + sole-authority + drift gate ===");
 
@@ -453,3 +453,9 @@ int main() {
     std::println("\n=== Results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_occurrence_goal_epoch_table_2278();
+}
+#endif

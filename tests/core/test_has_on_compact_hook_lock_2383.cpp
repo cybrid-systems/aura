@@ -184,7 +184,7 @@ static void ac3_semantics() {
 
 } // namespace
 
-int main() {
+int run_test_has_on_compact_hook_lock_2383() {
     std::println("=== Issue #2383: has_on_compact_hook lock parity ===");
     ac1_source_lock_parity();
     ac2_concurrent_set_has();
@@ -192,3 +192,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_has_on_compact_hook_lock_2383();
+}
+#endif

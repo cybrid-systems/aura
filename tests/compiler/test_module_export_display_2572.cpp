@@ -213,7 +213,7 @@ static void ac5_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_module_export_display_2572() {
     std::println("=== Issue #2572: module export multi-display / ConstString pool ===");
     ac1_exported_multi_display();
     ac2_body_only_literals();
@@ -223,3 +223,9 @@ int main() {
     std::println("\n=== #2572: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_module_export_display_2572();
+}
+#endif

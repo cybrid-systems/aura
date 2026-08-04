@@ -205,7 +205,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_type_system_health_2350() {
     std::println("=== Issue #2350: query:type-system-health ===");
     ac1_vacuous_healthy();
     ac2_force_reason_priority();
@@ -215,3 +215,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_system_health_2350();
+}
+#endif

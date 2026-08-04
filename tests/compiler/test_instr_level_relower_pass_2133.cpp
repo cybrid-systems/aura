@@ -90,7 +90,7 @@ static IRFunction make_two_cast_fn() {
 
 } // namespace
 
-int main() {
+int run_test_instr_level_relower_pass_2133() {
     std::println("=== Issue #2133: instr-level ImpactScope relower + pass ===");
 
     // ── AC5: source ──
@@ -222,3 +222,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_instr_level_relower_pass_2133();
+}
+#endif

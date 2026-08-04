@@ -85,7 +85,7 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_parallel_intend_pure_contract_2230() {
     std::println("=== Issue #2230: pure-parallel contract + metric paths ===");
     CHECK(true, "issue stamp #2230");
     CompilerService cs;
@@ -646,3 +646,9 @@ int main() {
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_parallel_intend_pure_contract_2230();
+}
+#endif

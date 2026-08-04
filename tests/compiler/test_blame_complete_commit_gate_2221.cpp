@@ -161,7 +161,7 @@ static void seed(CompilerService& cs) {
 
 } // namespace
 
-int main() {
+int run_test_blame_complete_commit_gate_2221() {
     std::println("=== Issue #2221: blame-complete apply + composite commit gate ===");
     CHECK(kBlameCommitRequireIssue == 2221, "issue stamp");
 
@@ -362,3 +362,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_blame_complete_commit_gate_2221();
+}
+#endif

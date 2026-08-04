@@ -45,7 +45,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_steal_snapshot_soft_production_lock_2372() {
     std::println("=== Issue #2372: Soft production lock + force-deopt ABI ===");
 
     // Save / restore process Soft lock + test override around the suite.
@@ -164,3 +164,9 @@ int main() {
     std::println("\n=== #2372 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_snapshot_soft_production_lock_2372();
+}
+#endif

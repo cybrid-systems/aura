@@ -124,7 +124,7 @@ static void ac4_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_setcode_rebind_survive_2569() {
     std::println("=== Issue #2569: set-code/rebind closure+hash survival ===");
     ac1_closure_survive();
     ac2_hash_survive();
@@ -133,3 +133,9 @@ int main() {
     std::println("\n=== #2569: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_setcode_rebind_survive_2569();
+}
+#endif

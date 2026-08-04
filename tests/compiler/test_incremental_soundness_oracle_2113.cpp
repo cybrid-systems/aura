@@ -313,7 +313,7 @@ void ac9_storm_elevation_factor() {
 
 } // namespace
 
-int main() {
+int run_test_incremental_soundness_oracle_2113() {
     std::println("=== Issue #2113: incremental soundness oracle ===");
     ac1_under_dirty_mismatch();
     ac2_happy_path();
@@ -328,3 +328,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_incremental_soundness_oracle_2113();
+}
+#endif

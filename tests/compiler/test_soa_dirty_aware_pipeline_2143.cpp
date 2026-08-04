@@ -101,7 +101,7 @@ struct FullSoaDirty {
 
 } // namespace
 
-int main() {
+int run_test_soa_dirty_aware_pipeline_2143() {
     std::println("=== Issue #2143: SoaDirtyAwarePass + run_dirty_pipeline ===");
 
     // ── AC1: concepts compile + negative ──
@@ -242,3 +242,9 @@ int main() {
     std::println("\n=== #2143 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_soa_dirty_aware_pipeline_2143();
+}
+#endif

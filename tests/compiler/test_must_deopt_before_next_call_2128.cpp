@@ -59,7 +59,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_must_deopt_before_next_call_2128() {
     std::println("=== Issue #2128: MustDeoptBeforeNextCall after reemit remap miss ===");
 
     // ── AC4: source wiring ──
@@ -194,3 +194,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_must_deopt_before_next_call_2128();
+}
+#endif

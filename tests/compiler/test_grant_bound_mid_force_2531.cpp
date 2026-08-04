@@ -48,7 +48,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_grant_bound_mid_force_2531() {
     std::println("=== Issue #2531: force non-zero bound_mutation_id ===");
     {
         std::println("\n--- AC1: Restricted force mid ---");
@@ -95,3 +95,9 @@ int main() {
     std::println("\n=== #2531: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_bound_mid_force_2531();
+}
+#endif

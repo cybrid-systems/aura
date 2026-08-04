@@ -216,7 +216,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_type_linear_commit_health_2613() {
     std::println("=== Issue #2613: query:type-linear-commit-health ===");
     ac1_query_keys();
     ac2_force_reason_match();
@@ -228,3 +228,9 @@ int main() {
     std::println("\n=== #2613: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_linear_commit_health_2613();
+}
+#endif

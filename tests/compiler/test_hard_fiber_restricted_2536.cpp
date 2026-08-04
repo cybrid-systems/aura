@@ -84,7 +84,7 @@ std::int64_t posture(CompilerService& cs, std::string_view key) {
 }
 } // namespace
 
-int main() {
+int run_test_hard_fiber_restricted_2536() {
     std::println("=== Issue #2536: Restricted hard-fiber optional policy ===");
 
     {
@@ -172,3 +172,9 @@ int main() {
     std::println("\n=== #2536: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hard_fiber_restricted_2536();
+}
+#endif

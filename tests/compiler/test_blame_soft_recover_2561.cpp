@@ -295,7 +295,7 @@ static void ac5_existing_authoritative() {
 
 } // namespace
 
-int main() {
+int run_test_blame_soft_recover_2561() {
     std::println("=== Issue #2561: Soft/Sampled blame recover + escalate ===");
     ac1_recover_or_escalate();
     ac2_complete_zero_work();
@@ -308,3 +308,9 @@ int main() {
     std::println("\n=== #2561: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_blame_soft_recover_2561();
+}
+#endif

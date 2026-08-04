@@ -146,7 +146,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_module_require_freevar_2566() {
     std::println("=== Issue #2566: module free-var resolve for required std bindings ===");
     ac1_module_freevar_parity();
     ac2_toplevel_inject();
@@ -156,3 +156,9 @@ int main() {
     std::println("\n=== #2566: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_module_require_freevar_2566();
+}
+#endif

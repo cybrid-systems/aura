@@ -240,7 +240,7 @@ static void ac6_high_fanout_gate() {
 
 } // namespace
 
-int main() {
+int run_test_partial_cone_commit_gate_2621() {
     std::println("=== Issue #2621: partial cone truncate commit gate ===");
     ac1_soft_observe_allow();
     ac2_production_deny();
@@ -323,3 +323,9 @@ static void ac2646_outside_cone_invalidate_source_cite() {
     CHECK(linter.find("occurrence_cone_outside_invalidate_total") != std::string::npos,
           "#2646 AC5: linter scans counter");
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_partial_cone_commit_gate_2621();
+}
+#endif

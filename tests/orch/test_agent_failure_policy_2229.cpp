@@ -98,7 +98,7 @@ void sleep_no_progress_body(AgentHandle& h, std::atomic<bool>& keep_running) {
 
 } // namespace
 
-int main() {
+int run_test_agent_failure_policy_2229() {
     std::println("=== Issue #2229: AgentFailurePolicy + RestartN ===");
     CHECK(true, "issue stamp #2229");
     CompilerService cs;
@@ -295,3 +295,9 @@ int main() {
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_failure_policy_2229();
+}
+#endif

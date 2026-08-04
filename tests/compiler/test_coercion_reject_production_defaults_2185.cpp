@@ -131,7 +131,7 @@ static void make_coerce_tree(FlatAST& flat, StringPool& pool, aura::ast::NodeId&
 
 } // namespace
 
-int main() {
+int run_test_coercion_reject_production_defaults_2185() {
     std::println("=== Issue #2185: production reject_apply_on_provenance_miss ===");
     CHECK(kCoercionProvenanceRejectProductionIssue == 2185, "issue stamp");
 
@@ -294,3 +294,9 @@ int main() {
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_reject_production_defaults_2185();
+}
+#endif

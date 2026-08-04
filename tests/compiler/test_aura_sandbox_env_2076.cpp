@@ -59,7 +59,7 @@ using aura::core::sandbox::set_mode;
 
 } // namespace
 
-int main() {
+int run_test_aura_sandbox_env_2076() {
     std::println(
         "=== Issue #2076: production default Restricted + Agent-readable deny reasons ===");
 
@@ -174,3 +174,9 @@ int main() {
     std::println("\n=== Results: passed ===");
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aura_sandbox_env_2076();
+}
+#endif

@@ -180,7 +180,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_flatast_soa_read_guard_2488() {
     std::println("=== Issue #2488: FlatAST SoAReadGuard / get_soa_safe ===");
     ac1_public_api();
     ac2_query_find_wired();
@@ -190,3 +190,9 @@ int main() {
     std::println("\n=== #2488 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_flatast_soa_read_guard_2488();
+}
+#endif

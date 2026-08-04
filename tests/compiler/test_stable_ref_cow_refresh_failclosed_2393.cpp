@@ -180,7 +180,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_stable_ref_cow_refresh_failclosed_2393() {
     std::println("=== Issue #2393: COW refresh fail-closed ===");
     ac1_ac2_cow_mismatch_failclosed();
     ac3_pinned_may_refresh();
@@ -189,3 +189,9 @@ int main() {
     std::println("\n=== #2393 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stable_ref_cow_refresh_failclosed_2393();
+}
+#endif

@@ -190,7 +190,7 @@ static void ac6_existing_keywords() {
 
 } // namespace
 
-int main() {
+int run_test_query_pattern_default_hygiene_2123() {
     ac1_docs();
     ac2_default_filters_macro();
     ac3_opt_in();
@@ -202,3 +202,9 @@ int main() {
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_query_pattern_default_hygiene_2123();
+}
+#endif

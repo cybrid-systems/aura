@@ -200,7 +200,7 @@ static void ac5_soft_allow_no_false_fail() {
 
 } // namespace
 
-int main() {
+int run_test_soa_residual_production_smoke_2618() {
     std::println("=== Issue #2618: production smoke residual_aos_bridge_total == 0 ===");
     // Order matters: AC1/AC2 need residual==0 before any opt-in bridge (AC3).
     ac1_production_smoke_residual_zero();
@@ -211,3 +211,9 @@ int main() {
     std::println("\n=== #2618: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_soa_residual_production_smoke_2618();
+}
+#endif

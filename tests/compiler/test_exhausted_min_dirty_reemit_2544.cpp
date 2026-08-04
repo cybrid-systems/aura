@@ -801,7 +801,7 @@ static void ac2639_schema_and_source() {
           "AC5: #2601 surface preserved");
 }
 
-int main() {
+int run_test_exhausted_min_dirty_reemit_2544() {
     std::println("test_exhausted_min_dirty_reemit_2544");
     ac1_exhaust_attempts_min_dirty();
     ac2_repromote_after_min_dirty_window();
@@ -823,3 +823,9 @@ int main() {
                  g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_exhausted_min_dirty_reemit_2544();
+}
+#endif

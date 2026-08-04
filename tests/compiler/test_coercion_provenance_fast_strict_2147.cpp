@@ -254,7 +254,7 @@ static void ac5_schema_tls() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_provenance_fast_strict_2147() {
     std::println("=== Issue #2147: coercion provenance fast path + Strict honesty ===");
     ac1_fast_path_no_walk();
     ac2_strict_weak_not_complete();
@@ -264,3 +264,9 @@ int main() {
     std::println("\n=== #2147 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_provenance_fast_strict_2147();
+}
+#endif

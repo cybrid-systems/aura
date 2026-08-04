@@ -76,7 +76,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_isolation_stamp_resolve_2224() {
     std::println("=== Issue #2224: export_ref + resolve_stamped gate ===");
     CHECK(true, "issue stamp #2224");
 
@@ -336,3 +336,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_isolation_stamp_resolve_2224();
+}
+#endif

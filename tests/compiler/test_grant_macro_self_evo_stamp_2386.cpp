@@ -173,7 +173,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_grant_macro_self_evo_stamp_2386() {
     std::println("=== Issue #2386: grant_macro_self_evo epoch/fiber stamp parity ===");
     ac1_grant_epoch_stamped();
     ac2_grant_fiber_stamped();
@@ -183,3 +183,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_macro_self_evo_stamp_2386();
+}
+#endif

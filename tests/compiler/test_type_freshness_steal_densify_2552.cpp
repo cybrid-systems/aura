@@ -222,7 +222,7 @@ static void ac6_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_type_freshness_steal_densify_2552() {
     std::println("=== Issue #2552: type freshness steal/densify fence ===");
     ac1_steal_fence_prunes_goals();
     ac2_hard_fail_no_fence();
@@ -233,3 +233,9 @@ int main() {
     std::println("\n=== #2552: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_freshness_steal_densify_2552();
+}
+#endif

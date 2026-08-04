@@ -212,7 +212,7 @@ static void ac8_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_gc_mark_size_inject_2084() {
     std::println("=== Issue #2084: GC mark_from_roots real heap size injection ===");
     ac1_injected_sizes_match();
     ac2_fallback_undersizes();
@@ -225,3 +225,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_mark_size_inject_2084();
+}
+#endif

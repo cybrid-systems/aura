@@ -234,7 +234,7 @@ static void ac5_inside_fast_path() {
 
 } // namespace
 
-int main() {
+int run_test_reemit_production_default_defer_2208() {
     std::println("=== Issue #2208: production default reemit Defer (refine #2205) ===");
     ac1_default_defer();
     ac2_outside_defers_and_drains();
@@ -247,3 +247,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reemit_production_default_defer_2208();
+}
+#endif

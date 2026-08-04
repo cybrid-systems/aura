@@ -196,7 +196,7 @@ static void ac1_grep_production() {
 
 } // namespace
 
-int main() {
+int run_test_soa_ban_residual_aos_bridge_2520() {
     std::println("=== Issue #2520: ban residual AoS bridge under SoA-only ===");
     reset_allow_aos_bridge_for_test();
     ::unsetenv("AURA_ALLOW_AOS_BRIDGE");
@@ -210,3 +210,9 @@ int main() {
     std::println("\n=== #2520: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_soa_ban_residual_aos_bridge_2520();
+}
+#endif

@@ -260,7 +260,7 @@ void ac_extra_full_rebuild_fallback() {
 
 } // namespace
 
-int main() {
+int run_test_source_to_ir_desync_recovery_2206() {
     std::println("=== test_source_to_ir_desync_recovery_2206 ===");
     ac1_recover_keeps_partial();
     ac2_query_schema();
@@ -270,3 +270,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_source_to_ir_desync_recovery_2206();
+}
+#endif

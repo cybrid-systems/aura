@@ -42,7 +42,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_restore_children_structural_lock_2455() {
     std::println("=== Issue #2455: restore_children structural lock ===");
 
     // ── AC1: self-locking restore (no external guard) ──────────────
@@ -135,3 +135,9 @@ int main() {
     std::println("\n=== #2455 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_restore_children_structural_lock_2455();
+}
+#endif

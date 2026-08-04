@@ -147,7 +147,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_list_end_of_list_void_2482() {
     std::println("=== Issue #2482: list end-of-list is void only ===");
     ac1_null();
     ac2_listp();
@@ -157,3 +157,9 @@ int main() {
     std::println("\n=== #2482 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_list_end_of_list_void_2482();
+}
+#endif

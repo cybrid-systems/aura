@@ -226,7 +226,7 @@ static void ac5_adaptive_on_demotes_mb() {
 
 } // namespace
 
-int main() {
+int run_test_boundary_yield_steal_metrics_2119() {
     std::println("=== Issue #2119: boundary yield + steal starvation metrics ===");
     ac1_yield_hold_metrics();
     ac2_steal_skip_and_pressure();
@@ -237,3 +237,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_boundary_yield_steal_metrics_2119();
+}
+#endif

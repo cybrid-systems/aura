@@ -281,7 +281,7 @@ static void ac5_soak_lineage() {
 
 } // namespace
 
-int main() {
+int run_test_residual_defer_steal_hard_and_2546() {
     std::println("=== Issue #2546: residual hard-AND on steal-complete ===");
     ac1_hard_residual_cancels();
     ac2_clean_zero_cost();
@@ -294,3 +294,9 @@ int main() {
     std::println("\n=== #2546: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_residual_defer_steal_hard_and_2546();
+}
+#endif

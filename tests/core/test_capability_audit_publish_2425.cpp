@@ -37,7 +37,7 @@ void reset_reg() {
 
 } // namespace
 
-int main() {
+int run_test_capability_audit_publish_2425() {
     std::println("=== Issue #2425: capability audit_ring published slots ===");
 
     // ── AC4 non-racing load ────────────────────────────────────────
@@ -199,3 +199,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_audit_publish_2425();
+}
+#endif

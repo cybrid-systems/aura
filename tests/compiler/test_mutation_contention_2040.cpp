@@ -45,7 +45,7 @@ std::int64_t href(CompilerService& cs, const char* prim, const char* key) {
 
 } // namespace
 
-int main() {
+int run_test_mutation_contention_2040() {
     std::println("=== Issue #2040: mutation contention + hold p99 observability ===");
 
     // ── AC1: metrics fields exist ─────────────────────────────────
@@ -174,3 +174,9 @@ int main() {
                  ::aura::test::g_failed);
     return ::aura::test::g_failed > 0 ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_contention_2040();
+}
+#endif

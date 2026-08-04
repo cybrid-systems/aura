@@ -296,7 +296,7 @@ static void ac8_2337_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_general_object_pin_2298() {
     std::println(
         "=== Issue #2298 + #2337: general object pin-or-remap + mutate/agent adoption ===");
     ac5_inventory_and_surface();
@@ -311,3 +311,9 @@ int main() {
     std::println("\n=== #2298 + #2337: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_general_object_pin_2298();
+}
+#endif

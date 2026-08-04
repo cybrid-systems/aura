@@ -40,7 +40,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_param_begin_count_publish_2451() {
     std::println("=== Issue #2451: param_begin_ + param_count_ publish order ===");
 
     // ── AC1: add_lambda publishes coherent params span ─────────────
@@ -97,3 +97,9 @@ int main() {
     std::println("\n=== #2451 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_param_begin_count_publish_2451();
+}
+#endif

@@ -175,7 +175,7 @@ static void ac5_happy_path_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_soa_generation_fence_2111() {
     std::println("=== Issue #2111: SoA generation fence ===");
     ac1_soa_generation_readable();
     ac2_should_relower_generation();
@@ -185,3 +185,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_soa_generation_fence_2111();
+}
+#endif

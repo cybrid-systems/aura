@@ -211,7 +211,7 @@ static void ac5_source() {
 
 } // namespace
 
-int main() {
+int run_test_orch_agent_mutation_boundary_2118() {
     std::println("=== Issue #2118: orch agent mutation boundary visibility ===");
     ac1_soft_boundary_visibility();
     ac2_pure_reasoning_zero_cost();
@@ -221,3 +221,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_orch_agent_mutation_boundary_2118();
+}
+#endif

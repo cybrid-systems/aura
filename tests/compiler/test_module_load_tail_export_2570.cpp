@@ -186,7 +186,7 @@ static void ac5_prim_reexport_math() {
 
 } // namespace
 
-int main() {
+int run_test_module_load_tail_export_2570() {
     std::println("=== Issue #2570: module load tail export / fail-closed ===");
     ac1_tail_exports();
     ac2_mid_error_fail_closed();
@@ -196,3 +196,9 @@ int main() {
     std::println("\n=== #2570: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_module_load_tail_export_2570();
+}
+#endif

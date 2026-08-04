@@ -165,7 +165,7 @@ static void ac6_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_aether_denseness_residual_2578() {
     std::println("=== Issue #2578: Aether denseness host residuals ===");
     ac1_orch_parallel_typecheck();
     ac2_orch_freevar_survive_rebind();
@@ -176,3 +176,9 @@ int main() {
     std::println("\n=== #2578: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aether_denseness_residual_2578();
+}
+#endif

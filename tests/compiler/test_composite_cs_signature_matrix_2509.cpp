@@ -265,7 +265,7 @@ static void ac5_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_composite_cs_signature_matrix_2509() {
     std::println("test_composite_cs_signature_matrix_2509");
     ac1_expected_empty_hard_miss();
     ac2_expected_has_work_sdo();
@@ -277,3 +277,9 @@ int main() {
     std::println("composite CS signature matrix #2509: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_composite_cs_signature_matrix_2509();
+}
+#endif

@@ -88,7 +88,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_capability_single_use_consume_2586() {
     std::println("=== Issue #2586: single-use grant auto-revoke ===");
 
     // ── AC1: grant_once(Mutate) → 1st allow; 2nd deny ──────────────
@@ -293,3 +293,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_single_use_consume_2586();
+}
+#endif

@@ -115,7 +115,7 @@ static void ac5_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_symbol_eq_2568() {
     std::println("=== Issue #2568: symbol eq?/equal? for quoted symbols ===");
     ac1_literal_eq();
     ac2_let_eq();
@@ -125,3 +125,9 @@ int main() {
     std::println("\n=== #2568: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_symbol_eq_2568();
+}
+#endif

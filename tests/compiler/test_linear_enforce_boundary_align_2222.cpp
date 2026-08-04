@@ -120,7 +120,7 @@ static auto incomplete_validate(bool require) {
 
 } // namespace
 
-int main() {
+int run_test_linear_enforce_boundary_align_2222() {
     std::println("=== Issue #2222: LinearEnforce boundary + production align ===");
     CHECK(kLinearEnforceBoundaryAlignIssue == 2222, "issue stamp");
 
@@ -273,3 +273,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_enforce_boundary_align_2222();
+}
+#endif

@@ -175,7 +175,7 @@ static void ac5_zero_cost_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_linear_partial_revalidate_2460() {
     std::println("=== Issue #2460: Phase-2 dirty ownership re-sim in infer_flat_partial ===");
     ac1_partial_path_hard_policy();
     ac2_phase1_unchanged();
@@ -185,3 +185,9 @@ int main() {
     std::println("\n=== #2460 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_partial_revalidate_2460();
+}
+#endif

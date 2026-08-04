@@ -283,7 +283,7 @@ static void ac2527_8_source_doc_comment() {
 
 } // namespace
 
-int main() {
+int run_test_query_and_replace_batch_2527() {
     std::print("=== Issue #2527: mutate:query-and-replace-batch ===\n");
     ac2527_1_no_match_returns_success();
     ac2527_1_size_counter_bumps();
@@ -297,3 +297,9 @@ int main() {
     std::print("=== Total: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_query_and_replace_batch_2527();
+}
+#endif

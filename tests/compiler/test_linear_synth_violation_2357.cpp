@@ -173,7 +173,7 @@ static void ac5_query_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_linear_synth_violation_2357() {
     std::println("=== Issue #2357: linear synth Move/Drop first-class violation ===");
     ac5_query_and_source();
     ac1_double_move_first_class();
@@ -184,3 +184,9 @@ int main() {
     std::println("\n=== #2357: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_synth_violation_2357();
+}
+#endif

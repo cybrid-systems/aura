@@ -290,7 +290,7 @@ static void ac6_readme() {
 
 } // namespace
 
-int main() {
+int run_test_agent_scope_hierarchy_2537() {
     std::println("=== Issue #2537: Hierarchical AgentScope ===");
     CHECK(kAgentScopeHierarchyIssue == 2537, "issue stamp");
 
@@ -304,3 +304,9 @@ int main() {
     std::println("\n=== #2537 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_scope_hierarchy_2537();
+}
+#endif

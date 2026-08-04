@@ -194,7 +194,7 @@ static void ac6_diverge_zero_ordered() {
 
 } // namespace
 
-int main() {
+int run_test_occurrence_dirty_key_authority_2622() {
     std::println("=== Issue #2622: occurrence dirty-key authority ===");
     ac1_shape_miss_refresh();
     ac2_no_live_goal_after_sync();
@@ -205,3 +205,9 @@ int main() {
     std::println("\n=== #2622: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_occurrence_dirty_key_authority_2622();
+}
+#endif

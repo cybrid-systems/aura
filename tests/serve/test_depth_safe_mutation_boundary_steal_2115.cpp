@@ -259,7 +259,7 @@ static void ac5_guard_held_and_dual_fiber() {
 
 } // namespace
 
-int main() {
+int run_test_depth_safe_mutation_boundary_steal_2115() {
     std::println("=== Issue #2115: depth-safe mutation boundary steal ===");
     ac1_depth_gt0_never_steal_safe();
     ac2_depth0_safe_depth_gt0_not();
@@ -269,3 +269,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_depth_safe_mutation_boundary_steal_2115();
+}
+#endif

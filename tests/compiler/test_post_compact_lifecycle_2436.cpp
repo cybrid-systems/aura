@@ -63,7 +63,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_post_compact_lifecycle_2436() {
     std::println("=== Issue #2436: post-compact lifecycle Arena×SoA×Shape×fiber ===");
     CHECK(kPostCompactLifecycleIssue == 2436, "issue stamp");
     CHECK(post_compact_lifecycle_wired.load() == 1, "wired sentinel");
@@ -222,3 +222,9 @@ int main() {
     std::println("\n=== #2436 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_post_compact_lifecycle_2436();
+}
+#endif

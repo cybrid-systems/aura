@@ -147,7 +147,7 @@ static void ac2631_source_and_readme() {
 
 } // namespace
 
-int main() {
+int run_test_orch_scope_child_2631() {
     std::println("=== Issue #2631: orch:scope-child hierarchical AgentScope surface ===");
     ac2631_spawn_child_hierarchy();
     ac2631_cancel_top_down_propagates();
@@ -157,3 +157,9 @@ int main() {
     std::println("\n=== #2631 Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_orch_scope_child_2631();
+}
+#endif

@@ -172,7 +172,7 @@ static void ac4_concurrent_mark_stress_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_atomic_mark_bitvector_2117() {
     std::println("=== Issue #2117: atomic MarkBitVector concurrent mark ===");
     ac1_concurrent_set_no_lost_update();
     ac2_mark_from_roots_api();
@@ -181,3 +181,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_atomic_mark_bitvector_2117();
+}
+#endif

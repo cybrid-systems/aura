@@ -102,7 +102,7 @@ bool find_isolation_deny(std::uint64_t& out_mid, std::uint64_t& out_tenant,
 
 } // namespace
 
-int main() {
+int run_test_isolation_audit_mid_2156() {
     std::println("=== Issue #2156: isolation-deny audit mid not tenant ===");
     CHECK(kIsolationAuditMidIssue == 2156, "issue stamp");
 
@@ -240,3 +240,9 @@ int main() {
     std::println("\n=== #2156 isolation audit mid: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_isolation_audit_mid_2156();
+}
+#endif

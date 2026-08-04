@@ -79,7 +79,7 @@ static void bump_bp_recent(std::uint64_t n) {
 
 } // namespace
 
-int main() {
+int run_test_per_scope_bp_admit_2591() {
     std::println("=== Issue #2591: per-spec BP admit threshold override ===");
 
     // ── README source-cite ──
@@ -255,3 +255,9 @@ int main() {
     std::println("\n=== #2591: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_per_scope_bp_admit_2591();
+}
+#endif

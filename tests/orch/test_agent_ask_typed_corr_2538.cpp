@@ -102,7 +102,7 @@ void typed_worker_loop(AgentHandle& h, std::atomic<bool>& running, std::atomic<i
 
 } // namespace
 
-int main() {
+int run_test_agent_ask_typed_corr_2538() {
     std::println("=== Issue #2538: typed agent-ask correlation ===");
     CHECK(kAgentAskTypedCorrIssue == 2538, "issue stamp");
     CompilerService cs;
@@ -410,3 +410,9 @@ int main() {
     std::println("\n=== #2538 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_ask_typed_corr_2538();
+}
+#endif

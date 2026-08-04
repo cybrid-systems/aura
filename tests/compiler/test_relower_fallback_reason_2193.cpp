@@ -57,7 +57,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_relower_fallback_reason_2193() {
     std::println("=== Issue #2193: RelowerFallbackReason per-reason cascade ===");
 
     // ── AC1: enum + note_relower_fallback ──
@@ -220,3 +220,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_relower_fallback_reason_2193();
+}
+#endif

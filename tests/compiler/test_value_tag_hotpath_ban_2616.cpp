@@ -210,7 +210,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_value_tag_hotpath_ban_2616() {
     std::println("=== Issue #2616: hard-ban classify on value hot path ===");
     ac1_hot_files_clean();
     ac2_pure_is_as();
@@ -220,3 +220,9 @@ int main() {
     std::println("\n=== #2616: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_value_tag_hotpath_ban_2616();
+}
+#endif

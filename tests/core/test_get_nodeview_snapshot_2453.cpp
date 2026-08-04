@@ -72,7 +72,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_get_nodeview_snapshot_2453() {
     std::println("=== Issue #2453: get(NodeId) NodeView snapshot contract ===");
 
     // ── AC1: sequential get self-consistency ───────────────────────
@@ -169,3 +169,9 @@ int main() {
     std::println("\n=== #2453 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_get_nodeview_snapshot_2453();
+}
+#endif

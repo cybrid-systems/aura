@@ -34,7 +34,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_capability_effect_stats_snapshot_2430() {
     std::println("=== Issue #2430: snapshot_capability_effect_stats double-check ===");
 
     // ── AC4 single-thread field coherence ──────────────────────────
@@ -176,3 +176,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_effect_stats_snapshot_2430();
+}
+#endif

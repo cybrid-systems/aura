@@ -187,7 +187,7 @@ static void ac5_query_schema() {
 
 } // namespace
 
-int main() {
+int run_test_layout_stamp_equality_8field_2519() {
     std::println("=== Issue #2519: LayoutStamp 8-field operator== ===");
     ac1_equality_matrix();
     ac2_ir_gen_equality();
@@ -197,3 +197,9 @@ int main() {
     std::println("\n=== #2519: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_layout_stamp_equality_8field_2519();
+}
+#endif

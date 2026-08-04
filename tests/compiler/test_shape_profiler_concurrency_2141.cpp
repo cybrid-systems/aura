@@ -43,7 +43,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_shape_profiler_concurrency_2141() {
     std::println("=== Issue #2141: ShapeProfiler multi-fiber concurrency ===");
     CHECK(kShapeProfilerConcurrencyIssue == 2141, "issue stamp");
 
@@ -248,3 +248,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_shape_profiler_concurrency_2141();
+}
+#endif

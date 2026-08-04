@@ -325,7 +325,7 @@ static void ac6_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_macro_hygiene_limits_2101() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
     ac2_query_live_limits();
@@ -336,3 +336,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_macro_hygiene_limits_2101();
+}
+#endif

@@ -105,7 +105,7 @@ static void ac4_gate() {
 
 } // namespace
 
-int main() {
+int run_test_gc_heap_cells_clear_2486() {
     std::println("=== Issue #2486: gc-heap clears cells_ ===");
     ac1_cells_cleared();
     ac2_fresh_after_reset();
@@ -114,3 +114,9 @@ int main() {
     std::println("\n=== #2486 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_heap_cells_clear_2486();
+}
+#endif

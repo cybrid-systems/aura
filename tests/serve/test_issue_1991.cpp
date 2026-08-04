@@ -15,7 +15,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 
-int main() {
+int run_test_issue_1991() {
     using aura::test::g_failed;
     using aura::test::g_passed;
 
@@ -32,3 +32,9 @@ int main() {
     std::println("issue 1991 module_mtx_ (gc): OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_issue_1991();
+}
+#endif

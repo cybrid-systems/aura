@@ -200,7 +200,7 @@ static void ac5_query_schema_and_docs() {
 
 } // namespace
 
-int main() {
+int run_test_outermost_exit_order_2120() {
     ac1_no_residual_gc_defer();
     ac2_depth_held_until_unlock_source();
     ac3_reemit_after_probes_source_and_metrics();
@@ -211,3 +211,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_outermost_exit_order_2120();
+}
+#endif

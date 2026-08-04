@@ -185,7 +185,7 @@ static void ac6_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_restricted_unset_principal_2385() {
     std::println("=== Issue #2385: Restricted unset principal deny side-effects ===");
     ac1_restricted_unset_denies_side_effect();
     ac2_restricted_with_principal_allows();
@@ -196,3 +196,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_restricted_unset_principal_2385();
+}
+#endif

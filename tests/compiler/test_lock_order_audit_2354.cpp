@@ -231,7 +231,7 @@ static void ac5_env_and_mode() {
 
 } // namespace
 
-int main() {
+int run_test_lock_order_audit_2354() {
     std::println("=== Issue #2354: debug lock-order audit (scheduler/workspace/closures) ===");
     ac4_rank_table_and_source_cite();
     ac1_audit_off_zero_cost();
@@ -245,3 +245,9 @@ int main() {
     std::println("\n=== #2354: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_lock_order_audit_2354();
+}
+#endif

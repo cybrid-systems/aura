@@ -225,7 +225,7 @@ static void ac6_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_unify_incomplete_skip_2620() {
     std::println("=== Issue #2620: unify Soft incomplete CoercionNode skip ===");
     ac1_soft_no_incomplete_insert();
     ac2_soft_arms_force_full();
@@ -236,3 +236,9 @@ int main() {
     std::println("\n=== #2620: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_unify_incomplete_skip_2620();
+}
+#endif

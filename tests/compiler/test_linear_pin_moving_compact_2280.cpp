@@ -76,7 +76,7 @@ void* const kOldAddr2 = reinterpret_cast<void*>(0xA000);
 
 } // namespace
 
-int main() {
+int run_test_linear_pin_moving_compact_2280() {
     std::println("=== Issue #2280: epoch-scoped linear pin contract ===");
 
     // ── AC1: pin/unpin bump counters, registry tracks roots ──
@@ -363,3 +363,9 @@ int main() {
     std::println("=== #2280 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_pin_moving_compact_2280();
+}
+#endif

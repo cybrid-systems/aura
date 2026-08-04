@@ -75,7 +75,7 @@ void reset_all_throttle() {
 
 } // namespace
 
-int main() {
+int run_test_mutate_mailbox_starvation_throttle_2587() {
     std::println("=== Issue #2587: mutate admission throttle gate ===");
 
     // ── AC5: zero cost when flag == 0 (helper structural verification) ─
@@ -223,3 +223,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutate_mailbox_starvation_throttle_2587();
+}
+#endif

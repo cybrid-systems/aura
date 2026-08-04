@@ -296,7 +296,7 @@ static void ac5_authority() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_dual_require_2562() {
     std::println("=== Issue #2562: dual-field require-or-drop ===");
     ac1_production_dual_drop();
     ac2_soft_insert_no_drop();
@@ -308,3 +308,9 @@ int main() {
     std::println("\n=== #2562: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_dual_require_2562();
+}
+#endif

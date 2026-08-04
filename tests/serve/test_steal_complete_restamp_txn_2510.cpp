@@ -273,7 +273,7 @@ static void ac_schema() {
 
 } // namespace
 
-int main() {
+int run_test_steal_complete_restamp_txn_2510() {
     std::println("test_steal_complete_restamp_txn_2510");
     ac1_sole_restamp_entry();
     ac2_hard_mismatch_fail();
@@ -286,3 +286,9 @@ int main() {
     std::println("steal-complete restamp txn #2510: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_complete_restamp_txn_2510();
+}
+#endif

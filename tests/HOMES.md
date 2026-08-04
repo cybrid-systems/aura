@@ -57,20 +57,32 @@ If unsure: `rg -n 'keyword' tests/compiler tests/core tests/serve tests/orch` an
 
 ## Consolidation waves (existing issue-suffixed files)
 
-~400 historical `test_*_NNNN.cpp` remain. Migrate by **family**, not one-off renames:
+**Status (2026-08-04):** multi-TU thematic batches done. Historical files keep
+`_*NNNN` names as **member TUs** (`run_test_*` + `AURA_ISSUE_BATCH_MEMBER`);
+**standalone `aura_add_issue_test` for issue-suffixed targets is removed**
+(exception: special `test_issue_178` reflect dual-TU). CI / `all_test_issue_targets`
+runs the batch drivers below.
 
-| Wave | Family | Target home |
-|------|--------|-------------|
-| W0 (done) | linear cross-closure #2563/#2612/#2623 | `compiler/test_linear_cross_closure.cpp` |
-| W1 | FlatAST / column locks atomics | `core/test_flatast_atomic_lock_batch.cpp` |
-| W2 | security / capability / grant / Restricted | capability + security batches |
-| W3 | densify / pin / Moving / envframe | arena + pin suites |
-| W4 | AOT / SpecJIT / stamp / relower | jit/aot batches |
-| W5 | mailbox / fiber / residual / chaos | serve + hotpath |
-| W6 | occurrence / cone / coercion | occurrence + dead_coercion batches |
-| W7 | leftover / uncategorized | case-by-case into nearest theme |
+| Wave | Family | Batch home | Status |
+|------|--------|------------|--------|
+| W0 | linear cross-closure #2563/#2612/#2623 | `compiler/test_linear_cross_closure.cpp` (single-TU fold) | done |
+| W1 | FlatAST / column locks atomics | `core/test_flatast_atomic_lock_batch` | done |
+| W2 | security / capability / grant / Restricted | `compiler/test_security_capability_batch` | done |
+| W3 | densify / pin / Moving / envframe | `core/test_densify_pin_batch` | done |
+| W4 | AOT / SpecJIT / stamp / relower | `compiler/test_aot_jit_stamp_batch` | done |
+| W5 | mailbox / fiber / residual / chaos | `serve/test_mailbox_fiber_batch` | done |
+| W6 | occurrence / cone / coercion | `compiler/test_occurrence_coercion_batch` | done |
+| W7 | linear ownership residual | `compiler/test_linear_misc_batch` | done |
+| W_orch | orch / agent | `orch/test_orch_agent_batch` | done |
+| W_obs | obs / health leftovers | `compiler/test_obs_misc_batch` | done |
+| W_other | leftovers | `compiler/test_misc_issue_fold_batch` | done |
 
-After each fold: drop old CMake targets, point coverage manifests at the thematic path, regen `test-registry.json` + inventory.
+**Tool:** `python3 scripts/tools/fold_issue_test_wave.py --wave W1 --apply`
+
+**Next (optional):** strip `_NNNN` from member filenames when unique + rewrite
+manifests (naming hygiene only — binary sprawl already fixed).
+
+After further folds: regen `test-registry.json` + inventory.
 
 ## Enforcement
 

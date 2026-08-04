@@ -247,7 +247,7 @@ static void ac5_source_and_query() {
 
 } // namespace
 
-int main() {
+int run_test_escape_gate_steal_densify_clear_2507() {
     std::println("test_escape_gate_steal_densify_clear_2507");
     ac1_steal_clear_no_stale_elision();
     ac2_densify_clear();
@@ -259,3 +259,9 @@ int main() {
     std::println("escape gate steal/densify clear #2507: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_escape_gate_steal_densify_clear_2507();
+}
+#endif

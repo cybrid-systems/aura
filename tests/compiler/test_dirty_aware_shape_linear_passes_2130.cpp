@@ -93,7 +93,7 @@ static IRFunction make_two_block_fn() {
 
 } // namespace
 
-int main() {
+int run_test_dirty_aware_shape_linear_passes_2130() {
     std::println("=== Issue #2130: dirty-aware ShapeAwareFold + LinearOwnership ===");
 
     // ── AC5: source ──
@@ -212,3 +212,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dirty_aware_shape_linear_passes_2130();
+}
+#endif

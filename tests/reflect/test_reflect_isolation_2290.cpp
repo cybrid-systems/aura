@@ -39,7 +39,7 @@ void check(bool cond, const char* msg) {
 
 } // namespace
 
-int main() {
+int run_test_reflect_isolation_2290() {
     using aura::reflect::enum_count;
     using aura::reflect::opcode_name;
     using aura::reflect::reflect_members;
@@ -67,3 +67,9 @@ int main() {
                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reflect_isolation_2290();
+}
+#endif

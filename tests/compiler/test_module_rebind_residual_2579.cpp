@@ -198,7 +198,7 @@ static void ac5_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_module_rebind_residual_2579() {
     std::println("=== Issue #2579: module rebind / multi-define residual ===");
     ac1_multidefine_call_init();
     ac2_split_module_rebind();
@@ -208,3 +208,9 @@ int main() {
     std::println("\n=== #2579: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_module_rebind_residual_2579();
+}
+#endif

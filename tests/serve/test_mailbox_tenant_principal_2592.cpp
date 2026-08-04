@@ -93,7 +93,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_mailbox_tenant_principal_2592() {
     std::println("=== Issue #2592: mailbox deliver principal verify ===");
 
     // ── AC6: source-cite ─────────────────────────────────────────
@@ -203,3 +203,9 @@ int main() {
     std::println("\n=== #2592: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mailbox_tenant_principal_2592();
+}
+#endif

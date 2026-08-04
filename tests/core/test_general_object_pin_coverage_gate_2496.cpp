@@ -185,7 +185,7 @@ static void ac20_exempt_marker_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_general_object_pin_coverage_gate_2496() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
                  "(extends #2496 test file per #81967) ===");
@@ -204,3 +204,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_general_object_pin_coverage_gate_2496();
+}
+#endif

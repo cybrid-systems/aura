@@ -228,7 +228,7 @@ static void ac5_source_schema_live() {
 
 } // namespace
 
-int main() {
+int run_test_commit_readiness_score_2553() {
     std::println("=== Issue #2553: commit-readiness score ===");
     apply_dev_audit_defaults();
     ac1_clean_ok();
@@ -240,3 +240,9 @@ int main() {
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_commit_readiness_score_2553();
+}
+#endif

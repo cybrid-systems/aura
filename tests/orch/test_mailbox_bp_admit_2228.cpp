@@ -102,7 +102,7 @@ void reset_counter_window() {
 
 } // namespace
 
-int main() {
+int run_test_mailbox_bp_admit_2228() {
     std::println("=== Issue #2228: mailbox BP-driven spawn admission ===");
     CHECK(true, "issue stamp #2228");
     CompilerService cs;
@@ -615,3 +615,9 @@ int main() {
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mailbox_bp_admit_2228();
+}
+#endif

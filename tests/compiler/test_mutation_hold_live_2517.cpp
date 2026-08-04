@@ -223,7 +223,7 @@ static void ac5_cas_stress() {
 
 } // namespace
 
-int main() {
+int run_test_mutation_hold_live_2517() {
     std::println("=== Issue #2517: mutation-hold-live max outermost probe ===");
     ac3_empty_zeros();
     ac1_ac2_enter_exit_query();
@@ -233,3 +233,9 @@ int main() {
     std::println("\n=== #2517: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_hold_live_2517();
+}
+#endif

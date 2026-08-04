@@ -40,7 +40,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_param_data_mutation_contract_2449() {
     std::println("=== Issue #2449: param_data_ mutation contract ===");
 
     // ── AC1: single-thread add_lambda / set_lambda_params ──────────
@@ -106,3 +106,9 @@ int main() {
     std::println("\n=== #2449 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_param_data_mutation_contract_2449();
+}
+#endif

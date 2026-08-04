@@ -187,7 +187,7 @@ static void ac5_query_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_delta_truncate_goal_priority_2508() {
     std::println("test_delta_truncate_goal_priority_2508");
     ac1_ac2_goal_priority_before_full();
     ac3_still_truncated_full_solve();
@@ -198,3 +198,9 @@ int main() {
     std::println("delta truncate goal priority #2508: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_delta_truncate_goal_priority_2508();
+}
+#endif

@@ -41,7 +41,7 @@ using aura::compiler::security::kEffectRender;
 
 } // namespace
 
-int main() {
+int run_test_capability_effect_force_2072() {
     std::println("=== Issue #2072: require_effect() + side-effect primitive gating ===");
 
     // ── AC1: require_effect exists + is the production entry ────────
@@ -136,3 +136,9 @@ int main() {
     std::println("\n=== Results: passed ===");
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_effect_force_2072();
+}
+#endif

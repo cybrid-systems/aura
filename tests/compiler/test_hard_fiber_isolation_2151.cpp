@@ -118,7 +118,7 @@ bool find_reason(std::string_view needle) {
 
 } // namespace
 
-int main() {
+int run_test_hard_fiber_isolation_2151() {
     std::println("=== Issue #2151: optional hard-deny grant_fiber_id mismatch ===");
     CHECK(kHardFiberIsolationIssue == 2151, "issue stamp");
 
@@ -344,3 +344,9 @@ int main() {
     std::println("\n=== #2151 hard fiber isolation: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hard_fiber_isolation_2151();
+}
+#endif

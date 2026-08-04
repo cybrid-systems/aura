@@ -86,7 +86,7 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_fiber_native_keepalive_2159() {
     std::println("=== Issue #2159: fiber-native keepalive helper ===");
     CHECK(kFiberNativeKeepaliveIssue == 2159, "issue stamp");
 
@@ -413,3 +413,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_fiber_native_keepalive_2159();
+}
+#endif

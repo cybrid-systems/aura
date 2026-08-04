@@ -30,7 +30,7 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
 
 } // namespace
 
-int main() {
+int run_test_production_stability_1014() {
     CompilerService cs;
 
     // Dashboard
@@ -118,3 +118,9 @@ int main() {
     std::println("production stability #1014–#1046: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_production_stability_1014();
+}
+#endif

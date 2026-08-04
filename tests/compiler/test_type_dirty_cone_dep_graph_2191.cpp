@@ -74,7 +74,7 @@ static void reset_type_cone_metrics() {
 
 } // namespace
 
-int main() {
+int run_test_type_dirty_cone_dep_graph_2191() {
     std::println("=== Issue #2191: type dirty cone ↔ DepGraph cascade ===");
 
     // ── Encode / decode unit ──
@@ -216,3 +216,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_dirty_cone_dep_graph_2191();
+}
+#endif

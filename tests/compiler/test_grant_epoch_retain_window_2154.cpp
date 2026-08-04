@@ -100,7 +100,7 @@ std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_grant_epoch_retain_window_2154() {
     std::println("=== Issue #2154: sliding grant_min_valid_epoch retain window ===");
     CHECK(kGrantEpochRetainWindowIssue == 2154, "issue stamp");
     CHECK(kDefaultGrantEpochRetainWindowMultiTenant == 64, "default multi-tenant K=64");
@@ -334,3 +334,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_epoch_retain_window_2154();
+}
+#endif

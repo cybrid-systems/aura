@@ -102,7 +102,7 @@ void reset_quota() {
 
 } // namespace
 
-int main() {
+int run_test_spawn_quota_no_leak_2155() {
     std::println("=== Issue #2155: spawn quota-reject no-leak invariants ===");
     CHECK(kSpawnQuotaNoLeakIssue == 2155, "issue stamp");
 
@@ -333,3 +333,9 @@ int main() {
     std::println("\n=== #2155 spawn quota no-leak: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_spawn_quota_no_leak_2155();
+}
+#endif

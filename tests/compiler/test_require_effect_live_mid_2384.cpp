@@ -188,7 +188,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_require_effect_live_mid_2384() {
     std::println("=== Issue #2384: require_effect live mutation_id provenance ===");
     ac1_bound_mismatch_denies();
     ac2_bound_match_allows();
@@ -198,3 +198,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_require_effect_live_mid_2384();
+}
+#endif

@@ -104,7 +104,7 @@ static SecurityScheduleInput base_input() {
 
 } // namespace
 
-int main() {
+int run_test_security_schedule_gate_2590() {
     std::println("=== Issue #2590: security schedule gate ===");
 
     // ── README source-cite (AC5) ──
@@ -324,3 +324,9 @@ int main() {
     std::println("\n=== #2590: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_schedule_gate_2590();
+}
+#endif

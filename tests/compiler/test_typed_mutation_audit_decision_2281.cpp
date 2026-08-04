@@ -53,7 +53,7 @@ struct AuditStateGuard {
 
 } // namespace
 
-int main() {
+int run_test_typed_mutation_audit_decision_2281() {
     std::println("=== Issue #2281: TypedMutationAudit decision query ===");
 
     AuditStateGuard guard;
@@ -245,3 +245,9 @@ int main() {
     std::println("=== #2281 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_typed_mutation_audit_decision_2281();
+}
+#endif

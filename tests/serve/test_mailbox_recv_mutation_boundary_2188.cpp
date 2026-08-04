@@ -623,7 +623,7 @@ static void ac2347_schema_and_contract() {
 
 } // namespace
 
-int main() {
+int run_test_mailbox_recv_mutation_boundary_2188() {
     std::println(
         "=== Issue #2188/#2312/#2347: MultiFiberMailbox recv/push gate under MutationBoundary ===");
     ac1_recv_rejected_under_guard();
@@ -652,3 +652,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mailbox_recv_mutation_boundary_2188();
+}
+#endif

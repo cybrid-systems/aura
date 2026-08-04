@@ -233,7 +233,7 @@ static void ac6_source() {
 
 } // namespace
 
-int main() {
+int run_test_orch_hot_update_health_throttle_2543() {
     std::println("=== Issue #2543: orch hot-update health self-throttle ===");
     ac2_idle_zero_throttle();
     ac1_storm_throttle();
@@ -244,3 +244,9 @@ int main() {
     std::println("\n=== #2543 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_orch_hot_update_health_throttle_2543();
+}
+#endif

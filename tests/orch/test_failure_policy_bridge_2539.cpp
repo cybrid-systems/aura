@@ -46,7 +46,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_failure_policy_bridge_2539() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
     CHECK(kFailurePolicyBridgeIssue == 2539, "issue stamp");
 
@@ -198,3 +198,9 @@ int main() {
     std::println("\n=== #2539 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_failure_policy_bridge_2539();
+}
+#endif

@@ -183,7 +183,7 @@ static void ac5_pure_schema() {
 
 } // namespace
 
-int main() {
+int run_test_type_system_health_next_action_2462() {
     std::println("=== Issue #2462: type-system-health next-action ===");
     apply_dev_audit_defaults();
     ac1_healthy_ok();
@@ -194,3 +194,9 @@ int main() {
     std::println("\n=== #2462 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_system_health_next_action_2462();
+}
+#endif

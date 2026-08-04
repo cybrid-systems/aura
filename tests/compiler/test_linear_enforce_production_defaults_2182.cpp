@@ -123,7 +123,7 @@ static std::int64_t href_enf(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_linear_enforce_production_defaults_2182() {
     std::println("=== Issue #2182: production LinearEnforceMode Strict defaults ===");
     CHECK(kLinearEnforceProductionDefaultsIssue == 2182, "issue stamp");
 
@@ -261,3 +261,9 @@ int main() {
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_enforce_production_defaults_2182();
+}
+#endif

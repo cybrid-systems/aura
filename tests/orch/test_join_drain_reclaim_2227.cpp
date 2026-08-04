@@ -84,7 +84,7 @@ void reset_between_acs() {
 
 } // namespace
 
-int main() {
+int run_test_join_drain_reclaim_2227() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
     CompilerService cs;
@@ -487,3 +487,9 @@ int main() {
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_join_drain_reclaim_2227();
+}
+#endif

@@ -34,7 +34,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_cap_write_effect_matrix_2532() {
     std::println("=== Issue #2532: write caps into Effect matrix ===");
     auto ws = effect_for_cap_name("workspace");
     auto fb = effect_for_cap_name("fiber");
@@ -59,3 +59,9 @@ int main() {
     std::println("\n=== #2532: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_cap_write_effect_matrix_2532();
+}
+#endif

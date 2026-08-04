@@ -67,7 +67,7 @@ static void seed(CompilerService& cs) {
 
 } // namespace
 
-int main() {
+int run_test_composite_commit_cs_reuse_2180() {
     std::println("=== Issue #2180: composite commit CS reuse ===");
 
     // ── AC5 + source ──
@@ -282,3 +282,9 @@ static void ac2644_source_cite() {
     CHECK(linter.find("check_occurrence_refined_consistency") != std::string::npos,
           "#2644 AC5: linter scans helper symbol");
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_composite_commit_cs_reuse_2180();
+}
+#endif

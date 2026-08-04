@@ -80,7 +80,7 @@ static std::int64_t href_expr(CompilerService& cs, const std::string& expr, std:
 
 } // namespace
 
-int main() {
+int run_test_rest_param_hygiene_2169() {
     std::println("=== Issue #2169: complete rest-param hygienic renaming ===");
 
     // ── AC1: source contract ──
@@ -295,3 +295,9 @@ int main() {
     std::println("\n=== #2169 rest-param hygiene: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_rest_param_hygiene_2169();
+}
+#endif

@@ -284,7 +284,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_densify_ownership_scan_fail_gate_2497() {
     std::println("=== Issue #2497: densify ownership scan fail → suppress outermost success ===");
     ac1_inject_suppresses_envframe_and_phase5_success();
     ac2_clean_moving_densify_allows_success();
@@ -294,3 +294,9 @@ int main() {
     std::println("\n=== #2497: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_densify_ownership_scan_fail_gate_2497();
+}
+#endif

@@ -302,7 +302,7 @@ static void ac5_schema_source() {
 
 } // namespace
 
-int main() {
+int run_test_adaptive_reverify_limit_2146() {
     std::println("=== Issue #2146: adaptive reverify limit ===");
     ac1_adaptive_limit_and_conflict();
     ac2_truncation_pending_drain();
@@ -312,3 +312,9 @@ int main() {
     std::println("\n=== #2146 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_adaptive_reverify_limit_2146();
+}
+#endif

@@ -184,7 +184,7 @@ static void ac5_source_cite_and_invalidate() {
 
 } // namespace
 
-int main() {
+int run_test_type_dep_epoch_prune_2355() {
     std::println("=== Issue #2355: type_dep epoch prune + NodeId invalidation ===");
     ac5_source_cite_and_invalidate();
     ac1_epoch_prune();
@@ -194,3 +194,9 @@ int main() {
     std::println("\n=== #2355: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_dep_epoch_prune_2355();
+}
+#endif

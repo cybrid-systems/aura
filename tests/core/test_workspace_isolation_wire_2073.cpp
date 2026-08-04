@@ -52,7 +52,7 @@ using aura::core::workspace_isolation::reset_tenant_isolation_for_test;
 
 } // namespace
 
-int main() {
+int run_test_workspace_isolation_wire_2073() {
     std::println("=== Issue #2073: stamp_ref_tenant on production hot paths ===");
 
     // Reset global isolation state for test isolation.
@@ -153,3 +153,9 @@ int main() {
     std::println("\n=== Results: passed ===");
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_workspace_isolation_wire_2073();
+}
+#endif

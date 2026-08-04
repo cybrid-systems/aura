@@ -325,7 +325,7 @@ static void ac6_source_and_security_exempt_doc() {
 
 } // namespace
 
-int main() {
+int run_test_capability_high_risk_promote_2489() {
     std::println("=== Issue #2489: high-risk caps into Effect matrix ===");
     ac1_registry_only_promoted_caps();
     ac2_revoke_clears_both();
@@ -336,3 +336,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_high_risk_promote_2489();
+}
+#endif

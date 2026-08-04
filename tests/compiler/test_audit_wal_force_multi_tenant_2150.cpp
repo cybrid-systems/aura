@@ -242,7 +242,7 @@ static void ac5_flush_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_audit_wal_force_multi_tenant_2150() {
     std::println("=== Issue #2150: force mutation-audit WAL multi-tenant/Strict ===");
     CHECK(kAuditWalForceMultiTenantIssue == 2150, "issue stamp");
     CHECK(MutationAuditWal::kFlushEvery == 32, "kFlushEvery baseline");
@@ -257,3 +257,9 @@ int main() {
     std::println("\n=== #2150 audit WAL force: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_audit_wal_force_multi_tenant_2150();
+}
+#endif

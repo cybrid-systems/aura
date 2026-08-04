@@ -244,7 +244,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_mailbox_hold_starvation_hard_2551() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
     ac2_soft_and_free();
@@ -254,3 +254,9 @@ int main() {
     std::println("\n=== #2551: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mailbox_hold_starvation_hard_2551();
+}
+#endif

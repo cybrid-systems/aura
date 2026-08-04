@@ -228,7 +228,7 @@ void ac7_pure_jit_cold() {
 
 } // namespace
 
-int main() {
+int run_test_aot_jit_joint_versioning_2046() {
     std::println("=== test_aot_jit_joint_versioning_2046 ===");
     ac1_source();
     ac2_probe_stale_after_bump();
@@ -240,3 +240,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aot_jit_joint_versioning_2046();
+}
+#endif

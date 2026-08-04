@@ -234,7 +234,7 @@ static void ac6_schema_source() {
 
 } // namespace
 
-int main() {
+int run_test_hard_gate_full_strict_2145() {
     std::println("=== Issue #2145: Full/Strict hard-gate ===");
     ac1_full_inject_rollback();
     ac2_strict_error_hold();
@@ -245,3 +245,9 @@ int main() {
     std::println("\n=== #2145 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hard_gate_full_strict_2145();
+}
+#endif

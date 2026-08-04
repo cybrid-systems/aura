@@ -58,7 +58,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_persistent_typechecker_2220() {
     std::println("=== Issue #2220: persistent TypeChecker on mutate path ===");
 
     // ── AC5 source ──
@@ -189,3 +189,9 @@ int main() {
     std::println("\n=== #2220 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_persistent_typechecker_2220();
+}
+#endif

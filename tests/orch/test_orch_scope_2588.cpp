@@ -113,7 +113,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_orch_scope_2588() {
     std::println("=== Issue #2588: Aura scope supervision surface ===");
 
     // ── AC2 + AC5: MVP linter still green — no global registry symbols ──
@@ -281,3 +281,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_orch_scope_2588();
+}
+#endif

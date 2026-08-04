@@ -510,7 +510,7 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
 
 } // namespace
 
-int main() {
+int run_test_residual_gc_defer_assert_2211() {
     std::println("=== Issue #2211: residual GC-defer assert at outermost Guard exit ===");
     ac1_normal_success_no_residual();
     ac2_inject_residual_bumps_and_clears();
@@ -533,3 +533,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_residual_gc_defer_assert_2211();
+}
+#endif

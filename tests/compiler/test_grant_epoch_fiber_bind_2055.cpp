@@ -71,7 +71,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_grant_epoch_fiber_bind_2055() {
     std::println("=== Issue #2055: grant/revoke WorkspaceEpoch + fiber bind ===");
     CHECK(kGrantEpochFiberBindIssue == 2055, "issue stamp");
 
@@ -320,3 +320,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_epoch_fiber_bind_2055();
+}
+#endif

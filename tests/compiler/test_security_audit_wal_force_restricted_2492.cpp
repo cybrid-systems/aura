@@ -199,7 +199,7 @@ static void ac6_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_security_audit_wal_force_restricted_2492() {
     std::println("=== Issue #2492: SecurityEvent WAL force under Restricted ===");
     ac1_restricted_forces_wal();
     ac2_off_sandbox_skips_wal();
@@ -210,3 +210,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_audit_wal_force_restricted_2492();
+}
+#endif

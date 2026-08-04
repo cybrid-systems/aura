@@ -246,7 +246,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_shape_compact_storm_isolation_2617() {
     std::println("=== Issue #2617: compact ↛ deopt-storm ring isolation ===");
     ac1_gate_compact_no_storm_ring();
     ac2_pure_compact_no_threshold();
@@ -256,3 +256,9 @@ int main() {
     std::println("\n=== #2617: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_shape_compact_storm_isolation_2617();
+}
+#endif

@@ -95,7 +95,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_dispatch_required_effects_2152() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
     CHECK(kDispatchRequiredEffectsIssue == 2152, "issue stamp");
     CHECK(kSideEffectInheritIssue == 2057, "inherits #2057 stamp");
@@ -360,3 +360,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dispatch_required_effects_2152();
+}
+#endif

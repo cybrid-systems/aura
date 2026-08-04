@@ -43,7 +43,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_audit_ring_publish_2530() {
     std::println("=== Issue #2530: audit ring 1024 + Isolation publish ===");
     CHECK(CapabilityRegistry::kAuditRing == 1024, "AC1: capability ring 1024");
     CHECK(WorkspaceIsolationPolicy::kAuditRing == 1024, "AC1: isolation ring 1024");
@@ -98,3 +98,9 @@ int main() {
     std::println("\n=== #2530: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_audit_ring_publish_2530();
+}
+#endif

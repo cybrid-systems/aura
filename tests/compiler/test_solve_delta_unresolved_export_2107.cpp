@@ -611,7 +611,7 @@ static void ac2318_source_cite_rows() {
 
 } // namespace
 
-int main() {
+int run_test_solve_delta_unresolved_export_2107() {
     std::println("=== Issue #2107: solve_delta unresolved export ===");
     ac1_timeout_unresolved();
     ac2_solved_empty();
@@ -633,3 +633,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_solve_delta_unresolved_export_2107();
+}
+#endif

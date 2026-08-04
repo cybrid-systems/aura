@@ -191,7 +191,7 @@ void ac8_public_finalize() {
 
 } // namespace
 
-int main() {
+int run_test_linear_gc_window_2043() {
     std::println("=== Issue #2043: linear+GC atomic invalidation window ===");
     ac1_source();
     ac2_soft_dirty_epoch();
@@ -206,3 +206,9 @@ int main() {
     std::println("linear+GC window (#2043): OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_gc_window_2043();
+}
+#endif

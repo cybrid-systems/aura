@@ -185,7 +185,7 @@ static void ac6_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_primcall_narg_2576() {
     std::println("=== Issue #2576: PrimCall N-arg ===");
     ac1_append3();
     ac2_substring();
@@ -196,3 +196,9 @@ int main() {
     std::println("\n=== #2576: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_primcall_narg_2576();
+}
+#endif

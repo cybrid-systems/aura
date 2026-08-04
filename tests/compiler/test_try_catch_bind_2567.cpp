@@ -123,7 +123,7 @@ static void ac5_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_try_catch_bind_2567() {
     std::println("=== Issue #2567: try/catch bind catch parameter ===");
     ac1_diagnostic_bind();
     ac2_error_prim_bind();
@@ -133,3 +133,9 @@ int main() {
     std::println("\n=== #2567: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_try_catch_bind_2567();
+}
+#endif

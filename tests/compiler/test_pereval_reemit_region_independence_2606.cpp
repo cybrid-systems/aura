@@ -346,7 +346,7 @@ static void ac4_query_and_single_eval_zero() {
 
 } // namespace
 
-int main() {
+int run_test_pereval_reemit_region_independence_2606() {
     std::println("=== test_pereval_reemit_region_independence_2606 ===");
     ac5_source_cite();
     ac1_dual_eval_reemit_owner_filter();
@@ -356,3 +356,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_pereval_reemit_region_independence_2606();
+}
+#endif

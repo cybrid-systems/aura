@@ -96,7 +96,7 @@ std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_join_drain_timeout_2153() {
     std::println("=== Issue #2153: configurable join drain timeout ===");
     CHECK(kJoinDrainTimeoutIssue == 2153, "issue stamp");
     CHECK(kDefaultJoinDrainMs == 2000, "default drain 2000ms");
@@ -371,3 +371,9 @@ int main() {
     std::println("\n=== #2153 join drain timeout: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_join_drain_timeout_2153();
+}
+#endif

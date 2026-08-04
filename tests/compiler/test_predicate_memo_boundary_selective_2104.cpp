@@ -277,7 +277,7 @@ static void ac9_phase2_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_predicate_memo_boundary_selective_2104() {
     std::println("=== Issue #2104 / #2285 Phase 2: predicate-memo selective wire ===");
     ac1_selective_drop();
     ac2_post_mutate_query();
@@ -291,3 +291,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_predicate_memo_boundary_selective_2104();
+}
+#endif

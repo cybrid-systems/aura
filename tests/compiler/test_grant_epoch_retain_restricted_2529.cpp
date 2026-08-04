@@ -71,7 +71,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_grant_epoch_retain_restricted_2529() {
     std::println("=== Issue #2529: Restricted grant epoch retain K=16 ===");
     CHECK(kGrantEpochRetainRestrictedIssue == 2529, "issue stamp");
     CHECK(kDefaultGrantEpochRetainWindowRestricted == 16, "K=16 constant");
@@ -146,3 +146,9 @@ int main() {
     std::println("\n=== #2529: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_epoch_retain_restricted_2529();
+}
+#endif

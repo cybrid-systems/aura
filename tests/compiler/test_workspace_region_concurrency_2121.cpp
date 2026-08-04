@@ -293,7 +293,7 @@ static void ac6_throughput_speedup() {
 
 } // namespace
 
-int main() {
+int run_test_workspace_region_concurrency_2121() {
     ac1_source_docs();
     ac2_disjoint_regions_not_global_unique();
     ac3_global_and_fallback();
@@ -305,3 +305,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_workspace_region_concurrency_2121();
+}
+#endif

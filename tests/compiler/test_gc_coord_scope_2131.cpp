@@ -53,7 +53,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_gc_coord_scope_2131() {
     std::println("=== Issue #2131: GcCoordScope pin → cascade → audit ===");
 
     // ── AC1: source ──
@@ -162,3 +162,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_coord_scope_2131();
+}
+#endif

@@ -181,7 +181,7 @@ static void ac5_source() {
 
 } // namespace
 
-int main() {
+int run_test_dual_path_desync_hard_fail_2116() {
     std::println("=== Issue #2116: dual-path desync hard-fail ===");
     ac1_hard_materialize();
     ac2_gc_walk_skip();
@@ -192,3 +192,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dual_path_desync_hard_fail_2116();
+}
+#endif

@@ -221,7 +221,7 @@ static void ac7_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_tenant_scope_fiber_mandate_2491() {
     std::println("=== Issue #2491: TenantScope mandated at fiber spawn/resume ===");
     ac1_assigned_tenant_id_accessor();
     ac2_resume_reinstalls_and_release_restores();
@@ -233,3 +233,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_tenant_scope_fiber_mandate_2491();
+}
+#endif

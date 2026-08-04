@@ -364,7 +364,7 @@ static void ac8_source_cite_2345() {
 
 } // namespace
 
-int main() {
+int run_test_partial_cs_single_source_2262() {
     std::println("=== Issue #2262: partial CS single source of truth ===");
     ac1_import_total_and_reuse();
     ac2_hard_empty_miss();
@@ -378,3 +378,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_partial_cs_single_source_2262();
+}
+#endif

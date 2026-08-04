@@ -259,7 +259,7 @@ namespace _2287_detail {
 
 } // namespace aura_dead_coercion_layered_2282
 
-int main() {
+int run_test_dead_coercion_layered_2282() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
@@ -382,3 +382,9 @@ static void run_2645_evidence_chain() {
 }
 
 } // namespace _2645_detail
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dead_coercion_layered_2282();
+}
+#endif

@@ -57,7 +57,7 @@ std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_side_effect_inherit_2057() {
     std::println("=== Issue #2057: side-effect inherit by construction ===");
     CHECK(kSideEffectInheritIssue == 2057, "issue stamp (compiler)");
     CHECK(aura::compiler::security::kSideEffectInheritIssue == 2057, "issue stamp (security)");
@@ -192,3 +192,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_side_effect_inherit_2057();
+}
+#endif

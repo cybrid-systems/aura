@@ -244,7 +244,7 @@ static void ac6_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_require_effect_auto_isolation_2490() {
     std::println("=== Issue #2490: require_effect auto-enforces isolation ===");
     ac1_restricted_unset_principal_denies();
     ac2_restricted_principal_grant_allows();
@@ -255,3 +255,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_require_effect_auto_isolation_2490();
+}
+#endif

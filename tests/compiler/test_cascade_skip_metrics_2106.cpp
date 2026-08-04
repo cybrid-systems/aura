@@ -197,7 +197,7 @@ static void ac6_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_cascade_skip_metrics_2106() {
     std::println("=== Issue #2106: cascade_skip_subtree metrics + DeadCoercion synergy ===");
     ac1_skip_visible_via_metrics();
     ac2_happy_path_and_no_double_count();
@@ -208,3 +208,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_cascade_skip_metrics_2106();
+}
+#endif

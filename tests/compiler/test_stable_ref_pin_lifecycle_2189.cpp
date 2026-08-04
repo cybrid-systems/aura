@@ -297,7 +297,7 @@ static void ac6_tenant_isolation() {
 
 } // namespace
 
-int main() {
+int run_test_stable_ref_pin_lifecycle_2189() {
     std::println("=== Issue #2189: Agent pin lifecycle RAII for StableNodeRef ===");
     ac1_edsl_surface();
     ac2_survive_guard_restamp();
@@ -308,3 +308,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stable_ref_pin_lifecycle_2189();
+}
+#endif

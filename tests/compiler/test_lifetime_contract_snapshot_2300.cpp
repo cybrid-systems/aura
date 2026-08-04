@@ -421,7 +421,7 @@ void ac2341_5_source_cite() {
           "evaluator_primitives_obs_jit.cpp");
 }
 
-int main() {
+int run_test_lifetime_contract_snapshot_2300() {
     std::println("=== Issue #2300 + #2341: lifetime-contract-snapshot + densify consistency ===");
     ac5_source_cite();
     ac1_idle_ok();
@@ -440,3 +440,9 @@ int main() {
     return g_failed == 0 ? 0 : 1;
 }
 // build-fix binding refresh for obs_jit (#1453)
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_lifetime_contract_snapshot_2300();
+}
+#endif

@@ -194,7 +194,7 @@ static void ac3b_same_name_overrides() {
 
 } // namespace
 
-int main() {
+int run_test_agent_name_table_isolation_2078() {
     std::println("=== Issue #2078: per-Evaluator orch agent name table ===");
     ac1_source_and_no_static();
     ac2_two_tables_isolation();
@@ -204,3 +204,9 @@ int main() {
     std::println("\n=== #2078: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_name_table_isolation_2078();
+}
+#endif

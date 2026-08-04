@@ -167,7 +167,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_validate_node_no_abort_2390() {
     std::println("=== Issue #2390: validate_node no hard-abort on !is_valid ===");
     ac1_post_restore_corrupt_reports();
     ac2_validate_node_throws();
@@ -177,3 +177,9 @@ int main() {
     std::println("\n=== #2390 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_validate_node_no_abort_2390();
+}
+#endif

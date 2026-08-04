@@ -120,7 +120,7 @@ static void ac4_index_design_cmake() {
 
 } // namespace
 
-int main() {
+int run_test_hot_strategy_2582() {
     std::println("=== Issue #2582: pure-Aura hot strategy ===");
     ac1_swap();
     ac2_heal();
@@ -129,3 +129,9 @@ int main() {
     std::println("\n=== #2582: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_strategy_2582();
+}
+#endif

@@ -158,7 +158,7 @@ static void ac4_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_fixup_deltas_2392() {
     std::println("=== Issue #2392: fixup_deltas safe rebase ===");
     ac1_valid_deltas();
     ac2_oob_and_overflow();
@@ -167,3 +167,9 @@ int main() {
     std::println("\n=== #2392 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_fixup_deltas_2392();
+}
+#endif

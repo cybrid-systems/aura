@@ -332,7 +332,7 @@ static void ac2640_source_and_linter() {
 
 } // namespace
 
-int main() {
+int run_test_epoch_invariant_walk_2366() {
     std::println("=== Issue #2366: epoch invariant per-entry + MustDeopt walk ===");
     ac1_soft_off();
     ac2_soft_detect_stale_aot();
@@ -350,3 +350,9 @@ int main() {
     std::println("\n=== #2366 + #2640: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_epoch_invariant_walk_2366();
+}
+#endif

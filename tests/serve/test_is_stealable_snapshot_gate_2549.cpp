@@ -182,7 +182,7 @@ static void ac5_happy_path_cost() {
 
 } // namespace
 
-int main() {
+int run_test_is_stealable_snapshot_gate_2549() {
     std::println("=== Issue #2549: is_stealable snapshot gate ===");
     ac1_held_or_unsafe_mb_not_stealable();
     ac2_candidate_reasons_depth0_ok();
@@ -192,3 +192,9 @@ int main() {
     std::println("\n=== #2549: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_is_stealable_snapshot_gate_2549();
+}
+#endif

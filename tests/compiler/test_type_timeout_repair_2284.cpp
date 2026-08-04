@@ -385,9 +385,15 @@ namespace _2343_detail {
 
 } // namespace aura_type_timeout_repair_2284
 
-int main() {
+int run_test_type_timeout_repair_2284() {
     std::println("=== Issue #2284 + #2343: TIMEOUT repair surface + unresolved graph ===");
     aura_type_timeout_repair_2284::_2284_detail::run_2284_timeout_repair();
     aura_type_timeout_repair_2284::_2343_detail::run_2343();
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_timeout_repair_2284();
+}
+#endif

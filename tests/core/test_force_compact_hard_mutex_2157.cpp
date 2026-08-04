@@ -63,7 +63,7 @@ void dummy_scan(void*, EnvFrameLifetimeSite) noexcept {}
 
 } // namespace
 
-int main() {
+int run_test_force_compact_hard_mutex_2157() {
     std::println("=== Issue #2157: Force live_compact hard-mutex ===");
     CHECK(kForceCompactHardMutexIssue == 2157, "issue stamp");
     reset_envframe_lifetime_stats();
@@ -196,3 +196,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_force_compact_hard_mutex_2157();
+}
+#endif

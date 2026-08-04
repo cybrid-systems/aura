@@ -393,7 +393,7 @@ void ac2375_all_shards_on_arena_zero() {
 
 } // namespace
 
-int main() {
+int run_test_moving_compact_2166() {
     std::println("=== Issue #2166: LiveCompactMode::Moving densify + object_remap ===");
     CHECK(kMovingCompactIssue == 2166, "issue stamp");
 
@@ -729,3 +729,9 @@ int main() {
     std::println("\n=== #2166 + #2342 + #2375: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_moving_compact_2166();
+}
+#endif

@@ -198,7 +198,7 @@ static void ac6_source() {
 
 } // namespace
 
-int main() {
+int run_test_composite_txn_commit_2105() {
     std::println("=== Issue #2105: composite_txn_commit ordered barrier ===");
     ac1_commit_order();
     ac2_force_fail_rollback_surface();
@@ -209,3 +209,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_composite_txn_commit_2105();
+}
+#endif

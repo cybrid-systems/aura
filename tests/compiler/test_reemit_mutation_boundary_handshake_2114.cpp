@@ -399,7 +399,7 @@ static void ac2604_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_reemit_mutation_boundary_handshake_2114() {
     std::println("=== Issue #2114: reemit ↔ MutationBoundary handshake ===");
     ac1_outside_soft_or_defer();
     ac2_inside_boundary_baseline();
@@ -418,3 +418,9 @@ int main() {
     std::println("\n=== #2114 + #2604 Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reemit_mutation_boundary_handshake_2114();
+}
+#endif

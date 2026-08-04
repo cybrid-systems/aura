@@ -210,7 +210,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_live_closure_stable_id_only_2369() {
     std::println("test_live_closure_stable_id_only_2369");
     ac1_stable_id_remap();
     ac2_miss_must_deopt();
@@ -222,3 +222,9 @@ int main() {
     std::println("live closure stable_id only #2369: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_live_closure_stable_id_only_2369();
+}
+#endif

@@ -284,7 +284,7 @@ static void ac5_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_steal_densify_linear_type_hard_and_2609() {
     std::println("=== test_steal_densify_linear_type_hard_and_2609 ===");
     ac4_pure_evaluate_priority();
     ac1_hard_linear_force_cancels();
@@ -294,3 +294,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_densify_linear_type_hard_and_2609();
+}
+#endif

@@ -235,7 +235,7 @@ static void ac5_schema_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_aot_hot_update_health_2506() {
     std::println("test_aot_hot_update_health_2506");
     ac1_idle_healthy();
     ac2_force_jit_and_storm();
@@ -247,3 +247,9 @@ int main() {
     std::println("aot-hot-update-health #2506: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aot_hot_update_health_2506();
+}
+#endif

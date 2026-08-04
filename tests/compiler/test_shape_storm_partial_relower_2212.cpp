@@ -207,7 +207,7 @@ static void ac4_lineage_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_shape_storm_partial_relower_2212() {
     std::println("=== Issue #2212: Shape-storm → partial-relower preference ===");
     ac1_shape_widens_partial_window();
     ac2_global_only_no_partial_prefer();
@@ -218,3 +218,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_shape_storm_partial_relower_2212();
+}
+#endif

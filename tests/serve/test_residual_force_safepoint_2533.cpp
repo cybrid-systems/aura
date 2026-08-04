@@ -41,7 +41,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_residual_force_safepoint_2533() {
     std::println("=== Issue #2533+#2636: residual force-safepoint + body-age ===");
     // ── #2533 AC1+AC2: mark_reclaimed sets flag + counter ──
     const auto f0 = Fiber::residual_force_safepoint_total();
@@ -121,3 +121,9 @@ int main() {
     std::println("\n=== #2533+#2636: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_residual_force_safepoint_2533();
+}
+#endif
