@@ -335,6 +335,19 @@ def cmd_lint():
             "occurrence refined consistency (#2644) coverage linter failed — run python3 scripts/check_occurrence_refined_consistency_2644.py"
         )
         return r
+    # Issue #2645: layered dead-coercion evidence chain lock (AST elision
+    # × IR DCE × deopt meta) — src-aligned E2E lock that asserts the three
+    # layers stay coherent under Soft vs evidence-backed paths.
+    dcle_script = ROOT / "scripts" / "check_dead_coercion_layered_evidence_2645.py"
+    if not dcle_script.exists():
+        fail(f"missing {dcle_script}")
+        return 1
+    r = run([sys.executable, str(dcle_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "dead-coercion layered evidence chain (#2645) coverage linter failed — run python3 scripts/check_dead_coercion_layered_evidence_2645.py"
+        )
+        return r
     ok("lint OK")
     return 0
 
