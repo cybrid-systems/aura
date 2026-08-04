@@ -3183,6 +3183,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             };
             return build_orch_hash(kv);
         } catch (...) {
+            // [SILENCE-PRIM-#2631]: scope-child failures surface as ok=false hash
+            // (Agent-visible status); do not rethrow through prim dispatch.
             aura::orch::g_orch_module_stats.scope_child_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {
