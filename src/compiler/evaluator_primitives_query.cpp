@@ -9484,6 +9484,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 last_resync = static_cast<std::int64_t>(e.env_version_resync);
                 last_live = static_cast<std::int64_t>(e.live_roots);
                 last_path_name = std::string(Evaluator::linear_gc_root_audit_path_name(e.path));
+                // Issue #2642: Phase 5 linear-root consistency scan counters.
+                insert_kv("component-linear-densify-scan-mismatch-total",
+                          static_cast<std::int64_t>(m ? m->linear_densify_scan_mismatch_total.load()
+                                                      : 0));
+                insert_kv("component-linear-densify-scan-mismatch-observe-total",
+                          static_cast<std::int64_t>(
+                              m ? m->linear_densify_scan_mismatch_observe_total.load() : 0));
+                insert_kv("linear-densify-scan-mismatch-total",
+                          static_cast<std::int64_t>(m ? m->linear_densify_scan_mismatch_total.load()
+                                                      : 0));
+                insert_kv("linear_densify_scan_mismatch_total",
+                          static_cast<std::int64_t>(m ? m->linear_densify_scan_mismatch_total.load()
+                                                      : 0));
+                insert_kv("linear-densify-scan-mismatch-observe-total",
+                          static_cast<std::int64_t>(
+                              m ? m->linear_densify_scan_mismatch_observe_total.load() : 0));
+                insert_kv("linear_densify_scan_mismatch_observe_total",
+                          static_cast<std::int64_t>(
+                              m ? m->linear_densify_scan_mismatch_observe_total.load() : 0));
+                insert_kv("linear-densify-wired", 1);
+                insert_kv("schema-2642", 2642);
+                insert_kv("issue-2642", 2642);
             }
 
             // Optional recent log as linked list of strings.

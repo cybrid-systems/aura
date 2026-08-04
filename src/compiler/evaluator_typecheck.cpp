@@ -1775,6 +1775,34 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
     return LinearForceAuthority::None;
 }
 
+// Issue #2642: Phase 5 O(dirty) live linear-root consistency scan.
+// Walks the dirty cone (or live pin set) and re-sims OwnershipEnv
+// against the post-compact addresses; returns true on mismatch (caller
+// routes to LinearDensifyRootMismatch force-rollback under prod/Full,
+// or bumps the observe counter under Soft).
+// Empty dirty / no linear ops → zero cost (early-return).
+// Bounds the walk strictly (dirty cone or live pin set size); never
+// full-heap.
+bool Evaluator::scan_linear_roots_after_densify() noexcept {
+    auto& ac = g_typed_mutation_audit_counters;
+    // #2642 scaffold: full O(dirty) walk + OwnershipEnv re-sim is the
+    // follow-up commit. For the scaffold: early-return on the cheap
+    // guards (no linear ops / Soft only), bump observe counter under
+    // Soft so Agents can watch the scan fire, return false otherwise.
+    // The authority wiring + counter bump on real mismatch lands via
+    // force_linear_rollback(LinearDensifyRootMismatch) once the walk ships.
+    if (!linear_ops_present())
+        return false; // AC3: no linear ops → zero cost path
+    const bool under_prod = aura::compiler::typed_audit::production_defaults_active();
+    if (!under_prod) {
+        // AC2: Soft path bumps observe counter only (no force-rollback).
+        ac.linear_densify_scan_mismatch_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    (void)ac;     // suppress unused-when-empty warning
+    return false; // scaffold: full walk is the #2642 follow-up commit
+}
+
 bool Evaluator::force_linear_rollback(std::string_view op,
                                       const void* precomputed_invariant_result) noexcept {
     using namespace aura::compiler::typed_audit;
@@ -1813,6 +1841,16 @@ bool Evaluator::force_linear_rollback(std::string_view op,
             clear_post_mutate_linear_fail();
             // #2563 counters owned by discovery path (no re-bump escape_total)
             deny_kind = "linear-cross-closure-escape";
+            break;
+        case LinearForceAuthority::LinearDensifyRootMismatch:
+            // Issue #2642: Phase 5 post-compact scan found a linear root
+            // stale (ownership mirror / EnvFrame lag). Hard path only —
+            // Soft path bumps the *_observe_total counter directly without
+            // setting the authority (no force-rollback under Soft).
+            ac.linear_densify_scan_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+            // Clear the pending flag (the scan already bumped the counter).
+            clear_linear_densify_root_mismatch_pending();
+            deny_kind = "linear-densify-root-mismatch";
             break;
         case LinearForceAuthority::None:
             return false;

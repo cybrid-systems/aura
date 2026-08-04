@@ -8307,6 +8307,25 @@ def cmd_security():
 # ═══════════════════════════════════════════════════════════════
 
 
+def cmd_occurrence_densify_root_scan_2642_coverage():
+    """Issue #2642: Phase-5 O(dirty) live linear-root consistency scan.
+    Schema + source-cite + coverage gate (extends the densify/linear
+    check scripts). Per #2609 AND, this scan is entity-level beyond
+    the flag hard-AND — see type_checker.ixx:3867 densify gate.
+    """
+    print(f"{B}=== densify root scan (#2642) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_densify_root_scan_2642.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence densify root scan (#2642) coverage failed")
+        return 1
+    ok("occurrence densify root scan (#2642) coverage clean")
+    return 0
+
+
 def run_bench_llm():
     """Run LLM benchmarks (DeepSeek / MiniMax / Grok) in parallel."""
     print(f"{B}═══ LLM Benchmark (3 models in parallel) ═══{N}")
