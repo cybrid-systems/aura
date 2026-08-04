@@ -1752,7 +1752,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_json_parse_object_grow_2481.cpp` (#2481) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/compiler/test_list_end_of_list_void_2482.cpp` (#2482) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true
 - `tests/compiler/test_load_cap_io_read_2485.cpp` (#2485) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
-- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — leftover issue-suffixed tests (W_other residual after Stream A spli
+- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — leftover issue-suffixed tests (W_other residual after Stream A
 - `tests/compiler/test_module_export_display_2572.cpp` (#2572) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
 - `tests/compiler/test_module_load_tail_export_2570.cpp` (#2570) [domain_suite, theme_compiler] — AC1: tail defines always export after require
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
