@@ -6824,9 +6824,20 @@ public:
     // so the GC size-provider callback can size the closure MarkBitVector
     // to the actual current closure count rather than the max root index.
     [[nodiscard]] std::size_t closures_size() const noexcept { return closures_.size(); }
+    // Issue #2651 / #1397: always serialize string_heap_ growth.
+    // Multi-fiber orch fanout (overnight agents) races unlocked
+    // push_back → pmr::vector / monotonic_buffer_resource corruption
+    // (SIGSEGV in allocate/deallocate / construct_at — H9).
     std::int32_t push_string_heap(const std::string& s) {
+        std::lock_guard lock(alloc_storage_lock_);
         const auto idx = static_cast<std::int32_t>(string_heap_.size());
         string_heap_.push_back(s);
+        return idx;
+    }
+    std::int32_t push_string_heap(std::string&& s) {
+        std::lock_guard lock(alloc_storage_lock_);
+        const auto idx = static_cast<std::int32_t>(string_heap_.size());
+        string_heap_.push_back(std::move(s));
         return idx;
     }
     // Issue #346: push_pair helper. Returns the new
@@ -6836,7 +6847,9 @@ public:
     // to the private pairs_ vector. The pair is
     // stored by value (copy), so the input values
     // remain valid after the call.
+    // Issue #2651: lock pairs_ growth (same race class as string_heap_).
     std::int32_t push_pair(EvalValue car, EvalValue cdr) {
+        std::lock_guard lock(alloc_storage_lock_);
         const auto idx = static_cast<std::int32_t>(pairs_.size());
         pairs_.push_back({car, cdr});
         return idx;
