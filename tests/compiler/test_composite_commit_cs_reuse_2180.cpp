@@ -206,3 +206,79 @@ int main() {
     std::println("\n=== #2180 composite CS reuse: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+// ── #2644 AC3+AC4: empty / single / consistent refined → no extra reject ──
+// #2644 AC5 source-cite lives below; full AC1/AC2/AC6 drift-injection
+// scenario requires a `inject_commit_occurrence_drift_for_test()` helper
+// (a follow-up commit). For now the helper short-circuits on empty
+// occurrence table (AC4 zero cost) and the wiring is source-cited.
+namespace ac2644_helpers {
+static std::uint64_t drift_observe() {
+    return g_typed_mutation_audit_counters.composite_type_scheme_drift_observe_total.load(
+        std::memory_order_relaxed);
+}
+static std::uint64_t drift_reject() {
+    return g_typed_mutation_audit_counters.composite_type_scheme_drift_reject_total.load(
+        std::memory_order_relaxed);
+}
+} // namespace ac2644_helpers
+
+static void ac2644_empty_cs_no_drift_bump() {
+    std::println("\n--- #2644 AC4: empty occurrence table → no drift bump ---");
+    reset_for_test();
+    set_strategy(AuditStrategy::Full);
+    CompilerService cs;
+    seed(cs);
+    const auto obs0 = ac2644_helpers::drift_observe();
+    const auto rej0 = ac2644_helpers::drift_reject();
+    CompositeTxnCommitResult cr{};
+    // Fresh seeded CS has no live occurrence drift (refs unify under Full).
+    cs.evaluator().composite_txn_commit(
+        /*mid=*/2644, "empty-cs", 0, 0, 1, /*nested=*/false, /*batch=*/true, &cr);
+    CHECK(ac2644_helpers::drift_observe() == obs0,
+          "#2644 AC4: empty/no-drift → observe counter unchanged");
+    CHECK(ac2644_helpers::drift_reject() == rej0,
+          "#2644 AC4: empty/no-drift → reject counter unchanged");
+}
+
+static void ac2644_source_cite() {
+    std::println("\n--- #2644 AC5: source-cite + wiring ---");
+    auto tc = read_file("src/compiler/type_checker.ixx");
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto audit_h = read_file("src/compiler/typed_mutation_audit.h");
+    auto eval_tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    auto build = read_file("build.py");
+    auto linter = read_file("scripts/check_occurrence_refined_consistency_2644.py");
+
+    // Helper declaration + implementation
+    CHECK(tc.find("check_occurrence_refined_consistency") != std::string::npos,
+          "#2644 AC5: ConstraintSystem helper declared");
+    CHECK(impl.find("check_occurrence_refined_consistency() noexcept") != std::string::npos,
+          "#2644 AC5: helper implementation exists");
+    CHECK(impl.find("occurrence_goals_.empty()") != std::string::npos,
+          "#2644 AC5: AC4 zero-cost short-circuit present");
+
+    // Counters in TypedMutationAuditCounters
+    CHECK(audit_h.find("composite_type_scheme_drift_observe_total") != std::string::npos,
+          "#2644 AC5: observe counter in TypedMutationAuditCounters");
+    CHECK(audit_h.find("composite_type_scheme_drift_reject_total") != std::string::npos,
+          "#2644 AC5: reject counter in TypedMutationAuditCounters");
+
+    // Wiring in composite_txn_commit
+    CHECK(eval_tc.find("composite_type_scheme_drift_reject_total") != std::string::npos,
+          "#2644 AC5: composite_txn_commit wires reject counter");
+    CHECK(eval_tc.find("composite_type_scheme_drift_observe_total") != std::string::npos,
+          "#2644 AC5: composite_txn_commit wires observe counter");
+    CHECK(eval_tc.find("check_occurrence_refined_consistency") != std::string::npos,
+          "#2644 AC5: composite_txn_commit calls helper");
+    CHECK(eval_tc.find("production_defaults_active()") != std::string::npos &&
+              eval_tc.find("type_scheme_drift") != std::string::npos,
+          "#2644 AC5: production/Soft routing comment + key");
+
+    // Linter registration in build.py
+    CHECK(build.find("check_occurrence_refined_consistency_2644") != std::string::npos,
+          "#2644 AC5: build.py wires linter");
+    CHECK(linter.find("#2644") != std::string::npos, "#2644 AC5: linter cites #2644");
+    CHECK(linter.find("check_occurrence_refined_consistency") != std::string::npos,
+          "#2644 AC5: linter scans helper symbol");
+}

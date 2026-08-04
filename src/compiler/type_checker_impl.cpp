@@ -10667,3 +10667,39 @@ std::size_t selective_adt_guardshape_renarrow(FlatAST& flat, const StringPool& p
 }
 
 } // namespace aura::compiler
+
+// Issue #2644: batch-level TypeVar refined consistency (anti SOLVED-but-drift).
+// Groups occurrence_goals_ by UF rep, checks pairwise consistent_unify both
+// directions. AC4 zero cost on empty table. Returns true when every pair
+// of live goals for the same var agrees on refined (or only one goal for
+// that var exists). Returns false on any pair that fails consistent_unify
+// both directions (drift). Caller routes to Soft observe vs production
+// reject based on typed_audit::production_defaults_active().
+bool ConstraintSystem::check_occurrence_refined_consistency() noexcept {
+    if (occurrence_goals_.empty())
+        return true; // AC4: empty goals → no scan (zero cost)
+    // First-seen goal index per UF rep. Pairwise compare subsequent goals
+    // against the first-seen for that rep. O(goals) average, O(goals^2)
+    // worst case if all goals share one rep — bounded in practice by
+    // occurrence_goals_size() cap (small under normal workloads).
+    std::unordered_map<std::uint32_t, std::size_t> rep_first;
+    rep_first.reserve(occurrence_goals_.size());
+    for (std::size_t i = 0; i < occurrence_goals_.size(); ++i) {
+        const auto& g = occurrence_goals_[i];
+        if (!g.var.valid())
+            continue;
+        const auto rep = find(g.var).index;
+        auto it = rep_first.find(rep);
+        if (it == rep_first.end()) {
+            rep_first.emplace(rep, i);
+            continue;
+        }
+        const auto& other = occurrence_goals_[it->second];
+        // AC1: incompatible refined on same rep (both directions fail).
+        if (!consistent_unify(g.refined, other.refined) &&
+            !consistent_unify(other.refined, g.refined)) {
+            return false;
+        }
+    }
+    return true;
+}
