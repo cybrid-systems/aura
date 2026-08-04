@@ -2704,6 +2704,7 @@ add_executable(test_occurrence_coercion_batch
     tests/compiler/test_castop_typed_meta.cpp
     tests/compiler/test_coercion_ban_weak_ir.cpp
     tests/compiler/test_coercion_dual_require.cpp
+    tests/compiler/test_coercion_evidence_loss_slo.cpp
     tests/compiler/test_coercion_prov_slo.cpp
     tests/compiler/test_coercion_provenance_fast_strict.cpp
     tests/compiler/test_coercion_provenance_miss_force_audit.cpp

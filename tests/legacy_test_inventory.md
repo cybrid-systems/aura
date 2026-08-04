@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 768 | Preferred destination suites |
-| **Total scanned** | **768** | |
+| `tests/core/test_*.cpp` | 769 | Preferred destination suites |
+| **Total scanned** | **769** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 221 | 221 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 222 | 222 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 94 | 94 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 42 | 42 | P1 — domain hygiene suite exists |
@@ -293,6 +293,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_coercion_ban_weak_ir.cpp`
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp`
 - `tests/compiler/test_coercion_dual_require.cpp`
+- `tests/compiler/test_coercion_evidence_loss_slo.cpp`
 - `tests/compiler/test_coercion_prov_slo.cpp`
 - `tests/compiler/test_coercion_provenance_fast_strict.cpp`
 - `tests/compiler/test_coercion_provenance_miss_force_audit.cpp`
@@ -1069,13 +1070,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_buf_fragmentation_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (221)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (222)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (221)
+#### domain/ (222)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1111,6 +1112,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_ban_weak_ir.cpp` (—) [domain_suite, theme_compiler] — AC1: Sampled + no active_mutation_id / no log → no CoercionNode; miss reject;
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp` (—) [domain_suite, theme_compiler] — test_coercion_dead_elim_castop_flow_zerooverhead.cpp
 - `tests/compiler/test_coercion_dual_require.cpp` (—) [domain_suite, theme_compiler] — AC1: Production / dual-require + incomplete dual → drop, counter++, no node
+- `tests/compiler/test_coercion_evidence_loss_slo.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → skip insert; soft_incomplete_skip advances
 - `tests/compiler/test_coercion_prov_slo.cpp` (—) [domain_suite, theme_compiler] — AC1: production + miss storm → bp < SLO → force pending; consume forces audit
 - `tests/compiler/test_coercion_provenance_fast_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: both fields set at add → chain_walk_total does not increase (fast path)
 - `tests/compiler/test_coercion_provenance_miss_force_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit

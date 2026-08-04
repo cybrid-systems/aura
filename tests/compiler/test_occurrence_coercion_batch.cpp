@@ -22,6 +22,7 @@ extern int run_test_castop_density_hard();
 extern int run_test_castop_typed_meta();
 extern int run_test_coercion_ban_weak_ir();
 extern int run_test_coercion_dual_require();
+extern int run_test_coercion_evidence_loss_slo();
 extern int run_test_coercion_prov_slo();
 extern int run_test_coercion_provenance_fast_strict();
 extern int run_test_coercion_provenance_miss_force_audit();
@@ -56,7 +57,20 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_occurrence_coercion_batch (42 members) ===");
+    std::println("=== test_occurrence_coercion_batch (43 members) ===");
+
+    // #2648 early: independent Soft evidence-loss SLO (avoids ADT batch abort
+    // masking later members during incremental verify).
+    std::println("\n──── test_coercion_evidence_loss_slo ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_coercion_evidence_loss_slo() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_coercion_evidence_loss_slo ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_coercion_evidence_loss_slo ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_adt_exhaustiveness_audit ────");
     g_passed = 0;

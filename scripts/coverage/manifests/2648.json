@@ -1,0 +1,94 @@
+{
+  "issue": 2648,
+  "title": "Issue #2648: Soft incomplete-skip evidence-loss SLO + one-shot Full arm.",
+  "ok": "OK: Issue #2648 Soft evidence-loss SLO — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "#2648",
+        "coercion_evidence_loss_bp",
+        "arm_soft_incomplete_force_full_observe"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "evaluate_coercion_evidence_loss_slo",
+        "AURA_COERCION_EVIDENCE_LOSS_BP",
+        "g_coercion_evidence_loss_force_consumed_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "#2648",
+        "g_coercion_evidence_loss_force_consumed_total",
+        "evidence_loss_pressure"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "vacuous",
+        "coercion_evidence_loss_bp"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "maybe_soft_recover_or_escalate_blame",
+        "evidence_loss_pressure"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2648",
+        "coercion-evidence-loss-bp",
+        "coercion-evidence-loss-force-armed",
+        "coercion-evidence-loss-force-consumed"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_linear_commit_health.hh",
+      "contains": [
+        "coercion_evidence_loss_bp",
+        "coercion-evidence-loss"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "tests/compiler/test_coercion_evidence_loss_slo.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_coercion_evidence_loss_slo_2648",
+        "cmd_coercion_evidence_loss_slo_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_coercion_evidence_loss_slo.cpp",
+      "contains": [
+        "ac1_soft_skip_preserved",
+        "ac2_loss_arms_and_consume_once",
+        "ac3_healthy_no_force",
+        "ac6_production_dual_require"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_coercion_evidence_loss_slo_2648.py"
+}

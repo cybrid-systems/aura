@@ -465,13 +465,24 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         aura::compiler::evaluate_coercion_provenance_slo(
             aura::compiler::coercion_provenance_completeness_bp(), /*production_active=*/true);
     }
+    // Issue #2648: Soft evidence-loss pressure is a pure read here (arming
+    // happens on soft incomplete skip via evaluate_coercion_evidence_loss_slo
+    // in arm_soft_incomplete_force_full_observe). Do NOT re-arm on every
+    // boundary exit — AC2: second exit without new misses must not re-arm.
+    const auto evidence_loss_bp = aura::compiler::coercion_evidence_loss_bp();
+    const bool evidence_loss_pressure =
+        aura::compiler::coercion_evidence_loss_pressure(evidence_loss_bp);
     const bool slo_force = aura::compiler::consume_coercion_prov_slo_force_full();
     bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary() || slo_force;
+    // Capture whether this exit Full-samples under #2648 evidence-loss pressure
+    // (before Soft recover may clear). One-shot: pending consumed above.
+    const bool evidence_loss_force_candidate = slo_force && evidence_loss_pressure;
     // Issue #2561: Soft/Sampled cheap blame recovery before force-audit.
     // When miss signal present under Sampled: re-walk fill for mid's dirty
     // cone; on success clear force; on fail arm one-shot Full sample only if
-    // AURA_BLAME_SOFT_ESCALATE=1 or production_defaults. Soft default stays
-    // observe-only (AC3). Full strategy leaves #2221 hard-reject alone.
+    // AURA_BLAME_SOFT_ESCALATE=1 or production_defaults or #2648 loss pressure.
+    // Soft default without evidence-loss stays observe-only (#2561 AC3).
+    // Full strategy leaves #2221 hard-reject alone.
     if (provenance_miss && success && workspace_flat_ && !nested_boundary &&
         typed_audit::get_strategy() == typed_audit::AuditStrategy::Sampled) {
         // Prefer last mutation log mid (dirty cone); fall back to counter.
@@ -481,14 +492,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             soft_mid = mlog.back().mutation_id;
         if (aura::compiler::maybe_soft_recover_or_escalate_blame(*workspace_flat_, soft_mid,
                                                                  /*had_miss_signal=*/true)) {
-            // Recovered dual fields — do not force audit solely for miss.
+            // Recovered dual fields — do not force audit solely for miss (#2648 AC4).
             provenance_miss = false;
         } else if (!aura::compiler::blame_soft_escalate_pending_for_boundary() &&
                    !aura::compiler::blame_soft_escalate_enabled() &&
-                   !typed_audit::production_defaults_active()) {
-            // Soft observe-only: recover failed and escalate disabled → drop
-            // force so Soft remains pure observe (AC3); fail counter already
-            // bumped inside maybe_soft_recover_or_escalate_blame.
+                   !typed_audit::production_defaults_active() && !evidence_loss_pressure) {
+            // Soft observe-only: recover failed, escalate disabled, and
+            // evidence-loss healthy → drop force (AC3 clean Soft). Fail
+            // counter already bumped inside maybe_soft_recover_or_escalate_blame.
+            // Issue #2648: when loss_bp >= threshold keep force for one Full sample.
             provenance_miss = false;
         }
     }
@@ -500,6 +512,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             1, std::memory_order_relaxed);
         typed_audit::g_typed_mutation_audit_counters.contextual_force_audit_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #2648: boundary consumed force-Full under evidence-loss pressure.
+        if (evidence_loss_force_candidate || (evidence_loss_pressure && slo_force)) {
+            aura::compiler::g_coercion_evidence_loss_force_consumed_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
     }
     // Issue #456: record mutation-impact summary on
     // success only. Walk the workspace mutation log

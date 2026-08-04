@@ -6,20 +6,22 @@
 // Folded keys (query:type-linear-commit-health):
 //   readiness_bp / force_reason / would_allow_commit   (#2553)
 //   coercion_completeness_bp / coercion_slo_force_pending (#2558)
+//   coercion_evidence_loss_bp / evidence-loss force (#2648)
 //   linear_force_unified / cross-closure observe|force totals (#2545/#2563)
 //   occurrence_stale / predicate_memo_stale (#2359)
 //
 // force_reason authority:
 //   1) commit_readiness when not "ok" (solve/blame/linear/truncate/empty_cs/…)
 //   2) else if coercion_slo_force_pending → "coercion-slo" (advisory; allow=true)
-//   3) else if occurrence_stale || predicate_memo_stale → "occurrence-stale"
-//   4) else "ok"
+//   3) else if coercion_evidence_loss_pressure → "coercion-evidence-loss" (advisory)
+//   4) else if occurrence_stale || predicate_memo_stale → "occurrence-stale"
+//   5) else "ok"
 // Codes: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs 6=auto_partial
-//        7=coercion-slo 8=occurrence-stale
+//        7=coercion-slo 8=occurrence-stale 9=coercion-evidence-loss
 //
 // Optional throttle advisory (never hard-fails mutate):
 //   0=none 1=delay-mutate 2=split-batch
-//   would_allow false → delay; coercion-slo / occurrence-stale → delay;
+//   would_allow false → delay; coercion-slo / evidence-loss / occurrence-stale → delay;
 //   empty_cs hard deny → split-batch
 
 #ifndef AURA_COMPILER_TYPE_LINEAR_COMMIT_HEALTH_HH
@@ -40,6 +42,9 @@ struct TypeLinearCommitHealthSnapshot {
     // #2558 coercion
     std::uint64_t coercion_completeness_bp = 10000;
     bool coercion_slo_force_pending = false;
+    // #2648 Soft evidence-loss bp (skip / skip+good); pressure is advisory only.
+    std::uint64_t coercion_evidence_loss_bp = 0;
+    bool coercion_evidence_loss_pressure = false;
     // #2545 / #2563 linear force counters (process totals; pure snapshot)
     bool linear_force_unified = true;
     std::uint64_t linear_cross_closure_escape_total = 0;
@@ -58,6 +63,8 @@ struct TypeLinearCommitHealthResult {
     // Folded flags (mirrors snapshot components for query)
     std::uint64_t coercion_completeness_bp = 10000;
     bool coercion_slo_force_pending = false;
+    std::uint64_t coercion_evidence_loss_bp = 0;
+    bool coercion_evidence_loss_pressure = false;
     bool linear_force_unified = true;
     std::uint64_t linear_cross_closure_escape_total = 0;
     std::uint64_t linear_cross_closure_force_total = 0;
@@ -70,13 +77,15 @@ struct TypeLinearCommitHealthResult {
     TypeLinearCommitHealthSnapshot components{};
 };
 
-// Extended reason codes for #2613 advisory axes (commit_readiness uses 0–6).
+// Extended reason codes for #2613 / #2648 advisory axes (commit_readiness uses 0–6).
 [[nodiscard]] inline std::int64_t
 type_linear_commit_health_reason_code(std::string_view r) noexcept {
     if (r == "coercion-slo")
         return 7;
     if (r == "occurrence-stale")
         return 8;
+    if (r == "coercion-evidence-loss")
+        return 9;
     return typed_audit::commit_readiness_reason_code(r);
 }
 
@@ -92,6 +101,8 @@ compute_type_linear_commit_health(const TypeLinearCommitHealthSnapshot& s) noexc
     r.components = s;
     r.coercion_completeness_bp = s.coercion_completeness_bp;
     r.coercion_slo_force_pending = s.coercion_slo_force_pending;
+    r.coercion_evidence_loss_bp = s.coercion_evidence_loss_bp;
+    r.coercion_evidence_loss_pressure = s.coercion_evidence_loss_pressure;
     r.linear_force_unified = s.linear_force_unified;
     r.linear_cross_closure_escape_total = s.linear_cross_closure_escape_total;
     r.linear_cross_closure_force_total = s.linear_cross_closure_force_total;
@@ -112,6 +123,11 @@ compute_type_linear_commit_health(const TypeLinearCommitHealthSnapshot& s) noexc
             r.force_reason = "coercion-slo";
             r.force_reason_code = 7;
             // would_allow_commit stays true — SLO forces Full audit, not commit deny.
+        } else if (s.coercion_evidence_loss_pressure) {
+            // Issue #2648: Soft evidence-loss pressure without pending yet
+            // (Agent throttle face; still advisory allow=true).
+            r.force_reason = "coercion-evidence-loss";
+            r.force_reason_code = 9;
         } else if (s.occurrence_stale > 0 || s.predicate_memo_stale > 0) {
             r.force_reason = "occurrence-stale";
             r.force_reason_code = 8;
@@ -125,9 +141,9 @@ compute_type_linear_commit_health(const TypeLinearCommitHealthSnapshot& s) noexc
             r.throttle_action = 2; // split-batch
         else
             r.throttle_action = 1; // delay-mutate
-    } else if (r.force_reason == "coercion-slo" || r.force_reason == "occurrence-stale" ||
-               r.force_reason == "truncate" || r.force_reason == "linear" ||
-               r.force_reason == "blame") {
+    } else if (r.force_reason == "coercion-slo" || r.force_reason == "coercion-evidence-loss" ||
+               r.force_reason == "occurrence-stale" || r.force_reason == "truncate" ||
+               r.force_reason == "linear" || r.force_reason == "blame") {
         r.throttle_action = 1; // Soft observe still advises delay
     } else {
         r.throttle_action = 0;

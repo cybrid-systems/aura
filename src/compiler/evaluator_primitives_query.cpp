@@ -6744,6 +6744,36 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2620", 2620);
                 insert_kv("issue-2620", 2620);
             }
+            // Issue #2648: Soft evidence-loss bp + force-Full arm/consume (Agent face).
+            {
+                const std::int64_t loss_bp =
+                    static_cast<std::int64_t>(aura::compiler::coercion_evidence_loss_bp());
+                const std::int64_t thr = static_cast<std::int64_t>(
+                    aura::compiler::coercion_evidence_loss_threshold_bp());
+                const std::int64_t armed = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_evidence_loss_force_armed_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t consumed = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_evidence_loss_force_consumed_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t breach = static_cast<std::int64_t>(
+                    aura::compiler::g_coercion_evidence_loss_breach_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("coercion-evidence-loss-bp", loss_bp);
+                insert_kv("coercion_evidence_loss_bp", loss_bp);
+                insert_kv("coercion-evidence-loss-threshold-bp", thr);
+                insert_kv("coercion-evidence-loss-force-armed", armed);
+                insert_kv("coercion-evidence-loss-force-consumed", consumed);
+                insert_kv("coercion-evidence-loss-breach-total", breach);
+                insert_kv("coercion-evidence-loss-force-armed-total", armed);
+                insert_kv("coercion-evidence-loss-force-consumed-total", consumed);
+                insert_kv(
+                    "coercion-evidence-loss-wired",
+                    static_cast<std::int64_t>(aura::compiler::g_coercion_evidence_loss_wired.load(
+                        std::memory_order_relaxed)));
+                insert_kv("schema-2648", 2648);
+                insert_kv("issue-2648", 2648);
+            }
             // Issue #2318: anti-starvation streak gate. N consecutive
             // truncated delta solves → force one full ConstraintSystem::
             // solve() (mirror #2277 escalation body). Reads from the
@@ -8165,13 +8195,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #2558 / #2561: query:coercion-provenance-health — completeness SLO
-    // + Soft blame recover/escalate counters for Agents under Sampled sessions.
+    // Issue #2558 / #2561 / #2648: query:coercion-provenance-health — completeness
+    // SLO + Soft blame recover/escalate + Soft evidence-loss bp for Agents.
     ObservabilityPrims::register_stats_impl(
         "query:coercion-provenance-health",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(32);
+            // #2648 evidence-loss keys need headroom beyond the #2558/#2561 set.
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8252,6 +8283,33 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       aura::compiler::coercion_dual_require_active() ? 1 : 0);
             insert_kv("schema-2562", 2562);
             insert_kv("issue-2562", 2562);
+            // Issue #2648: Soft evidence-loss rate + force arm/consume (single Agent face).
+            {
+                const std::int64_t loss_bp =
+                    static_cast<std::int64_t>(aura::compiler::coercion_evidence_loss_bp());
+                const std::int64_t thr = static_cast<std::int64_t>(
+                    aura::compiler::coercion_evidence_loss_threshold_bp());
+                insert_kv("coercion-evidence-loss-bp", loss_bp);
+                insert_kv("coercion-evidence-loss-threshold-bp", thr);
+                insert_kv("coercion-evidence-loss-force-armed",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_coercion_evidence_loss_force_armed_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("coercion-evidence-loss-force-consumed",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_coercion_evidence_loss_force_consumed_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("coercion-evidence-loss-breach-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::g_coercion_evidence_loss_breach_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "coercion-evidence-loss-wired",
+                    static_cast<std::int64_t>(aura::compiler::g_coercion_evidence_loss_wired.load(
+                        std::memory_order_relaxed)));
+                insert_kv("schema-2648", 2648);
+                insert_kv("issue-2648", 2648);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -8471,6 +8529,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // #2558 coercion completeness + SLO force pending.
             snap.coercion_completeness_bp = coercion_provenance_completeness_bp();
             snap.coercion_slo_force_pending = coercion_prov_slo_force_full_pending();
+            // #2648 Soft evidence-loss bp (single Agent throttle face).
+            snap.coercion_evidence_loss_bp = coercion_evidence_loss_bp();
+            snap.coercion_evidence_loss_pressure =
+                coercion_evidence_loss_pressure(snap.coercion_evidence_loss_bp);
             // #2359 occurrence goals + predicate memo stale (vacuous 0 without TC).
             if (__qev_) {
                 if (auto* ctc = static_cast<aura::compiler::TypeChecker*>(
@@ -8490,7 +8552,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             const auto scored = compute_type_linear_commit_health(snap);
 
-            auto* ht = FlatHashTable::create(48);
+            // #2648 adds evidence-loss keys — 64 slots keep load factor healthy.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8527,6 +8590,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coercion-completeness-bp",
                       static_cast<std::int64_t>(scored.coercion_completeness_bp));
             insert_kv("coercion-slo-force-pending", scored.coercion_slo_force_pending ? 1 : 0);
+            // #2648 Soft evidence-loss (single bp; no multi-key join)
+            insert_kv("coercion-evidence-loss-bp",
+                      static_cast<std::int64_t>(scored.coercion_evidence_loss_bp));
+            insert_kv("coercion-evidence-loss-pressure",
+                      scored.coercion_evidence_loss_pressure ? 1 : 0);
+            insert_kv("coercion-evidence-loss-force-armed",
+                      static_cast<std::int64_t>(g_coercion_evidence_loss_force_armed_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("coercion-evidence-loss-force-consumed",
+                      static_cast<std::int64_t>(g_coercion_evidence_loss_force_consumed_total.load(
+                          std::memory_order_relaxed)));
             // #2545 / #2563 linear
             insert_kv("linear-force-unified", scored.linear_force_unified ? 1 : 0);
             insert_kv("linear-cross-closure-escape-total",
@@ -8551,6 +8625,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("force-reason-auto-partial", 6);
             insert_kv("force-reason-coercion-slo", 7);
             insert_kv("force-reason-occurrence-stale", 8);
+            insert_kv("force-reason-coercion-evidence-loss", 9);
             insert_kv("type-linear-commit-health-wired", 1);
             insert_kv("schema-2613", kTypeLinearCommitHealthIssue);
             insert_kv("issue-2613", kTypeLinearCommitHealthIssue);
@@ -8560,6 +8635,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2545", 2545);
             insert_kv("schema-2563", 2563);
             insert_kv("schema-2359", 2359);
+            insert_kv("schema-2648", 2648);
+            insert_kv("issue-2648", 2648);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
