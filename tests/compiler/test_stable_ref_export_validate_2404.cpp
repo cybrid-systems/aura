@@ -239,7 +239,9 @@ int run_test_stable_ref_export_validate_2404() {
     // rejections are distinguishable from query-time export-stale-reject.
     {
         std::println("\n--- #2632 AC1-AC4: handoff_ref helper + counter + wire-ups ---");
-        CHECK(setup_workspace(cs), "2632 AC1 workspace");
+        CompilerService cs2632;
+        CHECK(setup_workspace(cs2632), "2632 AC1 workspace");
+        auto& ev = cs2632.evaluator();
 
         // AC1: handoff_ref exists as Evaluator member (compile-time check
         // via direct invocation below). If the declaration were missing

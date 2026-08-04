@@ -4222,8 +4222,6 @@ add_executable(test_aot_jit_stamp_batch
     tests/compiler/test_partial_relower_storm_gate_2190.cpp
     tests/compiler/test_pereval_reemit_region_independence_2606.cpp
     tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp
-    tests/compiler/test_reemit_production_default_defer_2205.cpp
-    tests/compiler/test_reemit_production_default_defer_2208.cpp
     tests/compiler/test_reload_recovery_query_2367.cpp
     tests/compiler/test_relower_fallback_reason_2193.cpp
     tests/compiler/test_shape_storm_partial_relower_2212.cpp
@@ -4618,117 +4616,391 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_json_io_cap_batch)
 endif()
 
-add_executable(test_misc_issue_fold_batch
-    tests/compiler/test_misc_issue_fold_batch.cpp
-    tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp
-    tests/compiler/test_adaptive_reverify_limit_2146.cpp
-    tests/compiler/test_aether_denseness_residual_2578.cpp
-    tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp
-    tests/compiler/test_aura_sandbox_env_2076.cpp
-    tests/compiler/test_bugfix_968.cpp
-    tests/compiler/test_cascade_incremental_pass_suite_2044.cpp
-    tests/compiler/test_cascade_skip_metrics_2106.cpp
-    tests/compiler/test_commercial_tenant_profile_2584.cpp
-    tests/compiler/test_commit_readiness_score_2553.cpp
-    tests/compiler/test_compact_policy_2500.cpp
-    tests/compiler/test_cross_cow_drift_contract_2505.cpp
-    tests/compiler/test_cross_cow_soft_migrate_2371.cpp
-    tests/compiler/test_delta_truncate_goal_priority_2508.cpp
-    tests/compiler/test_dep_graph_hybrid_cascade_2110.cpp
-    tests/compiler/test_dispatch_required_effects_2152.cpp
-    tests/compiler/test_dual_path_desync_hard_fail_2116.cpp
+
+# Domain batch: StableNodeRef / validate / tenant / wire ACs (Stream A6) (8 members + driver). Stream S2.
+add_executable(test_stable_ref_validate_batch
+    tests/compiler/test_stable_ref_validate_batch.cpp
     tests/compiler/test_edsl_validate_or_refresh_2186.cpp
-    tests/compiler/test_epoch_bump_invariant_2304.cpp
-    tests/compiler/test_epoch_invariant_complete_2501.cpp
-    tests/compiler/test_epoch_invariant_soft_prod_2541.cpp
-    tests/compiler/test_epoch_invariant_walk_2366.cpp
-    tests/compiler/test_escape_move_elision_gate_2263.cpp
-    tests/compiler/test_frame_budget_cascade_isolation_2137.cpp
-    tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp
-    tests/compiler/test_gc_coord_scope_2131.cpp
-    tests/compiler/test_gc_heap_cells_clear_2486.cpp
-    tests/compiler/test_hard_gate_full_strict_2145.cpp
-    tests/compiler/test_hot_contract_placement_2435.cpp
-    tests/compiler/test_hot_contract_unify_2142.cpp
-    tests/compiler/test_hot_pass_hard_dod_2434.cpp
-    tests/compiler/test_hot_pass_pure_wrap_2258.cpp
-    tests/compiler/test_hot_strategy_2582.cpp
-    tests/compiler/test_hygiene_checkpoint_2099.cpp
-    tests/compiler/test_incremental_soundness_oracle_2113.cpp
-    tests/compiler/test_instr_impact_minimal_dirty_2126.cpp
-    tests/compiler/test_instruction_level_impact_partial_2109.cpp
-    tests/compiler/test_isolation_audit_mid_2156.cpp
-    tests/compiler/test_lock_order_audit_2316.cpp
-    tests/compiler/test_lock_order_audit_2354.cpp
+    tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp
+    tests/compiler/test_stable_ref_export_validate_2404.cpp
+    tests/compiler/test_stable_ref_tenant_mandate_2056.cpp
+    tests/compiler/test_stable_ref_wire_v2_2198.cpp
+    tests/core/test_stable_ref_tenant_capture_2125.cpp
+    tests/core/test_stable_ref_wire_endian_2395.cpp
+    tests/core/test_validate_node_no_abort_2390.cpp
+)
+set_property(TARGET test_stable_ref_validate_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_stable_ref_validate_batch PRIVATE src tests)
+target_compile_definitions(test_stable_ref_validate_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_stable_ref_validate_batch)
+target_link_libraries(test_stable_ref_validate_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_stable_ref_validate_batch)
+add_test(NAME test_stable_ref_validate_batch_verification COMMAND ./test_stable_ref_validate_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_stable_ref_validate_batch)
+endif()
+
+# Domain batch: Production hardening / safety / readiness ACs (Stream A7) (8 members + driver). Stream S2.
+add_executable(test_production_hardening_batch
+    tests/compiler/test_production_hardening_batch.cpp
+    tests/compiler/test_commit_readiness_score_2553.cpp
     tests/compiler/test_lock_order_production_soft_2557.cpp
-    tests/compiler/test_macro_cross_flat_hygiene_2235.cpp
-    tests/compiler/test_macro_hygiene_limits_2101.cpp
-    tests/compiler/test_mutate_capability_force_2052.cpp
-    tests/compiler/test_mutate_type_gate_2219.cpp
-    tests/compiler/test_orch_scope_child_2631.cpp
-    tests/compiler/test_partial_cs_single_source_2262.cpp
-    tests/compiler/test_persistent_typechecker_2220.cpp
-    tests/compiler/test_post_compact_lifecycle_2436.cpp
-    tests/compiler/test_predicate_meet_join_lattice_2148.cpp
     tests/compiler/test_production_hardening_985.cpp
     tests/compiler/test_production_safety_1047.cpp
     tests/compiler/test_production_safety_1097.cpp
     tests/compiler/test_production_security_defaults_2053.cpp
     tests/compiler/test_production_stability_1014.cpp
-    tests/compiler/test_rest_param_hygiene_2169.cpp
-    tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp
-    tests/compiler/test_reverify_expand_2356.cpp
-    tests/compiler/test_rollback_by_marker_2237.cpp
-    tests/compiler/test_selfevo_bugfix_941.cpp
-    tests/compiler/test_shape_profiler_concurrency_2141.cpp
-    tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp
-    tests/compiler/test_stable_ref_export_validate_2404.cpp
-    tests/compiler/test_stable_ref_tenant_mandate_2056.cpp
-    tests/compiler/test_stable_ref_wire_v2_2198.cpp
     tests/compiler/test_stdlib_production_review_923.cpp
-    tests/compiler/test_subtype_constraint_meet_2195.cpp
-    tests/compiler/test_symbol_eq_2568.cpp
-    tests/compiler/test_timeout_repair_rich_roots_2548.cpp
-    tests/compiler/test_truncate_commit_gate_2458.cpp
-    tests/compiler/test_try_catch_bind_2567.cpp
-    tests/compiler/test_type_dirty_txn_order_2516.cpp
-    tests/compiler/test_value_tag_hot_path_2259.cpp
-    tests/compiler/test_value_tag_hotpath_ban_2616.cpp
-    tests/compiler/test_while_define_oneshot_2571.cpp
+)
+set_property(TARGET test_production_hardening_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_production_hardening_batch PRIVATE src tests)
+target_compile_definitions(test_production_hardening_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_production_hardening_batch)
+target_link_libraries(test_production_hardening_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_production_hardening_batch)
+add_test(NAME test_production_hardening_batch_verification COMMAND ./test_production_hardening_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_production_hardening_batch)
+endif()
+
+# Domain batch: PCV / workspace isolation & contention ACs (Stream A8) (7 members + driver). Stream S2.
+add_executable(test_pcv_workspace_batch
+    tests/core/test_pcv_workspace_batch.cpp
     tests/compiler/test_workspace_mtx_contention_2523.cpp
     tests/compiler/test_workspace_region_concurrency_2121.cpp
-    tests/core/test_arena_adaptive_compact_2059.cpp
-    tests/core/test_arena_compact_hook_stats_2381.cpp
-    tests/core/test_arena_compact_notify_lifecycle_2438.cpp
-    tests/core/test_arena_dtor_clears_hooks_2382.cpp
-    tests/core/test_fixup_deltas_2392.cpp
-    tests/core/test_force_compact_hard_mutex_2157.cpp
-    tests/core/test_has_on_compact_hook_lock_2383.cpp
-    tests/core/test_incremental_restamp_2061.cpp
     tests/core/test_pcv_exclusive_with_set_2140.cpp
     tests/core/test_pcv_tls_default_on_2521.cpp
     tests/core/test_pcv_tls_scratch_2406.cpp
     tests/core/test_pcv_unique_hotpath_2058.cpp
-    tests/core/test_reset_slot_parent_edges_2412.cpp
-    tests/core/test_restamp_sla_observability_2528.cpp
-    tests/core/test_stable_ref_tenant_capture_2125.cpp
-    tests/core/test_stable_ref_wire_endian_2395.cpp
-    tests/core/test_subtree_dirty_bounds_2424.cpp
-    tests/core/test_transaction_guard_2555.cpp
-    tests/core/test_validate_node_no_abort_2390.cpp
     tests/core/test_workspace_isolation_wire_2073.cpp
-    tests/reflect/test_hygiene_diagnostic_2167.cpp
-    tests/reflect/test_ir_pod_phase4_2291.cpp
-    tests/reflect/test_opcode_reflect_2289.cpp
-    tests/reflect/test_reflect_isolation_2290.cpp
+)
+set_property(TARGET test_pcv_workspace_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_pcv_workspace_batch PRIVATE src tests)
+target_compile_definitions(test_pcv_workspace_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_pcv_workspace_batch)
+target_link_libraries(test_pcv_workspace_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_pcv_workspace_batch)
+add_test(NAME test_pcv_workspace_batch_verification COMMAND ./test_pcv_workspace_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_pcv_workspace_batch)
+endif()
+
+# Domain batch: Arena compact hooks / dtor / force compact ACs (Stream A9) (7 members + driver). Stream S2.
+add_executable(test_arena_compact_hooks_batch
+    tests/core/test_arena_compact_hooks_batch.cpp
+    tests/core/test_arena_adaptive_compact_2059.cpp
+    tests/core/test_arena_compact_hook_stats_2381.cpp
+    tests/core/test_arena_compact_notify_lifecycle_2438.cpp
+    tests/core/test_arena_dtor_clears_hooks_2382.cpp
+    tests/core/test_force_compact_hard_mutex_2157.cpp
+    tests/core/test_has_on_compact_hook_lock_2383.cpp
+    tests/core/test_incremental_restamp_2061.cpp
+)
+set_property(TARGET test_arena_compact_hooks_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_arena_compact_hooks_batch PRIVATE src tests)
+target_compile_definitions(test_arena_compact_hooks_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_arena_compact_hooks_batch)
+target_link_libraries(test_arena_compact_hooks_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_arena_compact_hooks_batch)
+add_test(NAME test_arena_compact_hooks_batch_verification COMMAND ./test_arena_compact_hooks_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_arena_compact_hooks_batch)
+endif()
+
+# Domain batch: Epoch invariant walk / soft-prod / complete ACs (Stream A10a) (4 members + driver). Stream S2.
+add_executable(test_epoch_invariant_misc_batch
+    tests/compiler/test_epoch_invariant_misc_batch.cpp
+    tests/compiler/test_epoch_bump_invariant_2304.cpp
+    tests/compiler/test_epoch_invariant_complete_2501.cpp
+    tests/compiler/test_epoch_invariant_soft_prod_2541.cpp
+    tests/compiler/test_epoch_invariant_walk_2366.cpp
+)
+set_property(TARGET test_epoch_invariant_misc_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_epoch_invariant_misc_batch PRIVATE src tests)
+target_compile_definitions(test_epoch_invariant_misc_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_epoch_invariant_misc_batch)
+target_link_libraries(test_epoch_invariant_misc_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_epoch_invariant_misc_batch)
+add_test(NAME test_epoch_invariant_misc_batch_verification COMMAND ./test_epoch_invariant_misc_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_epoch_invariant_misc_batch)
+endif()
+
+# Domain batch: GC heap/closures/coord leftover ACs (Stream A10b) (5 members + driver). Stream S2.
+add_executable(test_gc_misc_batch
+    tests/compiler/test_gc_misc_batch.cpp
+    tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp
+    tests/compiler/test_gc_coord_scope_2131.cpp
+    tests/compiler/test_gc_heap_cells_clear_2486.cpp
     tests/serve/test_atomic_mark_bitvector_2117.cpp
     tests/serve/test_gc_mark_size_inject_2084.cpp
+)
+set_property(TARGET test_gc_misc_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_gc_misc_batch PRIVATE src tests)
+target_compile_definitions(test_gc_misc_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_gc_misc_batch)
+target_link_libraries(test_gc_misc_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_gc_misc_batch)
+add_test(NAME test_gc_misc_batch_verification COMMAND ./test_gc_misc_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_gc_misc_batch)
+endif()
+
+# Domain batch: Hot-pass / hot-contract / strategy ACs (Stream A10c) (5 members + driver). Stream S2.
+add_executable(test_hot_pass_contract_batch
+    tests/compiler/test_hot_pass_contract_batch.cpp
+    tests/compiler/test_hot_contract_placement_2435.cpp
+    tests/compiler/test_hot_contract_unify_2142.cpp
+    tests/compiler/test_hot_pass_hard_dod_2434.cpp
+    tests/compiler/test_hot_pass_pure_wrap_2258.cpp
+    tests/compiler/test_hot_strategy_2582.cpp
+)
+set_property(TARGET test_hot_pass_contract_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_hot_pass_contract_batch PRIVATE src tests)
+target_compile_definitions(test_hot_pass_contract_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_hot_pass_contract_batch)
+target_link_libraries(test_hot_pass_contract_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_hot_pass_contract_batch)
+add_test(NAME test_hot_pass_contract_batch_verification COMMAND ./test_hot_pass_contract_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_hot_pass_contract_batch)
+endif()
+
+# Domain batch: Macro hygiene / checkpoint ACs (Stream A10d) (4 members + driver). Stream S2.
+add_executable(test_macro_hygiene_batch
+    tests/compiler/test_macro_hygiene_batch.cpp
+    tests/compiler/test_hygiene_checkpoint_2099.cpp
+    tests/compiler/test_macro_cross_flat_hygiene_2235.cpp
+    tests/compiler/test_macro_hygiene_limits_2101.cpp
+    tests/reflect/test_hygiene_diagnostic_2167.cpp
+    tests/compiler/test_rest_param_hygiene_2169.cpp
+    tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp
+)
+set_property(TARGET test_macro_hygiene_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_macro_hygiene_batch PRIVATE src tests)
+target_compile_definitions(test_macro_hygiene_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_macro_hygiene_batch)
+target_link_libraries(test_macro_hygiene_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_macro_hygiene_batch)
+add_test(NAME test_macro_hygiene_batch_verification COMMAND ./test_macro_hygiene_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_macro_hygiene_batch)
+endif()
+
+# Domain batch: Cascade / adaptive thr / instr impact ACs (Stream A10e) (8 members + driver). Stream S2.
+add_executable(test_cascade_impact_batch
+    tests/compiler/test_cascade_impact_batch.cpp
+    tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp
+    tests/compiler/test_adaptive_reverify_limit_2146.cpp
+    tests/compiler/test_cascade_incremental_pass_suite_2044.cpp
+    tests/compiler/test_cascade_skip_metrics_2106.cpp
+    tests/compiler/test_dep_graph_hybrid_cascade_2110.cpp
+    tests/compiler/test_frame_budget_cascade_isolation_2137.cpp
+    tests/compiler/test_instr_impact_minimal_dirty_2126.cpp
+    tests/compiler/test_instruction_level_impact_partial_2109.cpp
+)
+set_property(TARGET test_cascade_impact_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_cascade_impact_batch PRIVATE src tests)
+target_compile_definitions(test_cascade_impact_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_cascade_impact_batch)
+target_link_libraries(test_cascade_impact_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_cascade_impact_batch)
+add_test(NAME test_cascade_impact_batch_verification COMMAND ./test_cascade_impact_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_cascade_impact_batch)
+endif()
+
+# Domain batch: Cross-COW soft migrate / drift contract (Stream A10f) (2 members + driver). Stream S2.
+add_executable(test_cross_cow_batch
+    tests/compiler/test_cross_cow_batch.cpp
+    tests/compiler/test_cross_cow_drift_contract_2505.cpp
+    tests/compiler/test_cross_cow_soft_migrate_2371.cpp
+)
+set_property(TARGET test_cross_cow_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_cross_cow_batch PRIVATE src tests)
+target_compile_definitions(test_cross_cow_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_cross_cow_batch)
+target_link_libraries(test_cross_cow_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_cross_cow_batch)
+add_test(NAME test_cross_cow_batch_verification COMMAND ./test_cross_cow_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_cross_cow_batch)
+endif()
+
+# Domain batch: Lock-order audit ACs (Stream C soft-home for 2316/2354) (2 members + driver). Stream S2.
+add_executable(test_lock_order_audit_batch
+    tests/compiler/test_lock_order_audit_batch.cpp
+    tests/compiler/test_lock_order_audit_2316.cpp
+    tests/compiler/test_lock_order_audit_2354.cpp
+)
+set_property(TARGET test_lock_order_audit_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_lock_order_audit_batch PRIVATE src tests)
+target_compile_definitions(test_lock_order_audit_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_lock_order_audit_batch)
+target_link_libraries(test_lock_order_audit_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_lock_order_audit_batch)
+add_test(NAME test_lock_order_audit_batch_verification COMMAND ./test_lock_order_audit_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_lock_order_audit_batch)
+endif()
+
+# Domain batch: Reemit production default defer (Stream C soft-home for 2205/2208) (2 members + driver). Stream S2.
+add_executable(test_reemit_defer_batch
+    tests/compiler/test_reemit_defer_batch.cpp
+    tests/compiler/test_reemit_production_default_defer_2205.cpp
+    tests/compiler/test_reemit_production_default_defer_2208.cpp
+)
+set_property(TARGET test_reemit_defer_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_reemit_defer_batch PRIVATE src tests)
+target_compile_definitions(test_reemit_defer_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_reemit_defer_batch)
+target_link_libraries(test_reemit_defer_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_reemit_defer_batch)
+add_test(NAME test_reemit_defer_batch_verification COMMAND ./test_reemit_defer_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_reemit_defer_batch)
+endif()
+
+
+# Domain batch: Type/txn/predicate leftover ACs (Stream A10g) (9 members + driver). Stream S2.
+add_executable(test_type_txn_misc_batch
+    tests/compiler/test_type_txn_misc_batch.cpp
+    tests/compiler/test_dispatch_required_effects_2152.cpp
+    tests/compiler/test_hard_gate_full_strict_2145.cpp
+    tests/compiler/test_mutate_type_gate_2219.cpp
+    tests/compiler/test_partial_cs_single_source_2262.cpp
+    tests/compiler/test_persistent_typechecker_2220.cpp
+    tests/compiler/test_predicate_meet_join_lattice_2148.cpp
+    tests/compiler/test_subtype_constraint_meet_2195.cpp
+    tests/compiler/test_timeout_repair_rich_roots_2548.cpp
+    tests/compiler/test_type_dirty_txn_order_2516.cpp
+)
+set_property(TARGET test_type_txn_misc_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_type_txn_misc_batch PRIVATE src tests)
+target_compile_definitions(test_type_txn_misc_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_type_txn_misc_batch)
+target_link_libraries(test_type_txn_misc_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_type_txn_misc_batch)
+add_test(NAME test_type_txn_misc_batch_verification COMMAND ./test_type_txn_misc_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_type_txn_misc_batch)
+endif()
+
+# Domain batch: Serve legacy issue_199x + spawn/mailbox leftovers (Stream A10h) (6 members + driver). Stream S2.
+add_executable(test_serve_legacy_issue_batch
+    tests/serve/test_serve_legacy_issue_batch.cpp
     tests/serve/test_issue_1990.cpp
     tests/serve/test_issue_1991.cpp
     tests/serve/test_issue_1992.cpp
     tests/serve/test_issue_1993.cpp
     tests/serve/test_mutate_mailbox_starvation_throttle_2587.cpp
     tests/serve/test_spawn_quota_no_leak_2155.cpp
+)
+set_property(TARGET test_serve_legacy_issue_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_serve_legacy_issue_batch PRIVATE src tests)
+target_compile_definitions(test_serve_legacy_issue_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_serve_legacy_issue_batch)
+target_link_libraries(test_serve_legacy_issue_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_serve_legacy_issue_batch)
+add_test(NAME test_serve_legacy_issue_batch_verification COMMAND ./test_serve_legacy_issue_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_serve_legacy_issue_batch)
+endif()
+
+# Domain batch: Value-tag hotpath ban/path ACs (Stream A10i) (2 members + driver). Stream S2.
+add_executable(test_value_tag_hotpath_batch
+    tests/compiler/test_value_tag_hotpath_batch.cpp
+    tests/compiler/test_value_tag_hot_path_2259.cpp
+    tests/compiler/test_value_tag_hotpath_ban_2616.cpp
+)
+set_property(TARGET test_value_tag_hotpath_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_value_tag_hotpath_batch PRIVATE src tests)
+target_compile_definitions(test_value_tag_hotpath_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_value_tag_hotpath_batch)
+target_link_libraries(test_value_tag_hotpath_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_value_tag_hotpath_batch)
+add_test(NAME test_value_tag_hotpath_batch_verification COMMAND ./test_value_tag_hotpath_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_value_tag_hotpath_batch)
+endif()
+
+add_executable(test_misc_issue_fold_batch
+    tests/compiler/test_misc_issue_fold_batch.cpp
+    tests/compiler/test_aether_denseness_residual_2578.cpp
+    tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp
+    tests/compiler/test_aura_sandbox_env_2076.cpp
+    tests/compiler/test_bugfix_968.cpp
+    tests/compiler/test_commercial_tenant_profile_2584.cpp
+    tests/compiler/test_compact_policy_2500.cpp
+    tests/compiler/test_delta_truncate_goal_priority_2508.cpp
+    tests/compiler/test_dual_path_desync_hard_fail_2116.cpp
+    tests/compiler/test_escape_move_elision_gate_2263.cpp
+    tests/compiler/test_incremental_soundness_oracle_2113.cpp
+    tests/compiler/test_isolation_audit_mid_2156.cpp
+    tests/compiler/test_mutate_capability_force_2052.cpp
+    tests/compiler/test_orch_scope_child_2631.cpp
+    tests/compiler/test_post_compact_lifecycle_2436.cpp
+    tests/compiler/test_reverify_expand_2356.cpp
+    tests/compiler/test_rollback_by_marker_2237.cpp
+    tests/compiler/test_selfevo_bugfix_941.cpp
+    tests/compiler/test_shape_profiler_concurrency_2141.cpp
+    tests/compiler/test_symbol_eq_2568.cpp
+    tests/compiler/test_truncate_commit_gate_2458.cpp
+    tests/compiler/test_try_catch_bind_2567.cpp
+    tests/compiler/test_while_define_oneshot_2571.cpp
+    tests/core/test_fixup_deltas_2392.cpp
+    tests/core/test_reset_slot_parent_edges_2412.cpp
+    tests/core/test_restamp_sla_observability_2528.cpp
+    tests/core/test_subtree_dirty_bounds_2424.cpp
+    tests/core/test_transaction_guard_2555.cpp
+    tests/reflect/test_ir_pod_phase4_2291.cpp
+    tests/reflect/test_opcode_reflect_2289.cpp
+    tests/reflect/test_reflect_isolation_2290.cpp
 )
 set_property(TARGET test_misc_issue_fold_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_misc_issue_fold_batch PRIVATE src tests)

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 752 | Preferred destination suites |
-| **Total scanned** | **752** | |
+| `tests/core/test_*.cpp` | 767 | Preferred destination suites |
+| **Total scanned** | **767** | |
 
 ### Related artifacts
 
@@ -32,15 +32,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 76 | 76 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 219 | 219 | P0 — high volume; strong domain suite foothold |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 220 | 220 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 94 | 94 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 42 | 42 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 49 | 49 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 45 | 45 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 54 | 54 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **81**
+- Existing `*_batch` drivers (migration milestones): **96**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -83,6 +83,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 - `tests/compiler/test_aot_jit_stamp_batch.cpp` → theme `jit_incremental`
 - `tests/core/test_arena_batch.cpp` → theme `arena_compaction`
+- `tests/core/test_arena_compact_hooks_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_atomic_batch_core_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_rollback_closed_loop.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` → theme `mutation_dirty`
@@ -91,8 +92,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_batch_dirty_discipline_2615.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_build_kv_hash_batch.cpp` → theme `jit_incremental`
 - `tests/core/test_capability_sandbox_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_cascade_impact_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_closure_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_closure_view_batch.cpp` → theme `observability`
+- `tests/compiler/test_cross_cow_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_dead_coercion_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` → theme `observability`
 - `tests/core/test_densify_pin_batch.cpp` → theme `mutation_dirty`
@@ -100,6 +103,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_env_lookup_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_envframe_epoch_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_epoch_apply_batch.cpp` → theme `arena_compaction`
+- `tests/compiler/test_epoch_invariant_misc_batch.cpp` → theme `arena_compaction`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp` → theme `fiber_orch`
 - `tests/serve/test_fiber_integration_batch.cpp` → theme `fiber_orch`
 - `tests/serve/test_fiber_orch_core_batch.cpp` → theme `fiber_orch`
@@ -111,7 +115,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_gc_batch.cpp` → theme `arena_compaction`
 - `tests/serve/test_gc_compact_batch.cpp` → theme `arena_compaction`
 - `tests/serve/test_gc_compact_sweep_batch.cpp` → theme `arena_compaction`
+- `tests/compiler/test_gc_misc_batch.cpp` → theme `arena_compaction`
 - `tests/core/test_guard_dtor_batch_metrics.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_hot_pass_contract_batch.cpp` → theme `uncategorized`
 - `tests/core/test_hotpath_matrix_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_incremental_relower_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_incremental_type_batch.cpp` → theme `jit_incremental`
@@ -126,9 +132,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_misc_batch.cpp` → theme `linear_ownership`
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
+- `tests/compiler/test_lock_order_audit_batch.cpp` → theme `uncategorized`
+- `tests/compiler/test_macro_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/compiler/test_macro_reflect_batch.cpp` → theme `edsl_hygiene`
 - `tests/serve/test_mailbox_fiber_batch.cpp` → theme `fiber_orch`
-- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `uncategorized`
+- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_module_query_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutate_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` → theme `observability`
@@ -144,23 +152,30 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_open_issues_phase1_batch.cpp` → theme `uncategorized`
 - `tests/orch/test_orch_agent_batch.cpp` → theme `fiber_orch`
 - `tests/core/test_panic_checkpoint_batch.cpp` → theme `uncategorized`
+- `tests/core/test_pcv_workspace_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_per_defuse_batch.cpp` → theme `fiber_orch`
+- `tests/compiler/test_production_hardening_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_production_readiness_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_query_and_replace_batch_2527.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_query_pattern_batch.cpp` → theme `edsl_hygiene`
+- `tests/compiler/test_reemit_defer_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_reflect_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/core/test_resource_quota_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_security_capability_batch.cpp` → theme `uncategorized`
+- `tests/serve/test_serve_legacy_issue_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_shape_soa_storm_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_shape_soa_unit_batch.cpp` → theme `shape_soa`
 - `tests/core/test_soa_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_stable_ref_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_cow_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_provenance_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_stable_ref_validate_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_type_txn_misc_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_typechecker_incremental_batch.cpp` → theme `jit_incremental`
+- `tests/compiler/test_value_tag_hotpath_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_walk_batch.cpp` → theme `mutation_dirty`
 
 ### Domain suites (do not regress; extend these)
@@ -203,6 +218,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_arena_batch.cpp`
 - `tests/core/test_arena_compact_hook_concurrent.cpp`
 - `tests/core/test_arena_compact_hook_stats_2381.cpp`
+- `tests/core/test_arena_compact_hooks_batch.cpp`
 - `tests/core/test_arena_compact_notify_lifecycle_2438.cpp`
 - `tests/core/test_arena_concurrent_mutex.cpp`
 - `tests/core/test_arena_defrag.cpp`
@@ -257,6 +273,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_capability_single_use_consume_2586.cpp`
 - `tests/compiler/test_capability_string_matrix_unify_2387.cpp`
 - `tests/compiler/test_capability_unified_2077.cpp`
+- `tests/compiler/test_cascade_impact_batch.cpp`
 - `tests/compiler/test_cascade_incremental_pass_suite_2044.cpp`
 - `tests/compiler/test_cascade_skip_metrics_2106.cpp`
 - `tests/compiler/test_castop_density_closed_loop_2459.cpp`
@@ -309,6 +326,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_coverage_holes_workspace_lock.cpp`
 - `tests/core/test_cpp26_contracts_hotpath.cpp`
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp`
+- `tests/compiler/test_cross_cow_batch.cpp`
 - `tests/compiler/test_cross_cow_drift_contract_2505.cpp`
 - `tests/compiler/test_cross_cow_soft_migrate_2371.cpp`
 - `tests/stdlib/test_datetime.cpp`
@@ -362,6 +380,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_epoch_apply_batch.cpp`
 - `tests/compiler/test_epoch_bump_invariant_2304.cpp`
 - `tests/compiler/test_epoch_invariant_complete_2501.cpp`
+- `tests/compiler/test_epoch_invariant_misc_batch.cpp`
 - `tests/compiler/test_epoch_invariant_soft_prod_2541.cpp`
 - `tests/compiler/test_epoch_invariant_walk_2366.cpp`
 - `tests/reflect/test_error_kind_names_wire.cpp`
@@ -411,6 +430,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_gc_evaluator_integration.cpp`
 - `tests/compiler/test_gc_heap_cells_clear_2486.cpp`
 - `tests/serve/test_gc_mark_size_inject_2084.cpp`
+- `tests/compiler/test_gc_misc_batch.cpp`
 - `tests/core/test_general_object_pin_2298.cpp`
 - `tests/core/test_general_object_pin_adopt_2363.cpp`
 - `tests/core/test_general_object_pin_coverage_gate_2496.cpp`
@@ -435,6 +455,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_hot_children_columnar_2614.cpp`
 - `tests/compiler/test_hot_contract_placement_2435.cpp`
 - `tests/compiler/test_hot_contract_unify_2142.cpp`
+- `tests/compiler/test_hot_pass_contract_batch.cpp`
 - `tests/compiler/test_hot_pass_dirty_soa_2060.cpp`
 - `tests/compiler/test_hot_pass_hard_dod_2434.cpp`
 - `tests/compiler/test_hot_pass_pure_wrap_2258.cpp`
@@ -539,6 +560,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_lock_hierarchy.cpp`
 - `tests/compiler/test_lock_order_audit_2316.cpp`
 - `tests/compiler/test_lock_order_audit_2354.cpp`
+- `tests/compiler/test_lock_order_audit_batch.cpp`
 - `tests/compiler/test_lock_order_closures_env.cpp`
 - `tests/compiler/test_lock_order_production_soft_2557.cpp`
 - `tests/compiler/test_longrunning_infra_primitives.cpp`
@@ -547,6 +569,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_macro_cross_flat_hygiene_2235.cpp`
 - `tests/core/test_macro_dirty_bits_lock_2441.cpp`
 - `tests/compiler/test_macro_fiber_hygiene.cpp`
+- `tests/compiler/test_macro_hygiene_batch.cpp`
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp`
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp`
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp`
@@ -670,6 +693,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_pcv_tls_default_on_2521.cpp`
 - `tests/core/test_pcv_tls_scratch_2406.cpp`
 - `tests/core/test_pcv_unique_hotpath_2058.cpp`
+- `tests/core/test_pcv_workspace_batch.cpp`
 - `tests/compiler/test_per_defuse_batch.cpp`
 - `tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp`
 - `tests/orch/test_per_scope_bp_admit_2591.cpp`
@@ -695,6 +719,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_primitives_registry_core_consistency.cpp`
 - `tests/compiler/test_primitives_surface_convergence.cpp`
 - `tests/compiler/test_production_hardening_985.cpp`
+- `tests/compiler/test_production_hardening_batch.cpp`
 - `tests/compiler/test_production_readiness_batch.cpp`
 - `tests/compiler/test_production_roadmap_closed_loop.cpp`
 - `tests/compiler/test_production_safety.cpp`
@@ -724,6 +749,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_quota_edge_cases.cpp`
 - `tests/core/test_raii_guard_flatast_lifetime_2454.cpp`
 - `tests/core/test_raw_pointer_safety.cpp`
+- `tests/compiler/test_reemit_defer_batch.cpp`
 - `tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp`
 - `tests/compiler/test_reemit_production_default_defer_2205.cpp`
 - `tests/compiler/test_reemit_production_default_defer_2208.cpp`
@@ -786,6 +812,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_self_evolution_loop_stats.cpp`
 - `tests/serve/test_self_heal_policy_engine.cpp`
 - `tests/compiler/test_selfevo_bugfix_941.cpp`
+- `tests/serve/test_serve_legacy_issue_batch.cpp`
 - `tests/core/test_set_arena_atomic_owner.cpp`
 - `tests/core/test_set_workspace_flat.cpp`
 - `tests/compiler/test_setcode_rebind_survive_2569.cpp`
@@ -832,6 +859,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp`
 - `tests/core/test_stable_ref_tenant_capture_2125.cpp`
 - `tests/compiler/test_stable_ref_tenant_mandate_2056.cpp`
+- `tests/compiler/test_stable_ref_validate_batch.cpp`
 - `tests/core/test_stable_ref_wire_endian_2395.cpp`
 - `tests/compiler/test_stable_ref_wire_v2_2198.cpp`
 - `tests/compiler/test_stale_closure_fallback.cpp`
@@ -890,6 +918,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_type_system_health_2350.cpp`
 - `tests/compiler/test_type_system_health_next_action_2462.cpp`
 - `tests/compiler/test_type_timeout_repair_2284.cpp`
+- `tests/compiler/test_type_txn_misc_batch.cpp`
 - `tests/compiler/test_typechecker_incremental_batch.cpp`
 - `tests/compiler/test_typed_mutation_audit_decision_2281.cpp`
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp`
@@ -902,6 +931,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_value_encoding_v2_dispatch_contracts.cpp`
 - `tests/compiler/test_value_tag_hot_path_2259.cpp`
 - `tests/compiler/test_value_tag_hotpath_ban_2616.cpp`
+- `tests/compiler/test_value_tag_hotpath_batch.cpp`
 - `tests/core/test_verification_dirty_bits_lock_2439.cpp`
 - `tests/compiler/test_verify_parse_shared_helper.cpp`
 - `tests/compiler/test_walk_batch.cpp`
@@ -950,13 +980,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (76)
+### `arena_compaction` — Arena / compaction / GC (79)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (76)
+#### domain/ (79)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation_2078.cpp` (#2078) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -967,6 +997,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_arena_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_arena_batch.cpp — consolidated arena batch driver. EXCLUDE_FROM_ALL.
 - `tests/core/test_arena_compact_hook_concurrent.cpp` (—) [small, domain_suite, theme_core] — test_arena_compact_hook_concurrent.cpp — Issue #1989: ASTArena::on_compact_hook_
 - `tests/core/test_arena_compact_hook_stats_2381.cpp` (#2381) [domain_suite, theme_core] — AC1: N=4 threads invoke compact_hook concurrently → TSAN clean path
+- `tests/core/test_arena_compact_hooks_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_arena_compact_hooks_batch.cpp — thematic multi-TU batch
 - `tests/core/test_arena_compact_notify_lifecycle_2438.cpp` (#2438) [domain_suite, theme_core] — AC1: Documented invariant on hooks + clear_arena_compact_notify_hooks
 - `tests/core/test_arena_concurrent_mutex.cpp` (—) [small, domain_suite, theme_core] — test_arena_concurrent_mutex.cpp — Issue #1988: ArenaGroup::arenas_ concurrent access.
 - `tests/core/test_arena_defrag.cpp` (—) [domain_suite, theme_core] — tests/core/test_arena_defrag.cpp — Issue #1390: request_defrag + safepoint contract test.
@@ -985,6 +1016,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_envframe_truncate_guard_dual_epoch.cpp` (—) [domain_suite, theme_core] — Issue #1739/#1842/#1889/#1927/#1948 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_epoch_apply_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_epoch_apply_batch.cpp — epoch_apply pair dup-merge (R19 phase 15).
 - `tests/compiler/test_epoch_bump_invariant_2304.cpp` (#2304) [domain_suite, theme_compiler] — Issue #2304 — post-bump hard invariant walk infrastructure.
+- `tests/compiler/test_epoch_invariant_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_epoch_invariant_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_epoch_invariant_soft_prod_2541.cpp` (#2541) [domain_suite, theme_compiler] — AC1: production Restricted, AURA_EPOCH_INVARIANT unset → mode == 1
 - `tests/compiler/test_epoch_invariant_walk_2366.cpp` (#2366) [domain_suite, theme_compiler] — AC1: Soft off → zero walks (single mode load)
 - `tests/compiler/test_escape_move_elision_gate_2263.cpp` (#2263) [large, domain_suite, theme_compiler] — AC1: escape-after-move binding → MoveOp emitted; blocked counter bumps
@@ -1000,6 +1032,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_gc_evaluator_integration.cpp` (—) [domain_suite, theme_core] — test_gc_evaluator_integration.cpp — Issue #113 verification
 - `tests/compiler/test_gc_heap_cells_clear_2486.cpp` (#2486) [domain_suite, theme_compiler] — AC1: after seeding cells + gc-heap, cells().size() == 0
 - `tests/serve/test_gc_mark_size_inject_2084.cpp` (#2084) [domain_suite, theme_serve] — AC1: mark_from_roots with injected sizes → MarkBitVector size == heap size
+- `tests/compiler/test_gc_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_gc_misc_batch.cpp — thematic multi-TU batch
 - `tests/core/test_general_object_pin_2298.cpp` (#2298) [domain_suite, theme_core] — AC1: Non-render buffer pin-or-remap; validate succeeds after densify.
 - `tests/core/test_general_object_pin_adopt_2363.cpp` (#2363) [domain_suite, theme_core] — AC1: wire_general_object_create_pair pins both buffers + bumps wire
 - `tests/compiler/test_grant_epoch_retain_restricted_2529.cpp` (#2529) [domain_suite, theme_compiler] — AC1: Restricted + no multi-tenant → K==16
@@ -1035,13 +1068,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp` (#2409) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_type_dep_epoch_prune_2355.cpp` (#2355) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (219)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (220)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (219)
+#### domain/ (220)
 
 - `tests/core/test_add_node_builder_contract_2445.cpp` (#2445) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit_2223.cpp` (#2223) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1240,6 +1273,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp` (—) [domain_suite, theme_serve] — test_stable_ref_provenance_fiber_cow.cpp — Merged #457/#497/#527/#540/#549 + #551/#552 (#1978).
 - `tests/core/test_stable_ref_tenant_capture_2125.cpp` (#2125) [domain_suite, theme_core] — AC1: Source cites #2125; make_ref stamps when isolation principal active
 - `tests/compiler/test_stable_ref_tenant_mandate_2056.cpp` (#2056) [domain_suite, theme_compiler] — AC1: make_stamped_ref / stamp_stable_ref set tenant_id from principal
+- `tests/compiler/test_stable_ref_validate_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_stable_ref_validate_batch.cpp — thematic multi-TU batch
 - `tests/core/test_stable_ref_wire_endian_2395.cpp` (#2395) [domain_suite, theme_core] — AC1: round-trip serialize → deserialize recovers full ref
 - `tests/compiler/test_stable_ref_wire_v2_2198.cpp` (#2198) [domain_suite, theme_compiler] — AC1: v2 round-trips tenant_id, fiber_id, boundary_pinned,
 - `tests/core/test_stale_ref_string_heap.cpp` (—) [domain_suite, theme_core] — Issue #1681 (#1978 renamed): issue# moved from filename to header.
@@ -1396,13 +1430,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health_2613.cpp` (#2613) [domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (41)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (42)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (41)
+#### domain/ (42)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1417,6 +1451,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_issue_178_reflect.cpp` (#178) [early_issue, domain_suite, theme_reflect] — Non-module TU: P2996 reflection (Issue #268).
 - `tests/compiler/test_macro_cross_flat_hygiene_2235.cpp` (#2235) [domain_suite, theme_compiler] — warning. Single-flat path stays zero-overhead (AC4 contract
 - `tests/compiler/test_macro_fiber_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2097 + FiberHygieneStats + get_fiber_hygiene_metrics
+- `tests/compiler/test_macro_hygiene_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_macro_hygiene_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp` (—) [domain_suite, theme_compiler] — Issue #1501/#1589/#1593/#1609/#1613 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2021; peak / in-flight atomics + snapshot helper
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp` (—) [domain_suite, theme_compiler] — test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp — Issue #654:
@@ -1533,13 +1568,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape_2574.cpp` (#2574) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (49)
+### `shape_soa` — Shape / SoA / column layout (50)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (49)
+#### domain/ (50)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
@@ -1559,6 +1594,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_layout_stamp_equality_8field_2519.cpp` (#2519) [domain_suite, theme_compiler] — AC1: operator== compares all 8 fields; shape-only / ir-only mismatch
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp` (—) [domain_suite, theme_compiler] — test_list_vector_soa_hotpath_ai_loops.cpp — Issue #752:
 - `tests/compiler/test_matcher_stable_captures.cpp` (—) [domain_suite, theme_compiler] — Issue #1695 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
 - `tests/core/test_param_begin_count_publish_2451.cpp` (#2451) [domain_suite, theme_core] — (count last after arena fill) under post-parse contract.
 - `tests/core/test_raii_guard_flatast_lifetime_2454.cpp` (#2454) [domain_suite, theme_core] — AC1: scoped StructuralMutationGuard / ReaderLockGuard work
 - `tests/core/test_region_dense_atomic_2443.cpp` (#2443) [domain_suite, theme_core] — AC1: concurrent writer + reader does not tear dense uint8 cells
@@ -1729,28 +1765,31 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention_2523.cpp` (#2523) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (45)
+### `uncategorized` — Uncategorized / mixed (54)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (45)
+#### domain/ (54)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
 - `tests/stdlib/test_atomic_swap_stdlib.cpp` (—) [domain_suite, theme_stdlib] — test_atomic_swap_stdlib.cpp — Issue #1380:
 - `tests/compiler/test_aura_result_error_policy.cpp` (—) [domain_suite, theme_compiler] — test_aura_result_error_policy.cpp — Issues #807 + #808:
+- `tests/compiler/test_cascade_impact_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_cascade_impact_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_channel_rendezvous_2483.cpp` (#2483) [domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
 - `tests/compiler/test_command_line_cap_io_read_2478.cpp` (#2478) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_compile02_no_dup_imports.cpp` (—) [domain_suite, theme_compiler] — Issue #1857 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_composite_commit_cs_reuse_2180.cpp` (#2180) [domain_suite, theme_compiler] — AC1: inject type conflict into commit CS → solve_fail + reject
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
+- `tests/compiler/test_cross_cow_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cross_cow_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_eval_current_no_auto_fix_2484.cpp` (#2484) [domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
 - `tests/orch/test_failure_policy_bridge_2539.cpp` (#2539) [domain_suite, theme_orch] — AC1: to_agent_policy(FailurePolicy, max_restarts=...) callable under aura::orch
 - `tests/core/test_general_object_pin_coverage_gate_2496.cpp` (#2496) [domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
+- `tests/compiler/test_hot_pass_contract_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_hot_pass_contract_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_ir_const_string_intern_2573.cpp` (#2573) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
 - `tests/compiler/test_ir_optimize_type_info_chain_2471.cpp` (#2471) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
 - `tests/compiler/test_json_io_cap_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_json_io_cap_batch.cpp — thematic multi-TU batch
@@ -1758,7 +1797,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_json_parse_object_grow_2481.cpp` (#2481) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/compiler/test_list_end_of_list_void_2482.cpp` (#2482) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true
 - `tests/compiler/test_load_cap_io_read_2485.cpp` (#2485) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
-- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_lock_order_audit_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_lock_order_audit_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_export_display_2572.cpp` (#2572) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
 - `tests/compiler/test_module_load_tail_export_2570.cpp` (#2570) [domain_suite, theme_compiler] — AC1: tail defines always export after require
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
@@ -1767,11 +1806,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_open_issues_phase1_batch.cpp` (—) [phase_slice, batch_driver, domain_suite, theme_compiler] — test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.
 - `tests/core/test_pair_unchecked_safety.cpp` (—) [domain_suite, theme_core] — Issue #1710 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_panic_checkpoint_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — tests/core/test_panic_checkpoint_batch.cpp
+- `tests/core/test_pcv_workspace_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_pcv_workspace_batch.cpp — thematic multi-TU batch
 - `tests/core/test_persist_basic.cpp` (—) [domain_suite, theme_core] — test_persist_basic.cpp — Issue #1381:
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — AC1: count > max clamped
 - `tests/compiler/test_primcall_str_intern_2577.cpp` (#2577) [domain_suite, theme_compiler] — AC1: N× (string-append x "!") — eval heap growth ≪ N
+- `tests/compiler/test_production_hardening_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_production_hardening_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_query_namespace_audit.cpp` (—) [domain_suite, theme_compiler] — test_query_namespace_audit.cpp — Issue #562:
+- `tests/compiler/test_reemit_defer_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_reemit_defer_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_security_capability_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_security_capability_batch.cpp — thematic multi-TU batch
+- `tests/serve/test_serve_legacy_issue_batch.cpp` (—) [small, batch_driver, domain_suite, theme_serve] — test_serve_legacy_issue_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp` (#2494) [domain_suite, theme_compiler] — AC1: Intentionally broken fixture prim (side-effect name, no
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:
 - `tests/core/test_stringpool_concurrent_intern.cpp` (—) [domain_suite, theme_core] — Issue #2062 — StringPool thread-safe intern test.
@@ -1780,6 +1823,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_truncate_commit_gate_2458.cpp` (#2458) [domain_suite, theme_compiler] — AC1: Soft Sampled + truncated → observe; commit_ok allows; no reject
 - `tests/compiler/test_try_catch_bind_2567.cpp` (#2567) [domain_suite, theme_compiler] — AC1: (try (no-such-fn …) (catch (e) (string? e))) → #t; list/cons usable
 - `tests/core/test_try_lock_workspace_lock_order.cpp` (—) [domain_suite, theme_core] — Issue #1768 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_type_txn_misc_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_type_txn_misc_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_value_tag_hotpath_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_value_tag_hotpath_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_while_define_oneshot_2571.cpp` (#2571) [domain_suite, theme_compiler] — AC1: issue repro — nested while with (define x 0) yields count=6
 - `tests/compiler/test_workspace_dispatch.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_dispatch.cpp — Issue #1437: workspace :op dispatch contract test.
 
