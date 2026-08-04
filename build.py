@@ -256,6 +256,19 @@ def cmd_lint():
     if r != 0:
         fail("test includes linter failed — run python3 scripts/check_test_includes.py")
         return r
+    # Issue #2632: cross-fiber / mailbox / handoff export_held_ref coverage
+    # contract (handoff_ref helper + counter + wire-ups at fiber steal and
+    # parallel-intend result packaging + multi_fiber_mailbox reference + test
+    # coverage). Wired next to the test-includes linter so a regression in
+    # the #2632 AC surface fails the same gate.
+    eh_script = ROOT / "scripts" / "check_export_held_handoff_coverage.py"
+    if not eh_script.exists():
+        fail(f"missing {eh_script}")
+        return 1
+    r = run([sys.executable, str(eh_script)], cwd=ROOT)
+    if r != 0:
+        fail("export-held handoff coverage linter failed — run python3 scripts/check_export_held_handoff_coverage.py")
+        return r
     ok("lint OK")
     return 0
 

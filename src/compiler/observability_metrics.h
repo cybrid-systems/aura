@@ -88,6 +88,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> jit_hotswap_live_closure_refreshed_total{0};
     std::atomic<std::uint64_t> jit_hotswap_forced_deopt_total{0};
     std::atomic<std::uint64_t> jit_hotswap_epoch_mismatch_prevented_total{0};
+    // Issue #2632: handoff rejection counter (single internal helper gate).
+    // Bumped when Evaluator::handoff_ref returns nullopt on a cross-fiber /
+    // mailbox / orch handoff. Distinguishes handoff rejections from
+    // query-time export-stale-reject (so dashboards can separate the two
+    // failure surfaces — e.g. agent body return vs. workspace query).
+    std::atomic<std::uint64_t> stable_ref_handoff_reject_total{0};
     // Issue #493: EDSL hot-path bottleneck measurement (evaluator_eval_flat /
     // lowering_impl call sites).
     std::atomic<std::uint64_t> hotpath_eval_flat_calls{0};
